@@ -1429,6 +1429,8 @@ ts_syntax
         assert "src/engine/generator.cpp" not in targets
         assert "src/models/postcard.cpp" not in targets
         assert "tests/test_product.py" in targets
+        assert "tests/" in contracts[0]["scope_paths"]
+        assert "tests/" not in contracts[0]["target_files"]
         assert "README.md" in targets
         assert "index.html" not in targets
         assert "styles.css" not in targets

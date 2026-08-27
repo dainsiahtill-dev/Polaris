@@ -1,0 +1,67 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R33-SAME-TASK-DECLARATION-HOME-SELF-HANDOFF",
+  "status": "CLOSED_LIVE_VALIDATED",
+  "severity": "P0",
+  "scope": "Polaris meta-platform only",
+  "target_project_modified_by_debugger": false,
+  "exact_run": {
+    "factory_run_id": "factory_e18ce79d0838",
+    "workspace": "/tmp/factory-bench-l3-24-r33/workspaces/0ddbaa2f90f7-2390110c31a64793/L3-24-023d7314133040b6/76e205cd01aa22bd1e96cd6b",
+    "project_id": "L3-24",
+    "terminal": "qa_failed",
+    "wall_clock_seconds": 3001.6
+  },
+  "dynamic_evidence": {
+    "terminal_compiler_residual": "src/diary.cpp:83:28: error: 'cipher' has not been declared",
+    "successful_prior_effect": "The Director provider request restricted to include/invisible_ink/diary.hpp produced a real edit receipt before the compiler frontier moved to src/diary.cpp.",
+    "final_request_context_snapshot_ref": "7899e2b514186ebc14e644ad",
+    "final_request_tool_contract": "Director identity correct; CE blueprint present; edit_file forced for the authorized repair target.",
+    "stalled_rounds": {
+      "count": 3,
+      "stage": "task_boundary_repair_targets_deferred",
+      "write_tool_evidence": false,
+      "success_reason": "repair_targets_outside_current_task_target_files"
+    },
+    "scope_contradiction": {
+      "requesting_task_id": "TASK-1",
+      "owner_task_id": "TASK-1",
+      "owner_found": true,
+      "recommended_route": "owner_task_retry",
+      "declared_target": "include/invisible_ink/cipher.hpp",
+      "also_reported_out_of_scope": "include/invisible_ink/cipher.hpp"
+    },
+    "terminal_gates": {
+      "cpp_compile": "failed",
+      "canonical_execution": "required_evidence_failed",
+      "real_run_gate": "failed",
+      "delivery_depth_gate": "failed"
+    }
+  },
+  "root_cause": {
+    "classification": "director_quality_repair_current_batch_confused_with_task_write_scope",
+    "mechanism": "The C++ declaration-home branch named every declaration file absent from the current narrow edit batch as unbound. It then emitted a task-boundary owner handoff without first partitioning those homes against the immutable current task write scope. A declaration home already owned by TASK-1 was therefore deferred from TASK-1 back to TASK-1, producing repeated no-op retries.",
+    "why_static_analysis_was_insufficient": "The source looked fail-closed in isolation. Only the exact r33 repair summaries, final provider request, effect receipt, current compiler residual, and owner-handoff projection exposed that the requesting owner and destination owner were identical while the same path was simultaneously declared and out of scope."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_repair_loop.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_repair_repeat_attempt_widening.py"
+    ],
+    "behavior": "Partition declaration homes by immutable task write scope before owner handoff. Same-task declaration homes are admitted to the current bounded repair batch; only genuinely external declaration homes remain fail-closed and route to owner handoff."
+  },
+  "verification": {
+    "tdd_red": "The r33-shaped regression reproduced zero provider invocation and task_boundary_repair_targets_deferred.",
+    "targeted_green": "49 passed across repeat-attempt widening and KernelOne ScopeAuthority tests.",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_bench": "L3-24 r34 factory_a0d586f9c6f1: no task_boundary_repair_targets_deferred; all 7 quality-repair rounds had write_tool_evidence=true. The remaining failure moved to a distinct C++ causal-target extraction defect."
+  },
+  "required_invariants": [
+    "Current repair-batch membership is not task write-scope authority.",
+    "A declaration home already owned by the requesting task must never be handed from that task back to itself.",
+    "Same-task declaration-home admission remains bounded by the quality repair batch limit.",
+    "A genuinely external declaration home remains fail-closed and must route to its immutable owner."
+  ],
+  "residual_risk": "r33 also exposed delivery-depth and CMake include-root failures. They remain independent residuals and must be re-evaluated only after the compiler repair path produces a real effect in a fresh isolated run."
+}

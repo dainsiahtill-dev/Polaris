@@ -1,0 +1,48 @@
+{
+  "schema_version": "polaris.dynamic_debug_defect.v1",
+  "defect_id": "l3-23-negated-placeholder-prose-20260825",
+  "status": "CLOSED_LOCAL_PENDING_SAME_RUN_REVALIDATION",
+  "severity": "P0",
+  "project_id": "L3-23",
+  "run_id": "factory_e0cda86d03da",
+  "attempt": "r19",
+  "symptom": "Director Task 3 created README.md plus two Rust test files with committed effect receipts, then materialization semantic quality failed because README anti-placeholder prose was classified as unfinished scaffold content.",
+  "exact_run_evidence": {
+    "workspace": "/tmp/factory-bench-l3-23-r19/workspaces/57417bb3ee24-6701852dbc6bd93e/L3-23-2956ab31bd653d97/fecb0ae8f35639fdf3b3e47c",
+    "factory_run_id": "factory_e0cda86d03da",
+    "director_run_id": "director-3c511b2ec316",
+    "task_id": "TASK-3",
+    "task_runtime_error": "director_materialization_semantic_quality_failed",
+    "quality_error": "generic/placeholder content detected: README.md:(?<![.:'\\\"-])\\bplaceholder\\b(?!\\s*[=:])(?![-'\\\"])",
+    "exact_line": "rather than a static placeholder.",
+    "changed_files": [
+      "README.md",
+      "tests/edges.rs",
+      "tests/product.rs"
+    ],
+    "effect_receipt_count": 3,
+    "coverage_status": "executable_runtime",
+    "plan_probe_status": "coverage_matched_but_unplannable",
+    "repair_tool_results": 0,
+    "pm_ce_restart_allowed": false,
+    "target_project_modified_by_debugger": false
+  },
+  "root_cause": "The placeholder detector distinguished comments, strings, attributes, and code tokens but treated all documentation prose as executable scaffold evidence. Explicit negation such as 'rather than a static placeholder' therefore produced a false quality failure. Coverage then matched a cleanup rule but produced no plan, suppressing the Director LLM fallback and terminalizing an otherwise substantive task.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/helpers.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/execution.py"
+    ],
+    "policy": "Only documentation suffixes may suppress placeholder matches, and only when a bounded same-sentence prefix proves explicit negation such as rather than, instead of, not, never, without, avoid, reject, or forbid. Executable code and affirmative README placeholders remain rejected."
+  },
+  "verification": {
+    "tdd_red": "Negated README case failed while affirmative placeholder case passed before implementation.",
+    "focused_tests": "2 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "negative_case": "README text 'This section is a placeholder until ...' remains rejected."
+  },
+  "automatic_audit_rule": "When materialization quality reports a bare placeholder marker, capture the exact matching line and file type. Documentation-only explicit negation is not unfinished content; code identifiers and affirmative prose remain blocking.",
+  "target_project_modified": false,
+  "next_action": "Use same-workspace stage-local recovery after loading the fixed Polaris source. Preserve PM/CE authority and successful Director Task 1/2 receipts; rerun only failed Director Task 3 or the failed quality verifier."
+}

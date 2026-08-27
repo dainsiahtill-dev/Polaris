@@ -973,6 +973,34 @@ class TestQualityRepairMissingTargetContractB:
 
         assert targets == ["src/main.rs", "tests/test_product.py"]
 
+    def test_python_runtime_smoke_cli_subcommand_failure_targets_cpp_cli_before_main(self, tmp_path) -> None:
+        """L3-24 r24: compiled CLI behavior must not fan out to every source."""
+
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "cipher.cpp").write_text("int cipher() { return 0; }\n", encoding="utf-8")
+        (tmp_path / "src" / "cli.cpp").write_text("int run_cli() { return 0; }\n", encoding="utf-8")
+        (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_product.py").write_text("import unittest\n", encoding="utf-8")
+
+        targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[
+                "FAIL: test_invalid_subcommand (test_product.TestCliBehaviour.test_invalid_subcommand)\n"
+                "Invalid input: unknown subcommand must exit non-zero.\n"
+                "Traceback (most recent call last):\n"
+                f'  File "{tmp_path / "tests" / "test_product.py"}", line 186, in test_invalid_subcommand\n'
+                "AssertionError: 0 == 0"
+            ],
+            changed_files=["src/cipher.cpp", "src/cli.cpp", "src/main.cpp", "tests/test_product.py"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/cli.cpp", "src/main.cpp"]
+
     def test_python_runtime_smoke_harness_targets_changed_non_python_sources(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _explicit_artifact_quality_repair_target_files,
@@ -1579,10 +1607,30 @@ class TestQualityRepairMissingTargetContractB:
 
         _, summary = await _run_materialization_quality_repair_retry(
             adapter,
-            task={"target_files": ["models/gallery.go", "models/capsule.go"]},
+            task={
+                "target_files": ["models/gallery.go", "models/capsule.go"],
+                "metadata": {
+                    "module_interface_contract": {
+                        "schema_version": "chief_engineer.module_interface_contract.v1",
+                        "modules": [
+                            {
+                                "path": "models/gallery.go",
+                                "planned_public_symbols": ["Entity"],
+                            }
+                        ],
+                    }
+                },
+            },
             target_task_id="PM-0001-1",
             run_id="run-go-compile-write-only",
-            context={},
+            context={
+                "director_interface_discrepancy_retry": {
+                    "authorized": True,
+                    "reason": "coverage_matched_but_unplannable",
+                    "recommended_owner": "director",
+                    "recommended_route": "director_retry_with_interface_discrepancy_context",
+                }
+            },
             original_message="Repair a Go package compile failure.",
             llm_call_timeout=10,
             artifact_quality_errors=[
@@ -1643,6 +1691,176 @@ class TestQualityRepairMissingTargetContractB:
         )
 
         assert targets == ["src/planet.py", "src/weather.py", "tests/test_planet.py", "tests/test_weather.py"]
+
+    def test_normalized_python_unittest_failure_keeps_cross_language_product_targets(self, tmp_path) -> None:
+        """Normalized unittest blocks remain causal evidence after wrapper stripping.
+
+        Live L3-24 r22 persisted one failure block per assertion without the
+        outer ``workspace validation command failed`` prefix.  Rejecting those
+        blocks as non-runtime evidence collapsed every repair turn onto the
+        Python observer test even though it exercised a C++ CLI product.
+        """
+
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+        (tmp_path / "src" / "cipher.cpp").write_text("int shift() { return 1; }\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_invariants.py").write_text(
+            "import unittest\n\n"
+            "class CipherTests(unittest.TestCase):\n"
+            "    def test_output(self) -> None:\n"
+            "        self.assertIn('== cipher ==', '----- cipher round-trip -----')\n",
+            encoding="utf-8",
+        )
+        error = (
+            "======================================================================\n"
+            "FAIL: test_output (test_invariants.CipherTests.test_output)\n"
+            "----------------------------------------------------------------------\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{tmp_path / "tests" / "test_invariants.py"}", line 5, in test_output\n'
+            "    self.assertIn('== cipher ==', out)\n"
+            "AssertionError: '== cipher ==' not found in '----- cipher round-trip -----'"
+        )
+
+        targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=["src/main.cpp", "src/cipher.cpp", "tests/test_invariants.py"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets[:2] == ["src/main.cpp", "src/cipher.cpp"]
+        assert "tests/test_invariants.py" not in targets
+
+    def test_python_unittest_cpp_cli_failure_targets_entrypoint_and_qualified_symbol_owner(
+        self,
+        tmp_path,
+    ) -> None:
+        """L3-24 r49: behavior residuals must not rotate through unrelated C++ files.
+
+        Python unittest is only the observer.  Its subprocess harness proves
+        the compiled CLI entrypoint is causal, while the runtime error's
+        qualified ``Type::method`` text proves the unique implementation
+        owner.  Unrelated changed sources must not enter the mutation frontier.
+        """
+
+        from polaris.cells.roles.adapters.public import (
+            resolve_director_causal_quality_repair_target_files,
+        )
+
+        (tmp_path / "app").mkdir()
+        (tmp_path / "app" / "main.cpp").write_text(
+            'int main(int argc, char**) { return argc > 1 ? 0 : 1; }\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "cipher.cpp").write_text(
+            "std::string MoonCipher::encrypt(std::string_view plaintext) const { return {}; }\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "moon_phase.cpp").write_text(
+            "double phase_visibility(int phase) { return phase / 7.0; }\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_product.py").write_text(
+            "import subprocess\n"
+            "import unittest\n\n"
+            "def _run(argv):\n"
+            "    return subprocess.run(argv, capture_output=True, text=True)\n\n"
+            "class ProductTests(unittest.TestCase):\n"
+            "    def test_seal(self):\n"
+            "        result = _run(['build/app', '--seal', 'hello'])\n"
+            "        self.assertEqual(result.returncode, 0, result.stderr)\n",
+            encoding="utf-8",
+        )
+        error = (
+            "FAIL: test_seal (test_product.ProductTests.test_seal)\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{tmp_path / "tests" / "test_product.py"}", line 10, in test_seal\n'
+            "    self.assertEqual(result.returncode, 0, result.stderr)\n"
+            "AssertionError: 2 != 0 : seal failed: MoonCipher::encrypt: "
+            "plaintext contains non-alphabet byte"
+        )
+
+        targets = resolve_director_causal_quality_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=[
+                "app/main.cpp",
+                "src/cipher.cpp",
+                "src/moon_phase.cpp",
+                "tests/test_product.py",
+            ],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["app/main.cpp", "src/cipher.cpp"]
+
+    def test_cpp_runtime_symbol_call_in_test_does_not_hide_unique_product_owner(self, tmp_path) -> None:
+        """A C++ assertion use-site is an observer, not a second definition.
+
+        Live L3-24 r66 reported ``Moonlight::days_since_1900`` from a Python
+        unittest wrapper around ``tests/cpp_unit.cpp``.  The C++ test called the
+        same qualified symbol that ``src/inkwell/moonlight.cpp`` defined.  The
+        old resolver counted both textual matches as owners, rejected the
+        symbol as ambiguous, and fell back to the first unrelated changed
+        production source.
+        """
+
+        from polaris.cells.roles.adapters.public import (
+            resolve_director_causal_quality_repair_target_files,
+        )
+
+        source_dir = tmp_path / "src" / "inkwell"
+        source_dir.mkdir(parents=True)
+        (source_dir / "cipher.cpp").write_text(
+            "int unrelated_cipher_behavior() { return 1; }\n",
+            encoding="utf-8",
+        )
+        (source_dir / "moonlight.cpp").write_text(
+            "long Moonlight::days_since_1900(const std::string& value) { return 0; }\n",
+            encoding="utf-8",
+        )
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "cpp_unit.cpp").write_text(
+            'int main() { return Moonlight::days_since_1900("2024-01-01") == 45292 ? 0 : 1; }\n',
+            encoding="utf-8",
+        )
+        (tests_dir / "test_product.py").write_text(
+            "import subprocess\n"
+            "import unittest\n\n"
+            "class ProductTests(unittest.TestCase):\n"
+            "    def test_cpp_unit_runs_and_passes(self):\n"
+            "        proc = subprocess.run(['build/cpp_unit'])\n"
+            "        self.assertEqual(proc.returncode, 0)\n",
+            encoding="utf-8",
+        )
+        error = (
+            "FAIL: test_cpp_unit_runs_and_passes "
+            "(test_product.ProductTests.test_cpp_unit_runs_and_passes)\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{tests_dir / "test_product.py"}", line 7, in test_cpp_unit_runs_and_passes\n'
+            "AssertionError: 1 != 0 : cpp_unit failed: FAIL: days_since_1900 baseline "
+            "(Moonlight::days_since_1900(\"2024-01-01\") vs long(45292)) at "
+            f"{tests_dir / 'cpp_unit.cpp'}:1"
+        )
+
+        targets = resolve_director_causal_quality_repair_target_files(
+            artifact_quality_errors=[error],
+            changed_files=[
+                "src/inkwell/cipher.cpp",
+                "src/inkwell/moonlight.cpp",
+                "tests/cpp_unit.cpp",
+                "tests/test_product.py",
+            ],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/inkwell/moonlight.cpp"]
 
     def test_python_unittest_docstring_failures_target_unique_symbol_owners(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
@@ -2173,8 +2391,8 @@ class TestQualityRepairMissingTargetContractB:
         assert "CURRENT UTF-8 CONTENT" in adapter.repair_message
         assert "assert.ok(keywords.includes('火焰'))" in adapter.repair_message
         assert "EDIT CONSISTENCY PREFLIGHT" in adapter.repair_message
-        assert "Never change a reference without its owner definition" in adapter.repair_message
-        assert "preserve already-passing behavior" in adapter.repair_message
+        assert "verify that its definition already exists" in adapter.repair_message
+        assert "preserve already-passing behavior" in adapter.repair_message.lower()
 
     @pytest.mark.asyncio
     async def test_go_test_failure_forces_same_task_edit_contract(

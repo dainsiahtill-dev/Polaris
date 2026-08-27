@@ -21,7 +21,10 @@ from polaris.cells.roles.kernel.internal.transaction.deferred_repair_followup im
     DeferredCommandEffectSynthesizer,
     build_deferred_repair_followup,
 )
-from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
+from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
+    ToolBatchExecutor,
+    _executor_core as executor_core_module,
+)
 from polaris.cells.roles.kernel.public import (
     create_deferred_director_command_request,
     create_deferred_director_repair_request,
@@ -54,12 +57,12 @@ def _attempt(workspace: Path) -> TaskRuntimeExecutionAttemptIdentityV1:
     )
 
 
-def _request(workspace: Path):
+def _request(workspace: Path, *, target_path: str = "src/models/Market.ts"):
     original = 'import {\n  Reputation,\n  export type ReputationTier,\n} from "./Reputation";\n'
     command = PlanDirectorRepairCommandV1(
         source_tool=_typescript_import_specifier_source_tool(),
-        base_files={"src/models/Market.ts": original},
-        artifact_quality_errors=("src/models/Market.ts(3,3): error TS1003: Identifier expected.",),
+        base_files={target_path: original},
+        artifact_quality_errors=(f"{target_path}(3,3): error TS1003: Identifier expected.",),
         deterministic_only=True,
     )
     planning = plan_director_repair(command)
@@ -71,7 +74,7 @@ def _request(workspace: Path):
         execution_attempt=attempt,
         planning_command=command,
         planning_result=planning,
-        allowed_paths=("src/models/Market.ts",),
+        allowed_paths=(target_path,),
     )
 
 
@@ -326,7 +329,18 @@ async def test_executor_followup_is_visible_distinct_and_uses_normal_prepare_the
 
     async def _prepare(self: object, **kwargs: object):
         observed["prepare"] = kwargs
-        return list(kwargs["invocations"]), object()  # type: ignore[arg-type]
+        invocations = list(kwargs["invocations"])  # type: ignore[arg-type]
+        prepared_batch = SimpleNamespace(
+            prepared_members=tuple(
+                SimpleNamespace(member=SimpleNamespace(tool_call_id=str(invocation.call_id)))
+                for invocation in invocations
+            )
+        )
+        return invocations, SimpleNamespace(
+            batch=prepared_batch,
+            restrictions_by_call_id=(),
+            dropped_members=(),
+        )
 
     def _check(self: object, invocations: object, turn_id: str) -> None:
         observed["policy"] = (invocations, turn_id)
@@ -381,3 +395,107 @@ async def test_executor_followup_is_visible_distinct_and_uses_normal_prepare_the
     assert followup_receipts[0]["deferred_repair_request_ids"] == [request.request_id]
     assert "request" not in receipts[0]["results"][0]["result"]
     assert len(emitted) == 1
+
+
+@pytest.mark.asyncio
+async def test_executor_followup_reconciles_policy_prepared_repair_pair_subset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R27: a policy-authorized repair pair must survive denied sibling pairs.
+
+    The authoritative DEO parent contains only policy-authorized members.  The
+    deferred follow-up partition therefore has to be projected onto that exact
+    prepared inventory before ToolBatchRuntime is built; passing the original
+    four call ids to a two-member parent raises the production partition error.
+    """
+
+    first_request = _request(tmp_path, target_path="src/models/Market.ts")
+    second_request = _request(tmp_path, target_path="src/models/Offer.ts")
+    receipts = [
+        {
+            "batch_id": "primary",
+            "results": [
+                {
+                    "status": "success",
+                    "result": {"requests": [first_request, second_request]},
+                }
+            ],
+        }
+    ]
+    followup = build_deferred_repair_followup(
+        receipts,
+        primary_batch_id="primary",
+        turn_id="turn-policy-subset",
+        expected_workspace=first_request.workspace,
+        expected_task_id=first_request.task_id,
+        expected_execution_attempt=first_request.execution_attempt,
+        synthesizer=DeferredRepairEffectSynthesizer(),
+    )
+    assert followup is not None
+    assert len(followup.inventory_invocations) == 4
+    selected_rollback, selected_forward = followup.rollback_activation_by_call_id[0]
+    selected_ids = (selected_forward, selected_rollback)
+    dropped_ids = tuple(
+        call_id
+        for call_id in (*followup.forward_call_ids, *followup.rollback_call_ids)
+        if call_id not in selected_ids
+    )
+    prepared_batch = SimpleNamespace(
+        prepared_members=tuple(
+            SimpleNamespace(member=SimpleNamespace(tool_call_id=call_id)) for call_id in selected_ids
+        )
+    )
+    prepared_dispatch = SimpleNamespace(
+        batch=prepared_batch,
+        restrictions_by_call_id=(),
+        dropped_members=tuple((call_id, "write_file", "deo_path_scope_denied") for call_id in dropped_ids),
+    )
+    executor = object.__new__(ToolBatchExecutor)
+    executor.directed_effect_execution_attempt = first_request.execution_attempt
+    executor._deferred_repair_synthesizer = DeferredRepairEffectSynthesizer()
+    executor.emit_event = lambda _event: None
+    observed: dict[str, object] = {}
+
+    async def _prepare(self: object, **kwargs: object):
+        del self
+        return list(kwargs["invocations"]), prepared_dispatch  # type: ignore[arg-type]
+
+    def _check(self: object, invocations: object, turn_id: str) -> None:
+        del self, invocations, turn_id
+
+    class _Runtime:
+        async def execute_batch(self, batch: object, turn_id: object):
+            observed["execute"] = (batch, turn_id)
+            return []
+
+    def _build(self: object, workspace: str, **kwargs: object):
+        del self, workspace
+        observed["runtime"] = kwargs
+        assert kwargs["directed_effect_dispatch_call_ids"] == (selected_forward,)
+        assert kwargs["directed_effect_abort_call_ids"] == (selected_rollback,)
+        assert {call_id for call_id, _binding in kwargs["directed_effect_repair_bindings_by_call_id"]} == set(
+            selected_ids
+        )
+        assert kwargs["directed_effect_rollback_activation_by_call_id"] == (
+            (selected_rollback, selected_forward),
+        )
+        return _Runtime()
+
+    monkeypatch.setattr(executor_core_module, "build_deferred_repair_followup", lambda *_args, **_kwargs: followup)
+    executor._prepare_directed_effect_dispatch = MethodType(_prepare, executor)
+    executor._check_effect_policy = MethodType(_check, executor)
+    executor._build_tool_batch_runtime = MethodType(_build, executor)
+    ledger = SimpleNamespace(tool_batch_count=0, state_history=[], run_id="run-policy-subset")
+
+    await executor._execute_deferred_repair_followup(
+        receipts_as_dicts=[],
+        primary_batch_id="primary",
+        workspace=first_request.workspace,
+        turn_id="turn-policy-subset",
+        ledger=ledger,
+        cancel_token=CancelToken(),
+    )
+
+    executed_batch = observed["execute"][0]  # type: ignore[index]
+    assert tuple(str(item.call_id) for item in executed_batch.serial_writes) == (selected_forward,)

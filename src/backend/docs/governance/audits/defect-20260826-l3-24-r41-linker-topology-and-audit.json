@@ -1,0 +1,102 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-R41-LINKER-TOPOLOGY-AUDIT",
+  "recorded_at": "2026-08-26T17:53:41+08:00",
+  "status": "FIXED_PENDING_FRESH_BENCH",
+  "severity": "P0",
+  "factory_run_id": "factory_bbf2a6bfe609",
+  "project_id": "L3-24",
+  "workspace": "/tmp/factory-bench-l3-24-r41/workspaces/5382cf4d577d-7e40938956c71223/L3-24-023d7314133040b6/b118c131375d56cb7406b37b",
+  "target_project_modified": false,
+  "dynamic_evidence": {
+    "terminal_status": "QA_FAILED",
+    "compile_translation_units_passed": 3,
+    "linker_error": "undefined reference to moon_token/moon_info/moon_illumination/moon_is_receptive",
+    "physical_tool_calls": 2,
+    "physical_tool": "edit_file",
+    "physical_effects_committed_then_rolled_back": true,
+    "rollback_reason": "no diagnostic reduction",
+    "before_repair_targets": [
+      "src/cipher_engine.cpp"
+    ],
+    "after_exact_selector_targets": [
+      "include/invisible_ink_diary/moon_phase.hpp",
+      "src/cipher_engine.cpp",
+      "src/main.cpp",
+      "src/diary.cpp"
+    ],
+    "authoritative_task_id": "TASK-1",
+    "authoritative_owner_contains_all_targets": true,
+    "before_audit_root_cause": "context.engine.final_provider_request_evidence_missing",
+    "after_audit_root_cause": "director.runtime.repair_coverage_gap",
+    "after_audit_retry_boundary": "same_director_task_repair_only",
+    "after_audit_pm_ce_restart_allowed": false,
+    "exact_context_pin_count": 10,
+    "role_context_coverage": {
+      "pm": "proven",
+      "chief_engineer": "proven",
+      "director": "proven"
+    },
+    "before_normalized_pseudo_path": "/n/tmp/factory-bench-l3-24-r41/.../src/cipher_engine.cpp",
+    "after_normalized_pseudo_paths": [],
+    "after_normalized_diagnostics": [
+      "cpp_compile_error",
+      "cpp_linker_undefined_reference",
+      "workspace_validation_failed",
+      "artifact_quality_error"
+    ]
+  },
+  "root_causes": [
+    {
+      "code": "audit.exact_run_context_pin_discovery_gap",
+      "cause": "Exact-run audit depended on trail events and did not query durable Factory context pins; actor role metadata and latest-request ordering were also lost.",
+      "owner": "context.engine + audit.diagnosis"
+    },
+    {
+      "code": "audit.recoverable_tool_lifecycle_false_blocker",
+      "cause": "Historical recoverable TOOL_RESULT_FAILED evidence was interpreted from raw ok=false instead of canonical Run Ledger lifecycle status.",
+      "owner": "audit.diagnosis"
+    },
+    {
+      "code": "director.cpp_linker_causal_target_gap",
+      "cause": "Linker output exposed object-file callers but repair targeting omitted the unique header declaration owner; a one-path Factory claim then collapsed the mutation frontier.",
+      "owner": "roles.adapters + factory.pipeline"
+    },
+    {
+      "code": "director.cpp_nested_transcript_normalization_gap",
+      "cause": "Literal escaped newlines in nested verifier output were treated as path bytes, producing /n/tmp and merging a warning with linker stderr; duplicate direct/wrapped diagnostics inflated coverage.",
+      "owner": "director.runtime"
+    }
+  ],
+  "platform_fixes": [
+    "Durable exact Factory context-pin query and public Context Engine projection",
+    "Actor-aware, latest-request exact causal audit with canonical lifecycle status",
+    "Unique C++ declaration-owner discovery for undefined references",
+    "Separate TaskRuntime owner claim from same-owner multi-target mutation frontier",
+    "Decode identified nested compiler transcripts, split linker diagnostics, deduplicate stable diagnostic ids"
+  ],
+  "verification": [
+    {
+      "command": "pytest test_characterization_workspace_quality_checks.py::TestRunWorkspaceQualityChecks::test_cpp_linker_repair_keeps_multi_target_topology_after_claim test_director_adapter_misc_3.py::test_cpp_linker_target_parser_includes_unique_declaration_owner_header",
+      "result": "2 passed"
+    },
+    {
+      "command": "pytest test_cpp_diagnostic_normalization.py",
+      "result": "1 passed after observed RED"
+    },
+    {
+      "command": "query_exact_run_causal_audit(factory_bbf2a6bfe609)",
+      "result": "root=director.runtime.repair_coverage_gap; evidence_gaps=[]; pm_ce_restart_allowed=false"
+    },
+    {
+      "command": "normalize exact r41 artifact_quality_errors",
+      "result": "4 unique diagnostics; cpp linker separated; pseudo_paths=[]"
+    }
+  ],
+  "remaining_risks": [
+    "cpp_linker_undefined_reference is intentionally an uncovered diagnostic; no sample-specific deterministic code generator was added",
+    "Fresh isolated Bench must prove the corrected declaration-first frontier reaches the physical Director request and reduces linker diagnostics",
+    "Delivery-depth failure remains independent after linker closure"
+  ],
+  "next_action": "Run focused static gates, then fresh isolated L3-24 with full budget; inspect exact provider request and physical receipts before any further change."
+}

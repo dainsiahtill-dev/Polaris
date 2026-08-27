@@ -13,7 +13,9 @@ from .contracts import (
     BuildRoleContextCommandV1,
     ContextEngineError,
     ContextResolvedEventV1,
+    FactoryRunContextSnapshotsResultV1,
     FinalProviderRequestAuditResultV1,
+    QueryFactoryRunContextSnapshotsV1,
     QueryFinalProviderRequestAuditV1,
     ResolveRoleContextQueryV1,
     RoleContextResultV1,
@@ -28,6 +30,7 @@ from .precision_mode import (
 from .service import (
     build_context_window,
     get_anthropomorphic_context_v2,
+    query_factory_run_context_snapshots,
     query_final_provider_request_audit,
 )
 
@@ -42,7 +45,9 @@ __all__ = [
     "ContextRequest",
     "ContextResolvedEventV1",
     "CostStrategy",
+    "FactoryRunContextSnapshotsResultV1",
     "FinalProviderRequestAuditResultV1",
+    "QueryFactoryRunContextSnapshotsV1",
     "QueryFinalProviderRequestAuditV1",
     "ResolveRoleContextQueryV1",
     "RoleContextResultV1",
@@ -50,6 +55,7 @@ __all__ = [
     "get_anthropomorphic_context_v2",
     "merge_policy",
     "normalize_cost_class",
+    "query_factory_run_context_snapshots",
     "query_final_provider_request_audit",
     "resolve_cost_class",
     "route_by_cost_model",

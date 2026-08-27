@@ -17,6 +17,7 @@ from ..cpp_runtime import (
     plan_cpp_post_repair,
     plan_cpp_standard_include_repair,
     plan_cpp_struct_getter_field_access_repair,
+    plan_cpp_use_before_definition_repair,
 )
 from ..diagnostics import normalize_artifact_quality_errors
 from ..generic_hygiene_runtime import (
@@ -1168,6 +1169,21 @@ def _plan_cpp_missing_private_members(
     mode: str,
 ) -> RuntimeRepairPlanning:
     planning = plan_cpp_missing_private_members_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_planning_from_cpp(planning)
+
+
+def _plan_cpp_use_before_definition(
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairPlanning:
+    planning = plan_cpp_use_before_definition_repair(
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         advisor_notes=advisor_notes,

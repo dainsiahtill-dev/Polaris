@@ -1,0 +1,52 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "defect-20260827-l3-24-r68-cpp-inline-constexpr-use-before-definition",
+  "status": "IMPLEMENTATION_AND_EXACT_COPY_REPLAY_VERIFIED",
+  "severity": "P1",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_e32d2196f20b",
+  "symptom": {
+    "stage": "director_quality_repair",
+    "diagnostic": "include/lunaris/invisible_diary.hpp:42:56: error: ‘DEFAULT_CIPHER_ALPHABET’ was not declared in this scope",
+    "task_attempts": 4,
+    "terminal_errors": [
+      "workspace_quality_repair_regression",
+      "workspace_quality_repair_equal_count_swap"
+    ]
+  },
+  "dynamic_debug_evidence": {
+    "target_workspace_mutated": false,
+    "exact_compiler_rerun_reproduced": true,
+    "definition_path": "include/lunaris/invisible_diary.hpp",
+    "use_line": 42,
+    "definition_lines": [59, 60],
+    "coverage_known_rule_matched": false,
+    "coverage_executable_runtime_plan_matched": false,
+    "director_restarted_pm_or_ce": false,
+    "director_llm_calls_after_initial_materialization": 0
+  },
+  "root_cause": {
+    "category": "director_runtime_repair_coverage_gap",
+    "summary": "The runtime-owned C++ use-before-definition rule only covers later free-function definitions in source files. It cannot recognize a compiler-proven later inline constexpr variable definition in a header, so same-task repair attempts execute unrelated candidates and roll them back."
+  },
+  "fix": {
+    "owner": "director.runtime",
+    "rule_id": "cpp.use_before_definition",
+    "source_tool": "deterministic_cpp_use_before_definition_repair",
+    "operation": "move one existing same-scope inline constexpr definition using precise text_replace",
+    "unsafe_cases": "fail_closed"
+  },
+  "validation": {
+    "tdd": "RED 3 failed then GREEN 8 passed",
+    "repair_kernel_regression": "193 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_copy_replay": "public Run emitted one edit receipt and exact CMake build reached 100 percent",
+    "post_compile_frontier": "21 tests ran; 11 failed across generated-test contract and domain semantics",
+    "fresh_isolated_bench": "pending"
+  },
+  "residual_risk": [
+    "other variable declaration forms remain intentionally uncovered",
+    "fresh isolated L3-24 may reveal a later independent residual"
+  ]
+}

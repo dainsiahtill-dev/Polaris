@@ -77,6 +77,7 @@ _build_materialization_quality_workspace_evidence_context: Any
 _deterministic_single_missing_python_module_alias_to_write_file: Any
 _deterministic_single_missing_quality_repair_to_write_file: Any
 _director_repair_force_existing_write_enabled: Any
+_embedded_cpp_compile_repair_target_files: Any
 _explicit_artifact_quality_repair_target_files: Any
 _extract_successful_write_paths: Any
 _filter_missing_workspace_file_errors_to_task_write_scope: Any
@@ -105,6 +106,7 @@ _quality_repair_execution_attempt: Any
 _quality_repair_existing_target_tool_definitions: Any
 _quality_repair_write_file_tool_definition: Any
 _reject_raw_single_target_repair_body: Any
+_rust_test_behavior_repair_target_files: Any
 _run_materialization_quality_public_boundary: Any
 _run_post_llm_materialization_runtime_guard: Any
 _semantic_exporter_scope_discrepancy_evidence: Any
@@ -600,6 +602,11 @@ async def _run_materialization_quality_repair_retry(
                 artifact_quality_errors=repair_quality_errors,
                 workspace_full=workspace_full,
             ),
+            *_rust_test_behavior_repair_target_files(
+                artifact_quality_errors=repair_quality_errors,
+                changed_files=changed_files,
+                workspace_full=workspace_full,
+            ),
         ]
     )
     explicit_missing_quality_targets = _dedupe_preserve_order(
@@ -676,9 +683,7 @@ async def _run_materialization_quality_repair_retry(
         raw_candidate_rejections = factory_quality.get("candidate_rejection_errors")
         if isinstance(raw_candidate_rejections, list | tuple):
             candidate_rejection_errors = [
-                str(item or "").strip()
-                for item in raw_candidate_rejections
-                if str(item or "").strip()
+                str(item or "").strip() for item in raw_candidate_rejections if str(item or "").strip()
             ][:4]
         causal_reanalysis_required = bool(factory_quality.get("causal_reanalysis_required"))
     factory_forced_targets_refreshed = False
@@ -708,9 +713,43 @@ async def _run_materialization_quality_repair_retry(
                 repair_target_candidates,
                 task=task,
             )
+            precise_cpp_header_sites: list[str] = []
+            if workspace_full:
+                precise_cpp_sites = _dedupe_preserve_order(
+                    [
+                        path
+                        for error in repair_quality_errors
+                        for path in _embedded_cpp_compile_repair_target_files(
+                            str(error or ""),
+                            Path(workspace_full),
+                        )
+                    ]
+                )
+                in_scope_cpp_sites, _ = _partition_paths_by_task_write_scope(
+                    precise_cpp_sites,
+                    task=task,
+                )
+                precise_cpp_header_sites = [
+                    path
+                    for path in in_scope_cpp_sites
+                    if Path(path).suffix.lower() in {".h", ".hh", ".hpp", ".hxx"}
+                ]
             forced_target_set = set(factory_forced_targets)
             current_candidate_set = set(current_in_scope_candidates)
-            if current_in_scope_candidates and forced_target_set.isdisjoint(current_candidate_set):
+            if precise_cpp_header_sites and forced_target_set.isdisjoint(precise_cpp_header_sites):
+                # Live L3-24 r34: Factory retained src/diary.cpp from an
+                # earlier residual while the current GCC diagnostic pointed
+                # precisely at an owned header. ``### FAILING_TUS`` kept the
+                # old TU in the broad candidate set, defeating the generic
+                # disjoint refresh and spending seven edits on a file that
+                # could not change the invalid header literal. A concrete
+                # header ``path:line:col: error`` site is stronger causal
+                # evidence than derivative failing TUs. This does not undo
+                # declaration-owner rebinds for source use-site diagnostics:
+                # only direct header error sites take this branch.
+                widened_candidates = list(precise_cpp_header_sites)
+                factory_forced_targets_refreshed = True
+            elif current_in_scope_candidates and forced_target_set.isdisjoint(current_candidate_set):
                 # Live L3-22 TASK-3: Factory initially rebound the test owner to
                 # engine/engine_test.go. Physical edits cleared every failure in
                 # that file, while verifier revalidation exposed residuals in
@@ -736,8 +775,13 @@ async def _run_materialization_quality_repair_retry(
                 widened_candidates.extend(_materialized_task_declared_target_files(task, workspace_full))
         else:
             widened_candidates = [
-                *in_scope_repair_target_files,
                 *_materialized_task_declared_target_files(task, workspace_full),
+                # A repeat without a Factory-forced causal owner deliberately
+                # widens to the immutable task contract. Preserve that
+                # declaration order; diagnostic priority is authoritative only
+                # in the narrow/forced branch above and must not reshuffle the
+                # full task-scope repair batch.
+                *in_scope_repair_target_files,
                 *explicit_quality_target_files,
                 *([str(item) for item in context_target_files] if isinstance(context_target_files, list) else []),
                 *[str(item or "") for item in (changed_files or [])],
@@ -857,10 +901,26 @@ async def _run_materialization_quality_repair_retry(
         for path in primary_anchor_files
         if path.startswith("tests/") or "/tests/" in path or Path(path).name.endswith("_test.rs")
     ]
-    if test_primary_anchors and not owns_primary_anchor and not factory_forced_targets:
+    in_scope_explicit_source_targets = [
+        path
+        for path in explicit_quality_target_files
+        if path in in_scope_set and path not in set(test_primary_anchors)
+    ]
+    if (
+        test_primary_anchors
+        and not owns_primary_anchor
+        and not factory_forced_targets
+        and not in_scope_explicit_source_targets
+    ):
         # Live L2-14: TASK-2 still owned treasure_runner.rs after cargo
         # residuals moved entirely to tests/product.rs (TASK-3). Same-task
         # widening kept authorizing the engine file and never rebound.
+        # A verifier location alone is not enough to defer when failure
+        # analysis already found an explicit, task-owned production source.
+        # Live TAP regression: tests/product.test.js:46 was the observation
+        # site, while import/title analysis correctly selected src/dream.js.
+        # The old unconditional branch discarded that causal target and made
+        # the Director repair round terminate before any edit was attempted.
         task_scope_filter_evidence = _task_boundary_scope_filter_evidence(
             task,
             target_files=test_primary_anchors,
@@ -890,7 +950,31 @@ async def _run_materialization_quality_repair_retry(
         repair_quality_errors,
         in_scope_repair_target_files,
     )
-    if unbound_homes and (owns_diagnostic_anchor or not in_scope_repair_target_files) and not owner_local_cpp_files:
+    should_bind_declaration_home = bool(
+        unbound_homes
+        and (owns_diagnostic_anchor or not in_scope_repair_target_files)
+        and not owner_local_cpp_files
+    )
+    if should_bind_declaration_home:
+        task_local_homes, externally_owned_homes = _partition_paths_by_task_write_scope(
+            unbound_homes,
+            task=task,
+        )
+        if task_local_homes:
+            # A declaration home absent from the CURRENT narrow edit batch is
+            # not automatically outside the TASK write scope.  Live L3-24 r33:
+            # TASK-1 declared both src/diary.cpp and cipher.hpp, but after the
+            # compiler frontier moved to ``cipher has not been declared`` the
+            # latter was handed from TASK-1 back to TASK-1 for three no-op
+            # rounds.  Admit same-task declaration homes to this repair batch;
+            # retain fail-closed deferral only for genuinely external owners.
+            in_scope_repair_target_files = _dedupe_preserve_order(
+                [*task_local_homes, *in_scope_repair_target_files]
+            )[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT]
+            repair_target_files = list(in_scope_repair_target_files)
+            in_scope_set = set(in_scope_repair_target_files)
+        unbound_homes = list(externally_owned_homes)
+    if unbound_homes and should_bind_declaration_home:
         header_suffixes = {".h", ".hh", ".hpp", ".hxx"}
         header_homes = [path for path in unbound_homes if Path(path).suffix.lower() in header_suffixes]
         primary_pool = header_homes or unbound_homes
@@ -1267,9 +1351,7 @@ async def _run_materialization_quality_repair_retry(
         and not missing_repair_target_files
         and _contains_verifier_test_failure(prompt_artifact_quality_errors)
     )
-    mixed_create_modify_quality_repair = bool(
-        existing_repair_target_files and missing_repair_target_files
-    )
+    mixed_create_modify_quality_repair = bool(existing_repair_target_files and missing_repair_target_files)
     if repair_target_files:
         if (
             official_cmake_missing
@@ -1307,12 +1389,8 @@ async def _run_materialization_quality_repair_retry(
                 "mutation_required": True,
                 "mutation_reason": "mixed_create_modify_quality_repair",
             }
-            repair_context["director_quality_repair"]["edit_preferred_target_files"] = (
-                existing_repair_target_files[:12]
-            )
-            repair_context["director_quality_repair"]["write_required_target_files"] = (
-                missing_repair_target_files[:12]
-            )
+            repair_context["director_quality_repair"]["edit_preferred_target_files"] = existing_repair_target_files[:12]
+            repair_context["director_quality_repair"]["write_required_target_files"] = missing_repair_target_files[:12]
         elif verifier_test_failure_requires_edit:
             # A verifier assertion against existing code is a mutation task,
             # not another exploration turn.  r46 exposed the full TAP failure
@@ -2033,11 +2111,15 @@ def _select_materialization_quality_repair_target_batch(
             first_stem = Path(missing_target_files[0]).stem.lower()
             # Live L2-15: attempt 2 kept generator.cpp/.hpp (same stem) and
             # never leased main.cpp / cmakelists.txt. Skip the first stem.
-            rotated = [path for path in missing_target_files if Path(path).stem.lower() != first_stem] or list(
-                missing_target_files
-            )
-            target_index = (repair_attempt - 2) % len(rotated)
-            return [rotated[target_index]]
+            rotated = [path for path in missing_target_files if Path(path).stem.lower() != first_stem]
+            # Attempt 2 must leave the first stem, but a bounded rotation must
+            # eventually revisit the original causal candidate after trying
+            # every distinct alternative.  The old cycle permanently removed
+            # index 0, so attempt 4 returned README.md again instead of
+            # src/main.ts and could never revalidate a later-unmasked error.
+            rotation_cycle = _dedupe_preserve_order([*rotated, missing_target_files[0]])
+            target_index = (repair_attempt - 2) % len(rotation_cycle)
+            return [rotation_cycle[target_index]]
         return [missing_target_files[0]]
     return list(missing_target_files[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT])
 

@@ -6,17 +6,47 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import patch
 
-from polaris.cells.context.engine.public.contracts import QueryFinalProviderRequestAuditV1
+from polaris.cells.context.engine.public.contracts import (
+    QueryFactoryRunContextSnapshotsV1,
+    QueryFinalProviderRequestAuditV1,
+)
 from polaris.cells.context.engine.public.service import (
     build_context_window,
     get_anthropomorphic_context_v2,
     get_search_service,
+    query_factory_run_context_snapshots,
     query_final_provider_request_audit,
 )
 from polaris.kernelone.context.engine import ContextBudget, ContextItem, ContextPack
+from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshotAuditPinRepository
 
 if TYPE_CHECKING:
     import pytest
+
+
+def test_query_factory_run_context_snapshots_uses_exact_durable_pin(tmp_path: Path) -> None:
+    repository = ContextSnapshotAuditPinRepository(workspace=str(tmp_path))
+    pin = repository.persist_snapshot_and_pin(
+        snapshot={"schema_version": "llm.provider_request_snapshot.v2", "role": "pm"},
+        factory_run_id="factory-exact",
+        role="pm",
+        verification_scope="factory",
+        request_freeze_id="freeze-pm",
+        provider_request_id="req-pm",
+        composite_request_hash="a" * 64,
+        snapshot_source="roles.kernel.final_physical_provider_request",
+    )
+
+    result = query_factory_run_context_snapshots(
+        QueryFactoryRunContextSnapshotsV1(
+            workspace=str(tmp_path),
+            factory_run_id="factory-exact",
+        )
+    )
+
+    assert result.ok is True
+    assert result.status == "available"
+    assert result.pins == (pin.to_record(),)
 
 
 def test_query_final_physical_provider_request_projects_native_anthropic_body(

@@ -691,6 +691,7 @@ class RepairRuleDefinition:
     priority: int = 1
     depends_on: tuple[str, ...] = ()
     diagnostic_codes: tuple[str, ...] = ()
+    path_suffixes: tuple[str, ...] = ()
     message_terms: tuple[str, ...] = ()
     message_any_terms: tuple[str, ...] = ()
     raw_terms: tuple[str, ...] = ()
@@ -710,6 +711,11 @@ class RepairRuleDefinition:
         object.__setattr__(self, "priority", max(0, int(self.priority)))
         object.__setattr__(self, "depends_on", _tuple_str(self.depends_on))
         object.__setattr__(self, "diagnostic_codes", tuple(code.lower() for code in _tuple_str(self.diagnostic_codes)))
+        object.__setattr__(
+            self,
+            "path_suffixes",
+            tuple(suffix.lower() for suffix in _tuple_str(self.path_suffixes)),
+        )
         object.__setattr__(self, "message_terms", tuple(term.lower() for term in _tuple_str(self.message_terms)))
         object.__setattr__(
             self, "message_any_terms", tuple(term.lower() for term in _tuple_str(self.message_any_terms))
@@ -753,6 +759,10 @@ class RepairRuleDefinition:
         diagnostic_code = diagnostic.code.lower()
         if self.diagnostic_codes and diagnostic_code not in self.diagnostic_codes:
             return False
+        if self.path_suffixes:
+            diagnostic_path = str(diagnostic.path or "").strip().lower().replace("\\", "/")
+            if not diagnostic_path.endswith(self.path_suffixes):
+                return False
         if self.message_terms:
             haystack = (diagnostic.message or diagnostic.raw).lower()
             if not all(term in haystack for term in self.message_terms):
@@ -796,6 +806,7 @@ class RepairRuleDefinition:
             "priority": self.priority,
             "depends_on": list(self.depends_on),
             "diagnostic_codes": list(self.diagnostic_codes),
+            "path_suffixes": list(self.path_suffixes),
             "message_terms": list(self.message_terms),
             "message_any_terms": list(self.message_any_terms),
             "raw_terms": list(self.raw_terms),

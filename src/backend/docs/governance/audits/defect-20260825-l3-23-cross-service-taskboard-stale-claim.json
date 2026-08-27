@@ -1,0 +1,52 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "l3-23-cross-service-taskboard-stale-claim-20260825",
+  "status": "FIXED_UNIT_VERIFIED_PENDING_LIVE_REVALIDATION",
+  "severity": "P0",
+  "component": "runtime.task_runtime.claim_authority",
+  "exact_run": {
+    "project_id": "L3-23",
+    "factory_run_id": "factory_e0cda86d03da",
+    "director_run_id": "director-f1eee601d52a",
+    "instance_id": "factory-bench-l3-23-r19-l3-23-run-57417bb3ee24-0e64eff9a4881fcf",
+    "workspace": "/tmp/factory-bench-l3-23-r19/workspaces/57417bb3ee24-6701852dbc6bd93e/L3-23-2956ab31bd653d97/fecb0ae8f35639fdf3b3e47c"
+  },
+  "symptom": "QA authorized same-task local rework and persisted TASK-1 as pending, but a pre-existing Director TaskRuntimeService rejected claim_execution with task_terminal.",
+  "dynamic_evidence": {
+    "factory_failure": "Director must claim TaskBoard task before execution",
+    "claim_reason": "task_terminal",
+    "latest_execution_fact": {
+      "task_id": "1",
+      "fact_seq": 222,
+      "status": "pending"
+    },
+    "persisted_row": {
+      "status": "pending",
+      "terminal_reset_at": 1787636756.1106517
+    },
+    "terminal_session": {
+      "status": "suspended",
+      "released_at": "2026-08-25T05:45:56.109398+00:00",
+      "last_error": "factory_quality_same_task_local_rework_authorized"
+    },
+    "two_service_regression_before_fix": "quality service reopened the row; pre-existing Director service returned success=false",
+    "two_service_regression_after_fix": "same Director service returned success=true and consumed the persisted failure diagnostic"
+  },
+  "root_cause": "TaskBoard loads rows into a process-local cache at construction. Factory quality rework and Director dispatch can hold distinct TaskRuntimeService instances for one workspace. The quality owner persisted a terminal-to-pending reopen, while the older Director TaskBoard.get() continued returning its cached terminal row. claim_execution therefore compared the terminal session against stale row metadata and reconciled back to terminal despite newer pending disk and FactStream authority.",
+  "fix": {
+    "task_board": "Add get_persisted(task_id), a narrow atomic single-row durable reload that refreshes the local cache.",
+    "claim_boundary": "Use get_persisted only in _task_entity_for_claim_execution before terminal session/fact comparison.",
+    "safety": "Do not change normal projection reads; a genuinely terminal latest fact remains fail-closed."
+  },
+  "verification": {
+    "red_before_fix": "1 failed: test_same_task_local_rework_is_claimable_by_preexisting_service_instance",
+    "focused_after_fix": "53 passed",
+    "ruff": "passed",
+    "ruff_format": "passed",
+    "mypy": "passed",
+    "diff_check": "passed",
+    "full_taskruntime_observation": "297 passed, 28 unrelated pre-existing failures from recent test/code splitting and DEO architecture drift; recorded separately from this defect"
+  },
+  "next_action": "Restart only the isolated r19 instance, retry factory_e0cda86d03da from director_dispatch, prove zero new PM/CE calls, and re-run only the failed Rust verifier.",
+  "target_project_modified": false
+}

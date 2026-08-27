@@ -16,6 +16,7 @@ from ..cpp_runtime import (
     run_cpp_post_repair,
     run_cpp_standard_include_repair,
     run_cpp_struct_getter_field_access_repair,
+    run_cpp_use_before_definition_repair,
 )
 from ..executor import DeleteFileFn, EditFileFn, TransactionalRepairExecutor, WriteFileFn
 from ..generic_hygiene_runtime import (
@@ -1355,6 +1356,31 @@ def _run_cpp_missing_private_members(
     mode: str,
 ) -> RuntimeRepairRun:
     run = run_cpp_missing_private_members_repair(
+        workspace=workspace,
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        writer=writer,
+        editor=editor,
+        allowed_paths=allowed_paths,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return _runtime_run_from_cpp(run)
+
+
+def _run_cpp_use_before_definition(
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None,
+    deleter: DeleteFileFn | None,
+    allowed_paths: Sequence[str] | None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None,
+    mode: str,
+) -> RuntimeRepairRun:
+    del deleter
+    run = run_cpp_use_before_definition_repair(
         workspace=workspace,
         base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,

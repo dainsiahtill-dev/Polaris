@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
@@ -117,6 +118,41 @@ async def _selective_tool_runtime(tool_name: str, arguments: dict[str, Any]) -> 
     return result
 
 
+def _build_mixed_write_decision(turn_id: str) -> TurnDecision:
+    """Build one effectful success plus one failed write in the same batch."""
+    return cast(
+        TurnDecision,
+        {
+            "turn_id": turn_id,
+            "metadata": {"workspace": "."},
+            "finalize_mode": "none",
+            "tool_batch": {
+                "batch_id": "batch_mixed_write",
+                "invocations": [
+                    {
+                        "call_id": "call_write_success",
+                        "tool_name": "write_file",
+                        "arguments": {"file": "src/ok.py", "content": "ok = True\n"},
+                        "execution_mode": "write_serial",
+                        "effect_type": "write",
+                    },
+                    {
+                        "call_id": "call_write_failure",
+                        "tool_name": "write_file",
+                        "arguments": {
+                            "file": "src/rejected.py",
+                            "content": "rejected = True\n",
+                            "should_fail": True,
+                        },
+                        "execution_mode": "write_serial",
+                        "effect_type": "write",
+                    },
+                ],
+            },
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # ToolBatchExecutor 层测试
 # ---------------------------------------------------------------------------
@@ -132,6 +168,64 @@ def test_authoritative_write_invocation_ignores_session_patch_file() -> None:
     ]
 
     assert tool_batch_has_authoritative_write_invocation(invocations) is False
+
+
+@pytest.mark.asyncio
+async def test_tool_failure_circuit_breaker_preserves_partial_authoritative_progress(
+    mock_emit_event: Any,
+    mock_guard_assert: Any,
+) -> None:
+    """A mixed batch must preserve committed effects instead of requesting batch two.
+
+    Exact live regression: L3-24 r16 committed two write receipts, rejected a
+    later sibling, then raised the circuit-breaker retry signal.  The retry
+    produced a second physical ToolBatch and collided with the kernel's
+    single-batch invariant.  Once any effect is authoritative, the batch is
+    consumed; residual failures remain receipts for same-task continuation.
+    """
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(side_effect=_selective_tool_runtime),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=mock_emit_event,
+        guard_assert_single_tool_batch=mock_guard_assert,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+
+    class _TriggeredBreaker:
+        def evaluate_batch(self, **_kwargs: Any) -> SimpleNamespace:
+            return SimpleNamespace(
+                triggered=True,
+                turn_id=turn_id,
+                batch_failures=1,
+                consecutive_failures=1,
+                total_failures=1,
+                consecutive_threshold=1,
+                total_threshold=1,
+                trigger_reason="dimension_consecutive_threshold",
+                triggered_dimension="write_file|write|error",
+            )
+
+    executor._tool_failure_circuit_breaker = _TriggeredBreaker()  # type: ignore[assignment]
+    turn_id = "turn_partial_write_progress"
+    ledger = TurnLedger(turn_id=turn_id)
+
+    result = await executor.execute_tool_batch(
+        _build_mixed_write_decision(turn_id),
+        _build_decoded_state_machine(turn_id),
+        ledger,
+        [{"role": "user", "content": "write the declared files"}],
+        stream=False,
+    )
+
+    receipt = result.get("batch_receipt") or {}
+    assert receipt.get("success_count") == 1
+    assert receipt.get("failure_count") == 1
+    assert ledger.tool_batch_count == 1
+    assert any(
+        flag.get("type") == "TOOL_FAILURE_CIRCUIT_BREAKER_PARTIAL_PROGRESS_PRESERVED"
+        for flag in ledger.anomaly_flags
+    )
 
 
 @pytest.mark.asyncio

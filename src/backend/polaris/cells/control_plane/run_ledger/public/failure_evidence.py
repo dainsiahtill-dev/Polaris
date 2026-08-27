@@ -419,7 +419,7 @@ def summarize_failed_gate_evidence_context_slot(value: Any) -> dict[str, Any]:
     first_item = next((dict(item) for item in evidence_items if isinstance(item, Mapping)), {})
     quality_metrics = found.get("quality_metrics")
     quality_minimums = found.get("quality_minimums")
-    return {
+    summary = {
         "schema_version": "polaris.failed_gate_evidence.context_slot.v1",
         "source_schema_version": str(found.get("schema_version") or ""),
         "source": str(found.get("source") or found.get("modality") or "failed_gate_evidence"),
@@ -444,6 +444,10 @@ def summarize_failed_gate_evidence_context_slot(value: Any) -> dict[str, Any]:
         "failed_required_modalities": list(_dedupe_text_tokens(found.get("failed_required_modalities") or ())),
         "failed_checks": list(_dedupe_text_tokens(found.get("failed_checks") or ())),
     }
+    raw_failed_quality_metrics = found.get("failed_quality_metrics")
+    if isinstance(raw_failed_quality_metrics, (list, tuple)):
+        summary["failed_quality_metrics"] = list(_dedupe_text_tokens(raw_failed_quality_metrics))
+    return summary
 
 
 def _explicit_failure_classes_from_rows(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:

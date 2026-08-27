@@ -1,0 +1,70 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-R38-BEHAVIOR-CAUSAL-ORDER-ERASED-BY-OWNER-ORDER",
+  "status": "FIX_IMPLEMENTED_LIVE_VALIDATION_PENDING",
+  "severity": "P0",
+  "factory_run_id": "factory_b223ebb98df5",
+  "project_id": "L3-24",
+  "workspace": "/tmp/factory-bench-l3-24-r38/workspaces/f6c23ba0b233-65c3531bd86eeb7b/L3-24-023d7314133040b6/611cf93c2cc0dd33d88274c2",
+  "symptom": {
+    "stage": "quality_gate",
+    "initial_compile_progress": "round 1 repaired include/diary/entry.hpp and reduced diagnostics 4->3",
+    "remaining_behavior_failures": [
+      "CLI --help output omitted the required cipher keyword",
+      "CLI --demo output omitted visibility labels"
+    ],
+    "wrong_mutation_target": "src/diary/diary_book.cpp",
+    "terminal_reason": "three_nonprogress_repairs_without_verified_progress"
+  },
+  "dynamic_evidence": {
+    "causal_resolver_output": [
+      "src/main.cpp",
+      "src/ink/visibility.cpp",
+      "src/diary/diary_book.cpp",
+      "src/diary/entry.cpp",
+      "src/cipher/moon_key.cpp",
+      "src/cipher/caesar_cipher.cpp",
+      "tests/test_cli_invocation.py"
+    ],
+    "repair_targets_by_round": [
+      ["include/diary/entry.hpp"],
+      ["src/diary/diary_book.cpp"],
+      ["src/diary/diary_book.cpp"],
+      ["src/diary/diary_book.cpp"]
+    ],
+    "final_request_context_snapshot_refs": [
+      "0f8e312190b0109c2689d7c7",
+      "13ba2ca2d05f39f4c80c2348",
+      "f9a61c81c0eb01d58dc39a18",
+      "bb094ba6b885f7d81be78bdd"
+    ],
+    "final_request_facts": "The requests contained the exact read-only diary_book.hpp API, compile rejection diagnostics, and a forced edit_file scope for only src/diary/diary_book.cpp. The failure was therefore not missing API context or missing tools; the selected mutation file did not own the observed CLI output.",
+    "candidate_pin_live_result": "Rounds 3 and 4 projected candidate_rejection_target_pinned=true, closing r37 while exposing this earlier causal-order loss."
+  },
+  "root_cause": {
+    "classification": "factory_quality_repair_causal_ranking_projection",
+    "summary": "The read-only causal resolver correctly ranked src/main.cpp first, but _workspace_quality_rank_owner_rebind_candidates converted diagnostic evidence into a set intersection and restored CE owner file order. Behavioral repair therefore discarded current causal ranking before applying the rotation cursor.",
+    "first_causal_boundary": "behavioral production-frontier ranking after the canonical TaskRuntime owner claim",
+    "not_model_failure": true,
+    "not_target_project_fix": true
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": "Behavioral runtime repair preserves the causal resolver's ordered production targets while intersecting them with immutable CE/JobToken authority. Compiler and explicit owner-rebind paths keep stable CE owner ordering by default."
+  },
+  "verification": {
+    "tdd_red": "_workspace_quality_rank_owner_rebind_candidates rejected prefer_diagnostic_order and could only return CE owner order.",
+    "target_test": "test_behavior_frontier_preserves_current_causal_order passed",
+    "factory_characterization": "95 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_validation": "pending fresh isolated r39"
+  },
+  "residual_risk": [
+    "Fresh r39 must prove the first post-compile behavioral repair request targets src/main.cpp for the CLI output failures.",
+    "The independent delivery-depth shortfall remains and must be attributed after behavior verifier convergence, not mixed into an arbitrary single-file repair."
+  ]
+}

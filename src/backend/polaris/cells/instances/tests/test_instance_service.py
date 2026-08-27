@@ -1319,6 +1319,99 @@ def test_refresh_instance_states_does_not_publish_without_state_change(
     assert published == []
 
 
+def test_watchdog_recovers_missing_frontend_for_current_main_instance(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    registry.save(
+        InstanceRecord(
+            instance_id="main",
+            name="Main",
+            kind="development",
+            polaris_root=str(root),
+            workspace=str(root),
+            runtime_root=str((root / ".polaris" / "runtime").resolve()),
+            backend_port=instance_service.DEFAULT_BACKEND_PORT,
+            frontend_port=instance_service.DEFAULT_FRONTEND_PORT,
+            backend_url=f"http://127.0.0.1:{instance_service.DEFAULT_BACKEND_PORT}",
+            frontend_url=f"http://127.0.0.1:{instance_service.DEFAULT_FRONTEND_PORT}",
+            token="test-token",
+            backend_pid=os.getpid(),
+            frontend_pid=61002,
+            frontend_vite=True,
+            start_frontend=True,
+            status="failed",
+            metadata={"backend_health": "process", "frontend_health": "failed"},
+        )
+    )
+    monkeypatch.setenv("KERNELONE_INSTANCE_ID", "main")
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid in {os.getpid(), 62002})
+    monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
+    started: list[tuple[str, Path]] = []
+
+    def fake_start_frontend(_self: InstanceSupervisor, record: InstanceRecord, log_path: Path) -> int:
+        started.append((record.instance_id, log_path))
+        return 62002
+
+    monkeypatch.setattr(InstanceSupervisor, "_start_frontend", fake_start_frontend)
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "_pid_looks_like_instance_process",
+        staticmethod(lambda _record, pid, *, process_kind, allow_unknown=False: pid in {os.getpid(), 62002}),
+    )
+
+    recovered = InstanceSupervisor(registry).recover_current_frontend()
+
+    stored = registry.get("main")
+    assert recovered is not None
+    assert stored is not None
+    assert started == [("main", registry.home / "main" / "logs" / "frontend.log")]
+    assert stored.frontend_pid == 62002
+    assert stored.status == "running"
+    assert stored.metadata["frontend_health"] == "process"
+    assert stored.metadata["frontend_recovery_count"] == 1
+
+
+def test_watchdog_does_not_recover_frontend_for_non_current_instance(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    registry.save(
+        InstanceRecord(
+            instance_id="bench-project",
+            name="Bench",
+            kind="bench_project",
+            polaris_root=str(root),
+            workspace=str(tmp_path / "bench"),
+            runtime_root=str((tmp_path / "bench" / ".polaris" / "runtime").resolve()),
+            backend_port=59991,
+            frontend_port=59992,
+            backend_url="http://127.0.0.1:59991",
+            frontend_url="http://127.0.0.1:59992",
+            token="test-token",
+            backend_pid=61001,
+            frontend_pid=None,
+            frontend_vite=True,
+            start_frontend=True,
+            status="failed",
+        )
+    )
+    monkeypatch.setenv("KERNELONE_INSTANCE_ID", "main")
+    monkeypatch.setattr(
+        InstanceSupervisor,
+        "_start_frontend",
+        lambda *_args, **_kwargs: pytest.fail("foreign instance frontend must not be started"),
+    )
+
+    recovered = InstanceSupervisor(registry).recover_current_frontend()
+
+    assert recovered is None
+
+
 def test_refresh_instance_states_cannot_drop_a_concurrent_start_reservation(
     tmp_path: Path,
     monkeypatch: Any,

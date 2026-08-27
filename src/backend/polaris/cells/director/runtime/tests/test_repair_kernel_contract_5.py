@@ -1778,6 +1778,70 @@ def test_rust_trait_import_coverage_matches_executable_runtime_plan() -> None:
     assert planning.composition.ok is True
 
 
+def test_rust_import_help_is_not_misplanned_as_line_replacement() -> None:
+    content = (
+        "#[cfg(test)]\n"
+        "mod tests {\n"
+        "    use super::*;\n"
+        "    fn outcome() {\n"
+        "        let _ = super::rules::DecisionOutcome::Evicted;\n"
+        "        let _ = super::rules::DecisionOutcome::Evicted;\n"
+        "    }\n"
+        "}\n"
+    )
+    raw = (
+        "error[E0433]: cannot find type `DecisionOutcome` in this scope\n"
+        " --> src/engine/seating.rs:5:17\n"
+        "  |\n"
+        "5 |         let _ = DecisionOutcome::Evicted;\n"
+        "  |                 ^^^^^^^^^^^^^^^ use of undeclared type `DecisionOutcome`\n"
+        "  |\n"
+        "help: consider importing this enum through its public re-export\n"
+        "  |\n"
+        "3 +     use crate::engine::DecisionOutcome;\n"
+        "  |\n"
+        "5 -         let _ = super::rules::DecisionOutcome::Evicted;\n"
+        "5 +         let _ = DecisionOutcome::Evicted;\n"
+        "error[E0433]: cannot find type `DecisionOutcome` in this scope\n"
+        " --> src/engine/seating.rs:6:17\n"
+        "  |\n"
+        "6 |         let _ = DecisionOutcome::Evicted;\n"
+        "  |                 ^^^^^^^^^^^^^^^ use of undeclared type `DecisionOutcome`\n"
+        "  |\n"
+        "help: consider importing this enum through its public re-export\n"
+        "  |\n"
+        "3 +     use crate::engine::DecisionOutcome;\n"
+        "  |\n"
+        "6 -         let _ = super::rules::DecisionOutcome::Evicted;\n"
+        "6 +         let _ = DecisionOutcome::Evicted;\n"
+    )
+    diagnostics = normalize_artifact_quality_errors([raw])
+
+    line_plan = build_rust_line_suggestion_plan(
+        base_files={"src/engine/seating.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+    import_plan = build_rust_trait_import_plan(
+        base_files={"src/engine/seating.rs": content},
+        diagnostics=diagnostics,
+        mode="shadow",
+    )
+
+    assert line_plan is None
+    assert import_plan is not None
+    assert import_plan.rule_id == "rust.trait_import"
+    composition = PatchComposer().compose(
+        {"src/engine/seating.rs": content},
+        import_plan.operations,
+    )
+    assert composition.ok is True
+    repaired = composition.patches[0].content_after
+    assert "    use crate::engine::DecisionOutcome;\n" in repaired
+    assert "        let _ = DecisionOutcome::Evicted;\n" in repaired
+    assert "super::rules::DecisionOutcome" not in repaired
+
+
 def test_rust_line_suggestion_rule_builds_precise_text_replace_plan_and_runs_with_editor(
     tmp_path: Path,
 ) -> None:

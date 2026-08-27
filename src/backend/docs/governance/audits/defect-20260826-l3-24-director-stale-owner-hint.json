@@ -1,0 +1,84 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-R13-DIRECTOR-STALE-OWNER-HINT",
+  "status": "FIXED_UNIT_LIVE_PENDING",
+  "severity": "P0",
+  "scope": "polaris_meta_project_only",
+  "target_project_modified": false,
+  "exact_run": {
+    "factory_run_id": "factory_137c103b58ed",
+    "project_id": "L3-24",
+    "workspace": "/tmp/factory-bench-l3-24-r13/workspaces/2620dad5ae02-c26a98ba10225693/L3-24-023d7314133040b6/7c7a07ad29c1e11b7f46b5db",
+    "wall_clock_seconds": 794.2,
+    "terminal_delivery_status": "DELIVERY_FAILED"
+  },
+  "symptom": "Director materialized the complete C++ project but workspace-quality repair consumed nine TaskRuntime attempts without leasing every still-failing translation unit.",
+  "dynamic_evidence": {
+    "initial_provider_violation": "provider_tool_surface_violation: requested=read_file; allowed=edit_file",
+    "initial_violation_contained_by_retry": true,
+    "repair_target_sequence": [
+      "include/invisible_ink_diary/cipher.hpp",
+      "src/diary_book.cpp",
+      "src/main.cpp",
+      "src/main.cpp",
+      "tests/test_diary_moon.cpp",
+      "tests/test_diary_moon.cpp",
+      "tests/test_diary_moon.cpp",
+      "tests/test_product.py",
+      "include/invisible_ink_diary/cipher.hpp"
+    ],
+    "current_failing_tus_in_every_final_request": [
+      "src/cli.cpp",
+      "src/diary_book.cpp",
+      "src/main.cpp",
+      "src/moon_phase.cpp",
+      "tests/test_diary_moon.cpp"
+    ],
+    "never_leased_failing_tus": [
+      "src/cli.cpp",
+      "src/moon_phase.cpp"
+    ],
+    "task_runtime_failure_sequence": [
+      "workspace_quality_deterministic_repair_no_commit",
+      "workspace_quality_repair_no_mutation",
+      "workspace_quality_repair_stagnant",
+      "workspace_quality_repair_equal_count_swap",
+      "workspace_quality_deterministic_repair_no_commit",
+      "workspace_quality_repair_forward_unmask",
+      "workspace_quality_repair_equal_count_swap"
+    ],
+    "physical_materialization": {
+      "production_files": 9,
+      "production_lines": 706,
+      "test_files": 4,
+      "test_assertions": 35
+    }
+  },
+  "root_cause": {
+    "classification": "director_quality_repair_stale_owner_hint_overrode_current_verifier_frontier",
+    "detail": "A deferred owner hint correctly selected the existing TaskRuntime/JobToken owner, but the same stale path list was also reused as Provider mutation intent. Owner-rebind ranking therefore followed old CE target order and could force an unrelated header/test even while the current FAILING_TUS frontier named different in-scope source files."
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+    "behavior": "Keep deferred owner hints for TaskRuntime claim only. After the owner is claimed, if the hint has no overlap with the explicit FAILING_TUS frontier, remint repair candidates from that frontier intersected with the already-claimed authoritative JobToken paths.",
+    "preserved_guards": [
+      "PM and Chief Engineer are not restarted",
+      "TaskRuntime owner remains authoritative",
+      "JobToken write scope is not expanded",
+      "cross-task deferred repair still claims the owning task",
+      "one Provider turn still receives exactly one repair target"
+    ]
+  },
+  "verification": {
+    "tdd_red": "The L3-24-shaped regression sent cipher.hpp instead of src/cli.cpp.",
+    "tdd_green": "Four deferred-rebind tests passed, including three existing L3-22 cross-task cases and the new stale-hint C++ case.",
+    "static_gates": "Ruff and Mypy passed for factory_workspace_quality_impl.py and its characterization tests.",
+    "broader_gate_note": "The 82-test file has one independent pre-existing Go causal-target failure: expected main.go is absent from the resolver result. This was dynamically reproduced and was not introduced by the stale-owner-hint fix.",
+    "fresh_isolated_bench": "pending"
+  },
+  "secondary_observations_pending_separate_closure": [
+    "Run Ledger projected the task boundary as completed_verified with an empty required_verifiers set while the project-level quality gate still failed compilation.",
+    "Bench primary attribution selected M06 control_plane:task_runtime_not_completed even though exact physical compiler failures were present.",
+    "These observations require separate exact-owner dynamic audits and are not folded into this fix."
+  ]
+}

@@ -1,0 +1,42 @@
+card_id: vc-20260826-l3-24-quality-repair-active-diagnostic-context
+classification: director_quality_repair_context
+status: unit_closed_live_revalidation_pending
+bench_status: schedulable_after_local_gates
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+observed_failure:
+  project_id: L3-24
+  factory_run_id: factory_0f9b7dff58b8
+  bench_run_id: 66afe0c0b054
+  stage: quality_gate
+  current_error: invisible_diary/cli.cpp:112
+  stale_context_anchor: invisible_diary/cli.cpp:18
+  repair_turns: 5
+  accepted_effect_turns: 1
+  rolled_back_nonprogress_turns: 3
+root_cause:
+  code: director_quality_repair_stale_compiler_history_actionable
+  owner: roles.adapters.director.quality_gate
+  summary: >-
+    Raw resolved and rejected compiler transcripts, including nested unittest
+    output with literal newline escapes, were replayed as actionable repair
+    context. Whole-line classification promoted include context before the
+    current compiler error and steered repeated edits to rolled-back bytes.
+fix:
+  primary_anchor: classify each path:line from its immediate error suffix
+  history: canonical compiler atoms minus current atoms, rendered negative-only
+  nested_transport: parse literal newline separators in diagnostic analysis
+  preserved: behavior regression context, tool policy, rollback, verifier policy
+required_gates:
+  focused_pytest: pass
+  ruff: pass
+  mypy: pass
+  exact_r45_replay: pass
+  fresh_isolated_l3_24: pending
+  broader_shared_tree_regression: >-
+    blocked by four target-selection failures in the concurrent quality-gate
+    split; none calls the new diagnostic-history helpers
+sign_off:
+  owner: Codex /root
+  opened_at: "2026-08-26"

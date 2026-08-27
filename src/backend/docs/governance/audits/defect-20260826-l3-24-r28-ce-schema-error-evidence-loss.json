@@ -1,0 +1,67 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-r28-ce-schema-error-evidence-loss",
+  "status": "CLOSED_LIVE_VERIFIED",
+  "severity": "P0",
+  "scope": "Polaris meta-platform only",
+  "target_project_mutated": false,
+  "exact_run": {
+    "factory_run_id": "factory_e95e57d785ae",
+    "workspace": "/tmp/factory-bench-l3-24-r28/workspaces/cc6fdc0bb102-d810f37f5760a51f/L3-24-023d7314133040b6/2db39400cf4cf34f01099610",
+    "first_failing_owner": "chief_engineer structured-output validation",
+    "initial_call_id": "abf28",
+    "final_repair_call_id": "9f3736a358ec434491d35fd931138665",
+    "context_snapshot_ref": "4e35aa84ae0a10507cd01bfc"
+  },
+  "symptom": {
+    "factory_terminal": "task_boundary_verdict_missing",
+    "authoritative_first_failure": "chief_engineer.portfolio_generation_failed",
+    "blueprints": "0/1",
+    "provider_calls": 3,
+    "director_provider_calls": 0
+  },
+  "dynamic_evidence": {
+    "provider_request_role_identity": "chief_engineer",
+    "provider_request_schema": "strict submit_structured_role_output",
+    "provider_request_context_sufficient": true,
+    "physical_llm_event_contains_final_request_audit": true,
+    "physical_llm_event_contains_context_snapshot_ref": true,
+    "stage_failure_signal_contains_final_request_audit": false,
+    "stage_failure_signal_contains_context_snapshot_ref": false,
+    "schema_failures": [
+      "structured_output_payload_schema_mismatch:additional properties",
+      "structured_output_payload_schema_mismatch:missing project_completion_contract"
+    ]
+  },
+  "root_cause": {
+    "classification": "cross-layer evidence loss before transaction ledger recording",
+    "source": "roles.kernel transaction_factory _LLMProvider",
+    "mechanism": "DecisionCaller returned provider metadata in response. Strict structured-output normalization raised before TurnTransactionController received the response, so TurnLedger never recorded the physical call. Factory's safe CE authoritative-PM fallback correctly rejected recovery because final-request evidence was absent from the returned error result."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/kernel/internal/kernel/transaction_factory.py",
+      "src/backend/polaris/cells/roles/kernel/tests/test_transaction_controller.py"
+    ],
+    "behavior": "Attach trusted response usage metadata, model, and output_validation_failed category to strict-normalization exceptions. Existing controller error projection records that evidence without weakening the CE schema or Factory fallback gates."
+  },
+  "validation": {
+    "tdd_red": "ImportError before helper existed",
+    "targeted_regression": "1 passed",
+    "transaction_failure_projection": "covered by the targeted controller regression",
+    "ruff": "passed",
+    "mypy": "passed",
+    "broader_suite_noise": [
+      "test_no_tool_definitions_suppresses_decoded_tool_batch",
+      "test_tool_failure_fails_closed"
+    ],
+    "broader_suite_noise_classification": "pre-existing semantic assertion drift outside this fix path",
+    "fresh_isolated_bench": {
+      "run": "factory_8baa41a4b6f4",
+      "result": "CE generated 1/1 blueprints with llm_calls=2; Director and QA both executed",
+      "r28_failure_removed": true
+    }
+  },
+  "expected_live_result": "If CE schema repairs remain invalid, the failure result retains final request evidence and the existing authoritative PM projection fallback may proceed. Director must still consume the resulting CE authority; no target-project patch is permitted.",
+  "residual_risk": "A semantic CE candidate or missing provider evidence must remain fail-closed. The fix preserves evidence only; it does not relax schema validation or fabricate a blueprint."
+}

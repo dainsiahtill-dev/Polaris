@@ -1,0 +1,65 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "20260825-l3-23-rust-lib-root-repair-regression",
+  "status": "FIXED_PENDING_FRESH_BENCH_REVALIDATION",
+  "severity": "P0",
+  "module_id": "M10_director_runtime_repair_kernel",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_330ca51c70e1",
+  "workspace": "/tmp/factory-bench-l3-23-r13/workspaces/e0aee629bdc0-0b228a349404339b/L3-23-2956ab31bd653d97/087a03588d91d54005e18591",
+  "symptom": "Fresh isolated r13 crossed PM, CE and Director, then cargo test failed with 7 Rust E0433 diagnostics. QA repair round 1 mutated src/bin/queue_ai.rs and regressed the verifier to 25 diagnostics; rounds 2 and 3 produced no writes. The regressing edit remained on disk.",
+  "dynamic_evidence": {
+    "before": {
+      "diagnostic_count": 7,
+      "primary_error": "fantasy_restaurant_queue_ai::engine unavailable because src/lib.rs declared only pub mod domain",
+      "disk_module_present": "src/engine/mod.rs"
+    },
+    "bad_repair": {
+      "path": "src/bin/queue_ai.rs",
+      "operation": "modify",
+      "change": "replaced external crate imports with local mod engine/path wiring",
+      "verifier_effect": "regression",
+      "diagnostic_count_after": 25,
+      "rollback_observed": false
+    },
+    "scratch_probe": {
+      "workspace": "/tmp/polaris-l3-23-r13-repair-probe",
+      "target_project_modified_by_agent": false,
+      "lib_root_repair": "insert pub mod engine into existing src/lib.rs",
+      "scoped_import_repair": "atomically insert use crate::engine::DecisionOutcome inside mod tests and rewrite five rustc-qualified references",
+      "verifier_command": ["cargo", "test", "--quiet"],
+      "verifier_exit_code": 0,
+      "test_groups": [25, 13, 6]
+    }
+  },
+  "root_causes": [
+    "The Rust lib-root facade source tool could repair re-exports but could not declare an existing disk module when the canonical crate root omitted it.",
+    "Rust line-suggestion and trait-import planners split one coupled rustc repair into two independently ineffective halves.",
+    "The trait-import planner ignored rustc's nested lexical insertion line and treated repeated identical source lines as unrepairable despite authoritative line numbers and a whole-file before hash.",
+    "The outer workspace-quality loop classifies verifier regression but does not yet restore a successful tool effect when post-repair diagnostics worsen."
+  ],
+  "fixes": [
+    {
+      "rule_id": "rust.lib_root_module_declaration",
+      "source_tool": "deterministic_rust_lib_root_facade_repair",
+      "scope": "one canonical crate plus one existing src/<module>/mod.rs or src/<module>.rs"
+    },
+    {
+      "rule_id": "rust.trait_import",
+      "source_tool": "deterministic_rust_trait_import_repair",
+      "scope": "one transaction containing scoped import and all matching rustc line rewrites"
+    }
+  ],
+  "verification": {
+    "targeted_pytest": "142 passed",
+    "ruff": "PASS",
+    "mypy": "PASS",
+    "exact_artifact_scratch_cargo_test": "PASS",
+    "fresh_bench": "PENDING"
+  },
+  "open_followup": {
+    "module_id": "M10_revalidation_transaction_rollback",
+    "requirement": "A verifier-regressing repair must be rolled back through Director-owned policy-gated effects; Factory must not write target files directly.",
+    "status": "OPEN"
+  }
+}

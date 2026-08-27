@@ -1,0 +1,87 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-R49-CROSS-LANGUAGE-BEHAVIOR-OWNER-FANOUT",
+  "status": "FIXED_UNIT_VERIFIED_PENDING_FRESH_BENCH",
+  "severity": "P0",
+  "owner_cell": "roles.adapters.director.quality_gate",
+  "factory_run_id": "factory_310ea6b5ac0a",
+  "workspace": "/tmp/factory-bench-l3-24-r49/workspaces/2d6ba85a66d0-b146cca992a5132d/L3-24-023d7314133040b6/aec3c7ebb37eca7a4f6cf975",
+  "target_project_mutated_by_main_agent": false,
+  "symptom": {
+    "delivery_status": "DELIVERY_VERIFIED_CHAIN_CONTROL_PLANE_FAIL",
+    "quality_gate": "failed_required_evidence",
+    "qa_invoked": false,
+    "build_passed": true,
+    "behavior_test_failures": 5,
+    "final_forced_repair_target": "src/moon_phase.cpp",
+    "final_tool_effect": "director_write_no_effect"
+  },
+  "dynamic_evidence": {
+    "final_validation_phase": "check_after_repair_9",
+    "exact_final_request_context_snapshot_ref": "bff17cdfa98e52099e0e69e7",
+    "provider_tool_calls": "all nine repair turns produced one edit_file call",
+    "final_residual_owners": [
+      "compiled CLI output and argument dispatch",
+      "MoonCipher::encrypt runtime failure"
+    ],
+    "pre_fix_exact_replay_targets": [
+      "app/main.cpp",
+      "src/cipher.cpp",
+      "src/diary.cpp",
+      "src/moon_phase.cpp",
+      "src/render.cpp",
+      "tests/test_product.py",
+      "tests/test_unit_cipher.py"
+    ],
+    "post_fix_exact_replay_targets": [
+      "app/main.cpp",
+      "src/cipher.cpp"
+    ],
+    "failed_hypotheses": [
+      "Director failed to call write/edit tools",
+      "project artifact receipts were missing",
+      "QA was over-strict",
+      "the remaining failures belonged to src/moon_phase.cpp"
+    ]
+  },
+  "root_cause": {
+    "classification": "cross_language_behavior_owner_resolution_gap_plus_harness_fanout",
+    "detail": "Python unittest was an observer of a compiled C++ CLI. Existing symbol ownership parsed Python AST only and could not map the qualified runtime evidence MoonCipher::encrypt to src/cipher.cpp. The runtime-smoke path appended every changed non-Python source before checking whether proven owners covered the failures. Factory then rotated the stable residual across unrelated CE-owned files and ended on src/moon_phase.cpp."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_language_targets.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_quality_repair_b.py"
+    ],
+    "behavior": [
+      "Detect Python tests that physically invoke subprocess commands and project that observation onto an existing native CLI entrypoint.",
+      "Map runtime Type::method evidence to a unique existing C/C++ definition inside changed files.",
+      "Use broad changed-source harness fallback only when proven owners do not cover the failing tests.",
+      "Recognize app/main and app/cli as compiled CLI entrypoint layouts."
+    ],
+    "safety": [
+      "read-only discovery only",
+      "unique C/C++ owner required",
+      "ambiguous symbols fail closed",
+      "CE JobToken remains mutation authority",
+      "no target project edits"
+    ]
+  },
+  "verification": {
+    "tdd_red": "resolver returned unrelated src/moon_phase.cpp and Python observer",
+    "focused_test": "1 passed",
+    "related_tests": "162 passed",
+    "ruff_production": "passed",
+    "mypy_production": "passed",
+    "diff_check": "passed",
+    "exact_r49_replay": [
+      "app/main.cpp",
+      "src/cipher.cpp"
+    ]
+  },
+  "residual_risks": [
+    "A C++ behavior failure without a qualified runtime symbol may still rely on CLI entrypoint evidence only.",
+    "The r49 final Director system prompt carried a stale Python-specialist role definition for a C++ project; track separately and do not conflate with this proven target-routing defect.",
+    "Fresh isolated r50 remains required for live closure."
+  ]
+}

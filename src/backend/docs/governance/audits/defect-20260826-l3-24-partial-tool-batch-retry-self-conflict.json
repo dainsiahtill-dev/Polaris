@@ -1,0 +1,90 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-R16-PARTIAL-TOOL-BATCH-RETRY-SELF-CONFLICT",
+  "status": "FIXED_UNIT_EXACT_LIVE_REVALIDATION_PENDING",
+  "severity": "P0",
+  "scope": "polaris_meta_project_only",
+  "target_project_modified": false,
+  "exact_run": {
+    "factory_run_id": "factory_63f97954ae8d",
+    "director_run_id": "director-bd399a6feb97",
+    "project_id": "L3-24",
+    "workspace": "/tmp/factory-bench-l3-24-r16/workspaces/be151fd5bcd0-681931a1cd482410/L3-24-023d7314133040b6/35ac0d8a3c20add3a8669283",
+    "terminal_delivery_status": "DELIVERY_FAILED"
+  },
+  "symptom": "Director emitted one native batch containing all 15 authorized write_file calls. CMakeLists.txt and include/invisible_diary/cipher.hpp committed, the third write was rejected, thirteen siblings were aborted, and the automatic replacement batch was rejected as a second ToolBatch in the same logical turn.",
+  "dynamic_evidence": {
+    "final_request_context_snapshot_ref": "77c79ca200323cecea3903ec",
+    "final_request_role": "director",
+    "final_request_tool_choice": "write_file",
+    "final_request_tool_surface": [
+      "write_file"
+    ],
+    "authorized_target_count": 15,
+    "provider_native_tool_call_count": 15,
+    "first_batch": {
+      "success_count": 2,
+      "failure_count": 13,
+      "authoritative_effect_receipt_count": 2,
+      "committed_files": [
+        "CMakeLists.txt",
+        "include/invisible_diary/cipher.hpp"
+      ],
+      "first_failure": "Write rejected before commit because include/invisible_diary/diary.hpp imports missing project-local header(s) outside the authorized target scope: invisible_diary/moon.hpp",
+      "aborted_siblings_reason": "serial_mutation_sibling_aborted_after_failure"
+    },
+    "authority_contradiction": {
+      "import_spelling": "invisible_diary/moon.hpp",
+      "authorized_target": "include/invisible_diary/moon.hpp",
+      "classification": "cpp_include_root_normalization_missing"
+    },
+    "replacement_batch": {
+      "batch_id": "director-bd399a6feb97--TASK-1--attempt-txi_a6a632edecf2c8523ebd6f5f-0:mutation-retry:1",
+      "invocation_count": 15,
+      "failure": "single_tool_batch violated for turn director-bd399a6feb97--TASK-1--attempt-txi_a6a632edecf2c8523ebd6f5f-0: expected at most 1 ToolBatch, got 2"
+    },
+    "exception_masking": "KernelGuardError is a frozen dataclass RuntimeError, so traceback assignment can replace the original guard error with cannot assign to field '__traceback__'."
+  },
+  "root_causes": [
+    {
+      "classification": "cpp_include_root_authority_mismatch",
+      "detail": "The write gate compared an include-root-relative C++ header spelling against workspace-relative authorized targets without resolving conventional include roots. A declared sibling target was therefore treated as unauthorized."
+    },
+    {
+      "classification": "effectful_partial_batch_retried_inside_single_batch_turn",
+      "detail": "After two authoritative effects committed, mutation recovery requested a replacement physical batch in the same logical turn, conflicting with the single_tool_batch invariant instead of preserving partial progress for same-task continuation."
+    },
+    {
+      "classification": "frozen_exception_masks_root_error",
+      "detail": "Frozen dataclass semantics prevent normal exception traceback mutation and mask the authoritative KernelGuardError."
+    }
+  ],
+  "required_fix": {
+    "behavior": [
+      "Resolve safe C++ project-local include spellings against authorized include-root targets before declaring them out of scope.",
+      "Never execute a second physical batch in the same logical turn after any authoritative effect committed; preserve receipts and continue the same Director task in a later turn.",
+      "Make KernelGuardError a normal traceback-safe exception."
+    ],
+    "constraints": [
+      "Do not weaken path authorization for undeclared headers.",
+      "Do not restart PM or Chief Engineer for this Director-local failure.",
+      "Do not edit the generated Bench target project."
+    ]
+  },
+  "implementation": {
+    "authoritative_scope_binding": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/execution_tools.py"
+    ],
+    "partial_batch_preservation": "src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_executor_execute.py",
+    "traceback_safe_exception": "src/backend/polaris/cells/roles/kernel/internal/kernel_guard.py",
+    "semantics": "DEO capability scope and signed repair target are bound to the private physical executor; a triggered circuit breaker with authoritative effect receipts preserves the mixed batch and records an anomaly instead of issuing replacement batch two; batches without authoritative effects remain fail-closed."
+  },
+  "verification": {
+    "focused_regression_tests": "135 passed",
+    "ruff": "passed for 7 changed Python files",
+    "mypy": "passed for 4 changed source files",
+    "dynamic_debug": "pytest PDB confirmed signed repair target needed to join capability scope; fixed without weakening unrelated scope",
+    "fresh_isolated_bench": "r17 did not exercise this defect because an earlier policy-preview integration regression denied every write before physical dispatch; see L3-24-R17-POLICY-PREVIEW-SCOPE-BINDING-REGRESSION"
+  }
+}

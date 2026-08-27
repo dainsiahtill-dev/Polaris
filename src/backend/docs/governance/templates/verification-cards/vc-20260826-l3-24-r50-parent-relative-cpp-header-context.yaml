@@ -1,0 +1,46 @@
+schema_version: polaris.verification_card.v1
+verification_id: vc-20260826-l3-24-r50-parent-relative-cpp-header-context
+defect_id: L3-24-R50-PARENT-RELATIVE-CPP-HEADER-CONTEXT
+factory_run_id: factory_9608917f89f8
+target_project_mutated: false
+classification: pattern
+assumption_register:
+  - assumption: Director failed because edit_file could not write.
+    verdict: disproved
+    evidence: rounds 2, 3, and 5 produced physical edit effects; the candidate guard rolled back unsafe edits.
+  - assumption: Existing read-only C++ header projection covered the r50 include form.
+    verdict: disproved
+    evidence: exact pre-fix replay omitted the InkLedger header API for ../include/core_engine/ink_ledger.hpp.
+  - assumption: Allowing parent-relative includes must permit workspace traversal.
+    verdict: disproved
+    evidence: canonical path containment rejects ../../outside.hpp and symlink escape.
+pre_mortem:
+  likely_wrong_fix: broadening Director write scope or allowing unrestricted parent traversal
+  prevention: change read-only evidence resolution only; authorize canonical path under workspace
+dynamic_debug:
+  exact_run: true
+  final_provider_request_audited: true
+  tool_calls_audited: true
+  physical_effects_audited: true
+  candidate_rollback_audited: true
+  verifier_history_audited: true
+pre_fix:
+  repair_target: src/ink_ledger.cpp
+  include_token: ../include/core_engine/ink_ledger.hpp
+  projected_header_contract: false
+  convergence_stop: three_nonprogress_repairs_without_verified_progress
+post_fix:
+  exact_replay_header: include/core_engine/ink_ledger.hpp
+  projected_declarations:
+    - std::string render_visible(int current_moon_day) const;
+    - std::string reveal_entry(std::uint64_t id, int current_moon_day);
+    - const std::vector<Entry>& entries() const noexcept
+  workspace_escape_rejected: true
+gates:
+  tdd_red: pass
+  focused_regression: pass
+  full_verifier_context_tests_25: pass
+  ruff: pass
+  mypy: pass
+  exact_r50_replay: pass
+  fresh_isolated_bench: pending

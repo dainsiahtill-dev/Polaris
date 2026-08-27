@@ -929,6 +929,126 @@ async def test_in_scope_syntax_error_not_deferred_for_later_tu_undeclared_type(
 
 
 @pytest.mark.asyncio
+async def test_same_task_cpp_declaration_home_is_admitted_instead_of_self_deferred(
+    tmp_path: Path,
+) -> None:
+    """A declaration home owned by the current task must enter the repair batch.
+
+    Live L3-24 r33: TASK-1 declared both ``src/diary.cpp`` and
+    ``include/invisible_ink/cipher.hpp``.  After a successful repair exposed
+    ``'cipher' has not been declared`` in diary.cpp, the narrow repair batch did
+    not yet contain cipher.hpp.  The quality loop mislabeled that same-task
+    declaration home as out of scope and handed TASK-1 back to itself for three
+    no-op rounds.
+    """
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include" / "invisible_ink").mkdir(parents=True)
+    (tmp_path / "src" / "diary.cpp").write_text(
+        '#include "invisible_ink/diary.hpp"\nstd::string summarize() { return cipher::encode("x"); }\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "include" / "invisible_ink" / "diary.hpp").write_text(
+        "#pragma once\n#include <string>\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "include" / "invisible_ink" / "cipher.hpp").write_text(
+        "#pragma once\nnamespace invisible_ink::cipher { std::string encode(const std::string&); }\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, Any] = {}
+    adapter = _recording_adapter(tmp_path, captured)
+
+    _results, summary = await _run_materialization_quality_repair_retry(
+        adapter,
+        task={
+            "task_id": "TASK-1",
+            "target_files": [
+                "src/diary.cpp",
+                "include/invisible_ink/diary.hpp",
+                "include/invisible_ink/cipher.hpp",
+            ],
+            "metadata": {"external_task_id": "TASK-1", "factory_run_id": "factory_l324_r33"},
+        },
+        target_task_id="TASK-1",
+        run_id="factory_l324_r33",
+        context={
+            "run_id": "factory_l324_r33",
+            "director_quality_repair": {"repair_target_files": ["src/diary.cpp"]},
+        },
+        original_message="Repair the current compiler residual within TASK-1.",
+        llm_call_timeout=30.0,
+        artifact_quality_errors=[
+            "src/diary.cpp:83:28: error: ‘cipher’ has not been declared",
+        ],
+        changed_files=["src/diary.cpp", "include/invisible_ink/diary.hpp"],
+        repair_attempt=4,
+    )
+
+    assert captured.get("invoked") is True
+    assert summary.get("stage") != "task_boundary_repair_targets_deferred"
+    assert "src/diary.cpp" in summary["repair_target_files"]
+    assert "include/invisible_ink/cipher.hpp" in summary["repair_target_files"]
+
+
+@pytest.mark.asyncio
+async def test_repeat_cpp_repair_refreshes_stale_tu_to_precise_header_error_site(
+    tmp_path: Path,
+) -> None:
+    """A current GCC header error must replace an earlier forced TU target.
+
+    Live L3-24 r34 kept Factory's stale ``src/diary.cpp`` target because that
+    translation unit still appeared in ``### FAILING_TUS``.  The actual error
+    site was ``include/.../moon_phase.hpp:42:64``; seven real edits to the TU
+    could not change the invalid literal in the header.
+    """
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include" / "invisible_diary").mkdir(parents=True)
+    (tmp_path / "src" / "diary.cpp").write_text(
+        '#include "invisible_diary/moon_phase.hpp"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "include" / "invisible_diary" / "moon_phase.hpp").write_text(
+        "#pragma once\nstatic constexpr long epoch = 947_289_240;\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, Any] = {}
+    adapter = _recording_adapter(tmp_path, captured)
+    diagnostic = (
+        "### FAILING_TUS src/diary.cpp\n"
+        "### src/diary.cpp\n"
+        "In file included from src/diary.cpp:1:\n"
+        "include/invisible_diary/moon_phase.hpp:2:36: error: "
+        "unable to find numeric literal operator 'operator\"\"_289_240'\n"
+    )
+
+    _results, summary = await _run_materialization_quality_repair_retry(
+        adapter,
+        task={
+            "task_id": "TASK-1",
+            "target_files": ["src/diary.cpp", "include/invisible_diary/moon_phase.hpp"],
+            "metadata": {"external_task_id": "TASK-1", "factory_run_id": "factory_l324_r34"},
+        },
+        target_task_id="TASK-1",
+        run_id="factory_l324_r34",
+        context={
+            "run_id": "factory_l324_r34",
+            "director_quality_repair": {"repair_target_files": ["src/diary.cpp"]},
+        },
+        original_message="Repair the current compiler residual within TASK-1.",
+        llm_call_timeout=30.0,
+        artifact_quality_errors=[diagnostic],
+        changed_files=["src/diary.cpp"],
+        repair_attempt=3,
+    )
+
+    assert captured.get("invoked") is True
+    assert summary["factory_forced_targets_refreshed"] is True
+    assert summary["repair_target_files"] == ["include/invisible_diary/moon_phase.hpp"]
+
+
+@pytest.mark.asyncio
 async def test_in_scope_namespace_error_not_deferred_for_later_tu_undeclared_type(
     tmp_path: Path,
 ) -> None:

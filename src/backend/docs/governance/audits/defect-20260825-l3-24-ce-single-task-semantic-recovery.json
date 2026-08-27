@@ -1,0 +1,78 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-CE-SINGLE-TASK-SEMANTIC-RECOVERY",
+  "status": "CLOSED_LIVE",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_f3b9d48335bd",
+  "bench_attempt_id": "ab302c730442",
+  "workspace": "/tmp/factory-bench-l3-24-r01/workspaces/ab302c730442-50272f0420272b63/L3-24-023d7314133040b6/28936596b90bac483900d8bf",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "chief_engineer.semantic_repair_exhausted",
+    "root_cause_hint": "chief_engineer.semantic_patch_invalid:ValueError:consumer_task_ids must not contain owner_task_id",
+    "director_dispatched": false,
+    "source_files_materialized": 0
+  },
+  "dynamic_evidence": {
+    "provider_call_count": 3,
+    "semantic_patch_tool_call_present": true,
+    "semantic_patch_call_id": "chatcmpl-tool-9c784fb509e1969d",
+    "semantic_patch_context_snapshot_ref": "19e3f25c3c7356b85b91eb4b",
+    "authoritative_task_ids": [
+      "TASK-1"
+    ],
+    "retained_candidate_hash": "df1eae2e0a4dd2e8ccd7e05dce6429aec8f9f0b4d6b2d041f7d3b7fbca91cd46",
+    "trace_exception": "artifact obligation group collides with another obligation category: OBL-VERIFY-TEST",
+    "final_request_role_identity_ok": true,
+    "final_request_required_refs_present": true,
+    "final_request_tool_schema_present": true,
+    "live_retry_recovery_signal": "chief_engineer.portfolio_structural_recovered",
+    "live_retry_repair_codes": [
+      "remove_task_local_invariant_from_shared_contract"
+    ],
+    "live_retry_old_error_absent": true
+  },
+  "root_causes": [
+    {
+      "code": "ce_structural_recovery_missing_authoritative_single_task_set",
+      "detail": "The provider may omit advisory task_plans. Factory knew the immutable portfolio contained only TASK-1 but did not pass that authority to the structural normalizer, so an owner-only shared invariant could not be proven task-local."
+    },
+    {
+      "code": "ce_structural_recovery_cross_category_group_collision_rollback",
+      "detail": "Two test artifacts reused OBL-VERIFY-TEST as a semantic group while the covering test verifier used the same identity. The normalizer aborted the whole transaction instead of minting unique artifact identities under explicit same-owner/same-applicability coverage evidence."
+    }
+  ],
+  "fixes": [
+    {
+      "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "change": "Accept immutable authoritative_task_ids; remove an owner-only shared row only when one-task authority proves it task-local. Normalize an artifact group/verifier collision only when the verifier explicitly covers the group and owner/applicability match."
+    },
+    {
+      "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "change": "Pass portfolio_task_ids into CE structural recovery."
+    }
+  ],
+  "verification": {
+    "targeted_tests": "2 passed",
+    "structural_recovery_regression_suite": "18 passed",
+    "ruff": "passed for changed source files",
+    "exact_candidate_replay": {
+      "recovered": true,
+      "repair_codes": [
+        "remove_task_local_invariant_from_shared_contract",
+        "split_shared_artifact_obligation_ids"
+      ],
+      "schema_errors": [],
+      "business_errors": []
+    },
+    "mypy": "blocked by 14 pre-existing errors in concurrently modified code outside this fix hunk"
+  },
+  "safety": {
+    "target_project_modified": false,
+    "multi_task_ambiguous_owner_only_rows": "fail_closed",
+    "entrypoint_collisions": "fail_closed",
+    "mismatched_verifier_owner_or_applicability": "fail_closed"
+  },
+  "next_action": "Closed. The next exact-run blocker is tracked separately as L3-24-PM-TEST-DEPTH-AUTHORITY."
+}

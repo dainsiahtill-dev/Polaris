@@ -628,7 +628,7 @@ class _ToolBatchExecutorCore:
             if _is_deo_abort_error(error_token):
                 _seal_deo_abort_tool_lifecycle(
                     workspace=workspace,
-                    run_id=str(getattr(ledger, "run_id", "") or ""),
+                    run_id=str(execution_attempt.run_id if execution_attempt is not None else ""),
                     task_id=str(
                         getattr(self.directed_effect_execution_attempt, "external_task_id", "")
                         if self.directed_effect_execution_attempt is not None
@@ -644,7 +644,102 @@ class _ToolBatchExecutorCore:
             raise
         if followup_prepared is None:
             raise RuntimeError("deo_deferred_repair_followup_not_prepared")
-        self._check_effect_policy(inventory_invocations, turn_id)
+        prepared_call_ids = tuple(
+            member.member.tool_call_id for member in followup_prepared.batch.prepared_members
+        )
+        prepared_call_id_set = set(prepared_call_ids)
+        followup_call_id_set = {
+            *followup.forward_call_ids,
+            *followup.rollback_call_ids,
+        }
+        if not prepared_call_id_set.issubset(followup_call_id_set):
+            raise RuntimeError("deo_deferred_repair_prepared_inventory_unknown_member")
+
+        # R27: the authoritative policy guard may soft-deny one repair while
+        # retaining an unrelated sibling.  The DEO parent then contains only
+        # the authorized subset, so the original follow-up partition cannot be
+        # handed to ToolBatchRuntime unchanged.  Project every execution
+        # contract onto the exact prepared inventory.  A forward/rollback pair
+        # remains atomic: admitting only one side is unsafe and fails closed.
+        prepared_activation: list[tuple[str, str]] = []
+        incomplete_pairs: list[tuple[str, str]] = []
+        for rollback_call_id, forward_call_id in followup.rollback_activation_by_call_id:
+            rollback_prepared = rollback_call_id in prepared_call_id_set
+            forward_prepared = forward_call_id in prepared_call_id_set
+            if rollback_prepared != forward_prepared:
+                incomplete_pairs.append((rollback_call_id, forward_call_id))
+            elif rollback_prepared:
+                prepared_activation.append((rollback_call_id, forward_call_id))
+        if incomplete_pairs:
+            # Keep the exact policy/preparation split observable.  The public
+            # lifecycle receipt intentionally carries only normalized dropped
+            # invocation refs, so without this evidence a live failure looks
+            # identical whether the forward member, rollback contingency, or
+            # an unrelated sibling was denied.  Never log file content here.
+            logger.warning(
+                "DEO deferred-repair pair incomplete turn_id=%s batch_id=%s "
+                "pairs=%s policy_dropped=%s prepared_call_ids=%s",
+                turn_id,
+                followup.batch_id,
+                incomplete_pairs,
+                followup_prepared.dropped_members,
+                prepared_call_ids,
+            )
+            _seal_deo_abort_tool_lifecycle(
+                workspace=workspace,
+                run_id=str(execution_attempt.run_id if execution_attempt is not None else ""),
+                task_id=str(
+                    getattr(self.directed_effect_execution_attempt, "external_task_id", "")
+                    if self.directed_effect_execution_attempt is not None
+                    else ""
+                ),
+                turn_id=turn_id,
+                role_id=str(getattr(self.config, "role_id", "") or ""),
+                invocations=[
+                    invocation
+                    for invocation in inventory_invocations
+                    if str(invocation.call_id) in prepared_call_id_set
+                ],
+                metadata={
+                    "incomplete_pairs": [list(pair) for pair in incomplete_pairs],
+                    "dropped_members": [list(row) for row in followup_prepared.dropped_members],
+                },
+                ledger=ledger,
+                error_code="deo_deferred_repair_prepared_pair_incomplete",
+            )
+            raise RuntimeError("deo_deferred_repair_prepared_pair_incomplete")
+
+        prepared_forward_call_ids = tuple(
+            call_id for call_id in followup.forward_call_ids if call_id in prepared_call_id_set
+        )
+        prepared_rollback_call_ids = tuple(
+            call_id for call_id in followup.rollback_call_ids if call_id in prepared_call_id_set
+        )
+        prepared_effect_bindings = tuple(
+            (call_id, binding)
+            for call_id, binding in followup.effect_bindings_by_call_id
+            if call_id in prepared_call_id_set
+        )
+        prepared_invocations = [
+            invocation
+            for invocation in inventory_invocations
+            if str(invocation.call_id) in prepared_call_id_set
+        ]
+        prepared_dispatch_invocations = [
+            invocation
+            for invocation in followup.dispatch_batch.serial_writes
+            if str(invocation.call_id) in prepared_call_id_set
+        ]
+        prepared_dispatch_batch = ToolBatch(
+            batch_id=followup.dispatch_batch.batch_id,
+            invocations=list(prepared_dispatch_invocations),
+            parallel_readonly=[],
+            readonly_serial=[],
+            serial_writes=list(prepared_dispatch_invocations),
+            async_receipts=[],
+        )
+
+        self._check_effect_policy(prepared_invocations, turn_id)
         ledger.tool_batch_count += 1
         ledger.state_history.append(("DEFERRED_REPAIR_FOLLOWUP_SCHEDULED", int(time.time() * 1000)))
         self.emit_event(
@@ -654,8 +749,9 @@ class _ToolBatchExecutorCore:
                 {
                     "event_kind": "deferred_repair_followup_scheduled",
                     "batch_id": followup.batch_id,
-                    "forward_count": len(followup.forward_call_ids),
-                    "rollback_contingency_count": len(followup.rollback_call_ids),
+                    "forward_count": len(prepared_forward_call_ids),
+                    "rollback_contingency_count": len(prepared_rollback_call_ids),
+                    "policy_dropped_count": len(followup_prepared.dropped_members),
                     "request_ids": list(followup.request_ids),
                     "visible_tool_batch_count": ledger.tool_batch_count,
                 },
@@ -666,12 +762,12 @@ class _ToolBatchExecutorCore:
             turn_id=turn_id,
             cancel_token=cancel_token,
             prepared_directed_effect=followup_prepared,
-            directed_effect_dispatch_call_ids=followup.forward_call_ids,
-            directed_effect_abort_call_ids=followup.rollback_call_ids,
-            directed_effect_repair_bindings_by_call_id=followup.effect_bindings_by_call_id,
-            directed_effect_rollback_activation_by_call_id=(followup.rollback_activation_by_call_id),
+            directed_effect_dispatch_call_ids=prepared_forward_call_ids,
+            directed_effect_abort_call_ids=prepared_rollback_call_ids,
+            directed_effect_repair_bindings_by_call_id=prepared_effect_bindings,
+            directed_effect_rollback_activation_by_call_id=tuple(prepared_activation),
         ).execute_batch(
-            followup.dispatch_batch,
+            prepared_dispatch_batch,
             TurnId(turn_id),
         )
         normalized_followup_receipts = normalize_batch_receipts(followup_receipts)

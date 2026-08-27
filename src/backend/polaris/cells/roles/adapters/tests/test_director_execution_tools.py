@@ -425,6 +425,109 @@ def test_edit_file_rejects_new_go_compile_failure_before_commit(tmp_path) -> Non
     assert target.read_text(encoding="utf-8") == original
 
 
+def test_write_file_rejects_undeclared_missing_cpp_local_include_before_commit(tmp_path) -> None:
+    """L3-24 r14: sources may not invent an out-of-scope project header."""
+
+    include_dir = tmp_path / "include" / "invisible_ink_diary"
+    include_dir.mkdir(parents=True)
+    (include_dir / "moon_cipher.hpp").write_text("#pragma once\n", encoding="utf-8")
+    executor = _create_director_tool_executor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "file": "src/cipher_engine.cpp",
+            "content": (
+                '#include "invisible_ink_diary/cipher_engine.hpp"\n\n'
+                "int cipher_engine_value() { return 1; }\n"
+            ),
+            "target_files": [
+                "src/cipher_engine.cpp",
+                "include/invisible_ink_diary/moon_cipher.hpp",
+            ],
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "undeclared_local_include_dependency"
+    assert result["retryable"] is True
+    assert result["missing_local_includes"] == ["invisible_ink_diary/cipher_engine.hpp"]
+    assert not (tmp_path / "src" / "cipher_engine.cpp").exists()
+
+
+def test_write_file_allows_declared_cpp_local_include_pending_same_batch(tmp_path) -> None:
+    """A header already authorized for this task may be materialized later in the batch."""
+
+    include_dir = tmp_path / "include" / "invisible_ink_diary"
+    include_dir.mkdir(parents=True)
+    executor = _create_director_tool_executor(str(tmp_path))
+    body = (
+        '#include "invisible_ink_diary/cipher_engine.hpp"\n\n'
+        "int cipher_engine_value() { return 1; }\n"
+    )
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "file": "src/cipher_engine.cpp",
+            "content": body,
+            "target_files": [
+                "src/cipher_engine.cpp",
+                "include/invisible_ink_diary/cipher_engine.hpp",
+            ],
+        },
+    )
+
+    assert result["ok"] is True, result
+    assert (tmp_path / "src" / "cipher_engine.cpp").read_text(encoding="utf-8") == body
+
+
+def test_write_file_uses_authoritative_scope_for_include_root_sibling(tmp_path) -> None:
+    """L3-24 r16: native tool args need not repeat JobToken path authority."""
+
+    executor = _create_director_tool_executor(str(tmp_path))
+    executor._bind_authorized_scope(
+        (
+            "include/invisible_diary/diary.hpp",
+            "include/invisible_diary/moon.hpp",
+        )
+    )
+    body = '#pragma once\n#include "invisible_diary/moon.hpp"\n'
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "file": "include/invisible_diary/diary.hpp",
+            "content": body,
+        },
+    )
+
+    assert result["ok"] is True, result
+    assert (tmp_path / "include" / "invisible_diary" / "diary.hpp").read_text(encoding="utf-8") == body
+
+
+def test_authoritative_scope_still_rejects_undeclared_cpp_local_include(tmp_path) -> None:
+    """Trusted scope fixes aliasing only; it must not broaden undeclared writes."""
+
+    include_dir = tmp_path / "include" / "invisible_diary"
+    include_dir.mkdir(parents=True)
+    (include_dir / "cipher.hpp").write_text("#pragma once\n", encoding="utf-8")
+    executor = _create_director_tool_executor(str(tmp_path))
+    executor._bind_authorized_scope(("include/invisible_diary/diary.hpp",))
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "file": "include/invisible_diary/diary.hpp",
+            "content": '#pragma once\n#include "invisible_diary/undeclared.hpp"\n',
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "undeclared_local_include_dependency"
+    assert not (include_dir / "diary.hpp").exists()
+
+
 def test_write_file_defers_go_test_compile_failure_to_workspace_quality(tmp_path) -> None:
     """L3-22 r42: test API mismatch must land for same-Director repair."""
 

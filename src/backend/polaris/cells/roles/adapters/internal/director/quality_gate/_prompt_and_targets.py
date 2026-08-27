@@ -253,12 +253,9 @@ def _repair_target_context_block(
                 start = max(1, line_number - 2)
                 end = min(len(content_lines), line_number + 2)
                 numbered_excerpt = "\n".join(
-                    f"{source_line}: {content_lines[source_line - 1]}"
-                    for source_line in range(start, end + 1)
+                    f"{source_line}: {content_lines[source_line - 1]}" for source_line in range(start, end + 1)
                 )
-                rendered_sites.append(
-                    f"--- {rel}:{line_number} ---\n```text\n{numbered_excerpt}\n```"
-                )
+                rendered_sites.append(f"--- {rel}:{line_number} ---\n```text\n{numbered_excerpt}\n```")
             if rendered_sites:
                 primary_diagnostic_blocks.extend(rendered_sites)
         if diagnostic_lines and len(content) <= budget:
@@ -293,8 +290,7 @@ def _repair_target_context_block(
             + "\n"
         )
     return (
-        primary_diagnostic_section
-        + "CURRENT UTF-8 CONTENT OF REPAIR TARGETS:\n"
+        primary_diagnostic_section + "CURRENT UTF-8 CONTENT OF REPAIR TARGETS:\n"
         "Use these current file bodies as the source of truth for cross-file API coherence. "
         "Preserve existing public contracts unless changing every dependent target in this repair batch.\n"
         + "\n".join(blocks)
@@ -305,6 +301,15 @@ def _repair_target_context_block(
 _GENERIC_DIAGNOSTIC_SOURCE_RE = re.compile(
     r"(?P<path>(?:[A-Za-z]:)?(?:\.{0,2}[/\\])?[^\s:()'\"]+\.[A-Za-z0-9_+-]+)"
     r"(?::(?P<line>\d+)(?::\d+)?|\((?P<paren_line>\d+)(?:,\d+)?\))"
+)
+
+_COMPILER_ERROR_DIAGNOSTIC_RE = re.compile(
+    r"^(?P<path>(?:[A-Za-z]:)?[^\r\n:]+?\.[A-Za-z0-9_+.-]+)"
+    r":(?P<line>\d+)(?::\d+)?:[ \t]+(?:fatal[ \t]+)?error:[ \t]+(?P<message>[^\r\n]+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_COMPILER_FUNCTION_CONTEXT_RE = re.compile(
+    r"(?:In|in)[ \t]+(?:member[ \t]+)?function[ \t]+[‘'](?P<context>[^’'\r\n]+)[’']:",
 )
 
 
@@ -323,17 +328,119 @@ def _diagnostic_line_numbers_for_path(
     """Return compiler/verifier line references that name ``rel_path``."""
 
     expected = _normalized_diagnostic_path(rel_path)
-    line_numbers: list[int] = []
+    primary_line_numbers: list[int] = []
+    contextual_line_numbers: list[int] = []
     for error in artifact_quality_errors:
-        for match in _GENERIC_DIAGNOSTIC_SOURCE_RE.finditer(str(error or "")):
+        error_text = str(error or "")
+        for match in _GENERIC_DIAGNOSTIC_SOURCE_RE.finditer(error_text):
             candidate = _normalized_diagnostic_path(match.group("path"))
             if candidate != expected and not candidate.endswith(f"/{expected}"):
                 continue
             raw_line = match.group("line") or match.group("paren_line")
             line_number = int(raw_line)
-            if line_number > 0 and line_number not in line_numbers:
-                line_numbers.append(line_number)
-    return sorted(line_numbers)
+            if line_number <= 0:
+                continue
+            # Classify this exact path:line token from its immediate suffix.
+            # A verifier can embed compiler output with literal ``\\n`` escape
+            # sequences inside one physical line.  Classifying the whole line
+            # then makes every path reference on that line look actionable as
+            # soon as any later token says ``error:``.  L3-24 r45 consequently
+            # promoted the include context at cli.cpp:18 ahead of the actual
+            # constructor error at cli.cpp:112 for three repair rounds.
+            diagnostic_suffix = error_text[match.end() : match.end() + 96]
+            destination = (
+                primary_line_numbers
+                if re.match(
+                    r":[ \t]+(?:fatal[ \t]+)?error(?:\[[^\]\r\n]+\])?:",
+                    diagnostic_suffix,
+                    re.IGNORECASE,
+                )
+                else contextual_line_numbers
+            )
+            if line_number not in destination:
+                destination.append(line_number)
+    # Compiler include/note locations are useful context but must never lead
+    # the actionable anchor.  Live L3-24 r45 put cli.cpp:18 (include site)
+    # before cli.cpp:112 (the actual error), then the Director edited includes
+    # for three rounds instead of the failing constructor call.
+    return sorted(primary_line_numbers) + sorted(
+        line_number for line_number in contextual_line_numbers if line_number not in primary_line_numbers
+    )
+
+
+def _compiler_diagnostic_atoms(
+    errors: Sequence[str],
+    *,
+    workspace_full: str,
+) -> list[tuple[tuple[str, str, str], str]]:
+    """Return stable compiler-error identities and compact display text.
+
+    Historical diagnostics are negative constraints, not current repair
+    targets.  Keeping whole compiler transcripts reintroduces resolved sites,
+    include notes, and nested test-run copies into later prompts.  Canonical
+    atoms let the prompt subtract current failures and retain only the exact
+    rejected/resolved signatures without executable source windows.
+    """
+
+    workspace_prefix = str(Path(workspace_full).resolve()).replace("\\", "/").rstrip("/")
+    atoms: list[tuple[tuple[str, str, str], str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for error in errors:
+        # unittest/pytest often embeds a failed compiler transcript inside a
+        # skip/error string using literal ``\\n`` separators.  Parse that
+        # nested transcript as lines too; otherwise it is misclassified as a
+        # behavior guard and the raw stale compiler failures are replayed into
+        # later repair prompts as if they were current.
+        error_text = str(error or "").replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+        function_contexts = list(_COMPILER_FUNCTION_CONTEXT_RE.finditer(error_text))
+        for match in _COMPILER_ERROR_DIAGNOSTIC_RE.finditer(error_text):
+            path = _normalized_diagnostic_path(match.group("path"))
+            if workspace_prefix and path.startswith(f"{workspace_prefix}/"):
+                path = path[len(workspace_prefix) + 1 :]
+            message = " ".join(str(match.group("message") or "").split()).rstrip("'\"")
+            function_context = ""
+            for context_match in function_contexts:
+                if context_match.start() >= match.start():
+                    break
+                function_context = " ".join(str(context_match.group("context") or "").split())
+            identity = (path.casefold(), function_context.casefold(), message.casefold())
+            if not path or not message or identity in seen:
+                continue
+            seen.add(identity)
+            context_display = f" [{function_context}]" if function_context else ""
+            atoms.append((identity, f"{path}{context_display}: error: {message}"))
+    return atoms
+
+
+def _historical_diagnostic_prompt_parts(
+    errors: Sequence[str],
+    *,
+    current_errors: Sequence[str],
+    workspace_full: str,
+) -> tuple[list[str], list[str]]:
+    """Split history into compiler negative constraints and behavior guards."""
+
+    current_identities = {
+        identity
+        for identity, _display in _compiler_diagnostic_atoms(
+            current_errors,
+            workspace_full=workspace_full,
+        )
+    }
+    compiler_constraints: list[str] = []
+    behavior_guards: list[str] = []
+    for error in errors:
+        normalized = str(error or "").strip()
+        if not normalized:
+            continue
+        atoms = _compiler_diagnostic_atoms([normalized], workspace_full=workspace_full)
+        if not atoms:
+            behavior_guards.append(normalized)
+            continue
+        for identity, display in atoms:
+            if identity not in current_identities and display not in compiler_constraints:
+                compiler_constraints.append(display)
+    return compiler_constraints, behavior_guards
 
 
 def _diagnostic_centered_excerpt(
@@ -401,15 +508,20 @@ _GO_TEST_ASSERTION_LOCATION_RE = re.compile(
     r"(?m)^\s*(?P<path>(?:[A-Za-z]:)?[^\s:\n]*_test\.go):(?P<line>\d+):",
     re.IGNORECASE,
 )
+_RUST_PANIC_LOCATION_RE = re.compile(
+    r"(?m)panicked\s+at\s+(?P<path>(?:[A-Za-z]:)?[^\s:\n]+\.rs):(?P<line>\d+)(?::\d+)?:",
+    re.IGNORECASE,
+)
 _GO_TEST_FUNCTION_DECL_RE = re.compile(
     r"^\s*func\s+(?:Test|Benchmark|Fuzz|Example)[A-Za-z0-9_]*\s*\(",
+)
+_RUST_FUNCTION_DECL_RE = re.compile(
+    r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*\s*\(",
 )
 _GO_SELECTOR_CALL_RE = re.compile(
     r"\b(?P<qualifier>[A-Za-z_][A-Za-z0-9_]*)\.(?P<symbol>[A-Z][A-Za-z0-9_]*)\s*\(",
 )
-_GO_FIXTURE_IMPORT_SPEC_RE = re.compile(
-    r'^\s*(?:(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\s+)?"(?P<path>[^"]+)"\s*$'
-)
+_GO_FIXTURE_IMPORT_SPEC_RE = re.compile(r'^\s*(?:(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\s+)?"(?P<path>[^"]+)"\s*$')
 _JS_TAP_RESERVED_CALLS = frozenset(
     {
         "assert",
@@ -481,6 +593,38 @@ def _go_verifier_function_window(lines: list[str], line_number: int) -> tuple[in
     for index in range(start + 1, len(lines)):
         if _GO_TEST_FUNCTION_DECL_RE.match(lines[index]):
             end = index
+            break
+    if not (start <= anchor < end):
+        return None
+    return start, end
+
+
+def _rust_verifier_function_window(lines: list[str], line_number: int) -> tuple[int, int] | None:
+    """Return the Rust verifier function containing a panic location.
+
+    Cargo reports the assertion line, but behavior repair needs the preceding
+    fixture setup and state transitions.  Bound the read-only excerpt by Rust
+    function declarations; include adjacent attributes such as ``#[test]``.
+    """
+
+    if not lines:
+        return None
+    anchor = min(max(0, line_number - 1), len(lines) - 1)
+    start: int | None = None
+    for index in range(anchor, -1, -1):
+        if _RUST_FUNCTION_DECL_RE.match(lines[index]):
+            start = index
+            while start > 0 and lines[start - 1].lstrip().startswith("#["):
+                start -= 1
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for index in range(anchor + 1, len(lines)):
+        if _RUST_FUNCTION_DECL_RE.match(lines[index]):
+            end = index
+            while end > start and lines[end - 1].lstrip().startswith("#["):
+                end -= 1
             break
     if not (start <= anchor < end):
         return None
@@ -588,9 +732,7 @@ def _go_referenced_fixture_contract_blocks(
                 used += len(rendered)
                 blocks.append(
                     f"--- {rel} GO REFERENCED FIXTURE CONTRACT: {qualifier}.{symbol} "
-                    "(READ-ONLY; BOUNDED DEFINITION) ---\n```text\n"
-                    + rendered
-                    + "\n```"
+                    "(READ-ONLY; BOUNDED DEFINITION) ---\n```text\n" + rendered + "\n```"
                 )
                 break
     return blocks
@@ -651,6 +793,7 @@ def _verifier_source_context_block(
     refs: list[tuple[str, int]] = []
     tap_refs: set[tuple[str, int]] = set()
     go_refs: set[tuple[str, int]] = set()
+    rust_refs: set[tuple[str, int]] = set()
     for error in artifact_quality_errors:
         for match in _PYTHON_TRACEBACK_SOURCE_RE.finditer(str(error or "")):
             raw_path = Path(str(match.group("path") or ""))
@@ -686,6 +829,26 @@ def _verifier_source_context_block(
             if ref not in refs:
                 refs.append(ref)
             go_refs.add(ref)
+        # Rust assertion failures use ``thread ... panicked at path:line:col``.
+        # Project the enclosing test function as read-only evidence so the
+        # repair model sees setup/state transitions instead of guessing from
+        # only the final left/right values.
+        for match in _RUST_PANIC_LOCATION_RE.finditer(str(error or "")):
+            raw_path = Path(str(match.group("path") or ""))
+            try:
+                line_number = max(1, int(match.group("line")))
+            except (TypeError, ValueError):
+                continue
+            resolved = _resolve_reference(raw_path)
+            if resolved is None:
+                continue
+            _, rel = resolved
+            if rel in repair_targets or not _is_verifier_source_path(rel):
+                continue
+            ref = (rel, line_number)
+            if ref not in refs:
+                refs.append(ref)
+            rust_refs.add(ref)
         error_text = str(error or "")
         tap_is_suite = "type: 'suite'" in error_text.lower() or 'type: "suite"' in error_text.lower()
         for match in (*_NODE_TAP_LOCATION_RE.finditer(error_text), *_NODE_STACK_FRAME_RE.finditer(error_text)):
@@ -716,9 +879,13 @@ def _verifier_source_context_block(
             lines = source_path.read_text(encoding="utf-8").splitlines()
         except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
             continue
-        go_window = _go_verifier_function_window(lines, line_number) if (rel, line_number) in go_refs else None
-        if go_window is not None:
-            start, end = go_window
+        function_window = None
+        if (rel, line_number) in go_refs:
+            function_window = _go_verifier_function_window(lines, line_number)
+        elif (rel, line_number) in rust_refs:
+            function_window = _rust_verifier_function_window(lines, line_number)
+        if function_window is not None:
+            start, end = function_window
         else:
             # Node TAP `location` is the test() header, not the assertion/call.
             # Live L2-18 remint-5: location 206 hid grantWish(...) at 211.
@@ -732,7 +899,7 @@ def _verifier_source_context_block(
         excerpt = excerpt[:remaining]
         used += len(excerpt)
         blocks.append(f"--- {rel} around line {line_number} (READ-ONLY) ---\n```text\n{excerpt}\n```")
-        if go_window is not None:
+        if (rel, line_number) in go_refs and function_window is not None:
             go_verifier_contexts.append((rel, "\n".join(lines[start:end])))
 
     # A single Go behavior failure does not define the whole public contract.
@@ -798,9 +965,7 @@ def _verifier_source_context_block(
             go_verifier_contexts.append((rel, "\n".join(excerpt_lines)))
             blocks.append(
                 f"--- {rel} GO SIBLING VERIFIER CONTRACT (READ-ONLY; BOUNDED PREFIX) ---\n"
-                "```text\n"
-                + "\n".join(excerpt_lines)
-                + "\n```"
+                "```text\n" + "\n".join(excerpt_lines) + "\n```"
             )
         blocks.extend(
             _go_referenced_fixture_contract_blocks(
@@ -1102,7 +1267,7 @@ def _cpp_type_definition_refs(
 
 def _resolve_cpp_quoted_include(workspace: Path, importer: Path, include_path: str) -> Path | None:
     token = str(include_path or "").replace("\\", "/").strip()
-    if not token or token.startswith("/") or ".." in Path(token).parts:
+    if not token or token.startswith("/"):
         return None
     for candidate in (
         importer.parent / token,
@@ -1112,6 +1277,11 @@ def _resolve_cpp_quoted_include(workspace: Path, importer: Path, include_path: s
     ):
         try:
             resolved = candidate.resolve()
+            # Parent-relative quoted includes are valid C/C++ (for example,
+            # ``src/x.cpp`` including ``../include/x.hpp``). Authorize the
+            # resolved path, not the raw token: in-workspace parents remain
+            # readable evidence while traversal or symlink escape stays
+            # fail-closed.
             resolved.relative_to(workspace)
         except (OSError, ValueError):
             continue
@@ -1152,9 +1322,10 @@ _CPP_CONTROL_FUNCTION_NAMES = frozenset(
     {"if", "for", "while", "switch", "catch", "else", "return", "sizeof", "static_assert"}
 )
 _CPP_DEFINED_FUNCTION_RE = re.compile(
-    r"^(?:template\s*<[^>]*>\s*)?(?:inline\s+)?(?:constexpr\s+)?(?:static\s+)?"
-    r"(?:[\w:<>,\s*&]+?)\s+(?P<name>[A-Za-z_]\w*)\s*\([^;{]*\)\s*"
-    r"(?:const\s*)?(?:noexcept(?:\s*\([^)]*\))?\s*)?\{",
+    r"^[ \t]*(?:template\s*<[^>]*>\s*)?(?:inline[ \t]+)?(?:constexpr[ \t]+)?(?:static[ \t]+)?"
+    r"(?:[\w:<>,*&]+(?:[ \t]+[\w:<>,*&]+)*)[ \t]+"
+    r"(?:(?:[A-Za-z_]\w*)::)*(?P<name>[A-Za-z_]\w*)[ \t]*\([^;{]*\)[ \t\r\n]*"
+    r"(?:const[ \t\r\n]*)?(?:noexcept(?:[ \t]*\([^)]*\))?[ \t\r\n]*)?\{",
     re.MULTILINE,
 )
 _CPP_DECLARED_FUNCTION_RE = re.compile(
@@ -1201,6 +1372,7 @@ def _cpp_defined_and_declaration_only_names(
     *,
     workspace: Path,
     headers: list[Path],
+    repair_target_files: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Split included-header APIs into defined vs declaration-only aliases.
 
@@ -1211,6 +1383,18 @@ def _cpp_defined_and_declaration_only_names(
 
     defined: list[str] = []
     declared: list[str] = []
+    repair_implementations: list[Path] = []
+    for raw_path in repair_target_files or []:
+        rel = _normalize_declared_task_path(raw_path)
+        if not rel or Path(rel).suffix.lower() not in {".c", ".cc", ".cpp", ".cxx"}:
+            continue
+        try:
+            candidate = (workspace / rel).resolve()
+            candidate.relative_to(workspace)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if candidate.is_file() and candidate not in repair_implementations:
+            repair_implementations.append(candidate)
     for header in headers:
         try:
             header_text = header.read_text(encoding="utf-8")
@@ -1219,42 +1403,59 @@ def _cpp_defined_and_declaration_only_names(
         for name in _cpp_declared_function_names(header_text):
             if name not in declared:
                 declared.append(name)
+        implementation_candidates = list(repair_implementations)
         sibling = _cpp_sibling_implementation_path(header)
-        if sibling is None:
-            continue
-        try:
-            sibling_text = sibling.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        for name in _cpp_defined_function_names(sibling_text):
-            if name not in defined:
-                defined.append(name)
+        if sibling is not None and sibling not in implementation_candidates:
+            implementation_candidates.append(sibling)
+        for implementation in implementation_candidates:
+            try:
+                implementation_text = implementation.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for name in _cpp_defined_function_names(implementation_text):
+                if name not in defined:
+                    defined.append(name)
     declaration_only = [name for name in declared if name not in set(defined)]
     return defined, declaration_only
 
 
-def _cpp_header_public_api_excerpt(text: str, *, budget: int = 1800) -> str:
-    """Keep enum/class declarations and existing label/parser signatures."""
+def _cpp_header_public_api_excerpt(text: str, *, budget: int = 3600) -> str:
+    """Keep complete enum/class/struct contracts plus free API signatures.
+
+    A declaration opener without its body is actively misleading during a
+    source-only repair: the Director cannot know which methods are inline or
+    which members are actually declared. Preserve each balanced declaration
+    block so read-only sibling headers remain authoritative without injecting
+    unrelated whole-file prose/preprocessor noise.
+    """
 
     lines = str(text or "").splitlines()
     kept: list[str] = []
     used = 0
-    capture_enum = 0
+    capturing_declaration = False
+    declaration_brace_depth = 0
+    declaration_open_seen = False
     for line in lines:
         stripped = line.strip()
         keep = False
-        if re.match(r"^(?:enum\s+class|enum|struct|class)\s+[A-Z]", stripped):
+        starts_declaration = bool(re.match(r"^(?:enum\s+class|enum|struct|class)\s+[A-Za-z_]", stripped))
+        if starts_declaration:
+            capturing_declaration = True
+            declaration_brace_depth = 0
+            declaration_open_seen = False
+
+        if capturing_declaration:
             keep = True
-            capture_enum = 8 if stripped.startswith("enum") else 0
-        elif capture_enum > 0:
-            keep = bool(stripped) and not stripped.startswith("#")
-            capture_enum -= 1
-            if "}" in stripped:
-                capture_enum = 0
-        elif stripped.startswith("[[nodiscard]]") or re.match(
-            r"^(?:inline\s+)?(?:constexpr\s+)?(?:bool|void|std::string_view|std::string)\s+\w+(?:_label|try_parse_\w*)?\s*\(",
-            stripped,
-        ):
+            opens = line.count("{")
+            closes = line.count("}")
+            if opens:
+                declaration_open_seen = True
+            declaration_brace_depth += opens - closes
+            if (declaration_open_seen and declaration_brace_depth <= 0 and "}" in line) or (
+                not declaration_open_seen and ";" in stripped
+            ):
+                capturing_declaration = False
+        elif _CPP_DECLARED_FUNCTION_RE.match(stripped):
             keep = True
         if not keep:
             continue
@@ -1310,12 +1511,15 @@ def _cpp_included_header_api_block(
     blocks: list[str] = []
     header_texts: list[str] = []
     used = 0
-    total_budget = 6000
+    total_budget = 12000
     for header in headers[:8]:
         try:
             rel = header.relative_to(workspace).as_posix()
             header_text = header.read_text(encoding="utf-8")
-            excerpt = _cpp_header_public_api_excerpt(header_text)
+            excerpt = _cpp_header_public_api_excerpt(
+                header_text,
+                budget=min(3600, max(0, total_budget - used)),
+            )
         except (OSError, UnicodeDecodeError, ValueError):
             continue
         header_texts.append(header_text)
@@ -1333,6 +1537,7 @@ def _cpp_included_header_api_block(
     defined_names, declaration_only = _cpp_defined_and_declaration_only_names(
         workspace=workspace,
         headers=headers,
+        repair_target_files=repair_target_files,
     )
     defined_table = ""
     if defined_names:
@@ -1773,9 +1978,7 @@ def _go_same_package_definition_context_blocks(
             used += len(excerpt)
             blocks.append(
                 f"--- {rel} GO SAME-PACKAGE DEFINITIONS (READ-ONLY; DECLARATIONS ONLY) ---\n"
-                "```text\n"
-                + excerpt
-                + "\n```"
+                "```text\n" + excerpt + "\n```"
             )
     return blocks
 
@@ -2725,8 +2928,10 @@ def _build_full_verifier_diagnostics_block(
     return (
         "FULL VERIFIER DIAGNOSTICS (context, not extra target scope):\n"
         "These are all verifier/artifact failures for this repair round, including failures outside "
-        "the current target batch. Keep the named repair target scope unless a coherent type fix in "
-        "that scope must account for these diagnostics.\n"
+        "the current target batch. They are read-only regression context, not action items. "
+        "Do NOT attempt to fix failures whose causal owner is outside the authorized target paths. "
+        "Only use an outside diagnostic to avoid regressing an already-observed contract while "
+        "repairing the target-scoped Quality errors below.\n"
         f"{full_lines}\n"
     )
 
@@ -2862,44 +3067,77 @@ def _build_materialization_quality_repair_message(
     normalized_regression_guards = [
         str(item or "").strip() for item in (regression_guard_errors or []) if str(item or "").strip()
     ][:6]
+    regression_compiler_constraints, regression_behavior_guards = _historical_diagnostic_prompt_parts(
+        normalized_regression_guards,
+        current_errors=artifact_quality_errors,
+        workspace_full=workspace_full,
+    )
     regression_guard_block = ""
     regression_guard_source_context_block = ""
-    if normalized_regression_guards:
-        guard_lines = "\n".join(
-            f"- {_format_quality_error_for_repair_prompt(item)}" for item in normalized_regression_guards
+    if regression_compiler_constraints or regression_behavior_guards:
+        compiler_guard_lines = "\n".join(
+            f"- RESOLVED compiler guard; do not act on it: {item}" for item in regression_compiler_constraints[:8]
         )
+        behavior_guard_lines = "\n".join(
+            f"- {_format_quality_error_for_repair_prompt(item)}" for item in regression_behavior_guards[:6]
+        )
+        guard_lines = "\n".join(item for item in (compiler_guard_lines, behavior_guard_lines) if item)
         regression_guard_block = (
             "REGRESSION GUARDS FROM THE PREVIOUS REPAIR ROUND:\n"
             "These diagnostics failed before the previous edit and then disappeared. "
-            "Keep them fixed while resolving the current Quality errors. They are read-only "
-            "behavior constraints and do not expand authorized tool paths.\n"
+            "Keep them fixed while resolving the current Quality errors. They are negative, read-only "
+            "constraints, NOT current repair targets, and do not expand authorized tool paths. "
+            "Never edit solely to address a resolved compiler guard.\n"
             f"{guard_lines}\n"
         )
-        regression_guard_source_context_block = _verifier_source_context_block(
-            workspace_full=workspace_full,
-            artifact_quality_errors=normalized_regression_guards,
-            repair_target_files=prompt_repair_target_files,
-            heading="REGRESSION GUARD VERIFIER SOURCE CONTEXT",
-            include_go_sibling_contract=False,
-        )
+        # Named behavior guards still need fixture/setup context for A/B
+        # synthesis. Compiler guards do not: their old source windows are
+        # executable-looking stale context and caused L3-24 r45 to repair an
+        # already-closed include error for three consecutive rounds.
+        if regression_behavior_guards:
+            regression_guard_source_context_block = _verifier_source_context_block(
+                workspace_full=workspace_full,
+                artifact_quality_errors=regression_behavior_guards,
+                repair_target_files=prompt_repair_target_files,
+                heading="REGRESSION GUARD VERIFIER SOURCE CONTEXT",
+                include_go_sibling_contract=False,
+            )
     normalized_candidate_rejections = [
-        str(item or "").strip()
-        for item in (candidate_rejection_errors or [])
-        if str(item or "").strip()
+        str(item or "").strip() for item in (candidate_rejection_errors or []) if str(item or "").strip()
     ][:4]
+    candidate_compiler_constraints, candidate_behavior_rejections = _historical_diagnostic_prompt_parts(
+        normalized_candidate_rejections,
+        current_errors=artifact_quality_errors,
+        workspace_full=workspace_full,
+    )
     candidate_rejection_block = ""
-    if normalized_candidate_rejections:
-        rejection_lines = "\n".join(
-            f"- {_format_quality_error_for_repair_prompt(item)}"
-            for item in normalized_candidate_rejections
+    candidate_rejection_source_context_block = ""
+    if candidate_compiler_constraints or candidate_behavior_rejections:
+        compiler_rejection_lines = "\n".join(
+            f"- REJECTED-ONLY compiler signature; do not repair as current: {item}"
+            for item in candidate_compiler_constraints[:8]
         )
+        behavior_rejection_lines = "\n".join(
+            f"- {_format_quality_error_for_repair_prompt(item)}" for item in candidate_behavior_rejections[:4]
+        )
+        rejection_lines = "\n".join(item for item in (compiler_rejection_lines, behavior_rejection_lines) if item)
         candidate_rejection_block = (
             "PREVIOUS CANDIDATE REJECTED BEFORE COMMIT:\n"
             "The precommit syntax/compile guard rejected the previous candidate and kept the workspace unchanged. "
-            "Use the diagnostic below to choose a different valid edit; do not repeat that rejected edit. "
+            "The signatures below describe rolled-back bytes, not the current file. Use them only as negative "
+            "constraints while fixing the current Quality errors; do not repeat that rejected edit and never "
+            "edit solely to clear a rejected-only signature. "
             "This feedback does not expand authorized tool paths.\n"
             f"{rejection_lines}\n"
         )
+        if candidate_behavior_rejections:
+            candidate_rejection_source_context_block = _verifier_source_context_block(
+                workspace_full=workspace_full,
+                artifact_quality_errors=candidate_behavior_rejections,
+                repair_target_files=prompt_repair_target_files,
+                heading="REJECTED CANDIDATE VERIFIER SOURCE CONTEXT",
+                include_go_sibling_contract=False,
+            )
     causal_reanalysis_block = ""
     if causal_reanalysis_required:
         causal_reanalysis_block = (
@@ -3253,6 +3491,7 @@ def _build_materialization_quality_repair_message(
         f"{verifier_source_context_block}"
         f"{regression_guard_block}"
         f"{candidate_rejection_block}"
+        f"{candidate_rejection_source_context_block}"
         f"{regression_guard_source_context_block}"
         f"{causal_reanalysis_block}"
         f"{referenced_definition_context_block}"
@@ -3278,8 +3517,9 @@ def _build_materialization_quality_repair_message(
         "its definition already exists in the CURRENT UTF-8 CONTENT or READ-ONLY referenced definition files. "
         "Use existing variants/methods/fields only. Never invent members. Never edit READ-ONLY files. "
         "Only edit authorized write targets.\n"
-        "- Cover every listed verifier diagnostic, preserve already-passing behavior, and do not trade one failure "
-        "for a new unresolved symbol or runtime exception.\n"
+        "- Cover every target-scoped Quality error listed below. Treat FULL VERIFIER DIAGNOSTICS as read-only "
+        "regression context; do not attempt unrelated failures in the authorized target. Preserve already-passing "
+        "behavior and do not trade one failure for a new unresolved symbol or runtime exception.\n"
         "- A verifier failure guard `if <condition> { fail(...) }` passes only when `<condition>` becomes false. "
         "Derive the required result from the executable condition and its setup/calls; comments are secondary and "
         "must never override the executable assertion.\n"

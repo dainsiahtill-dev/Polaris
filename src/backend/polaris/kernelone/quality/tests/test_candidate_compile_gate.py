@@ -55,3 +55,38 @@ def test_allows_candidate_that_reduces_existing_go_diagnostics(tmp_path: Path) -
     assert result.after_ok is False
     assert result.regression is False
 
+
+def test_rejects_rust_candidate_that_breaks_compile_green_workspace(tmp_path: Path) -> None:
+    """A Rust quality repair must not commit a newly invented API call.
+
+    Exact L3-23 r19 was compile-green before QA repair.  The forced edit then
+    inserted ``PatienceTracker::add`` even though that method did not exist,
+    leaving three E0599 diagnostics on disk.  The candidate compile gate must
+    detect that regression in a shadow crate before the Director tool commits
+    the physical edit.
+    """
+
+    (tmp_path / "Cargo.toml").write_text(
+        '[package]\nname = "candidate-rust"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "src" / "lib.rs"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "pub struct Tracker;\n\nimpl Tracker {\n    pub fn len(&self) -> usize { 0 }\n}\n",
+        encoding="utf-8",
+    )
+    candidate = (
+        "pub struct Tracker;\n\n"
+        "impl Tracker {\n    pub fn len(&self) -> usize { 0 }\n}\n\n"
+        "pub fn seed(tracker: &Tracker) { tracker.add(); }\n"
+    )
+
+    result = check_candidate_workspace_compile(tmp_path, "src/lib.rs", candidate)
+
+    assert result.checked is True
+    assert result.before_ok is True
+    assert result.after_ok is False
+    assert result.regression is True
+    assert result.command[:2] == ("cargo", "check")
+    assert "no method named `add`" in result.error

@@ -15,8 +15,10 @@ from polaris.cells.audit.diagnosis.public.service import (
     _context_snapshot_refs,
     _event_correlated_run_ids,
     _event_matches_run_id,
+    _factory_run_pinned_context_refs,
     _file_deficits_from_final_request,
     _file_deficits_from_request_metadata,
+    _provider_audit_projection,
     _repair_evidence_from_workspace,
     _structured_failure_signals,
     query_audit_diagnosis_trail,
@@ -83,6 +85,56 @@ def test_structured_request_metadata_is_preferred_for_file_deficits() -> None:
     ]
 
 
+def test_effective_depth_failure_does_not_resurrect_waived_file_count() -> None:
+    """Regression: L3-24 r25 failed only lines; source coverage waived files."""
+
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    "delivery_depth_contract_failed: implementation depth metrics: "
+                    "prod_files=4, prod_lines=424, test_files=3, "
+                    "minimums={'min_prod_files': 7, 'min_prod_lines': 650}; "
+                    "failures: production_source_lines=424 < 650"
+                ),
+            }
+        ],
+        "tools": [{"type": "function", "function": {"name": "edit_file"}}],
+        "final_request_context_audit": {
+            "request_metadata_summary": {
+                "failed_gate_evidence_summary": {
+                    "quality_metrics": {"prod_files": 4, "prod_lines": 424, "test_files": 3},
+                    "quality_minimums": {"min_prod_files": 7, "min_prod_lines": 650},
+                }
+            }
+        },
+    }
+    result = SimpleNamespace(
+        ok=True,
+        status="ok",
+        context_snapshot_ref="0123456789abcdef01234567",
+        error_code=None,
+        payload=payload,
+    )
+
+    projection = _provider_audit_projection(result)
+
+    assert projection["file_deficits"] == []
+
+
+def test_explicit_failed_quality_metrics_filter_structured_inventory() -> None:
+    request_metadata = {
+        "failed_gate_evidence_summary": {
+            "quality_metrics": {"prod_files": 4, "prod_lines": 424, "test_files": 3},
+            "quality_minimums": {"min_prod_files": 7, "min_prod_lines": 650},
+            "failed_quality_metrics": ["prod_lines"],
+        }
+    }
+
+    assert _file_deficits_from_request_metadata(request_metadata) == []
+
+
 def test_context_snapshot_selection_preserves_each_role_under_long_director_tail() -> None:
     pm_ref = "000000000000000000000001"
     ce_ref = "000000000000000000000002"
@@ -95,6 +147,40 @@ def test_context_snapshot_selection_preserves_each_role_under_long_director_tail
     refs = _context_snapshot_refs(events, limit=3)
 
     assert refs == [pm_ref, ce_ref, f"{29:024x}"]
+
+
+def test_context_snapshot_selection_uses_actor_role() -> None:
+    pm_ref = "000000000000000000000001"
+
+    assert _context_snapshot_refs([{"actor": "pm", "context_snapshot_ref": pm_ref}]) == [pm_ref]
+
+
+def test_exact_run_pins_prefer_final_physical_snapshot_per_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    prewire = "000000000000000000000001"
+    physical = "000000000000000000000002"
+    monkeypatch.setattr(
+        diagnosis_service,
+        "query_factory_run_context_snapshots",
+        lambda _query: SimpleNamespace(
+            ok=True,
+            pins=(
+                {
+                    "role": "pm",
+                    "context_snapshot_ref": prewire,
+                    "snapshot_source": "roles.kernel.final_provider_attempt",
+                },
+                {
+                    "role": "pm",
+                    "context_snapshot_ref": physical,
+                    "snapshot_source": "roles.kernel.final_physical_provider_request",
+                },
+            ),
+        ),
+    )
+
+    assert _factory_run_pinned_context_refs(workspace="/tmp/project", factory_run_id="factory-exact") == [
+        physical
+    ]
 
 
 def test_structured_failure_signal_uses_typed_fields_not_message_prose() -> None:

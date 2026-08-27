@@ -664,10 +664,6 @@ def _assert_terminal_reconcile_result_shape(
     return row, error, event
 
 
-
-
-
-
 def test_task_runtime_service_normalizes_task_ids() -> None:
     assert TaskRuntimeService.normalize_task_id("task-12") == 12
     assert TaskRuntimeService.normalize_task_id("12") == 12
@@ -1140,6 +1136,98 @@ def test_append_execution_event_omits_session_write_receipt_for_wrong_session_id
     assert isinstance(details, dict)
     assert "session_write_receipt" not in details
     assert details["source"] == "stale-session-receipt-test"
+
+
+def test_non_terminal_control_events_do_not_reuse_terminal_session_transition_id(
+    tmp_path: Path,
+) -> None:
+    """Distinct recovery actions may cite one terminal session without colliding.
+
+    Live L3-23 r19 emitted multiple ProjectCompletion owner-rework actions for
+    one failed Director session. ``same_task_local_rework_prepared`` reused the
+    session's terminal transition id, so the second action hit a FactStream
+    idempotency conflict even though its action id and payload were different.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    task = service.create_task_row(subject="terminal-session control-event task")
+    task_id = int(task["id"])
+    session = TaskExecutionSession.create(
+        task_id=task_id,
+        role_id="director",
+        worker_id="director-worker",
+        run_id="factory-current",
+        lease_ttl_seconds=120,
+        attempt=1,
+        resume_count=0,
+        origin="unit",
+        selection_source="unit",
+    )
+    session.mark_failed(error="compile failed")
+
+    first = service._append_execution_event(
+        "same_task_local_rework_prepared",
+        task_row=task,
+        session=session,
+        details={"action_id": "a" * 64},
+    )
+    second = service._append_execution_event(
+        "same_task_local_rework_prepared",
+        task_row=task,
+        session=session,
+        details={"action_id": "b" * 64},
+    )
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert first["fact_event_id"] != second["fact_event_id"]
+    first_payload = _execution_event_payload_for_result(
+        workspace,
+        first,
+        event_type="same_task_local_rework_prepared",
+    )
+    second_payload = _execution_event_payload_for_result(
+        workspace,
+        second,
+        event_type="same_task_local_rework_prepared",
+    )
+    assert first_payload["idempotency_key"] != second_payload["idempotency_key"]
+    assert session.terminal_transition_id not in first_payload["idempotency_key"]
+    assert session.terminal_transition_id not in second_payload["idempotency_key"]
+
+
+def test_terminal_outcome_event_keeps_terminal_session_transition_id(tmp_path: Path) -> None:
+    """Actual terminal outcome projection remains stable and idempotent."""
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    task = service.create_task_row(subject="terminal-outcome task")
+    session = TaskExecutionSession.create(
+        task_id=int(task["id"]),
+        role_id="director",
+        worker_id="director-worker",
+        run_id="factory-current",
+        lease_ttl_seconds=120,
+        attempt=1,
+        resume_count=0,
+        origin="unit",
+        selection_source="unit",
+    )
+    session.mark_failed(error="compile failed")
+
+    event = service._append_execution_event(
+        "failed",
+        task_row=task,
+        session=session,
+        details={"error": "compile failed"},
+    )
+
+    assert event["ok"] is True
+    payload = _execution_event_payload_for_result(workspace, event, event_type="failed")
+    assert payload["idempotency_key"].endswith(session.terminal_transition_id)
 
 
 def test_write_session_terminal_preserved_path_writes_while_holding_session_file_lock(
@@ -2149,4 +2237,3 @@ def test_task_row_read_model_projection_parity_coverage_prefers_fact_over_stale_
         fact_only_row_ids=[],
         row_ids_with_projection_mismatch=[],
     )
-

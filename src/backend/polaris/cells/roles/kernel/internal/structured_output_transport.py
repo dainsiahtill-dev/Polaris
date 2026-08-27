@@ -519,6 +519,33 @@ def _unwrap_singleton_item_wrapper(value: Any) -> Any | None:
     return value[keys[0]]
 
 
+def _normalize_schema_proven_root_item_wrapper(
+    value: Any,
+    schema: Mapping[str, Any],
+) -> tuple[Any, bool]:
+    """Unwrap one provider-added root ``item`` envelope for a closed object.
+
+    This recovery is deliberately root-only.  The caller schema must prove a
+    closed object that does not itself declare ``item``/``items``; the payload
+    must contain exactly that one wrapper; and the wrapped value must remain an
+    object for the existing recursive normalizers and final strict validation.
+    Nested object fields keep their original fail-closed semantics.
+    """
+
+    if not _schema_type_includes(schema, "object"):
+        return value, False
+    if schema.get("additionalProperties") is not False:
+        return value, False
+    properties = schema.get("properties")
+    declared = properties if isinstance(properties, Mapping) else {}
+    if any(key in declared for key in _SINGLETON_ITEM_WRAPPER_KEYS):
+        return value, False
+    wrapped = _unwrap_singleton_item_wrapper(value)
+    if not isinstance(wrapped, Mapping):
+        return value, False
+    return dict(wrapped), True
+
+
 def _normalize_schema_proven_singleton_item_wrapper(
     value: Any,
     schema: Mapping[str, Any],
@@ -571,6 +598,186 @@ def _normalize_schema_proven_singleton_item_wrapper(
                 result[key] = normalized_child
                 changed = True
         return result, changed
+
+    return value, False
+
+
+def _normalize_schema_proven_map_item_chain(
+    value: Any,
+    schema: Mapping[str, Any],
+    *,
+    path: tuple[str, ...] = (),
+) -> tuple[Any, bool, tuple[str, ...]]:
+    """Recover a pure JSON map serialized as a recursive ``item`` chain.
+
+    Some Anthropic-compatible strict-tool providers cannot express an object
+    whose values are governed only by ``additionalProperties``.  They encode
+    the map as a linked wrapper instead::
+
+        {"item": {"TASK-1": {"item": ["INV-1"]},
+                  "item": {"TASK-2": {"item": ["INV-2"]}}}}
+
+    Flatten that envelope only when the caller schema proves a *pure* map
+    (no declared properties and a schema-valued ``additionalProperties``),
+    every chain node carries exactly one semantic key plus at most one
+    continuation wrapper, every value independently satisfies the map value
+    schema after ordinary singleton-array normalization, no key repeats, and
+    the complete reconstructed map validates.  Any ambiguity remains
+    fail-closed under the original payload.
+    """
+
+    if _schema_type_includes(schema, "array"):
+        normalized_array, array_changed = _normalize_schema_proven_singleton_item_wrapper(value, schema)
+        if not isinstance(normalized_array, list):
+            return value, False, ()
+        item_schema = schema.get("items")
+        if not isinstance(item_schema, Mapping):
+            return normalized_array, array_changed, ()
+        result_items: list[Any] = []
+        changed = array_changed
+        array_paths: list[str] = []
+        for index, item in enumerate(normalized_array):
+            normalized_item, item_changed, item_paths = _normalize_schema_proven_map_item_chain(
+                item,
+                item_schema,
+                path=(*path, str(index)),
+            )
+            result_items.append(normalized_item)
+            changed = changed or item_changed
+            array_paths.extend(item_paths)
+        return result_items, changed, tuple(array_paths)
+
+    if not (_schema_type_includes(schema, "object") and isinstance(value, Mapping)):
+        return value, False, ()
+
+    properties = schema.get("properties")
+    declared = properties if isinstance(properties, Mapping) else {}
+    additional = schema.get("additionalProperties")
+
+    if not declared and isinstance(additional, Mapping):
+        wrapped = _unwrap_singleton_item_wrapper(value)
+        if isinstance(wrapped, Mapping):
+            flattened: dict[str, Any] = {}
+            cursor: Mapping[str, Any] = wrapped
+            valid_chain = True
+            while True:
+                wrapper_keys = [key for key in cursor if str(key) in _SINGLETON_ITEM_WRAPPER_KEYS]
+                semantic_keys = [key for key in cursor if str(key) not in _SINGLETON_ITEM_WRAPPER_KEYS]
+                if len(wrapper_keys) > 1 or len(semantic_keys) != 1:
+                    valid_chain = False
+                    break
+                raw_semantic_key = semantic_keys[0]
+                semantic_key = str(raw_semantic_key).strip()
+                if not semantic_key or semantic_key in flattened:
+                    valid_chain = False
+                    break
+                normalized_child, _child_changed, _child_paths = _normalize_schema_proven_map_item_chain(
+                    cursor[raw_semantic_key],
+                    additional,
+                    path=(*path, semantic_key),
+                )
+                if not _payload_matches_schema(normalized_child, additional):
+                    valid_chain = False
+                    break
+                flattened[semantic_key] = normalized_child
+                if not wrapper_keys:
+                    break
+                next_cursor = cursor[wrapper_keys[0]]
+                if not isinstance(next_cursor, Mapping):
+                    valid_chain = False
+                    break
+                cursor = next_cursor
+            if valid_chain and flattened and _payload_matches_schema(flattened, schema):
+                normalized_path = ".".join(path) or "$"
+                return flattened, True, (normalized_path,)
+
+    result = dict(value)
+    changed = False
+    object_paths: list[str] = []
+    for raw_key, child_value in tuple(result.items()):
+        child_schema = declared.get(raw_key)
+        if not isinstance(child_schema, Mapping) and isinstance(additional, Mapping):
+            child_schema = additional
+        if not isinstance(child_schema, Mapping):
+            continue
+        normalized_child, child_changed, child_paths = _normalize_schema_proven_map_item_chain(
+            child_value,
+            child_schema,
+            path=(*path, str(raw_key)),
+        )
+        if child_changed:
+            result[raw_key] = normalized_child
+            changed = True
+        object_paths.extend(child_paths)
+    return result, changed, tuple(object_paths)
+
+
+def _normalize_schema_proven_self_named_empty_wrapper(
+    value: Any,
+    schema: Mapping[str, Any],
+    *,
+    field_name: str | None = None,
+) -> tuple[Any, bool]:
+    """Drop only an empty scalar wrapper that repeats its declared field name.
+
+    Some Provider tool transports encode an empty object field as
+    ``{"field": {"field": ""}}``.  When the outer schema proves that ``field``
+    is an empty-allowed object/array, the repeated key carries no semantic
+    content and can be reduced to the corresponding empty container.  A
+    non-empty value, siblings, or a non-empty schema remains untouched and is
+    validated fail-closed.
+    """
+
+    expected_type = _schema_container_type(schema)
+    if (
+        field_name
+        and expected_type is not None
+        and isinstance(value, Mapping)
+        and list(value) == [field_name]
+    ):
+        wrapped = value[field_name]
+        scalar_empty = wrapped is None or (isinstance(wrapped, str) and not wrapped.strip())
+        empty_value: dict[str, Any] | list[Any] = {} if expected_type is dict else []
+        if scalar_empty and _payload_matches_schema(empty_value, schema):
+            return empty_value, True
+
+    schema_type = schema.get("type")
+    if schema_type == "object" and isinstance(value, Mapping):
+        result = dict(value)
+        properties = schema.get("properties")
+        declared = properties if isinstance(properties, Mapping) else {}
+        additional = schema.get("additionalProperties")
+        changed = False
+        for raw_key, child_value in tuple(result.items()):
+            child_schema = declared.get(raw_key)
+            if not isinstance(child_schema, Mapping) and isinstance(additional, Mapping):
+                child_schema = additional
+            if not isinstance(child_schema, Mapping):
+                continue
+            normalized_child, child_changed = _normalize_schema_proven_self_named_empty_wrapper(
+                child_value,
+                child_schema,
+                field_name=str(raw_key),
+            )
+            if child_changed:
+                result[raw_key] = normalized_child
+                changed = True
+        return result, changed
+
+    if schema_type == "array" and isinstance(value, list):
+        item_schema = schema.get("items")
+        if not isinstance(item_schema, Mapping):
+            return value, False
+        result_items: list[Any] = []
+        changed = False
+        for item in value:
+            normalized_item, item_changed = _normalize_schema_proven_self_named_empty_wrapper(
+                item,
+                item_schema,
+            )
+            result_items.append(normalized_item)
+            changed = changed or item_changed
+        return result_items, changed
 
     return value, False
 
@@ -739,6 +946,95 @@ def _insert_displaced_object_member(
     return True
 
 
+def _declared_descendant_values(
+    value: Any,
+    schema: Mapping[str, Any],
+    property_name: str,
+    *,
+    path: tuple[str, ...] = (),
+) -> tuple[Any, ...]:
+    """Collect present values for one schema-declared descendant property."""
+
+    if _schema_type_includes(schema, "array") and isinstance(value, list):
+        item_schema = schema.get("items")
+        if not isinstance(item_schema, Mapping):
+            return ()
+        matches: list[Any] = []
+        for index, item in enumerate(value):
+            matches.extend(
+                _declared_descendant_values(
+                    item,
+                    item_schema,
+                    property_name,
+                    path=(*path, str(index)),
+                )
+            )
+        return tuple(matches)
+
+    if not (_schema_type_includes(schema, "object") and isinstance(value, Mapping)):
+        return ()
+    properties = schema.get("properties")
+    declared = properties if isinstance(properties, Mapping) else {}
+    additional = schema.get("additionalProperties")
+    matches = []
+    for raw_key, child_value in value.items():
+        child_schema = declared.get(raw_key)
+        if not isinstance(child_schema, Mapping) and isinstance(additional, Mapping):
+            child_schema = additional
+        if not isinstance(child_schema, Mapping):
+            continue
+        key = str(raw_key)
+        if path and key == property_name:
+            matches.append(child_value)
+        matches.extend(
+            _declared_descendant_values(
+                child_value,
+                child_schema,
+                property_name,
+                path=(*path, key),
+            )
+        )
+    return tuple(matches)
+
+
+def _normalize_schema_proven_duplicate_root_members(
+    payload: Mapping[str, Any],
+    json_schema: Mapping[str, Any],
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Drop only root members that duplicate an existing declared descendant.
+
+    Anthropic-compatible result-tool transports can repeat a nested scalar at
+    the strict root after correctly serializing the nested object/array.  A
+    same-named field is transport noise only when its canonical JSON value is
+    already present under a schema-declared descendant path.  Non-duplicates
+    remain untouched and therefore fail closed during final schema validation.
+    """
+
+    if json_schema.get("additionalProperties") is not False:
+        return dict(payload), ()
+    properties = json_schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return dict(payload), ()
+    declared_root = {str(key) for key in properties}
+    candidate = deepcopy(dict(payload))
+    removed: list[str] = []
+    for raw_key, root_value in tuple(candidate.items()):
+        key = str(raw_key)
+        if key in declared_root:
+            continue
+        descendant_values = _declared_descendant_values(candidate, json_schema, key)
+        root_canonical = _canonical_json_value(root_value)
+        if any(_canonical_json_value(value) == root_canonical for value in descendant_values):
+            candidate.pop(raw_key, None)
+            removed.append(key)
+    if removed:
+        logger.warning(
+            "structured_output_duplicate_root_members_recovered: removed=%s",
+            sorted(removed),
+        )
+    return candidate, tuple(sorted(removed))
+
+
 def _normalize_schema_proven_displaced_root_members(
     payload: Mapping[str, Any],
     json_schema: Mapping[str, Any],
@@ -865,6 +1161,19 @@ def _validate_payload_with_normalization(
     if not isinstance(schema, Mapping):
         raise ValueError("structured_output_json_schema_must_be_object")
     normalized, normalization_policy = _normalize_schema_proven_json_containers(payload, schema)
+    normalized_root_wrapper, root_wrapper_changed = _normalize_schema_proven_root_item_wrapper(
+        normalized,
+        schema,
+    )
+    if not isinstance(normalized_root_wrapper, dict):
+        raise ValueError("structured_output_payload_must_be_json_object")
+    normalized = normalized_root_wrapper
+    if root_wrapper_changed:
+        normalization_policy = (
+            f"{normalization_policy}+schema_proven_root_item_wrapper_v1"
+            if normalization_policy != "none"
+            else "schema_proven_root_item_wrapper_v1"
+        )
     normalized_item_wrapper, item_wrapper_changed = _normalize_schema_proven_singleton_item_wrapper(
         normalized,
         schema,
@@ -878,6 +1187,22 @@ def _validate_payload_with_normalization(
             if normalization_policy != "none"
             else "schema_proven_singleton_item_wrapper_v1"
         )
+    normalized_map_chain, map_chain_changed, map_chain_paths = _normalize_schema_proven_map_item_chain(
+        normalized,
+        schema,
+    )
+    if not isinstance(normalized_map_chain, dict):
+        raise ValueError("structured_output_payload_must_be_json_object")
+    normalized = normalized_map_chain
+    normalization_details: dict[str, Any] = {}
+    if map_chain_changed:
+        normalization_policy = (
+            f"{normalization_policy}+schema_proven_map_item_chain_v1"
+            if normalization_policy != "none"
+            else "schema_proven_map_item_chain_v1"
+        )
+        if map_chain_paths:
+            normalization_details["map_item_chain_paths"] = list(map_chain_paths)
     normalized_text_noise, text_noise_changed = _normalize_schema_closed_object_text_noise(normalized, schema)
     if not isinstance(normalized_text_noise, dict):
         raise ValueError("structured_output_payload_must_be_json_object")
@@ -888,7 +1213,31 @@ def _validate_payload_with_normalization(
             if normalization_policy != "none"
             else "schema_proven_closed_object_text_noise_v1"
         )
-    normalization_details: dict[str, Any] = {}
+    normalized_self_wrapper, self_wrapper_changed = _normalize_schema_proven_self_named_empty_wrapper(
+        normalized,
+        schema,
+    )
+    if not isinstance(normalized_self_wrapper, dict):
+        raise ValueError("structured_output_payload_must_be_json_object")
+    normalized = normalized_self_wrapper
+    if self_wrapper_changed:
+        normalization_policy = (
+            f"{normalization_policy}+schema_proven_self_named_empty_wrapper_v1"
+            if normalization_policy != "none"
+            else "schema_proven_self_named_empty_wrapper_v1"
+        )
+    normalized_duplicate_root, duplicate_root_members = _normalize_schema_proven_duplicate_root_members(
+        normalized,
+        schema,
+    )
+    normalized = normalized_duplicate_root
+    if duplicate_root_members:
+        normalization_policy = (
+            f"{normalization_policy}+schema_proven_duplicate_root_members_v1"
+            if normalization_policy != "none"
+            else "schema_proven_duplicate_root_members_v1"
+        )
+        normalization_details["duplicate_root_members"] = list(duplicate_root_members)
     (
         normalized_displaced,
         displaced_changed,

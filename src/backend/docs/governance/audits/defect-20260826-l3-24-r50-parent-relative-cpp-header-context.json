@@ -1,0 +1,72 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-R50-PARENT-RELATIVE-CPP-HEADER-CONTEXT",
+  "status": "FIXED_EXACT_REPLAY_LIVE_PENDING",
+  "severity": "P0",
+  "recorded_at": "2026-08-26T23:58:00+08:00",
+  "repository_head": "f3d3bb63284015b958719039b159c2d6a032d015",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_9608917f89f8",
+  "workspace": "/tmp/factory-bench-l3-24-r50/workspaces/c2a39d24ff08-14d575386fffc80a/L3-24-023d7314133040b6/f0cde549bc07130613983857",
+  "symptom": "Director made one verifier-improving C++ repair, then two later src/ink_ledger.cpp edits invented or changed declarations incompatible with the existing header and were rolled back; a third attempt produced no write, ending in three_nonprogress_repairs_without_verified_progress.",
+  "dynamic_evidence": {
+    "quality_report": ".polaris/runtime/qa/workspace-validation.json",
+    "factory_outcome": "QA_FAILED",
+    "repair_target": "src/ink_ledger.cpp",
+    "include_token": "../include/core_engine/ink_ledger.hpp",
+    "repair_rounds": {
+      "round_2": "progress; compilation became green",
+      "round_3": "candidate_rejected_rolled_back after declaration mismatch",
+      "round_4": "no_op with no write effect",
+      "round_5": "candidate_rejected_rolled_back after declaration mismatch"
+    },
+    "final_request": {
+      "role_identity_ok": true,
+      "available_tools": [
+        "edit_file"
+      ],
+      "tool_choice": "forced",
+      "has_pm_contract": true,
+      "has_chief_engineer_blueprint": true,
+      "has_target_content": true,
+      "has_failure_feedback": true,
+      "sibling_reads_forbidden": true,
+      "pre_fix_has_actual_sibling_exports": false
+    }
+  },
+  "root_cause": {
+    "classification": "DIRECTOR_REPAIR_CONTEXT_PATH_NORMALIZATION_GAP",
+    "owner": "polaris.cells.roles.adapters.internal.director.quality_gate",
+    "mechanism": "_resolve_cpp_quoted_include rejected any raw include token containing '..' before canonical path resolution. A valid src/ink_ledger.cpp -> ../include/core_engine/ink_ledger.hpp edge therefore lost its read-only public contract while the repair request simultaneously prohibited sibling reads.",
+    "not_caused_by": [
+      "edit_file normalization",
+      "write-path authorization",
+      "candidate rollback policy",
+      "PM contract",
+      "Chief Engineer blueprint"
+    ]
+  },
+  "fix": {
+    "source": "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py",
+    "behavior": "Resolve quoted include candidates canonically, then accept parent-relative headers only when the resolved path remains inside the workspace.",
+    "write_scope_change": false,
+    "target_project_modified": false
+  },
+  "regression_tests": [
+    "test_quality_repair_projects_parent_relative_cpp_header_contract",
+    "test_cpp_parent_relative_header_resolution_rejects_workspace_escape"
+  ],
+  "verification": {
+    "pytest": "25 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_r50_projection": {
+      "header_present": true,
+      "render_visible_declaration_present": true,
+      "reveal_entry_declaration_present": true,
+      "entries_declaration_present": true,
+      "workspace_escape_rejected": true
+    }
+  },
+  "next_action": "Run fresh isolated L3-24 r51 with the generic Polaris fix and require same-task Director repair to preserve the projected InkLedger contract; do not modify the generated project."
+}

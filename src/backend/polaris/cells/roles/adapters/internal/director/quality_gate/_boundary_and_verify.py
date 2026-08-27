@@ -87,6 +87,7 @@ _DEPTH_METRIC_NAMES = "|".join(re.escape(name) for name in _DEPTH_METRIC_ALIASES
 _DEPTH_ASSIGNMENT_RE = re.compile(rf"\b({_DEPTH_METRIC_NAMES})\s*=\s*(\d+)", re.IGNORECASE)
 _DEPTH_COMPARISON_RE = re.compile(rf"\b({_DEPTH_METRIC_NAMES})\s*=\s*(\d+)\s*<\s*(\d+)", re.IGNORECASE)
 _DEPTH_MINIMUM_RE = re.compile(r"['\"]?(min_[a-z_]+)['\"]?\s*:\s*(\d+)", re.IGNORECASE)
+_DEPTH_FAILURE_CLAUSE_RE = re.compile(r"\bfailures\s*:\s*(?P<failures>[^\r\n]+)", re.IGNORECASE)
 
 
 def _delivery_depth_failure_metrics(quality_errors: list[str]) -> tuple[dict[str, int], dict[str, int]]:
@@ -106,6 +107,30 @@ def _delivery_depth_failure_metrics(quality_errors: list[str]) -> tuple[dict[str
         for match in _DEPTH_MINIMUM_RE.finditer(error):
             minimums[match.group(1).lower()] = int(match.group(2))
     return metrics, minimums
+
+
+def _delivery_depth_failed_metric_names(quality_errors: list[str]) -> list[str] | None:
+    """Return only metrics named by the authoritative ``failures:`` clause.
+
+    Delivery-depth diagnostics also carry a complete metric inventory and the
+    unwaived contract minimums.  Comparing that inventory again downstream can
+    resurrect a metric that the quality gate deliberately waived (for example,
+    raw ``prod_files`` after declared source-target coverage passed).  The
+    clause after ``failures:`` is the effective gate verdict.
+    """
+
+    failed_metrics: list[str] = []
+    has_failure_clause = False
+    for error in quality_errors:
+        if "delivery_depth_contract_failed" not in error:
+            continue
+        for clause in _DEPTH_FAILURE_CLAUSE_RE.finditer(error):
+            has_failure_clause = True
+            for match in _DEPTH_COMPARISON_RE.finditer(clause.group("failures")):
+                metric = _DEPTH_METRIC_ALIASES[match.group(1).lower()]
+                if metric not in failed_metrics:
+                    failed_metrics.append(metric)
+    return failed_metrics if has_failure_clause else None
 
 
 def _run_materialization_quality_public_boundary(
@@ -228,8 +253,9 @@ def _build_materialization_quality_failure_evidence_context(
     repair_targets = [str(path).strip() for path in repair_target_files if str(path or "").strip()]
     changed = [str(path).strip() for path in changed_files if str(path or "").strip()]
     quality_metrics, quality_minimums = _delivery_depth_failure_metrics(quality_errors)
+    failed_quality_metrics = _delivery_depth_failed_metric_names(quality_errors)
     failure_class = "INCOMPLETE_MATERIALIZATION" if missing_targets else "WORKSPACE_QUALITY_GATE_FAILED"
-    return {
+    evidence = {
         "schema_version": "polaris.failure_evidence.v1",
         "source": "director.materialization_quality_repair",
         "failure_class": failure_class,
@@ -246,6 +272,9 @@ def _build_materialization_quality_failure_evidence_context(
         "changed_files": changed[:40],
         "attempt": repair_attempt,
     }
+    if failed_quality_metrics is not None:
+        evidence["failed_quality_metrics"] = failed_quality_metrics
+    return evidence
 
 
 def _build_materialization_quality_workspace_evidence_context(
@@ -263,7 +292,8 @@ def _build_materialization_quality_workspace_evidence_context(
     repair_targets = [str(path).strip() for path in repair_target_files if str(path or "").strip()]
     changed = [str(path).strip() for path in changed_files if str(path or "").strip()]
     quality_metrics, quality_minimums = _delivery_depth_failure_metrics(quality_errors)
-    return {
+    failed_quality_metrics = _delivery_depth_failed_metric_names(quality_errors)
+    evidence = {
         "schema_version": "polaris.workspace_quality_evidence.v1",
         "source": "director.materialization_quality_repair",
         "all_checks_passed": False,
@@ -277,6 +307,9 @@ def _build_materialization_quality_workspace_evidence_context(
         "changed_files": changed[:40],
         "attempt": repair_attempt,
     }
+    if failed_quality_metrics is not None:
+        evidence["failed_quality_metrics"] = failed_quality_metrics
+    return evidence
 
 
 def _safe_int(value: Any) -> int:

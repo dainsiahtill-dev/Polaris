@@ -1599,6 +1599,8 @@ def workspace_quality_deferred_owner_targets(summary: dict[str, Any]) -> list[st
 def workspace_quality_residual_owner_handoff_targets(
     summary: Mapping[str, Any],
     residual_errors: Sequence[str],
+    *,
+    prior_summaries: Sequence[Mapping[str, Any]] = (),
 ) -> list[str]:
     """Return owner-routable scope targets still named by the verifier.
 
@@ -1614,18 +1616,19 @@ def workspace_quality_residual_owner_handoff_targets(
     residual_blob = "\n".join(str(item or "") for item in residual_errors).replace("\\", "/")
     skipped_parts = {".git", ".polaris", "runtime", "node_modules", "__pycache__"}
     matched: list[str] = []
-    for raw_request in owner_task_retry_handoff_requests_from_scope_payload(summary):
-        if str(raw_request.get("recommended_route") or "").strip() != "owner_task_retry":
-            continue
-        if not bool(raw_request.get("owner_found")) and str(raw_request.get("status") or "").strip() != "owner_found":
-            continue
-        rel = str(raw_request.get("target_file") or "").strip().replace("\\", "/")
-        if not rel or rel not in residual_blob:
-            continue
-        parts = Path(rel).parts
-        if any(part.startswith(".") or part in skipped_parts for part in parts):
-            continue
-        matched.append(rel)
+    for payload in (*prior_summaries, summary):
+        for raw_request in owner_task_retry_handoff_requests_from_scope_payload(payload):
+            if str(raw_request.get("recommended_route") or "").strip() != "owner_task_retry":
+                continue
+            if not bool(raw_request.get("owner_found")) and str(raw_request.get("status") or "").strip() != "owner_found":
+                continue
+            rel = str(raw_request.get("target_file") or "").strip().replace("\\", "/")
+            if not rel or rel not in residual_blob:
+                continue
+            parts = Path(rel).parts
+            if any(part.startswith(".") or part in skipped_parts for part in parts):
+                continue
+            matched.append(rel)
     return _dedupe_workspace_repair_paths(matched)
 
 

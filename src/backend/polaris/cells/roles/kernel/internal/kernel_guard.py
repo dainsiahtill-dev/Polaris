@@ -21,7 +21,7 @@ except ImportError:
     _FINALIZATION_HALLUCINATION_COUNTER = None
 
 
-@dataclass(frozen=True)
+@dataclass
 class KernelGuardError(RuntimeError):
     """Raised when a transactional turn violates a non-negotiable invariant."""
 

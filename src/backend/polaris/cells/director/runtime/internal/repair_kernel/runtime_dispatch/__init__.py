@@ -33,18 +33,22 @@ from ..cpp_runtime import (
     CppStandardIncludeRun,
     CppStructGetterFieldAccessPlanning,
     CppStructGetterFieldAccessRun,
+    CppUseBeforeDefinitionPlanning,
+    CppUseBeforeDefinitionRun,
     plan_cpp_include_path_repair,
     plan_cpp_missing_private_members_repair,
     plan_cpp_placeholder_declaration_repair,
     plan_cpp_post_repair,
     plan_cpp_standard_include_repair,
     plan_cpp_struct_getter_field_access_repair,
+    plan_cpp_use_before_definition_repair,
     run_cpp_include_path_repair,
     run_cpp_missing_private_members_repair,
     run_cpp_placeholder_declaration_repair,
     run_cpp_post_repair,
     run_cpp_standard_include_repair,
     run_cpp_struct_getter_field_access_repair,
+    run_cpp_use_before_definition_repair,
 )
 from ..cpp_syntax import (
     CPP_INCLUDE_PATH_SOURCE_TOOL,
@@ -53,6 +57,7 @@ from ..cpp_syntax import (
     CPP_POST_SOURCE_TOOL,
     CPP_STANDARD_INCLUDE_SOURCE_TOOL,
     CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL,
+    CPP_USE_BEFORE_DEFINITION_SOURCE_TOOL,
 )
 from ..diagnostics import normalize_artifact_quality_errors
 from ..executor import DeleteFileFn, EditFileFn, TransactionalRepairExecutor, WriteFileFn
@@ -430,6 +435,7 @@ from ._handlers_plan import (
     _plan_cpp_post,
     _plan_cpp_standard_include,
     _plan_cpp_struct_getter_field_access,
+    _plan_cpp_use_before_definition,
     _plan_generic_hygiene,
     _plan_generic_hygiene_typed,
     _plan_go_bare_import_string,
@@ -508,6 +514,7 @@ from ._handlers_run import (
     _run_cpp_post,
     _run_cpp_standard_include,
     _run_cpp_struct_getter_field_access,
+    _run_cpp_use_before_definition,
     _run_generic_hygiene,
     _run_generic_hygiene_typed,
     _run_go_bare_import_string,
@@ -1269,6 +1276,13 @@ _RUNTIME_REPAIR_BINDINGS: dict[str, RuntimeRepairBinding] = {
         rule_id="cpp.struct_getter_field_access",
         planner=_plan_cpp_struct_getter_field_access,
         runner=_run_cpp_struct_getter_field_access,
+    ),
+    CPP_USE_BEFORE_DEFINITION_SOURCE_TOOL: RuntimeRepairBinding(
+        source_tool=CPP_USE_BEFORE_DEFINITION_SOURCE_TOOL,
+        language="cpp",
+        rule_id="cpp.use_before_definition",
+        planner=_plan_cpp_use_before_definition,
+        runner=_run_cpp_use_before_definition,
     ),
     GO_BARE_IMPORT_STRING_SOURCE_TOOL: RuntimeRepairBinding(
         source_tool=GO_BARE_IMPORT_STRING_SOURCE_TOOL,

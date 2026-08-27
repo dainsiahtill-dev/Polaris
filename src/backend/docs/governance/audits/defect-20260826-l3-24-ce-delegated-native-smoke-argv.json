@@ -1,0 +1,79 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-CE-DELEGATED-NATIVE-SMOKE-ARGV",
+  "status": "FIXED_UNIT_LIVE_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_f2812c569936",
+  "workspace": "/tmp/factory-bench-l3-24-r08/workspaces/199dfbda6169-4d524ae0a541c08e/L3-24-023d7314133040b6/efbf1f16a2b9e38d4e314d47",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "invalid_project_completion_contract",
+    "root_cause_hint": "ChiefEngineerBlueprintErrorV1: invalid project completion contract: application project requires a required entrypoint",
+    "director_dispatched": false
+  },
+  "dynamic_evidence": {
+    "final_provider_request_ref": "a7ab00ebeb8fe48ace634d49",
+    "final_provider_request_role": "chief_engineer",
+    "final_provider_request_tools": [
+      "submit_structured_role_output"
+    ],
+    "final_provider_request_required_refs_present": [
+      "pm_contract",
+      "target_files",
+      "failed_gate_evidence"
+    ],
+    "persisted_candidate_ref": "runtime/state/blueprints/semantic-repair/L3-24/factory_f2812c569936/0bc68ef0b377a38079fbaca82cec5197ab116db6e7c2f1db29925474d33b221a.json",
+    "persisted_candidate_hash": "0bc68ef0b377a38079fbaca82cec5197ab116db6e7c2f1db29925474d33b221a",
+    "persisted_required_entrypoint": {
+      "source_path": "src/main.cpp",
+      "runtime_path": "build/invisible_diary",
+      "command": "./build/invisible_diary encode --key moon --message 'invisible moon diary'",
+      "owner_task_id": "TASK-1",
+      "applicability": "required"
+    },
+    "persisted_source_artifact_present": true,
+    "pm_topology_authority": "chief_engineer",
+    "pm_required_source_kinds": [
+      "domain_modules",
+      "public_headers",
+      "entrypoint"
+    ],
+    "pm_entrypoint_targets": [],
+    "drop_point": "canonical_delegated_native_entrypoint rejected every command whose parsed argv contained more than one token. The valid source/runtime executable matched, but the entrypoint smoke arguments caused the whole advisory row to be discarded. PM intentionally delegated the entrypoint path, so no PM-path fallback existed."
+  },
+  "root_causes": [
+    {
+      "code": "delegated_native_entrypoint_treated_argv_arguments_as_shell_authority",
+      "detail": "Native entrypoint normalization conflated no-shell argv arguments with executable-path authority widening. It required len(argv)==1 even though VerificationCommandAuthorityV1 stores an argv tuple and the runtime executes without a shell."
+    }
+  ],
+  "fixes": [
+    {
+      "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+      "change": "Accept a non-empty parsed argv when argv[0], after ./ normalization, exactly equals the safe delegated runtime path. Preserve literal arguments in the no-shell command authority. Existing source artifact, owner, topology, suffix, runtime path, and executable-path checks remain fail-closed."
+    },
+    {
+      "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsa.py",
+      "change": "Add an exact L3-24 r08 regression for a C++ CLI smoke command with subcommand, flags, and quoted value; retain traversal and executable mismatch negative cases."
+    }
+  ],
+  "verification": {
+    "tdd_red": "Exact regression failed before the fix with ValueError: application project requires a required entrypoint.",
+    "native_entrypoint_regressions": "4 passed",
+    "chief_engineer_public_contract_tests": "189 passed",
+    "semantic_repair_and_factory_handoff_tests": "124 passed",
+    "ruff": "passed",
+    "mypy": "one pre-existing error remains at _portfolio.py:262; no new error is in the changed native-entrypoint path",
+    "fresh_isolated_live": "pending L3-24 r09"
+  },
+  "safety": {
+    "target_project_modified": false,
+    "shell_execution": false,
+    "argv_zero_must_match_runtime_path": true,
+    "runtime_path_escape": "fail_closed",
+    "missing_source_artifact_or_owner": "fail_closed",
+    "source_suffix_outside_pm_authority": "fail_closed"
+  },
+  "next_action": "Run fresh isolated L3-24 r09. Confirm CE produces a completion contract with the required native entrypoint, then dynamically audit the first downstream failing owner."
+}

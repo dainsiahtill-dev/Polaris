@@ -1,0 +1,106 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-R52-CPP-STANDARD-COMPATIBILITY-REPAIR-ATOMICITY",
+  "status": "OPEN_IMPLEMENTATION_PENDING",
+  "severity": "P0",
+  "recorded_at": "2026-08-27T00:43:10+08:00",
+  "repository_head": "f3d3bb63284015b958719039b159c2d6a032d015",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_20818f28c5e3",
+  "workspace": "/tmp/factory-bench-l3-24-r52/workspaces/23f404f436cb-f29b86ed8944e482/L3-24-023d7314133040b6/9d44d482cd98dccb6a6f9f27",
+  "target_project_modified": false,
+  "symptom": "Director completed with eight committed effects, then QA ran three same-Director repair rounds and stopped with three_nonprogress_repairs_without_verified_progress. Four C++ translation units remained red because a C++17 project used std::span, while a separate delivery-depth residual remained at 485/650 production lines.",
+  "dynamic_evidence": {
+    "exact_causal_api": "/v2/audit/runs/factory_20818f28c5e3/causal",
+    "exact_causal_status": "qa_failed",
+    "exact_causal_owner": "director.runtime",
+    "retry_scope": "same_director_task_repair_only",
+    "pm_ce_restart_allowed": false,
+    "quality_report": ".polaris/runtime/qa/workspace-validation.json",
+    "compiler_contract": "CMakeLists.txt pins CMAKE_CXX_STANDARD 17 and cxx_std_17",
+    "primary_diagnostic": "std::span is only available from C++20 onwards",
+    "fanout": "The same declaration incompatibility failed four translation units; it is one causal frontier, not four independent defects.",
+    "repair_rounds": {
+      "count": 3,
+      "deterministic_source_tool": "deterministic_cpp_standard_include_repair",
+      "deterministic_effect": "stagnant",
+      "llm_candidate_effect": "candidate_rejected_rolled_back",
+      "stop_reason": "three_nonprogress_repairs_without_verified_progress"
+    },
+    "coverage": {
+      "matched_rule": "cpp.standard_include",
+      "match_basis": "cpp_compile_error plus raw term std::",
+      "plan_probe": "covered_unplannable",
+      "plannable_source_tools": [],
+      "problem": "The rule can only add missing standard headers; it cannot repair a language-standard incompatibility. Adding <span> cannot make std::span valid under C++17."
+    },
+    "final_provider_request": {
+      "context_snapshot_ref": "32ba67a12d7b6abe56ea6a67",
+      "role_identity_ok": true,
+      "has_pm_contract": true,
+      "has_chief_engineer_blueprint": true,
+      "has_target_files": true,
+      "has_failure_feedback": true,
+      "cxx17_contract_visible": true,
+      "available_tools": [
+        "edit_file"
+      ],
+      "tool_choice": "forced edit_file",
+      "forced_target": "src/diary/include/invisible_diary/invisible_ink_cipher.hpp",
+      "forced_tool_call_count": 1,
+      "actual_sibling_exports_present": false
+    },
+    "llm_and_tool_execution": {
+      "llm_conclusion": "Replace std::span<const std::uint8_t> with const std::vector<std::uint8_t>& for C++17 compatibility.",
+      "native_tool_call_id": "call_3ec08929a7f0496499b33d28",
+      "tool": "edit_file",
+      "receipt_id": "director-physical-effect-5f5d9575b426e0ab415b578f",
+      "receipt_outcome": "succeeded",
+      "changed_file": "src/diary/include/invisible_diary/invisible_ink_cipher.hpp",
+      "before_sha256": "ee7badbe097d11784b5d1ff8548d9d042e7c78e1e44c2adfeae31b3052661368",
+      "after_sha256": "0e3f762e5630115690951ee0663612e6f1521ac91db8e9058ae45bc8554af75c",
+      "post_effect": "Candidate was rolled back because source definitions and callers could not be updated in the same forced single-file transaction."
+    },
+    "secondary_residual": {
+      "classification": "delivery_depth",
+      "actual_prod_lines": 485,
+      "required_prod_lines": 650,
+      "handling": "Keep separate from the compiler frontier; revalidate only after compiler compatibility converges."
+    }
+  },
+  "root_cause": {
+    "classification": "DIRECTOR_REPAIR_CLASSIFICATION_AND_ATOMIC_SCOPE_GAP",
+    "owner": "polaris.cells.director.runtime plus roles.adapters Director quality repair bridge",
+    "mechanisms": [
+      "cpp.standard_include is over-broad and falsely claims any cpp_compile_error whose raw text contains std::.",
+      "The quality repair request collapses a multi-file API compatibility change into exactly one edit on one header.",
+      "The final request omits actual sibling exports and forbids a coherent header/source/caller transaction even though immutable CE scope authorizes those files.",
+      "Candidate rollback is correct; the preceding classification and repair-scope projection are wrong."
+    ],
+    "not_caused_by": [
+      "weak model",
+      "missing edit_file tool",
+      "tool argument normalization",
+      "write authorization",
+      "PM contract",
+      "Chief Engineer C++17 contract",
+      "QA strictness"
+    ]
+  },
+  "required_fix": {
+    "coverage": "Do not match C++ language-standard incompatibilities as cpp.standard_include. Record a distinct compatibility archetype/diagnosis.",
+    "routing": "Route compatibility residuals to the same Director task with immutable C++ standard authority and exact verifier evidence.",
+    "atomic_scope": "When one diagnostic requires coherent declaration/definition/caller edits, authorize a bounded multi-file edit batch inside the existing CE/JobToken scope; do not force exactly one target/tool call.",
+    "verification": "Require a real compiler rerun and strict causal frontier reduction before accepting; rollback remains fail-closed.",
+    "restart_policy": "Never restart PM or CE for this code-quality residual."
+  },
+  "required_tests": [
+    "C++20-only API under explicit C++17 must not match cpp.standard_include.",
+    "A true missing standard include must still match and plan deterministic_cpp_standard_include_repair.",
+    "A compatibility repair request must include the declaration header, matching source definition, callers, CMake standard contract, and edit_file tool.",
+    "The repair bridge must permit a bounded multi-file edit batch within the immutable task scope.",
+    "An incoherent partial candidate must still roll back.",
+    "A coherent candidate followed by compiler frontier reduction must commit and revalidate without PM/CE restart."
+  ],
+  "next_action": "Implement the generic coverage and atomic repair-scope correction in Polaris only, run targeted gates, then execute fresh isolated L3-24 r53."
+}

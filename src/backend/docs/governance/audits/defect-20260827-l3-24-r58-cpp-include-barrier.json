@@ -1,0 +1,67 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "l3-24-r58-cpp-include-barrier-forward-unmask",
+  "status": "FIXED_UNIT_AND_REPLAY_VERIFIED_LIVE_PENDING",
+  "severity": "P1",
+  "factory_run_id": "factory_7c2a114d9432",
+  "project_id": "L3-24",
+  "symptom": "A correct #include <vector> edit was physically applied and receipted, then classified as non-progress and rolled back because bounded compiler excerpts exposed more later errors.",
+  "root_cause": "Workspace-quality convergence lacked a phase-specific proof for malformed C/C++ include repair. Generic truncated diagnostic identity/cardinality could not distinguish a correct include replacement from deletion that hid the same preprocessor diagnostic.",
+  "dynamic_evidence": {
+    "initial_final_request_snapshot_ref": "c8c6532fdbd66cfb5585a8f6",
+    "repair_final_request_snapshot_refs": [
+      "c8f2c249087e41550d2888cb",
+      "0d176790b2217f207f47816b"
+    ],
+    "correct_candidate_before_hash": "701a4714",
+    "correct_candidate_after_hash": "1d957648",
+    "candidate_guard_status": "restored",
+    "repair_stop_reason": "three_nonprogress_repairs_without_verified_progress",
+    "full_compiler_error_counts": {
+      "baseline": 410,
+      "correct_candidate": 262,
+      "deletion_candidate": 1992
+    },
+    "bounded_excerpt_error_counts": {
+      "baseline": 36,
+      "correct_candidate": 46,
+      "deletion_candidate": 34
+    },
+    "copied_workspace_replay": {
+      "correct_candidate": "include diagnostics 8->4; exact line valid; proof true",
+      "deletion_candidate": "include diagnostics 8->4; exact line absent; proof false"
+    }
+  },
+  "coverage_evidence": {
+    "diagnostics_queried": 3,
+    "known_rule_matched": 0,
+    "executable_runtime_plan_matched": 0,
+    "reserved_language_slot": "cpp"
+  },
+  "scope": {
+    "modified_domain": "Polaris Factory workspace-quality convergence",
+    "generated_project_modified": false
+  },
+  "fix": {
+    "classification": "verified_cpp_include_barrier_repair",
+    "fail_closed_conditions": [
+      "same verifier include diagnostic count must strictly decrease",
+      "exact candidate file and line must contain #include <header>",
+      "path must resolve inside workspace",
+      "deletion and ambiguous evidence remain non-progress"
+    ],
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ]
+  },
+  "verification": {
+    "characterization_tests": "105 passed",
+    "ruff": "pass",
+    "mypy": "pass",
+    "exact_copy_replay": "pass",
+    "live_r59": "pending"
+  },
+  "next_action": "Run fresh isolated L3-24 r59 and dynamically verify that the correct include edit survives candidate settlement."
+}

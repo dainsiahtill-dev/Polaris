@@ -17,6 +17,21 @@ class TestKernelGuard:
         with pytest.raises(KernelGuardError, match="single_tool_batch"):
             KernelGuard.assert_single_tool_batch("turn_batch", 2)
 
+    def test_kernel_guard_error_allows_traceback_assignment(self) -> None:
+        """RuntimeError must not mask its cause when contextlib restores traceback."""
+
+        error = KernelGuardError(
+            turn_id="turn_batch",
+            invariant="single_tool_batch",
+            details="expected at most 1 ToolBatch, got 2",
+        )
+        try:
+            raise error
+        except KernelGuardError as caught:
+            caught.__traceback__ = caught.__traceback__
+
+        assert str(error).startswith("single_tool_batch violated")
+
     def test_assert_no_hidden_continuation_detects_second_decision_request(self) -> None:
         with pytest.raises(KernelGuardError, match="no_hidden_continuation"):
             KernelGuard.assert_no_hidden_continuation(

@@ -1,0 +1,63 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R31-CE-SEMANTIC-REPAIR-STALE-TRANSACTION",
+  "status": "CLOSED_LIVE_VERIFIED",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_5250c223db62",
+  "workspace": "/tmp/factory-bench-l3-24-r31/workspaces/55a3ea52e410-9a008c1019b817fa/L3-24-023d7314133040b6/e6602d046997dae8cab12563",
+  "symptom": "CE repair 1 fixed the entrypoint, but repair 2 regressed it and exhausted semantic repair while delivery depth remained infeasible.",
+  "dynamic_evidence": {
+    "repair_1_context_snapshot_ref": "16ada21bb65bf7db64643aaa",
+    "repair_1_call_id": "294f7c431f40461db860fc64528de38a",
+    "repair_2_context_snapshot_ref": "431cde0e1c29c99898367bb3",
+    "repair_2_call_id": "74068a3e7d2a400399a015b6f6539a78",
+    "stale_base_candidate_hash": "731a1b6d9057137ed559901bac7325ed33ae7e03c7dab5b25f8b11e95d9d3f68",
+    "stale_diagnosis_hash": "fe8aa9e91c8703cde3153574db887402db54ba974d1d22e21268ead127a3698d",
+    "stale_diagnostic_codes": [
+      "chief_engineer.entrypoint_contract.invalid"
+    ],
+    "stale_allowed_operations": [
+      "entrypoint_upsert"
+    ],
+    "current_validation_error": "project_completion_contract delivery depth infeasible: prod_files=6 < 7",
+    "repair_1_effect": "entrypoint changed from help introspection to an encrypt proof-of-work command",
+    "repair_2_effect": "entrypoint changed back to --help; no artifact_upsert authority was available"
+  },
+  "root_cause": "The Factory CE multi-repair loop updates repaired_output_errors after composing repair 1, but only rebuilds semantic_repair_candidate and semantic_repair_diagnosis when the candidate is None. Repair 2 therefore receives current failure text combined with stale candidate and diagnosis CAS authority.",
+  "root_cause_class": "control_plane_repair_transaction_state_stale",
+  "platform_fix_scope": [
+    "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+    "src/backend/polaris/cells/factory/pipeline/tests"
+  ],
+  "unit_verification": {
+    "regression": "1 passed",
+    "ce_characterization": "59 passed",
+    "ruff": "passed",
+    "mypy": "passed"
+  },
+  "live_verification": {
+    "factory_run_id": "factory_870b3ac36729",
+    "workspace": "/tmp/factory-bench-l3-24-r32/workspaces/fdc27f7eaf21-47890d89a326856a/L3-24-023d7314133040b6/9da3dc44995a3c3339ea01ba",
+    "result": "CE completed and Factory advanced through Director into workspace quality validation",
+    "plan_present": true,
+    "blueprint_present": true,
+    "director_reached": true,
+    "canonical_cmake_build_passed": true,
+    "independent_later_blocker": "workspace-quality target rotation used the global repair round after the diagnostic signature changed"
+  },
+  "target_project_modified": false,
+  "required_invariants": [
+    "Each semantic repair attempt uses the current composed candidate.",
+    "Each semantic repair attempt recomputes diagnosis and allowed operations from current validation errors.",
+    "Candidate and diagnosis hashes advance when the composed candidate or residual diagnosis changes.",
+    "A later repair preserves fields fixed by earlier repairs."
+  ],
+  "required_verification": [
+    "Regression test for entrypoint repair followed by delivery-depth repair.",
+    "Targeted Factory CE tests pass.",
+    "Ruff and mypy pass for changed modules.",
+    "Fresh isolated L3-24 Bench final requests show new candidate and diagnosis hashes on repair 2."
+  ],
+  "residual_risk": "The CE transaction defect is closed. L3-24 exposed an independent Director workspace-quality target-rotation defect tracked separately as L3-24-R32-DIAGNOSTIC-SCOPED-TARGET-ROTATION."
+}

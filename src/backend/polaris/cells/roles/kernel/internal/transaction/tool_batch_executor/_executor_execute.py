@@ -72,6 +72,7 @@ from ._helpers import (
     _batch_has_authoritative_success,
     _batch_result_count,
     _capability_token_from_metadata,
+    _effect_receipts_from_batch_receipts,
     _execution_envelope_hash_from_metadata,
     _is_deo_abort_error,
     _is_mutation_for_speculative_routing,
@@ -1275,18 +1276,45 @@ class _ToolBatchExecuteMixin:
             invocations=[invocation.to_dict() for invocation in invocations],
         )
         if breaker_snapshot.triggered:
-            batch_cancel_token.cancel("tool_failure_circuit_breaker_triggered")
-            raise RuntimeError(
-                "single_batch_contract_violation: tool_failure_circuit_breaker_triggered "
-                f"turn_id={breaker_snapshot.turn_id} "
-                f"batch_failures={breaker_snapshot.batch_failures} "
-                f"consecutive_failures={breaker_snapshot.consecutive_failures} "
-                f"total_failures={breaker_snapshot.total_failures} "
-                f"consecutive_threshold={breaker_snapshot.consecutive_threshold} "
-                f"total_threshold={breaker_snapshot.total_threshold} "
-                f"trigger_reason={breaker_snapshot.trigger_reason} "
-                f"triggered_dimension={breaker_snapshot.triggered_dimension or 'none'}"
-            )
+            if _effect_receipts_from_batch_receipts(receipts_as_dicts):
+                # A partially successful mutation batch is already consumed:
+                # its effect receipts are authoritative and cannot be replaced
+                # by a second physical ToolBatch in the same logical turn.
+                # Preserve the committed effects and surface the residual
+                # failures to same-task continuation instead of requesting a
+                # replacement batch that would violate the kernel's own
+                # single-batch invariant (live L3-24 r16).
+                ledger.anomaly_flags.append(
+                    {
+                        "type": "TOOL_FAILURE_CIRCUIT_BREAKER_PARTIAL_PROGRESS_PRESERVED",
+                        "turn_id": breaker_snapshot.turn_id,
+                        "batch_failures": breaker_snapshot.batch_failures,
+                        "consecutive_failures": breaker_snapshot.consecutive_failures,
+                        "total_failures": breaker_snapshot.total_failures,
+                        "trigger_reason": breaker_snapshot.trigger_reason,
+                        "triggered_dimension": breaker_snapshot.triggered_dimension or "none",
+                    }
+                )
+                logger.warning(
+                    "Tool failure circuit breaker observed partial authoritative progress; "
+                    "preserving receipts without replacement batch. turn_id=%s failures=%s dimension=%s",
+                    breaker_snapshot.turn_id,
+                    breaker_snapshot.batch_failures,
+                    breaker_snapshot.triggered_dimension or "none",
+                )
+            else:
+                batch_cancel_token.cancel("tool_failure_circuit_breaker_triggered")
+                raise RuntimeError(
+                    "single_batch_contract_violation: tool_failure_circuit_breaker_triggered "
+                    f"turn_id={breaker_snapshot.turn_id} "
+                    f"batch_failures={breaker_snapshot.batch_failures} "
+                    f"consecutive_failures={breaker_snapshot.consecutive_failures} "
+                    f"total_failures={breaker_snapshot.total_failures} "
+                    f"consecutive_threshold={breaker_snapshot.consecutive_threshold} "
+                    f"total_threshold={breaker_snapshot.total_threshold} "
+                    f"trigger_reason={breaker_snapshot.trigger_reason} "
+                    f"triggered_dimension={breaker_snapshot.triggered_dimension or 'none'}"
+                )
 
         # === Phase 4b: 执行完成 ===
         state_machine.transition_to(TurnState.TOOL_BATCH_EXECUTED)

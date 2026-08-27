@@ -1,0 +1,59 @@
+{
+  "schema_version": "polaris.dynamic_debug_defect.v1",
+  "defect_id": "l3-23-not-applicable-verifier-authority-20260825",
+  "status": "CLOSED_FRESH_BENCH_VERIFIED",
+  "severity": "P0",
+  "project_id": "L3-23",
+  "run_id": "factory_8eabd03c73bc",
+  "attempt": "r18",
+  "symptom": "Chief Engineer produced a schema-valid portfolio, but completion-contract validation aborted before Director because a not_applicable lint verifier retained an untrusted command_authority_hash.",
+  "exact_run_evidence": {
+    "workspace": "/tmp/factory-bench-l3-23-r18/workspaces/c29abebc782e-e7597c226cc87149/L3-23-2956ab31bd653d97/235d313bfa6f0027fef8d12e",
+    "run_id": "factory_8eabd03c73bc",
+    "request_start_snapshot_ref": "3282b2347e38369814afce9c",
+    "final_request_snapshot_ref": "9765f399293947099478423e",
+    "call_id": "b70945404bf74676bd69d5f09543a4a4",
+    "provider": "anthropic_compat",
+    "model": "MiniMax-M3",
+    "error": "invalid project completion contract: not_applicable verification must use command_authority_hash=null",
+    "offending_verifier": {
+      "applicability": "not_applicable",
+      "command_authority_hash": "lint.cargo_clippy",
+      "covers_obligation_ids": [
+        "OBL-MANIFEST-CARGO"
+      ],
+      "modality": "lint",
+      "obligation_id": "OBL-VERIFY-LINT",
+      "owner_task_id": null
+    },
+    "director_started": false,
+    "qa_started": false
+  },
+  "root_cause": "CE may advise verifier semantics but PM alone owns executable verifier commands and their hashes. The composer already canonicalized required verifier rows without PM authority to not_applicable, yet explicit not_applicable rows were validated before canonicalization. A provider-supplied hash and coverage therefore caused a false terminal CE failure even though no executable authority was being granted.",
+  "safety_boundary": "Canonicalize only rows already declared not_applicable. Clear command, command_authority_hash, covers_obligation_ids, and owner_task_id. Required verifier rows still resolve exclusively through PM command authority and remain fail-closed on ambiguity or mismatch.",
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+    "normalization": {
+      "command": null,
+      "command_authority_hash": null,
+      "covers_obligation_ids": [],
+      "owner_task_id": null
+    }
+  },
+  "verification": {
+    "tdd_red": "The regression first failed on non-null hash, then exposed non-empty coverage as a second invariant violation.",
+    "targeted_cases": "3 passed",
+    "full_portfolio_suite": "185 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "negative_authority_boundary": "Required verifiers with unknown or ambiguous command authority remain rejected."
+  },
+  "automatic_audit_rule": "Before attributing a completion-contract failure to Director or model quality, inspect exact CE verification rows. A not_applicable row must carry no executable command, authority hash, covered obligation, or owner; canonicalize that zero-authority state before strict contract validation.",
+  "target_project_modified": false,
+  "fresh_bench_verification": {
+    "attempt": "r19",
+    "run_id": "factory_e0cda86d03da",
+    "result": "Chief Engineer completed and Director dispatched all three project tasks; the prior not_applicable command-authority terminal was absent."
+  },
+  "next_action": "Closed. Continue r19 at its Director-local quality boundary without restarting PM or Chief Engineer."
+}

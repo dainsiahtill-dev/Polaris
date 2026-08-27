@@ -18,6 +18,7 @@ KNOWN_DETERMINISTIC_REPAIR_SOURCE_TOOLS: frozenset[str] = frozenset(
         "deterministic_cpp_post_repair",
         "deterministic_cpp_standard_include_repair",
         "deterministic_cpp_struct_getter_field_access_repair",
+        "deterministic_cpp_use_before_definition_repair",
         "deterministic_declared_target_contract_repair",
         "deterministic_go_bare_import_repair",
         "deterministic_go_bare_import_string_repair",

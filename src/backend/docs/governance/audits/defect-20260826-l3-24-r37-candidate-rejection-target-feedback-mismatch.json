@@ -1,0 +1,71 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-R37-CANDIDATE-REJECTION-TARGET-FEEDBACK-MISMATCH",
+  "status": "CLOSED_LIVE_VALIDATED",
+  "severity": "P0",
+  "factory_run_id": "factory_33a1503321f4",
+  "project_id": "L3-24",
+  "workspace": "/tmp/factory-bench-l3-24-r37/workspaces/a09283dda0de-be3ef88f0f2efbda/L3-24-023d7314133040b6/339672f591d55c335ce1c330",
+  "symptom": {
+    "stage": "quality_gate",
+    "repair_rounds": 9,
+    "initial_behavior_failures": 6,
+    "best_behavior_failures": 3,
+    "terminal_reason": "three_nonprogress_repairs_without_verified_progress",
+    "failure_sequence": [
+      "round 8 edited src/moon_phase.cpp and was rolled back after a new compile diagnostic",
+      "round 9 received that candidate-rejection diagnostic but was authorized to edit src/ink_renderer.cpp",
+      "the model could not repair the rejected moon_phase candidate because the feedback target was outside its write scope"
+    ]
+  },
+  "dynamic_evidence": {
+    "exact_run_backend": "http://127.0.0.1:49978",
+    "exact_run_context_snapshot_refs": [
+      "100c1ac88a54a900b8249697",
+      "36f714bd3d18e09934af86e8"
+    ],
+    "round_8": {
+      "authorized_target": "src/moon_phase.cpp",
+      "final_request_context": "Included the exact read-only moon_phase.hpp API and forced edit_file for only src/moon_phase.cpp.",
+      "candidate_result": "candidate_rejected_rolled_back",
+      "new_diagnostic": "undeclared last_day_of_phase"
+    },
+    "round_9": {
+      "authorized_target": "src/ink_renderer.cpp",
+      "final_request_context": "Carried the prior candidate_rejection_errors while forcing edit_file for only src/ink_renderer.cpp.",
+      "candidate_result": "candidate_rejected_rolled_back",
+      "new_diagnostic": "undeclared visibility_for"
+    },
+    "live_progress_before_terminal": "Production target rotation worked and accepted rounds reduced failures 6->5->3, proving the prior r36 mutation-collapse defect closed."
+  },
+  "root_cause": {
+    "classification": "factory_quality_repair_feedback_scope_projection",
+    "summary": "Factory persisted candidate rejection diagnostics but not the rejected candidate's repair_target_files. The next behavioral round independently advanced the production-frontier cursor, so diagnostic feedback and mutation authority described different files.",
+    "first_causal_boundary": "workspace quality repair round-state projection between candidate rollback and the next LLM repair request",
+    "not_model_failure": true,
+    "not_target_project_fix": true
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": "When a candidate is rejected for source compile or verifier regression, persist its exact repair_target_files and pin the next repair round to the rejected target inside the same scoped authorized candidate set. Clear the pin only after a real subsequent write. Equal-count swaps remain free to rotate because they do not identify a target-local regression."
+  },
+  "verification": {
+    "tdd_red": "With a rejection for src/moon_phase.cpp and a rotation cursor pointing elsewhere, the implementation selected src/main.cpp.",
+    "target_test": "test_behavior_repair_compile_rejection_feedback_stays_on_rejected_target passed",
+    "factory_characterization": "94 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_validation": {
+      "run_id": "factory_b223ebb98df5",
+      "workspace": "/tmp/factory-bench-l3-24-r38/workspaces/f6c23ba0b233-65c3531bd86eeb7b/L3-24-023d7314133040b6/611cf93c2cc0dd33d88274c2",
+      "result": "After round 2 rejected src/diary/diary_book.cpp, rounds 3 and 4 remained on the same target. Exact final requests 13ba2ca2d05f39f4c80c2348 and f9a61c81c0eb01d58dc39a18 projected candidate_rejection_target_pinned=true. The former feedback/target mismatch did not recur."
+    }
+  },
+  "residual_risk": [
+    "The fresh live run must prove that a rejected candidate's next round remains on the same target and can consume its diagnostic.",
+    "The exact r37 target also contains an apparently infeasible generated CMake assertion and an independent delivery-depth residual; neither was modified or hidden by this fix."
+  ]
+}

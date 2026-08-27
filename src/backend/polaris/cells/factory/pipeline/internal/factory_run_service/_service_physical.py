@@ -560,13 +560,37 @@ class _FactoryRunServicePhysicalMixin:
         operation = "recover_run"
         nonce = f"lifecycle_{uuid.uuid4().hex}"
         claimed = False
+        from polaris.cells.factory.pipeline.public.contracts import (
+            FactoryWorkspaceRunLeaseConflictError,
+        )
+
         try:
-            lease = self._claim_lifecycle_operation(
-                run,
-                operation=operation,
-                nonce=nonce,
-                acquire_if_available=True,
-            )
+            try:
+                lease = self._claim_lifecycle_operation(
+                    run,
+                    operation=operation,
+                    nonce=nonce,
+                    acquire_if_available=True,
+                )
+            except FactoryWorkspaceRunLeaseConflictError as exc:
+                if exc.code != "factory_workspace_run_lease_expired":
+                    raise
+                # An expired lease cannot authorize new work, but the exact
+                # same-run owner must still be able to fence, replay and
+                # release its already-terminal physical-attempt epoch.  Reuse
+                # the existing stale-owner authority: it preserves the old
+                # expiry, requires the exact fencing token, reconstructs under
+                # a replay fence, and cannot admit Director/QA effects until
+                # release evidence is durable and a fresh epoch is opened.
+                operation = "recover_stale_workspace_owner"
+                nonce = f"lifecycle_{uuid.uuid4().hex}"
+                lease = self._claim_lifecycle_operation(
+                    run,
+                    operation=operation,
+                    nonce=nonce,
+                    acquire_if_available=False,
+                    allow_expired_owner=True,
+                )
             claimed = True
             if lease.state.value != "draining":
                 raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_retry_replay_fence_missing")

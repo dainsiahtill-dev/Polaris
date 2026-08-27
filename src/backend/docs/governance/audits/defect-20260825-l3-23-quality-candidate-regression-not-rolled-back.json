@@ -1,0 +1,77 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "defect-20260825-l3-23-quality-candidate-regression-not-rolled-back",
+  "status": "CLOSED_LIVE",
+  "severity": "P0",
+  "scope": "Polaris Factory workspace-quality candidate acceptance",
+  "exact_run": {
+    "factory_run_id": "factory_e0cda86d03da",
+    "project_id": "L3-23",
+    "workspace": "/tmp/factory-bench-l3-23-r19/workspaces/57417bb3ee24-6701852dbc6bd93e/L3-23-2956ab31bd653d97/fecb0ae8f35639fdf3b3e47c",
+    "retry_boundary": "same_run_qa_only"
+  },
+  "symptom": "A later Director repair fixed the current Rust failures but reintroduced previously resolved named tests; subsequent rounds oscillated and exhausted the bounded repair loop.",
+  "dynamic_evidence": {
+    "verifier_sequence": [
+      "tests/edges.rs:15/17",
+      "tests/edges.rs:17/17; tests/product.rs:15/17",
+      "tests/edges.rs:15/17"
+    ],
+    "final_request_snapshot_ref": "a139925ef3e5d90ce9770cc6",
+    "final_request_contains_current_failure_source": true,
+    "final_request_contains_regression_guard_source": true,
+    "physical_edit_timestamp": "2026-08-25T11:24:34.047253+00:00",
+    "physical_edit_path": "src/patience.rs",
+    "failed_live_revalidation_at": "2026-08-25T11:55:49.798560Z",
+    "reported_residual_after_rejection": "tests/edges.rs:15/17",
+    "independent_disk_verifier_residual": "tests/product.rs:15/17",
+    "candidate_guard_target_files": [
+      "src/lib.rs"
+    ],
+    "factory_repair_target_files": [
+      "src/patience.rs"
+    ],
+    "physical_candidate_edit_timestamp": "2026-08-25T11:55:36.587243+00:00",
+    "physical_report_split_confirmed": true,
+    "successful_live_revalidation_at": "2026-08-25T12:16:56.547473+00:00",
+    "live_candidate_affected_files": [
+      "src/patience.rs"
+    ],
+    "live_candidate_restored_files": [
+      "src/patience.rs"
+    ],
+    "reported_and_independent_residual": "tests/edges.rs:15/17",
+    "physical_report_split_closed": true
+  },
+  "root_cause": "Two coupled platform defects existed. First, Factory detected a rejected verifier candidate but settled only TaskRuntime and left its bytes on disk. Second, the initial rollback guard re-derived its scope across the roles public boundary and snapshotted the broad owner task path src/lib.rs instead of Factory's explicit causal repair authority src/patience.rs. The guard then reported restored while the actual candidate remained on disk, and Factory reset diagnostics to the pre-round baseline, splitting report truth from physical verifier truth.",
+  "owner": {
+    "cell": "roles.adapters",
+    "orchestrator": "factory.pipeline",
+    "module": "Director materialization-quality candidate transaction"
+  },
+  "required_fix": "Snapshot the exact Factory-authorized repair_target_files before mutation through an explicit public service parameter; after real verifier revalidation, CAS-restore rejected or regressive candidates and persist rollback evidence. Never re-derive rollback scope from mutable context/task rows. Do not expand write scope or restart PM/CE.",
+  "required_tests": [
+    "A candidate that reintroduces a regression guard without verified net progress restores the pre-candidate UTF-8 file content.",
+    "An accepted verifier-progress candidate discards its snapshot and remains on disk.",
+    "Rollback fails closed when the post-effect hash drifted before restore.",
+    "Rollback never touches paths outside the Director-authorized candidate scope.",
+    "When the owner task target is src/lib.rs but Factory repair_target_files is src/patience.rs, only src/patience.rs is snapshotted and restored.",
+    "A rejected equal-count swap restores physical bytes before the next verifier baseline and preserves candidate diagnostics only as rejection feedback."
+  ],
+  "implementation_evidence": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_candidate_guard.py",
+      "src/backend/polaris/cells/roles/adapters/public/service.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py"
+    ],
+    "tests": "13 passed, 104 deselected",
+    "mypy": "success",
+    "ruff": "all checks passed",
+    "live_revalidation": "same-run QA-only retry proved each rejected candidate restored src/patience.rs; Factory report and independent cargo test both ended at tests/edges.rs:15/17"
+  },
+  "prohibited_actions": [
+    "modify generated L3-23 project manually",
+    "restart PM or Chief Engineer for an ordinary Director repair failure",
+    "treat prompt presence as proof of candidate acceptance"
+  ]
+}

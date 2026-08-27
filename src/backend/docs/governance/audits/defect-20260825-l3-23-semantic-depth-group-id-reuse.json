@@ -1,0 +1,69 @@
+{
+  "schema_version": "polaris.platform-defect.v1",
+  "defect_id": "L3-23-R08-CE-SEMANTIC-DEPTH-GROUP-ID-REUSE",
+  "recorded_at": "2026-08-25T01:30:26Z",
+  "status": "FIX_IMPLEMENTED_UNIT_VERIFIED_AWAITING_LIVE_REVALIDATION",
+  "severity": "P0",
+  "scope": "chief_engineer.semantic_repair",
+  "exact_run": {
+    "factory_run_id": "factory_918021817775",
+    "project_id": "L3-23",
+    "attempt": "r08",
+    "workspace": "/tmp/factory-bench-l3-23-r08/workspaces/b06c0a15f6ef-eea0e34e193b2d7a/L3-23-2956ab31bd653d97/8fb960b421dc7aa56338580f",
+    "context_snapshot_ref": "925cfd664e2c8645b2b14839"
+  },
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "chief_engineer.semantic_repair_exhausted",
+    "detail": "semantic repair cannot mutate immutable semantic identity: obligation_id='OBL-PRODUCT-TESTS':fields=['path']",
+    "llm_calls": 3,
+    "generated_blueprints": 0,
+    "expected_blueprints": 3
+  },
+  "dynamic_evidence": {
+    "provider_role": "chief_engineer",
+    "provider_tool": "submit_structured_role_output",
+    "provider_tool_choice_forced": true,
+    "diagnostic_codes": [
+      "chief_engineer.shared_behavior_contract.invalid",
+      "chief_engineer.delivery_depth.test_files_below_minimum",
+      "chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing"
+    ],
+    "provider_reasoning": "Add tests/engine_decisions.rs by splitting OBL-PRODUCT-TESTS.",
+    "baseline_identity": {
+      "obligation_id": "OBL-PRODUCT-TESTS",
+      "path": "tests/product.rs",
+      "semantic_role": "test",
+      "owner_task_id": "TASK-3"
+    },
+    "proposed_shape": "same obligation id, same role/owner/applicability, second authorized physical test path",
+    "guard_result": "correctly rejected as an immutable path mutation before normalization"
+  },
+  "root_cause": {
+    "category": "safe_provider_shape_not_normalized",
+    "summary": "The typed semantic composer treated unambiguous delivery-depth group-id reuse as moving an existing artifact instead of splitting one semantic group into two physical artifacts.",
+    "not_model_weakness": true,
+    "not_target_project_bug": true
+  },
+  "fix": {
+    "source_file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+    "test_file": "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_semantic_repair.py",
+    "behavior": [
+      "Only during delivery-depth repair, preserve the baseline artifact row.",
+      "When path is the only changed identity field and owner/role/applicability match, mint a deterministic artifact-normalized-* id for the authorized new path.",
+      "Atomically expand verifier and behavior obligation references from the group id to the original and minted ids.",
+      "Keep owner, role, applicability, unauthorized path, duplicate path, and non-depth identity mutations fail-closed."
+    ]
+  },
+  "verification": {
+    "red_test": "immutable semantic identity failure reproduced",
+    "targeted_tests": "2 passed",
+    "semantic_repair_suite": "62 passed",
+    "chief_engineer_public_contract_suite": "182 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "git_diff_check": "passed",
+    "live_revalidation": "pending fresh isolated L3-23 run"
+  },
+  "residual_risk": "A fresh provider may produce a genuinely ambiguous semantic mutation; those shapes remain fail-closed and must not be normalized."
+}

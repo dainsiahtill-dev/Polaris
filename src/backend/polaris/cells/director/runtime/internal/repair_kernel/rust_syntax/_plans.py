@@ -900,11 +900,48 @@ def build_rust_trait_import_plan(
 
     operations: list[RepairOperation] = []
     planned_diagnostics: list[RepairDiagnostic] = []
+    planned_diagnostic_ids: set[str] = set()
     seen: set[tuple[str, str]] = set()
+    seen_spans: set[tuple[str, int, int]] = set()
     working = dict(normalized_base)
     ops_by_path: dict[str, list[RepairOperation]] = {}
+    # An unresolved re-export often carries two coupled rustc suggestions:
+    # import the short symbol into the lexical scope and replace the invalid
+    # qualified references with that short symbol. Neither half is valid by
+    # itself, so keep them in one repair transaction owned by this planner.
+    # Apply every same-line rewrite first: inserting the import shifts following
+    # rustc line numbers and would otherwise make later diagnostics unplannable.
     for diagnostic in diagnostics:
-        diagnostic_planned = False
+        for path, line_number, code in _parse_rust_line_suggestions(
+            (diagnostic,),
+            allow_import_companion=True,
+        ):
+            if path not in working or not path.endswith(".rs"):
+                continue
+            operation = _rust_line_suggestion_operation(
+                path=path,
+                content=working[path],
+                line_number=line_number,
+                code=code,
+                diagnostic=diagnostic,
+                allow_non_unique_line_anchor=True,
+            )
+            if operation is None:
+                continue
+            span_key = (operation.path, int(operation.span_start or 0), int(operation.span_end or 0))
+            if span_key in seen_spans:
+                continue
+            seen_spans.add(span_key)
+            current = working[path]
+            working[path] = (
+                current[: int(operation.span_start or 0)]
+                + str(operation.replacement)
+                + current[int(operation.span_end or 0) :]
+            )
+            ops_by_path.setdefault(path, []).append(operation)
+            planned_diagnostic_ids.add(diagnostic.diagnostic_id)
+
+    for diagnostic in diagnostics:
         for path, import_line in _parse_rust_trait_import_suggestions((diagnostic,)):
             if path not in working or not path.endswith(".rs"):
                 continue
@@ -927,9 +964,11 @@ def build_rust_trait_import_plan(
                 + current[int(operation.span_end or 0) :]
             )
             ops_by_path.setdefault(path, []).append(operation)
-            diagnostic_planned = True
-        if diagnostic_planned:
-            planned_diagnostics.append(diagnostic)
+            planned_diagnostic_ids.add(diagnostic.diagnostic_id)
+
+    planned_diagnostics.extend(
+        diagnostic for diagnostic in diagnostics if diagnostic.diagnostic_id in planned_diagnostic_ids
+    )
 
     for path, path_ops in ops_by_path.items():
         if len(path_ops) == 1:

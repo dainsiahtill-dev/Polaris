@@ -312,6 +312,7 @@ def chief_engineer_portfolio_output_errors(
     payload: Mapping[str, Any],
     *,
     task_ids: tuple[str, ...],
+    authorized_artifact_obligation_ids: frozenset[str] | None = None,
 ) -> list[str]:
     """Validate the nested project-level CE output contract."""
 
@@ -467,6 +468,14 @@ def chief_engineer_portfolio_output_errors(
                         obligation_id = str(row.get("obligation_id") or "").strip()
                         role = str(row.get("semantic_role") or "").strip()
                         if not owner or not obligation_id:
+                            continue
+                        if (
+                            authorized_artifact_obligation_ids is not None
+                            and obligation_id not in authorized_artifact_obligation_ids
+                        ):
+                            # Raw provider rows are not authority. Cross-task
+                            # behavior audit must consume the same immutable CE
+                            # task/path projection used by completion/depth.
                             continue
                         if role in {"source", "entrypoint"}:
                             required_sources.setdefault(owner, set()).add(obligation_id)

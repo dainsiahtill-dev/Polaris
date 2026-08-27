@@ -171,6 +171,33 @@ def test_typescript_aggregate_diagnostics_expand_each_compiler_line() -> None:
     ]
 
 
+def test_workspace_validation_multiline_python_command_does_not_become_repair_diagnostics() -> None:
+    """L3-24 r43: verifier command source is provenance, not 70+ defects."""
+
+    diagnostic = (
+        "Artifact quality scan failed: workspace validation command failed "
+        "(/usr/bin/python -c import pathlib\n"
+        "import re\n"
+        "root = pathlib.Path(\".\")\n"
+        "for path in root.rglob(\"*\"):\n"
+        "    if path.is_file():\n"
+        "        continue\n"
+        "print(\"CMake build passed\")): CMake Error at CMakeLists.txt:50 (add_executable):\n"
+        "  Cannot find source file:\n\n"
+        "    tests/test_cipher_engine.cpp\n\n"
+        "  No SOURCES given to target: invisible_diary_selftest\n"
+    )
+
+    diagnostics = normalize_artifact_quality_errors([diagnostic])
+    raws = [str(item.metadata.get("raw") or item.raw or "") for item in diagnostics]
+
+    assert diagnostics
+    assert len(diagnostics) <= 6
+    assert any("Cannot find source file" in raw for raw in raws)
+    assert all("import re" not in raw for raw in raws)
+    assert all("root.rglob" not in raw for raw in raws)
+
+
 def test_typescript_member_alias_maps_verify_report_derived_members_to_results() -> None:
     diagnostic = (
         "tests/verify.test.ts(4,39): error TS2339: "
@@ -2463,6 +2490,20 @@ def test_cpp_standard_include_adds_cmath_for_isfinite() -> None:
 
     assert "#include <cmath>" in repaired
     assert repaired.index("#include <cmath>") < repaired.index("isfinite")
+
+
+def test_cpp_standard_include_adds_stdexcept_for_standard_exception_types() -> None:
+    content = (
+        "void decode() {\n"
+        '    try { throw std::runtime_error("bad"); }\n'
+        "    catch (const std::invalid_argument&) {}\n"
+        "}\n"
+    )
+
+    repaired = repair_cpp_missing_standard_includes_text(content)
+
+    assert "#include <stdexcept>" in repaired
+    assert repaired.index("#include <stdexcept>") < repaired.index("std::runtime_error")
 
 
 def test_cpp_missing_private_members_rule_builds_canonical_plan_without_diagnostics() -> None:

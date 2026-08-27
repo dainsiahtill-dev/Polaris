@@ -358,7 +358,7 @@ def summarize_workspace_quality_evidence_context_slot(value: Any) -> dict[str, A
         return {}
     quality_metrics = found.get("quality_metrics")
     quality_minimums = found.get("quality_minimums")
-    return {
+    summary = {
         "schema_version": "polaris.workspace_quality_evidence.context_slot.v1",
         "source_schema_version": _text(found.get("schema_version")),
         "source": _text(found.get("source") or found.get("modality") or "workspace_quality_evidence"),
@@ -372,3 +372,7 @@ def summarize_workspace_quality_evidence_context_slot(value: Any) -> dict[str, A
         "failed_required_modalities": _string_tokens(found.get("failed_required_modalities")),
         "missing_required_modalities": _string_tokens(found.get("missing_required_modalities")),
     }
+    raw_failed_quality_metrics = found.get("failed_quality_metrics")
+    if isinstance(raw_failed_quality_metrics, (list, tuple)):
+        summary["failed_quality_metrics"] = _string_tokens(raw_failed_quality_metrics)
+    return summary

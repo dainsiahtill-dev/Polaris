@@ -1,0 +1,64 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-DIRECTOR-COMPILE-TO-LINK-PROGRESS",
+  "status": "FIXED_UNIT_LIVE_PENDING",
+  "severity": "P1",
+  "title": "Compile-to-link phase advance is misclassified as an equal-count diagnostic swap",
+  "scope": "factory.pipeline workspace-quality repair convergence",
+  "first_observed_run_id": "factory_96c141aa5ffd",
+  "exact_workspace": "/tmp/factory-bench-l3-24-r09/workspaces/033eacd827b6-0c530ca447e4370e/L3-24-023d7314133040b6/bb8e40af61b10c88f457858e",
+  "symptom": {
+    "project_id": "L3-24",
+    "task_id": "TASK-1",
+    "task_runtime_attempt": 5,
+    "task_runtime_event_seq": 111,
+    "repeated_task_runtime_attempt": 8,
+    "repeated_task_runtime_event_seq": 162,
+    "settlement_reason": "workspace_quality_repair_equal_count_swap",
+    "before_phase": "cxx_compilation",
+    "after_phase": "linker",
+    "pm_ce_restart_observed": false
+  },
+  "dynamic_evidence": {
+    "task_runtime_stream": ".polaris/runtime/events/task_runtime.execution.jsonl#seq=111",
+    "before_failing_translation_units": [
+      "tests/test_moon_cipher.cpp"
+    ],
+    "after_linker_anchors": [
+      "undefined reference",
+      "collect2: error: ld returned 1 exit status"
+    ],
+    "after_missing_artifact": "src/invisible_diary/io/invisible_io.cpp",
+    "tool_effect": "authoritative edit_file receipt committed",
+    "final_request_context_snapshot_refs": [
+      "c732b5d5e87c50ad7f23461e",
+      "231640566f78b288fc7eb609"
+    ],
+    "same_task_recovery": "TaskRuntime repeatedly reopened and reclaimed TASK-1; PM and Chief Engineer were not rerun",
+    "token_safety_action": "r09 was stopped after attempt 8 reproduced the same misclassification because its already-running isolated backend could not load the main-checkout fix"
+  },
+  "root_cause": {
+    "classification": "compile_frontier_zero_is_treated_as_unknown",
+    "owner": "factory.pipeline",
+    "mechanism": "workspace_quality_compile_barrier_reduced only accepted a strict subset when both before and after verifier output contained FAILING_TUS. A successful edit that cleared the last translation unit and exposed linker errors produced no after FAILING_TUS marker, so _workspace_quality_repair_effect fell through to equal_count_swap.",
+    "why_general": "C, C++, Rust native-link, and mixed build systems routinely stop emitting per-source compiler diagnostics once compilation succeeds and the linker becomes authoritative. The phase transition must be recognized without accepting opaque same-count churn."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": "When the same verifier previously had explicit failing translation units and now has none, accept progress only if the command passed or the after evidence contains an explicit linker anchor. Empty or truncated output remains fail-closed."
+  },
+  "verification": {
+    "tdd_red": "The exact compile-to-link regression returned equal_count_swap before the fix.",
+    "tdd_green": "The exact regression returns progress after the fix.",
+    "targeted_pytest": "6 passed, 75 deselected",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 1 source file",
+    "broader_suite": "80/81 behaviors continued; one independently reproducible pre-existing causal-owner test fails because main.go is absent from the current target projection. This is outside the compile-to-link classifier and was not hidden or changed by this fix.",
+    "fresh_isolated": "r10 pending after r09 evidence-preserving stop"
+  },
+  "target_project_modified": false,
+  "residual_risk": "A fresh isolated L3-24 r10 must prove the compile-to-link phase no longer settles as equal_count_swap."
+}

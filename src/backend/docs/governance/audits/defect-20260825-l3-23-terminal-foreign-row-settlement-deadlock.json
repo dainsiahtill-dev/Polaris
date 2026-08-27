@@ -1,0 +1,74 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "20260825-l3-23-terminal-foreign-row-settlement-deadlock",
+  "diagnosis_id": "9c83be452101d764af57e8c2",
+  "status": "FIXED_PENDING_SAME_RUN_RECOVERY",
+  "severity": "P0",
+  "module_id": "M06_task_runtime_settlement_authority",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_e0cda86d03da",
+  "foreign_factory_run_id": "factory_aa35ede57f1d",
+  "workspace": "/tmp/factory-bench-l3-23-r19/workspaces/57417bb3ee24-6701852dbc6bd93e/L3-23-2956ab31bd653d97/fecb0ae8f35639fdf3b3e47c",
+  "symptom": "The original QA-only same-run retry and an accidental temporary Director-resume run mutually reported child-session settlement conflicts even though no TaskRuntime session remained active.",
+  "dynamic_evidence": {
+    "active_session_count": 0,
+    "original_row": {
+      "task_runtime_row": 10,
+      "factory_run_id": "factory_e0cda86d03da",
+      "status": "pending",
+      "external_task_id": "TASK-1"
+    },
+    "foreign_rows": [
+      {
+        "task_runtime_row": 13,
+        "factory_run_id": "factory_aa35ede57f1d",
+        "status": "cancelled",
+        "external_task_id": "TASK-2"
+      },
+      {
+        "task_runtime_row": 14,
+        "factory_run_id": "factory_aa35ede57f1d",
+        "status": "cancelled",
+        "external_task_id": "TASK-3"
+      }
+    ],
+    "before_fix": "query_factory_run_settlement reused reset authority conflicts and treated every foreign persisted row as an active mutation owner.",
+    "after_fix": {
+      "original_settled": true,
+      "foreign_settled": true,
+      "original_conflicts": [],
+      "foreign_conflicts": []
+    },
+    "workspace_lease": {
+      "run_id": "factory_aa35ede57f1d",
+      "state": "draining",
+      "fencing_token": 9,
+      "expires_at": "2026-08-25T07:39:03.715452+00:00"
+    }
+  },
+  "root_cause": "_reset_authority_conflicts encoded two different authority questions as one rule. Destructive reset must reject every foreign binding; read-only Factory settlement only needs to reject live mutation authority, namely claimed or in-progress rows and active sessions. Pending, blocked, cancelled, failed, and completed foreign rows have no current mutation capability.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/runtime/task_runtime/internal/service/_mixin_directed_effect.py",
+      "src/backend/polaris/cells/runtime/task_runtime/internal/service/_mixin_recovery_reexec.py",
+      "src/backend/polaris/cells/runtime/task_runtime/tests/test_service_sub2.py"
+    ],
+    "behavior": "query_factory_run_settlement ignores inactive foreign bindings while retaining active row/session conflicts; reset_records keeps its prior strict foreign-binding refusal.",
+    "safety": [
+      "No PM or Chief Engineer restart",
+      "No generated target-project modification",
+      "No active claimed or in-progress authority relaxation",
+      "No active session relaxation",
+      "No destructive reset relaxation"
+    ]
+  },
+  "verification": {
+    "tdd_red": "The regression failed before implementation because original settlement was false.",
+    "focused_pytest": "26 passed in 3.80s",
+    "ruff": "PASS",
+    "mypy": "PASS",
+    "exact_runtime_read_only_query": "Both runs settled=true with active_session_count=0 and conflicts=[]",
+    "same_run_recovery": "PENDING official stale-owner recovery after lease expiry, then original qa_gate-only retry"
+  },
+  "next_action": "After the draining lease expires, call the official recover-stale-workspace-owner action with fencing token 9, then retry only qa_gate for factory_e0cda86d03da and audit TASK-3 effect plus Rust verifier reduction."
+}

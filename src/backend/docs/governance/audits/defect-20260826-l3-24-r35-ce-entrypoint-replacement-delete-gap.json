@@ -1,0 +1,56 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-R35-CE-ENTRYPOINT-REPLACEMENT-DELETE-GAP",
+  "status": "FIX_IMPLEMENTED_LIVE_VALIDATION_PENDING",
+  "severity": "P0",
+  "scope": "chief_engineer.semantic_repair",
+  "observed_at": "2026-08-26T13:35:00+08:00",
+  "exact_run": {
+    "factory_run_id": "factory_e9486071c80a",
+    "project_id": "L3-24",
+    "workspace": "/tmp/factory-bench-l3-24-r35/workspaces/2d1e69ca8ac8-04a2abe1ae94947f/L3-24-023d7314133040b6/efe8875113d4588a5602c04c",
+    "terminal_error_code": "chief_engineer.semantic_repair_exhausted",
+    "context_snapshot_ref_prefix": "4a578edc"
+  },
+  "symptom": "The CE provider added a valid proof-of-work CLI demo entrypoint, but the invalid help-only entrypoint remained in the composed candidate and the same semantic validation failed again.",
+  "dynamic_evidence": {
+    "initial_candidate_hash_prefix": "d8ef01e",
+    "provider_patch_observed": {
+      "added_entrypoint_obligation_id": "TASK-1::cli_demo",
+      "obsolete_entrypoint_obligation_id": "TASK-1::cli_help",
+      "obsolete_command": "./build/invisible_diary help"
+    },
+    "final_request_audit": "CE identity, PM contract, target files, failure feedback, response schema, and forced structured-output tool were present.",
+    "tool_result": "Provider returned a schema-valid entrypoint_upsert; no removal operation existed in the advertised schema.",
+    "composition_result": "_replace_by_id appended the new id and preserved the old id, so full candidate revalidation failed on TASK-1::cli_help."
+  },
+  "root_cause_class": "semantic_patch_contract_insufficient",
+  "root_cause": "ChiefEngineerSemanticRepairPatchV1 and its provider schema were upsert-only. Replacing an invalid obligation under a new id was inexpressible: the model could add a correct row but could not explicitly remove the diagnosed obsolete row.",
+  "fix": {
+    "contract": "Add optional entrypoint_remove_obligation_ids to the typed patch while retaining entrypoint_upsert as the diagnosis authority group.",
+    "policy": "A removal id must exist in the frozen candidate and the same patch must contain a same-owner, same-kind replacement; unknown or cross-owner removals fail closed.",
+    "composition": "Remove authorized obsolete rows before applying typed entrypoint upserts; include removed ids in the immutable repair receipt.",
+    "provider_context": "Expose removable ids and the replacement rule, and instruct CE to use the typed removal surface instead of leaving the invalid row beside its replacement."
+  },
+  "files_modified": [
+    "src/backend/polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py",
+    "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+    "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_semantic_repair.py",
+    "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+    "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_ce_handoff.py"
+  ],
+  "verification": {
+    "semantic_repair_and_factory_tests": "132 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live": "pending fresh isolated L3-24 r36"
+  },
+  "guardrails": [
+    "No generated Bench project file was modified.",
+    "No free-form delete path was added.",
+    "Unknown removal ids fail closed.",
+    "A removal without a same-owner same-kind replacement fails closed.",
+    "Unrelated candidate sections remain hash-preserved in the semantic repair receipt."
+  ],
+  "residual_risk": "A provider may omit the optional removal field; full candidate validation remains authoritative and will reject the stale invalid entrypoint rather than accept a false green."
+}

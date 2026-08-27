@@ -1164,6 +1164,48 @@ def test_materialization_settle_scope_includes_plannable_derived_targets(tmp_pat
     assert "forbidden.txt" not in targets
 
 
+def test_materialization_settle_context_binds_candidate_local_typed_repair_targets(
+    tmp_path: Path,
+) -> None:
+    """r40: a typed C++ repair plan must extend only its own DEO JobToken scope."""
+
+    (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\n", encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    run = _run(tmp_path)
+    effects = (
+        SimpleNamespace(contingency_kind="forward", target_path="include/cipher/diary.hpp"),
+        SimpleNamespace(contingency_kind="forward", target_path="src/diary.cpp"),
+        SimpleNamespace(contingency_kind="rollback", target_path="src/diary.cpp"),
+        SimpleNamespace(contingency_kind="forward", target_path="../outside.cpp"),
+        SimpleNamespace(contingency_kind="forward", target_path=".polaris/runtime/ledger.json"),
+    )
+    deferred = SimpleNamespace(
+        plan=SimpleNamespace(effects=effects),
+        allowed_paths=("include/cipher/diary.hpp", "src/diary.cpp"),
+    )
+    candidate = {
+        "success": True,
+        "result": {
+            "status": "deferred_repair_effects_pending",
+            "deferred_request": deferred,
+        },
+    }
+
+    context = executor._director_stage_materialization_settle_commit_context(
+        run=run,
+        run_id=run.id,
+        diagnostics=[],
+        deferred_tool_results=[candidate],
+    )
+
+    assert "include/cipher/diary.hpp" in context["allowed_write_paths"]
+    assert "src/diary.cpp" in context["allowed_write_paths"]
+    assert "../outside.cpp" not in context["allowed_write_paths"]
+    assert ".polaris/runtime/ledger.json" not in context["allowed_write_paths"]
+    assert "polaris/runtime/ledger.json" not in context["allowed_write_paths"]
+    assert context["job_token"]["allowed_write_paths"] == context["allowed_write_paths"]
+
+
 def test_collect_director_stage_materialization_diagnostics_parses_tsc_stderr(
     tmp_path: Path,
 ) -> None:

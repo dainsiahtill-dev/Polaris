@@ -839,6 +839,23 @@ class _ExecutionMixin(_ServiceMixinBase):
             return self._execution_attempt_settlement_result(
                 False, "session_lease_expired", command, session=session
             ), None
+        return self._settle_execution_attempt_without_lease_check_locked(command, session)
+
+    def _settle_execution_attempt_without_lease_check_locked(
+        self,
+        command: SettleTaskRuntimeExecutionAttemptCommandV1,
+        session: TaskExecutionSession,
+    ) -> tuple[dict[str, Any], TaskExecutionSession | None]:
+        """Close DEO parent and persist one terminal outcome under owner locks.
+
+        Normal settlement performs lease validation before entering this
+        helper. Factory terminal drain and historical terminal-session repair
+        may call it after their stronger run-owner checks when the execution
+        lease has already expired. They still MUST pass the exact DEO
+        inventory/parent close protocol; this helper never bypasses unresolved
+        physical effects.
+        """
+
         prepared = self._prepare_terminal_settlement_intent_locked(command, session)
         if not isinstance(prepared, _PreparedTerminalSettlement):
             return prepared

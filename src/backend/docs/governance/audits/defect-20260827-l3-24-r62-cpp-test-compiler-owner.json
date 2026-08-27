@@ -1,0 +1,82 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-r62-cpp-test-compiler-owner",
+  "recorded_at": "2026-08-27T06:28:58+08:00",
+  "status": "FIXED_UNIT_AND_EXACT_RUN_REPLAY_VERIFIED_E2E_PENDING",
+  "severity": "P0",
+  "scope": "polaris_meta_platform_only",
+  "target_project_modified": false,
+  "factory_run_id": "factory_308086628a50",
+  "workspace": "/tmp/factory-bench-l3-24-r62/workspaces/20a2c7aac706-7f3d362e2e3b5856/L3-24-023d7314133040b6/efd1cd44d948a70e8f2ea082",
+  "symptom": {
+    "stage": "quality_gate_repair",
+    "verifier_error": "tests/cpp_unit.cpp:125:14: error: no match for operator=",
+    "wrong_provider_mutation_target": "src/inkwell/cipher.cpp",
+    "provider_target_snapshots": [
+      "81b067f455d004a6da90e209",
+      "dab71c6bbeef530501d4c732",
+      "528c83bb3b004d4a0e0e3628"
+    ],
+    "candidate_effect": "production source edits did not reduce the authored test translation-unit compiler failure and were rolled back"
+  },
+  "dynamic_debug_evidence": {
+    "independent_verifier_command": "g++ -std=c++17 -fsyntax-only -I . -I src -I include tests/cpp_unit.cpp",
+    "independent_verifier_exit_code": 1,
+    "physical_fault_path": "tests/cpp_unit.cpp",
+    "physical_fault_line": 125,
+    "pre_fix_route": {
+      "exact_direct_diagnostic_targets": [
+        "tests/cpp_unit.cpp",
+        "tests/test_product.py"
+      ],
+      "mixed_frontier_first_target": "src/inkwell/cipher.cpp",
+      "provider_claim_target": "src/inkwell/cipher.cpp"
+    },
+    "post_fix_exact_run_replay": {
+      "direct_compiler_targets": [
+        "tests/cpp_unit.cpp"
+      ],
+      "causal_targets": [
+        "tests/cpp_unit.cpp"
+      ],
+      "claim_target_files": [
+        "tests/cpp_unit.cpp"
+      ]
+    }
+  },
+  "root_cause": {
+    "classification": "compiler_mutation_authority_conflated_with_runtime_and_depth_frontier",
+    "details": [
+      "workspace_quality_unclaimed_failing_tu_targets can fall through from compiler markers to delivery-depth production sources",
+      "the caller labeled this mixed result compiler_diagnostic_target_files",
+      "workspace_quality_llm_claim_target_files discarded test paths when selecting compiler authority",
+      "an authored compiler-failing test translation unit was therefore treated as an observer and production source became the only writable target"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "mechanism": [
+      "extract exact workspace-local C/C++ compiler paths from normalized diagnostics",
+      "make exact compiler paths an atomic causal frontier before runtime/depth candidates",
+      "preserve authored test translation units as compiler mutation authority",
+      "use legacy FAILING_TUS/depth frontier only when no exact compiler path exists and the explicit marker is present"
+    ]
+  },
+  "verification": {
+    "tests": {
+      "targeted_red_green": "2 passed",
+      "characterization_suite": "109 passed"
+    },
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_run_dynamic_replay": "tests/cpp_unit.cpp selected end-to-end by direct compiler, causal, and claim selectors",
+    "fresh_isolated_bench": "pending"
+  },
+  "residual_risks": [
+    "fresh isolated L3-24 must prove the provider receives tests/cpp_unit.cpp and the compiler frontier advances",
+    "runtime-smoke and delivery-depth residuals remain separate later phases after compiler repair"
+  ]
+}

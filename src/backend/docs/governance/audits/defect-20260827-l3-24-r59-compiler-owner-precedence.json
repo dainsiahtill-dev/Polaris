@@ -1,0 +1,66 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "l3-24-r59-compiler-owner-precedence",
+  "status": "FIXED_UNIT_AND_EXACT_REPLAY_VERIFIED_LIVE_PENDING",
+  "severity": "P0",
+  "factory_run_id": "factory_fd2dbd023e42",
+  "project_id": "L3-24",
+  "symptom": "The sole failing C++ translation unit was read-only while every forced Director edit targeted a derived Python acceptance-test observer.",
+  "root_cause": "Factory computed the compiler frontier but omitted it from mixed-owner claim selection. The first intersecting TaskRuntime owner was the unittest observer, and this stale forced target overrode the adapter's production-first candidate order.",
+  "dynamic_evidence": {
+    "primary_diagnostic": "src/core/cipher.cpp:97:22: no matching function for call to InvisibleCipher::to_hex(const char*, unsigned long)",
+    "initial_final_request_snapshot_refs": [
+      "00194f83b0b165b29b8c6cf6",
+      "2308359e759b7c26297ee8ec"
+    ],
+    "repair_final_request_snapshot_refs": [
+      "bd8cee107374a6ba5ad75bc2",
+      "1df6218c6d7ca268953538f1",
+      "acbd6fabb2f3e0460ad229e1",
+      "3e2c53e0fd341255db9a2be6"
+    ],
+    "provider_tools": [
+      "edit_file"
+    ],
+    "physical_edit_target": "tests/test_acceptance.py",
+    "primary_source_mutable": false,
+    "candidate_outcome": "candidate_rejected_rolled_back",
+    "stop_reason": "three_nonprogress_repairs_without_verified_progress",
+    "persisted_contradiction": {
+      "explicit_quality_target_head": "src/core/cipher.cpp",
+      "forced_repair_target": "tests/test_acceptance.py"
+    },
+    "exact_replay": {
+      "old_claim": "tests/test_acceptance.py",
+      "new_claim": "src/core/cipher.cpp"
+    }
+  },
+  "scope": {
+    "modified_domain": "Polaris Factory workspace-quality owner routing",
+    "generated_project_modified": false,
+    "job_token_scope_broadened": false
+  },
+  "fix": {
+    "classification": "compiler_frontier_owner_precedence",
+    "invariants": [
+      "compiler frontier restricts candidates to non-test physical owners",
+      "current normalized diagnostic order ranks frontier candidates",
+      "selected path must remain inside immutable TaskRuntime owner scope",
+      "test-only compiler diagnostics retain test ownership"
+    ],
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ]
+  },
+  "verification": {
+    "tdd_red": "pass",
+    "targeted_tests": "2 passed",
+    "characterization_tests": "107 passed",
+    "ruff": "pass",
+    "mypy": "pass",
+    "exact_read_only_replay": "pass",
+    "live_r60": "pending"
+  },
+  "next_action": "Run fresh isolated L3-24 r60 and verify the first repair request grants edit_file authority to src/core/cipher.cpp."
+}

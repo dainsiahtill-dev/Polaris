@@ -188,6 +188,50 @@ class ContextSnapshotAuditPinRepository:
             self._assert_current_identity()
             return self._query_snapshot_pins_locked(ref)
 
+    def query_factory_run_pins(self, factory_run_id: str) -> tuple[ContextSnapshotAuditPinV1, ...]:
+        """Return validated snapshot pins bound to one exact Factory run.
+
+        Role calls use child run ids, so their journal events are not always
+        present in a parent Factory trail.  Audit pins carry the immutable
+        parent ``factory_run_id`` and are therefore the durable correlation
+        authority for final provider requests.
+        """
+
+        requested_run_id = str(factory_run_id or "").strip()
+        if not requested_run_id:
+            raise ContextSnapshotAuditPinError("factory_run_id must be non-empty")
+        with self._exclusive_lock():
+            self._assert_current_identity()
+            pins_root = os.path.join(self.contexts_root, "pins")
+            if not os.path.exists(pins_root):
+                return ()
+            if not os.path.isdir(pins_root):
+                raise ContextSnapshotAuditPinError("context snapshot pins root is not a directory")
+            refs: list[str] = []
+            try:
+                with os.scandir(pins_root) as shards:
+                    shard_entries = sorted(shards, key=lambda entry: entry.name)
+                for shard in shard_entries:
+                    if not shard.is_dir(follow_symlinks=False) or not re.fullmatch(r"[0-9a-f]{2}", shard.name):
+                        raise ContextSnapshotAuditPinError("context snapshot pins root contains an invalid shard")
+                    with os.scandir(shard.path) as ref_dirs:
+                        for ref_entry in sorted(ref_dirs, key=lambda entry: entry.name):
+                            if not ref_entry.is_dir(follow_symlinks=False):
+                                raise ContextSnapshotAuditPinError("context snapshot pin shard contains a non-directory")
+                            ref = self._validated_ref(ref_entry.name)
+                            if ref[:2] != shard.name:
+                                raise ContextSnapshotAuditPinError("context snapshot pin shard/ref mismatch")
+                            refs.append(ref)
+            except OSError as exc:
+                raise ContextSnapshotAuditPinError("context snapshot pins root is unreadable") from exc
+
+            matched: list[ContextSnapshotAuditPinV1] = []
+            for ref in refs:
+                for pin in self._query_snapshot_pins_locked(ref):
+                    if pin.factory_run_id == requested_run_id:
+                        matched.append(pin)
+            return tuple(matched)
+
     def remove_snapshot_if_unpinned(self, snapshot_path: str) -> bool:
         candidate = os.path.realpath(snapshot_path)
         with self._exclusive_lock():

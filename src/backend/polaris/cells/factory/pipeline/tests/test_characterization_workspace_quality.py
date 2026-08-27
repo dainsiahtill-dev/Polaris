@@ -1421,3 +1421,168 @@ class TestWorkspaceQualityDeterministicRepairExecution:
         assert summary["execution_attempt_heartbeat_failures"][0]["code"] == "heartbeat_rejected"
         assert summary["task_runtime_repair_attempt"]["outcome"] == "failed"
         assert settled["stage_status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_llm_repair_keeps_candidate_guard_private_until_verifier_settlement(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polaris.cells.factory.pipeline.internal import factory_workspace_quality_impl
+
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "src" / "app.js").write_text("export const app = 1;\n", encoding="utf-8")
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=10,
+            external_task_id="TASK-6",
+            session_id="quality-candidate-guard-session",
+            attempt=1,
+            role_id="director",
+            worker_id="director",
+            run_id="factory-quality-candidate-guard",
+            lease_expires_at="2026-08-25T12:00:00+00:00",
+        )
+
+        guard_events: list[tuple[str, str]] = []
+
+        class FakeCandidateGuard:
+            def accept(self, *, reason: str) -> dict[str, Any]:
+                guard_events.append(("accept", reason))
+                return {"status": "accepted", "reason": reason}
+
+            async def rollback(self, *, reason: str) -> dict[str, Any]:
+                guard_events.append(("rollback", reason))
+                return {"status": "restored", "reason": reason}
+
+        candidate_guard = FakeCandidateGuard()
+
+        async def wait_heartbeat(
+            _authority: Any,
+            *,
+            stop: asyncio.Event,
+            failures: list[dict[str, Any]],
+            context_summary: str,
+        ) -> None:
+            del failures, context_summary
+            await stop.wait()
+
+        async def fake_llm_repair(*_args: Any, **_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {
+                            "file": "src/app.js",
+                            "before_sha256": "a" * 64,
+                            "after_sha256": "b" * 64,
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "write_tool_evidence": True,
+                    "_candidate_guard": candidate_guard,
+                },
+            )
+
+        monkeypatch.setattr(
+            factory_workspace_quality_impl,
+            "_run_workspace_quality_repair_heartbeat",
+            wait_heartbeat,
+        )
+        monkeypatch.setattr(
+            "polaris.cells.runtime.task_runtime.public.create_task_runtime_execution_attempt_authority",
+            lambda _identity: object(),
+        )
+        monkeypatch.setattr(
+            executor,
+            "_claim_workspace_quality_repair_attempt",
+            lambda **_kwargs: ("TASK-6", 10, identity, {"id": "TASK-6", "target_files": ["src/app.js"]}),
+        )
+        monkeypatch.setattr(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            lambda **_kwargs: {"success": True},
+        )
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_llm_repair,
+        )
+
+        run = FactoryRun(
+            id="factory-quality-candidate-guard",
+            config=FactoryConfig(name="quality-candidate-guard", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-25T00:00:00+00:00",
+        )
+        _, summary = await executor._apply_workspace_quality_llm_repairs(
+            run=run,
+            context={},
+            artifact_quality_errors=["src/app.js failed"],
+            repair_attempt=1,
+        )
+
+        assert "_candidate_guard" not in summary
+        pending = summary["_pending_task_runtime_repair_attempt"]
+        assert pending["candidate_guard"] is candidate_guard
+        await factory_workspace_quality_impl._settle_pending_workspace_quality_repair_attempt(
+            executor,
+            summary.pop("_pending_task_runtime_repair_attempt"),
+            accepted=True,
+            reason="test_cleanup",
+        )
+        assert guard_events == [("accept", "test_cleanup")]
+
+    @pytest.mark.asyncio
+    async def test_rejected_verifier_candidate_rolls_back_before_task_settlement(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from polaris.cells.factory.pipeline.internal import factory_workspace_quality_impl
+
+        executor = _executor(tmp_path)
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=11,
+            external_task_id="TASK-7",
+            session_id="quality-rejected-candidate-session",
+            attempt=1,
+            role_id="director",
+            worker_id="director",
+            run_id="factory-quality-rejected-candidate",
+            lease_expires_at="2026-08-25T12:00:00+00:00",
+        )
+        events: list[str] = []
+
+        class FakeCandidateGuard:
+            async def rollback(self, *, reason: str) -> dict[str, Any]:
+                events.append(f"rollback:{reason}")
+                return {"status": "restored", "reason": reason}
+
+        monkeypatch.setattr(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            lambda **_kwargs: events.append("settle") or {"success": True},
+        )
+
+        result = await factory_workspace_quality_impl._settle_pending_workspace_quality_repair_attempt(
+            executor,
+            {
+                "task_id": "TASK-7",
+                "task_row_id": "11",
+                "execution_attempt": identity,
+                "mutation_committed": False,
+                "candidate_guard": FakeCandidateGuard(),
+            },
+            accepted=False,
+            reason="workspace_quality_repair_equal_count_swap",
+        )
+
+        assert events == ["rollback:workspace_quality_repair_equal_count_swap", "settle"]
+        assert result is not None
+        assert result["candidate_guard_receipt"]["status"] == "restored"

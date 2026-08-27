@@ -632,6 +632,13 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             conflicts = self._reset_authority_conflicts(
                 projection.rows,
                 factory_run_id=authority,
+                # Settlement asks whether any live child authority can still
+                # mutate this workspace. Pending/blocked or terminal rows owned
+                # by another run have no active execution authority and must
+                # not make same-run QA/Director repair permanently non-reentrant.
+                # Claimed/in-progress rows and active sessions remain conflicts;
+                # destructive reset keeps the stricter default below.
+                ignore_inactive_foreign_bindings=True,
             )
         active_sessions = [
             dict(conflict) for conflict in conflicts if str(conflict.get("kind") or "").startswith("active_")
@@ -1059,9 +1066,9 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             must keep using fact-overlaid task-row projections.
 
         Complexity:
-            O(k) to normalize the task-id token plus one O(1) in-memory
-            ``TaskBoard`` lookup. Invalid ids return ``(None, None)``; missing
-            rows return ``(normalized_id, None)`` so claim result shapes remain
+            O(k + n) to normalize the task-id token and read one durable row of
+            size ``n``. Invalid ids return ``(None, None)``; missing rows return
+            ``(normalized_id, None)`` so claim result shapes remain
             ``invalid_task_id`` / ``task_not_found``.
 
         Extension point:
@@ -1074,7 +1081,11 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
             return None, None
-        return normalized, self._board.get(normalized)
+        # Claim authority crosses long-lived TaskRuntimeService instances.
+        # Another service may have reopened this row after this instance
+        # cached its terminal predecessor, so consume the durable owner row
+        # before comparing it with terminal session/fact evidence.
+        return normalized, self._board.get_persisted(normalized)
 
     def _task_entity_for_owner_terminal_transition(self, task_id: Any) -> tuple[int | None, Task | None]:
         """Resolve raw owner-cell task entity for row-only terminal transitions.
@@ -1236,12 +1247,18 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
 
     @staticmethod
     def _prefer_live_external_task_row(matches: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
-        """Prefer a rematerialized pending/ready row over a stale terminal sibling.
+        """Return the newest attempt for one external task identity.
 
         Live L1-10: factory drain reset left TASK-1's numeric row ``1`` terminal
         in the fact overlay, then rematerialized pending row ``6`` with the same
-        ``external_task_id``. First-match lookup claimed ``1`` and failed with
-        ``task_terminal``.
+        ``external_task_id``.  Newest-attempt ordering selects row ``6``.
+
+        Live L3-23 r19 exposed the inverse case: older row ``3`` remained
+        pending after reopen while newer row ``6`` failed during same-run lease
+        recovery.  Preferring *any* live row hid the newer failure, causing
+        ``ensure_task_row(TASK-3)`` to reuse stale row ``3`` instead of minting
+        a repair owner.  Lifecycle class must therefore never outrank attempt
+        recency; ``fact_event_seq`` and then numeric row id are the authority.
         """
 
         if not matches:
@@ -1254,10 +1271,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             id_n = int(row_id) if isinstance(row_id, int) and not isinstance(row_id, bool) else 0
             return (seq_n, id_n)
 
-        live = [
-            row for row in matches if not is_terminal_task_row_status(row.get("execution_state") or row.get("status"))
-        ]
-        pool: list[dict[str, Any]] = live or list(matches)
+        pool = list(matches)
         chosen = pool[0]
         chosen_key = sort_key(chosen)
         for row in pool[1:]:

@@ -1,0 +1,70 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-R54-LINKER-CLEAR-CANDIDATE-FALSE-ROLLBACK",
+  "status": "FIX_IMPLEMENTED_EXACT_REPLAY_VERIFIED_FRESH_REVALIDATION_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_3f0b0b43910c",
+  "workspace": "/tmp/factory-bench-l3-24-r54/workspaces/c81b329128ea-3bccafbbef8bb011/L3-24-023d7314133040b6/5e8fceb53284e13288c438bb",
+  "generated_project_mutated": false,
+  "symptom": {
+    "factory_status": "QA_FAILED",
+    "current_stage": "quality_gate",
+    "responsible_cell_reported": "director.runtime",
+    "retry_boundary": "same_director_task_repair_only",
+    "pm_ce_restart_allowed": false,
+    "candidate_effect_reported": "regression",
+    "candidate_guard_status": "restored",
+    "restored_file": "src/moon_clock.hpp",
+    "final_reported_residual": "older undefined-reference linker failure"
+  },
+  "dynamic_evidence": {
+    "qa_workspace_validation": ".polaris/runtime/qa/workspace-validation.json",
+    "repair_round": 4,
+    "before_candidate": {
+      "cpp_syntax_passed": true,
+      "cmake_build_passed": false,
+      "unittest_summary": "FAILED (failures=1)",
+      "primary_barrier": "undefined reference to moon_clock::abs_day_from_ymd"
+    },
+    "candidate_state_before_rollback": {
+      "cpp_syntax_passed": true,
+      "cmake_build_passed": true,
+      "unittest_summary": "FAILED (failures=4)",
+      "residual_surface": "behavioral tests plus delivery depth; compile and link errors absent"
+    },
+    "pre_fix_exact_replay": {
+      "compile_barrier_reduced": false,
+      "verifier_regressed": true,
+      "repair_effect": "regression"
+    },
+    "post_fix_exact_replay": {
+      "compile_barrier_reduced": true,
+      "verifier_regressed": true,
+      "repair_effect": "progress"
+    },
+    "failed_debug_attempt": "The first local replay called the instance-only _workspace_quality_repair_errors method without self and raised TypeError; no root-cause claim used that failed replay. The corrected replay consumed persisted round artifact_quality_errors and candidate_residual_errors."
+  },
+  "root_cause": {
+    "code": "linker_clear_not_recognized_as_compile_barrier_progress",
+    "cause": "workspace_quality_compile_barrier_reduced recognized only explicit FAILING_TUS reduction or compile-to-link transition. A linker failure has no FAILING_TUS marker, so the same CMake build changing from explicit linker failure to pass was invisible. The lower-priority unittest fanout guard then treated newly runnable behavioral tests as regression and rolled back a real upstream fix."
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+    "change": "Treat an explicit linker-failure output followed by success from the same build command as authoritative compile-barrier reduction. Keep the independent unittest regression detector unchanged; upstream barrier progress only outranks derivative fanout for that round."
+  },
+  "regression_test": {
+    "file": "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py",
+    "name": "test_workspace_quality_linker_clear_outranks_newly_runnable_unittest_fanout",
+    "contract": "linker fail plus one visible unittest failure, followed by build pass plus four newly visible unittest failures, classifies as progress rather than regression"
+  },
+  "validation": {
+    "new_regression_test": "1 passed",
+    "related_regression_cluster": "5 passed, 97 deselected",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_r54_replay": "passed",
+    "fresh_isolated_bench": "pending r55"
+  },
+  "next_action": "Run fresh isolated L3-24 r55 from current main worktree; dynamically inspect only the new authoritative residual frontier."
+}

@@ -28,6 +28,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     chief_engineer_source_suffixes_for_language,
     classify_chief_engineer_pm_entrypoint_kind,
     derive_project_kind_authority_from_catalog_snapshot,
+    project_chief_engineer_completion_contract_semantic_errors,
     project_chief_engineer_portfolio_delivery_depth_feasibility,
     project_completion_catalog_snapshot_hash,
     project_completion_verifier_policy_snapshot_hash,
@@ -1345,7 +1346,6 @@ class _Mixin01:
                                                 "owner_task_id": {"type": "string", "minLength": 1},
                                                 "consumer_task_ids": {
                                                     "type": "array",
-                                                    "minItems": 1,
                                                     "items": {"type": "string", "minLength": 1},
                                                 },
                                                 "covered_obligation_ids": {
@@ -1385,6 +1385,7 @@ class _Mixin01:
                             },
                         },
                         "required": [
+                            "task_plans",
                             "project_interface_contract",
                             "shared_behavior_contract",
                         ],
@@ -1531,19 +1532,35 @@ class _Mixin01:
     ) -> list[str]:
         """Validate the nested project-level CE output contract."""
 
+        feasibility = (
+            project_chief_engineer_portfolio_delivery_depth_feasibility(
+                payload,
+                tasks=tasks,
+            )
+            if tasks
+            else None
+        )
         errors = ce_evidence.chief_engineer_portfolio_output_errors(
             payload,
             task_ids=tuple(task.task_id for task in tasks) or tuple(task_ids or ()),
+            authorized_artifact_obligation_ids=(
+                frozenset(feasibility["authorized_artifact_obligation_ids"])
+                if feasibility is not None
+                else None
+            ),
         )
+        errors.extend(project_chief_engineer_completion_contract_semantic_errors(payload))
         depth_compatible_errors = tuple(
-            error for error in errors if ".covered_obligation_ids reference unknown completion obligations:" in error
+            error
+            for error in errors
+            if (
+                ".covered_obligation_ids reference unknown completion obligations:" in error
+                or "production-and-test obligation coverage" in error
+                or "entrypoint" in error
+            )
         )
-        if len(depth_compatible_errors) != len(errors) or not tasks:
+        if len(depth_compatible_errors) != len(errors) or feasibility is None:
             return errors
-        feasibility = project_chief_engineer_portfolio_delivery_depth_feasibility(
-            payload,
-            tasks=tasks,
-        )
         for deficit in feasibility["deficits"]:
             errors.append(
                 "project_completion_contract delivery depth infeasible: "

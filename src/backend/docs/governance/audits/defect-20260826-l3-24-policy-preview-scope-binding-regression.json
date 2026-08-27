@@ -1,0 +1,73 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-R17-POLICY-PREVIEW-SCOPE-BINDING-REGRESSION",
+  "status": "FIXED_UNIT_EXACT_LIVE_REVALIDATION_PENDING",
+  "severity": "P0",
+  "scope": "polaris_meta_project_only",
+  "target_project_modified": false,
+  "exact_run": {
+    "factory_run_id": "factory_45a953e32728",
+    "director_run_id": "director-64186ffa42d8",
+    "project_id": "L3-24",
+    "workspace": "/tmp/factory-bench-l3-24-r17/workspaces/e44ce94c8c1b-7cf9829471b15e12/L3-24-023d7314133040b6/a19df44c4d295f9d45924457",
+    "terminal_delivery_status": "DELIVERY_FAILED"
+  },
+  "symptom": "Two successful native Director responses each decoded 15 write_file calls, yet DEO dispatched zero calls and projected every member as deo_tool_normalization_failed. The target workspace retained only catalog and requirements scaffolding.",
+  "dynamic_evidence": {
+    "final_request_context_snapshot_refs": [
+      "ce817e330df8ab3560a6acd5",
+      "80995e29c05332326de9329f"
+    ],
+    "provider_http": {
+      "status_codes": [
+        200,
+        200
+      ],
+      "response_body_chars_first": 63349,
+      "native_write_calls_per_response": 15
+    },
+    "kernel_turn_outcome": {
+      "first_batch_nonempty_content_calls": 14,
+      "first_batch_empty_content_calls": 1,
+      "second_batch_nonempty_content_calls": 15,
+      "content_length_range": "47..11058 for the second batch"
+    },
+    "control_plane": {
+      "decoded_tool_calls_count": 15,
+      "dispatched_tool_calls_count": 0,
+      "effect_receipt_count": 0,
+      "deo_abort": true,
+      "deo_error_code": "deo_tool_normalization_failed"
+    },
+    "dynamic_test_reproduction": {
+      "command": "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/adapters/tests/test_director_directed_effect_policy_snapshot.py -x",
+      "before_fix": "5 passed, then test_snapshot_and_revalidation_denials_have_full_zero_effect_matrix[binding] failed because snapshot.allowed was false with deo_tool_normalization_failed",
+      "after_fix": "73 passed"
+    }
+  },
+  "root_cause": {
+    "classification": "cross_owner_unbound_method_private_state_assumption",
+    "detail": "DirectorEffectPolicySnapshotPort reuses DirectorToolExecutor._validate_director_policy_for_write as an unbound evidence-only preview. The r16 physical-scope hardening directly read self._authorized_scope, but the policy snapshot port intentionally does not own that physical executor field. Every preview raised AttributeError, which the snapshot boundary correctly collapsed to deo_tool_normalization_failed; all candidates were therefore soft-denied before dispatch.",
+    "false_attribution_prevented": "The downstream blank-content retry diagnostic inspected error receipts after DEO denial and incorrectly suggested model blank writes, although immutable kernel turn outcomes retained substantial non-empty content."
+  },
+  "implementation": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/execution_tools.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    ],
+    "behavior": "The shared write-policy validator uses the physical executor's bound scope only when that private field exists; otherwise the evidence-only snapshot port consumes request-carried capability scope. Snapshot normalization failures now log tool, target, exception type, and exception message without logging file content."
+  },
+  "safety_invariants": [
+    "No generated Bench target was modified.",
+    "Undeclared paths remain denied by the same capability policy.",
+    "The snapshot port remains evidence-only and performs no physical effect.",
+    "Ordinary Director failures remain in the same Director task; PM and Chief Engineer are not restarted."
+  ],
+  "verification": {
+    "policy_snapshot_suite": "73 passed",
+    "broader_regression": "200 passed across policy snapshot, mutation port, execution tools, mutation guard, KernelGuard, and tool-batch decision tree",
+    "ruff": "passed for 8 affected Python files",
+    "mypy": "passed for 5 affected source files",
+    "fresh_isolated_bench": "pending"
+  }
+}

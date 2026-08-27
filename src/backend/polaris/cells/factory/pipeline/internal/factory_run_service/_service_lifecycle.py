@@ -729,7 +729,29 @@ class _FactoryRunServiceLifecycleMixin:
             # Launcher-restart can leave an orphaned settle_terminal_run claim.
             # Finish that exact nonce before recover_run, otherwise retry_phase
             # conflicts for the workspace TTL (live L2-12 factory_a1b49b0460f2).
-            run = await self._settle_terminal_run_locked(run)
+            #
+            # A terminal DRAINING lease *without* such a claim is different:
+            # it is the old physical-attempt epoch that
+            # _prepare_failed_retry_execution_epoch_locked must replay and
+            # settle.  Trying to claim settle_terminal_run first made an
+            # expired exact-owner drain permanently unrecoverable (live L3-23
+            # QA-only retry) before the replay path could produce release
+            # evidence.  Do not renew or bypass the lease here; route that
+            # precise state to the fenced replay below.
+            current_lease = self._admission.current()
+            current_claim = (
+                current_lease.lifecycle_operation_claim
+                if current_lease is not None and current_lease.run_id == run.id
+                else None
+            )
+            terminal_drain_requires_retry_replay = (
+                current_lease is not None
+                and current_lease.run_id == run.id
+                and current_lease.state.value == "draining"
+                and current_claim is None
+            )
+            if not terminal_drain_requires_retry_replay:
+                run = await self._settle_terminal_run_locked(run)
             run = await self._prepare_failed_retry_execution_epoch_locked(run)
             self._require_physical_attempt_admission_open(run.id)
             self._acquire_workspace_lease(run)

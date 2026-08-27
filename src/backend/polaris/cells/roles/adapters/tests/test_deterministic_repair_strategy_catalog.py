@@ -504,13 +504,93 @@ def test_post_execution_repair_schedule_public_wrapper_fails_closed_without_exec
     assert results
     assert all(item["tool"] == "director_repair_kernel" for item in results)
     assert all(item["success"] is False for item in results)
-    assert any(
-        item["result"].get("error_code") == "deo_deferred_repair_attempt_required"
-        for item in results
-    )
+    assert any(item["result"].get("error_code") == "deo_deferred_repair_attempt_required" for item in results)
     assert summary is not None
     assert summary["schema_version"] == "director.post_execution_repair_kernel.v1"
     assert '#include "src/models/postcard.hpp"' in target.read_text(encoding="utf-8")
+
+
+def test_post_execution_repair_schedule_public_wrapper_forwards_diagnostics_and_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    observed: dict[str, Any] = {}
+    execution_attempt = object()
+    diagnostics = [
+        "tests/test_cipher.cpp:112:41: error: expected unqualified-id before '&' token",
+    ]
+
+    def fake_post_execution_repairs(
+        adapter: Any,
+        *,
+        task_id: str,
+        execution_attempt: Any | None = None,
+    ) -> tuple[list[dict[str, Any]], None]:
+        observed.update(
+            {
+                "task_id": task_id,
+                "execution_attempt": execution_attempt,
+                "artifact_quality_errors": tuple(adapter.artifact_quality_errors),
+            }
+        )
+        return [], None
+
+    monkeypatch.setattr(
+        post_execution_repair_bridge,
+        "run_post_execution_language_repairs",
+        fake_post_execution_repairs,
+    )
+
+    results, summary = run_director_post_execution_repair_schedule(
+        tmp_path,
+        task_id="test-post-execution-diagnostics",
+        artifact_quality_errors=diagnostics,
+        execution_attempt=execution_attempt,
+    )
+
+    assert results == []
+    assert summary is None
+    assert observed == {
+        "task_id": "test-post-execution-diagnostics",
+        "execution_attempt": execution_attempt,
+        "artifact_quality_errors": tuple(diagnostics),
+    }
+
+
+def test_cpp_post_execution_runner_forwards_adapter_diagnostics_to_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "tests" / "test_cipher.cpp"
+    target.parent.mkdir(parents=True)
+    target.write_text("void test_cipher() {}\n", encoding="utf-8")
+    diagnostics = ("tests/test_cipher.cpp:112:41: error: expected unqualified-id before '&' token",)
+    observed: list[dict[str, Any]] = []
+
+    class Adapter:
+        workspace = str(tmp_path)
+        artifact_quality_errors = diagnostics
+        _execution = None
+
+    def fake_runtime_repair(*_args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        observed.append(dict(kwargs))
+        return []
+
+    monkeypatch.setattr(
+        post_execution_repair_bridge,
+        "run_runtime_repair_with_director_tools",
+        fake_runtime_repair,
+    )
+
+    post_execution_repair_bridge.run_cpp_post_repairs_as_tool_results(
+        tmp_path,
+        adapter=Adapter(),
+        task_id="test-cpp-diagnostics",
+    )
+
+    assert observed
+    assert all(call["artifact_quality_errors"] == diagnostics for call in observed)
+    assert any(call["source_tool"] == "deterministic_cpp_standard_include_repair" for call in observed)
 
 
 def test_materialization_quality_public_wrapper_is_not_internal_function_alias(

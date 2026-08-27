@@ -29,8 +29,8 @@ from polaris.cells.chief_engineer.blueprint.public import (
     ChiefEngineerSemanticRepairCandidateV1,
     ChiefEngineerSemanticRepairDiagnosisV1,
     ChiefEngineerSemanticRepairOperationV1,
-    ChiefEngineerSemanticRepairPatchV1,
     GenerateTaskBlueprintCommandV1,
+    bind_chief_engineer_semantic_repair_provider_patch,
     build_chief_engineer_blueprint_portfolio,
     build_chief_engineer_semantic_repair_patch_schema,
     chief_engineer_semantic_repair_task_set_hash,
@@ -171,19 +171,16 @@ class _Mixin02:
                 metric = "test_files" if "test_files=" in error else "prod_files"
                 codes.append(f"chief_engineer.delivery_depth.{metric}_below_minimum")
                 operations.append("artifact_upsert")
-                if metric == "test_files":
+                if metric == "test_files" and len(candidate.task_ids) > 1:
                     # Adding a test artifact can create a new PM-authorized test
                     # owner.  The same atomic patch must be able to bind that
                     # owner to production behavior; otherwise depth repair
                     # merely unmasks cross-task coverage after the provider
-                    # budget is exhausted (exact L3-23 r06).
-                    codes.append(
-                        "chief_engineer.shared_behavior_contract."
-                        "cross_task_production_test_coverage_missing"
-                    )
-                    operations.extend(
-                        ("behavior_invariant_upsert", "task_behavior_ref_replace")
-                    )
+                    # budget is exhausted (exact L3-23 r06). A one-task
+                    # portfolio has no legal cross-task owner/consumer pair;
+                    # requiring one there creates an impossible repair contract.
+                    codes.append("chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing")
+                    operations.extend(("behavior_invariant_upsert", "task_behavior_ref_replace"))
             elif "cross-task production-and-test obligation coverage" in error:
                 codes.append("chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing")
                 operations.extend(("behavior_invariant_upsert", "task_behavior_ref_replace"))
@@ -220,9 +217,10 @@ class _Mixin02:
         try:
             if not isinstance(raw_patch, Mapping):
                 raise TypeError("semantic repair structured_output must be an object")
-            patch = ChiefEngineerSemanticRepairPatchV1.from_provider_dict(
+            patch, provider_binding = bind_chief_engineer_semantic_repair_provider_patch(
                 raw_patch,
-                allowed_operations=diagnosis.allowed_operations,
+                candidate=candidate,
+                diagnosis=diagnosis,
             )
             after, receipt = compose_chief_engineer_semantic_repair(
                 candidate,
@@ -240,11 +238,6 @@ class _Mixin02:
                     ]
                 ],
             )
-        if output_errors:
-            return self._chief_engineer_post_validation_repair_result(
-                prior_result=result,
-                output_errors=output_errors,
-            )
         metadata = dict(result.metadata or {})
         metadata.update(
             {
@@ -252,9 +245,10 @@ class _Mixin02:
                 "chief_engineer_semantic_repair_receipt": receipt.to_dict(),
                 "chief_engineer_semantic_repair_patch_hash": patch.patch_hash,
                 "chief_engineer_semantic_repair_candidate_hash": after.candidate_hash,
+                "chief_engineer_semantic_repair_provider_binding": provider_binding,
             }
         )
-        return RoleExecutionResultV1(
+        composed_result = RoleExecutionResultV1(
             ok=True,
             status=str(getattr(result, "status", "") or "completed"),
             role=str(getattr(result, "role", "") or "chief_engineer"),
@@ -270,6 +264,15 @@ class _Mixin02:
             metadata=metadata,
             turn_history=list(getattr(result, "turn_history", []) or []),
         )
+        if output_errors:
+            # A useful patch may expose a new residual.  The next repair must
+            # consume the composed candidate and its receipt, not the provider's
+            # now-stale patch envelope retained in ``result.metadata``.
+            return self._chief_engineer_post_validation_repair_result(
+                prior_result=composed_result,
+                output_errors=output_errors,
+            )
+        return composed_result
 
     def _recover_chief_engineer_portfolio_structural_result(
         self,
@@ -287,7 +290,10 @@ class _Mixin02:
             arguments = tool_call.get("arguments")
         if not isinstance(arguments, Mapping):
             return result
-        recovery = normalize_chief_engineer_portfolio_tool_arguments(arguments)
+        recovery = normalize_chief_engineer_portfolio_tool_arguments(
+            arguments,
+            authoritative_task_ids=portfolio_task_ids,
+        )
         if not recovery.recovered:
             return result
         schema = self._chief_engineer_structured_output_contract(portfolio_task_ids).json_schema
@@ -317,6 +323,233 @@ class _Mixin02:
             session_id=getattr(result, "session_id", None),
             run_id=getattr(result, "run_id", None),
             output=json.dumps(recovered_payload, ensure_ascii=False, sort_keys=True),
+            thinking=getattr(result, "thinking", None),
+            tool_calls=tuple(getattr(result, "tool_calls", ()) or ()),
+            artifacts=tuple(getattr(result, "artifacts", ()) or ()),
+            usage=dict(getattr(result, "usage", {}) or {}),
+            metadata=metadata,
+            turn_history=list(getattr(result, "turn_history", []) or []),
+        )
+
+    @staticmethod
+    def _chief_engineer_schema_repair_base_candidate(
+        result: RoleExecutionResultV1,
+    ) -> dict[str, Any] | None:
+        """Return the immutable structured candidate carried by a failed CE turn.
+
+        Native forced-tool responses normally have empty visible assistant output.
+        Their actual candidate lives in ``metadata.tool_call.arguments``.  A later
+        bounded repair also carries the original candidate explicitly so a failed
+        patch cannot replace valid subtrees from the previous round.
+        """
+
+        metadata = dict(result.metadata or {})
+        carried = metadata.get("chief_engineer_schema_repair_base_candidate")
+        if isinstance(carried, Mapping):
+            return deepcopy(dict(carried))
+        structured_output = metadata.get("structured_output")
+        if isinstance(structured_output, Mapping):
+            return deepcopy(dict(structured_output))
+        tool_call = metadata.get("tool_call")
+        if isinstance(tool_call, Mapping):
+            arguments = tool_call.get("arguments")
+            if isinstance(arguments, Mapping):
+                return deepcopy(dict(arguments))
+        return None
+
+    @staticmethod
+    def _chief_engineer_required_property_repair_paths(
+        *,
+        candidate: Mapping[str, Any],
+        schema: Mapping[str, Any],
+    ) -> tuple[tuple[str, ...], ...]:
+        """Return exact object-only paths when every schema error is ``required``.
+
+        Array-index, type, enum, and additional-property failures stay on the
+        existing fail-closed reconstruction path.  Only unambiguous missing
+        object members are safe to patch without replacing valid sibling data.
+        """
+
+        errors = sorted(
+            Draft202012Validator(dict(schema)).iter_errors(dict(candidate)),
+            key=lambda error: tuple(str(part) for part in error.absolute_path),
+        )
+        if not errors or any(error.validator != "required" for error in errors):
+            return ()
+        paths: set[tuple[str, ...]] = set()
+        for error in errors:
+            parent_path = tuple(error.absolute_path)
+            if any(not isinstance(part, str) or not part for part in parent_path):
+                return ()
+            instance = error.instance
+            required = error.validator_value
+            if not isinstance(instance, Mapping) or not isinstance(required, list):
+                return ()
+            missing = [item for item in required if isinstance(item, str) and item and item not in instance]
+            if not missing:
+                return ()
+            paths.update((*cast(tuple[str, ...], parent_path), item) for item in missing)
+        return tuple(sorted(paths))
+
+    @classmethod
+    def _chief_engineer_required_property_patch_schema(
+        cls,
+        *,
+        schema: Mapping[str, Any],
+        paths: tuple[tuple[str, ...], ...],
+    ) -> dict[str, Any]:
+        """Build a strict merge-patch schema for exact missing object members."""
+
+        if not paths:
+            raise ValueError("chief_engineer_schema_repair_paths_required")
+
+        def _path_schema(node: Mapping[str, Any], path: tuple[str, ...]) -> dict[str, Any]:
+            key = path[0]
+            properties = node.get("properties")
+            if not isinstance(properties, Mapping) or not isinstance(properties.get(key), Mapping):
+                raise ValueError(f"chief_engineer_schema_repair_path_not_in_schema:{'.'.join(path)}")
+            child_schema = cast(Mapping[str, Any], properties[key])
+            child = deepcopy(dict(child_schema)) if len(path) == 1 else _path_schema(child_schema, path[1:])
+            return {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {key: child},
+                "required": [key],
+            }
+
+        def _merge_schema(left: dict[str, Any], right: Mapping[str, Any]) -> dict[str, Any]:
+            merged = deepcopy(left)
+            merged_properties = cast(dict[str, Any], merged.setdefault("properties", {}))
+            for key, right_value in cast(Mapping[str, Any], right.get("properties") or {}).items():
+                left_value = merged_properties.get(key)
+                if isinstance(left_value, dict) and isinstance(right_value, Mapping):
+                    merged_properties[key] = _merge_schema(left_value, right_value)
+                else:
+                    merged_properties[key] = deepcopy(right_value)
+            merged["required"] = sorted(
+                {str(item) for item in merged.get("required", [])} | {str(item) for item in right.get("required", [])}
+            )
+            return merged
+
+        patch_schema: dict[str, Any] = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {},
+            "required": [],
+        }
+        for path in paths:
+            if not path:
+                raise ValueError("chief_engineer_schema_repair_path_must_not_be_empty")
+            patch_schema = _merge_schema(patch_schema, _path_schema(schema, path))
+        return patch_schema
+
+    @staticmethod
+    def _merge_chief_engineer_required_property_patch(
+        base: Mapping[str, Any],
+        patch: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Recursively merge a schema-limited patch without deleting siblings."""
+
+        merged = deepcopy(dict(base))
+        for key, value in patch.items():
+            current = merged.get(key)
+            if isinstance(current, Mapping) and isinstance(value, Mapping):
+                merged[key] = _Mixin02._merge_chief_engineer_required_property_patch(current, value)
+            else:
+                merged[key] = deepcopy(value)
+        return merged
+
+    def _compose_chief_engineer_required_property_repair_result(
+        self,
+        *,
+        result: RoleExecutionResultV1,
+        base_candidate: Mapping[str, Any],
+        repair_paths: tuple[tuple[str, ...], ...],
+        portfolio_task_ids: tuple[str, ...],
+    ) -> RoleExecutionResultV1:
+        """Merge one typed missing-member patch, then revalidate the full schema."""
+
+        metadata = dict(result.metadata or {})
+        metadata["chief_engineer_schema_repair_base_candidate"] = deepcopy(dict(base_candidate))
+        metadata["chief_engineer_schema_repair_paths"] = [list(path) for path in repair_paths]
+        metadata["chief_engineer_schema_repair_base_candidate_hash"] = hashlib.sha256(
+            json.dumps(base_candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if not result.ok:
+            result.metadata.clear()
+            result.metadata.update(metadata)
+            return result
+
+        patch = metadata.get("structured_output")
+        if not isinstance(patch, Mapping):
+            tool_call = metadata.get("tool_call")
+            patch = tool_call.get("arguments") if isinstance(tool_call, Mapping) else None
+        if not isinstance(patch, Mapping):
+            return RoleExecutionResultV1(
+                ok=False,
+                status="failed",
+                role=str(getattr(result, "role", "") or "chief_engineer"),
+                workspace=str(getattr(result, "workspace", "") or self.workspace),
+                task_id=getattr(result, "task_id", None),
+                session_id=getattr(result, "session_id", None),
+                run_id=getattr(result, "run_id", None),
+                output=str(getattr(result, "output", "") or ""),
+                thinking=getattr(result, "thinking", None),
+                tool_calls=tuple(getattr(result, "tool_calls", ()) or ()),
+                artifacts=tuple(getattr(result, "artifacts", ()) or ()),
+                usage=dict(getattr(result, "usage", {}) or {}),
+                metadata=metadata,
+                error_code="chief_engineer.schema_repair_patch_missing",
+                error_message="Schema repair completed without a structured patch payload.",
+                turn_history=list(getattr(result, "turn_history", []) or []),
+            )
+
+        merged_candidate = self._merge_chief_engineer_required_property_patch(base_candidate, patch)
+        full_schema = self._chief_engineer_structured_output_contract(portfolio_task_ids).json_schema
+        errors = sorted(
+            Draft202012Validator(full_schema).iter_errors(merged_candidate),
+            key=lambda error: tuple(str(part) for part in error.absolute_path),
+        )
+        metadata["chief_engineer_schema_repair_base_candidate"] = deepcopy(merged_candidate)
+        metadata["chief_engineer_schema_repair_patch"] = deepcopy(dict(patch))
+        if errors:
+            first = errors[0]
+            path = ".".join(str(part) for part in first.absolute_path) or "$"
+            return RoleExecutionResultV1(
+                ok=False,
+                status="failed",
+                role=str(getattr(result, "role", "") or "chief_engineer"),
+                workspace=str(getattr(result, "workspace", "") or self.workspace),
+                task_id=getattr(result, "task_id", None),
+                session_id=getattr(result, "session_id", None),
+                run_id=getattr(result, "run_id", None),
+                output="",
+                thinking=getattr(result, "thinking", None),
+                tool_calls=tuple(getattr(result, "tool_calls", ()) or ()),
+                artifacts=tuple(getattr(result, "artifacts", ()) or ()),
+                usage=dict(getattr(result, "usage", {}) or {}),
+                metadata=metadata,
+                error_code="structured_output_payload_schema_mismatch",
+                error_message=f"structured_output_payload_schema_mismatch:{path}:{first.message}",
+                turn_history=list(getattr(result, "turn_history", []) or []),
+            )
+
+        metadata["structured_output"] = deepcopy(merged_candidate)
+        metadata["chief_engineer_schema_repair_merged"] = True
+        tool_call = metadata.get("tool_call")
+        if isinstance(tool_call, Mapping):
+            merged_tool_call = dict(tool_call)
+            merged_tool_call["arguments"] = deepcopy(merged_candidate)
+            metadata["tool_call"] = merged_tool_call
+        return RoleExecutionResultV1(
+            ok=True,
+            status="completed",
+            role=str(getattr(result, "role", "") or "chief_engineer"),
+            workspace=str(getattr(result, "workspace", "") or self.workspace),
+            task_id=getattr(result, "task_id", None),
+            session_id=getattr(result, "session_id", None),
+            run_id=getattr(result, "run_id", None),
+            output=json.dumps(merged_candidate, ensure_ascii=False, sort_keys=True),
             thinking=getattr(result, "thinking", None),
             tool_calls=tuple(getattr(result, "tool_calls", ()) or ()),
             artifacts=tuple(getattr(result, "artifacts", ()) or ()),
@@ -444,6 +677,43 @@ class _Mixin02:
             prior_result=prior_result,
             portfolio_task_ids=portfolio_task_ids,
         )
+        schema_repair_base_candidate: dict[str, Any] | None = None
+        schema_repair_paths: tuple[tuple[str, ...], ...] = ()
+        schema_repair_patch_schema: dict[str, Any] | None = None
+        if not semantic_patch:
+            schema_repair_base_candidate = self._chief_engineer_schema_repair_base_candidate(prior_result)
+            if schema_repair_base_candidate is not None:
+                full_schema = self._chief_engineer_structured_output_contract(portfolio_task_ids).json_schema
+                schema_repair_paths = self._chief_engineer_required_property_repair_paths(
+                    candidate=schema_repair_base_candidate,
+                    schema=full_schema,
+                )
+                if schema_repair_paths:
+                    schema_repair_patch_schema = self._chief_engineer_required_property_patch_schema(
+                        schema=full_schema,
+                        paths=schema_repair_paths,
+                    )
+                    base_candidate_hash = hashlib.sha256(
+                        json.dumps(
+                            schema_repair_base_candidate,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest()
+                    repair_objective = (
+                        "Repair the existing Chief Engineer portfolio by returning exactly one typed missing-member "
+                        "patch through submit_structured_role_output. The platform has retained the immutable prior "
+                        "candidate and will merge this patch server-side before revalidating the complete strict "
+                        "portfolio schema. Emit ONLY the schema-required paths listed below; do not reconstruct, "
+                        "repeat, delete, or overwrite valid sibling fields. Preserve PM task authority and derive "
+                        "the missing content from the validated PM contracts, target_files, and scope_paths already "
+                        "attached to this request. Emit no assistant prose or raw JSON outside the single required "
+                        "tool call.\n"
+                        f"Immutable base candidate SHA-256: {base_candidate_hash}\n"
+                        "Required missing paths: "
+                        + json.dumps([list(path) for path in schema_repair_paths], ensure_ascii=False)
+                    )
         provider_patch_context: dict[str, Any] | None = None
         if semantic_candidate is not None and semantic_diagnosis is not None:
             provider_patch_context = project_chief_engineer_semantic_repair_provider_context(
@@ -484,10 +754,25 @@ class _Mixin02:
                 )
             repair_objective = (
                 "Repair the schema-valid Chief Engineer candidate by returning exactly one typed semantic patch "
-                "envelope. Do not reconstruct the portfolio, emit JSON Pointer/free-form paths, delete fields, "
-                "change PM task authority, or alter unrelated sections. Use only the operation arrays authorized "
+                "envelope. Do not reconstruct the portfolio, emit JSON Pointer/free-form paths, or delete raw "
+                "portfolio fields. The only authorized removal surface is entrypoint_remove_obligation_ids: "
+                "when replacing a diagnosed invalid current entrypoint under a new obligation_id, include the "
+                "obsolete exact id there and add one same-owner same-kind entrypoint_upsert in the same envelope. "
+                "Never leave the invalid row in place beside its replacement. Do not change PM task authority "
+                "or alter unrelated sections. Use only the operation arrays authorized "
                 "by the diagnosis. Echo base_candidate_hash and diagnosis_hash exactly. Call the required "
                 "result-submission tool exactly once; do not emit prose or a second envelope. "
+                "Treat every existing semantic ID as an immutable identity. For each upsert, consult "
+                "upsert_identity_policy in the authoritative patch context: an existing ID MUST preserve every "
+                "listed immutable field exactly. If the desired path or any other immutable field differs, mint "
+                "a new unique obligation_id and leave the existing row unchanged; never repurpose an old ID. "
+                "When adding a test artifact under expandable_test_scope_paths, its file suffix MUST appear in "
+                "the owner task's allowed_source_suffixes; an existing harness path in another language does not "
+                "authorize inventing more files with that suffix. "
+                "When authoritative patch context contains delivery_depth_feasibility.deficits, satisfy every "
+                "row in this single atomic envelope: add at least that row's exact deficit count of distinct, "
+                "authorized artifacts for its metric. Do not treat invalid-language current rows as satisfying "
+                "the projected deficit. "
                 "For behavior_invariant_upserts, every covered_obligation_ids value MUST either come from "
                 "allowed_completion_obligation_ids in the authoritative patch context OR be the obligation_id "
                 "of an artifact_upsert in this same atomic envelope; never copy diagnostic prose, gate labels, "
@@ -519,7 +804,7 @@ class _Mixin02:
             else []
         )
         raw_pm_tasks = portfolio_context.get("pm_task_contracts")
-        pm_task_payloads = (
+        pm_task_payloads: list[Mapping[str, Any]] = (
             [dict(item) for item in raw_pm_tasks if isinstance(item, Mapping)] if isinstance(raw_pm_tasks, list) else []
         )
         depth_projection = project_chief_engineer_delivery_depth_feasibility_from_pm_tasks(
@@ -540,7 +825,16 @@ class _Mixin02:
                 "\nObserved invalid root members from the prior result envelope (names only; relocate them under "
                 "their schema-declared parents): " + json.dumps(observed_invalid_root_members, ensure_ascii=False)
             )
-        prior_output = str(prior_result.output or "")
+        prior_output = (
+            json.dumps(
+                schema_repair_base_candidate,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if schema_repair_base_candidate is not None
+            else str(prior_result.output or "")
+        )
         repair_failure_feedback = {
             "schema_version": "factory.chief_engineer_schema_repair.failure_evidence.v1",
             "failure_class": self._ce_schema_repair_failure_class(prior_result),
@@ -614,6 +908,12 @@ class _Mixin02:
                     "response_format_mode": "json",
                     "chief_engineer_json_contract_required": True,
                     "chief_engineer_portfolio_required": not semantic_patch,
+                    "chief_engineer_schema_repair_base_candidate_hash": (
+                        hashlib.sha256(prior_output.encode("utf-8")).hexdigest()
+                        if schema_repair_base_candidate is not None
+                        else ""
+                    ),
+                    "chief_engineer_schema_repair_paths": [list(path) for path in schema_repair_paths],
                     "chief_engineer_semantic_patch_transport_retry_budget": (
                         _CHIEF_ENGINEER_SEMANTIC_PATCH_TRANSPORT_MAX_RETRIES if semantic_patch else 0
                     ),
@@ -632,14 +932,25 @@ class _Mixin02:
                     }
                 )
             structured_output_contract = self._chief_engineer_structured_output_contract(portfolio_task_ids)
-            if semantic_candidate is not None:
+            if schema_repair_patch_schema is not None:
+                structured_output_contract = RoleStructuredOutputContractV1(
+                    schema_name="chief_engineer_blueprint_portfolio_required_patch",
+                    description=(
+                        "Strict merge patch containing only schema-proven missing required object members. "
+                        "The platform retains and revalidates the immutable full CE candidate."
+                    ),
+                    json_schema=schema_repair_patch_schema,
+                )
+            if semantic_candidate is not None and semantic_diagnosis is not None:
                 structured_output_contract = RoleStructuredOutputContractV1(
                     schema_name="chief_engineer_semantic_repair_patch",
                     description=(
-                        "Typed, upsert-only patch for one exact CE semantic candidate and diagnosis; "
+                        "Typed, diagnosis-scoped patch for one exact CE semantic candidate and diagnosis; "
                         "base_candidate_hash and diagnosis_hash are immutable CAS values."
                     ),
-                    json_schema=build_chief_engineer_semantic_repair_patch_schema(),
+                    json_schema=build_chief_engineer_semantic_repair_patch_schema(
+                        allowed_operations=semantic_diagnosis.allowed_operations,
+                    ),
                 )
             command = ExecuteRoleTaskCommandV1(
                 role="chief_engineer",
@@ -663,6 +974,12 @@ class _Mixin02:
                     "schema_repair_of_task_id": f"CE-PORTFOLIO-{run.id}",
                     "chief_engineer_repair_round": repair_round,
                     "chief_engineer_semantic_repair": semantic_patch,
+                    "chief_engineer_schema_repair_base_candidate_hash": (
+                        hashlib.sha256(prior_output.encode("utf-8")).hexdigest()
+                        if schema_repair_base_candidate is not None
+                        else ""
+                    ),
+                    "chief_engineer_schema_repair_paths": [list(path) for path in schema_repair_paths],
                     "chief_engineer_semantic_repair_base_candidate_hash": (
                         semantic_candidate.candidate_hash if semantic_candidate is not None else ""
                     ),
@@ -696,7 +1013,25 @@ class _Mixin02:
                     authority_binding=authority_binding,
                 ),
             )
+            if (
+                not semantic_patch
+                and schema_repair_base_candidate is not None
+                and schema_repair_paths
+                and schema_repair_patch_schema is not None
+            ):
+                result = self._compose_chief_engineer_required_property_repair_result(
+                    result=result,
+                    base_candidate=schema_repair_base_candidate,
+                    repair_paths=schema_repair_paths,
+                    portfolio_task_ids=portfolio_task_ids,
+                )
             if not semantic_patch:
+                # Required-property repair first merges a strict partial payload
+                # into the frozen full portfolio.  That composed portfolio must
+                # pass through the same content-preserving structural recovery
+                # as every other full CE result.  Exact L3-24 r42 otherwise
+                # froze one-task owner-only invariants, then asked a semantic
+                # patch to invent an impossible sibling consumer.
                 result = self._recover_chief_engineer_portfolio_structural_result(
                     result=result,
                     portfolio_task_ids=portfolio_task_ids,
@@ -1220,20 +1555,43 @@ class _Mixin02:
                     # preserves downstream Director/QA deadline reserves.
                     if ce_result is not None and llm_call_count == 2:
                         repaired_output_errors: list[str] = []
-                        if ce_result.ok:
-                            repaired_structured_output = dict(ce_result.metadata or {}).get("structured_output")
+                        ce_result_metadata = dict(ce_result.metadata or {})
+                        composed_semantic_candidate = bool(
+                            ce_result_metadata.get("chief_engineer_semantic_repair_candidate_hash")
+                        )
+                        if ce_result.ok or composed_semantic_candidate:
+                            repaired_structured_output = ce_result_metadata.get("structured_output")
                             if isinstance(repaired_structured_output, Mapping):
-                                repaired_output_errors = self._chief_engineer_portfolio_output_errors(
-                                    repaired_structured_output,
-                                    tasks=portfolio_tasks,
-                                )
-                                # Exact r06 path: call 1 was schema-invalid, call 2 reconstructed
-                                # one schema-valid portfolio with only a semantic/depth deficit.
-                                # Freeze that valid candidate now and make call 3 a typed patch;
-                                # never reconstruct the full portfolio again.
-                                if repaired_output_errors and semantic_repair_candidate is None:
+                                if ce_result.ok:
+                                    repaired_output_errors = self._chief_engineer_portfolio_output_errors(
+                                        repaired_structured_output,
+                                        tasks=portfolio_tasks,
+                                    )
+                                else:
+                                    repaired_output_errors = [
+                                        str(item).strip()
+                                        for item in ce_result_metadata.get(
+                                            "chief_engineer_post_validation_errors",
+                                            (),
+                                        )
+                                        if str(item).strip()
+                                    ]
+                                # Every schema-valid repair result becomes the exact base for the
+                                # next typed patch.  Do not retain the first transaction after a
+                                # patch has changed the candidate: its CAS hash, diagnosis and
+                                # allowed operations describe the *previous* residual.  Exact
+                                # L3-24 r31 fixed an invalid help entrypoint in repair 1, then
+                                # revalidation exposed only a production-depth deficit; retaining
+                                # the entrypoint diagnosis made repair 2 regress the fixed command
+                                # and prevented the required artifact upsert.
+                                if repaired_output_errors:
                                     assert portfolio_authority is not None
                                     task_ids = tuple(task.task_id for task in portfolio_tasks)
+                                    prior_candidate_hash = (
+                                        semantic_repair_candidate.candidate_hash
+                                        if semantic_repair_candidate is not None
+                                        else ""
+                                    )
                                     semantic_repair_candidate = ChiefEngineerSemanticRepairCandidateV1(
                                         workspace=str(self.workspace),
                                         project_id=portfolio_authority.project_id,
@@ -1252,17 +1610,24 @@ class _Mixin02:
                                     )
                                     stage_signals.append(
                                         {
-                                            "code": "chief_engineer.schema_repair_candidate_frozen",
+                                            "code": (
+                                                "chief_engineer.semantic_repair_transaction_refreshed"
+                                                if prior_candidate_hash
+                                                else "chief_engineer.schema_repair_candidate_frozen"
+                                            ),
                                             "severity": "info",
                                             "detail": (
-                                                "The schema-repair result was schema-valid but semantically "
-                                                "incomplete; its exact candidate is frozen for typed patch repair."
+                                                "The current schema-valid CE repair result remains semantically "
+                                                "incomplete; its exact candidate and residual diagnosis now form "
+                                                "the next typed patch transaction."
                                             ),
                                             "task_id": portfolio_task_id,
                                             "candidate_ref": candidate_ref,
+                                            "prior_candidate_hash": prior_candidate_hash,
                                             "candidate_hash": semantic_repair_candidate.candidate_hash,
                                             "diagnosis_hash": semantic_repair_diagnosis.diagnosis_hash,
                                             "diagnostic_codes": list(semantic_repair_diagnosis.diagnostic_codes),
+                                            "allowed_operations": list(semantic_repair_diagnosis.allowed_operations),
                                         }
                                     )
                         elif self._ce_portfolio_result_allows_schema_repair(ce_result):
@@ -2625,6 +2990,41 @@ class _Mixin02:
             return False
         return bool(re.search(r"\bran\s+[1-9][0-9]*\s+tests?\b", after_text))
 
+    @staticmethod
+    def _python_setup_barrier_unmasked_runtime_tests(
+        before_signature: Iterable[str],
+        after_signature: Iterable[str],
+    ) -> bool:
+        """True when fewer broken unittest setup barriers expose test methods.
+
+        A generated ``setUpClass`` can fail before any test method runs.  A
+        repair that clears one such barrier may reveal several independent
+        runtime failures, increasing the raw diagnostic count while still
+        advancing execution.  Require both a strict reduction of the exact
+        setup-barrier family and newly visible named test-method errors; other
+        Python exception churn remains fail-closed.
+        """
+
+        before_items = tuple(str(item or "").casefold() for item in before_signature)
+        after_items = tuple(str(item or "").casefold() for item in after_signature)
+
+        def _setup_barrier_count(items: tuple[str, ...]) -> int:
+            return sum(
+                1
+                for item in items
+                if "error: setupclass" in item and "typeerror: testcase.assertequal() missing" in item
+            )
+
+        before_barriers = _setup_barrier_count(before_items)
+        after_barriers = _setup_barrier_count(after_items)
+        if before_barriers <= 0 or after_barriers >= before_barriers:
+            return False
+        return any(
+            re.search(r"(?m)^error:\s+test_[a-z0-9_]", item) is not None
+            or re.search(r"(?m)^fail:\s+test_[a-z0-9_]", item) is not None
+            for item in after_items
+        )
+
     @classmethod
     def _workspace_quality_repair_effect(
         cls,
@@ -2635,6 +3035,7 @@ class _Mixin02:
         write_tool_evidence: bool,
         before_results: Iterable[Mapping[str, Any]] = (),
         after_results: Iterable[Mapping[str, Any]] = (),
+        workspace: os.PathLike[str] | str | None = None,
     ) -> str:
         """Classify one local repair by verifier effect, never by model claim."""
 
@@ -2642,6 +3043,47 @@ class _Mixin02:
             return "resolved"
         if not write_tool_evidence:
             return "no_op"
+        if workspace_quality_impl.workspace_quality_compile_barrier_reduced(
+            tuple(before_results),
+            tuple(after_results),
+        ):
+            # A downstream test runner may invoke the same still-red build and
+            # fan one remaining compiler blocker into more setup errors.  An
+            # explicit strict reduction of the upstream compiler frontier is
+            # nevertheless real monotonic progress and must survive into the
+            # next same-task repair round.  Use ``progress`` rather than
+            # ``forward_unmask``: the latter is intentionally accepted only
+            # for a newly observed diagnostic phase, while a strict frontier
+            # subset necessarily retains already-seen residual diagnostics.
+            return "progress"
+        if workspace_quality_impl.workspace_quality_compiler_diagnostic_frontier_reduced(
+            tuple(before_results),
+            tuple(after_results),
+        ):
+            # A shared downstream blocker can keep every translation unit red
+            # even after the candidate removes one causal compiler error.  The
+            # explicit post-edit error-identity subset is verifier-owned proof
+            # of monotonic progress; unlike cardinality, it rejects swaps.
+            return "progress"
+        if workspace_quality_impl.workspace_quality_cpp_include_barrier_repaired(
+            tuple(before_results),
+            tuple(after_results),
+            workspace=workspace,
+        ):
+            # Correcting an early malformed include can expose more later C++
+            # diagnostics beyond the per-TU excerpt limit. Exact disk evidence
+            # distinguishes a valid include repair from deletion that merely
+            # hides the preprocessor diagnostic.
+            return "progress"
+        if workspace_quality_impl.workspace_quality_test_harness_barrier_reduced(
+            tuple(before_results),
+            tuple(after_results),
+        ):
+            # A Python test wrapper may fail in its own error-reporting path
+            # before surfacing an already-proven product compiler blocker.
+            # Clearing that wrapper-only barrier is causal progress even when
+            # top-level diagnostic cardinality stays unchanged.
+            return "progress"
         if workspace_quality_impl.workspace_quality_verifier_regressed(
             tuple(before_results),
             tuple(after_results),
@@ -2671,6 +3113,8 @@ class _Mixin02:
         if cls._go_compile_barrier_unmasked_runnable_tests(before_signature, after_signature):
             return "forward_unmask"
         if cls._python_import_barrier_unmasked_runnable_tests(before_signature, after_signature):
+            return "forward_unmask"
+        if cls._python_setup_barrier_unmasked_runtime_tests(before_signature, after_signature):
             return "forward_unmask"
         # A smaller authoritative diagnostic set is measurable progress even
         # when the remaining diagnostic text is not a strict subset.  Real

@@ -1,0 +1,142 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-R14-CE-PORTFOLIO-SCHEMA-REPAIR-SHAPE",
+  "status": "OPEN_LIVE_REGRESSION_SCHEMA_INVARIANT_MISMATCH",
+  "severity": "P0",
+  "scope": "polaris_meta_project_only",
+  "target_project_modified": false,
+  "exact_run": {
+    "factory_run_id": "factory_49b7ed9b3617",
+    "project_id": "L3-24",
+    "workspace": "/tmp/factory-bench-l3-24-r14/workspaces/ef229c7460e0-fbd0dc63b80a2f00/L3-24-023d7314133040b6/e80a4259e55a6138acdb22e0",
+    "stage": "chief_engineer_review"
+  },
+  "symptom": "A schema-valid CE request needed four provider calls because intermediate repair payloads leaked nested object fields to the portfolio root.",
+  "dynamic_evidence": {
+    "initial_error": "structured_output_payload_schema_mismatch:$: unexpected /interfaces_naming_consistency, interfaces_naming, item, verification_commands",
+    "schema_repair_error": "structured_output_payload_schema_mismatch:$: unexpected description, risk_id, severity",
+    "repair_attempts": [
+      "SCHEMA-REPAIR",
+      "CONTRACT-REPAIR-2",
+      "SEMANTIC-PATCH-REPAIR-3"
+    ],
+    "final_provider_request_identity_ok": true,
+    "required_refs_present": [
+      "pm_contract",
+      "target_files"
+    ],
+    "offered_tools": [
+      "submit_structured_role_output"
+    ],
+    "terminal_stage_result": "success: 1/1 blueprints; llm_calls=4"
+  },
+  "root_cause": {
+    "classification": "structured_output_repair_nested_object_root_leak",
+    "detail": "The provider returned portfolio-like content, but repair normalization admitted nested interface/risk object fields at the strict top-level boundary. Existing multi-stage correction eventually reconstructed a valid portfolio, so this was a token/latency defect rather than the terminal run blocker."
+  },
+  "required_hardening": [
+    "Preserve the full declared root object across schema repair.",
+    "Reject or re-nest known child-object fields before a second provider call when their owner key is unambiguous.",
+    "Add an exact normalization regression for nested risk/interface fields without weakening strict additionalProperties enforcement."
+  ],
+  "verification": {
+    "live_recovery": "passed",
+    "targeted_unit": "pending",
+    "fresh_isolated_bench": "r18 regressed before Director; fix and fresh live revalidation pending"
+  },
+  "live_regression_r18": {
+    "factory_run_id": "factory_647b7825633f",
+    "workspace": "/tmp/factory-bench-l3-24-r18/workspaces/e86d4ba7c460-e9f94cd11be1291c/L3-24-023d7314133040b6/6ba0a63476bec034884cf0ee",
+    "terminal_stage": "chief_engineer_review",
+    "provider_calls": 3,
+    "director_reached": false,
+    "dynamic_failure_sequence": [
+      "construction_plan:'shared_behavior_contract' is a required property",
+      "$:'construction_plan' is a required property",
+      "$:'project_completion_contract' is a required property"
+    ],
+    "final_request_audit": {
+      "role_identity_ok": true,
+      "required_refs_present": [
+        "pm_contract",
+        "target_files"
+      ],
+      "offered_tools": [
+        "submit_structured_role_output"
+      ],
+      "tool_choice_forced": true
+    },
+    "candidate_continuity_evidence": {
+      "initial_native_tool_root_members": [
+        "construction_plan",
+        "project_completion_contract",
+        "risk_flags"
+      ],
+      "initial_construction_plan_members": [
+        "project_interface_contract"
+      ],
+      "repair_prompt_prior_output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repair_prompt_prior_output_chars": 0,
+      "detail": "The invalid native tool arguments remained available in metadata.tool_call.arguments, but repair evidence and prompt continuity were computed from empty visible output. Each repair reconstructed and replaced the full portfolio instead of preserving the prior valid subtrees."
+    },
+    "root_cause_classification": "schema_repair_candidate_continuity_lost",
+    "required_fix": [
+      "Extract the failed structured candidate from native tool arguments, not visible assistant output.",
+      "Request only the schema-proven missing required paths.",
+      "Merge the typed patch into the immutable prior candidate, then validate the complete portfolio schema.",
+      "Keep strict full-schema validation and fail closed for ambiguous or non-required-property corruption."
+    ]
+  },
+  "live_regression_r19": {
+    "factory_run_id": "factory_7075b1b4644f",
+    "workspace": "/tmp/factory-bench-l3-24-r19/workspaces/5855d88bd2b7-b5d72342c1255713/L3-24-023d7314133040b6/b75effdeedf17d7c9a715d6c",
+    "terminal_stage": "chief_engineer_review",
+    "director_reached": false,
+    "wall_clock_seconds": 66.7,
+    "dynamic_error": "TypeError: candidate.construction_plan.task_plans must be a mapping",
+    "observed_progress": "The r18 missing-path repair preserved sibling roots and emitted a typed patch instead of replacing the full portfolio.",
+    "contract_mismatch": {
+      "provider_schema": "construction_plan.task_plans was optional",
+      "prompt": "task_plans may be an empty object because PM authority is projected deterministically",
+      "semantic_candidate": "ChiefEngineerSemanticRepairCandidateV1 requires task_plans to be a mapping"
+    },
+    "root_cause_classification": "provider_schema_semantic_candidate_invariant_mismatch",
+    "required_fix": [
+      "Require construction_plan.task_plans in the authoritative CE provider schema.",
+      "Keep an empty object valid so deterministic PM task projection remains authoritative.",
+      "Use the typed missing-required-path repair to add task_plans without replacing valid sibling roots."
+    ]
+  },
+  "live_regression_r20": {
+    "factory_run_id": "factory_0d1647d56957",
+    "workspace": "/tmp/factory-bench-l3-24-r20/workspaces/4c5a45883f27-d879f869b7b6d471/L3-24-023d7314133040b6/6c916428fd43f1cf0c2df8a2",
+    "terminal_stage": "chief_engineer_review",
+    "director_reached": false,
+    "wall_clock_seconds": 99.0,
+    "observed_progress": [
+      "CE task_plans contract mismatch no longer raised TypeError.",
+      "Schema-valid candidates were frozen and repaired without replacing valid sibling roots."
+    ],
+    "dynamic_error": "ChiefEngineerBlueprintErrorV1: invalid project completion contract: verification command must provide proof-of-work, not help/version introspection",
+    "exact_candidate_evidence": {
+      "entrypoint_obligation_id": "OBF-ENTRY-RUN-0001",
+      "command": "./build/invisible_ink_diary --help",
+      "candidate_hashes": [
+        "9cde55db6312cdec87f79edb0d247ebc4f3650166f6dfcf605494c9f75c1ba4a",
+        "5a0498dda54f29be079b8f6e7f1c9a9c0c231ce9bee98f24c8ce0be71d311b44"
+      ]
+    },
+    "root_cause_classification": "completion_contract_validation_after_repair_budget",
+    "required_fix": [
+      "Project the authoritative entrypoint command proof-of-work check before final portfolio persistence.",
+      "Route introspection-only commands to typed entrypoint_upsert repair without weakening proof requirements.",
+      "Keep final ProjectCompletionContractV1 validation fail-closed."
+    ],
+    "verification": {
+      "targeted_tests": "2 passed",
+      "ruff": "passed",
+      "mypy": "passed",
+      "fresh_isolated_bench": "pending r21"
+    }
+  }
+}

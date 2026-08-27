@@ -1,0 +1,71 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "defect-20260825-l3-23-run-ledger-project-identity-split",
+  "status": "IMPLEMENTED_UNIT_VERIFIED_LIVE_PENDING",
+  "severity": "P0",
+  "scope": "Factory workspace-validation evidence to control_plane.run_ledger",
+  "exact_run": {
+    "factory_run_id": "factory_e0cda86d03da",
+    "project_id": "L3-23",
+    "workspace": "/tmp/factory-bench-l3-23-r19/workspaces/57417bb3ee24-6701852dbc6bd93e/L3-23-2956ab31bd653d97/fecb0ae8f35639fdf3b3e47c",
+    "retry_boundary": "same_run_qa_only"
+  },
+  "symptom": "Factory and QA completed with cargo test 34/34. The exact Factory-run projection was green, but the workspace aggregate split its successful workspace-validation evidence under project_id=factory_e0cda86d03da while the historical Bench attempt remained under project_id=L3-23.",
+  "dynamic_evidence": {
+    "failed_event": {
+      "recorded_at": "2026-08-25T05:28:40.855584Z",
+      "event_id": "0f9f4f701aaf2d3d0c4e4bce9602fbfda7469ff37aadb7256f00bf56cbaf0292",
+      "gate": "real_run_gate",
+      "gate_ok": false,
+      "project_id": "L3-23",
+      "run_id": "57417bb3ee24",
+      "factory_run_id": "factory_e0cda86d03da"
+    },
+    "successful_event": {
+      "recorded_at": "2026-08-25T12:35:02.289250Z",
+      "event_id": "613e88364afcb94c57c451ddda40749efd7bb10888c9b0ffb590fc99e09cbeb4",
+      "gate": "workspace_validation",
+      "gate_ok": true,
+      "project_id": "factory_e0cda86d03da",
+      "run_id": "factory_e0cda86d03da",
+      "factory_run_id": "factory_e0cda86d03da"
+    },
+    "immutable_start_metadata": {
+      "factory_bench_project_id": "L3-23",
+      "factory_bench_requested_project_id": "L3-23",
+      "factory_bench_canonical_project_id": "L3-23"
+    },
+    "projection_split": {
+      "L3-23": "failed command",
+      "factory_e0cda86d03da": "passed command"
+    },
+    "run_scoped_projection": {
+      "57417bb3ee24": "historical Bench attempt failed real_run_gate",
+      "factory_e0cda86d03da": "current Factory run ready; outcome_ok=true"
+    }
+  },
+  "root_cause": "Same-stage QA retry rebuilt a context without project_id. Factory workspace-validation ledger persistence then fell back to run.id even though the immutable factory_start_request metadata retained the canonical project id. Run Ledger correctly kept distinct run attempts immutable, but the workspace aggregate consequently misattributed the successful Factory verifier epoch to a fake logical project named after the Factory run.",
+  "owner": {
+    "cell": "factory.pipeline",
+    "module": "factory_stage_executor._mixin_03._persist_workspace_validation_ledger"
+  },
+  "implemented_fix": "Resolve the ledger project id from explicit retry context first, then the immutable Factory start-request project metadata, and only then run.id. Preserve append-only history and Run Ledger fail-closed evidence semantics.",
+  "implementation": {
+    "source": "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_03.py",
+    "test": "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_stage_executor.py::test_workspace_validation_ledger_preserves_canonical_project_identity_on_qa_retry",
+    "red_evidence": "factory-retry-1 != L3-23",
+    "green_evidence": "1 passed; mypy success"
+  },
+  "required_tests": [
+    "Workspace-validation persistence keeps the canonical project id when retry context omits project_id.",
+    "Explicit context project_id still wins.",
+    "A fresh exact-run retry writes successful verifier evidence under the canonical project identity.",
+    "Historical failed Bench-attempt evidence remains queryable and is not deleted."
+  ],
+  "prohibited_actions": [
+    "modify generated L3-23 project",
+    "delete historical failed ledger events",
+    "make failed command evidence globally non-blocking",
+    "restart PM, Chief Engineer, or Director"
+  ]
+}

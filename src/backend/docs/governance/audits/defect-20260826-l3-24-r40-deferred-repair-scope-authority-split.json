@@ -1,0 +1,69 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-R40-DEFERRED-REPAIR-SCOPE-AUTHORITY-SPLIT",
+  "status": "FIX_IMPLEMENTED_LIVE_VALIDATION_PENDING",
+  "severity": "P0",
+  "factory_run_id": "factory_55cc44ddb30b",
+  "project_id": "L3-24",
+  "attempt": "r40",
+  "symptom": {
+    "stage": "director_materialization_settle_and_quality_gate",
+    "error_code": "deo_path_scope_denied",
+    "secondary_error": "DEO-abort lifecycle sealed only in-memory (missing run_id)",
+    "effect": "typed deterministic repair plans were rejected before physical mutation"
+  },
+  "dynamic_evidence": {
+    "backend_log": "/home/dains/.polaris/instances/factory-bench-l3-24-r40-l3-24-run-819ebbb87ca9-ef23b04760f47b90/logs/backend.log",
+    "observed_turns": [
+      "director-stage-mat-settle-factory_55cc44ddb30b:round0:candidate0",
+      "director-stage-mat-settle-factory_55cc44ddb30b:round0:candidate1",
+      "workspace-quality-repair-factory_55cc44ddb30b-round1-candidate0",
+      "workspace-quality-repair-factory_55cc44ddb30b-round1-candidate1"
+    ],
+    "planner_forward_targets": [
+      "include/cipher/diary.hpp",
+      "src/diary.cpp",
+      "src/ink.cpp",
+      "src/main.cpp",
+      "src/moon.cpp"
+    ],
+    "pre_fix_job_token_scope": [
+      "CMakeLists.txt",
+      "tests/test_product.py",
+      "README.md",
+      "package.json",
+      "tsconfig.json",
+      "tests/verify.test.ts",
+      "tests/smoke.test.ts",
+      "tests/unit/smoke.test.ts"
+    ],
+    "post_fix_debug_result": "all typed forward targets authorized; authorization advanced to synthetic-copy-only deo_execution_attempt_heartbeat_failed",
+    "target_project_modified_by_debugger": false
+  },
+  "root_cause": {
+    "category": "control_plane_capability_projection",
+    "primary": "Factory minted the deferred repair JobToken before binding candidate-local typed plan targets, so deterministic CE-expanded C++ files were outside the capability scope.",
+    "secondary": "The deferred ToolBatch abort path read run_id from TurnLedger even though the canonical run identity exists on TaskRuntimeExecutionAttemptIdentityV1."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_materialization_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_03.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_executor_core.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py"
+    ],
+    "strategy": "Mint one narrow JobToken per typed deferred candidate using only safe forward plan targets; preserve fail-closed path checks; persist abort lifecycle with canonical execution_attempt.run_id; log path/scope mismatch evidence without content.",
+    "global_scope_relaxation": false
+  },
+  "verification": {
+    "pytest": {
+      "director_stage_materialization_settle": "27 passed",
+      "deo_commit_followup_and_production_wiring": "37 passed"
+    },
+    "ruff": "passed",
+    "mypy": "blocked by two pre-existing module-level staticmethod misc errors already present in HEAD",
+    "live": "pending fresh isolated r41"
+  },
+  "next_action": "Run fresh isolated L3-24 r41 and require zero deo_path_scope_denied for typed in-scope repair candidates plus durable abort lifecycle evidence for any later fail-closed outcome."
+}

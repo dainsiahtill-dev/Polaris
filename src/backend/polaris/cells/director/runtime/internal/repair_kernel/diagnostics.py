@@ -55,6 +55,14 @@ _CPP_ERROR_RE = re.compile(
     r"(?:(?P<severity>fatal error|error|warning):\s*)?(?P<message>[^\n]+)",
     re.IGNORECASE,
 )
+_CPP_STANDARD_INCOMPATIBILITY_RE = re.compile(
+    r"(?P<symbol>std::[A-Za-z_][A-Za-z0-9_]*)[^\r\n]{0,96}(?:"
+    r"only\s+available\s+from\s+c\+\+(?P<available>\d+)|"
+    r"requires\s+c\+\+(?P<requires>\d+)|"
+    r"c\+\+(?P<extension>\d+)\s+extension"
+    r")",
+    re.IGNORECASE,
+)
 _JAVA_ERROR_RE = re.compile(
     r"(?P<path>[^:\n]+\.java):(?P<line>\d+):\s*error:\s*(?P<message>[^\n]+)",
     re.IGNORECASE,
@@ -145,12 +153,57 @@ _VERIFIER_LOCATION_RE = re.compile(
     r":(?P<line>\d+):(?P<column>\d+)",
     re.IGNORECASE,
 )
+
+
+def _workspace_validation_output_payload(text: str) -> str:
+    """Remove a balanced command envelope while retaining verifier output.
+
+    Workspace validation records may embed a multi-line ``python -c`` program
+    inside ``command failed (<command>): <output>``.  A regex that stops at the
+    first ``)`` cannot delimit such a command, so every source line was later
+    projected as an independent repair diagnostic (L3-24 r43: 79 rows from
+    three real failures).  Parse only the balanced outer command parentheses;
+    command provenance remains authoritative in the verifier receipt.
+    """
+
+    raw = str(text or "")
+    prefix = re.search(r"workspace validation command failed\s*\(", raw, re.IGNORECASE)
+    if prefix is None:
+        return raw
+    depth = 1
+    quote = ""
+    escaped = False
+    for index in range(prefix.end(), len(raw)):
+        char = raw[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            continue
+        if char in {"'", '"'}:
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                suffix = raw[index + 1 :].lstrip()
+                if suffix.startswith(":"):
+                    payload = suffix[1:].lstrip()
+                    if payload:
+                        return payload
+                return raw
+    return raw
 _TAP_FIELD_RE = re.compile(r"(?m)^\s*(?P<key>actual|expected|operator):\s*(?P<value>.+?)\s*$", re.IGNORECASE)
 
 
 def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiagnostic, ...]:
     """Convert raw or structured artifact-quality input into repair diagnostics."""
 
+    raw_errors = tuple(errors or ())
     diagnostics: list[RepairDiagnostic] = []
     # Buffer only a TS primary line + its indented tsc continuations. Unrelated
     # non-TS rows stay separate so coverage counts remain stable.
@@ -163,7 +216,7 @@ def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiag
         diagnostics.extend(_normalize_text_error_blob("\n".join(ts_buffer)))
         ts_buffer = []
 
-    for raw in errors or ():
+    for raw in raw_errors:
         if isinstance(raw, RepairDiagnostic):
             flush_ts_buffer()
             diagnostics.append(raw)
@@ -177,8 +230,13 @@ def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiag
         text = str(raw or "")
         if not text.strip():
             continue
-        # Multi-line string already carries primary + continuations.
-        if "\n" in text:
+        # Multi-line string already carries primary + continuations.  Quoted
+        # verifier output may instead carry an escaped stdout/stderr transcript
+        # on one physical line; route that through the same causal-blob parser.
+        escaped_transcript = "\\n" in text and bool(
+            re.search(r"\\n(?:stdout|stderr):\\n", text, re.IGNORECASE)
+        )
+        if "\n" in text or escaped_transcript:
             flush_ts_buffer()
             diagnostics.extend(_normalize_text_error_blob(text))
             continue
@@ -193,15 +251,84 @@ def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiag
         flush_ts_buffer()
         diagnostics.append(_normalize_one_error(line.strip()))
     flush_ts_buffer()
-    return tuple(diagnostics)
+    cpp_standard_requirements: dict[str, str] = {}
+    for raw in raw_errors:
+        if isinstance(raw, RepairDiagnostic):
+            evidence_text = "\n".join((raw.message, raw.raw))
+        elif isinstance(raw, Mapping):
+            evidence_text = "\n".join(
+                str(raw.get(key) or "") for key in ("message", "raw", "stderr", "stdout", "error")
+            )
+        else:
+            evidence_text = str(raw or "")
+        for match in _CPP_STANDARD_INCOMPATIBILITY_RE.finditer(evidence_text):
+            required = next(
+                (
+                    str(match.group(group) or "").strip()
+                    for group in ("available", "requires", "extension")
+                    if str(match.group(group) or "").strip()
+                ),
+                "",
+            )
+            cpp_standard_requirements[match.group("symbol").casefold()] = f"c++{required}" if required else ""
+    if cpp_standard_requirements:
+        promoted: list[RepairDiagnostic] = []
+        for diagnostic in diagnostics:
+            diagnostic_text = "\n".join((diagnostic.message, diagnostic.raw)).casefold()
+            matched_symbol = next(
+                (symbol for symbol in cpp_standard_requirements if symbol in diagnostic_text),
+                "",
+            )
+            if diagnostic.code != "cpp_compile_error" or not matched_symbol:
+                promoted.append(diagnostic)
+                continue
+            promoted.append(
+                RepairDiagnostic(
+                    source=diagnostic.source,
+                    code="cpp_language_standard_incompatibility",
+                    message=diagnostic.message,
+                    severity=diagnostic.severity,
+                    path=diagnostic.path,
+                    line=diagnostic.line,
+                    column=diagnostic.column,
+                    span_start=diagnostic.span_start,
+                    span_end=diagnostic.span_end,
+                    raw=diagnostic.raw,
+                    metadata={
+                        **dict(diagnostic.metadata),
+                        "language": "cpp",
+                        "diagnostic_kind": "language_standard_incompatibility",
+                        "incompatible_symbol": matched_symbol,
+                        "required_standard": cpp_standard_requirements[matched_symbol],
+                        "origin_diagnostic_id": diagnostic.diagnostic_id,
+                    },
+                )
+            )
+        diagnostics = promoted
+    # One physical failure may be reported by both the direct build verifier
+    # and a nested test wrapper.  Stable diagnostic identity represents the
+    # causal fact; counting the same fact twice inflates coverage and can trip
+    # convergence guards without any new residual.
+    unique: dict[str, RepairDiagnostic] = {}
+    for diagnostic in diagnostics:
+        unique.setdefault(diagnostic.diagnostic_id, diagnostic)
+    return tuple(unique.values())
 
 
 def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
     """Normalize one text blob that may contain multi-line tsc diagnostics."""
 
-    blob = str(text or "")
+    blob = _workspace_validation_output_payload(str(text or ""))
     if not blob.strip():
         return []
+    # Verifier frameworks can quote a nested compiler transcript, preserving
+    # newlines as literal ``\\n`` sequences.  Parsing that transport form as a
+    # path turns ``\\n/tmp/...`` into the fake ``/n/tmp/...`` after canonical
+    # slash normalization.  Decode only an identified stdout/stderr build
+    # transcript; ordinary source diagnostics may legitimately contain the
+    # two characters ``\\n`` and must remain byte-faithful.
+    if "\\n" in blob and re.search(r"\\n(?:stdout|stderr):\\n", blob, re.IGNORECASE):
+        blob = blob.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
     expanded = _normalize_typescript_errors(blob)
     if expanded:
         residuals: list[RepairDiagnostic] = []
@@ -285,6 +412,12 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
         rust_blocks = _split_rust_compiler_error_blocks(blob)
         if rust_blocks:
             return rust_blocks
+    cpp_linker_failures = _normalize_cpp_linker_failures(blob)
+    if cpp_linker_failures:
+        return cpp_linker_failures
+    cpp_compiler_failures = _normalize_cpp_compiler_failures(blob)
+    if cpp_compiler_failures:
+        return cpp_compiler_failures
     lowered = blob.lower()
     if ("npm run test" in lowered or "npm test" in lowered) and (
         "module_not_found" in lowered or "cannot find module" in lowered or "could not find" in lowered
@@ -320,6 +453,71 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
     # Non-TS blob: preserve one diagnostic per non-empty line.
     per_line = [_normalize_one_error(line.strip()) for line in blob.splitlines() if line.strip()]
     return per_line if per_line else [_normalize_one_error(blob.strip())]
+
+
+def _normalize_cpp_linker_failures(text: str) -> list[RepairDiagnostic]:
+    """Keep C++ compiler warnings separate from linker undefined symbols."""
+
+    blob = str(text or "")
+    if "undefined reference" not in blob.casefold():
+        return []
+
+    diagnostics: list[RepairDiagnostic] = []
+    seen_compiler: set[tuple[str, int | None, int | None, str]] = set()
+    for match in _CPP_ERROR_RE.finditer(blob):
+        diagnostic = _normalize_one_error(str(match.group(0) or "").strip())
+        key = (str(diagnostic.path or ""), diagnostic.line, diagnostic.column, diagnostic.message)
+        if key in seen_compiler:
+            continue
+        seen_compiler.add(key)
+        diagnostics.append(diagnostic)
+
+    undefined_lines: list[str] = []
+    for line in blob.splitlines():
+        stripped = line.strip()
+        if "undefined reference" in stripped.casefold() and stripped not in undefined_lines:
+            undefined_lines.append(stripped)
+    diagnostics.append(
+        RepairDiagnostic(
+            source="compiler",
+            code="cpp_linker_undefined_reference",
+            message="\n".join(undefined_lines),
+            raw=blob,
+            metadata={
+                "language": "cpp",
+                "diagnostic_kind": "linker_undefined_reference",
+            },
+        )
+    )
+    return diagnostics
+
+
+def _normalize_cpp_compiler_failures(text: str) -> list[RepairDiagnostic]:
+    """Preserve every distinct GCC/Clang occurrence in one compiler transcript.
+
+    ``_normalize_one_error`` intentionally returns one diagnostic.  Applying it
+    to a complete multi-error C++ transcript therefore retained only the first
+    location.  That made a one-of-many edit look like a stagnant 1 -> 1 repair
+    and hid the remaining occurrence from the next same-task repair round.
+    """
+
+    blob = str(text or "")
+    matches = list(_CPP_ERROR_RE.finditer(blob))
+    if len(matches) < 2:
+        return []
+
+    diagnostics: list[RepairDiagnostic] = []
+    seen: set[tuple[str, int | None, int | None, str]] = set()
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(blob)
+        block = blob[match.start() : end].strip()
+        diagnostic = _normalize_one_error(block)
+        key = (str(diagnostic.path or ""), diagnostic.line, diagnostic.column, diagnostic.message)
+        if key in seen:
+            continue
+        seen.add(key)
+        diagnostics.append(diagnostic)
+    return diagnostics
 
 
 def _normalize_tap_failures(text: str) -> list[RepairDiagnostic]:

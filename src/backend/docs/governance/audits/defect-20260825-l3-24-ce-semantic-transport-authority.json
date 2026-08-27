@@ -1,0 +1,75 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-CE-SEMANTIC-TRANSPORT-AUTHORITY",
+  "status": "CLOSED_LIVE",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_b49eb1646f1e",
+  "workspace": "/tmp/factory-bench-l3-24-r02/workspaces/b67eefdffb82-0926ab9891fbc410/L3-24-023d7314133040b6/5e829eb6167004dd98dbc560",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "chief_engineer.semantic_repair_exhausted",
+    "root_cause_hint": "structured_output_payload_schema_mismatch:entrypoint_upserts.0.command:'' is not valid under any of the given schemas",
+    "director_dispatched": false,
+    "source_files_materialized": 0
+  },
+  "dynamic_evidence": {
+    "final_request_role_identity_ok": true,
+    "final_request_required_refs_present": true,
+    "final_request_tool_schema_present": true,
+    "final_request_tool_choice_forced": true,
+    "first_semantic_patch_context_snapshot_ref": "677faa4460d7c1b1655c9ab1",
+    "final_semantic_patch_context_snapshot_ref": "4c7bfd7f58c95c1c8d059f6b",
+    "authorized_operations": [
+      "artifact_upsert"
+    ],
+    "first_patch_path": "tests/test_compile.py",
+    "first_patch_rejection": "semantic repair artifact semantic role does not match path kind: semantic_role='test':path='tests/test_compile.py'",
+    "owner_allowed_source_suffixes": [
+      ".c",
+      ".cc",
+      ".cpp",
+      ".cxx",
+      ".h",
+      ".hpp",
+      ".hxx"
+    ],
+    "final_transport_failure": "Provider added a malformed entrypoint_upsert even though only artifact_upsert was authorized; the transport schema rejected the ignored group before the authoritative parser could discard it."
+  },
+  "root_causes": [
+    {
+      "code": "ce_test_artifact_suffix_authority_not_explicit_in_repair_objective",
+      "detail": "Provider context contained allowed_source_suffixes but the repair objective did not state that newly invented test artifacts must use the owner task's authorized suffixes. The model copied the existing Python harness convention into a C++ task."
+    },
+    {
+      "code": "ce_semantic_transport_schema_exceeded_diagnosis_authority",
+      "detail": "Transport validation strictly parsed every operation group even when diagnosis allowed only artifact_upsert. Application parsing and composition already discard disabled groups, so irrelevant malformed content pre-empted a potentially valid authorized repair."
+    }
+  ],
+  "fixes": [
+    {
+      "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "change": "Build diagnosis-scoped provider schemas. Authorized groups retain strict item schemas; disabled groups retain required container types only and remain non-authoritative."
+    },
+    {
+      "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "change": "Pass diagnosis.allowed_operations to the schema builder and explicitly bind invented test artifacts to owner allowed_source_suffixes."
+    }
+  ],
+  "verification": {
+    "chief_engineer_semantic_repair_tests": "67 passed",
+    "factory_ce_handoff_characterization_tests": "56 passed",
+    "ruff": "passed",
+    "mypy": "new error count is zero; 14 pre-existing errors remain in concurrently modified source outside this fix",
+    "exact_failure_shape_replay": "artifact-only schema accepts malformed disabled entrypoint group while still rejecting an invalid authorized artifact path",
+    "live_retry_factory_run_id": "factory_4009c5b45f0b",
+    "live_retry_result": "Provider returned two authorized C++ test artifact upserts; transport, parser, and semantic composition all accepted them. Both prior signatures were absent."
+  },
+  "safety": {
+    "target_project_modified": false,
+    "authorized_operation_validation": "strict",
+    "disabled_operation_effect": "discarded by authoritative parser before composition",
+    "ambiguous_authority": "fail_closed"
+  },
+  "next_action": "Closed. The next exact-run blocker is tracked as L3-24-CE-DELEGATED-NATIVE-ENTRYPOINT-AUTHORITY."
+}

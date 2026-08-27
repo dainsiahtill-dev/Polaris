@@ -1190,6 +1190,11 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
             "tests/test_product.py",
             "README.md",
         ]
+        # The level contract can require more than one test file while PM owns
+        # only the canonical test filename. Delegate the narrow ``tests/``
+        # topology so CE can name additional native tests without inventing a
+        # PM target or escaping the verification directory (exact L3-24).
+        delivery_scope_paths = [*delivery_targets, "tests"]
         delivery_depth_contract = _delivery_depth_contract(
             domain_label=domain_label,
             language="cpp",
@@ -1215,7 +1220,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "include 根、领域头文件和入口路径由 Chief Engineer 决定，"
                         f"确保源码覆盖需求关键词和确定性检查：{keyword_summary}。"
                     ),
-                    "scope": delivery_targets,
+                    "scope": delivery_scope_paths,
                     "target_files": delivery_targets,
                     "steps": [
                         "创建 CMakeLists.txt，声明 C++17 标准、可执行目标和 CE 选定的源码/include 根",

@@ -1,0 +1,40 @@
+{
+  "schema_version": "polaris.dynamic_debug_defect.v1",
+  "defect_id": "l3-23-semantic-patch-map-item-chain-20260825",
+  "status": "fixed_unit_verified_live_pending",
+  "severity": "P0",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_9d946f4f608b",
+  "attempt": "r10",
+  "workspace": "/tmp/factory-bench-l3-23-r10/workspaces/3fae04b958b7-63fb26f54d1e42e5/L3-23-2956ab31bd653d97/5d68b1dc78dc99f761587eaf",
+  "symptom": "Chief Engineer semantic repair exhausted before Director dispatch; no source files were materialized.",
+  "dynamic_evidence": {
+    "stage": "chief_engineer_review",
+    "last_successful_stage": "pm_planning",
+    "context_snapshot_ref": "b5ee0708a1e10e6368d83d67",
+    "call_id": "d814a0fca1264129b4b2bae92dc43b36",
+    "native_tool_call_id": "call_function_ko2u0x5fly6a_1",
+    "tool_name": "submit_structured_role_output",
+    "arguments_hash": "05236ba4e2687e7da5075040a029394552318516485be9a4a43d924f7f5e3248",
+    "role_identity_ok": true,
+    "final_request_evidence_coverage_pass": true,
+    "schema_error": "structured_output_payload_schema_mismatch:task_behavior_ref_replacements.item: value is not of type array",
+    "observed_shape": "task_behavior_ref_replacements={item:{TASK-1:{item:[...]},item:{TASK-2:{item:[...]},item:{TASK-3:{item:[...]}}}}}",
+    "expected_shape": "task_behavior_ref_replacements={TASK-1:[...],TASK-2:[...],TASK-3:[...]}"
+  },
+  "root_cause": "The Anthropic-compatible strict-tool provider serialized a schema-defined additionalProperties map as a recursive item chain and separately wrapped each array value. The structured-output transport handled singleton array wrappers and empty self-wrappers but did not reconstruct schema-proven map item chains.",
+  "fix": {
+    "file": "src/backend/polaris/cells/roles/kernel/internal/structured_output_transport.py",
+    "policy": "schema_proven_map_item_chain_v1",
+    "safety": "Normalize only pure additionalProperties maps, require exactly one semantic key per node, reject duplicate keys and ambiguous wrapper nodes, validate every value and the complete reconstructed map against the caller-owned JSON schema."
+  },
+  "tests": {
+    "red_before_fix": "1 failed, 1 passed",
+    "targeted_after_fix": "2 passed",
+    "full_transport_suite": "43 passed",
+    "ruff": "passed",
+    "mypy": "passed"
+  },
+  "target_project_modified": false,
+  "live_revalidation": "fresh isolated L3-23 r11 pending"
+}

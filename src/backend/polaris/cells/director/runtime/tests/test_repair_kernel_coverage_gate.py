@@ -405,6 +405,22 @@ def test_public_coverage_matches_rust_lib_root_facade_signals_with_path_rewrite_
     assert "rust.unresolved_pub_use" not in root_item["matched_rule_ids"]
 
 
+def test_public_coverage_matches_rust_missing_canonical_root_module() -> None:
+    raw_error = (
+        "error[E0433]: cannot find `engine` in `fantasy_restaurant_queue_ai`\n"
+        " --> tests/product.rs:22:34\n"
+    )
+    payload = query_director_repair_coverage(
+        QueryDirectorRepairCoverageV1(artifact_quality_errors=(raw_error,))
+    ).to_dict()
+    item = payload["items"][0]
+
+    assert item["known_rule_matched"] is True
+    assert item["executable_runtime_plan_matched"] is True
+    assert "rust.lib_root_module_declaration" in item["matched_rule_ids"]
+    assert RUST_LIB_ROOT_FACADE_SOURCE_TOOL in item["matched_source_tools"]
+
+
 def test_public_coverage_gap_projects_reserved_slot_and_recommended_owner_fields() -> None:
     payload = query_director_repair_coverage(
         QueryDirectorRepairCoverageV1(

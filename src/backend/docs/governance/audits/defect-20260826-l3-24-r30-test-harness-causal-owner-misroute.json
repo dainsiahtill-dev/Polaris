@@ -1,0 +1,87 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-r30-test-harness-causal-owner-misroute",
+  "status": "FIX_IMPLEMENTED_LIVE_VALIDATION_PENDING",
+  "severity": "P0",
+  "scope": "Polaris meta-platform only",
+  "target_project_mutated": false,
+  "exact_run": {
+    "factory_run_id": "factory_86023d760904",
+    "workspace": "/tmp/factory-bench-l3-24-r30/workspaces/5aba2dd9148e-99052df8b7a74fd1/L3-24-023d7314133040b6/2e91b49d7ef5c111c5d78802",
+    "factory_terminal": "qa_failed",
+    "retry_boundary": "same_director_task_repair_only",
+    "pm_ce_restart_allowed": false
+  },
+  "symptom": {
+    "round_1": "src/cipher.cpp compiler repair accepted as progress; cpp_compile and CMake build passed",
+    "rounds_2_to_4": "final provider requests still authorized only src/cipher.cpp while current failing tests were read-only",
+    "terminal": "three_nonprogress_repairs_without_verified_progress"
+  },
+  "final_request_evidence": [
+    {
+      "context_snapshot_ref": "88d7e53ae612e66fba69cb1e",
+      "call_id": "a5094ecf77664436aeac20e4d3666898",
+      "meaning": "round 1 C++ compiler repair for src/cipher.cpp"
+    },
+    {
+      "context_snapshot_ref": "4fd53eb2bdc56697f32281bf",
+      "call_id": "3125601020b84006a9041dacd26fad12",
+      "meaning": "post-compiler repair still restricted to src/cipher.cpp"
+    },
+    {
+      "context_snapshot_ref": "ee6907f805fdfe2dd7d13745",
+      "call_id": "d514339f154f4b488d50e51058814265",
+      "meaning": "repeated post-compiler repair still restricted to src/cipher.cpp"
+    },
+    {
+      "context_snapshot_ref": "493c962c0019a8f5a746efbb",
+      "call_id": "bd0ae52aeaa940cca948061df8466423",
+      "meaning": "final repeated repair still restricted to src/cipher.cpp"
+    }
+  ],
+  "dynamic_evidence": {
+    "round_1_before_paths": [
+      "src/cipher.cpp",
+      "tests/test_product.py",
+      "tests/test_helpers.py"
+    ],
+    "round_1_after_paths": [
+      "tests/test_product.py",
+      "tests/test_helpers.py"
+    ],
+    "current_test_failures": [
+      "FileNotFoundError from test setup invoking an unbuilt per-test binary",
+      "UnicodeDecodeError from the project-local subprocess helper"
+    ],
+    "authorized_write_target_rounds_2_to_4": [
+      "src/cipher.cpp"
+    ],
+    "test_files_were_read_only": true,
+    "director_produced_real_edits": true,
+    "later_candidate_effect": "candidate_rejected_rolled_back",
+    "tool_lifecycle_failed": false,
+    "effect_receipt_count": 18
+  },
+  "root_cause": {
+    "classification": "causal repair owner misclassification",
+    "source": "factory workspace-quality causal target routing",
+    "mechanism": "When direct verifier paths were tests and causal discovery also returned a production file, the classifier always preferred production. That is valid for behavioral assertions but invalid for project-local test harness/setup/runtime exceptions. Fresh test-owned failures were therefore redirected to an already-green production file and the true owner became read-only in the final provider request."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": "If every direct project path is a test and current diagnostics contain a recognized harness/setup/runtime exception, keep the direct test owner before causal production candidates. Ordinary assertion failures retain the existing production-owner behavior. TaskRuntime and JobToken remain the write authority."
+  },
+  "validation": {
+    "tdd_red": "new r30 test returned src/cipher.cpp before tests",
+    "targeted_green": "2 passed: harness exception selects tests; ordinary C++ behavior assertion still selects production",
+    "full_characterization": "89 passed, 1 unrelated pre-existing refactor assertion failed",
+    "unrelated_failure": "test_workspace_quality_go_behavior_failure_excludes_test_owner",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_bench": "pending L3-24 r31"
+  },
+  "residual_risk": "The marker set is deliberately narrow and fail-closed. Unknown exception families continue through existing causal routing until exact-run evidence justifies a new general archetype."
+}

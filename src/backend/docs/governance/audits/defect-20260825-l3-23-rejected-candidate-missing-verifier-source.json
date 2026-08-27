@@ -1,0 +1,70 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "defect-20260825-l3-23-rejected-candidate-missing-verifier-source",
+  "status": "CLOSED_LIVE",
+  "severity": "P0",
+  "scope": "Director materialization-quality repair final provider request",
+  "exact_run": {
+    "factory_run_id": "factory_e0cda86d03da",
+    "project_id": "L3-23",
+    "workspace": "/tmp/factory-bench-l3-23-r19/workspaces/57417bb3ee24-6701852dbc6bd93e/L3-23-2956ab31bd653d97/fecb0ae8f35639fdf3b3e47c",
+    "retry_boundary": "same_run_qa_only"
+  },
+  "symptom": "Rejected Director candidates alternated Rust failures between tests/edges.rs and tests/product.rs even though physical rollback was correct.",
+  "dynamic_evidence": {
+    "current_failure_snapshot_ref": "425769e7634a3ea67261e4f3",
+    "rejected_candidate_snapshot_ref": "6a945a64471e9d976dd939c7",
+    "current_failure_source_context_present": true,
+    "rejected_candidate_diagnostic_text_present": true,
+    "rejected_candidate_verifier_source_context_present": false,
+    "current_residual": "tests/edges.rs:15/17",
+    "rejected_candidate_residual": "tests/product.rs:15/17",
+    "offered_tools": [
+      "edit_file"
+    ],
+    "role_identity_ok": true
+  },
+  "root_cause": "The quality-repair prompt projected verifier source context for current failures and regression guards, but candidate_rejection_errors were rendered as diagnostic strings only. The next Director request therefore lacked the rejected candidate's executable setup, calls, and assertions and could not reliably preserve both behavior surfaces.",
+  "owner": {
+    "cell": "roles.adapters",
+    "module": "director.quality_gate._prompt_and_targets"
+  },
+  "required_fix": "Project bounded read-only verifier source context for candidate_rejection_errors using the same workspace-scoped extractor as current failures, without expanding Director write authority.",
+  "required_tests": [
+    "Rejected candidate diagnostics include nearby verifier setup/call/assertion source.",
+    "Verifier source remains read-only and does not add authorized tool paths.",
+    "Existing current-failure and regression-guard source-context tests remain green.",
+    "A fresh child backend same-run QA retry exposes the new source block in the final provider request."
+  ],
+  "implementation_evidence": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_quality_repair_verifier_context.py"
+    ],
+    "tests": "21 passed",
+    "mypy": "success",
+    "ruff": "all checks passed",
+    "live_revalidation": {
+      "status": "passed",
+      "final_request_snapshot_refs": [
+        "24d744e14d3ccf540a18e344",
+        "80d05721fa624970b90fe8be"
+      ],
+      "rejected_candidate_verifier_source_context_present": true,
+      "both_verifier_files_present": [
+        "tests/edges.rs",
+        "tests/product.rs"
+      ],
+      "factory_status": "completed",
+      "quality_gate": "passed",
+      "workspace_validation": "passed",
+      "cargo_test": "34 passed",
+      "entrypoint": "cargo run --quiet --bin fantasy_restaurant -- --help exited 0"
+    }
+  },
+  "prohibited_actions": [
+    "modify generated L3-23 project manually",
+    "expand repair write scope to tests",
+    "restart PM or Chief Engineer"
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R34-CPP-HEADER-CAUSAL-TARGET-LOST",
+  "status": "FIX_IMPLEMENTED_LIVE_VALIDATION_PENDING",
+  "severity": "P0",
+  "scope": "Polaris meta-platform only",
+  "target_project_modified_by_debugger": false,
+  "exact_run": {
+    "factory_run_id": "factory_a0d586f9c6f1",
+    "workspace": "/tmp/factory-bench-l3-24-r34/workspaces/4d631e095c09-919e6aaf14330248/L3-24-023d7314133040b6/33e95dedf7b7d36f9db79259",
+    "project_id": "L3-24",
+    "terminal": "qa_failed",
+    "wall_clock_seconds": 782.3
+  },
+  "dynamic_evidence": {
+    "terminal_compiler_residual": "include/invisible_diary/moon_phase.hpp:42:64: error: unable to find numeric literal operator 'operator\"\"_289_240'",
+    "physical_artifacts": "4 production C++ files, 666 production lines, 2 test files, 25 assertions",
+    "repair_rounds": {
+      "count": 7,
+      "all_had_real_write_effect": true,
+      "authorized_target_every_round": [
+        "src/diary.cpp"
+      ],
+      "terminal_stop": "three_nonprogress_repairs_without_verified_progress"
+    },
+    "provider_request": "Correct Director identity, CE blueprint and forced edit_file tool; only src/diary.cpp was authorized. The provider emitted native edits and Polaris reran g++, CMake and unittest.",
+    "candidate_guard": "Rejected stagnant src/diary.cpp candidates were restored by before/after hash receipts.",
+    "parser_replay_before_fix": {
+      "embedded_cpp_targets": [],
+      "explicit_quality_targets": [],
+      "zero_width_split_observation": "The full include/invisible_diary/moon_phase.hpp path was split at every character and the final fragment e.hpp failed workspace existence validation."
+    },
+    "repair_coverage": {
+      "covered": 0,
+      "known_rule_matched": false,
+      "executable_runtime_plan_matched": false,
+      "language": "cpp",
+      "code": "cpp_compile_error"
+    }
+  },
+  "root_cause": {
+    "classification": "cpp_diagnostic_causal_path_parser_and_forced_target_refresh_failure",
+    "mechanisms": [
+      "_embedded_cpp_compile_repair_target_files used re.split with a zero-width lookahead. It fragmented valid GCC paths and discarded the real header error site as a nonexistent suffix path.",
+      "_explicit_artifact_quality_repair_target_files required a fixed phrase hint before invoking the already-general C++ diagnostic recognizer, so valid numeric-literal compiler errors were filtered out.",
+      "Factory forced-target refresh required complete set disjointness. The derivative FAILING_TUS list retained src/diary.cpp, so an old TU target prevented refresh even when the current precise header error site changed."
+    ],
+    "why_static_analysis_was_insufficient": "The tool path, provider response and edit receipts were all healthy. Only the exact r34 compiler output replayed through the live extraction helpers proved that the platform lost the complete header path and then kept a stale TU because of derivative diagnostic overlap."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_language_targets.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_repair_loop.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_misc_3.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_repair_repeat_attempt_widening.py"
+    ],
+    "behavior": [
+      "Iterate complete GCC/Clang error-site regex matches instead of zero-width splitting.",
+      "Allow any schema-recognized embedded C++ compile diagnostic through explicit target extraction without enumerating every compiler phrase.",
+      "When a current in-scope precise header error site differs from an earlier Factory-forced TU, refresh authorization to the header. Preserve declaration-owner rebind behavior for source use-site diagnostics and preserve immutable task declaration order for broad repeat widening."
+    ]
+  },
+  "verification": {
+    "tdd_red": [
+      "r34-shaped GCC header parser test returned [] instead of include/invisible_diary/moon_phase.hpp.",
+      "r34-shaped repeat repair retained factory_forced_targets_refreshed=false and src/diary.cpp."
+    ],
+    "targeted_green": "104 passed across Director repeat-widening and adapter misc suites.",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_diagnostic_replay_after_fix": [
+      "include/invisible_diary/moon_phase.hpp",
+      "src/diary.cpp",
+      "src/main.cpp",
+      "src/moon_phase.cpp"
+    ],
+    "fresh_isolated_bench": "pending L3-24 r35"
+  },
+  "required_invariants": [
+    "A concrete compiler path:line:column:error site must retain the complete workspace-relative path.",
+    "Compiler diagnostic recognition must not depend on an exhaustive phrase allowlist after a valid language/path/error shape is proven.",
+    "Derivative FAILING_TUS fanout must not outrank the current precise header error site.",
+    "Declaration-owner rebinds remain authoritative for source use-site diagnostics.",
+    "Rejected candidate edits remain transactional and restorable."
+  ],
+  "residual_risk": "The exact numeric-literal archetype has no executable deterministic repair binding. The corrected causal authorization should let Director edit the real header; a new runtime rule may be considered only after coverage-first governance and fresh live evidence show the LLM path cannot converge."
+}

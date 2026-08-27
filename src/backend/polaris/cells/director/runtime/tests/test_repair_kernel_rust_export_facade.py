@@ -401,6 +401,85 @@ def test_lib_root_facade_export_runtime_runs_with_editor_only(tmp_path: Path) ->
     assert record["unique_context_checked"] is True
 
 
+def test_lib_root_module_declaration_plans_and_runs_with_editor_only(tmp_path: Path) -> None:
+    raw_error = (
+        "error[E0433]: cannot find `engine` in `fantasy_restaurant_queue_ai`\n"
+        " --> tests/product.rs:22:34\n"
+    )
+    base_files = {
+        "Cargo.toml": (
+            '[package]\nname = "fantasy-restaurant-queue-ai"\nversion = "0.1.0"\n'
+            'edition = "2021"\n'
+        ),
+        "src/lib.rs": "pub mod domain;\n\npub use domain::Menu;\n",
+        "src/domain/mod.rs": "pub struct Menu;\n",
+        "src/engine/mod.rs": "pub mod rules;\n",
+        "src/engine/rules.rs": "pub struct Rule;\n",
+    }
+    target = tmp_path / "src/lib.rs"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(base_files["src/lib.rs"], encoding="utf-8")
+    edits: list[str] = []
+
+    def writer(path: str, content: str) -> dict[str, object]:
+        raise AssertionError(f"module declaration must use edit_file, not write_file: {path} {content}")
+
+    def editor(operation) -> dict[str, object]:
+        edits.append(operation.operation_id)
+        content = target.read_text(encoding="utf-8")
+        start = int(operation.span_start)
+        end = int(operation.span_end)
+        assert content[start:end] == operation.expected
+        target.write_text(content[:start] + str(operation.replacement) + content[end:], encoding="utf-8")
+        return {"ok": True, "path": operation.path}
+
+    planning = plan_runtime_repair(
+        source_tool=RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
+        base_files=base_files,
+        artifact_quality_errors=(raw_error,),
+        mode="shadow",
+    )
+    run = run_runtime_repair(
+        source_tool=RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
+        workspace=tmp_path,
+        base_files=base_files,
+        artifact_quality_errors=(raw_error,),
+        writer=writer,
+        editor=editor,
+        allowed_paths=("src/lib.rs",),
+    )
+
+    assert planning.plan is not None
+    assert planning.plan.rule_id == "rust.lib_root_module_declaration"
+    assert planning.plan.operations[0].path == "src/lib.rs"
+    assert planning.plan.operations[0].replacement == "pub mod engine;\n"
+    assert run.ok is True
+    assert len(edits) == 1
+    assert target.read_text(encoding="utf-8") == (
+        "pub mod domain;\npub mod engine;\n\npub use domain::Menu;\n"
+    )
+
+
+def test_lib_root_module_declaration_rejects_noncanonical_or_missing_disk_module() -> None:
+    base_files = {
+        "Cargo.toml": '[package]\nname = "demo"\nversion = "0.1.0"\n',
+        "src/lib.rs": "pub mod domain;\n",
+        "src/engine/mod.rs": "pub mod rules;\n",
+    }
+    for raw_error in (
+        "error[E0433]: cannot find `engine` in `other_crate`",
+        "error[E0433]: cannot find `missing` in `demo`",
+        "error[E0433]: cannot find `engine` in `super`",
+    ):
+        planning = plan_runtime_repair(
+            source_tool=RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
+            base_files=base_files,
+            artifact_quality_errors=(raw_error,),
+            mode="shadow",
+        )
+        assert planning.plan is None
+
+
 def test_lib_root_facade_export_blocks_existing_export_declarations() -> None:
     raw_error = (
         "error[E0432]: unresolved import `palette_kit::generate_palette`\n"

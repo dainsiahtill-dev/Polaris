@@ -15,6 +15,7 @@ import os
 import subprocess
 import uuid
 from collections.abc import Mapping, Sequence
+from pathlib import PurePosixPath
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
@@ -39,6 +40,56 @@ from .run_ledger import load_run_ledger_projection
 logger = logging.getLogger(__name__)
 
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
+
+
+def _deferred_repair_forward_target_paths(
+    tool_results: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """Return safe workspace-relative targets proven by typed repair plans.
+
+    The deterministic repair runtime may derive concrete CE-owned files that
+    are not present in the generic PM target row.  Those paths are known only
+    after planning, so the Factory must bind them into the candidate-local
+    JobToken before DEO policy capture.  Never trust arbitrary result text:
+    consume only typed plan effects (or the deferred request's own allowed
+    paths), reject absolute/traversal/runtime paths, and preserve order.
+    """
+
+    paths: list[str] = []
+    seen: set[str] = set()
+    for item in tool_results:
+        result = item.get("result") if isinstance(item, Mapping) else None
+        if not isinstance(result, Mapping):
+            continue
+        deferred = result.get("deferred_request")
+        plan = getattr(deferred, "plan", None) if deferred is not None else None
+        effects = getattr(plan, "effects", None) if plan is not None else None
+        candidates: list[object] = []
+        if isinstance(effects, (list, tuple)):
+            candidates.extend(
+                getattr(effect, "target_path", "")
+                for effect in effects
+                if str(getattr(effect, "contingency_kind", "") or "").strip() == "forward"
+            )
+        if not candidates:
+            candidates.extend(getattr(deferred, "allowed_paths", None) or result.get("allowed_paths") or ())
+        for raw_path in candidates:
+            token = str(raw_path or "").replace("\\", "/").strip()
+            if not token or "\n" in token or "\r" in token:
+                continue
+            pure = PurePosixPath(token)
+            if pure.is_absolute() or ".." in pure.parts:
+                continue
+            normalized = pure.as_posix()
+            while normalized.startswith("./"):
+                normalized = normalized[2:]
+            if not normalized or normalized == "." or normalized.startswith(".polaris/"):
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            paths.append(normalized)
+    return paths
 
 
 def _director_stage_should_run_materialization_quality_settle(
@@ -522,6 +573,7 @@ def _director_stage_materialization_settle_commit_context(
     run_id: str,
     diagnostics: list[str],
     factory_stage: str = "director_dispatch",
+    deferred_tool_results: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Build DEO commit context with control-plane JobToken evidence (M06).
 
@@ -535,6 +587,14 @@ def _director_stage_materialization_settle_commit_context(
 
     normalized_stage = str(factory_stage or "").strip() or "director_dispatch"
     target_files = executor._director_stage_materialization_settle_target_files(diagnostics=diagnostics)
+    target_files = list(
+        dict.fromkeys(
+            [
+                *target_files,
+                *_deferred_repair_forward_target_paths(deferred_tool_results),
+            ]
+        )
+    )
     blueprint_artifact, blueprint_text = executor._workspace_quality_repair_blueprint_evidence(run_id=run_id)
     project_id = str(getattr(run.config, "name", "") or "").strip() or run_id
     token_record: dict[str, Any] = {
@@ -714,11 +774,6 @@ async def _run_director_stage_materialization_quality_settle(
                 execution_attempt=execution_attempt,
             )
             tool_results.extend(round_tool_results)
-            commit_context = executor._director_stage_materialization_settle_commit_context(
-                run=run,
-                run_id=run_id,
-                diagnostics=current_diagnostics,
-            )
             round_candidates = [
                 item
                 for item in round_tool_results
@@ -741,6 +796,12 @@ async def _run_director_stage_materialization_quality_settle(
             # signatures and the shared round cap stop no-progress loops.
             round_committed = False
             for candidate_index, candidate in enumerate(round_candidates):
+                commit_context = executor._director_stage_materialization_settle_commit_context(
+                    run=run,
+                    run_id=run_id,
+                    diagnostics=current_diagnostics,
+                    deferred_tool_results=[candidate],
+                )
                 candidate_receipts = await commit_materialization_deferred_repairs(
                     workspace=str(execution_attempt.workspace),
                     tool_results=[candidate],

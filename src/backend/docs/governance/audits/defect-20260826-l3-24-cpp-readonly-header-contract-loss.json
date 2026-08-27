@@ -1,0 +1,89 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-R11-CPP-READONLY-HEADER-CONTRACT-LOSS",
+  "status": "FIXED_UNIT_LIVE_PENDING",
+  "severity": "P0",
+  "recorded_at": "2026-08-26T01:50:30+08:00",
+  "repository_head": "f3d3bb63284015b958719039b159c2d6a032d015",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_01f53f6688a7",
+  "workspace": "/tmp/factory-bench-l3-24-r11/workspaces/aa11f898322a-d47bc25d097858ab/L3-24-023d7314133040b6/bc092731e332ca986dfb7ebc",
+  "symptom": "Director quality repair added production depth but repeatedly introduced C++ declarations inconsistent with existing read-only headers; the candidate guard correctly rolled the edits back and convergence stopped after three non-progress rounds.",
+  "dynamic_evidence": {
+    "quality_report": ".polaris/qa/factory_01f53f6688a7.workspace-validation.json",
+    "context_snapshot_ref": "bda91c2ff3a8b416c7d91908",
+    "rounds": [
+      {
+        "round": 1,
+        "effect": "progress",
+        "diagnostics_before": 4,
+        "diagnostics_after": 1,
+        "accepted_file": "src/invisible_diary/moon_cipher.cpp"
+      },
+      {
+        "round": 2,
+        "effect": "regression_rolled_back",
+        "candidate_prod_lines": 646,
+        "failures": [
+          "Diary::size redefined although inline in diary.hpp",
+          "Diary::empty and Diary::clear have no header declarations",
+          "std::vector used without a compatible declared API/include"
+        ]
+      },
+      {
+        "round": 4,
+        "effect": "regression_rolled_back",
+        "candidate_prod_lines": 597,
+        "failures": [
+          "Diary methods invented outside the existing class contract",
+          "moon phase helpers called without declarations",
+          "CLI helpers called without declarations"
+        ]
+      }
+    ],
+    "final_request": {
+      "role_identity_ok": true,
+      "available_tools": [
+        "edit_file"
+      ],
+      "tool_call_had_authorized_effect": true,
+      "has_pm_contract": true,
+      "has_chief_engineer_blueprint": true,
+      "has_failure_feedback": true,
+      "has_actual_sibling_exports": false,
+      "actual_export_module_count": 0,
+      "observed_header_projection": "Only class/struct opener lines and a narrow label/parser subset were projected; inline members and general free-function declarations were omitted."
+    }
+  },
+  "root_cause": {
+    "classification": "DIRECTOR_REPAIR_CONTEXT_CONTRACT_LOSS",
+    "owner": "polaris.cells.roles.adapters.internal.director.quality_gate",
+    "mechanism": "_cpp_header_public_api_excerpt emitted enum fragments and a narrow function whitelist but only the opening line of class/struct declarations. Source-only repair therefore lacked authoritative sibling header contracts while read_file was absent from the physical tool surface.",
+    "not_caused_by": [
+      "edit_file normalization",
+      "path authorization",
+      "candidate rollback policy",
+      "PM or Chief Engineer planning"
+    ]
+  },
+  "fix": {
+    "source": "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py",
+    "behavior": "Project complete balanced enum/class/struct declarations and all recognized C++ free-function declarations from included read-only headers, bounded to 3600 characters per header and 12000 characters total.",
+    "write_scope_change": false,
+    "target_project_modified": false
+  },
+  "regression_test": "test_quality_repair_projects_complete_cpp_class_contract_from_read_only_header",
+  "verification": {
+    "pytest": "2 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_workspace_projection": {
+      "projected_chars": 5838,
+      "inline_diary_size_present": true,
+      "diary_entry_declaration_present": true,
+      "moon_phase_overload_present": true,
+      "moon_phase_parser_present": true
+    }
+  },
+  "next_action": "Run a fresh isolated L3-24 Bench and require the same-task Director repair to consume the richer header contract, produce verifier-safe edits, and avoid any PM/Chief Engineer restart."
+}

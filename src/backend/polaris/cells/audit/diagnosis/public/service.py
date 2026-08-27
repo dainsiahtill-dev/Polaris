@@ -43,7 +43,12 @@ from polaris.cells.audit.diagnosis.public.contracts import (
 from polaris.cells.chief_engineer.blueprint.public import (
     project_chief_engineer_delivery_depth_feasibility_from_pm_tasks,
 )
-from polaris.cells.context.engine.public import QueryFinalProviderRequestAuditV1, query_final_provider_request_audit
+from polaris.cells.context.engine.public import (
+    QueryFactoryRunContextSnapshotsV1,
+    QueryFinalProviderRequestAuditV1,
+    query_factory_run_context_snapshots,
+    query_final_provider_request_audit,
+)
 from polaris.cells.control_plane.run_ledger.public import ReadRunLedgerProjectionQueryV1, read_run_ledger_projection
 from polaris.cells.director.runtime.public import (
     QueryDirectorRepairCoverageV1,
@@ -68,6 +73,10 @@ _RUN_ID_KEYS = frozenset({"run_id", "factory_run_id", "orchestration_run_id", "s
 _FILE_DEFICIT_PATTERN = re.compile(
     r"\b(?P<metric>prod_files|production_source_files|test_files|test_source_files)\s*"
     r"(?:=|:)\s*(?P<actual>\d+)\s*<\s*(?P<required>\d+)\b",
+    re.IGNORECASE,
+)
+_DELIVERY_DEPTH_FAILURE_CLAUSE_PATTERN = re.compile(
+    r"\bfailures\s*:\s*(?P<failures>[^\r\n]+)",
     re.IGNORECASE,
 )
 _MACHINE_ERROR_PREFIX_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{2,127}$")
@@ -333,6 +342,7 @@ def _context_snapshot_refs(value: object, *, limit: int = 16) -> list[str]:
             str(
                 _mapping_value(event, "role")
                 or _mapping_value(event, "agent_role")
+                or _mapping_value(event, "actor")
                 or _mapping_value(event, "stage")
                 or ""
             )
@@ -364,6 +374,40 @@ def _context_snapshot_refs(value: object, *, limit: int = 16) -> list[str]:
         if len(selected) >= limit:
             break
     return selected[:limit]
+
+
+def _factory_run_pinned_context_refs(*, workspace: str, factory_run_id: str) -> list[str]:
+    """Return exact-run pinned refs, preferring physical provider requests per role."""
+
+    result = query_factory_run_context_snapshots(
+        QueryFactoryRunContextSnapshotsV1(
+            workspace=workspace,
+            factory_run_id=factory_run_id,
+        )
+    )
+    if not result.ok:
+        return []
+    pins_by_role: dict[str, list[Mapping[str, Any]]] = {}
+    for pin in result.pins:
+        role = str(pin.get("role") or "").strip().casefold()
+        ref = str(pin.get("context_snapshot_ref") or "").strip().lower()
+        if not role or len(ref) != 24 or any(char not in "0123456789abcdef" for char in ref):
+            continue
+        pins_by_role.setdefault(role, []).append(pin)
+    refs: list[str] = []
+    for role in sorted(pins_by_role):
+        role_pins = pins_by_role[role]
+        physical = [
+            pin
+            for pin in role_pins
+            if str(pin.get("snapshot_source") or "").strip()
+            == "roles.kernel.final_physical_provider_request"
+        ]
+        for pin in physical or role_pins:
+            ref = str(pin.get("context_snapshot_ref") or "").strip().lower()
+            if ref not in refs:
+                refs.append(ref)
+    return refs
 
 
 def _mapping_value(value: object, key: str, *, max_depth: int = 10) -> object | None:
@@ -498,12 +542,62 @@ def _file_deficits_from_final_request(messages: object) -> list[dict[str, object
     return deficits
 
 
+def _effective_file_deficits_from_final_request(
+    messages: object,
+) -> tuple[list[dict[str, object]], bool]:
+    """Read file deficits only from an explicit delivery-depth failure clause.
+
+    The surrounding diagnostic contains a raw metric inventory and contract
+    minimums, including metrics that may have been waived by source-target
+    coverage.  Once an explicit ``failures:`` clause exists, it is the
+    authoritative effective verdict; an empty file-deficit result is therefore
+    meaningful and must not fall back to the raw inventory.
+    """
+
+    deficits: list[dict[str, object]] = []
+    seen: set[tuple[str, int, int]] = set()
+    explicit_failure_clause = False
+    for text in _message_texts(messages):
+        for line in text.splitlines():
+            lowered = line.lower()
+            if "failures:" not in lowered or (
+                "delivery_depth_contract_failed" not in lowered
+                and "implementation depth metrics" not in lowered
+            ):
+                continue
+            for clause in _DELIVERY_DEPTH_FAILURE_CLAUSE_PATTERN.finditer(line):
+                explicit_failure_clause = True
+                for match in _FILE_DEFICIT_PATTERN.finditer(clause.group("failures")):
+                    metric = match.group("metric").lower()
+                    actual = int(match.group("actual"))
+                    required = int(match.group("required"))
+                    key = (metric, actual, required)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    deficits.append(
+                        {
+                            "metric": metric,
+                            "actual": actual,
+                            "required": required,
+                            "source": "final_provider_request.messages.failures",
+                        }
+                    )
+    return deficits, explicit_failure_clause
+
+
 def _file_deficits_from_request_metadata(request_metadata: Mapping[str, Any]) -> list[dict[str, object]]:
     failed_gate = request_metadata.get("failed_gate_evidence_summary")
     failed_gate_map = failed_gate if isinstance(failed_gate, Mapping) else {}
     metrics_raw = failed_gate_map.get("quality_metrics")
     minimums_raw = failed_gate_map.get("quality_minimums")
     metrics = metrics_raw if isinstance(metrics_raw, Mapping) else {}
+    failed_metrics_raw = failed_gate_map.get("failed_quality_metrics")
+    failed_metrics = (
+        {str(metric).strip().lower() for metric in failed_metrics_raw if str(metric).strip()}
+        if isinstance(failed_metrics_raw, Sequence) and not isinstance(failed_metrics_raw, (str, bytes))
+        else None
+    )
     minimums = dict(minimums_raw) if isinstance(minimums_raw, Mapping) else {}
     depth_summary = request_metadata.get("delivery_depth_contract_summary")
     depth_summary_map = depth_summary if isinstance(depth_summary, Mapping) else {}
@@ -513,6 +607,8 @@ def _file_deficits_from_request_metadata(request_metadata: Mapping[str, Any]) ->
             minimums.setdefault(str(key), value)
     deficits: list[dict[str, object]] = []
     for metric in ("prod_files", "test_files"):
+        if failed_metrics is not None and metric not in failed_metrics:
+            continue
         actual = metrics.get(metric)
         required = minimums.get(f"min_{metric}")
         if (
@@ -542,7 +638,12 @@ def _provider_audit_projection(result: Any) -> dict[str, object]:
     request_metadata = final_audit_map.get("request_metadata_summary")
     request_metadata_map = request_metadata if isinstance(request_metadata, dict) else {}
     file_deficits = _file_deficits_from_request_metadata(request_metadata_map)
-    if not file_deficits:
+    effective_message_deficits, has_explicit_failure_clause = _effective_file_deficits_from_final_request(
+        payload.get("messages")
+    )
+    if has_explicit_failure_clause:
+        file_deficits = effective_message_deficits
+    elif not file_deficits:
         file_deficits = _file_deficits_from_final_request(payload.get("messages"))
     raw_tools = payload.get("tools")
     tool_names: list[str] = []
@@ -559,6 +660,7 @@ def _provider_audit_projection(result: Any) -> dict[str, object]:
         "ok": result.ok,
         "status": result.status,
         "context_snapshot_ref": result.context_snapshot_ref,
+        "stored_at": str(payload.get("stored_at") or ""),
         "error_code": result.error_code or "",
         "role": str(payload.get("role") or ""),
         "tool_names": tool_names,
@@ -736,6 +838,13 @@ async def query_exact_run_causal_audit(query: QueryExactRunCausalAuditV1) -> Aud
             )
         )
         trail_events = list(trail.payload.get("events") or []) if trail.ok else []
+        context_refs = _context_snapshot_refs(trail_events)
+        for pinned_ref in _factory_run_pinned_context_refs(
+            workspace=query.workspace,
+            factory_run_id=query.factory_run_id,
+        ):
+            if pinned_ref not in context_refs:
+                context_refs.append(pinned_ref)
         provider_audits = [
             query_final_provider_request_audit(
                 QueryFinalProviderRequestAuditV1(
@@ -743,8 +852,12 @@ async def query_exact_run_causal_audit(query: QueryExactRunCausalAuditV1) -> Aud
                     context_snapshot_ref=context_ref,
                 )
             )
-            for context_ref in _context_snapshot_refs(trail_events)
+            for context_ref in context_refs
         ]
+        provider_audit_projections = sorted(
+            (_provider_audit_projection(result) for result in provider_audits),
+            key=lambda item: str(item.get("stored_at") or ""),
+        )
         repair_evidence = (
             dict(query.preloaded_repair_evidence)
             if query.preloaded_repair_evidence is not None
@@ -762,7 +875,7 @@ async def query_exact_run_causal_audit(query: QueryExactRunCausalAuditV1) -> Aud
             factory_projection=factory_projection.to_dict(),
             ledger_projection=ledger_projection,
             terminal_task_runtime_projection=terminal_projection.to_dict() if terminal_projection else None,
-            provider_request_audits=[_provider_audit_projection(result) for result in provider_audits],
+            provider_request_audits=provider_audit_projections,
             chief_engineer_authority_feasibility=_chief_engineer_authority_feasibility(
                 workspace=query.workspace,
                 factory_run_id=query.factory_run_id,

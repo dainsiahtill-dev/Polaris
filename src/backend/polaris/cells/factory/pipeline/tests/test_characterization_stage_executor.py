@@ -51,6 +51,7 @@ from polaris.cells.events.fact_stream.public.service import (
 from polaris.cells.factory.pipeline.internal import (
     factory_stage_executor as stage_executor_module,
     factory_workspace_quality as workspace_quality_module,
+    run_ledger as run_ledger_module,
 )
 from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
     FactoryDeadlineBudgetPolicyV1,
@@ -1459,6 +1460,60 @@ def test_workspace_validation_artifact_writes_run_ledger_command_evidence(tmp_pa
     assert repair_result["full_evidence_ref"] == "runtime/qa/workspace-validation.json"
     assert repair_result["full_evidence_bytes"] > 2_000_000
     assert len(json.dumps(ledger_event, ensure_ascii=False).encode("utf-8")) < 64_000
+
+
+def test_workspace_validation_ledger_preserves_canonical_project_identity_on_qa_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A same-run QA retry must not replace the project id with the Factory run id."""
+
+    executor = _executor(tmp_path)
+    run = FactoryRun(
+        id="factory-retry-1",
+        config=FactoryConfig(name="demo"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-08-25T00:00:00Z",
+        metadata={
+            "factory_start_request": {
+                "metadata": {
+                    "factory_bench_project_id": "L3-23",
+                    "factory_bench_requested_project_id": "L3-23",
+                    "factory_bench_canonical_project_id": "L3-23",
+                }
+            }
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    def _capture_persist(
+        _workspace: Path,
+        record: dict[str, Any],
+        _gate: dict[str, Any],
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        captured["record"] = dict(record)
+        captured["kwargs"] = dict(kwargs)
+        return {}
+
+    monkeypatch.setattr(run_ledger_module, "persist_real_run_gate_ledger", _capture_persist)
+
+    executor._write_workspace_validation_artifact(
+        run,
+        {"target_files": ["src/lib.rs"]},
+        {
+            "schema_version": "factory.workspace_quality_checks.v1",
+            "factory_run_id": run.id,
+            "passed": True,
+            "effective_commands": [
+                {"command": ["cargo", "test", "--quiet"], "passed": True, "exit_code": 0},
+            ],
+        },
+    )
+
+    assert captured["record"]["project_id"] == "L3-23"
+    assert captured["kwargs"]["project_id"] == "L3-23"
+    assert executor._workspace_validation_project_id(run, {"project_id": "explicit-project"}) == "explicit-project"
 
 
 def test_workspace_validation_ledger_uses_terminal_verifier_epoch(tmp_path: Path) -> None:

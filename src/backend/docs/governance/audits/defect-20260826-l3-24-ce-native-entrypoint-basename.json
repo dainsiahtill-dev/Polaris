@@ -1,0 +1,46 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-R12-CE-NATIVE-ENTRYPOINT-BASENAME",
+  "status": "FIXED_LIVE_VERIFIED",
+  "severity": "P0",
+  "scope": "polaris_meta_project_only",
+  "target_project_modified": false,
+  "exact_run": {
+    "factory_run_id": "factory_332d3f234971",
+    "project_id": "L3-24",
+    "workspace": "/tmp/factory-bench-l3-24-r12/workspaces/4f61ebbd1a1e-cd1c6dfe88cceb3c/L3-24-023d7314133040b6/90181fe87598fea6f38d5cc3"
+  },
+  "symptom": "Chief Engineer generated a required native entrypoint but final portfolio hydration reported that the application had no required entrypoint.",
+  "error_code": "invalid_project_completion_contract",
+  "error_message": "application project requires a required entrypoint",
+  "dynamic_evidence": {
+    "candidate_source_path": "src/main.cpp",
+    "candidate_runtime_path": "build/invisible_ink_diary",
+    "candidate_command": "invisible_ink_diary seal --key moonlit-key --plain the moon hides the diary",
+    "pm_entrypoint_command": "./build/polaris_app",
+    "candidate_entrypoint_required": true,
+    "candidate_persisted": true,
+    "portfolio_entrypoint_after_normalization": false
+  },
+  "root_cause": {
+    "classification": "chief_engineer_authority_normalization_false_negative",
+    "detail": "The delegated native entrypoint resolver required argv[0] to equal the full runtime_path. A safe basename matching the runtime-path basename was rejected, so the only required entrypoint was dropped before completion-contract hydration."
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+    "behavior": "Normalize only an exact matching binary basename to the safe runtime_path and project the authority-owned canonical command into the completion entrypoint row.",
+    "preserved_guards": [
+      "different binary names remain rejected",
+      "unsafe runtime paths remain rejected",
+      "source artifact ownership remains required",
+      "topology delegation remains required",
+      "argument tokens remain literal and unchanged"
+    ]
+  },
+  "verification": {
+    "tdd_red": "test_completion_contract_accepts_argv_safe_delegated_native_smoke_command failed with required-entrypoint error",
+    "tdd_green": "same test passed after normalization",
+    "broader_unit": "189 public portfolio tests passed; Ruff and Mypy passed",
+    "fresh_isolated_bench": "L3-24 r13 / factory_137c103b58ed passed PM and Chief Engineer, persisted plan=True and blueprint=True, and entered Director materialization with the canonical ./build/invisible_ink_diary entrypoint. The run later failed only in Director workspace quality/QA."
+  }
+}

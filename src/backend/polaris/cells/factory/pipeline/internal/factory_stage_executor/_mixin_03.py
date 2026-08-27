@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -124,9 +124,15 @@ class _Mixin03:
         run_id: str,
         diagnostics: list[str],
         factory_stage: str = "director_dispatch",
+        deferred_tool_results: Sequence[Mapping[str, Any]] = (),
     ) -> dict[str, Any]:
         return materialization_impl._director_stage_materialization_settle_commit_context(
-            self, run=run, run_id=run_id, diagnostics=diagnostics, factory_stage=factory_stage
+            self,
+            run=run,
+            run_id=run_id,
+            diagnostics=diagnostics,
+            factory_stage=factory_stage,
+            deferred_tool_results=deferred_tool_results,
         )
 
     @staticmethod
@@ -282,6 +288,25 @@ class _Mixin03:
         for diagnostic in diagnostics:
             append_workspace_path(str(diagnostic.path or ""))
 
+        # Compiler-owned translation units outrank the verifier wrapper that
+        # merely observed their failure.  A Python unittest traceback often
+        # names ``tests/test_product.py`` before the embedded g++ diagnostic;
+        # leasing that wrapper gave the Director no authority over the actual
+        # C++ fault and let a repair weaken a test threshold instead.  Reuse
+        # the marker-aware verifier projection (``### FAILING_TUS`` / tsc
+        # sites) as the first causal authority, while keeping the wrapper as
+        # read-only context later in the ordered candidate list.
+        diagnostic_blob = "\n".join(str(item or "") for item in artifact_quality_errors or [])
+        compiler_site_candidates = (
+            wq_evidence.workspace_quality_unclaimed_failing_tu_targets(
+                artifact_quality_errors,
+                claimed_targets=(),
+                workspace=workspace_root,
+            )
+            if "### FAILING_TUS" in diagnostic_blob
+            else []
+        )
+
         # Python tracebacks are ordered outermost -> innermost.  Owner routing
         # must therefore rank the deepest workspace frame before the importing
         # test/package frames.  Live L3-21 exposed ``NameError: dataclass`` in
@@ -299,7 +324,7 @@ class _Mixin03:
             )
             for match in reversed(traceback_matches):
                 append_workspace_path(match.group("path"), target=causal_traceback_candidates)
-        candidates = [*causal_traceback_candidates, *candidates]
+        candidates = [*compiler_site_candidates, *causal_traceback_candidates, *candidates]
         joined_errors = "\n".join(str(item or "") for item in artifact_quality_errors).lower()
         for filename in _LANGUAGE_NEUTRAL_REPAIR_FILENAMES:
             if filename.lower() not in joined_errors:
@@ -550,6 +575,31 @@ class _Mixin03:
         self._persist_workspace_validation_ledger(run, context, payload)
         return artifact
 
+    @staticmethod
+    def _workspace_validation_project_id(run: FactoryRun, context: dict[str, Any]) -> str:
+        """Resolve immutable logical project identity across same-run QA retries."""
+
+        sources: list[Mapping[str, Any]] = [context]
+        run_metadata = run.metadata if isinstance(run.metadata, Mapping) else {}
+        start_request = run_metadata.get("factory_start_request")
+        if isinstance(start_request, Mapping):
+            start_metadata = start_request.get("metadata")
+            if isinstance(start_metadata, Mapping):
+                sources.append(start_metadata)
+        for source in sources:
+            for key in (
+                "canonical_project_id",
+                "requested_project_id",
+                "project_id",
+                "factory_bench_canonical_project_id",
+                "factory_bench_requested_project_id",
+                "factory_bench_project_id",
+            ):
+                value = str(source.get(key) or "").strip()
+                if value:
+                    return value
+        return run.id
+
     def _persist_workspace_validation_ledger(
         self,
         run: FactoryRun,
@@ -588,9 +638,10 @@ class _Mixin03:
             full_repair,
             full_evidence_ref="runtime/qa/workspace-validation.json",
         )
+        project_id = self._workspace_validation_project_id(run, context)
         record = {
-            "id": str(context.get("project_id") or context.get("requested_project_id") or run.id),
-            "project_id": str(context.get("project_id") or context.get("requested_project_id") or run.id),
+            "id": project_id,
+            "project_id": project_id,
             "run_id": run.id,
             "target_files": target_files,
             "scope_paths": scope_paths,

@@ -21,6 +21,7 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
     TASK_RUNTIME_EXECUTION_STREAM_V1,
     QuerySameTaskLocalReworkAuthorizationV1,
     SameTaskLocalReworkAuthorizationQueryResultV1,
+    SettleTaskRuntimeExecutionAttemptCommandV1,
 )
 
 from ..directed_effect_operation import (
@@ -502,15 +503,36 @@ class _TaskRowsMixin(_ServiceMixinBase):
                         "existing_factory_run_id": owned_factory_run_id,
                         "requested_factory_run_id": authority,
                     }
-                # Force path: skip inactive DEO pre-barrier. Factory terminal
-                # closeout owns authority; residual DEO receipts remain ledger
-                # evidence, not lease-pin forever.
+                # Factory terminal closeout may ignore an expired execution
+                # lease, but it must NOT bypass DEO settlement. Bypassing this
+                # close left a terminal TaskRuntime session with an OPEN parent
+                # registry; every later same-task QA repair then failed closed
+                # with ``settlement_parent_close_required`` forever.
                 if not is_terminal_session_status(session.status):
-                    session.mark_failed(error=failure_reason)
-                    self._write_session_locked(
+                    settlement, settled_session = self._settle_execution_attempt_without_lease_check_locked(
+                        SettleTaskRuntimeExecutionAttemptCommandV1(
+                            workspace=self.workspace,
+                            identity=self._execution_attempt_identity_from_session(session),
+                            outcome="failed",
+                            summary=failure_reason,
+                            metadata={
+                                "factory_run_id": authority,
+                                "source": source_text,
+                                "factory_abort_force_active_session": True,
+                            },
+                        ),
                         session,
-                        allow_terminal_downgrade=True,
                     )
+                    if not settlement.get("success") or settled_session is None:
+                        return {
+                            "ok": False,
+                            "code": str(settlement.get("code") or "factory_abort_deo_settlement_failed"),
+                            "task_id": str(normalized),
+                            "session_id": session.session_id,
+                            "reason": "Factory abort could not safely close the directed-effect parent",
+                            "settlement": settlement,
+                        }
+                    session = settled_session
 
         merged_metadata = {
             "factory_abort_reason": failure_reason,
@@ -787,6 +809,45 @@ class _TaskRowsMixin(_ServiceMixinBase):
             session = self._read_session_locked(normalized)
             if session is not None:
                 pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
+                if (
+                    not pre_barrier.allowed
+                    and pre_barrier.code == "settlement_parent_close_required"
+                    and is_terminal_session_status(session.status)
+                ):
+                    # Compatibility self-heal for sessions terminalized by the
+                    # former Factory force-abort path before their DEO parent
+                    # was outcome-closed. Reuse the exact terminal outcome and
+                    # settlement protocol. An unresolved operation still makes
+                    # this fail closed and leaves the session/row unchanged.
+                    outcome = (
+                        "completed"
+                        if session.status == "completed"
+                        else "suspended"
+                        if session.status == "suspended"
+                        else "failed"
+                    )
+                    summary = sanitize_summary(
+                        session.last_error
+                        or session.last_result_summary
+                        or reason
+                        or "terminal_parent_close_recovery"
+                    )
+                    recovery, recovered_session = self._settle_execution_attempt_without_lease_check_locked(
+                        SettleTaskRuntimeExecutionAttemptCommandV1(
+                            workspace=self.workspace,
+                            identity=self._execution_attempt_identity_from_session(session),
+                            outcome=outcome,
+                            summary=summary,
+                            metadata={
+                                "source": "task_reopen_terminal_parent_recovery",
+                                "reopen_reason": sanitize_summary(reason or "task_reopened"),
+                            },
+                        ),
+                        session,
+                    )
+                    if recovery.get("success") and recovered_session is not None:
+                        session = recovered_session
+                        pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
                 if not pre_barrier.allowed:
                     return None, None, None, [], pre_barrier
             if session is not None:

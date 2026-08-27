@@ -1,0 +1,63 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "L3-24-R46-COMPILER-DIAGNOSTIC-MULTIPLICITY",
+  "status": "FIXED_UNIT_AND_EXACT_RUN_REPLAY_VALIDATED",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_30c20410aeac",
+  "workspace": "/tmp/factory-bench-l3-24-r46/workspaces/710f65c89bdc-cadb8c3136d5e5c6/L3-24-023d7314133040b6/e822ffe01663e2b3ccfcc697",
+  "symptom": {
+    "stage": "quality_gate",
+    "candidate_reason": "workspace_quality_repair_equal_count_swap",
+    "candidate_status": "restored",
+    "repeated_rollbacks": 2
+  },
+  "final_request_evidence": {
+    "context_snapshot_ref": "bef7107c77033d8a5bbe9baf",
+    "role_identity_ok": true,
+    "edit_file_forced": true,
+    "pm_contract_present": true,
+    "ce_blueprint_present": true,
+    "target_content_present": true,
+    "failure_evidence_present": true,
+    "stale_r45_history_absent": true
+  },
+  "dynamic_debug_evidence": {
+    "workspace_validation": ".polaris/runtime/workspace-validation.json",
+    "task_runtime": ".polaris/runtime/events/task_runtime.task.failed.jsonl",
+    "target": "src/invisible_ink.cpp",
+    "before_hash_prefix": "2e9be",
+    "after_hash_prefix": "371499",
+    "replacements": 1,
+    "before_frontier": "src/invisible_ink.cpp:95:31",
+    "after_frontier": "src/invisible_ink.cpp:101:31",
+    "top_level_diagnostic_count_before": 3,
+    "top_level_diagnostic_count_after": 3,
+    "tool_effect_proven": true,
+    "rollback_proven": true
+  },
+  "root_cause": {
+    "module": "factory.pipeline.workspace_quality",
+    "cause": "Compiler diagnostic path/message identities were stored in a set. Repeated occurrences collapsed, so removing one occurrence could not prove strict frontier reduction."
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+    "strategy": "Compare Counter multisets per verifier command; require component-wise non-increase plus strict total occurrence reduction."
+  },
+  "verification": {
+    "tdd_red": "1 failed, 98 deselected; expected progress, actual equal_count_swap",
+    "focused_pytest": "99 workspace-quality checks passed; 38 candidate-guard regressions passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_r46_replay": "passed; compiler occurrences 15 -> 13, no identity increased, frontier_reduced=true",
+    "fresh_isolated_l3_24": "pending"
+  },
+  "constraints": {
+    "target_project_modified": false,
+    "dynamic_debug_required": true,
+    "static_analysis_used_as_root_cause_proof": false,
+    "tool_normalization_changed": false,
+    "candidate_transaction_changed": false
+  },
+  "next_action": "Run fresh isolated L3-24 and verify the causal edit is retained through candidate settlement."
+}

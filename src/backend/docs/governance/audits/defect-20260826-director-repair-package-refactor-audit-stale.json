@@ -1,0 +1,36 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "DIRECTOR-REPAIR-PACKAGE-REFACTOR-AUDIT-STALE",
+  "status": "OPEN_SEPARATE_OWNER",
+  "severity": "P1",
+  "scope": "polaris_meta_project_only",
+  "target_project_modified": false,
+  "symptom": "A broad Director repair regression batch reported 27 failures after recent monolith-to-package splits, while 119 tests passed.",
+  "dynamic_evidence": {
+    "command_scope": [
+      "test_deterministic_repair_strategy_catalog.py",
+      "test_factory_workspace_quality_post_execution_bridge.py",
+      "test_repair_kernel_contract_4.py",
+      "test_director_repair_kernel_boundary.py"
+    ],
+    "result": "119 passed, 27 failed",
+    "failure_shapes": [
+      "FileNotFoundError for deleted execute_method.py after execute_method/ package split",
+      "FileNotFoundError for deleted post_execution_repair_bridge.py after package split",
+      "FileNotFoundError for deleted director/runtime/public/service.py after service/ package split",
+      "FileNotFoundError for deleted quality_gate.py after quality_gate/ package split",
+      "architecture allowlists do not recognize the new package-owned public/internal boundaries"
+    ]
+  },
+  "root_cause": {
+    "classification": "post_refactor_audit_gauge_stale",
+    "detail": "Audit tests and architecture allowlists still encode pre-split monolith paths. Restoring compatibility shims would violate the current package architecture; the gauges must be migrated to package-aware discovery and ownership assertions."
+  },
+  "constraints": [
+    "Do not restore deleted monolith shims",
+    "Do not conflate these gauge failures with the r15 post-execution diagnostic bridge defect",
+    "Preserve other agents' package-refactor changes",
+    "Update tests and allowlists against current package authority"
+  ],
+  "next_action": "Assign a separate package-refactor audit migration owner; rerun the same 146-test batch after updating package-aware paths and allowlists."
+}

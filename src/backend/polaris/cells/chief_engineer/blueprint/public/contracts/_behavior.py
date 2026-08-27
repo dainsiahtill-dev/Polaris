@@ -41,7 +41,7 @@ class ChiefEngineerBehaviorExampleV1:
 
 @dataclass(frozen=True, slots=True)
 class ChiefEngineerBehaviorInvariantV1:
-    """One domain-neutral cross-task semantic invariant."""
+    """One domain-neutral owned semantic invariant, optionally cross-task."""
 
     invariant_id: str
     statement: str
@@ -53,7 +53,7 @@ class ChiefEngineerBehaviorInvariantV1:
     def __post_init__(self) -> None:
         invariant_id = _require_completion_token("invariant_id", self.invariant_id)
         owner_task_id = _require_completion_token("owner_task_id", self.owner_task_id)
-        consumer_task_ids = _strict_unique_string_tuple("consumer_task_ids", self.consumer_task_ids, require_items=True)
+        consumer_task_ids = _strict_unique_string_tuple("consumer_task_ids", self.consumer_task_ids)
         if owner_task_id in consumer_task_ids:
             raise ValueError("consumer_task_ids must not contain owner_task_id")
         covered_obligation_ids = _strict_unique_string_tuple(

@@ -221,6 +221,7 @@ from ._language_targets import (
     _python_unittest_failure_test_target_files,
     _python_unittest_module_candidate_paths,
     _resolve_javascript_relative_import_target,
+    _rust_test_behavior_repair_target_files,
     _typescript_source_repair_target_for_javascript_output,
     _workspace_cli_entrypoint_repair_target_files,
     _workspace_go_entrypoint_repair_target_files,

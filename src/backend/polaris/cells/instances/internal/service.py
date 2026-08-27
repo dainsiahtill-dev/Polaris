@@ -722,6 +722,68 @@ class InstanceSupervisor:
                 self.registry.replace_records(next_records, action="health_changed", record=changed[0])
             return [item.to_dict() for item in changed]
 
+    def recover_current_frontend(self) -> dict[str, Any] | None:
+        """Restart the owned frontend for this backend when it disappears.
+
+        Only the backend process bound to the same registry instance may do
+        this.  Other project/bench records remain observation-only here; their
+        lifecycle continues to belong to the external Instance Supervisor.
+        """
+
+        instance_id = str(os.environ.get("KERNELONE_INSTANCE_ID", "") or "").strip()
+        if not instance_id:
+            return None
+        with self.registry.mutation_lock():
+            record = self.registry.get(instance_id)
+            if (
+                record is None
+                or not self._record_is_current_backend(record)
+                or not record.start_frontend
+                or not record.frontend_vite
+                or record.frontend_port <= 0
+                or not is_process_alive(record.backend_pid)
+            ):
+                return None
+            if is_process_alive(record.frontend_pid):
+                if self._pid_looks_like_instance_process(
+                    record,
+                    record.frontend_pid,
+                    process_kind="frontend",
+                    allow_unknown=True,
+                ):
+                    return None
+                # Never spawn over a live process the registry does not own.
+                return None
+            if not is_port_free(record.frontend_port):
+                # The reserved port is occupied without an owned live PID.
+                # Fail closed instead of letting Vite silently choose another
+                # port and making the Launcher URL lie.
+                return None
+
+            log_dir = ensure_absolute_dir(self._instance_dir(record.instance_id) / "logs")
+            frontend_pid = self._start_frontend(record, log_dir / "frontend.log")
+            record.frontend_pid = frontend_pid
+            record.status = "starting"
+            record.metadata["frontend_recovery_count"] = int(
+                record.metadata.get("frontend_recovery_count") or 0
+            ) + 1
+            record.metadata["frontend_recovered_at"] = utc_timestamp()
+            self.registry.save(record)
+            try:
+                self._wait_for_frontend_identity(record)
+            except Exception:
+                self._terminate_pid(frontend_pid)
+                record.frontend_pid = None
+                record.status = "failed"
+                record.metadata["frontend_health"] = "failed"
+                record.metadata["status_reason"] = "frontend recovery identity check failed"
+                self.registry.save(record)
+                raise
+
+            projected = self._with_health(record, probe_http=False)
+            self.registry.save(projected)
+            return projected.to_dict()
+
     def start_instance(self, request: dict[str, Any]) -> dict[str, Any]:
         kind = str(request.get("kind") or "project")
         is_bench_project = kind == "bench_project"
@@ -1225,6 +1287,7 @@ class InstanceSupervisor:
             DEFAULT_HOST,
             "--port",
             str(record.frontend_port),
+            "--strictPort",
         ]
         env = os.environ.copy()
         env["VITE_BACKEND_URL"] = record.backend_url
@@ -1620,6 +1683,7 @@ def _instance_watchdog_default_enabled() -> bool:
 async def _instance_watchdog_loop(supervisor: InstanceSupervisor, interval_seconds: float) -> None:
     while True:
         try:
+            supervisor.recover_current_frontend()
             supervisor.refresh_instance_states()
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning("instance watchdog refresh failed: %s", exc)

@@ -23,6 +23,15 @@ def _depth_error() -> str:
     )
 
 
+def _depth_error_with_effective_failure() -> str:
+    return (
+        "delivery_depth_contract_failed: implementation depth metrics: "
+        "prod_files=4, prod_lines=424, test_files=3, test_assertions=41; "
+        "minimums={'min_prod_files': 7, 'min_prod_lines': 650, 'min_test_files': 2}; "
+        "failures: production_source_lines=424 < 650"
+    )
+
+
 def test_quality_failure_context_projects_numeric_depth_evidence() -> None:
     evidence = _build_materialization_quality_failure_evidence_context(
         artifact_quality_errors=[_depth_error()],
@@ -47,6 +56,23 @@ def test_quality_failure_context_projects_numeric_depth_evidence() -> None:
     assert summary["quality_metrics"]["prod_files"] == 3
     assert summary["quality_minimums"]["min_prod_files"] == 7
     assert summary["repair_target_file_count"] == 1
+    assert "failed_quality_metrics" not in summary
+
+
+def test_quality_failure_context_projects_only_effective_failed_metrics() -> None:
+    evidence = _build_materialization_quality_failure_evidence_context(
+        artifact_quality_errors=[_depth_error_with_effective_failure()],
+        missing_target_files=[],
+        repair_target_files=["src/main.cpp"],
+        changed_files=["src/main.cpp"],
+        repair_attempt=1,
+    )
+
+    assert evidence["quality_metrics"]["prod_files"] == 4
+    assert evidence["quality_minimums"]["min_prod_files"] == 7
+    assert evidence["failed_quality_metrics"] == ["prod_lines"]
+    summary = summarize_failed_gate_evidence_context_slot(evidence)
+    assert summary["failed_quality_metrics"] == ["prod_lines"]
 
 
 def test_workspace_and_delivery_contract_summaries_preserve_policy_numbers() -> None:

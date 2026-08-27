@@ -8,6 +8,7 @@ from ..cpp_syntax import (
     CPP_PLACEHOLDER_DECLARATION_SOURCE_TOOL,
     CPP_STANDARD_INCLUDE_SOURCE_TOOL,
     CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL,
+    CPP_USE_BEFORE_DEFINITION_SOURCE_TOOL,
 )
 from ..generic_hygiene_syntax import (
     DECLARED_TARGET_CONTRACT_SOURCE_TOOL,
@@ -596,7 +597,25 @@ def pre_typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             priority=0,
             depends_on=("cpp.include_path",),
             diagnostic_codes=("cpp_compile_error",),
-            raw_terms=("std::",),
+            # Match the compiler's diagnostic message, not the complete raw
+            # blob.  GCC/Clang raw output includes the enclosing source line;
+            # an unrelated error inside a function whose signature contains
+            # ``std::string`` must not claim standard-include coverage.
+            message_any_terms=(
+                "namespace ‘std’",
+                "namespace 'std'",
+                "namespace `std`",
+                "member of ‘std’",
+                "member of 'std'",
+                "std::",
+            ),
+            excluded_raw_terms=(
+                "only available from c++",
+                "requires c++",
+                "c++20 extension",
+                "c++23 extension",
+                "c++26 extension",
+            ),
             risk_level="low",
             description="Adds missing C++ standard library includes for generated std:: type usage.",
             runtime_plan_available=True,
@@ -623,9 +642,29 @@ def pre_typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             priority=1,
             depends_on=("cpp.standard_include",),
             diagnostic_codes=("cpp_compile_error",),
+            path_suffixes=(".h", ".hh", ".hpp", ".hxx"),
             raw_terms=("return", "_"),
             risk_level="medium",
             description="Adds missing private member declarations for generated inline C++ getters.",
+            runtime_plan_available=True,
+        ),
+        RepairRuleDefinition(
+            rule_id="cpp.use_before_definition",
+            source_tool=CPP_USE_BEFORE_DEFINITION_SOURCE_TOOL,
+            language="cpp",
+            phase="post_materialization",
+            archetype=RepairArchetype.MISSING_DEPENDENCY,
+            priority=1,
+            diagnostic_codes=("cpp_compile_error",),
+            path_suffixes=(".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"),
+            message_any_terms=(
+                "was not declared in this scope",
+                "use of undeclared identifier",
+            ),
+            risk_level="low",
+            description=(
+                "Repairs one unambiguous later free-function or inline-constexpr variable definition in the same C++ file."
+            ),
             runtime_plan_available=True,
         ),
         RepairRuleDefinition(
@@ -1479,6 +1518,31 @@ def pre_typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             risk_level="medium",
             description="Repairs stale Rust public re-exports after module generation.",
             runtime_plan_available=True,
+        ),
+        RepairRuleDefinition(
+            rule_id="rust.lib_root_module_declaration",
+            source_tool=RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
+            language="rust",
+            phase="export_resolution",
+            archetype=RepairArchetype.WRONG_IMPORT_PATH,
+            priority=1,
+            diagnostic_codes=("rust_e0433",),
+            message_terms=("cannot find",),
+            raw_terms=(" in `",),
+            risk_level="low",
+            description=(
+                "Declares one existing src/<module>/mod.rs or src/<module>.rs in "
+                "src/lib.rs when the canonical crate cannot expose that module."
+            ),
+            runtime_plan_available=True,
+            metadata={
+                "rule_status": "executable_runtime",
+                "metadata_only": False,
+                "executable_runtime_binding": True,
+                "planner_helper_available": True,
+                "runtime_plan_scope": "single_existing_disk_module_declaration",
+                "adapter_materialization_runner": False,
+            },
         ),
         RepairRuleDefinition(
             rule_id="rust.lib_root_inline_module_shadow",

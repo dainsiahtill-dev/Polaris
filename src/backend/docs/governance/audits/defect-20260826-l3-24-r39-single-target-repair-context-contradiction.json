@@ -1,0 +1,76 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-R39-SINGLE-TARGET-REPAIR-CONTEXT-CONTRADICTION",
+  "status": "FIX_IMPLEMENTED_LIVE_VALIDATION_PENDING",
+  "severity": "P0",
+  "factory_run_id": "factory_65282524de80",
+  "project_id": "L3-24",
+  "workspace": "/tmp/factory-bench-l3-24-r39/workspaces/73a38e840103-1ba76c6c11224757/L3-24-023d7314133040b6/ed2b13dbf6ef48974aeb2f5f",
+  "symptom": {
+    "stage": "quality_gate",
+    "compile_gate": "passed",
+    "candidate_transactions": 3,
+    "candidate_outcomes": [
+      "src/cipher.cpp candidate rejected after verifier regression",
+      "src/cipher.cpp candidate rejected without strict diagnostic reduction",
+      "src/main.cpp candidate rejected without strict diagnostic reduction"
+    ],
+    "terminal_reason": "three_nonprogress_repairs_without_verified_progress"
+  },
+  "dynamic_evidence": {
+    "exact_run_workspace": "/tmp/factory-bench-l3-24-r39/workspaces/73a38e840103-1ba76c6c11224757/L3-24-023d7314133040b6/ed2b13dbf6ef48974aeb2f5f",
+    "final_request_context_snapshot_refs": [
+      "bc83b195f442e948b46a10e4",
+      "d5b5c63e49318805f8979504",
+      "2022f84c7412ee6e04221954"
+    ],
+    "post_attempt_context_snapshot_refs": [
+      "68d9e052",
+      "26f8ed",
+      "6e21f442"
+    ],
+    "effect_transactions": [
+      "tx-739274",
+      "tx-4ca103",
+      "tx-f0b4"
+    ],
+    "tool_facts": "Each exact request offered forced native edit_file with the correct Director role, current target source, CE authority and authorized path. Each attempt produced a real edit effect receipt and was then candidate-guarded and rolled back. This excludes missing tools, write no-effect and receipt loss as the primary cause.",
+    "provider_request_contradiction": "The single-target request labelled the complete project verifier list as FULL VERIFIER DIAGNOSTICS while preflight ordered the Director to cover every listed diagnostic, including failures outside its one-file authorization.",
+    "cpp_definition_falsehood": "The exact src/cipher.cpp request contained definitions of encrypt, decrypt, filter_alphabet, alphabet_count and is_alphabet_only, but the platform simultaneously classified them as DECLARED BUT NOT DEFINED (do not call these)."
+  },
+  "root_cause": {
+    "classification": "director_quality_repair_final_request_construction",
+    "summary": "C++ definition discovery searched only an implementation file beside the included header. It did not inspect the authorized repair source under src/, so a normal include/... header plus src/... implementation topology was projected as declaration-only. Separately, full-project diagnostics were phrased as actionable obligations even though the repair authority was intentionally one target file.",
+    "first_causal_boundary": "Director quality-repair final provider request construction",
+    "not_model_failure": true,
+    "not_target_project_fix": true
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_quality_repair_verifier_context.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_quality_repair_c.py"
+    ],
+    "behavior": [
+      "C++ public API projection scans safe, authorized C/C++ repair sources in addition to a header-adjacent implementation.",
+      "FULL VERIFIER DIAGNOSTICS are explicitly read-only regression context and cannot expand target authority.",
+      "Preflight requires coverage only for target-scoped Quality errors."
+    ]
+  },
+  "verification": {
+    "tdd_red": [
+      "Normal include/cipher.hpp plus src/cipher.cpp topology did not emit EXISTING DEFINED C++ FUNCTIONS.",
+      "Single-target prompt still contained the imperative Cover every listed verifier diagnostic."
+    ],
+    "roles_targeted_tests": "23 passed plus 16 passed",
+    "factory_characterization": "95 passed",
+    "ruff": "passed for changed production files and the clean verifier-context test; the legacy sliced quality_repair_c test retains unrelated pre-existing import/E402 debt",
+    "mypy": "passed for both changed production modules",
+    "read_only_exact_prompt_rebuild": "encrypt/decrypt now project as defined; outside-owner diagnostics are read-only; old imperative contradiction is absent",
+    "live_validation": "pending fresh isolated r40"
+  },
+  "residual_risk": [
+    "Fresh r40 must prove the exact live provider request carries the corrected C++ definition truth and target-scoped diagnostic contract.",
+    "Native edit arguments are represented by an arguments hash rather than persisted search/replace text in the observed session evidence, limiting post-hoc semantic review of a rejected edit; this is an observability gap, not evidence that no edit occurred."
+  ]
+}

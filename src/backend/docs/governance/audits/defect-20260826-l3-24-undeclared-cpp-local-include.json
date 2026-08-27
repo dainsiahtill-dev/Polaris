@@ -1,0 +1,81 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-R14-UNDECLARED-CPP-LOCAL-INCLUDE",
+  "status": "FIXED_UNIT_LIVE_PENDING",
+  "severity": "P0",
+  "scope": "polaris_meta_project_only",
+  "target_project_modified": false,
+  "exact_run": {
+    "factory_run_id": "factory_49b7ed9b3617",
+    "project_id": "L3-24",
+    "workspace": "/tmp/factory-bench-l3-24-r14/workspaces/ef229c7460e0-fbd0dc63b80a2f00/L3-24-023d7314133040b6/e80a4259e55a6138acdb22e0",
+    "wall_clock_seconds": 624.7,
+    "terminal_delivery_status": "DELIVERY_FAILED"
+  },
+  "symptom": "Director created thirteen authorized artifacts, but several C++ sources imported project-local headers that neither existed nor appeared in the CE/PM target scope. QA then failed six of seven translation units and same-task repair could not create the out-of-scope headers.",
+  "dynamic_evidence": {
+    "physical_file_effect_count": 13,
+    "missing_project_local_headers": [
+      "include/invisible_ink_diary/cipher_engine.hpp",
+      "include/invisible_ink_diary/invisible_ink.hpp"
+    ],
+    "declared_headers": [
+      "include/invisible_ink_diary/moon_cipher.hpp",
+      "include/invisible_ink_diary/diary_entry.hpp"
+    ],
+    "failing_translation_units": [
+      "src/cipher_engine.cpp",
+      "src/invisible_ink.cpp",
+      "src/main.cpp",
+      "src/moon_cipher.cpp",
+      "tests/test_diary_entry.cpp",
+      "tests/test_moon_cipher.cpp"
+    ],
+    "exact_read_only_reproduction": "g++ -std=c++17 -fsyntax-only -I . -I src -I include src/cipher_engine.cpp exited 1 because cipher_engine.hpp was physically absent",
+    "final_provider_request": {
+      "context_snapshot_ref": "868344adb51af77e08e8ed23",
+      "role_identity_ok": true,
+      "pm_contract_present": true,
+      "ce_blueprint_present": true,
+      "target_files_present": true,
+      "failure_feedback_present": true,
+      "forced_tool": "edit_file",
+      "authorized_repair_target": "src/cipher_engine.cpp"
+    },
+    "repair_effects": {
+      "real_edit_receipts_present": true,
+      "candidate_rejected_and_rolled_back": true,
+      "convergence_stop_reason": "three_nonprogress_repairs_without_verified_progress"
+    }
+  },
+  "root_cause": {
+    "classification": "director_write_committed_undeclared_project_local_dependency",
+    "detail": "Write policy validated the mutated path but not the local dependency topology encoded in the new C/C++ content. A source could therefore import a header under an existing project namespace even when that header was absent and outside the immutable task target scope. The later repair loop correctly refused to expand authority, leaving no legal way to create the invented dependency."
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/roles/adapters/internal/director/execution_tools.py",
+    "behavior": "Before any Director write/edit is committed, inspect quoted C/C++ header imports. If an include belongs to an existing or authorized project namespace, but is neither present nor represented by an authorized target path, reject the write as undeclared_local_include_dependency and require the same Director task to retry without inventing an out-of-scope file.",
+    "preserved_guards": [
+      "target scope is never expanded",
+      "declared headers may still be materialized later in the same tool batch",
+      "existing local headers remain valid",
+      "ambiguous external or generated quoted headers are not claimed as project-local",
+      "PM and Chief Engineer are not restarted",
+      "generated target project remains read-only to the debugging agent"
+    ]
+  },
+  "verification": {
+    "tdd_red": "The undeclared cipher_engine.hpp write was accepted before the guard.",
+    "tdd_green": "The same write now fails before disk mutation, while an explicitly authorized pending header remains allowed.",
+    "targeted_tests": "24/24 test_director_execution_tools.py passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_bench": "pending"
+  },
+  "secondary_residuals_not_folded_into_this_fix": [
+    "src/moon_cipher.cpp performs arithmetic directly on enum class MoonPhase",
+    "tests/test_moon_cipher.cpp omits the vector header",
+    "implementation depth reports 615 production lines against a 650-line L3 minimum",
+    "src/invisible_ink.cpp misses one benchmark keyword requirement"
+  ]
+}

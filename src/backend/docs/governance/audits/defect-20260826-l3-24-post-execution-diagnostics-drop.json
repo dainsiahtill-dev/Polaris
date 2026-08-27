@@ -1,0 +1,81 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-R15-POST-EXECUTION-DIAGNOSTICS-DROP",
+  "status": "FIXED_UNIT_SHADOW_EXACT_LIVE_PENDING",
+  "severity": "P0",
+  "scope": "polaris_meta_project_only",
+  "target_project_modified": false,
+  "exact_run": {
+    "factory_run_id": "factory_8b5bb3869276",
+    "project_id": "L3-24",
+    "workspace": "/tmp/factory-bench-l3-24-r15/workspaces/4877be042579-4fd8a09463f93fed/L3-24-023d7314133040b6/6e9136c552412c5b0398d5bd",
+    "wall_clock_seconds": 484.4,
+    "terminal_delivery_status": "DELIVERY_FAILED"
+  },
+  "symptom": "The exact r15 C++ verifier diagnostics were visible to Factory, yet runtime post-execution repair produced no executable plan. The same Director task entered repeated quality repair and eventually rejected and rolled back a candidate without closing the missing standard-library include.",
+  "dynamic_evidence": {
+    "verifier_residuals": [
+      "tests/test_cipher.cpp uses std::invalid_argument without including <stdexcept>",
+      "tests/test_diary_moon.cpp references a nonexistent DiaryEntry.plaintext field"
+    ],
+    "pre_fix_runtime_capture": {
+      "factory_public_schedule_artifact_quality_errors": null,
+      "cpp_runtime_runner_artifact_quality_errors": [],
+      "execution_attempt_propagated": false,
+      "planned_source_tools": []
+    },
+    "post_fix_runtime_capture": {
+      "factory_public_schedule_received_exact_diagnostics": true,
+      "cpp_runtime_runner_received_exact_diagnostics": true,
+      "same_task_runtime_execution_attempt_propagated": true,
+      "planned_source_tool": "deterministic_cpp_standard_include_repair",
+      "planned_target": "tests/test_cipher.cpp",
+      "planned_include": "#include <stdexcept>",
+      "target_workspace_unchanged_by_debugger": true
+    },
+    "authority_chain": [
+      "Factory workspace-quality diagnostic collection",
+      "roles.adapters public schedule wrapper",
+      "roles.adapters internal post-execution C++ bridge",
+      "director.runtime repair planner",
+      "policy-gated deferred effect settlement"
+    ]
+  },
+  "root_causes": [
+    {
+      "classification": "public_repair_bridge_dropped_diagnostics_and_attempt",
+      "detail": "The public post-execution schedule wrapper constructed an adapter from workspace only, so Factory verifier diagnostics and the canonical TaskRuntime execution attempt were lost before runtime planning."
+    },
+    {
+      "classification": "language_runner_dropped_adapter_diagnostics",
+      "detail": "The C++ schedule runner called the runtime planner without forwarding the diagnostics already held by the adapter."
+    },
+    {
+      "classification": "cpp_standard_exception_header_coverage_gap",
+      "detail": "The registered C++ standard-include source tool lacked stdexcept exception types, so coverage metadata could match while the executable planner returned no plan."
+    }
+  ],
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/public/service.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/post_execution_repair_bridge/_language.py",
+      "src/backend/polaris/cells/director/runtime/internal/repair_kernel/cpp_syntax.py"
+    ],
+    "behavior": "Forward exact verifier diagnostics plus the same canonical TaskRuntime execution attempt across the Factory/public/internal/runtime bridge, execute the runtime-owned post-execution schedule before settlement, and plan <stdexcept> for standard exception types. PM and Chief Engineer are not restarted."
+  },
+  "verification": {
+    "tdd": "Three focused bridge regressions changed from red to green; stdexcept planning changed from unplannable to a concrete tests/test_cipher.cpp plan.",
+    "dynamic_exact_shadow": "The exact r15 diagnostic now reaches every C++ runtime source tool with the TaskRuntime attempt; the stdexcept planner emits a content-preserving deferred edit while the generated workspace remains unchanged.",
+    "focused_closure_tests": "39/39 passed: 2 Factory forwarding/settlement, 2 diagnostic propagation, 5 C++ include planning, 30 adapter bridge",
+    "ruff": "passed",
+    "mypy": "passed",
+    "diff_check": "passed",
+    "fresh_isolated_bench": "pending"
+  },
+  "remaining_residuals": [
+    "DiaryEntry.plaintext is an independent cross-file API mismatch",
+    "delivery depth remains below the L3 production-file and line thresholds",
+    "fresh isolated live receipt and verifier closure are still required"
+  ]
+}

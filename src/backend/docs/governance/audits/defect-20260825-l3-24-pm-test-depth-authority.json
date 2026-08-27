@@ -1,0 +1,90 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-PM-TEST-DEPTH-AUTHORITY",
+  "status": "CLOSED_LIVE",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_f3b9d48335bd",
+  "bench_attempt_id": "ab302c730442",
+  "workspace": "/tmp/factory-bench-l3-24-r01/workspaces/ab302c730442-50272f0420272b63/L3-24-023d7314133040b6/28936596b90bac483900d8bf",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "chief_engineer.semantic_repair_authority_infeasible",
+    "diagnostic_codes": [
+      "chief_engineer.delivery_depth.test_files_below_minimum",
+      "chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing"
+    ],
+    "director_dispatched": false
+  },
+  "dynamic_evidence": {
+    "retained_candidate_hash": "b8c099a7d6f581c0e60522cfa9204061b5c11ba6803ea788dcebfc70da6f8b99",
+    "immutable_task_ids": [
+      "TASK-1"
+    ],
+    "minimum_test_files": 2,
+    "pm_exact_test_targets": [
+      "tests/test_product.py"
+    ],
+    "pm_expandable_test_scope_paths_before": [],
+    "delegated_artifact_roles_before": [
+      "entrypoint",
+      "source"
+    ],
+    "metric_feasibility_before": {
+      "prod_files": true,
+      "test_files": false
+    },
+    "repair_feasible_before": false,
+    "post_fix_offline_projection": {
+      "diagnostic_codes": [
+        "chief_engineer.delivery_depth.test_files_below_minimum"
+      ],
+      "allowed_operations": [
+        "artifact_upsert"
+      ],
+      "expandable_test_scope_paths": [
+        "tests"
+      ],
+      "metric_feasibility": {
+        "prod_files": true,
+        "test_files": true
+      },
+      "repair_feasible": true
+    }
+  },
+  "root_causes": [
+    {
+      "code": "pm_depth_contract_exceeds_test_write_authority",
+      "detail": "The deterministic C++ PM contract required min_test_files=2 but authorized only tests/test_product.py and no expandable tests directory. CE correctly failed closed because no legal second test path existed."
+    },
+    {
+      "code": "single_task_depth_repair_invents_cross_task_contract",
+      "detail": "The CE diagnosis added cross-task behavior binding for every test-depth deficit even when immutable PM authority contained only one task. That produced an impossible owner/consumer contract and caused repeated semantic-repair churn."
+    }
+  ],
+  "fixes": [
+    {
+      "file": "src/backend/polaris/cells/roles/adapters/internal/pm/synthesis/_mixin.py",
+      "change": "Keep canonical test files as exact targets while adding the narrow tests/ directory to C++ PM scope so CE may name additional test topology required by delivery depth."
+    },
+    {
+      "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "change": "Add cross-task behavior repair requirements only when immutable portfolio authority contains more than one task."
+    }
+  ],
+  "verification": {
+    "red_tests": "Both exact regressions failed before their respective fixes.",
+    "targeted_tests": "3 passed",
+    "ruff": "passed for the changed files",
+    "exact_candidate_projection_replay": "repair_feasible changed false to true; cross-task diagnosis removed for one-task authority",
+    "live_retry_factory_run_id": "factory_4009c5b45f0b",
+    "live_retry_result": "Fresh PM scope retained exact targets and added tests/ authority; CE legally produced tests/test_edge_cases.cpp and tests/test_invisible_rules.cpp."
+  },
+  "safety": {
+    "target_project_modified": false,
+    "exact_test_target_preserved": true,
+    "scope_expansion": "tests/ only",
+    "multi_task_cross_task_binding_preserved": true
+  },
+  "next_action": "Closed live."
+}

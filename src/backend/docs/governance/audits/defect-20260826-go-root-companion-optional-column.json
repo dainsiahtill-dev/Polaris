@@ -1,0 +1,59 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "GO-ROOT-COMPANION-OPTIONAL-COLUMN-CAUSAL-ROUTING",
+  "status": "FIXED_UNIT_LIVE_PENDING",
+  "severity": "P1",
+  "scope": "polaris_meta_project_only",
+  "target_project_modified": false,
+  "trigger": {
+    "source": "full workspace-quality regression after L3-24 r13 repair hardening",
+    "test": "TestRunWorkspaceQualityChecks.test_workspace_quality_go_residual_claims_causal_implementation_owner",
+    "diagnostic_shape": "go test output containing root main_test.go plus package-local behavior and missing-member diagnostics"
+  },
+  "dynamic_evidence": {
+    "first_red": {
+      "expected": "main.go is present in causal repair targets",
+      "actual": [
+        "models/model_test.go",
+        "models/model.go",
+        "engine/engine.go"
+      ],
+      "cause": "root-level assertion paths were explicitly skipped even when an exact main_test.go -> main.go companion existed"
+    },
+    "second_red_after_first_fix": {
+      "expected_claim": [
+        "engine/engine.go"
+      ],
+      "actual_claim": [
+        "models/model.go"
+      ],
+      "cause": "_GO_COMPILE_PATH_RE required file.go:line:column and ignored the valid file.go:line: missing-member diagnostic, so behavioral package order outranked the compiler owner"
+    },
+    "green": "The exact regression passed after both generic fixes; the complete 82-test workspace-quality file passed."
+  },
+  "root_cause": {
+    "classification": "director_go_causal_target_normalization_gap",
+    "detail": "Two conservative parsers discarded unambiguous evidence: exact root test companions and Go diagnostics with an omitted column. Candidate discovery therefore omitted main.go and then ranked models/model.go before the missing-member owner engine/engine.go."
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_language_targets.py",
+    "behavior": [
+      "Map only an exact root X_test.go to an existing X.go companion.",
+      "Accept Go source locations as file.go:line:message or file.go:line:column:message."
+    ],
+    "preserved_guards": [
+      "No generated target project modification",
+      "No arbitrary root production-file promotion",
+      "Workspace path existence and case-insensitive containment checks remain active",
+      "TaskRuntime and JobToken remain the mutation authority"
+    ]
+  },
+  "verification": {
+    "exact_regression": "1 passed",
+    "workspace_quality_file": "82 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "module_gate": "M06_director_multi_task passed",
+    "fresh_isolated_bench": "pending"
+  }
+}

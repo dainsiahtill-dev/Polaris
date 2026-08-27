@@ -1,0 +1,65 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "defect-20260827-l3-24-r56-cli-behavior-causal-owner",
+  "status": "IMPLEMENTATION_AND_EXACT_ROUTE_REPLAY_VERIFIED",
+  "severity": "P1",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_133765f7fbc9",
+  "symptom": {
+    "stage": "director_quality_repair",
+    "selected_target": "src/cipher.cpp",
+    "causal_target": "src/cli/main.cpp",
+    "diagnostics": [
+      "error: --index is required",
+      "error: unknown command 'phase-list'"
+    ]
+  },
+  "dynamic_debug_evidence": {
+    "target_workspace_mutated_by_main_agent": false,
+    "context_snapshot_ref": "90afcc124891a118550be456",
+    "provider_call_id": "891ba713ac96460cb0ef5fb06d41415d",
+    "director_role_valid": true,
+    "pm_contract_present": true,
+    "ce_blueprint_present": true,
+    "failure_feedback_present": true,
+    "edit_file_tool_present": true,
+    "native_edit_file_call_observed": true,
+    "actual_effect_file": "src/cipher.cpp",
+    "effect_policy_allowed": true,
+    "effect_receipt_committed": true,
+    "context_window_utilization": 0.0214
+  },
+  "root_cause": {
+    "category": "behavioral_repair_causal_target_misroute",
+    "summary": "Factory expanded test-only CLI diagnostics to the whole same-task production frontier and rotated by candidate index. It therefore forced a domain source even though argv and command parsing failures proved the CE-owned entrypoint was the causal mutation owner.",
+    "not_caused_by": [
+      "missing Director tool call",
+      "tool argument normalization",
+      "wrong role context",
+      "missing CE authority",
+      "context budget",
+      "effect receipt loss",
+      "weak model"
+    ]
+  },
+  "fix": {
+    "owner": "factory.pipeline",
+    "scope": "same-task behavior frontier target ranking only",
+    "strategy": "pin CE-owned entrypoint candidates for unambiguous CLI boundary diagnostics before bounded rotation",
+    "candidate_rejection_priority": "preserved",
+    "authority_expansion": false
+  },
+  "validation": {
+    "tdd_red": "expected src/cli/main.cpp, actual src/cipher.cpp",
+    "focused_tests": "3 passed",
+    "regression_tests": "103 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_r56_route_replay": "src/cli/main.cpp",
+    "fresh_isolated_bench": "pending"
+  },
+  "residual_risk": [
+    "ambiguous multi-entrypoint owners remain bounded to CE-owned candidates",
+    "domain behavior without explicit CLI boundary evidence keeps existing rotation"
+  ]
+}

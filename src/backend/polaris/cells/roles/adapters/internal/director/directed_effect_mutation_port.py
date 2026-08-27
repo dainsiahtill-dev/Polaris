@@ -684,10 +684,18 @@ class _DirectorDirectedEffectMutationPort:
         failure_kind = "physical_executor_construction_exception"
         try:
             from polaris.cells.roles.adapters.internal.director.execution_tools import (
+                DirectorToolExecutor,
                 _create_director_tool_executor,
             )
 
             executor = _create_director_tool_executor(self._workspace)
+            if isinstance(executor, DirectorToolExecutor):
+                authorized_scope = list(prepared.authorization.capability_scope)
+                if prepared.repair_binding is not None:
+                    repair_target = str(prepared.repair_binding.effect.target_path or "").strip()
+                    if repair_target:
+                        authorized_scope.append(repair_target)
+                executor._bind_authorized_scope(authorized_scope)
             failure_kind = "physical_executor_exception"
             raw_result = executor.execute_tool(
                 prepared.tool_name,

@@ -1,0 +1,58 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "L3-24-R47-CE-ARTIFACT-ROLE-ALIAS",
+  "status": "FIXED_UNIT_VALIDATED_FRESH_LIVE_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_34602430d453",
+  "workspace": "/tmp/factory-bench-l3-24-r47/workspaces/5b2fc5b2ee27-594928ffcb8f7c22/L3-24-023d7314133040b6/4ee4020e48f284ddd710bafb",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "generated_blueprints": "0/1",
+    "error_code": "chief_engineer.advisory_projection_fallback_infeasible",
+    "source_files": 0
+  },
+  "final_request_evidence": {
+    "context_snapshot_ref": "7c0233664f9cc3886413ab9a",
+    "role_identity_ok": true,
+    "pm_contract_present": true,
+    "target_files_present": true,
+    "structured_submission_tool_present": true,
+    "final_request_evidence_coverage_pass": true,
+    "context_window_utilization": 0.0056,
+    "provider_http_success": true
+  },
+  "dynamic_debug_evidence": {
+    "initial_failure": "structured_output_payload_schema_mismatch:$:'project_completion_contract' is a required property",
+    "repair_1_failure": "structured_output_payload_schema_mismatch:$:Additional properties are not allowed ('item', 'task_plans' were unexpected)",
+    "repair_2_failure": "structured_output_payload_schema_mismatch:project_completion_contract.obligations.artifacts.0.semantic_role:'build' is not one of ['source', 'test', 'manifest', 'config', 'docs', 'entrypoint', 'assets']",
+    "turn_outcomes": ".polaris/runtime/events/roles.kernel.turn_outcomes.jsonl",
+    "ce_review": ".polaris/runtime/state/blueprints/factory_34602430d453.review.json",
+    "provider_calls": 3,
+    "director_reached": false
+  },
+  "root_cause": {
+    "module": "chief_engineer.blueprint.semantic_repair",
+    "cause": "The post-transport structural recovery consumed failed tool_call arguments but inferred artifact semantic roles only when the field was absent. A present schema-invalid provider alias such as 'build' bypassed the existing path-proven inference and forced an infeasible fallback."
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+    "strategy": "Accept canonical enum values unchanged; for missing or invalid values use the existing deterministic path classifier; recover only when one canonical role is proven and otherwise return the original payload fail-closed."
+  },
+  "verification": {
+    "tdd_red": "1 failed, 1 passed; CMakeLists.txt with semantic_role=build remained unrecovered",
+    "focused_pytest": "3 semantic-role tests passed; 2 Factory failed-result recovery tests passed",
+    "full_targeted_pytest": "137 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "diff_check": "passed",
+    "fresh_isolated_l3_24": "pending"
+  },
+  "constraints": {
+    "target_project_modified": false,
+    "dynamic_debug_required": true,
+    "global_enum_coercion_added": false,
+    "ambiguous_path_fails_closed": true
+  },
+  "next_action": "Run fresh isolated L3-24 and prove the CE stage consumes the recovered provider result and reaches Director."
+}

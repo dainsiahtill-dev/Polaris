@@ -67,6 +67,13 @@ _REQUIRED_TRANSITION_FIELDS: dict[str, dict[str, type[object]]] = {
 _OPTIONAL_TERMINAL_FIELDS = frozenset(
     {"diagnostic_id", "action_id", "owner_binding_hash", "owner_snapshot_hash"}
 )
+_OPTIONAL_TRANSITION_FIELDS: dict[str, dict[str, type[object]]] = {
+    "project_completion.action_dispatch_failed.v1": {
+        "error_code": str,
+        "error_message": str,
+    },
+    "project_completion.terminal.v1": dict.fromkeys(_OPTIONAL_TERMINAL_FIELDS, str),
+}
 
 
 class ProjectCompletionCursorConflictError(RuntimeError):
@@ -136,8 +143,8 @@ class ProjectCompletionCursorTransitionV1:
             raise ValueError("cursor transition identity is injected by the cursor owner")
         required = _REQUIRED_TRANSITION_FIELDS[self.event_type]
         allowed = set(required)
-        if self.event_type == "project_completion.terminal.v1":
-            allowed.update(_OPTIONAL_TERMINAL_FIELDS)
+        optional = _OPTIONAL_TRANSITION_FIELDS.get(self.event_type, {})
+        allowed.update(optional)
         if set(self.payload) != allowed.intersection(self.payload) or not set(required).issubset(self.payload):
             raise ValueError("cursor transition fields do not match the exact event schema")
         for name, expected_type in required.items():
@@ -149,9 +156,9 @@ class ProjectCompletionCursorTransitionV1:
             type(item) is not str for item in cast(list[object], reason_codes)
         ):
             raise TypeError("cursor terminal reason_codes must contain exact strings")
-        for name in _OPTIONAL_TERMINAL_FIELDS.intersection(self.payload):
-            if type(self.payload[name]) is not str:
-                raise TypeError(f"cursor terminal {name} must be an exact string")
+        for name, expected_type in optional.items():
+            if name in self.payload and type(self.payload[name]) is not expected_type:
+                raise TypeError(f"cursor transition {name} must be an exact {expected_type.__name__}")
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
 
 

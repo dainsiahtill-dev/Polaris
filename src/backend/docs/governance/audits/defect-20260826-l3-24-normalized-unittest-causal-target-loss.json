@@ -1,0 +1,64 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-R22-NORMALIZED-UNITTEST-CAUSAL-TARGET-LOSS",
+  "status": "FIXED_LIVE_VERIFIED_DOWNSTREAM_OVERRIDE_DISCOVERED",
+  "severity": "P0",
+  "owner_cell": "roles.adapters.director.quality_gate",
+  "factory_run_id": "factory_436c60625211",
+  "head": "f3d3bb63284015b958719039b159c2d6a032d015",
+  "workspace": "/tmp/factory-bench-l3-24-r22/workspaces/f5c0f1b34b0e-582099fd488a9fe0/L3-24-023d7314133040b6/112be8e1d08f935135b6bf81",
+  "symptom": {
+    "stage": "quality_gate",
+    "repair_rounds": 6,
+    "failed_assertions": 7,
+    "delivery_depth_failure": "production_source_lines=437 < 650",
+    "repeated_repair_target": "tests/test_invariants.py",
+    "terminal": "required_evidence_failed"
+  },
+  "dynamic_evidence": {
+    "final_provider_request_snapshot_ref": "f0fafe63895fb82cbdf6ff79",
+    "native_tool_call_id": "call_01a03ac7efc37d319b69c464",
+    "effect_receipt_id": "director-physical-effect-464b7f3a54c7c3ef5d64ba6e",
+    "effect_before_hash": "df3388",
+    "effect_after_hash": "4c876f",
+    "candidate_guard_outcome": "workspace_quality_repair_equal_count_swap",
+    "candidate_guard_action": "restored",
+    "causal_resolver_before": [],
+    "causal_resolver_after": [
+      "src/moon_key.cpp",
+      "src/cipher.cpp",
+      "src/invisible_ink.cpp",
+      "src/main.cpp",
+      "src/diary.cpp"
+    ],
+    "proof": "The provider emitted a real edit_file call and Polaris committed an effect receipt. The candidate was correctly rolled back because residual count stayed seven. The pre-fix causal resolver returned no production file, so Factory repeatedly authorized the traceback observer test."
+  },
+  "root_cause": {
+    "classification": "normalized_diagnostic_envelope_loss",
+    "detail": "Workspace validation persisted one canonical unittest failure block per assertion and removed the outer 'workspace validation command failed' wrapper. _looks_like_python_runtime_smoke_quality_error required that wrapper, so the existing cross-language Python-harness source resolver never ran.",
+    "not_root_causes": [
+      "LLM failed to call edit_file",
+      "tool alias or argument normalization failure",
+      "effect receipt loss",
+      "candidate rollback bug",
+      "context window pressure"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_language_targets.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_quality_repair_b.py"
+    ],
+    "behavior": "Accept only schema-preserving normalized unittest blocks containing FAIL/ERROR, an in-workspace traceback and a concrete Python exception, then reuse existing cross-language production-source discovery. Mutation authority remains bounded by CE ownership and JobToken."
+  },
+  "verification": {
+    "targeted_test": "8 passed",
+    "ruff_source": "passed",
+    "mypy_source": "passed",
+    "exact_r22_replay": "causal resolver now returns five C++ production sources and excludes Python observer tests",
+    "aggregate_test_baseline": "57 passed, 4 unrelated pre-existing failures in the actively refactored aggregate test file",
+    "fresh_r23_factory_run_id": "factory_6c40e77ee83a",
+    "fresh_r23_live_result": "The fixed resolver produced four C++ causal sources and workspace-validation persisted them in runtime_smoke_target_files; a downstream owner-hint selector then collapsed the final provider mutation scope back to tests/test_product.py. The r22 defect is therefore live-closed and the remaining fault is separately cataloged."
+  },
+  "next_action": "Close L3-24-R23-TEST-OWNER-HINT-OVERRIDES-CAUSAL-SOURCE and run fresh isolated r24."
+}

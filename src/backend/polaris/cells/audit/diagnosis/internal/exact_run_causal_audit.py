@@ -7,7 +7,10 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from polaris.cells.control_plane.run_ledger.public import suspected_files_from_failure_evidence_payload
+from polaris.cells.control_plane.run_ledger.public import (
+    project_tool_lifecycle_failure_status,
+    suspected_files_from_failure_evidence_payload,
+)
 from polaris.kernelone.platform_modules import attribute_residual
 
 
@@ -255,13 +258,12 @@ def _role_context_coverage(
     for role in expected_roles:
         rows = [item for item in provider_request_audits if _normalized_role(item.get("role")) == role]
         available = [item for item in rows if item.get("ok") is True]
-        coverage_failed = [
-            item
-            for item in available
-            if item.get("evidence_coverage_pass") is False or item.get("role_identity_ok") is False
-        ]
         latest = available[-1] if available else {}
-        status = "missing" if not available else "failed" if coverage_failed else "proven"
+        latest_failed = bool(
+            latest
+            and (latest.get("evidence_coverage_pass") is False or latest.get("role_identity_ok") is False)
+        )
+        status = "missing" if not available else "failed" if latest_failed else "proven"
         by_role[role] = {
             "status": status,
             "snapshot_count": len(available),
@@ -475,6 +477,12 @@ def build_exact_run_causal_report(
     if latest_boundary_task_id and latest_boundary_task_id not in task_boundary_failed_task_ids:
         task_boundary_failed_task_ids.append(latest_boundary_task_id)
     tool_lifecycle = _mapping(ledger_projection.get("tool_lifecycle"))
+    tool_lifecycle_failure = project_tool_lifecycle_failure_status(tool_lifecycle)
+    tool_lifecycle_failed = tool_lifecycle_failure.get("failed") is True or (
+        not str(tool_lifecycle_failure.get("status") or "").strip()
+        and bool(tool_lifecycle)
+        and tool_lifecycle.get("ok") is not True
+    )
     evidence_modalities = _mapping(ledger_projection.get("evidence_modalities"))
     tool_failure_rows = [
         dict(item) for item in _sequence(tool_lifecycle.get("failure_evidence")) if isinstance(item, Mapping)
@@ -567,6 +575,8 @@ def build_exact_run_causal_report(
             "proven" if tool_lifecycle else "missing",
             "control_plane.run_ledger",
             ok=bool(tool_lifecycle.get("ok")),
+            authoritative_failed=tool_lifecycle_failed,
+            authoritative_status=str(tool_lifecycle_failure.get("status") or ""),
             effect_receipt_count=int(tool_lifecycle.get("effect_receipt_count") or 0),
             failed_count=int(tool_lifecycle.get("failed_count") or 0),
         ),
@@ -575,7 +585,7 @@ def build_exact_run_causal_report(
                 "proven"
                 if tool_failure_rows
                 else "missing"
-                if tool_lifecycle and tool_lifecycle.get("ok") is not True
+                if tool_lifecycle_failed
                 else "not_applicable"
             ),
             "control_plane.run_ledger",
@@ -726,7 +736,8 @@ def build_exact_run_causal_report(
                     evidence_refs=terminal_failed_rows,
                 )
             )
-        if tool_lifecycle and tool_lifecycle.get("ok") is not True:
+        if tool_lifecycle_failed:
+            lifecycle_failure_class = str(tool_lifecycle_failure.get("failure_class") or "").strip()
             candidates.append(
                 _candidate(
                     code="roles.kernel.tool_lifecycle_incomplete",
@@ -735,10 +746,10 @@ def build_exact_run_causal_report(
                     current_status="CHAIN_INCOMPLETE",
                     reason=(
                         "Tool lifecycle did not close with authoritative result/effect receipts"
-                        + (f" ({', '.join(failure_classes)})." if failure_classes else ".")
+                        + (f" ({lifecycle_failure_class})." if lifecycle_failure_class else ".")
                     ),
                     detected_by="control_plane.run_ledger",
-                    evidence_refs=failure_classes,
+                    evidence_refs=[lifecycle_failure_class] if lifecycle_failure_class else failure_classes,
                 )
             )
         if missing_required:

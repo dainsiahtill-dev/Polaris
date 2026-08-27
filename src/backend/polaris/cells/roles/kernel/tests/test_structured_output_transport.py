@@ -7,6 +7,9 @@ import logging
 from copy import deepcopy
 
 import pytest
+from polaris.cells.chief_engineer.blueprint.public import (
+    build_chief_engineer_semantic_repair_patch_schema,
+)
 from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
 from polaris.cells.roles.kernel.internal.structured_output_transport import (
     STRUCTURED_OUTPUT_TOOL_NAME,
@@ -457,6 +460,120 @@ def test_unknown_root_noise_without_schema_proven_relocation_remains_fail_closed
         )
 
 
+def test_schema_proven_duplicate_root_member_is_removed_without_provider_retry() -> None:
+    """L3-23 r17: a duplicated nested ``when`` shadow is transport noise."""
+
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_semantic_repair_patch",
+        description="Submit one typed semantic repair patch.",
+        json_schema=build_chief_engineer_semantic_repair_patch_schema(),
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    malformed = {
+        "base_candidate_hash": "a" * 64,
+        "diagnosis_hash": "b" * 64,
+        "artifact_upserts": [],
+        "entrypoint_upserts": [],
+        "behavior_invariant_upserts": [
+            {
+                "invariant_id": "INV-1",
+                "statement": "Queue selection is deterministic.",
+                "owner_task_id": "TASK-1",
+                "consumer_task_ids": ["TASK-3"],
+                "covered_obligation_ids": ["ART-LIB-LIB", "ART-TEST-PRODUCT"],
+                "verification_examples": [
+                    {
+                        "given": "a seeded queue",
+                        "when": "the queue is evaluated",
+                        "then": "the same party is selected",
+                    }
+                ],
+            }
+        ],
+        "task_behavior_ref_replacements": {"TASK-1": ["INV-1"], "TASK-3": ["INV-1"]},
+        "when": "the queue is evaluated",
+    }
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": malformed,
+                    "call_id": "call-duplicate-root-shadow",
+                }
+            ],
+        },
+        plan,
+    )
+
+    payload = json.loads(normalized["content"])
+    assert "when" not in payload
+    assert payload["behavior_invariant_upserts"][0]["verification_examples"][0]["when"] == (
+        "the queue is evaluated"
+    )
+    evidence = normalized["structured_output_transport"]
+    assert "schema_proven_duplicate_root_members_v1" in evidence["schema_normalization_policy"]
+    assert evidence["schema_normalization_details"]["duplicate_root_members"] == ["when"]
+
+
+def test_non_duplicate_root_member_with_nested_name_remains_fail_closed() -> None:
+    """A same-named root value must not be dropped when it carries new semantics."""
+
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_semantic_repair_patch",
+        description="Submit one typed semantic repair patch.",
+        json_schema=build_chief_engineer_semantic_repair_patch_schema(),
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    malformed = {
+        "base_candidate_hash": "a" * 64,
+        "diagnosis_hash": "b" * 64,
+        "artifact_upserts": [],
+        "entrypoint_upserts": [],
+        "behavior_invariant_upserts": [
+            {
+                "invariant_id": "INV-1",
+                "statement": "Queue selection is deterministic.",
+                "owner_task_id": "TASK-1",
+                "consumer_task_ids": ["TASK-3"],
+                "covered_obligation_ids": ["ART-LIB-LIB", "ART-TEST-PRODUCT"],
+                "verification_examples": [
+                    {
+                        "given": "a seeded queue",
+                        "when": "the queue is evaluated",
+                        "then": "the same party is selected",
+                    }
+                ],
+            }
+        ],
+        "task_behavior_ref_replacements": {"TASK-1": ["INV-1"], "TASK-3": ["INV-1"]},
+        "when": "a different undispatched condition",
+    }
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": malformed,
+                        "call_id": "call-non-duplicate-root-member",
+                    }
+                ],
+            },
+            plan,
+        )
+
+
 def test_displaced_root_member_plus_arbitrary_residual_remains_fail_closed() -> None:
     """A valid relocation must not smuggle an unrelated member into an open object."""
 
@@ -562,6 +679,187 @@ def test_missing_required_empty_arrays_are_coerced_before_schema_validation() ->
     assert payload["scope_for_apply"] == []
     assert payload["risk_flags"] == []
     assert normalized["tool_calls"] == []
+
+
+def test_semantic_patch_self_named_empty_mapping_wrapper_is_normalized() -> None:
+    """Exact L3-23 r09: an empty self-wrapper is transport noise, not a task id."""
+
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_semantic_repair_patch",
+        description="Submit one typed semantic repair patch.",
+        json_schema=build_chief_engineer_semantic_repair_patch_schema(),
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": {
+                        "base_candidate_hash": "a" * 64,
+                        "diagnosis_hash": "b" * 64,
+                        "artifact_upserts": [],
+                        "entrypoint_upserts": [],
+                        "behavior_invariant_upserts": [],
+                        "task_behavior_ref_replacements": {
+                            "task_behavior_ref_replacements": "",
+                        },
+                    },
+                    "call_id": "call-semantic-empty-self-wrapper",
+                }
+            ],
+        },
+        plan,
+    )
+
+    projected = json.loads(normalized["content"])
+    assert projected["task_behavior_ref_replacements"] == {}
+    assert "schema_proven_self_named_empty_wrapper_v1" in str(
+        normalized["structured_output_transport"]["schema_normalization_policy"]
+    )
+
+
+def test_non_empty_self_named_mapping_entry_is_not_normalized() -> None:
+    """Transport normalization must not erase a schema-valid non-empty value."""
+
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_semantic_repair_patch",
+        description="Submit one typed semantic repair patch.",
+        json_schema=build_chief_engineer_semantic_repair_patch_schema(),
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": {
+                        "base_candidate_hash": "a" * 64,
+                        "diagnosis_hash": "b" * 64,
+                        "artifact_upserts": [],
+                        "entrypoint_upserts": [],
+                        "behavior_invariant_upserts": [],
+                        "task_behavior_ref_replacements": {
+                            "task_behavior_ref_replacements": ["INV-1"],
+                        },
+                    },
+                    "call_id": "call-semantic-non-empty-self-key",
+                }
+            ],
+        },
+        plan,
+    )
+
+    projected = json.loads(normalized["content"])
+    assert projected["task_behavior_ref_replacements"] == {
+        "task_behavior_ref_replacements": ["INV-1"],
+    }
+    assert "schema_proven_self_named_empty_wrapper_v1" not in str(
+        normalized["structured_output_transport"]["schema_normalization_policy"]
+    )
+
+
+def test_semantic_patch_map_item_chain_is_normalized() -> None:
+    """Exact L3-23 r10: MiniMax encoded a string-array map as an ``item`` chain."""
+
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_semantic_repair_patch",
+        description="Submit one typed semantic repair patch.",
+        json_schema=build_chief_engineer_semantic_repair_patch_schema(),
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": {
+                        "base_candidate_hash": "a" * 64,
+                        "diagnosis_hash": "b" * 64,
+                        "artifact_upserts": [],
+                        "entrypoint_upserts": [],
+                        "behavior_invariant_upserts": [],
+                        "task_behavior_ref_replacements": {
+                            "item": {
+                                "TASK-1": {"item": ["INV-1"]},
+                                "item": {
+                                    "TASK-2": {"item": ["INV-2"]},
+                                    "item": {"TASK-3": {"item": ["INV-3"]}},
+                                },
+                            }
+                        },
+                    },
+                    "call_id": "call-semantic-map-item-chain",
+                }
+            ],
+        },
+        plan,
+    )
+
+    projected = json.loads(normalized["content"])
+    assert projected["task_behavior_ref_replacements"] == {
+        "TASK-1": ["INV-1"],
+        "TASK-2": ["INV-2"],
+        "TASK-3": ["INV-3"],
+    }
+    assert "schema_proven_map_item_chain_v1" in str(
+        normalized["structured_output_transport"]["schema_normalization_policy"]
+    )
+
+
+def test_semantic_patch_map_item_chain_duplicate_key_remains_fail_closed() -> None:
+    """A wrapper chain cannot overwrite one already reconstructed map key."""
+
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_semantic_repair_patch",
+        description="Submit one typed semantic repair patch.",
+        json_schema=build_chief_engineer_semantic_repair_patch_schema(),
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": {
+                            "base_candidate_hash": "a" * 64,
+                            "diagnosis_hash": "b" * 64,
+                            "artifact_upserts": [],
+                            "entrypoint_upserts": [],
+                            "behavior_invariant_upserts": [],
+                            "task_behavior_ref_replacements": {
+                                "item": {
+                                    "TASK-1": {"item": ["INV-1"]},
+                                    "item": {"TASK-1": {"item": ["INV-CONFLICT"]}},
+                                }
+                            },
+                        },
+                        "call_id": "call-semantic-map-item-chain-duplicate",
+                    }
+                ],
+            },
+            plan,
+        )
 
 
 def test_nested_required_empty_object_is_coerced_without_provider_retry() -> None:
@@ -1234,6 +1532,124 @@ def test_real_ce_schema_unwraps_minimax_item_wrapper_on_declared_arrays() -> Non
     evidence = normalized["structured_output_transport"]
     assert evidence["schema_normalization_applied"] is True
     assert "schema_proven_singleton_item_wrapper_v1" in evidence["schema_normalization_policy"]
+
+
+def test_ce_semantic_patch_unwraps_schema_proven_root_item_wrapper() -> None:
+    """L3-24 r05: strict CE patch arrived as one root ``item`` envelope."""
+
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_semantic_repair_patch",
+        description="Submit one typed semantic repair patch.",
+        json_schema=build_chief_engineer_semantic_repair_patch_schema(),
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    expected_payload = {
+        "base_candidate_hash": "a" * 64,
+        "diagnosis_hash": "b" * 64,
+        "artifact_upserts": [],
+        "entrypoint_upserts": [],
+        "behavior_invariant_upserts": [],
+        "task_behavior_ref_replacements": {},
+    }
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": {"item": expected_payload},
+                    "call_id": "call-root-item-wrapper",
+                }
+            ],
+        },
+        plan,
+    )
+
+    assert json.loads(normalized["content"]) == expected_payload
+    evidence = normalized["structured_output_transport"]
+    assert "schema_proven_root_item_wrapper_v1" in evidence["schema_normalization_policy"]
+
+
+def test_root_item_wrapper_with_sibling_remains_fail_closed() -> None:
+    contract = RoleStructuredOutputContractV1(
+        schema_name="chief_engineer_semantic_repair_patch",
+        description="Submit one typed semantic repair patch.",
+        json_schema=build_chief_engineer_semantic_repair_patch_schema(),
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+    payload = {
+        "base_candidate_hash": "a" * 64,
+        "diagnosis_hash": "b" * 64,
+        "artifact_upserts": [],
+        "entrypoint_upserts": [],
+        "behavior_invariant_upserts": [],
+        "task_behavior_ref_replacements": {},
+    }
+
+    with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch"):
+        normalize_structured_output_response(
+            {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                        "args": {"item": payload, "untrusted_bypass": True},
+                        "call_id": "call-root-item-wrapper-with-sibling",
+                    }
+                ],
+            },
+            plan,
+        )
+
+
+def test_declared_root_item_property_is_not_treated_as_transport_wrapper() -> None:
+    contract = RoleStructuredOutputContractV1(
+        schema_name="declared_root_item",
+        description="Keep a schema-owned item property.",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "item": {
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                    "required": ["value"],
+                    "additionalProperties": False,
+                }
+            },
+            "required": ["item"],
+            "additionalProperties": False,
+        },
+    )
+    plan = resolve_structured_output_transport(
+        {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+    )
+    assert plan is not None
+
+    normalized = normalize_structured_output_response(
+        {
+            "content": "",
+            "tool_calls": [
+                {
+                    "tool": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "args": {"item": {"value": "schema-owned"}},
+                    "call_id": "call-declared-root-item",
+                }
+            ],
+        },
+        plan,
+    )
+
+    assert json.loads(normalized["content"]) == {"item": {"value": "schema-owned"}}
+    assert "schema_proven_root_item_wrapper_v1" not in str(
+        normalized["structured_output_transport"]["schema_normalization_policy"]
+    )
 
 
 def test_item_wrapper_with_extra_keys_remains_fail_closed() -> None:

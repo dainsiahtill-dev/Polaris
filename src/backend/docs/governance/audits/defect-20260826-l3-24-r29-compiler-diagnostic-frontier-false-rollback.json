@@ -1,0 +1,62 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-r29-compiler-diagnostic-frontier-false-rollback",
+  "status": "CLOSED_LIVE_VERIFIED",
+  "severity": "P0",
+  "scope": "Polaris meta-platform only",
+  "target_project_mutated": false,
+  "exact_run": {
+    "factory_run_id": "factory_8baa41a4b6f4",
+    "workspace": "/tmp/factory-bench-l3-24-r29/workspaces/80264c9f4e51-917083ff94a4b996/L3-24-023d7314133040b6/2ada90cee53feca75c2c256e",
+    "first_failing_owner": "Factory workspace-quality candidate guard",
+    "successful_edit_call_id": "f7532f78d8ed4265837dbb6f346eebd1",
+    "successful_tool_call_id": "call_01a03b83850c7fb3ba8a21a4"
+  },
+  "symptom": {
+    "factory_terminal": "quality_gate_failed",
+    "candidate_verifier_effect": "equal_count_swap",
+    "candidate_guard_action": "rollback",
+    "repair_stop": "three_nonprogress_repairs_without_verified_progress"
+  },
+  "dynamic_evidence": {
+    "provider_request_role_identity": "director",
+    "native_edit_file_calls": 3,
+    "successful_effect_receipt": {
+      "path": "include/invisible_ink/cipher.hpp",
+      "effect": "modify",
+      "change": "add #include <cstdint>",
+      "before_hash": "f8ee",
+      "after_hash": "e3f2"
+    },
+    "post_edit_verifier": "The std::int64_t missing-member compiler diagnostic disappeared; exception-spec and shared moon_phase.hpp diagnostics remained.",
+    "failing_translation_units_before_after": "unchanged",
+    "top_level_error_count_before_after": "4 -> 4",
+    "rollback_restored_original_hash": true
+  },
+  "root_cause": {
+    "classification": "verifier progress projection too coarse",
+    "source": "factory workspace-quality candidate acceptance",
+    "mechanism": "The guard recognized only top-level error cardinality and strict FAILING_TUS reduction. A second shared-header blocker kept every translation unit red, so removal of one explicit compiler diagnostic was mislabeled equal_count_swap and a causally useful edit was rolled back."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": "Extract stable path-plus-message identities from explicit compiler error lines for the same verifier command. Preserve a candidate only when the after set is a strict subset of the before set. Error swaps, opaque output, and new diagnostics remain fail-closed; verifier success is not fabricated."
+  },
+  "validation": {
+    "tdd_red": "frontier reduction classified stagnant; swap control rejected progress",
+    "targeted_regressions": "8 passed",
+    "full_characterization_except_known_refactor_drift": "88 passed, 1 deselected",
+    "known_refactor_drift": "test_workspace_quality_go_behavior_failure_excludes_test_owner",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_bench": {
+      "factory_run_id": "factory_86023d760904",
+      "result": "The first src/cipher.cpp edit was accepted as verifier progress; the explicit compiler frontier disappeared; cpp_compile and CMake build passed; later candidates did not roll back the accepted compiler fix."
+    }
+  },
+  "residual_risk": "The proof preserves a candidate only for bounded revalidation and does not grant quality success or accept error swaps. A separate r30 causal-owner defect remained after the compiler frontier closed and is tracked independently."
+}

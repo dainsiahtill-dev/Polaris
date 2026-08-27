@@ -1,0 +1,71 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "l3-23-r14-ce-semantic-patch-provenance-echo-mismatch",
+  "severity": "P0",
+  "status": "CLOSED_LOCAL_EXACT_REPLAY_PENDING_FRESH_BENCH",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_8cf275985bd6",
+  "workspace": "/tmp/factory-bench-l3-23-r14/workspaces/eb288b3c2de3-154605e2c17651b3/L3-23-2956ab31bd653d97/4e2f70ca4e107759c64dd528",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "chief_engineer.advisory_projection_fallback_infeasible",
+    "actual": "A useful typed semantic patch was rejected, then the fallback portfolio failed delivery depth.",
+    "expected": "The active server transaction binds CAS provenance; typed content is composed and revalidated without another PM/CE planning cycle."
+  },
+  "dynamic_evidence": {
+    "candidate_hash": "82f5f7ab1f8d956894f8741faa0af326365cc133de764cf339668b46c3a2c508",
+    "provider_echoed_candidate_hash": "82f5f7ab1f8d956894f8741faa0eb326365cc133de764cf339668b46c3a2c508",
+    "diagnosis_hash": "9798771e433728fbcc4d80c4107d8e95ab8fddf1b018478ecc67955ac5fd0c90",
+    "provider_context_snapshot_ref": "50e3dd7c63ff36e7bc9646da",
+    "pre_fix_feasibility": {
+      "prod_files": 10,
+      "test_files": 0,
+      "required_test_files": 2
+    },
+    "bound_patch_without_baseline_owner_normalization": {
+      "prod_files": 10,
+      "test_files": 1,
+      "required_test_files": 2
+    },
+    "post_fix_exact_replay": {
+      "factory_compose_ok": true,
+      "portfolio_output_errors": [],
+      "prod_files": 11,
+      "test_files": 4,
+      "required_test_files": 2,
+      "after_candidate_hash": "cc484bc0cdfbd1bf9ceb4cc24d52071dbe07cd1f33155d63f0cea138696dc753"
+    }
+  },
+  "root_causes": [
+    {
+      "code": "ce.provider_echo_owned_cas_authority",
+      "detail": "Factory delegated opaque candidate/diagnosis identity to the LLM and discarded typed content when one copied hash nibble differed."
+    },
+    {
+      "code": "ce.depth_repair_partial_frozen_owner_normalization",
+      "detail": "The composer corrected invalid owners only for artifact rows repeated by the provider. Three frozen tests remained owned by TASK-2 although TASK-3 was their unique immutable authority."
+    }
+  ],
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/__init__.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/__init__.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py"
+    ],
+    "summary": "Parse the provider envelope strictly, bind only CAS provenance to the active server transaction, retain provider echoes as audit evidence, and normalize every uniquely unauthorized frozen artifact owner during a delivery-depth repair transaction.",
+    "guardrails": [
+      "Semantic operation groups remain diagnosis-authorized and strictly parsed.",
+      "Malformed provenance values still fail closed during provider-envelope parsing.",
+      "Owner rebinding occurs only when immutable task authority yields exactly one authorized task.",
+      "No generated Bench project file is modified."
+    ]
+  },
+  "verification": {
+    "tests": "125 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_run_replay": "passed",
+    "fresh_isolated_bench": "pending"
+  }
+}

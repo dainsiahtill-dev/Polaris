@@ -1,0 +1,96 @@
+{
+  "schema_version": "polaris.dynamic_debug_defect.v1",
+  "defect_id": "main-launcher-frontend-not-started-20260825",
+  "status": "closed_live_revalidated",
+  "severity": "P1",
+  "reported_by": "user_ui_observation",
+  "symptom": "http://127.0.0.1:5173/launcher was unreachable",
+  "dynamic_evidence": {
+    "before": {
+      "port_5173_listener": false,
+      "port_49977_listener_pid": 5584,
+      "main_backend_command": "python -m polaris.delivery.cli.backend serve --workspace /home/dains/Documents/polaris --port 49977 --runtime-root /home/dains/Documents/polaris/.polaris/runtime --token polaris-local-dev",
+      "instance_registry": {
+        "instance_id": "main",
+        "backend_alive": true,
+        "frontend_alive": false,
+        "start_frontend": false,
+        "frontend_vite": false,
+        "frontend_port": 5173
+      },
+      "port_5175_owner": "stale L3-22 isolated bench frontend, not main"
+    },
+    "temporary_recovery": {
+      "port_5173_listener": true,
+      "http_status": 200,
+      "windows_host_http_status": 200,
+      "playwright_url": "http://127.0.0.1:5173/launcher",
+      "playwright_heading": "Polaris Launcher",
+      "playwright_page_errors": [],
+      "playwright_failed_requests": [],
+      "main_frontend_pid": 55774,
+      "main_frontend_started_at": "2026-08-25T08:52:37+08:00",
+      "registry_frontend_alive": false,
+      "registry_frontend_pid": null,
+      "registry_frontend_health": "disabled"
+    },
+    "supervised_recovery": {
+      "main_backend_pid": 73494,
+      "initial_frontend_pid": 73842,
+      "recovered_frontend_pid": 74363,
+      "backend_pid_unchanged_during_frontend_recovery": true,
+      "registry_start_frontend": true,
+      "registry_frontend_vite": true,
+      "registry_status": "running",
+      "frontend_recovery_count": 1,
+      "launcher_http_status": 200,
+      "playwright_title": "Polaris App Layout",
+      "playwright_launcher_visible": true,
+      "playwright_page_errors": []
+    },
+    "subsequent_refactor_transient": {
+      "observed_at": "2026-08-25T04:45:05Z",
+      "symptom": "User observed Launcher unavailable while a large frontend refactor was landing.",
+      "frontend_log_errors": [
+        "Failed to load url /src/app/App.js from src/main.tsx",
+        "Failed to load url /src/lib/queryClient.js from src/main.tsx"
+      ],
+      "mechanism": "Vite HMR reloaded main.tsx while refactor output was temporarily incomplete; the module graph could not be transformed and the browser rendered no application.",
+      "automatic_detection": {
+        "instance_supervisor_frontend_recovery_count": 1,
+        "frontend_recovered_at": "2026-08-25T03:54:23Z",
+        "backend_pid_preserved": 73494
+      },
+      "live_revalidation": {
+        "linux_launcher_http": 200,
+        "windows_host_launcher_http": 200,
+        "playwright_launcher_visible": true,
+        "playwright_page_errors": [],
+        "playwright_failed_requests": [],
+        "workspace_binding_match": true
+      }
+    }
+  },
+  "root_cause": "The long-lived main process was started with the backend-only canonical CLI. That CLI intentionally registers start_frontend=false and never starts Vite. No process therefore owned reserved main frontend port 5173. A Vite listener on 5175 belonged to an isolated L3-22 bench restart and was not a main frontend fallback.",
+  "recovery": "Added current-instance frontend recovery to the Instance Supervisor watchdog, made Vite strict-port, migrated main to Supervisor-owned backend/frontend PIDs, then killed the owned frontend process group and observed automatic recovery without restarting the backend.",
+  "latest_reverification": {
+    "verified_at": "2026-08-25T03:54:26Z",
+    "linux_launcher_http": 200,
+    "windows_host_launcher_http": 200,
+    "playwright_rendered_heading": "Polaris Launcher",
+    "backend_health_ok": true,
+    "workspace_binding_match": true,
+    "main_backend_pid": 73494,
+    "main_frontend_pid": 74363,
+    "frontend_supervisor_owned": true,
+    "frontend_self_heal_live_proven": true,
+    "instance_tests": "63 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "verdict": "supervised_and_self_healing"
+  },
+  "target_project_modified": false,
+  "polaris_source_modified": true,
+  "residual_gap": "Backend process death still requires an external Supervisor start/restart action; this fix closes the observed frontend-only Launcher outage while preserving the current-backend self-management prohibition.",
+  "follow_up": "Keep main launches on InstanceSupervisor with start_frontend=true. Do not return to backend-only registration for the reserved main 49977/5173 pair."
+}

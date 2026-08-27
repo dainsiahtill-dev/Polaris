@@ -2893,6 +2893,86 @@ async def test_terminal_failed_quality_retry_preserves_frozen_task_runtime_epoch
 
 
 @pytest.mark.asyncio
+async def test_cancelled_quality_retry_replays_expired_draining_lease_after_restart(
+    tmp_path: Path,
+) -> None:
+    """L3-23: exact-run QA retry must release an expired terminal drain.
+
+    A debugger can cancel a runaway quality repair after PM/CE/Director have
+    completed.  If the backend restarts after that run entered DRAINING, the
+    durable lease may expire before the operator requests the QA-only retry.
+    The exact owner, with no live stage/lifecycle claim, must replay and settle
+    that old physical-attempt epoch before opening a fresh QA epoch.  Replaying
+    PM/CE/Director or minting a new Factory run is forbidden.
+    """
+
+    workspace = tmp_path / "workspace"
+    cache_root = tmp_path / "runtime"
+    state_root = cache_root / "factory"
+    workspace.mkdir()
+    clock = _MutableClock()
+    admission = FactoryWorkspaceRunAdmission(
+        workspace,
+        state_root=state_root,
+        lease_ttl_seconds=10,
+        clock=clock,
+    )
+    owner = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_SuccessfulStageExecutor(),
+        admission=admission,
+    )
+    run = await owner.create_run(
+        FactoryConfig(
+            name="cancelled-expired-quality-retry",
+            stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
+        )
+    )
+    await owner.start_run(run.id)
+    terminal = await owner.get_run(run.id)
+    assert terminal is not None
+    terminal.status = FactoryRunStatus.CANCELLED
+    terminal.completed_at = clock().isoformat()
+    terminal.stages_completed = ["pm_planning", "chief_engineer_review", "director_dispatch"]
+    terminal.metadata["last_successful_stage"] = "director_dispatch"
+    current = admission.current()
+    assert current is not None
+    draining = admission.begin_draining(
+        run.id,
+        fencing_token=current.fencing_token,
+        reason="dynamic_debug_quality_repair_cancelled",
+    )
+    owner._attach_workspace_lease(terminal, draining)
+    await owner.store.save_run(terminal)
+    clock.advance(11)
+
+    restarted = FactoryRunService(
+        workspace,
+        cache_root=cache_root,
+        executor=_SuccessfulStageExecutor(),
+        admission=admission,
+    )
+    retried = await restarted.retry_run_from_stage(
+        run.id,
+        target_stage="quality_gate",
+        reason="same-run QA-only recovery after terminal lease expiry",
+    )
+
+    assert retried.id == run.id
+    assert retried.status is FactoryRunStatus.RECOVERING
+    assert retried.metadata["retry_from_status"] == "cancelled"
+    assert retried.metadata["retry_execution_stage"] == "quality_gate"
+    assert retried.stages_completed == ["pm_planning", "chief_engineer_review", "director_dispatch"]
+    assert retried.metadata["factory_physical_attempt_execution_epoch"] == 2
+    active = restarted._admission.current()
+    assert active is not None
+    assert active.run_id == run.id
+    assert active.state.value == "active"
+    assert active.fencing_token > draining.fencing_token
+
+
+@pytest.mark.asyncio
 async def test_same_run_quality_retry_remints_expired_factory_deadline(tmp_path: Path) -> None:
     """Live L2-13: qa_gate retry after started_at+5400 must remint owner LLM budget."""
 

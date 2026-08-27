@@ -1,0 +1,48 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-23-R15-CE-BUILD-VERIFIER-COVERAGE-ALIAS",
+  "recorded_at": "2026-08-25T00:00:00+08:00",
+  "status": "CLOSED_LOCAL_EXACT_REPLAY_PENDING_FRESH_BENCH",
+  "severity": "P0",
+  "owner_cell": "chief_engineer.blueprint",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_e7d67d7912cf",
+  "workspace": "/tmp/factory-bench-l3-23-r15/workspaces/3a81a8a6c4d1-840722c12c1e0f03/L3-23-2956ab31bd653d97/dbddfa66e237fe3dc774579c",
+  "first_failing_phase": "chief_engineer_review",
+  "symptom": "Chief Engineer generated 0/3 blueprints and the strict completion DTO rejected build verifier coverage that referenced OBL-DELIVERY-DEPTH, which was not an artifact or entrypoint obligation.",
+  "exact_error": "invalid project completion contract: verifier 'OBL-VERIFY-BUILD' references unknown obligation ids ['OBL-DELIVERY-DEPTH']",
+  "final_request_evidence": {
+    "context_snapshot_ref": "1972b552b5a099b1d66bfeaf",
+    "role_identity": "chief_engineer",
+    "final_request_evidence_coverage_pass": true,
+    "required_structured_tool_present": true,
+    "context_or_tool_defect": false
+  },
+  "provider_evidence": {
+    "base_candidate_hash": "963fb303d6e80427ba634edf725856aab57e43c089a96f00d74a211688a0e20b",
+    "semantic_patch_diagnosis_hash": "59a2229ffe0f85fed4dce8d2f211aa7f068188cfc8282c7cc7677aadcb0ea47f",
+    "invented_build_coverage_id": "OBL-DELIVERY-DEPTH",
+    "provider_patch_useful": true
+  },
+  "root_cause": "The CE authority normalizer rebuilt environment, test, and entrypoint verifier coverage from committed PM authority, but preserved raw build/lint covers_obligation_ids. Provider acceptance labels therefore leaked into the strict completion obligation namespace and caused a late DTO failure.",
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+    "policy": "At the CE authority boundary, retain only build/lint coverage ids that name normalized canonical artifact or entrypoint obligations. If provider advice contains aliases only, bind coverage to all required non-doc, non-test PM-authorized artifacts. Keep ProjectCompletionContractV1 strict for callers bypassing the authority boundary.",
+    "target_project_modified": false
+  },
+  "dynamic_replay": {
+    "mode": "exact persisted candidate plus exact final semantic patch",
+    "result": "PASS",
+    "contract_hash": "f17473a5a4fc4f66c251747c77e4f77238b7f56227359656c238627e52f503b3",
+    "build_coverage_count": 13,
+    "unknown_coverage_ids": []
+  },
+  "verification": {
+    "tests": "331 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_bench": "pending"
+  },
+  "secondary_audit_gap": "The bench audit labeled this failure M06_director_multi_task even though Director never ran. Primary attribution must use the first authoritative failing phase before downstream residual signatures.",
+  "residual_risk": "Fresh isolated Bench is required because provider output may expose a later independent CE or Director defect after this blocker is removed."
+}

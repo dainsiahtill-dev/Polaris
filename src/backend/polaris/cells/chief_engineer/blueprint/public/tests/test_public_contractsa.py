@@ -277,10 +277,11 @@ def _portfolio_command_authority(
     pm_contract_hash: str = _PM_CONTRACT_HASH,
     catalog_snapshot_override: dict[str, str] | None = None,
     entrypoint_owner_task_ids: tuple[str, ...] | None = None,
+    command_authority_override: tuple[VerificationCommandAuthorityV1, ...] | None = None,
 ) -> dict:
     owner_task_ids = tuple(task.task_id for task in tasks)
     entrypoint_owners = set(entrypoint_owner_task_ids or owner_task_ids)
-    command_authority = tuple(
+    command_authority = command_authority_override or tuple(
         _command_authority(task_id, modality, argv)
         for task_id in owner_task_ids
         for modality, argv in (
@@ -947,6 +948,65 @@ class TestChiefEngineerBlueprintPortfolio:
         assert verifier.command_authority_hash is None
         assert verifier.owner_task_id is None
         assert verifier.covers_obligation_ids == ()
+        assert verifier.owner_task_id is None
+        assert verifier.covers_obligation_ids == ()
+
+    def test_explicit_not_applicable_verifier_drops_untrusted_model_hash(self, tmp_path: Path) -> None:
+        """L3-23 r18: N/A semantics cannot carry executable PM authority."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the application entrypoint",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+                entrypoint_targets=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build the application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["verification"].append(
+            {
+                "obligation_id": "verify-lint-not-applicable",
+                "modality": "lint",
+                "command_authority_hash": "model-invented-lint-hash",
+                "applicability": "not_applicable",
+                "covers_obligation_ids": ["artifact-main"],
+                "owner_task_id": "TASK-A",
+            }
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-not-applicable-model-hash",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-not-applicable-model-hash",
+                ),
+                llm_blueprint={
+                    "construction_plan": {"implementation": ["Build the application"]},
+                    "project_completion_contract": requirements,
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        verifier = next(
+            item for item in completion.obligations.verification if item.obligation_id == "verify-lint-not-applicable"
+        )
+        assert verifier.applicability == "not_applicable"
+        assert verifier.command is None
+        assert verifier.command_authority_hash is None
 
     def test_completion_contract_composer_repairs_cross_owner_rows_and_drops_unexecutable_entrypoints(
         self,
@@ -1057,6 +1117,158 @@ class TestChiefEngineerBlueprintPortfolio:
         )
         assert environment_verifier.applicability == "required"
         assert environment_verifier.command_authority_hash is not None
+
+    def test_completion_contract_rebinds_build_to_earliest_dependency_complete_owner(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A verifier may not run before every artifact it covers can exist.
+
+        Live L3-23 r07 produced a TASK-A build verifier that covered an
+        entrypoint owned by downstream TASK-B.  TASK-A could neither write the
+        entrypoint nor pass the project-wide build.  The committed PM command
+        surface contains the same build command for both tasks, so the
+        completion compiler must bind the verifier to the earliest task whose
+        dependency closure contains every covered artifact owner.
+        """
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build the application core",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build the executable adapter",
+                target_files=("src/cli.py",),
+                scope_paths=("src/cli.py",),
+                dependencies=("TASK-A",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-C",
+                objective="Build the application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-B",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        obligations = requirements["obligations"]
+        obligations["artifacts"].append(
+            {
+                "obligation_id": "artifact-cli",
+                "path": "src/cli.py",
+                "semantic_role": "entrypoint",
+                "applicability": "required",
+                "owner_task_id": "TASK-B",
+            }
+        )
+        obligations["verification"].append(
+            {
+                "obligation_id": "verify-build-cross-owner",
+                "modality": "build",
+                "command_authority_hash": _command_authority(
+                    "TASK-A", "build", ("python", "-m", "compileall", "src")
+                ).authority_hash,
+                "applicability": "required",
+                "covers_obligation_ids": ["artifact-main", "artifact-cli"],
+                "owner_task_id": "TASK-A",
+            }
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-dependency-complete-verifier-owner",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-dependency-complete-verifier-owner",
+                ),
+                llm_blueprint={
+                    "construction_plan": {"implementation": ["Build the application"]},
+                    "project_completion_contract": requirements,
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        verifier = next(
+            item for item in completion.obligations.verification if item.obligation_id == "verify-build-cross-owner"
+        )
+        assert verifier.owner_task_id == "TASK-B"
+        assert (
+            verifier.command_authority_hash
+            == _command_authority("TASK-B", "build", ("python", "-m", "compileall", "src")).authority_hash
+        )
+
+    def test_completion_contract_rejects_cross_owner_verifier_without_dependency_complete_owner(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Parallel owners cannot be collapsed into an invented verifier owner."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Build one independent component",
+                target_files=("src/main.py",),
+                scope_paths=("src/main.py",),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build another independent component",
+                target_files=("src/cli.py",),
+                scope_paths=("src/cli.py",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        obligations = requirements["obligations"]
+        obligations["artifacts"][1] = {
+            "obligation_id": "artifact-cli",
+            "path": "src/cli.py",
+            "semantic_role": "entrypoint",
+            "applicability": "required",
+            "owner_task_id": "TASK-B",
+        }
+        obligations["verification"] = [
+            {
+                "obligation_id": "verify-build-incomparable-owners",
+                "modality": "build",
+                "command_authority_hash": _command_authority(
+                    "TASK-A", "build", ("python", "-m", "compileall", "src")
+                ).authority_hash,
+                "applicability": "required",
+                "covers_obligation_ids": ["artifact-main", "artifact-cli"],
+                "owner_task_id": "TASK-A",
+            }
+        ]
+        obligations["entrypoints"] = []
+
+        with pytest.raises(
+            ChiefEngineerBlueprintErrorV1,
+            match="dependency-complete verifier owner",
+        ):
+            build_chief_engineer_blueprint_portfolio(
+                BuildChiefEngineerBlueprintPortfolioCommandV1(
+                    workspace=str(tmp_path),
+                    run_id="run-incomparable-verifier-owners",
+                    tasks=tasks,
+                    **_portfolio_command_authority(
+                        tasks=tasks,
+                        workspace=tmp_path,
+                        run_id="run-incomparable-verifier-owners",
+                    ),
+                    llm_blueprint={
+                        "construction_plan": {"implementation": ["Build independent components"]},
+                        "project_completion_contract": requirements,
+                    },
+                )
+            )
 
     def test_all_filtered_ce_entrypoints_fall_back_to_pm_entrypoint_authority(
         self,
@@ -1401,7 +1613,13 @@ class TestChiefEngineerBlueprintPortfolio:
                     "TASK-1", "build", ("python", "-m", "compileall", "src")
                 ).authority_hash,
                 "applicability": "required",
-                "covers_obligation_ids": ["ART-BUILD", "ART-MAIN", "ART-BATTLE", "ART-ROUTER"],
+                "covers_obligation_ids": [
+                    "OBL-DELIVERY-DEPTH",
+                    "ART-BUILD",
+                    "ART-MAIN",
+                    "ART-BATTLE",
+                    "ART-ROUTER",
+                ],
                 "owner_task_id": "TASK-1",
             },
             {
@@ -1450,6 +1668,7 @@ class TestChiefEngineerBlueprintPortfolio:
         build_verifier = next(item for item in completion.obligations.verification if item.modality == "build")
         assert "ART-BATTLE" not in build_verifier.covers_obligation_ids
         assert "ART-BUILD" not in build_verifier.covers_obligation_ids
+        assert "OBL-DELIVERY-DEPTH" not in build_verifier.covers_obligation_ids
         assert "ART-MAIN" in build_verifier.covers_obligation_ids
 
     def test_empty_ce_obligations_project_library_authority(self, tmp_path: Path) -> None:
@@ -1847,6 +2066,253 @@ class TestChiefEngineerBlueprintPortfolio:
             and item.owner_task_id == "TASK-A"
             for item in completion.obligations.artifacts
         )
+
+    def test_completion_contract_accepts_bounded_delegated_native_entrypoint(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Exact L3-24 r03: CE may name one safe native binary under delegated topology."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Choose and implement the C++ CLI topology",
+                target_files=("CMakeLists.txt",),
+                scope_paths=("CMakeLists.txt",),
+                topology_authority="chief_engineer",
+                required_source_kinds=("domain_modules", "public_headers", "entrypoint"),
+                primary_language="cpp",
+                allowed_source_suffixes=(".cpp", ".hpp"),
+            ),
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-B",
+                objective="Build application tests",
+                target_files=("tests/test_main.py",),
+                scope_paths=("tests/test_main.py",),
+                dependencies=("TASK-A",),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        requirements["obligations"]["artifacts"][0].update(
+            {
+                "path": "CMakeLists.txt",
+                "semantic_role": "config",
+                "owner_task_id": "TASK-A",
+            }
+        )
+        requirements["obligations"]["artifacts"].append(
+            {
+                "obligation_id": "artifact-native-cli",
+                "path": "src/cli/invisible_diary_cli.cpp",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            }
+        )
+        requirements["obligations"]["entrypoints"][0].update(
+            {
+                "source_path": "src/cli/invisible_diary_cli.cpp",
+                "runtime_path": "build/invisible_diary",
+                "owner_task_id": "TASK-A",
+                "command": "./build/invisible_diary",
+            }
+        )
+        command_authority = (
+            _command_authority("TASK-A", "environment_prep", ("cmake", "-S", ".", "-B", "build")),
+            _command_authority("TASK-A", "build", ("cmake", "--build", "build")),
+            _command_authority("TASK-A", "entrypoint", ("./build/polaris_app",)),
+            _command_authority("TASK-B", "test", ("pytest", "-q")),
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-delegated-native-entrypoint",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-delegated-native-entrypoint",
+                    command_authority_override=command_authority,
+                ),
+                llm_blueprint={
+                    "construction_plan": {"project_interface_contract": {}},
+                    "project_completion_contract": requirements,
+                    "risk_flags": [],
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        entrypoint = next(item for item in completion.obligations.entrypoints if item.applicability == "required")
+        assert entrypoint.source_path == "src/cli/invisible_diary_cli.cpp"
+        assert entrypoint.runtime_path == "build/invisible_diary"
+        assert entrypoint.command == "./build/invisible_diary"
+        assert any(
+            item.modality == "entrypoint" and item.argv == ("./build/invisible_diary",)
+            for item in completion.verification_command_authority
+        )
+
+    def test_completion_contract_accepts_argv_safe_delegated_native_smoke_command(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Exact L3-24 r08: delegated native entrypoints may carry argv-safe smoke inputs."""
+
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Choose and implement the C++ CLI topology",
+                target_files=("CMakeLists.txt", "tests/test_main.py"),
+                scope_paths=("CMakeLists.txt", "tests/test_main.py"),
+                topology_authority="chief_engineer",
+                required_source_kinds=("domain_modules", "public_headers", "entrypoint"),
+                primary_language="cpp",
+                allowed_source_suffixes=(".cpp", ".hpp"),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        for artifact in requirements["obligations"]["artifacts"]:
+            artifact["owner_task_id"] = "TASK-A"
+        requirements["obligations"]["artifacts"][0].update({"path": "CMakeLists.txt", "semantic_role": "config"})
+        requirements["obligations"]["artifacts"].append(
+            {
+                "obligation_id": "artifact-native-cli",
+                "path": "src/main.cpp",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            }
+        )
+        smoke_command = "invisible_diary encode --key moon --message 'invisible moon diary'"
+        canonical_smoke_command = "build/invisible_diary encode --key moon --message 'invisible moon diary'"
+        requirements["obligations"]["entrypoints"][0].update(
+            {
+                "source_path": "src/main.cpp",
+                "runtime_path": "build/invisible_diary",
+                "owner_task_id": "TASK-A",
+                "command": smoke_command,
+            }
+        )
+        command_authority = (
+            _command_authority("TASK-A", "environment_prep", ("cmake", "-S", ".", "-B", "build")),
+            _command_authority("TASK-A", "build", ("cmake", "--build", "build")),
+            _command_authority("TASK-A", "test", ("pytest", "-q")),
+            _command_authority("TASK-A", "entrypoint", ("./build/polaris_app",)),
+        )
+
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-delegated-native-smoke-command",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-delegated-native-smoke-command",
+                    command_authority_override=command_authority,
+                ),
+                llm_blueprint={
+                    "construction_plan": {"project_interface_contract": {}},
+                    "project_completion_contract": requirements,
+                    "risk_flags": [],
+                },
+            )
+        )
+
+        completion = portfolio.project_completion_contract
+        assert completion is not None
+        entrypoint = next(item for item in completion.obligations.entrypoints if item.applicability == "required")
+        assert entrypoint.source_path == "src/main.cpp"
+        assert entrypoint.runtime_path == "build/invisible_diary"
+        assert entrypoint.command == canonical_smoke_command
+        assert any(
+            item.modality == "entrypoint"
+            and item.argv
+            == (
+                "build/invisible_diary",
+                "encode",
+                "--key",
+                "moon",
+                "--message",
+                "invisible moon diary",
+            )
+            for item in completion.verification_command_authority
+        )
+
+    @pytest.mark.parametrize(
+        ("runtime_path", "command"),
+        [
+            ("../invisible_diary", "../invisible_diary"),
+            ("build/invisible_diary", "./build/other_binary"),
+        ],
+    )
+    def test_completion_contract_rejects_unbounded_delegated_native_entrypoint(
+        self,
+        tmp_path: Path,
+        runtime_path: str,
+        command: str,
+    ) -> None:
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-A",
+                objective="Choose the C++ CLI topology",
+                target_files=("CMakeLists.txt", "tests/test_main.py"),
+                scope_paths=("CMakeLists.txt", "tests/test_main.py"),
+                topology_authority="chief_engineer",
+                required_source_kinds=("domain_modules", "entrypoint"),
+                primary_language="cpp",
+                allowed_source_suffixes=(".cpp", ".hpp"),
+            ),
+        )
+        requirements = _application_completion_requirements()
+        for artifact in requirements["obligations"]["artifacts"]:
+            artifact["owner_task_id"] = "TASK-A"
+        requirements["obligations"]["artifacts"][0].update({"path": "CMakeLists.txt", "semantic_role": "config"})
+        requirements["obligations"]["artifacts"].append(
+            {
+                "obligation_id": "artifact-native-cli",
+                "path": "src/cli/invisible_diary_cli.cpp",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-A",
+            }
+        )
+        requirements["obligations"]["entrypoints"][0].update(
+            {
+                "source_path": "src/cli/invisible_diary_cli.cpp",
+                "runtime_path": runtime_path,
+                "owner_task_id": "TASK-A",
+                "command": command,
+            }
+        )
+        command_authority = (
+            _command_authority("TASK-A", "environment_prep", ("cmake", "-S", ".", "-B", "build")),
+            _command_authority("TASK-A", "build", ("cmake", "--build", "build")),
+            _command_authority("TASK-A", "test", ("pytest", "-q")),
+            _command_authority("TASK-A", "entrypoint", ("./build/polaris_app",)),
+        )
+
+        with pytest.raises(ChiefEngineerBlueprintErrorV1, match="requires a required entrypoint"):
+            build_chief_engineer_blueprint_portfolio(
+                BuildChiefEngineerBlueprintPortfolioCommandV1(
+                    workspace=str(tmp_path),
+                    run_id="run-reject-delegated-native-entrypoint",
+                    tasks=tasks,
+                    **_portfolio_command_authority(
+                        tasks=tasks,
+                        workspace=tmp_path,
+                        run_id="run-reject-delegated-native-entrypoint",
+                        command_authority_override=command_authority,
+                    ),
+                    llm_blueprint={
+                        "construction_plan": {"project_interface_contract": {}},
+                        "project_completion_contract": requirements,
+                        "risk_flags": [],
+                    },
+                )
+            )
 
     def test_delegated_topology_support_task_uses_project_completion_source_authority(
         self,
@@ -4387,13 +4853,117 @@ def test_shared_behavior_drops_only_candidate_entrypoint_ids_normalized_out_by_a
     behavior = portfolio.shared_behavior_contract
     assert completion is not None
     assert behavior is not None
-    assert "entrypoint-delegated-advisory" not in {
-        item.obligation_id for item in completion.obligations.entrypoints
-    }
+    assert "entrypoint-delegated-advisory" not in {item.obligation_id for item in completion.obligations.entrypoints}
     assert behavior.invariants[0].covered_obligation_ids == (
         "artifact-main",
         "artifact-tests",
     )
+
+
+def test_completion_contract_splits_linked_artifact_entrypoint_id_collision(tmp_path: Path) -> None:
+    """Exact L3-23 r12: one file view must not fail global ID uniqueness."""
+
+    tasks = _cross_task_behavior_tasks()
+    blueprint = _cross_task_behavior_blueprint(include_invariant=True)
+    obligations = blueprint["project_completion_contract"]["obligations"]
+    obligations["entrypoints"][0]["obligation_id"] = "artifact-main"
+    entrypoint_verifier = next(row for row in obligations["verification"] if row["modality"] == "entrypoint")
+    entrypoint_verifier["covers_obligation_ids"] = ["artifact-main"]
+
+    portfolio = build_chief_engineer_blueprint_portfolio(
+        BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-linked-artifact-entrypoint-id",
+            tasks=tasks,
+            **_portfolio_command_authority(
+                tasks=tasks,
+                workspace=tmp_path,
+                run_id="run-linked-artifact-entrypoint-id",
+            ),
+            llm_blueprint=blueprint,
+        )
+    )
+
+    completion = portfolio.project_completion_contract
+    behavior = portfolio.shared_behavior_contract
+    assert completion is not None
+    assert behavior is not None
+    artifact_ids = {item.obligation_id for item in completion.obligations.artifacts}
+    entrypoint = completion.obligations.entrypoints[0]
+    verifier = next(item for item in completion.obligations.verification if item.modality == "entrypoint")
+    all_ids = [
+        *(item.obligation_id for item in completion.obligations.artifacts),
+        *(item.obligation_id for item in completion.obligations.entrypoints),
+        *(item.obligation_id for item in completion.obligations.verification),
+    ]
+    assert "artifact-main" in artifact_ids
+    assert entrypoint.obligation_id.startswith("entrypoint-normalized-")
+    assert verifier.covers_obligation_ids == (entrypoint.obligation_id,)
+    assert len(all_ids) == len(set(all_ids))
+    assert "artifact-main" in behavior.invariants[0].covered_obligation_ids
+
+
+def test_completion_contract_splits_artifact_test_verifier_id_collision(tmp_path: Path) -> None:
+    """Exact L3-24 r61: verifier identity must not collide with its test artifact."""
+
+    tasks = _cross_task_behavior_tasks()
+    blueprint = _cross_task_behavior_blueprint(include_invariant=True)
+    obligations = blueprint["project_completion_contract"]["obligations"]
+    test_verifier = next(row for row in obligations["verification"] if row["modality"] == "test")
+    test_verifier["obligation_id"] = "artifact-tests"
+    test_verifier["covers_obligation_ids"] = ["artifact-tests"]
+
+    portfolio = build_chief_engineer_blueprint_portfolio(
+        BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="run-linked-artifact-test-verifier-id",
+            tasks=tasks,
+            **_portfolio_command_authority(
+                tasks=tasks,
+                workspace=tmp_path,
+                run_id="run-linked-artifact-test-verifier-id",
+            ),
+            llm_blueprint=blueprint,
+        )
+    )
+
+    completion = portfolio.project_completion_contract
+    assert completion is not None
+    artifact_ids = {item.obligation_id for item in completion.obligations.artifacts}
+    verifier = next(item for item in completion.obligations.verification if item.modality == "test")
+    all_ids = [
+        *(item.obligation_id for item in completion.obligations.artifacts),
+        *(item.obligation_id for item in completion.obligations.entrypoints),
+        *(item.obligation_id for item in completion.obligations.verification),
+    ]
+    assert "artifact-tests" in artifact_ids
+    assert verifier.obligation_id.startswith("verification-authority-test-")
+    assert verifier.covers_obligation_ids == ("artifact-tests",)
+    assert len(all_ids) == len(set(all_ids))
+
+
+def test_completion_contract_rejects_unlinked_cross_kind_id_collision(tmp_path: Path) -> None:
+    """Same id without matching path/owner remains a hard authority error."""
+
+    tasks = _cross_task_behavior_tasks()
+    blueprint = _cross_task_behavior_blueprint(include_invariant=True)
+    obligations = blueprint["project_completion_contract"]["obligations"]
+    obligations["entrypoints"][0]["obligation_id"] = "artifact-tests"
+
+    with pytest.raises(ChiefEngineerBlueprintErrorV1, match="duplicate obligation_id"):
+        build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id="run-unlinked-artifact-entrypoint-id",
+                tasks=tasks,
+                **_portfolio_command_authority(
+                    tasks=tasks,
+                    workspace=tmp_path,
+                    run_id="run-unlinked-artifact-entrypoint-id",
+                ),
+                llm_blueprint=blueprint,
+            )
+        )
 
 
 def test_shared_behavior_unknown_obligation_still_fails_closed(tmp_path: Path) -> None:

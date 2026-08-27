@@ -172,3 +172,31 @@ def test_file_like_scope_is_exact_even_when_not_repeated_in_targets() -> None:
 
     assert _task_authorizes_completion_path(task=task, path="README.md") is True
     assert _task_authorizes_completion_path(task=task, path="README.md/child.go") is False
+
+
+def test_depth_projection_exposes_only_authorized_artifact_obligation_ids() -> None:
+    """Raw CE rows owned outside immutable task authority must not drive later audits."""
+
+    task = ChiefEngineerPortfolioTaskV1(
+        task_id="TASK-DOMAIN",
+        objective="Deliver domain modules",
+        target_files=("go.mod",),
+        scope_paths=("go.mod",),
+        topology_authority="chief_engineer",
+        required_source_kinds=("domain_modules",),
+        primary_language="go",
+        allowed_source_suffixes=(".go",),
+        delivery_depth_contract={"minimums": {"min_prod_files": 1, "min_test_files": 1}},
+    )
+    authorized = _artifact("models/model.go", "source")
+    unauthorized = _artifact("tests/model_test.go", "test")
+    authorized["owner_task_id"] = "TASK-DOMAIN"
+    unauthorized["owner_task_id"] = "TASK-DOMAIN"
+
+    result = project_chief_engineer_portfolio_delivery_depth_feasibility(
+        _payload([authorized, unauthorized]),
+        tasks=(task,),
+    )
+
+    assert result["authorized_artifact_obligation_ids"] == [authorized["obligation_id"]]
+    assert result["actual"] == {"prod_files": 1, "test_files": 0}

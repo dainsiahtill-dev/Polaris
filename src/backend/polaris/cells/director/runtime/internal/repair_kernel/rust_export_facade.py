@@ -338,6 +338,13 @@ def build_rust_lib_root_facade_plan(
     )
     if inline_shadow is not None:
         return inline_shadow
+    module_declaration = build_rust_lib_root_module_declaration_plan(
+        base_files=base_files,
+        diagnostics=diagnostics,
+        mode=mode,
+    )
+    if module_declaration is not None:
+        return module_declaration
     path_rewrite = build_rust_lib_root_facade_path_rewrite_plan(
         base_files=base_files,
         diagnostics=diagnostics,
@@ -367,6 +374,92 @@ _COULD_NOT_FIND_IN_MODULE_RE = re.compile(
     r"could not find [`'\"]?(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"]? in [`'\"]?(?P<module>[A-Za-z_][A-Za-z0-9_]*)",
     re.IGNORECASE,
 )
+_MISSING_MODULE_IN_CRATE_RE = re.compile(
+    r"(?:cannot|could not) find [`'\"]?(?P<symbol>[A-Za-z_][A-Za-z0-9_]*)[`'\"]? "
+    r"in [`'\"]?(?P<module>[A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
+
+
+def build_rust_lib_root_module_declaration_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Expose one existing disk module missing from the library crate root."""
+
+    normalized_base = _normalize_base_files(base_files)
+    root_path = _lib_root_path(normalized_base)
+    canonical_crate = _canonical_crate_name(normalized_base)
+    if not root_path or not canonical_crate:
+        return None
+    root_content = normalized_base[root_path]
+    declared_modules = _declared_root_modules(root_content)
+    matches: dict[str, list[RepairDiagnostic]] = {}
+    for diagnostic in tuple(diagnostics or ()):
+        match = _MISSING_MODULE_IN_CRATE_RE.search(_diagnostic_text(diagnostic))
+        if match is None:
+            continue
+        module_name = str(match.group("symbol") or "").strip()
+        containing_module = str(match.group("module") or "").strip().replace("-", "_")
+        if containing_module != canonical_crate or not _is_rust_identifier(module_name):
+            continue
+        if module_name in declared_modules:
+            continue
+        disk_module = f"src/{module_name}/mod.rs"
+        disk_file = f"src/{module_name}.rs"
+        if disk_module not in normalized_base and disk_file not in normalized_base:
+            continue
+        matches.setdefault(module_name, []).append(diagnostic)
+    if len(matches) != 1:
+        return None
+
+    module_name, matching_diagnostics = next(iter(matches.items()))
+    insertion = _lib_root_module_declaration_insert_anchor(root_content)
+    if insertion is None:
+        return None
+    insert_at, unique_context = insertion
+    declaration = f"pub mod {module_name};\n"
+    operation = RepairOperation(
+        kind="text_replace",
+        path=root_path,
+        span_start=insert_at,
+        span_end=insert_at,
+        expected="",
+        replacement=declaration,
+        before_hash=sha256_text(root_content),
+        metadata={
+            "repair_kind": "rust_lib_root_module_declaration",
+            "runtime_plan_scope": "single_existing_disk_module_declaration",
+            "edit_strategy": "span_text_insert",
+            "write_file_fallback_allowed": False,
+            "candidate_action": "insert_pub_module_declaration",
+            "unique_span": True,
+            "unique_context": unique_context,
+            "module_name": module_name,
+            "canonical_crate": canonical_crate,
+        },
+    )
+    return RepairPlan(
+        rule_id="rust.lib_root_module_declaration",
+        source_tool=RUST_LIB_ROOT_FACADE_SOURCE_TOOL,
+        operations=(operation,),
+        diagnostics=tuple(matching_diagnostics),
+        mode=mode,
+        risk_level="low",
+        priority=0,
+        metadata={
+            "repair_kind": "rust_lib_root_module_declaration",
+            "runtime_plan_scope": "single_existing_disk_module_declaration",
+            "edit_strategy": "span_text_insert",
+            "write_file_fallback_allowed": False,
+            "target_path": root_path,
+            "module_name": module_name,
+            "canonical_crate": canonical_crate,
+            "diagnostic_count": len(matching_diagnostics),
+        },
+    )
 
 
 def _inline_module_is_docs_only(body: str) -> bool:
@@ -1099,6 +1192,19 @@ def _lib_root_export_insert_anchor(*, root_content: str, module_path: str) -> tu
     if not unique_context or root_content.count(unique_context) != 1:
         return None
     return match.end(), unique_context
+
+
+def _lib_root_module_declaration_insert_anchor(root_content: str) -> tuple[int, str] | None:
+    matches = tuple(_ROOT_MODULE_DECL_RE.finditer(root_content))
+    if not matches:
+        return None
+    match = matches[-1]
+    line_end = root_content.find("\n", match.end())
+    insert_at = len(root_content) if line_end < 0 else line_end + 1
+    unique_context = root_content[match.start() : insert_at]
+    if not unique_context or root_content.count(unique_context) != 1:
+        return None
+    return insert_at, unique_context
 
 
 def _lib_root_path(base_files: Mapping[str, str]) -> str:

@@ -22,6 +22,7 @@ import copy
 import dataclasses
 import inspect
 import weakref
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -55,6 +56,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.request_facts import project
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
 from polaris.cells.roles.kernel.internal.structured_output_transport import (
     StructuredOutputStreamNormalizer,
+    StructuredOutputTransportPlan,
     normalize_structured_output_response,
     resolve_structured_output_transport,
 )
@@ -80,6 +82,35 @@ if TYPE_CHECKING:
 
 def _as_mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _normalize_structured_output_response_with_error_evidence(
+    response: dict[str, Any],
+    plan: StructuredOutputTransportPlan | None,
+) -> dict[str, Any]:
+    """Preserve final-request evidence when strict result validation rejects output.
+
+    ``TurnTransactionController`` records LLM evidence only after its provider
+    adapter returns.  Structured-output validation runs inside that adapter, so
+    an invalid result can raise before the controller sees the response.  Attach
+    the trusted invoker metadata to the exception so the controller's existing
+    error path can record the physical call in its ledger.
+    """
+
+    try:
+        return normalize_structured_output_response(response, plan)
+    except (TypeError, ValueError) as exc:
+        usage = response.get("usage")
+        metadata = dict(usage) if isinstance(usage, Mapping) else {}
+        existing = getattr(exc, "llm_response_metadata", None)
+        if isinstance(existing, Mapping):
+            metadata.update(dict(existing))
+        if metadata:
+            vars(exc)["llm_response_metadata"] = metadata
+        model = str(response.get("model") or metadata.get("model") or "unknown").strip() or "unknown"
+        vars(exc)["llm_response_model"] = model
+        vars(exc).setdefault("llm_response_error_category", "output_validation_failed")
+        raise
 
 
 def _truthy_flag(value: Any) -> bool:
@@ -438,7 +469,7 @@ def create_transaction_kernel(
                         attempt=0,
                         turn_round=0,
                     )
-                    return normalize_structured_output_response(
+                    return _normalize_structured_output_response_with_error_evidence(
                         finalization_response,
                         structured_output_transport,
                     )
@@ -462,7 +493,7 @@ def create_transaction_kernel(
                     "model": str(getattr(response, "model", "unknown") or "unknown"),
                     "usage": dict(getattr(response, "metadata", {}) or {}),
                 }
-                return normalize_structured_output_response(
+                return _normalize_structured_output_response_with_error_evidence(
                     normalized_response,
                     structured_output_transport,
                 )
@@ -479,7 +510,7 @@ def create_transaction_kernel(
                     attempt=0,
                     turn_round=0,
                 )
-                return normalize_structured_output_response(
+                return _normalize_structured_output_response_with_error_evidence(
                     decision_response,
                     structured_output_transport,
                 )
@@ -503,7 +534,7 @@ def create_transaction_kernel(
                 "model": str(getattr(response, "model", "unknown") or "unknown"),
                 "usage": dict(getattr(response, "metadata", {}) or {}),
             }
-            return normalize_structured_output_response(
+            return _normalize_structured_output_response_with_error_evidence(
                 normalized_response,
                 structured_output_transport,
             )

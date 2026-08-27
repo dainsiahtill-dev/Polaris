@@ -1,0 +1,100 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-R25-CLAIM-HINT-ERASED-SIBLING-FRONTIER",
+  "status": "FIXED_UNIT_VERIFIED_LIVE_REVALIDATION_PENDING",
+  "severity": "P0",
+  "owner_cell": "factory.pipeline.workspace_quality",
+  "factory_run_id": "factory_fa026e3e4792",
+  "workspace": "/tmp/factory-bench-l3-24-r25/workspaces/500ce616d17c-76e801f3fe9349f9/L3-24-023d7314133040b6/3b070ea996752dfccaaf24cf",
+  "target_project_mutated_by_main_agent": false,
+  "symptom": {
+    "stage": "quality_gate",
+    "director_repair_final_request_count": 10,
+    "forced_target_on_every_repair_request": "src/cipher.cpp",
+    "unreachable_current_production_targets": [
+      "src/diary.cpp",
+      "src/main.cpp",
+      "src/moon_phase.cpp"
+    ],
+    "result": "Behavior and delivery-depth residuals could not converge because nine later Provider turns retained the first owner-claim hint instead of receiving the current sibling frontier."
+  },
+  "dynamic_evidence": {
+    "final_request_context_snapshot_refs": [
+      "638549f288fa70ece58b8a4c",
+      "c6834fcad05f18cda322c8bf",
+      "aed980355abf615f5831f1f5",
+      "74782ffad520a5d0782d473b",
+      "7fda2218cddddbfc014250d5",
+      "43d978f0b7700bb5a651a72b",
+      "e2294b9084309f9a1e9494d7",
+      "5eab6ed748b97d6e8c83dde8",
+      "59ff927ed32faf9e1a8efb72",
+      "32b1b297fa05a3b3abca63a1"
+    ],
+    "final_request_role_identity": "Director",
+    "final_request_tool": "edit_file",
+    "final_request_context_complete": true,
+    "exact_resolver_replay": {
+      "current_causal_production_targets": [
+        "src/cipher.cpp",
+        "src/moon_phase.cpp",
+        "src/main.cpp",
+        "src/diary.cpp"
+      ],
+      "ce_owned_current_overlap": [
+        "src/cipher.cpp",
+        "src/diary.cpp",
+        "src/main.cpp",
+        "src/moon_phase.cpp"
+      ],
+      "old_claim_hint": [
+        "src/cipher.cpp"
+      ]
+    },
+    "post_fix_exact_replay": {
+      "expanded_current_ce_owner_frontier": [
+        "src/cipher.cpp",
+        "src/diary.cpp",
+        "src/main.cpp",
+        "src/moon_phase.cpp"
+      ],
+      "round_rotation": {
+        "1": "src/cipher.cpp",
+        "2": "src/diary.cpp",
+        "3": "src/main.cpp",
+        "4": "src/moon_phase.cpp"
+      }
+    }
+  },
+  "root_cause": {
+    "classification": "task_owner_claim_hint_reused_as_complete_provider_mutation_frontier",
+    "detail": "Factory correctly used the first causal source path to claim the authoritative TaskRuntime/JobToken owner. After the owner was known, the explicit owner-rebind path retained only that hint whenever it overlapped any current diagnostic. A partial overlap therefore erased other current CE-owned production residuals. The bounded repair loop rotated a one-element list and forced every final Provider request back onto src/cipher.cpp.",
+    "not_root_causes": [
+      "weak model",
+      "missing edit_file tool",
+      "context truncation",
+      "cross-task authorization failure",
+      "generated target project modification by the main agent"
+    ]
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+    "behavior": "After authoritative owner claim, rebuild the production repair frontier from current diagnostic targets intersected with the claimed CE-owned paths. Preserve narrow test-owner hints. Existing Factory round rotation then grants one exact sibling per Provider turn without expanding JobToken scope.",
+    "preserved_guards": [
+      "PM and Chief Engineer are not restarted",
+      "TaskRuntime claim remains owner authority",
+      "JobToken write scope never expands",
+      "generated/build paths are excluded unless CE-owned",
+      "test-owner repair does not fan out across sibling tests",
+      "one Provider turn receives one exact repair target"
+    ]
+  },
+  "verification": {
+    "targeted_pytest": "6 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_r25_dynamic_replay": "four CE-owned production candidates recovered and deterministically rotated",
+    "fresh_isolated_bench": "pending"
+  },
+  "next_action": "Run fresh isolated L3-24. Confirm distinct production repair_target_files appear across rounds and require real verifier reduction before closure."
+}

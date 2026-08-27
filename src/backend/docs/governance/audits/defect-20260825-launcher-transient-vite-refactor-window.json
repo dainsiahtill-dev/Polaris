@@ -1,0 +1,40 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "launcher-transient-vite-refactor-window-20260825",
+  "status": "CLOSED_AUTO_RECOVERED_LIVE_VERIFIED",
+  "severity": "P1",
+  "component": "main_frontend_launcher",
+  "symptom": "http://127.0.0.1:5173/launcher was temporarily unreachable during a large frontend source split",
+  "dynamic_evidence": {
+    "frontend_listener": "127.0.0.1:5173 pid=74375",
+    "backend_listener": "127.0.0.1:49977 pid=73494",
+    "frontend_http": 200,
+    "instances_http": 200,
+    "instance_count": 97,
+    "registry_frontend_recovery_count": 1,
+    "registry_frontend_recovered_at": "2026-08-25T03:54:23Z",
+    "vite_error": [
+      "Failed to load url /src/app/App.js from src/main.tsx",
+      "Failed to load url /src/lib/queryClient.js from src/main.tsx"
+    ],
+    "browser_verification": {
+      "engine": "playwright.chromium",
+      "goto_status": 200,
+      "heading": "Polaris Launcher",
+      "websocket": "WS live",
+      "page_errors": 0,
+      "failed_requests": 0,
+      "bad_responses": 0
+    }
+  },
+  "root_cause": "Vite observed a non-atomic intermediate state while frontend JavaScript artifacts and imports were being replaced during a large source split. The pre-transform failure made the dev frontend temporarily unavailable; Instance Supervisor then restarted Vite after the tree stabilized.",
+  "classification": "development_refactor_transient_not_backend_or_workspace_failure",
+  "resolution": "Instance Supervisor recovered the main frontend; live HTTP, API, WebSocket, and Chromium rendering were revalidated without restarting the main instance.",
+  "prevention": [
+    "Keep main backend reload disabled during multi-agent work.",
+    "Apply multi-file frontend splits as an atomic edit window when possible and run the frontend typecheck before considering the refactor stable.",
+    "Treat Vite pre-transform errors as frontend availability failures and preserve Supervisor recovery telemetry.",
+    "Do not restart or kill the main instance when 5173 already returns 200 and a real browser renders Launcher successfully."
+  ],
+  "target_project_modified": false
+}

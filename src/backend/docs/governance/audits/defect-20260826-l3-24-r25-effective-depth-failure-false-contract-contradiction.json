@@ -1,0 +1,82 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-R25-EFFECTIVE-DEPTH-FAILURE-FALSE-CONTRACT-CONTRADICTION",
+  "status": "FIXED_DYNAMIC_REPLAY_VERIFIED_LIVE_REVALIDATION_PENDING",
+  "severity": "P1",
+  "owner_cell": "audit.diagnosis",
+  "factory_run_id": "factory_fa026e3e4792",
+  "context_snapshot_ref": "59ff927ed32faf9e1a8efb72",
+  "workspace": "/tmp/factory-bench-l3-24-r25/workspaces/500ce616d17c-76e801f3fe9349f9/L3-24-023d7314133040b6/3b070ea996752dfccaaf24cf",
+  "target_project_mutated_by_main_agent": false,
+  "symptom": {
+    "actual_effective_depth_failure": "production_source_lines=424 < 650",
+    "waived_raw_metric": "prod_files=4 < 7",
+    "waiver_reason": "declared src/**/*.cpp source-target coverage was complete",
+    "incorrect_root_cause_code": "director.tasking.delivery_contract_scope_contradiction",
+    "incorrect_reason": "file_count_deficit_without_create_capable_tool"
+  },
+  "dynamic_evidence": {
+    "provider_request_role": "Director",
+    "provider_request_tools": [
+      "edit_file"
+    ],
+    "request_metric_inventory": {
+      "prod_files": 4,
+      "prod_lines": 424,
+      "test_files": 3,
+      "test_assertions": 41
+    },
+    "request_minimums": {
+      "min_prod_files": 7,
+      "min_prod_lines": 650,
+      "min_test_files": 2,
+      "min_test_assertions": 10
+    },
+    "authoritative_failures_clause": [
+      "production_source_lines=424 < 650"
+    ],
+    "pre_fix_projection": [
+      {
+        "metric": "prod_files",
+        "actual": 4,
+        "required": 7
+      }
+    ],
+    "post_fix_exact_request_replay": {
+      "file_deficits": [],
+      "context_snapshot_ref": "59ff927ed32faf9e1a8efb72"
+    }
+  },
+  "root_cause": {
+    "classification": "raw_depth_inventory_reinterpreted_as_effective_gate_failure",
+    "detail": "The exact-run provider audit compared every raw quality metric against the unwaived contract minimums. It ignored the delivery-depth diagnostic's authoritative failures clause, so a file-count metric already waived by the quality gate was resurrected as a create-tool contract contradiction.",
+    "not_root_causes": [
+      "missing create tool",
+      "Chief Engineer infeasible artifact count",
+      "generated project missing declared C++ sources",
+      "weak model"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_boundary_and_verify.py",
+      "src/backend/polaris/cells/audit/diagnosis/public/service.py"
+    ],
+    "behavior": "Project failed_quality_metrics from the authoritative delivery-depth failures clause. Exact-run attribution filters structured metric inventory by this list and, for historical requests, parses only explicit delivery-depth failures clauses before claiming a file-count deficit.",
+    "preserved_guards": [
+      "real production/test file deficits remain contract contradictions when create-capable tools are absent",
+      "legacy requests without an explicit failures clause retain numeric-signature fallback",
+      "raw metric inventory remains available for observability",
+      "no generated target project files are modified"
+    ]
+  },
+  "verification": {
+    "targeted_pytest": "35 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_r25_provider_request_replay": "file_deficits=[]",
+    "known_unrelated_dirty_tree_gate": "test_summarize_failed_gate_evidence_context_slot_projects_structured_payload expects an older summary shape; its four extra fields predate this defect diff",
+    "fresh_isolated_bench": "pending"
+  },
+  "next_action": "Run fresh isolated L3-24 and require the exact-run causal audit to attribute only the effective current verifier failure."
+}

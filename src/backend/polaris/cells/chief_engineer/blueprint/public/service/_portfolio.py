@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -90,6 +91,7 @@ def project_chief_engineer_portfolio_delivery_depth_feasibility(
     )
 
     required_paths: list[tuple[str, str]] = []
+    authorized_artifact_obligation_ids: set[str] = set()
     tasks_by_id = {task.task_id: task for task in tasks}
     for artifact in artifacts:
         if str(artifact.get("applicability") or "required").strip() != "required":
@@ -119,6 +121,9 @@ def project_chief_engineer_portfolio_delivery_depth_feasibility(
         ):
             continue
         required_paths.append((path, role))
+        obligation_id = str(artifact.get("obligation_id") or "").strip()
+        if obligation_id:
+            authorized_artifact_obligation_ids.add(obligation_id)
 
     test_paths = {path for path, role in required_paths if role == "test"}
     production_paths = {
@@ -151,8 +156,55 @@ def project_chief_engineer_portfolio_delivery_depth_feasibility(
         "minimums": minimums,
         "deficits": deficits,
         "required_artifact_paths": [path for path, _role in required_paths],
+        "authorized_artifact_obligation_ids": sorted(authorized_artifact_obligation_ids),
         "authority_source": "chief_engineer.project_completion_contract",
     }
+
+
+def project_chief_engineer_completion_contract_semantic_errors(
+    payload: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Project owner-contract command failures before portfolio persistence.
+
+    The final completion-contract compiler may mint entrypoint command
+    authority for CE-delegated topology. Surface the same proof-of-work
+    invariant while the immutable provider candidate is still repairable;
+    otherwise a schema-valid candidate can consume every bounded CE repair
+    round and fail only during final DTO hydration.
+    """
+
+    completion = _mapping(payload.get("project_completion_contract"))
+    obligations = _mapping(completion.get("obligations"))
+    raw_entrypoints = obligations.get("entrypoints")
+    if not isinstance(raw_entrypoints, list):
+        return ()
+
+    errors: list[str] = []
+    for raw_row in raw_entrypoints:
+        if not isinstance(raw_row, Mapping):
+            continue
+        row = dict(raw_row)
+        if str(row.get("applicability") or "").strip() != "required":
+            continue
+        command = str(row.get("command") or "").strip()
+        if not command:
+            continue
+        obligation_id = str(row.get("obligation_id") or "").strip() or "<unknown>"
+        owner_task_id = str(row.get("owner_task_id") or "").strip() or "TASK-ENTRYPOINT-PROBE"
+        try:
+            argv = tuple(shlex.split(command, posix=True))
+            VerificationCommandAuthorityV1(
+                task_id=owner_task_id,
+                modality="entrypoint",
+                argv=argv,
+                cwd=".",
+            )
+        except (TypeError, ValueError) as exc:
+            errors.append(
+                "project_completion_contract entrypoint command is not executable proof-of-work; "
+                f"obligation_id={obligation_id!r}; reason={str(exc).strip()}"
+            )
+    return tuple(errors)
 
 
 def project_chief_engineer_delivery_depth_feasibility_from_pm_tasks(
@@ -247,9 +299,18 @@ def _normalized_away_entrypoint_obligation_ids(
         for row in obligations.get("entrypoints", ())
         if isinstance(row, Mapping) and str(row.get("obligation_id") or "")
     }
+    # A provider may use one id for the artifact and executable views of the
+    # same owned path.  Completion compilation splits the entrypoint view to
+    # preserve global identifier uniqueness, but the original id remains valid
+    # artifact authority.  Such an id was normalized, not removed, and must not
+    # be deleted from shared behavior coverage.
     normalized_ids = {
         item.obligation_id
-        for item in completion_contract.obligations.entrypoints
+        for item in (
+            *completion_contract.obligations.artifacts,
+            *completion_contract.obligations.entrypoints,
+            *completion_contract.obligations.verification,
+        )
     }
     return frozenset(candidate_ids - normalized_ids)
 
@@ -1005,6 +1066,65 @@ def _build_portfolio_completion_contract(
                 return None
             return owner_task_id, runtime_path, expected_argv
 
+        def canonical_delegated_native_entrypoint(
+            row: Mapping[str, Any],
+        ) -> tuple[str, str, tuple[str, ...]] | None:
+            """Resolve one bounded native executable chosen under CE topology authority.
+
+            PM may delegate entrypoint topology while committing only a generic
+            native executable placeholder. Accept CE's concrete executable name
+            only when source artifact, owner, suffix, runtime path, and parsed
+            argv executable agree exactly. Extra argv remain literal arguments
+            in the no-shell command authority; they cannot widen the executable
+            path or introduce shell evaluation.
+            """
+
+            if row["applicability"] != "required":
+                return None
+            owner_task_id = str(row.get("owner_task_id") or "")
+            task = delegated_topology_tasks.get(owner_task_id)
+            if task is None or not task_delegates(owner_task_id, "entrypoint"):
+                return None
+            source_path = str(row.get("source_path") or "")
+            if not _is_ce_source_topology_path(
+                source_path,
+                allowed_source_suffixes=task.allowed_source_suffixes,
+            ):
+                return None
+            source_artifact_matches = tuple(
+                artifact
+                for artifact in artifact_rows
+                if artifact["applicability"] == "required"
+                and str(artifact.get("path") or "") == source_path
+                and str(artifact.get("owner_task_id") or "") == owner_task_id
+                and str(artifact.get("semantic_role") or "") in {"source", "entrypoint"}
+            )
+            if len(source_artifact_matches) != 1:
+                return None
+            runtime_path = str(row.get("runtime_path") or "")
+            runtime_parts = PurePosixPath(runtime_path).parts
+            if (
+                len(runtime_parts) < 2
+                or runtime_parts[0] not in {"bin", "build", "dist", "target"}
+                or any(part in {"", ".", ".."} for part in runtime_parts)
+                or not re.fullmatch(r"[A-Za-z0-9_.-]+", runtime_parts[-1])
+            ):
+                return None
+            try:
+                candidate_argv = tuple(shlex.split(str(row.get("command") or ""), posix=True))
+            except ValueError:
+                return None
+            if not candidate_argv:
+                return None
+            command_path = candidate_argv[0].replace("\\", "/")
+            if command_path.startswith("./"):
+                command_path = command_path[2:]
+            if command_path == runtime_parts[-1]:
+                candidate_argv = (runtime_path, *candidate_argv[1:])
+            elif command_path != runtime_path:
+                return None
+            return owner_task_id, source_path, candidate_argv
+
         # Normalize the common split CLI description before path authority is
         # projected.  The executable ``__main__.py`` is a real delivery
         # artifact; without this row the completion contract has an entrypoint
@@ -1309,17 +1429,81 @@ def _build_portfolio_completion_contract(
                 pm_entrypoint_owners_by_path.setdefault(path, set()).add(task.task_id)
         explicit_pm_entrypoint_owners = {task.task_id for task in command.tasks if task.entrypoint_targets}
 
-        def authorities_for(*, modality: str, owner_task_id: str | None = None) -> tuple[Any, ...]:
+        def authorities_for(
+            *,
+            modality: str,
+            owner_task_id: str | None = None,
+        ) -> tuple[VerificationCommandAuthorityV1, ...]:
             return tuple(
                 item
                 for item in command_authorities
                 if item.modality == modality and (owner_task_id is None or item.task_id == owner_task_id)
             )
 
+        def dependency_complete_verifier_authority(
+            row: Mapping[str, Any],
+            *,
+            preferred: VerificationCommandAuthorityV1,
+        ) -> VerificationCommandAuthorityV1:
+            """Bind a verifier only after every covered artifact can exist.
+
+            A task may execute a project-wide verifier only when it owns, or
+            transitively depends on the owner of, every active artifact named
+            by ``covers_obligation_ids``.  Otherwise the completion contract is
+            temporally impossible: the verifier fails on a future artifact
+            that the current task is forbidden to write.  Rebinding is allowed
+            only to the earliest dependency-complete task carrying the exact
+            same committed argv/cwd authority.  Parallel/incomparable owners
+            remain a structured contract failure rather than an invented
+            cross-task permission widening.
+            """
+
+            covered_owners = {
+                artifact_owner_by_id[obligation_id]
+                for obligation_id in row["covers_obligation_ids"]
+                if obligation_id in artifact_owner_by_id
+            }
+            if not covered_owners:
+                return preferred
+
+            def covers_every_owner(authority: VerificationCommandAuthorityV1) -> bool:
+                return all(
+                    authority.task_id == owner_task_id or transitively_depends_on(authority.task_id, owner_task_id)
+                    for owner_task_id in covered_owners
+                )
+
+            if covers_every_owner(preferred):
+                return preferred
+
+            exact_command_candidates = tuple(
+                item
+                for item in authorities_for(modality=str(row["modality"]))
+                if (item.argv, item.cwd) == (preferred.argv, preferred.cwd) and covers_every_owner(item)
+            )
+            earliest_task_ids = {
+                candidate.task_id
+                for candidate in exact_command_candidates
+                if not any(
+                    other.task_id != candidate.task_id and transitively_depends_on(candidate.task_id, other.task_id)
+                    for other in exact_command_candidates
+                )
+            }
+            earliest_candidates = tuple(
+                candidate for candidate in exact_command_candidates if candidate.task_id in earliest_task_ids
+            )
+            if len(earliest_task_ids) == 1 and len(earliest_candidates) == 1:
+                return earliest_candidates[0]
+            raise ValueError(
+                "active verification has no unique dependency-complete verifier owner; "
+                f"obligation_id={row['obligation_id']!r}; modality={row['modality']!r}; "
+                f"covered_owners={sorted(covered_owners)!r}; "
+                f"candidate_owners={sorted({item.task_id for item in exact_command_candidates})!r}"
+            )
+
         def resolve_delegated_entrypoint_authority(
             row: Mapping[str, Any],
         ) -> VerificationCommandAuthorityV1 | None:
-            """Resolve one explicitly delegated Python package entrypoint.
+            """Resolve one explicitly delegated bounded entrypoint.
 
             This is deliberately not a shell escape hatch.  The exact argv is
             derived from a normalized ``src/<module>/__main__.py`` path and
@@ -1329,6 +1513,8 @@ def _build_portfolio_completion_contract(
             """
 
             delegated_entrypoint = canonical_delegated_python_entrypoint(row)
+            if delegated_entrypoint is None:
+                delegated_entrypoint = canonical_delegated_native_entrypoint(row)
             if delegated_entrypoint is None:
                 return None
             delegated_owner_task_id, source_path, expected_argv = delegated_entrypoint
@@ -1432,14 +1618,14 @@ def _build_portfolio_completion_contract(
                         "active verification command authority modality mismatch; "
                         f"obligation_id={row['obligation_id']!r}"
                     )
-                return authority
+                return dependency_complete_verifier_authority(row, preferred=authority)
 
             owner_candidates = authorities_for(
                 modality=str(row["modality"]),
                 owner_task_id=str(row["owner_task_id"]) if row["owner_task_id"] is not None else None,
             )
             if len(owner_candidates) == 1:
-                return owner_candidates[0]
+                return dependency_complete_verifier_authority(row, preferred=owner_candidates[0])
 
             covered_owners = {
                 artifact_owner_by_id[obligation_id]
@@ -1452,12 +1638,13 @@ def _build_portfolio_completion_contract(
                     owner_task_id=next(iter(covered_owners)),
                 )
                 if len(covered_owner_candidates) == 1:
-                    return covered_owner_candidates[0]
+                    return dependency_complete_verifier_authority(row, preferred=covered_owner_candidates[0])
 
             modality_candidates = authorities_for(modality=str(row["modality"]))
             command_keys = {(item.argv, item.cwd) for item in modality_candidates}
             if len(command_keys) == 1 and modality_candidates:
-                return sorted(modality_candidates, key=lambda item: (item.task_id, item.authority_hash))[0]
+                preferred = sorted(modality_candidates, key=lambda item: (item.task_id, item.authority_hash))[0]
+                return dependency_complete_verifier_authority(row, preferred=preferred)
             raise ValueError(
                 "active verification cannot be bound to one committed PM command authority; "
                 f"obligation_id={row['obligation_id']!r}; modality={row['modality']!r}; "
@@ -1483,11 +1670,16 @@ def _build_portfolio_completion_contract(
                 covers_obligation_ids: tuple[str, ...] = ()
                 owner_task_id = None
             elif applicability == "not_applicable":
-                if authority_hash is not None:
-                    raise ValueError("not_applicable verification must use command_authority_hash=null")
+                # CE owns advisory verifier semantics; only committed PM
+                # authority can mint an executable command hash.  A declared
+                # N/A row is never executable, so discard any model-supplied
+                # opaque hash rather than letting it kill an otherwise valid
+                # portfolio.  Active rows still resolve through
+                # ``authority_for_row`` and remain fail-closed.
+                authority_hash = None
                 verifier_command = None
-                covers_obligation_ids = row["covers_obligation_ids"]
-                owner_task_id = row["owner_task_id"]
+                covers_obligation_ids = ()
+                owner_task_id = None
             else:
                 authority = authority_for_row(row)
                 authority_hash = authority.authority_hash
@@ -1563,7 +1755,9 @@ def _build_portfolio_completion_contract(
                 continue
             delegated_authority = resolve_delegated_entrypoint_authority(row)
             if delegated_authority is not None:
-                normalized_entrypoint_rows.append(normalize_advisory_runtime_path(row))
+                normalized_row = normalize_advisory_runtime_path(row)
+                normalized_row["command"] = delegated_authority.command
+                normalized_entrypoint_rows.append(normalized_row)
                 continue
             if source_path is not None:
                 path_authorized_owners = owners_for_path(source_path)
@@ -1603,8 +1797,103 @@ def _build_portfolio_completion_contract(
         if not normalized_entrypoint_rows:
             normalized_entrypoint_rows.extend(project_pm_authoritative_entrypoints())
 
+        def normalize_linked_entrypoint_ids(
+            rows: list[Mapping[str, Any]],
+        ) -> list[Mapping[str, Any]]:
+            """Split one proven artifact/entrypoint view into unique identities.
+
+            Providers commonly reuse the artifact obligation id for the
+            executable view of the exact same path.  The semantic link is
+            useful, but the authoritative completion contract requires every
+            obligation identity to be globally unique.  Preserve the artifact
+            identity and mint a stable entrypoint identity only when path and
+            owner prove both rows describe the same delivery fact.  Any
+            mismatched collision remains untouched and therefore fails closed
+            at ``ProjectCompletionObligationsV1``.
+            """
+
+            artifacts_by_id: dict[str, list[dict[str, Any]]] = {}
+            for artifact in artifact_rows:
+                artifacts_by_id.setdefault(str(artifact["obligation_id"]), []).append(dict(artifact))
+            occupied_ids = {
+                str(item.get("obligation_id") or "")
+                for item in (*artifact_rows, *entrypoint_rows, *verification_rows)
+                if str(item.get("obligation_id") or "")
+            }
+            normalized_rows: list[Mapping[str, Any]] = []
+            seen_entrypoint_ids: set[str] = set()
+            for row in rows:
+                normalized = dict(row)
+                obligation_id = str(normalized.get("obligation_id") or "")
+                colliding_artifacts = artifacts_by_id.get(obligation_id, [])
+                if colliding_artifacts and obligation_id not in seen_entrypoint_ids:
+                    source_path = str(normalized.get("source_path") or normalized.get("runtime_path") or "")
+                    owner_task_id = str(normalized.get("owner_task_id") or "")
+                    linked = [
+                        artifact
+                        for artifact in colliding_artifacts
+                        if str(artifact.get("path") or "") == source_path
+                        and str(artifact.get("owner_task_id") or "") == owner_task_id
+                    ]
+                    if len(colliding_artifacts) == 1 and len(linked) == 1:
+                        identity = json.dumps(
+                            {
+                                "kind": normalized.get("kind"),
+                                "obligation_id": obligation_id,
+                                "owner_task_id": owner_task_id,
+                                "path": source_path,
+                                "command": normalized.get("command"),
+                            },
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ).encode("utf-8")
+                        digest = hashlib.sha256(identity).hexdigest()
+                        minted_id = ""
+                        for width in range(16, len(digest) + 1, 4):
+                            candidate_id = f"entrypoint-normalized-{digest[:width]}"
+                            if candidate_id not in occupied_ids:
+                                minted_id = candidate_id
+                                break
+                        if not minted_id:  # pragma: no cover - cryptographic collision guard.
+                            raise ValueError(f"cannot mint unique entrypoint obligation id for {obligation_id}")
+                        normalized["obligation_id"] = minted_id
+                        occupied_ids.add(minted_id)
+                seen_entrypoint_ids.add(str(normalized.get("obligation_id") or ""))
+                normalized_rows.append(normalized)
+            return normalized_rows
+
+        normalized_entrypoint_rows = normalize_linked_entrypoint_ids(normalized_entrypoint_rows)
+
+        known_completion_obligation_ids = {
+            str(row["obligation_id"]) for row in (*artifact_rows, *normalized_entrypoint_rows)
+        }
+        buildable_artifact_ids = [
+            str(row["obligation_id"])
+            for row in artifact_rows
+            if row["applicability"] == "required" and row["semantic_role"] not in {"docs", "test"}
+        ]
         normalized_verification_rows: list[dict[str, Any]] = []
-        for row in verification_rows:
+        used_completion_obligation_ids = set(known_completion_obligation_ids)
+
+        def claim_verification_obligation_id(*, preferred: str, fallback: str) -> str:
+            """Reserve one verifier id without colliding with delivery facts.
+
+            Provider output may reuse the covered artifact id as the verifier
+            id (exact L3-24 r61).  The relation is valid, but the authoritative
+            completion DTO requires global identity uniqueness.  Keep the
+            artifact identity and mint only the derived verifier identity.
+            """
+
+            candidate_id = preferred if preferred not in used_completion_obligation_ids else fallback
+            suffix = 2
+            while candidate_id in used_completion_obligation_ids:
+                candidate_id = f"{fallback}-{suffix:03d}"
+                suffix += 1
+            used_completion_obligation_ids.add(candidate_id)
+            return candidate_id
+
+        for index, row in enumerate(verification_rows, start=1):
             if row["modality"] not in {"build", "lint"}:
                 continue
             normalized_row = dict(row)
@@ -1613,16 +1902,31 @@ def _build_portfolio_completion_contract(
             # authority.  Its verifier references must be removed in the same
             # normalization transaction; otherwise Polaris creates its own
             # dangling obligation id and rejects an otherwise valid portfolio.
-            # Truly unknown ids remain untouched and therefore still fail closed
-            # in ProjectCompletionContractV1.
-            normalized_row["covers_obligation_ids"] = [
+            # Build/lint coverage is a derived relation over PM-authorized
+            # delivery facts, never a second provider-owned namespace.  Models
+            # often emit acceptance labels such as ``OBL-DELIVERY-DEPTH`` or
+            # ``OBL-RUST-COMPILE`` here.  Those labels are not artifact or
+            # entrypoint obligations and made an otherwise authoritative
+            # portfolio fail only at final DTO hydration (exact L3-23 r15).
+            # Keep canonical refs; when advice contains aliases only, bind the
+            # verifier to every required buildable PM artifact.  The strict
+            # ProjectCompletionContractV1 validator remains fail-closed for
+            # callers that bypass this authority-normalization boundary.
+            canonical_coverage = [
                 obligation_id
                 for obligation_id in row["covers_obligation_ids"]
                 if str(obligation_id) not in dropped_unexecutable_entrypoint_ids
                 and str(obligation_id) not in dropped_unauthorized_artifact_ids
+                and str(obligation_id) in known_completion_obligation_ids
             ]
+            normalized_row["covers_obligation_ids"] = (
+                canonical_coverage if canonical_coverage else list(buildable_artifact_ids)
+            )
+            normalized_row["obligation_id"] = claim_verification_obligation_id(
+                preferred=str(row["obligation_id"]),
+                fallback=f"verification-authority-{row['modality']}-{index:03d}",
+            )
             normalized_verification_rows.append(normalized_row)
-        used_verification_ids = {str(row["obligation_id"]) for row in normalized_verification_rows}
         required_test_seed_rows = [
             row for row in verification_rows if row["modality"] == "test" and row["applicability"] == "required"
         ]
@@ -1654,14 +1958,14 @@ def _build_portfolio_completion_contract(
                     "required test artifact owner must have exactly one committed PM test authority; "
                     f"owner_task_id={owner_task_id!r}; matches={len(test_authorities)}"
                 )
-            seed_id = (
-                str(required_test_seed_rows[0]["obligation_id"])
-                if index == 1 and required_test_seed_rows
-                else f"verification-authority-test-{index:03d}"
+            seed_id = claim_verification_obligation_id(
+                preferred=(
+                    str(required_test_seed_rows[0]["obligation_id"])
+                    if index == 1 and required_test_seed_rows
+                    else f"verification-authority-test-{index:03d}"
+                ),
+                fallback=f"verification-authority-test-{index:03d}",
             )
-            if seed_id in used_verification_ids:
-                seed_id = f"verification-authority-test-{index:03d}"
-            used_verification_ids.add(seed_id)
             normalized_verification_rows.append(
                 {
                     "obligation_id": seed_id,
@@ -1675,7 +1979,10 @@ def _build_portfolio_completion_contract(
         if not required_test_artifacts_by_owner and not_applicable_test_artifacts:
             normalized_verification_rows.append(
                 {
-                    "obligation_id": "verification-authority-test-na",
+                    "obligation_id": claim_verification_obligation_id(
+                        preferred="verification-authority-test-na",
+                        fallback="verification-authority-test-na",
+                    ),
                     "modality": "test",
                     "command_authority_hash": None,
                     "applicability": "not_applicable",
@@ -1705,14 +2012,14 @@ def _build_portfolio_completion_contract(
                 for row in verification_rows
                 if row["modality"] == "environment_prep" and row["applicability"] == "required"
             ]
-            environment_obligation_id = (
-                str(environment_seed_rows[0]["obligation_id"])
-                if environment_seed_rows
-                else "verification-authority-environment-001"
+            environment_obligation_id = claim_verification_obligation_id(
+                preferred=(
+                    str(environment_seed_rows[0]["obligation_id"])
+                    if environment_seed_rows
+                    else "verification-authority-environment-001"
+                ),
+                fallback="verification-authority-environment-001",
             )
-            if environment_obligation_id in used_verification_ids:
-                environment_obligation_id = "verification-authority-environment-001"
-            used_verification_ids.add(environment_obligation_id)
             normalized_verification_rows.append(
                 {
                     "obligation_id": environment_obligation_id,
@@ -1726,7 +2033,12 @@ def _build_portfolio_completion_contract(
         else:
             environment_rows = [dict(row) for row in verification_rows if row["modality"] == "environment_prep"]
             if environment_rows:
-                normalized_verification_rows.extend(environment_rows)
+                for index, environment_row in enumerate(environment_rows, start=1):
+                    environment_row["obligation_id"] = claim_verification_obligation_id(
+                        preferred=str(environment_row["obligation_id"]),
+                        fallback=f"verification-authority-environment-{index:03d}",
+                    )
+                    normalized_verification_rows.append(environment_row)
             elif environment_candidates:
                 # Library/package CE output may omit advisory completion rows.
                 # A committed PM environment command is still project authority,
@@ -1739,7 +2051,10 @@ def _build_portfolio_completion_contract(
                 )[0]
                 normalized_verification_rows.append(
                     {
-                        "obligation_id": "verification-authority-environment-001",
+                        "obligation_id": claim_verification_obligation_id(
+                            preferred="verification-authority-environment-001",
+                            fallback="verification-authority-environment-001",
+                        ),
                         "modality": "environment_prep",
                         "command_authority_hash": environment_authority.authority_hash,
                         "applicability": "required",
@@ -1750,7 +2065,10 @@ def _build_portfolio_completion_contract(
             else:
                 normalized_verification_rows.append(
                     {
-                        "obligation_id": "verification-authority-environment-na",
+                        "obligation_id": claim_verification_obligation_id(
+                            preferred="verification-authority-environment-na",
+                            fallback="verification-authority-environment-na",
+                        ),
                         "modality": "environment_prep",
                         "command_authority_hash": None,
                         "applicability": "not_applicable",
@@ -1781,14 +2099,14 @@ def _build_portfolio_completion_contract(
                 if candidate["modality"] == "entrypoint"
                 and entrypoint_row["obligation_id"] in candidate["covers_obligation_ids"]
             ]
-            entrypoint_obligation_id = (
-                str(entrypoint_seed_rows[0]["obligation_id"])
-                if entrypoint_seed_rows
-                else f"verification-authority-entrypoint-{index:03d}"
+            entrypoint_obligation_id = claim_verification_obligation_id(
+                preferred=(
+                    str(entrypoint_seed_rows[0]["obligation_id"])
+                    if entrypoint_seed_rows
+                    else f"verification-authority-entrypoint-{index:03d}"
+                ),
+                fallback=f"verification-authority-entrypoint-{index:03d}",
             )
-            if entrypoint_obligation_id in used_verification_ids:
-                entrypoint_obligation_id = f"verification-authority-entrypoint-{index:03d}"
-            used_verification_ids.add(entrypoint_obligation_id)
             normalized_verification_rows.append(
                 {
                     "obligation_id": entrypoint_obligation_id,

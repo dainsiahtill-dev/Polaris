@@ -1,0 +1,70 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "defect-20260827-l3-24-r55-cpp-use-before-definition-repair-gap",
+  "status": "IMPLEMENTATION_AND_EXACT_REPLAY_VERIFIED",
+  "severity": "P1",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_f81dc5e8d1a8",
+  "symptom": {
+    "stage": "director_quality_repair",
+    "verifier_command": [
+      "g++",
+      "-std=c++17",
+      "-fsyntax-only",
+      "-I.",
+      "-Isrc",
+      "-Iinclude",
+      "src/moon_phase.cpp"
+    ],
+    "diagnostic": "src/moon_phase.cpp:40:38: error: ‘ymd_to_days’ was not declared in this scope",
+    "coverage_before": "covered_unplannable",
+    "false_rule_before": "cpp.missing_private_members"
+  },
+  "dynamic_debug_evidence": {
+    "target_workspace_mutated": false,
+    "context_snapshot_ref": "82dc9c36541c43b8f2699928",
+    "response_snapshot_ref": "254b0877c15a005bce162383",
+    "director_role_valid": true,
+    "pm_contract_present": true,
+    "ce_blueprint_present": true,
+    "target_body_present": true,
+    "diagnostic_present": true,
+    "edit_file_tool_present": true,
+    "native_tool_calls_observed": true,
+    "effect_receipts_observed": true,
+    "candidate_rollbacks_were_correct": true,
+    "exact_verifier_rerun_reproduced": true
+  },
+  "root_cause": {
+    "category": "repair_coverage_and_runtime_binding_gap",
+    "summary": "A C++ same-translation-unit free function was called before its later definition. Coverage false-routed the compiler error to a header-only private-member rule, while no executable runtime rule could plan the required forward declaration.",
+    "not_caused_by": [
+      "missing Director tools",
+      "wrong role context",
+      "missing CE authority",
+      "tool normalization",
+      "effect receipt loss",
+      "candidate rollback policy"
+    ]
+  },
+  "fix": {
+    "owner": "director.runtime",
+    "rule_id": "cpp.use_before_definition",
+    "source_tool": "deterministic_cpp_use_before_definition_repair",
+    "operation": "precise text_replace projected as edit_file",
+    "false_coverage_removed": "cpp.missing_private_members constrained to header suffixes",
+    "unsafe_cases": "fail_closed"
+  },
+  "validation": {
+    "focused_tests": "4 passed",
+    "repair_kernel_regression": "193 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_r55_copy_replay": "public Run receipt emitted and exact g++ verifier passed",
+    "fresh_isolated_bench": "pending"
+  },
+  "residual_risk": [
+    "multi-line definitions and overload sets remain intentionally unplanned",
+    "fresh isolated L3-24 may reveal a later independent residual"
+  ]
+}

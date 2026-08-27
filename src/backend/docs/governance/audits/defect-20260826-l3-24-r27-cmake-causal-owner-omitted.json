@@ -1,0 +1,67 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-r27-cmake-causal-owner-omitted",
+  "status": "CLOSED_UNIT_AND_EXACT_REPLAY_VERIFIED",
+  "severity": "P0",
+  "factory_run_id": "factory_b3a0d4f469fa",
+  "project_id": "L3-24",
+  "symptom": "QA retained CMake missing-source diagnostics, but Director quality repair authorized only an unrelated existing header and never offered CMakeLists.txt as the causal repair owner.",
+  "dynamic_evidence": {
+    "workspace_validation": ".polaris/runtime/qa/workspace-validation.json",
+    "context_snapshot_ref": "489c5b3fb1a586fbd0fc1a26",
+    "before_replay_targets": [
+      "src/moon_cipher.cpp",
+      "src/diary_book.cpp",
+      "src/cli.cpp"
+    ],
+    "qa_missing_source_diagnostics": [
+      "CMake Error at CMakeLists.txt:25: Cannot find source file src/diary_entry.cpp",
+      "CMake Error at CMakeLists.txt:49: Cannot find source file tests/test_cipher_engine.cpp"
+    ],
+    "scope_filter_rejected_missing_paths": [
+      "src/diary_entry.cpp"
+    ],
+    "final_repair_target_before_fix": "include/invisible_ink/diary_entry.hpp"
+  },
+  "root_cause": {
+    "classification": "causal_repair_owner_projection_gap",
+    "details": [
+      "resolve_director_causal_quality_repair_target_files did not consume the existing explicit artifact-quality target resolver.",
+      "The CMake target resolver recognized only basename/include-root/linker-bridge diagnostics, not Cannot find source file or No SOURCES given to target.",
+      "The scope gate correctly refused to create undeclared missing paths; without the manifest owner, repair collapsed onto unrelated in-scope files."
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/public/service.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_language_targets.py"
+    ],
+    "behavior": [
+      "Expose explicit artifact-quality causal targets through the public pre-claim resolver.",
+      "Classify CMake missing-source/source-less-target diagnostics as owned by the existing CMakeLists.txt.",
+      "Prioritize CMakeLists.txt ahead of derivative compile use-sites while retaining CE and JobToken scope enforcement."
+    ]
+  },
+  "verification": {
+    "red_test": "test_cmake_missing_source_routes_to_declaring_manifest initially returned an empty target list, then src/existing.cpp ahead of CMakeLists.txt.",
+    "exact_r27_replay_after_fix": [
+      "CMakeLists.txt",
+      "src/cli.cpp",
+      "src/diary_book.cpp",
+      "src/moon_cipher.cpp",
+      "include/invisible_ink/moon_phase.hpp",
+      "include/invisible_ink/moon_cipher.hpp",
+      "include/invisible_ink/diary_entry.hpp",
+      "include/invisible_ink/diary_book.hpp",
+      "tests/test_product.py"
+    ],
+    "tests": [
+      "85 passed: causal-target and Director adapter misc suites",
+      "38 passed: deferred-repair followup and ToolBatchRuntime suites",
+      "mypy: success on 3 production files",
+      "ruff: all checks passed on touched files"
+    ]
+  },
+  "target_project_modified": false,
+  "residual_risk": "Fresh isolated r28 is still required to prove the manifest owner reaches a successful live repair and to discover the next exact residual."
+}

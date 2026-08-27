@@ -1104,8 +1104,7 @@ def test_factory_force_abort_terminalizes_expired_open_parent_session(
 
     workspace = tmp_path / "expired-open-parent"
     service, task_id, identity = _claim_attempt(workspace)
-    _enroll_parent_registry(identity)
-    _admit_parent(identity)
+    _commit_one_succeeded_directed_effect(identity)
     expired_session = service._read_session(task_id)
     assert expired_session is not None
     expired_session.lease_expires_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
@@ -1133,6 +1132,62 @@ def test_factory_force_abort_terminalizes_expired_open_parent_session(
     session = service._read_session(task_id)
     assert session is not None
     assert str(session.status).lower() != "active"
+    verdict = service._directed_effect_inactive_pre_barrier_locked(session)
+    assert verdict.allowed is True
+
+    reopened = service.reopen_task_row(task_id, reason="same-run QA repair")
+    assert reopened is not None
+    assert str(reopened["status"]).lower() in {"pending", "ready", "blocked"}
+
+
+def test_reopen_self_heals_legacy_terminal_session_with_open_parent(
+    tmp_path: Path,
+) -> None:
+    """Historical force-abort terminal state closes its DEO parent on reopen.
+
+    The legacy path wrote ``session.status=failed`` directly while leaving the
+    outcome-bound parent registry OPEN.  Same-task QA repair then failed closed
+    forever with ``settlement_parent_close_required``.  Reopen must replay the
+    exact failed settlement protocol before changing the terminal row.
+    """
+
+    workspace = tmp_path / "legacy-terminal-open-parent"
+    service, task_id, identity = _claim_attempt(workspace)
+    _commit_one_succeeded_directed_effect(identity)
+
+    session = service._read_session(task_id)
+    assert session is not None
+    session.mark_failed(error="legacy factory abort")
+    assert service._write_session(session, allow_terminal_downgrade=True) is True
+    failed = service._board.update(
+        task_id,
+        status=service_module.TaskStatus.FAILED,
+        metadata={"factory_run_id": "settlement-run"},
+        allow_terminal_status=True,
+        allow_execution_status=True,
+    )
+    assert failed is not None
+
+    legacy = service._read_session(task_id)
+    assert legacy is not None
+    blocked = service._directed_effect_inactive_pre_barrier_locked(legacy)
+    assert blocked.allowed is False
+    assert blocked.code == "settlement_parent_close_required"
+
+    reopened = service.reopen_task_row(task_id, reason="same-run QA repair")
+
+    assert reopened is not None
+    assert str(reopened["status"]).lower() in {"pending", "ready", "blocked"}
+    reclaimed = service.claim_execution(
+        task_id,
+        worker_id="qa-repair-director",
+        role_id="director",
+        run_id="settlement-run",
+        external_task_id="settlement-task",
+        selection_source="same-run-qa-repair",
+    )
+    assert reclaimed["success"] is True
+    assert reclaimed["execution_attempt"]["attempt"] == 2
 
 
 def _director_materialization_attempt(

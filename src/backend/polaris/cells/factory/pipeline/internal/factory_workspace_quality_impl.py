@@ -10,12 +10,19 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
+from os import PathLike
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from polaris.cells.runtime.execution_broker.public import (
+    ProjectArtifactReceiptV1,
+    RecordProjectArtifactCommandV1,
+    record_project_artifact,
+)
 from polaris.cells.runtime.task_runtime.public import (
     BindRuntimeTaskToFactoryRunCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
@@ -68,8 +75,34 @@ _TEST_MODALITY_SHORTFALL_RE = re.compile(
     re.IGNORECASE,
 )
 _PYTEST_COUNT_RE = re.compile(r"\b(?P<count>\d+)\s+(?P<kind>failed|error|errors)\b", re.IGNORECASE)
+_FAILING_TRANSLATION_UNITS_RE = re.compile(
+    r"^### FAILING_TUS[ \t]+(?P<paths>[^\r\n]+)$",
+    re.MULTILINE,
+)
+_LINKER_PHASE_HINTS = (
+    "undefined reference",
+    "ld returned ",
+    "linker command failed",
+    "link.exe",
+    "lld-link",
+)
 _DIAGNOSTIC_LINE_LABEL_RE = re.compile(r"\bline\s+\d+\b", re.IGNORECASE)
 _DIAGNOSTIC_FILE_LOCATION_RE = re.compile(r"(?P<path>(?:[A-Za-z]:)?[^\s:\n]+\.[A-Za-z0-9_+-]+):\d+(?::\d+)?")
+_COMPILER_ERROR_LINE_RE = re.compile(
+    r"^[ \t]*(?P<path>(?:[A-Za-z]:)?[^:\r\n]+?\.[A-Za-z0-9_+.-]+)"
+    r":\d+(?::\d+)?:[ \t]+(?:fatal[ \t]+)?error:[ \t]+(?P<message>[^\r\n]+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_CPP_MALFORMED_INCLUDE_ERROR_RE = re.compile(
+    r"^[ \t]*(?P<path>(?:[A-Za-z]:)?[^:\r\n]+?\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx|inl|ipp|tpp))"
+    r":(?P<line>\d+)(?::\d+)?:[ \t]+(?:fatal[ \t]+)?error:[ \t]+"
+    r"#include expects \"FILENAME\" or <FILENAME>[ \t]*$",
+    re.IGNORECASE,
+)
+_CPP_MALFORMED_INCLUDE_SOURCE_RE = re.compile(
+    r"^[ \t]*(?P<line>\d+)[ \t]*\|[ \t]*#include[ \t]+"
+    r"(?P<header>[A-Za-z_][A-Za-z0-9_./+\-]*)[ \t]*$"
+)
 _NAMED_TEST_FAILURE_RES = (
     ("go", re.compile(r"(?m)^---\s+FAIL:\s+(?P<test>[^\s(]+)", re.IGNORECASE)),
     ("unittest", re.compile(r"(?m)^(?:FAIL|ERROR):\s+(?P<test>[^\s(]+)", re.IGNORECASE)),
@@ -84,6 +117,133 @@ _GO_COMPILER_DIAGNOSTIC_RE = re.compile(
     r")",
     re.IGNORECASE | re.MULTILINE,
 )
+_CLI_BOUNDARY_BEHAVIOR_RE = re.compile(
+    r"(?:unknown|unrecognized)[ \t]+(?:command|option|argument)"
+    r"|--[A-Za-z0-9][A-Za-z0-9_-]*[ \t]+is[ \t]+required"
+    r"|(?:missing|required)[ \t]+(?:command[- ]line|cli)[ \t]+(?:argument|option)",
+    re.IGNORECASE,
+)
+_ENTRYPOINT_PATH_STEMS = frozenset({"main", "cli", "app", "server", "index"})
+_ENTRYPOINT_PATH_PARTS = frozenset({"bin", "cli", "cmd", "command", "commands"})
+_CPP_STANDARD_INCOMPATIBILITY_RE = re.compile(
+    r"(?P<symbol>std::[A-Za-z_][A-Za-z0-9_]*)[^\r\n]{0,96}(?:"
+    r"only\s+available\s+from\s+c\+\+(?P<available>\d+)|"
+    r"requires\s+c\+\+(?P<requires>\d+)|"
+    r"c\+\+(?P<extension>\d+)\s+extension"
+    r")",
+    re.IGNORECASE,
+)
+_CPP_REPAIR_SOURCE_SUFFIXES = frozenset(
+    {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp", ".tpp"}
+)
+
+
+def _task_completion_projection_from_repair_task(task: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return the exact CE completion projection carried by a claimed task."""
+
+    raw_projection = task.get("task_completion_projection")
+    if raw_projection is None:
+        raw_metadata = task.get("metadata")
+        metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
+        raw_projection = metadata.get("task_completion_projection")
+    return dict(raw_projection) if isinstance(raw_projection, Mapping) else None
+
+
+def _record_workspace_quality_repair_artifact_receipts(
+    pending: Mapping[str, Any],
+) -> tuple[dict[str, str], ...]:
+    """Refresh project artifact authority after an accepted repair edit.
+
+    Normal Director task execution records CE-owned artifact bytes before it
+    settles TaskRuntime.  Factory's same-task workspace-quality repair is a
+    second physical-write path and must preserve that invariant.  Ownership is
+    never inferred from changed files: only the claimed task's immutable CE
+    completion projection can authorize a receipt.
+    """
+
+    raw_projection = pending.get("task_completion_projection")
+    if raw_projection is None:
+        # Migration compatibility for synthetic/legacy task rows. Canonical
+        # PM -> CE -> Director tasks always carry this projection.
+        return ()
+    if not isinstance(raw_projection, Mapping):
+        raise TypeError("workspace quality repair task completion projection must be a mapping")
+    projection = dict(raw_projection)
+    task_id = str(pending.get("task_id") or "").strip()
+    projection_task_id = str(projection.get("task_id") or "").strip()
+    if not task_id or projection_task_id != task_id:
+        raise ValueError("workspace quality repair projection owner does not match claimed task")
+    execution_attempt = pending.get("execution_attempt")
+    workspace = str(getattr(execution_attempt, "workspace", "") or "").strip()
+    project_id = str(projection.get("project_id") or "").strip()
+    run_id = str(projection.get("run_id") or "").strip()
+    contract_hash = str(projection.get("project_contract_hash") or "").strip()
+    if not workspace or not project_id or not run_id or len(contract_hash) != 64:
+        raise ValueError("workspace quality repair projection lacks exact project/run/contract identity")
+    raw_artifacts = projection.get("owned_artifacts")
+    if raw_artifacts is None or raw_artifacts == [] or raw_artifacts == ():
+        return ()
+    if not isinstance(raw_artifacts, (list, tuple)):
+        raise TypeError("workspace quality repair owned_artifacts must be a sequence")
+
+    recorded: list[dict[str, str]] = []
+    seen: dict[str, tuple[str, str]] = {}
+    for index, raw_artifact in enumerate(raw_artifacts):
+        if not isinstance(raw_artifact, Mapping):
+            raise TypeError(f"workspace quality repair owned_artifacts[{index}] must be a mapping")
+        obligation_id = str(raw_artifact.get("obligation_id") or "").strip()
+        owner_task_id = str(raw_artifact.get("owner_task_id") or "").strip()
+        path = str(raw_artifact.get("path") or "").strip()
+        if not obligation_id or owner_task_id != task_id or not path:
+            raise ValueError(f"workspace quality repair owned_artifacts[{index}] lacks exact owner identity")
+        prior = seen.get(obligation_id)
+        identity = (owner_task_id, path)
+        if prior is not None:
+            if prior != identity:
+                raise ValueError(f"artifact obligation {obligation_id!r} has conflicting duplicate identity")
+            continue
+        seen[obligation_id] = identity
+        receipt = record_project_artifact(
+            RecordProjectArtifactCommandV1(
+                workspace=workspace,
+                project_id=project_id,
+                run_id=run_id,
+                completion_contract_hash=contract_hash,
+                obligation_id=obligation_id,
+                owner_task_id=owner_task_id,
+                path=path,
+            )
+        )
+        if type(receipt) is not ProjectArtifactReceiptV1:
+            raise TypeError("workspace quality repair artifact owner returned a lookalike receipt")
+        if (
+            receipt.workspace,
+            receipt.project_id,
+            receipt.run_id,
+            receipt.completion_contract_hash,
+            receipt.obligation_id,
+            receipt.owner_task_id,
+            receipt.path,
+        ) != (
+            workspace,
+            project_id,
+            run_id,
+            contract_hash,
+            obligation_id,
+            owner_task_id,
+            path,
+        ):
+            raise ValueError("workspace quality repair artifact receipt identity changed")
+        recorded.append(
+            {
+                "obligation_id": obligation_id,
+                "path": path,
+                "artifact_hash": receipt.artifact_hash,
+                "receipt_hash": receipt.receipt_hash,
+                "receipt_ref": receipt.receipt_ref,
+            }
+        )
+    return tuple(recorded)
 
 
 def _is_workspace_quality_test_target(path: str) -> bool:
@@ -222,6 +382,290 @@ def _workspace_quality_unittest_run_count(result: Mapping[str, Any]) -> int | No
     return int(matches[-1].group("count")) if matches else None
 
 
+def _workspace_quality_failing_translation_units(result: Mapping[str, Any]) -> frozenset[str]:
+    """Return explicit failing translation-unit identities from one verifier."""
+
+    output = "\n".join(
+        str(result.get(key) or "")
+        for key in ("diagnostic_excerpt", "stdout_tail", "stderr_tail")
+        if str(result.get(key) or "").strip()
+    )
+    matches = list(_FAILING_TRANSLATION_UNITS_RE.finditer(output))
+    if not matches:
+        return frozenset()
+    return frozenset(path for path in matches[-1].group("paths").split() if path)
+
+
+def workspace_quality_compile_barrier_reduced(
+    before_results: Sequence[Mapping[str, Any]],
+    after_results: Sequence[Mapping[str, Any]],
+) -> bool:
+    """True when the same compiler verifier clears part of its compile frontier."""
+
+    def command_key(result: Mapping[str, Any]) -> tuple[str, ...]:
+        return tuple(str(part or "").strip() for part in result.get("command") or () if str(part or "").strip())
+
+    before_by_command = {command_key(result): result for result in before_results if command_key(result)}
+    after_by_command = {command_key(result): result for result in after_results if command_key(result)}
+    for command, before in before_by_command.items():
+        after = after_by_command.get(command)
+        if after is None:
+            continue
+        before_units = _workspace_quality_failing_translation_units(before)
+        after_units = _workspace_quality_failing_translation_units(after)
+        before_output = "\n".join(
+            str(before.get(key) or "")
+            for key in ("diagnostic_excerpt", "stdout_tail", "stderr_tail")
+            if str(before.get(key) or "").strip()
+        ).casefold()
+        after_output = "\n".join(
+            str(after.get(key) or "")
+            for key in ("diagnostic_excerpt", "stdout_tail", "stderr_tail")
+            if str(after.get(key) or "").strip()
+        ).casefold()
+        if before_units and after_units and after_units < before_units:
+            return True
+        if after_units:
+            continue
+        # Once a compiler has cleared every previously explicit translation
+        # unit, a failing build can legitimately move into the linker.  Linker
+        # output has no ``FAILING_TUS`` marker, so treating the empty set as
+        # unknown mislabeled a live compile -> link transition as an
+        # equal-count diagnostic swap.  Require either authoritative command
+        # success or an explicit linker anchor; truncated/opaque output stays
+        # fail-closed.
+        if before_units and (
+            bool(after.get("passed")) or any(hint in after_output for hint in _LINKER_PHASE_HINTS)
+        ):
+            return True
+        # A linker failure has no ``FAILING_TUS`` marker either.  When the same
+        # authoritative build command becomes green, downstream tests can run
+        # deeper and legitimately expose more failures.  Preserve that edit as
+        # upstream barrier progress before the test-fanout regression guard.
+        # Live L3-24 r54 otherwise rolled back a header definition that made
+        # both syntax and CMake build pass, restoring the older linker failure.
+        if any(hint in before_output for hint in _LINKER_PHASE_HINTS) and bool(after.get("passed")):
+            return True
+    return False
+
+
+def _workspace_quality_compiler_error_identity_counts(result: Mapping[str, Any]) -> Counter[str]:
+    """Return stable file/message occurrence counts for compiler errors.
+
+    Line and column numbers are intentionally excluded: a valid edit can move
+    a surviving diagnostic without changing its causal identity.  Occurrence
+    multiplicity is retained because removing one of several identical
+    diagnostics is strict progress.  Opaque or truncated verifier output yields
+    no identities and therefore cannot prove progress.
+    """
+
+    output = "\n".join(
+        str(result.get(key) or "")
+        for key in ("diagnostic_excerpt", "stdout_tail", "stderr_tail")
+        if str(result.get(key) or "").strip()
+    )
+    identities: Counter[str] = Counter()
+    for match in _COMPILER_ERROR_LINE_RE.finditer(output):
+        raw_path = match.group("path").strip()
+        raw_message = match.group("message").strip()
+        if not raw_path or not raw_message:
+            continue
+        path = "/".join(raw_path.replace("\\", "/").split("/")).casefold()
+        message = " ".join(raw_message.split()).casefold()
+        identities[f"{path}|{message}"] += 1
+    return identities
+
+
+_PYTHON_HARNESS_NAME_ERROR_RE = re.compile(
+    r"\bNameError:\s*name\s+['\"](?P<name>[A-Za-z_][A-Za-z0-9_]*)['\"]\s+is\s+not\s+defined\b",
+    re.IGNORECASE,
+)
+
+
+def _workspace_quality_compiler_error_message_counts(result: Mapping[str, Any]) -> Counter[str]:
+    """Return compiler error multiplicity without path spelling differences."""
+
+    messages: Counter[str] = Counter()
+    for identity, count in _workspace_quality_compiler_error_identity_counts(result).items():
+        _, separator, message = identity.partition("|")
+        if separator and message:
+            messages[message] += count
+    return messages
+
+
+def workspace_quality_test_harness_barrier_reduced(
+    before_results: Sequence[Mapping[str, Any]],
+    after_results: Sequence[Mapping[str, Any]],
+) -> bool:
+    """True when a Python harness error clears onto an existing compile frontier.
+
+    A generated unittest wrapper can fail in its own exception-reporting code
+    before it exposes the product compiler diagnostics it captured.  Removing
+    that wrapper-local ``NameError`` is monotonic progress only when the new
+    compiler messages were already proven by an independent pre-edit compiler
+    verifier.  This keeps a real harness fix while rejecting edits that
+    introduce a novel product/compiler failure.
+    """
+
+    def command_key(result: Mapping[str, Any]) -> tuple[str, ...]:
+        return tuple(str(part or "").strip() for part in result.get("command") or () if str(part or "").strip())
+
+    def output(result: Mapping[str, Any]) -> str:
+        return "\n".join(
+            str(result.get(key) or "")
+            for key in ("diagnostic_excerpt", "stdout_tail", "stderr_tail")
+            if str(result.get(key) or "").strip()
+        )
+
+    def is_python_test_command(command: tuple[str, ...]) -> bool:
+        folded = tuple(part.casefold() for part in command)
+        return "unittest" in folded or any(Path(part).name.casefold() in {"pytest", "py.test"} for part in folded)
+
+    upstream_compiler_messages: Counter[str] = Counter()
+    for result in before_results:
+        command = command_key(result)
+        if command and not is_python_test_command(command):
+            upstream_compiler_messages.update(_workspace_quality_compiler_error_message_counts(result))
+    if not upstream_compiler_messages:
+        return False
+
+    after_by_command = {command_key(result): result for result in after_results if command_key(result)}
+    for before in before_results:
+        command = command_key(before)
+        if not command or not is_python_test_command(command):
+            continue
+        after = after_by_command.get(command)
+        if after is None or bool(after.get("passed")):
+            continue
+        before_names = {match.group("name").casefold() for match in _PYTHON_HARNESS_NAME_ERROR_RE.finditer(output(before))}
+        after_names = {match.group("name").casefold() for match in _PYTHON_HARNESS_NAME_ERROR_RE.finditer(output(after))}
+        removed_names = before_names - after_names
+        if not removed_names:
+            continue
+        unmasked_compiler_messages = _workspace_quality_compiler_error_message_counts(after)
+        if not unmasked_compiler_messages:
+            continue
+        if all(
+            count <= upstream_compiler_messages.get(message, 0)
+            for message, count in unmasked_compiler_messages.items()
+        ):
+            return True
+    return False
+
+
+def workspace_quality_compiler_diagnostic_frontier_reduced(
+    before_results: Sequence[Mapping[str, Any]],
+    after_results: Sequence[Mapping[str, Any]],
+) -> bool:
+    """True when the same verifier strictly removes compiler diagnostics.
+
+    This is narrower than top-level diagnostic-cardinality progress.  It
+    requires every post-edit identity count to be no greater than its pre-edit
+    count and the total occurrence count to strictly decrease.  An edit that
+    trades one error for another therefore remains fail-closed.  Multiplicity
+    covers the live case where one repeated compiler occurrence is removed but
+    another occurrence with the same stable path/message identity survives.
+    """
+
+    def command_key(result: Mapping[str, Any]) -> tuple[str, ...]:
+        return tuple(str(part or "").strip() for part in result.get("command") or () if str(part or "").strip())
+
+    before_by_command = {command_key(result): result for result in before_results if command_key(result)}
+    after_by_command = {command_key(result): result for result in after_results if command_key(result)}
+    for command, before in before_by_command.items():
+        after = after_by_command.get(command)
+        if after is None:
+            continue
+        before_errors = _workspace_quality_compiler_error_identity_counts(before)
+        after_errors = _workspace_quality_compiler_error_identity_counts(after)
+        no_identity_increased = all(count <= before_errors.get(identity, 0) for identity, count in after_errors.items())
+        if (
+            before_errors
+            and after_errors
+            and no_identity_increased
+            and sum(after_errors.values()) < sum(before_errors.values())
+        ):
+            return True
+    return False
+
+
+def workspace_quality_cpp_include_barrier_repaired(
+    before_results: Sequence[Mapping[str, Any]],
+    after_results: Sequence[Mapping[str, Any]],
+    *,
+    workspace: Path | PathLike[str] | str | None,
+) -> bool:
+    """Prove a malformed C/C++ include became a valid include on disk.
+
+    Compiler excerpts are bounded per translation unit.  Correcting an early
+    preprocessor error can therefore expose more later diagnostics and make
+    generic diagnostic cardinality look worse.  Count reduction alone is not
+    sufficient: deleting the bad directive has the same apparent effect.  This
+    proof requires both a strict same-verifier reduction of the preprocessor
+    diagnostic and the exact repaired directive at the same file/line inside
+    the current workspace.
+    """
+
+    if workspace is None:
+        return False
+    workspace_root = Path(workspace).resolve()
+
+    def command_key(result: Mapping[str, Any]) -> tuple[str, ...]:
+        return tuple(str(part or "").strip() for part in result.get("command") or () if str(part or "").strip())
+
+    def output(result: Mapping[str, Any]) -> str:
+        return "\n".join(
+            str(result.get(key) or "")
+            for key in ("diagnostic_excerpt", "stdout_tail", "stderr_tail")
+            if str(result.get(key) or "").strip()
+        )
+
+    after_by_command = {command_key(result): result for result in after_results if command_key(result)}
+    for before in before_results:
+        command = command_key(before)
+        after = after_by_command.get(command)
+        if not command or after is None:
+            continue
+        before_output = output(before)
+        after_output = output(after)
+        before_count = before_output.count('#include expects "FILENAME" or <FILENAME>')
+        after_count = after_output.count('#include expects "FILENAME" or <FILENAME>')
+        if before_count <= 0 or after_count >= before_count:
+            continue
+
+        lines = before_output.splitlines()
+        for index, line in enumerate(lines):
+            diagnostic = _CPP_MALFORMED_INCLUDE_ERROR_RE.match(line)
+            if diagnostic is None:
+                continue
+            source_match = None
+            for nearby in lines[index + 1 : index + 4]:
+                candidate_match = _CPP_MALFORMED_INCLUDE_SOURCE_RE.match(nearby)
+                if candidate_match is not None:
+                    source_match = candidate_match
+                    break
+            if source_match is None or source_match.group("line") != diagnostic.group("line"):
+                continue
+            raw_path = diagnostic.group("path").strip()
+            candidate_path = Path(raw_path)
+            if not candidate_path.is_absolute():
+                candidate_path = workspace_root / candidate_path
+            candidate_path = candidate_path.resolve()
+            if not candidate_path.is_relative_to(workspace_root) or not candidate_path.is_file():
+                continue
+            try:
+                candidate_lines = candidate_path.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeError):
+                continue
+            line_number = int(diagnostic.group("line"))
+            if line_number <= 0 or line_number > len(candidate_lines):
+                continue
+            header = source_match.group("header")
+            if candidate_lines[line_number - 1].strip() == f"#include <{header}>":
+                return True
+    return False
+
+
 def workspace_quality_verifier_regressed(
     before_results: Sequence[Mapping[str, Any]],
     after_results: Sequence[Mapping[str, Any]],
@@ -246,11 +690,7 @@ def workspace_quality_verifier_regressed(
             return True
         before_run_count = _workspace_quality_unittest_run_count(before)
         after_run_count = _workspace_quality_unittest_run_count(after)
-        if (
-            before_run_count is not None
-            and after_run_count is not None
-            and after_run_count < before_run_count
-        ):
+        if before_run_count is not None and after_run_count is not None and after_run_count < before_run_count:
             return True
         before_counts = _workspace_quality_test_failure_counts(before)
         after_counts = _workspace_quality_test_failure_counts(after)
@@ -351,6 +791,38 @@ async def _settle_pending_workspace_quality_repair_attempt(
     if failures:
         accepted = False
         reason = f"workspace_quality_repair_lease_heartbeat_failed:{failures[0].get('code', 'unknown')}"
+    candidate_guard_receipt: dict[str, Any] = {}
+    candidate_guard = pending.get("candidate_guard")
+    if candidate_guard is not None:
+        if accepted and callable(getattr(candidate_guard, "accept", None)):
+            candidate_guard_receipt = dict(candidate_guard.accept(reason=reason))
+            if str(candidate_guard_receipt.get("status") or "") != "accepted":
+                accepted = False
+                reason = "workspace_quality_repair_candidate_accept_failed"
+        elif not accepted and callable(getattr(candidate_guard, "rollback", None)):
+            candidate_guard_receipt = dict(await candidate_guard.rollback(reason=reason))
+            rollback_status = str(candidate_guard_receipt.get("status") or "")
+            if rollback_status not in {"restored", "closed"}:
+                reason = f"workspace_quality_repair_candidate_rollback_failed:{rollback_status or 'unknown'}"
+    artifact_receipts: tuple[dict[str, str], ...] = ()
+    artifact_receipt_error = ""
+    mutation_committed = pending.get("mutation_committed") is True
+    if accepted or mutation_committed:
+        try:
+            # Artifact authority proves which bytes physically landed; it is
+            # independent of whether those bytes improved the verifier.  A
+            # real, authorized mutation must therefore refresh receipts even
+            # when the repair attempt later settles failed/no-progress.
+            # Otherwise ProjectCompletion sees the prior hash, invents a
+            # ``missing_required_artifact`` residual, and hides the real
+            # compiler/test diagnostic behind a stale owner-rework loop.
+            artifact_receipts = _record_workspace_quality_repair_artifact_receipts(pending)
+        except (FileNotFoundError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            accepted = False
+            artifact_receipt_error = (
+                f"workspace_quality_repair_artifact_receipt_refresh_failed:{type(exc).__name__}:{exc}"
+            )
+            reason = artifact_receipt_error
     settle_result = executor._settle_director_stage_materialization_attempt(
         task_row_id=task_row_id,
         execution_attempt=execution_attempt,
@@ -363,6 +835,10 @@ async def _settle_pending_workspace_quality_repair_attempt(
         "settled": bool(settle_result.get("success")),
         "outcome": "completed" if accepted else "failed",
         "success_authority": "post_repair_verifier" if accepted else "repair_attempt_failure",
+        "project_artifact_receipt_count": len(artifact_receipts),
+        "project_artifact_receipts": [dict(item) for item in artifact_receipts],
+        "artifact_receipt_error": artifact_receipt_error,
+        "candidate_guard_receipt": candidate_guard_receipt,
     }
 
 
@@ -500,9 +976,7 @@ _CRATE_REWRITE_HOLD_MARKERS = (
 def _workspace_quality_plannable_source_tools(plan_probe: Mapping[str, Any] | None) -> set[str]:
     payload = dict(plan_probe) if isinstance(plan_probe, Mapping) else {}
     return {
-        str(item or "").strip()
-        for item in (payload.get("plannable_source_tools") or ())
-        if str(item or "").strip()
+        str(item or "").strip() for item in (payload.get("plannable_source_tools") or ()) if str(item or "").strip()
     }
 
 
@@ -1169,6 +1643,7 @@ def _apply_workspace_quality_repairs(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     from polaris.cells.roles.adapters.public.service import (
         run_director_materialization_quality_repair_schedule,
+        run_director_post_execution_repair_schedule,
     )
 
     class _QualityRepairAdapter:
@@ -1232,13 +1707,43 @@ def _apply_workspace_quality_repairs(
         task_payload["metadata"] = metadata
     else:
         task_payload = {"target_files": target_files, "metadata": metadata}
-    return run_director_materialization_quality_repair_schedule(
+    materialization_results, materialization_summary = run_director_materialization_quality_repair_schedule(
         _QualityRepairAdapter(executor.workspace),
         task=task_payload,
         task_id=resolved_task_id,
         artifact_quality_errors=artifact_quality_errors,
         execution_attempt=execution_attempt,
     )
+    # The materialization schedule does not own C/C++ post-compiler rules.
+    # Preserve the same verifier diagnostics and canonical TaskRuntime attempt
+    # across the public post-execution boundary so its runtime planner can
+    # produce DEO effects.  The former workspace-only call dropped both facts:
+    # coverage said ``cpp.standard_include`` was executable, while the runner
+    # received no diagnostics and returned ``repair_not_planned``.
+    post_execution_results, post_execution_summary = run_director_post_execution_repair_schedule(
+        executor.workspace,
+        task_id=resolved_task_id,
+        artifact_quality_errors=artifact_quality_errors,
+        execution_attempt=execution_attempt,
+    )
+    results = [
+        *(dict(item) for item in materialization_results),
+        *(dict(item) for item in post_execution_results),
+    ]
+    summary = dict(materialization_summary)
+    source_tools = [str(item) for item in summary.get("source_tools", []) if str(item or "").strip()]
+    for item in post_execution_results:
+        result = item.get("result") if isinstance(item, Mapping) else None
+        if not isinstance(result, Mapping):
+            continue
+        source_tool = str(result.get("source_tool") or "").strip()
+        if source_tool and source_tool not in source_tools:
+            source_tools.append(source_tool)
+    summary["source_tools"] = source_tools
+    summary["tool_results"] = len(results)
+    if post_execution_summary is not None:
+        summary["post_execution_repair_summary"] = dict(post_execution_summary)
+    return results, summary
 
 
 async def _apply_workspace_quality_deterministic_repairs(
@@ -1279,6 +1784,7 @@ async def _apply_workspace_quality_deterministic_repairs(
         executor,
         artifact_quality_errors=artifact_quality_errors,
     )
+    direct_diagnostic_target_files = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
     if not diagnostic_target_files:
         diagnostic_target_files = _workspace_quality_test_shortfall_owner_targets(
             executor,
@@ -1289,9 +1795,10 @@ async def _apply_workspace_quality_deterministic_repairs(
     # TASK-1-source-models-2 (poem.hpp) while the leading error was
     # Moon.status on generator.cpp (live L1-06). Claim the first diagnostic
     # path's owner; later residuals select the next owner after revalidation.
-    primary_diagnostic_targets = _workspace_quality_llm_claim_target_files(
-        owner_target_files=None,
-        diagnostic_target_files=diagnostic_target_files,
+    primary_diagnostic_targets = _workspace_quality_primary_claim_target_files(
+        plan_probe=executor._workspace_quality_repair_plan_probe_report(artifact_quality_errors),
+        direct_diagnostic_target_files=direct_diagnostic_target_files,
+        causal_diagnostic_target_files=diagnostic_target_files,
         fallback_target_files=[],
     )
     claim_target_files = (
@@ -1378,13 +1885,14 @@ async def _apply_workspace_quality_deterministic_repairs(
                 in {"deferred_repair_effects_pending", "deferred_command_effect_pending"}
             )
         ]
-        commit_context = executor._director_stage_materialization_settle_commit_context(
-            run=run,
-            run_id=run_id,
-            diagnostics=artifact_quality_errors,
-            factory_stage="quality_gate",
-        )
         for candidate_index, candidate in enumerate(deferred_candidates):
+            commit_context = executor._director_stage_materialization_settle_commit_context(
+                run=run,
+                run_id=run_id,
+                diagnostics=artifact_quality_errors,
+                factory_stage="quality_gate",
+                deferred_tool_results=[candidate],
+            )
             candidate_receipts = await commit_materialization_deferred_repairs(
                 workspace=str(execution_attempt.workspace),
                 tool_results=[candidate],
@@ -1432,6 +1940,8 @@ async def _apply_workspace_quality_deterministic_repairs(
             "task_id": task_id,
             "task_row_id": task_row_id,
             "execution_attempt": execution_attempt,
+            "task_completion_projection": _task_completion_projection_from_repair_task(repair_task),
+            "mutation_committed": True,
             "heartbeat_task": heartbeat_task,
             "heartbeat_stop": heartbeat_stop,
             "heartbeat_failures": heartbeat_failures,
@@ -1487,6 +1997,8 @@ def _workspace_quality_llm_claim_target_files(
     owner_target_files: list[str] | None,
     diagnostic_target_files: list[str],
     fallback_target_files: list[str],
+    compiler_diagnostic_target_files: list[str] | None = None,
+    prefer_production_owner: bool = False,
 ) -> list[str]:
     """Choose the current claimed owner before unrelated mixed diagnostics.
 
@@ -1501,7 +2013,28 @@ def _workspace_quality_llm_claim_target_files(
     normalized_diagnostics = _dedupe_workspace_repair_paths(diagnostic_target_files)
     if normalized_diagnostics:
         normalized_owners = _dedupe_workspace_repair_paths(owner_target_files or [])
+        compiler_targets = [
+            path
+            for path in _dedupe_workspace_repair_paths(compiler_diagnostic_target_files or [])
+            if path in set(normalized_diagnostics)
+        ]
+        if compiler_targets:
+            # Compiler locations are physical mutation authority even when the
+            # authored translation unit is a test. L3-24 r62 proved
+            # ``tests/cpp_unit.cpp:125`` attempted to mutate a const value, but
+            # the old production-source preference discarded that exact test
+            # TU and forced every Provider edit onto ``src/inkwell/cipher.cpp``.
+            # Keep TaskRuntime ownership as the boundary; within that boundary
+            # the compiler's exact path outranks runtime observers and depth
+            # shortfall candidates.
+            if normalized_owners:
+                owner_set = set(normalized_owners)
+                owned_compiler_targets = [path for path in compiler_targets if path in owner_set]
+                if owned_compiler_targets:
+                    return owned_compiler_targets[:1]
+            return compiler_targets[:1]
         diagnostic_set = set(normalized_diagnostics)
+        source_targets = [path for path in normalized_diagnostics if not _is_workspace_quality_test_target(path)]
         # The deterministic TaskRuntime claim passes only its verified
         # in-scope diagnostic targets.  A generic prior owner override often
         # contains additional files that are absent from the current failure;
@@ -1509,12 +2042,159 @@ def _workspace_quality_llm_claim_target_files(
         # owner routing.  Require the whole supplied owner set to be current.
         if normalized_owners and set(normalized_owners).issubset(diagnostic_set):
             owner_set = set(normalized_owners)
+            compiler_source_set = set(compiler_targets)
+            compiler_owner_sources = [
+                path for path in source_targets if path in compiler_source_set and path in owner_set
+            ]
+            if compiler_owner_sources:
+                # Live L3-24 r59: mixed owner evidence began with the Python
+                # acceptance-test observer, while ``FAILING_TUS`` proved
+                # src/core/cipher.cpp was the physical compiler owner. Leasing
+                # the observer made every Provider repair edit the test and
+                # left the primary C++ failure outside mutation scope.
+                return compiler_owner_sources[:1]
+            if prefer_production_owner and source_targets:
+                owner_sources = [path for path in source_targets if path in owner_set]
+                if owner_sources:
+                    # Live L3-24 r43: the exact owner evidence contained a
+                    # Python assertion observer first, followed by the CMake
+                    # manifest and four causal C++ sources.  Selecting the
+                    # first intersecting owner forced every Provider repair
+                    # onto the test while all production owners were read-only.
+                    # The caller enables this only for normalized behavioral
+                    # runtime failures; test-only/compiler-owned diagnostics
+                    # retain the narrow behavior below.
+                    return owner_sources[:1]
+            # A runnable behavior assertion names its observing test wrapper,
+            # while causal analysis can additionally prove the production
+            # implementation that owns the failure.  The old owner hint is a
+            # lease-routing aid, not stronger mutation authority than current
+            # verifier causality.  Do not let an all-test hint collapse a
+            # source-backed repair back to the observer (live L3-24 r23:
+            # checksum failures resolved four C++ sources, yet every Provider
+            # turn was forced to edit only tests/test_product.py).
+            if source_targets and all(_is_workspace_quality_test_target(path) for path in normalized_owners):
+                return source_targets[:1]
+            owner_set = set(normalized_owners)
             return [path for path in normalized_diagnostics if path in owner_set][:1]
-        source_targets = [path for path in normalized_diagnostics if not _is_workspace_quality_test_target(path)]
         return (source_targets or normalized_diagnostics)[:1]
     if owner_target_files:
         return _dedupe_workspace_repair_paths(owner_target_files)
     return _dedupe_workspace_repair_paths(fallback_target_files)
+
+
+_DIRECT_DIAGNOSTIC_OWNER_SOURCE_TOOLS = frozenset(
+    {
+        "deterministic_rust_field_rename_suggestion_repair",
+        "deterministic_rust_line_suggestion_repair",
+    }
+)
+
+
+def _workspace_quality_primary_claim_target_files(
+    *,
+    plan_probe: Mapping[str, Any] | None,
+    direct_diagnostic_target_files: list[str],
+    causal_diagnostic_target_files: list[str],
+    fallback_target_files: list[str],
+) -> list[str]:
+    """Choose an edit owner without promoting read-only probe companions.
+
+    Line-local and field-local executable repairs mutate the file named by the
+    compiler diagnostic. Rust plan probing also appends ``Cargo.toml`` and
+    ``src/lib.rs`` as read context; those companions must not be re-ranked as
+    write owners merely because they are non-test paths. Other diagnostic
+    archetypes retain the existing causal-source ordering.
+    """
+
+    direct_targets = _dedupe_workspace_repair_paths(direct_diagnostic_target_files)
+    if direct_targets and (
+        _workspace_quality_plannable_source_tools(plan_probe) & _DIRECT_DIAGNOSTIC_OWNER_SOURCE_TOOLS
+    ):
+        return direct_targets[:1]
+    return _workspace_quality_llm_claim_target_files(
+        owner_target_files=None,
+        diagnostic_target_files=causal_diagnostic_target_files,
+        fallback_target_files=fallback_target_files,
+    )
+
+
+_TEST_HARNESS_EXCEPTION_MARKERS = (
+    "filenotfounderror:",
+    "unicodedecodeerror:",
+    "modulenotfounderror:",
+    "failed to import test module",
+    "error at setup",
+    "setup failed",
+)
+
+
+def _workspace_quality_direct_test_exception_targets(
+    *,
+    direct_targets: list[str],
+    artifact_quality_errors: list[str],
+) -> list[str]:
+    """Keep project-local test owners for harness/setup/runtime exceptions.
+
+    A failing behavioral assertion observes production behavior and may be
+    causally routed to a source module.  A traceback whose only direct project
+    paths are tests and whose terminal error is a harness/setup/runtime error
+    is different: redirecting it to production makes the files that can repair
+    the harness read-only.  This classifier never grants scope; the canonical
+    TaskRuntime claim and JobToken still authorize the returned owner.
+    """
+
+    normalized_direct = _dedupe_workspace_repair_paths(direct_targets)
+    if not normalized_direct or any(not _is_workspace_quality_test_target(path) for path in normalized_direct):
+        return []
+    diagnostic_blob = "\n".join(str(item or "") for item in artifact_quality_errors).casefold()
+    if any(marker in diagnostic_blob for marker in _TEST_HARNESS_EXCEPTION_MARKERS):
+        return normalized_direct
+    return []
+
+
+def _workspace_quality_direct_cpp_compiler_target_files(
+    executor,
+    *,
+    artifact_quality_errors: list[str],
+) -> list[str]:
+    """Return exact workspace-local C/C++ paths named by compiler diagnostics.
+
+    A compiler location is physical mutation evidence.  It must stay distinct
+    from broader causal/runtime/depth candidates, including when the authored
+    translation unit lives under ``tests/``.  This helper is read-only; the
+    canonical TaskRuntime claim and JobToken still decide write authority.
+    """
+
+    from polaris.cells.director.runtime.public import normalize_director_repair_diagnostics
+
+    try:
+        diagnostics = normalize_director_repair_diagnostics(
+            tuple(str(item or "") for item in artifact_quality_errors if str(item or "").strip())
+        )
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        return []
+
+    workspace = Path(executor.workspace).resolve()
+    targets: list[str] = []
+    for diagnostic in diagnostics:
+        if str(diagnostic.source or "").strip().casefold() not in {"compiler", "typecheck", "syntax"}:
+            continue
+        raw_path = str(diagnostic.path or "").strip()
+        if not raw_path:
+            continue
+        candidate = Path(raw_path)
+        if candidate.is_absolute():
+            try:
+                candidate = candidate.resolve().relative_to(workspace)
+            except (OSError, ValueError):
+                continue
+        rel = candidate.as_posix().lstrip("./")
+        if not rel or Path(rel).suffix.casefold() not in _CPP_REPAIR_SOURCE_SUFFIXES:
+            continue
+        if (workspace / rel).is_file():
+            targets.append(rel)
+    return _dedupe_workspace_repair_paths(targets)
 
 
 def _workspace_quality_causal_repair_target_files(
@@ -1532,12 +2212,50 @@ def _workspace_quality_causal_repair_target_files(
     from polaris.cells.roles.adapters.public import resolve_director_causal_quality_repair_target_files
 
     direct_targets = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
+    direct_cpp_compiler_targets = _workspace_quality_direct_cpp_compiler_target_files(
+        executor,
+        artifact_quality_errors=artifact_quality_errors,
+    )
+    if direct_cpp_compiler_targets:
+        return direct_cpp_compiler_targets
+    direct_test_exception_targets = _workspace_quality_direct_test_exception_targets(
+        direct_targets=direct_targets,
+        artifact_quality_errors=artifact_quality_errors,
+    )
+    if direct_test_exception_targets:
+        return direct_test_exception_targets
     causal_targets = resolve_director_causal_quality_repair_target_files(
         artifact_quality_errors=list(artifact_quality_errors),
         changed_files=executor._workspace_quality_repair_changed_files(),
         workspace_full=str(executor.workspace),
     )
     diagnostic_blob = "\n".join(str(item or "") for item in artifact_quality_errors)
+    causal_source_targets = [path for path in causal_targets if not _is_workspace_quality_test_target(path)]
+    direct_source_targets = [path for path in direct_targets if not _is_workspace_quality_test_target(path)]
+    compiler_frontier = (
+        workspace_quality_unclaimed_failing_tu_targets(
+            artifact_quality_errors,
+            claimed_targets=(),
+            workspace=Path(executor.workspace),
+        )
+        if "### FAILING_TUS" in diagnostic_blob
+        else []
+    )
+    # A runtime behavior assertion names its observing Python/JS test wrapper,
+    # while language-aware causal discovery names the production CLI/module.
+    # Keep genuine compiler-owned test files authoritative, but otherwise put
+    # proven production candidates before the observer.  L3-24 r24 retained
+    # ``src/cli.cpp`` in runtime-smoke evidence yet sent four Provider turns to
+    # ``tests/test_product.py``; three equal-count test edits were rolled back.
+    if (
+        causal_source_targets
+        and direct_targets
+        and not direct_source_targets
+        and not compiler_frontier
+        and _GO_COMPILER_DIAGNOSTIC_RE.search(diagnostic_blob) is None
+        and "go test" not in diagnostic_blob.casefold()
+    ):
+        return _dedupe_workspace_repair_paths([*causal_source_targets, *direct_targets])
     causal_go_sources = [
         path
         for path in causal_targets
@@ -1568,6 +2286,7 @@ def _workspace_quality_rank_owner_rebind_candidates(
     *,
     owner_candidates: list[str],
     diagnostic_targets: list[str],
+    prefer_diagnostic_order: bool = False,
 ) -> list[str]:
     """Narrow a rebound CE owner to production paths named by current evidence.
 
@@ -1582,11 +2301,206 @@ def _workspace_quality_rank_owner_rebind_candidates(
         set(diagnostic_targets),
         set(normalized_owners),
     )
-    # Preserve the CE owner's stable file order for bounded round rotation;
-    # current diagnostics only narrow that list, they do not mint a second
-    # ordering authority.
-    causal_owner_candidates = [path for path in normalized_owners if path in owner_overlap]
+    if prefer_diagnostic_order:
+        # Runtime behavior evidence is a current causal ranking, not merely a
+        # scope filter.  Live L3-24 r38 resolved two CLI output assertions to
+        # ``src/main.cpp`` first, but restoring CE owner order selected
+        # ``src/diary/diary_book.cpp`` and forced three impossible repairs in
+        # the wrong module.  Preserve the read-only resolver's ranking while
+        # still intersecting it with the immutable CE/JobToken boundary.
+        normalized_diagnostics = _dedupe_workspace_repair_paths(diagnostic_targets)
+        causal_owner_candidates = [path for path in normalized_diagnostics if path in owner_overlap]
+    else:
+        # Compiler/owner-rebind rounds keep the CE owner's stable file order
+        # for bounded rotation; current diagnostics narrow that list without
+        # becoming a second ordering authority.
+        causal_owner_candidates = [path for path in normalized_owners if path in owner_overlap]
     return causal_owner_candidates or normalized_owners
+
+
+def _workspace_quality_cli_boundary_entrypoint_candidates(
+    *,
+    artifact_quality_errors: list[str],
+    owner_candidates: list[str],
+) -> list[str]:
+    """Return CE-owned entrypoints for unambiguous CLI boundary failures.
+
+    Runtime behavior assertions normally require bounded rotation across the
+    same CE-owned production frontier because a failed CLI observation may be
+    caused by a domain sibling.  Argument/command-dispatch failures are
+    different: they prove the executable boundary itself rejected the call
+    before domain behavior could run.  Narrow only that explicit evidence and
+    never infer authority outside ``owner_candidates``.
+    """
+
+    diagnostic_blob = "\n".join(str(item or "") for item in artifact_quality_errors)
+    if _CLI_BOUNDARY_BEHAVIOR_RE.search(diagnostic_blob) is None:
+        return []
+    entrypoints: list[str] = []
+    for path in _dedupe_workspace_repair_paths(owner_candidates):
+        normalized = path.replace("\\", "/")
+        candidate = Path(normalized)
+        parent_parts = {part.casefold() for part in candidate.parts[:-1]}
+        if (
+            candidate.stem.casefold() in _ENTRYPOINT_PATH_STEMS
+            or bool(parent_parts.intersection(_ENTRYPOINT_PATH_PARTS))
+        ):
+            entrypoints.append(path)
+    return entrypoints
+
+
+def _workspace_quality_expand_claimed_owner_production_frontier(
+    *,
+    authoritative_owner_paths: list[str],
+    claimed_owner_candidates: list[str],
+    diagnostic_targets: list[str],
+) -> list[str]:
+    """Keep every current production residual inside one claimed CE owner.
+
+    The first diagnostic path is sufficient to claim the authoritative
+    TaskRuntime owner, but it is not the complete mutation frontier.  Once the
+    owner is known, retain every current production target inside that same
+    CE-owned boundary so bounded Factory repair rounds can rotate across the
+    siblings.  Test-owner repair remains narrow: an observing test wrapper
+    must not silently authorize every sibling test in its task.
+    """
+
+    normalized_owner_paths = _dedupe_workspace_repair_paths(authoritative_owner_paths)
+    normalized_claimed = _dedupe_workspace_repair_paths(claimed_owner_candidates)
+    current_overlap = _workspace_quality_repair_path_overlaps(
+        set(diagnostic_targets),
+        set(normalized_owner_paths),
+    )
+    current_owner_candidates = [path for path in normalized_owner_paths if path in current_overlap]
+    current_production_candidates = [
+        path for path in current_owner_candidates if not _is_workspace_quality_test_target(path)
+    ]
+    claimed_production_only = bool(normalized_claimed) and all(
+        not _is_workspace_quality_test_target(path) for path in normalized_claimed
+    )
+    if current_production_candidates and (not normalized_claimed or claimed_production_only):
+        return current_production_candidates
+    return normalized_claimed or current_owner_candidates
+
+
+def _workspace_quality_cpp_linker_topology_repair_targets(
+    *,
+    artifact_quality_errors: list[str],
+    authoritative_owner_paths: list[str],
+    claimed_owner_candidates: list[str],
+    diagnostic_targets: list[str],
+) -> list[str]:
+    """Keep the full same-owner linker topology after a one-path claim.
+
+    Linker ``undefined reference`` output identifies callers plus a declaration
+    owner; the first path is sufficient to claim a TaskRuntime owner but is not
+    the complete mutation frontier.  Return only current diagnostic paths that
+    are already inside that immutable CE/JobToken owner.
+    """
+
+    if not any("undefined reference" in str(item or "").casefold() for item in artifact_quality_errors):
+        return []
+    frontier = _workspace_quality_expand_claimed_owner_production_frontier(
+        authoritative_owner_paths=authoritative_owner_paths,
+        claimed_owner_candidates=claimed_owner_candidates,
+        diagnostic_targets=diagnostic_targets,
+    )
+    return _workspace_quality_rank_owner_rebind_candidates(
+        owner_candidates=frontier,
+        diagnostic_targets=diagnostic_targets,
+        prefer_diagnostic_order=True,
+    )
+
+
+def _workspace_quality_cpp_standard_compatibility_repair_targets(
+    *,
+    artifact_quality_errors: list[str],
+    workspace: Path,
+    authoritative_owner_paths: list[str],
+    claimed_owner_candidates: list[str],
+    diagnostic_targets: list[str],
+) -> list[str]:
+    """Return same-owner files that use one compiler-proven incompatible API.
+
+    A language-standard diagnostic is an interface transaction, not a missing
+    include.  Changing a declaration without its definitions/callers creates a
+    guaranteed compiler regression.  The first path remains sufficient for the
+    TaskRuntime claim; mutation scope expands only to files already authorized
+    by that immutable CE/JobToken owner and containing the exact compiler-named
+    ``std::`` symbol.
+    """
+
+    diagnostic_blob = "\n".join(str(item or "") for item in artifact_quality_errors)
+    incompatible_symbols = list(
+        dict.fromkeys(match.group("symbol") for match in _CPP_STANDARD_INCOMPATIBILITY_RE.finditer(diagnostic_blob))
+    )
+    if not incompatible_symbols:
+        return []
+
+    workspace_root = workspace.resolve()
+    normalized_owner_paths = _dedupe_workspace_repair_paths(authoritative_owner_paths)
+    normalized_claimed = _dedupe_workspace_repair_paths(claimed_owner_candidates)
+    if normalized_claimed and not _workspace_quality_repair_path_overlaps(
+        set(normalized_claimed),
+        set(normalized_owner_paths),
+    ):
+        return []
+
+    symbol_paths: list[str] = []
+    for owner_path in normalized_owner_paths:
+        if Path(owner_path).suffix.casefold() not in _CPP_REPAIR_SOURCE_SUFFIXES:
+            continue
+        candidate = (workspace_root / owner_path).resolve()
+        try:
+            candidate.relative_to(workspace_root)
+        except ValueError:
+            continue
+        try:
+            content = candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if any(symbol in content for symbol in incompatible_symbols):
+            symbol_paths.append(owner_path)
+
+    current_frontier = _workspace_quality_expand_claimed_owner_production_frontier(
+        authoritative_owner_paths=normalized_owner_paths,
+        claimed_owner_candidates=normalized_claimed,
+        diagnostic_targets=diagnostic_targets,
+    )
+    targets = _dedupe_workspace_repair_paths([*current_frontier, *symbol_paths])
+    return targets if len(targets) > 1 else []
+
+
+def _workspace_quality_has_behavioral_runtime_failure(
+    artifact_quality_errors: list[str],
+) -> bool:
+    """Return whether current verifier evidence is a behavioral runtime fail.
+
+    Compiler diagnostics already provide an exact mutation site and must stay
+    narrow.  A runtime assertion, by contrast, observes behavior through a
+    test wrapper or CLI entrypoint and can legitimately have several
+    production candidates inside one immutable CE/JobToken owner.  Use the
+    runtime-owned normalized diagnostic metadata rather than framework text.
+    """
+
+    from polaris.cells.director.runtime.public import normalize_director_repair_diagnostics
+
+    try:
+        diagnostics = normalize_director_repair_diagnostics(
+            tuple(str(item or "") for item in artifact_quality_errors if str(item or "").strip())
+        )
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        return False
+    has_behavior_failure = any(
+        str(diagnostic.source or "").strip() == "runtime_smoke"
+        and str(diagnostic.metadata.get("result_kind") or "").strip().casefold() == "fail"
+        for diagnostic in diagnostics
+    )
+    has_compiler_failure = any(
+        str(diagnostic.source or "").strip().casefold() in {"compiler", "typecheck", "syntax"}
+        for diagnostic in diagnostics
+    )
+    return has_behavior_failure and not has_compiler_failure
 
 
 async def _apply_workspace_quality_llm_repairs(
@@ -1617,7 +2531,19 @@ async def _apply_workspace_quality_llm_repairs(
         executor,
         artifact_quality_errors=artifact_quality_errors,
     )
+    diagnostic_blob = "\n".join(str(item or "") for item in artifact_quality_errors)
+    compiler_diagnostic_target_files = _workspace_quality_direct_cpp_compiler_target_files(
+        executor,
+        artifact_quality_errors=artifact_quality_errors,
+    )
+    if not compiler_diagnostic_target_files and "### FAILING_TUS" in diagnostic_blob:
+        compiler_diagnostic_target_files = workspace_quality_unclaimed_failing_tu_targets(
+            artifact_quality_errors,
+            claimed_targets=(),
+            workspace=Path(executor.workspace),
+        )
     materialized_declared_targets = [path for path in declared_target_files if path in set(changed_files)]
+    behavioral_runtime_failure = _workspace_quality_has_behavioral_runtime_failure(artifact_quality_errors)
     claim_target_files = (
         _dedupe_workspace_repair_paths(owner_target_files or [])
         if explicit_owner_rebind
@@ -1625,6 +2551,8 @@ async def _apply_workspace_quality_llm_repairs(
             owner_target_files=owner_target_files,
             diagnostic_target_files=diagnostic_target_files,
             fallback_target_files=materialized_declared_targets or changed_files,
+            compiler_diagnostic_target_files=compiler_diagnostic_target_files,
+            prefer_production_owner=behavioral_runtime_failure,
         )
     )
     # Provider mutation intent follows the exact current diagnostic target.
@@ -1635,28 +2563,28 @@ async def _apply_workspace_quality_llm_repairs(
     inbound_quality_context = context.get("director_quality_repair")
     inbound_regression_guards: list[str] = []
     inbound_candidate_rejections: list[str] = []
+    inbound_candidate_rejection_targets: list[str] = []
     inbound_causal_reanalysis_required = False
     if isinstance(inbound_quality_context, Mapping):
         raw_guards = inbound_quality_context.get("regression_guard_errors")
         if isinstance(raw_guards, list | tuple):
-            inbound_regression_guards = [
-                str(item or "").strip() for item in raw_guards if str(item or "").strip()
-            ][:6]
+            inbound_regression_guards = [str(item or "").strip() for item in raw_guards if str(item or "").strip()][:6]
         raw_candidate_rejections = inbound_quality_context.get("candidate_rejection_errors")
         if isinstance(raw_candidate_rejections, list | tuple):
             inbound_candidate_rejections = [
-                str(item or "").strip()
-                for item in raw_candidate_rejections
-                if str(item or "").strip()
+                str(item or "").strip() for item in raw_candidate_rejections if str(item or "").strip()
             ][:4]
+        raw_candidate_rejection_targets = inbound_quality_context.get("candidate_rejection_target_files")
+        if isinstance(raw_candidate_rejection_targets, list | tuple):
+            inbound_candidate_rejection_targets = _dedupe_workspace_repair_paths(
+                [str(item or "").strip() for item in raw_candidate_rejection_targets if str(item or "").strip()]
+            )[:12]
         # This wrapper intentionally rebuilds the Director context from a
         # whitelist so inbound data cannot override paths/tool policy. Preserve
         # the one bounded Factory-owned escalation bit explicitly. Live L3-22
         # set it after verified stagnation, but dropping it here meant the
         # final provider request never received the causal-path directive.
-        inbound_causal_reanalysis_required = (
-            inbound_quality_context.get("causal_reanalysis_required") is True
-        )
+        inbound_causal_reanalysis_required = inbound_quality_context.get("causal_reanalysis_required") is True
     repair_context: dict[str, Any] = {
         "delivery_mode": "materialize_changes",
         "run_id": run_id,
@@ -1684,6 +2612,10 @@ async def _apply_workspace_quality_llm_repairs(
         repair_context["director_quality_repair"]["regression_guard_errors"] = inbound_regression_guards
     if inbound_candidate_rejections:
         repair_context["director_quality_repair"]["candidate_rejection_errors"] = inbound_candidate_rejections
+    if inbound_candidate_rejection_targets:
+        repair_context["director_quality_repair"]["candidate_rejection_target_files"] = (
+            inbound_candidate_rejection_targets
+        )
     if inbound_causal_reanalysis_required:
         repair_context["director_quality_repair"]["causal_reanalysis_required"] = True
     catalog = executor._read_catalog_contract()
@@ -1776,27 +2708,153 @@ async def _apply_workspace_quality_llm_repairs(
             "tool_results": 0,
         }
 
-    if explicit_owner_rebind:
-        repair_task_metadata_raw = repair_task.get("metadata")
-        repair_task_metadata = (
-            repair_task_metadata_raw if isinstance(repair_task_metadata_raw, Mapping) else {}
+    repair_task_metadata_raw = repair_task.get("metadata")
+    repair_task_metadata = repair_task_metadata_raw if isinstance(repair_task_metadata_raw, Mapping) else {}
+    authoritative_owner_paths = _workspace_quality_authoritative_owner_paths(
+        repair_task_metadata,
+        run_id=run_id,
+    )
+    if not authoritative_owner_paths:
+        raw_owner_paths = repair_task.get("target_files") or repair_task.get("scope_paths") or ()
+        authoritative_owner_paths = _dedupe_workspace_repair_paths(
+            [raw_owner_paths] if isinstance(raw_owner_paths, str) else list(raw_owner_paths)
         )
-        authoritative_owner_paths = _workspace_quality_authoritative_owner_paths(
-            repair_task_metadata,
-            run_id=run_id,
+
+    topology_repair_targets = _workspace_quality_cpp_linker_topology_repair_targets(
+        artifact_quality_errors=artifact_quality_errors,
+        authoritative_owner_paths=authoritative_owner_paths,
+        claimed_owner_candidates=claim_target_files,
+        diagnostic_targets=diagnostic_target_files,
+    )
+    compatibility_repair_targets = _workspace_quality_cpp_standard_compatibility_repair_targets(
+        artifact_quality_errors=artifact_quality_errors,
+        workspace=Path(executor.workspace),
+        authoritative_owner_paths=authoritative_owner_paths,
+        claimed_owner_candidates=claim_target_files,
+        diagnostic_targets=diagnostic_target_files,
+    )
+    atomic_repair_targets = topology_repair_targets or compatibility_repair_targets
+    if not explicit_owner_rebind and atomic_repair_targets:
+        target_files = atomic_repair_targets
+        repair_context["target_files"] = atomic_repair_targets
+        repair_context["director_quality_repair"]["repair_target_files"] = atomic_repair_targets
+        repair_context["director_quality_repair"]["write_only_single_target"] = (
+            {"target_file": atomic_repair_targets[0]} if len(atomic_repair_targets) == 1 else None
         )
-        if not authoritative_owner_paths:
-            raw_owner_paths = repair_task.get("target_files") or repair_task.get("scope_paths") or ()
-            authoritative_owner_paths = _dedupe_workspace_repair_paths(
-                [raw_owner_paths] if isinstance(raw_owner_paths, str) else list(raw_owner_paths)
+        repair_context["director_quality_repair"]["topology_multi_target"] = len(atomic_repair_targets) > 1
+        repair_context["director_quality_repair"]["atomic_multi_target"] = len(atomic_repair_targets) > 1
+        repair_context["factory_workspace_quality_repair"]["target_files"] = atomic_repair_targets
+        frontier_key = (
+            "factory_workspace_quality_linker_topology_frontier"
+            if topology_repair_targets
+            else "factory_workspace_quality_cpp_standard_compatibility_frontier"
+        )
+        repair_context[frontier_key] = {
+            "claimed_owner_task_id": repair_task_id,
+            "claim_hint_target_files": list(claim_target_files),
+            "authorized_target_files": atomic_repair_targets,
+        }
+
+    if (
+        not explicit_owner_rebind
+        and behavioral_runtime_failure
+    ):
+        # L3-24 r36: ``app/main.cpp`` was sufficient to claim TASK-1, but the
+        # same behavioral diagnostic identified cipher/codec siblings inside
+        # that exact CE owner.  Reusing the claim hint as mutation authority
+        # forced three Provider turns onto main.cpp while the model correctly
+        # diagnosed the inverse-transform defect in the read-only cipher
+        # implementation.  Claim and mutation are distinct: after the owner is
+        # known, restore the current same-owner production frontier and rotate
+        # it with the diagnostic-signature cursor.  Compiler paths remain
+        # exact, test-only owners remain narrow, and JobToken scope is never
+        # expanded beyond the claimed task.
+        behavior_frontier = _workspace_quality_expand_claimed_owner_production_frontier(
+            authoritative_owner_paths=authoritative_owner_paths,
+            claimed_owner_candidates=claim_target_files,
+            diagnostic_targets=diagnostic_target_files,
+        )
+        cli_boundary_candidates = (
+            []
+            if inbound_candidate_rejections
+            else _workspace_quality_cli_boundary_entrypoint_candidates(
+                artifact_quality_errors=artifact_quality_errors,
+                owner_candidates=behavior_frontier,
             )
+        )
+        scoped_behavior_candidates = cli_boundary_candidates or _workspace_quality_rank_owner_rebind_candidates(
+            owner_candidates=behavior_frontier,
+            diagnostic_targets=diagnostic_target_files,
+            prefer_diagnostic_order=True,
+        )
+        if scoped_behavior_candidates:
+            rejection_retry_candidates = [
+                path for path in inbound_candidate_rejection_targets if path in scoped_behavior_candidates
+            ]
+            if inbound_candidate_rejections and rejection_retry_candidates:
+                # L3-24 r37: a moon_phase.cpp candidate was rejected by the
+                # precommit C++ compiler.  Factory correctly carried that exact
+                # diagnostic forward, but independently advanced the behavior
+                # rotation cursor to ink_renderer.cpp.  The next Director turn
+                # therefore had feedback it could not act on.  A candidate
+                # rejection is a target-bound transaction: retry that same
+                # path inside the already-claimed JobToken until the rejection
+                # is consumed or the existing convergence fuse stops it.
+                target_index = scoped_behavior_candidates.index(rejection_retry_candidates[0])
+            elif len(scoped_behavior_candidates) == 1:
+                target_index = 0
+            else:
+                raw_rotation_index = context.get("_factory_workspace_quality_target_rotation_index")
+                if isinstance(raw_rotation_index, int) and not isinstance(raw_rotation_index, bool):
+                    target_index = max(0, raw_rotation_index) % len(scoped_behavior_candidates)
+                else:
+                    target_index = (max(1, repair_attempt) - 1) % len(scoped_behavior_candidates)
+            scoped_repair_targets = [scoped_behavior_candidates[target_index]]
+            target_files = scoped_repair_targets
+            repair_context["target_files"] = scoped_repair_targets
+            repair_context["director_quality_repair"]["repair_target_files"] = scoped_repair_targets
+            repair_context["director_quality_repair"]["write_only_single_target"] = {
+                "target_file": scoped_repair_targets[0]
+            }
+            repair_context["factory_workspace_quality_repair"]["target_files"] = scoped_repair_targets
+            repair_context["factory_workspace_quality_behavior_frontier"] = {
+                "claimed_owner_task_id": repair_task_id,
+                "claim_hint_target_files": list(claim_target_files),
+                "authorized_target_candidates": scoped_behavior_candidates,
+                "authorized_target_files": scoped_repair_targets,
+                "rotation_index": target_index,
+                "candidate_rejection_target_pinned": bool(
+                    inbound_candidate_rejections and rejection_retry_candidates
+                ),
+            }
+
+    if explicit_owner_rebind:
         owner_overlap = _workspace_quality_repair_path_overlaps(
             set(claim_target_files),
             set(authoritative_owner_paths),
         )
-        authorized_owner_candidates = [
-            path for path in claim_target_files if path in owner_overlap
-        ]
+        authorized_owner_candidates = [path for path in claim_target_files if path in owner_overlap]
+        # ``owner_target_files`` is a deferred routing hint.  Once the exact
+        # TaskRuntime owner has been claimed, an explicit FAILING_TUS frontier
+        # is the stronger current mutation authority.  If the old hint has no
+        # overlap with that frontier, widen only inside the already-claimed
+        # JobToken and discard unrelated owner files from Provider rotation.
+        # Live L3-24 r13 otherwise forced edits to cipher.hpp/test_product.py
+        # while cli.cpp and moon_phase.cpp remained red for nine attempts.
+        primary_diagnostic_targets = compiler_diagnostic_target_files or diagnostic_target_files
+        if primary_diagnostic_targets:
+            # Live L3-24 r25: the first causal path (src/cipher.cpp) correctly
+            # claimed TASK-1, but that claim hint then replaced the full
+            # four-file behavior frontier. Ten physical repair requests were
+            # consequently forced back onto cipher.cpp while moon_phase.cpp,
+            # main.cpp, and diary.cpp could never receive an edit. A claim
+            # identifies the owner; it must not erase current sibling
+            # residuals inside that same immutable CE authority.
+            authorized_owner_candidates = _workspace_quality_expand_claimed_owner_production_frontier(
+                authoritative_owner_paths=authoritative_owner_paths,
+                claimed_owner_candidates=authorized_owner_candidates,
+                diagnostic_targets=primary_diagnostic_targets,
+            )
         if not authorized_owner_candidates:
             task_runtime_attempt = await _settle_pending_workspace_quality_repair_attempt(
                 executor,
@@ -1821,7 +2879,7 @@ async def _apply_workspace_quality_llm_repairs(
             }
         scoped_repair_candidates = _workspace_quality_rank_owner_rebind_candidates(
             owner_candidates=authorized_owner_candidates,
-            diagnostic_targets=diagnostic_target_files,
+            diagnostic_targets=primary_diagnostic_targets,
         )
         # Remint the owner from every deferred candidate, then give one exact
         # failing path to each Provider turn.  A broad same-owner batch lets a
@@ -1830,7 +2888,27 @@ async def _apply_workspace_quality_llm_repairs(
         # main_test.go and ignored note_test.go/sandbox_test.go).  Rotation is
         # bounded by the existing quality-repair round budget and never
         # expands the claimed JobToken scope.
-        target_index = (max(1, repair_attempt) - 1) % len(scoped_repair_candidates)
+        # Rotation belongs to one immutable verifier-diagnostic signature, not
+        # to the global workspace repair round number.  A successful repair
+        # can change both the residual set and its ordered causal candidates;
+        # carrying the old round ordinal into that new set skips its causal
+        # head.  Live L3-24 r32 repaired the test harness first, then used
+        # global round 2 against the new ``main.cpp -> cipher_engine.cpp``
+        # behavior frontier and therefore forced every physical retry onto the
+        # cipher file.  The enclosing validation loop now supplies a cursor
+        # scoped to the current diagnostic signature.  Direct/legacy callers
+        # without that cursor retain the historical round-based behavior.
+        rejection_retry_candidates = [
+            path for path in inbound_candidate_rejection_targets if path in scoped_repair_candidates
+        ]
+        if inbound_candidate_rejections and rejection_retry_candidates:
+            target_index = scoped_repair_candidates.index(rejection_retry_candidates[0])
+        else:
+            raw_rotation_index = context.get("_factory_workspace_quality_target_rotation_index")
+            if isinstance(raw_rotation_index, int) and not isinstance(raw_rotation_index, bool):
+                target_index = max(0, raw_rotation_index) % len(scoped_repair_candidates)
+            else:
+                target_index = (max(1, repair_attempt) - 1) % len(scoped_repair_candidates)
         scoped_repair_targets = [scoped_repair_candidates[target_index]]
         target_files = scoped_repair_targets
         repair_context["target_files"] = scoped_repair_targets
@@ -1844,6 +2922,9 @@ async def _apply_workspace_quality_llm_repairs(
             "claimed_owner_task_id": repair_task_id,
             "authorized_target_candidates": scoped_repair_candidates,
             "authorized_target_files": scoped_repair_targets,
+            "candidate_rejection_target_pinned": bool(
+                inbound_candidate_rejections and rejection_retry_candidates
+            ),
         }
 
     repair_context["task_id"] = repair_task_id
@@ -1897,6 +2978,7 @@ async def _apply_workspace_quality_llm_repairs(
             llm_call_timeout=executor._workspace_quality_llm_repair_timeout_seconds(context),
             artifact_quality_errors=artifact_quality_errors,
             changed_files=changed_files,
+            repair_target_files=list(target_files),
             repair_attempt=repair_attempt,
         )
     except Exception as exc:  # noqa: BLE001 - fail closed around external LLM repair boundary.
@@ -1920,6 +3002,7 @@ async def _apply_workspace_quality_llm_repairs(
     # fast-provider-response race exercised by the direct adapter tests.
     await asyncio.sleep(0)
     normalized_summary = dict(summary)
+    candidate_guard = normalized_summary.pop("_candidate_guard", None)
     if not str(normalized_summary.get("error_code") or "").strip():
         returned_error = str(normalized_summary.get("error") or "").strip()
         returned_error_folded = returned_error.casefold()
@@ -1971,9 +3054,12 @@ async def _apply_workspace_quality_llm_repairs(
             "task_id": repair_task_id,
             "task_row_id": repair_task_row_id,
             "execution_attempt": execution_attempt,
+            "task_completion_projection": _task_completion_projection_from_repair_task(repair_task),
+            "mutation_committed": True,
             "heartbeat_task": heartbeat_task,
             "heartbeat_stop": heartbeat_stop,
             "heartbeat_failures": heartbeat_failures,
+            "candidate_guard": candidate_guard,
         }
         normalized_summary["task_runtime_repair_attempt"] = {
             "task_id": repair_task_id,
@@ -1982,6 +3068,10 @@ async def _apply_workspace_quality_llm_repairs(
             "outcome": "pending_revalidation",
         }
     else:
+        if candidate_guard is not None and callable(getattr(candidate_guard, "rollback", None)):
+            normalized_summary["candidate_guard_rollback"] = await candidate_guard.rollback(
+                reason="workspace_quality_repair_authority_rejected"
+            )
         normalized_summary["task_runtime_repair_attempt"] = (
             await _settle_pending_workspace_quality_repair_attempt(
                 executor,
@@ -2194,6 +3284,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         seen_plannable_source_tools: set[str] = set()
         regression_guard_errors: list[str] = []
         candidate_rejection_errors: list[str] = []
+        candidate_rejection_target_files: list[str] = []
         regression_synthesis_round_granted = False
         regression_synthesis_round_pending = False
         regression_synthesis_union_test_identities: set[str] = set()
@@ -2213,12 +3304,20 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         # burns CPU/attempt epochs.  Route subsequent identical diagnostics
         # directly to the same-owner LLM edit path instead.
         deterministic_no_commit_contexts: dict[tuple[str, ...], dict[str, Any]] = {}
+        # Provider target rotation is meaningful only while the verifier
+        # diagnostic signature is unchanged.  A new signature represents a
+        # new causal frontier and must start from candidate zero.
+        owner_rebind_rotation_by_signature: dict[tuple[str, ...], int] = {}
+        active_repair_signature: tuple[str, ...] = ()
+        # Keep typed owner handoffs across rounds. A compiler can temporarily
+        # hide downstream diagnostics while an upstream source error is being
+        # repaired; dropping the handoff with that round strands the owner when
+        # the downstream error becomes visible again.
+        owner_handoff_history: list[dict[str, Any]] = []
 
-        def llm_repair_context() -> dict[str, Any]:
+        def llm_repair_context(*, owner_rebind_rotation: bool = False) -> dict[str, Any]:
             """Attach bounded prior-round failures without changing write authority."""
 
-            if not regression_guard_errors and not candidate_rejection_errors and not causal_reanalysis_this_round:
-                return context
             projected = dict(context)
             raw_quality = projected.get("director_quality_repair")
             quality = dict(raw_quality) if isinstance(raw_quality, Mapping) else {}
@@ -2226,9 +3325,16 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 quality["regression_guard_errors"] = list(regression_guard_errors[:6])
             if candidate_rejection_errors:
                 quality["candidate_rejection_errors"] = list(candidate_rejection_errors[:4])
+            if candidate_rejection_target_files:
+                quality["candidate_rejection_target_files"] = list(candidate_rejection_target_files[:12])
             if causal_reanalysis_this_round:
                 quality["causal_reanalysis_required"] = True
-            projected["director_quality_repair"] = quality
+            if quality:
+                projected["director_quality_repair"] = quality
+            if owner_rebind_rotation:
+                rotation_index = owner_rebind_rotation_by_signature.get(active_repair_signature, 0)
+                owner_rebind_rotation_by_signature[active_repair_signature] = rotation_index + 1
+                projected["_factory_workspace_quality_target_rotation_index"] = rotation_index
             return projected
 
         def current_workspace_repair_summary(
@@ -2262,9 +3368,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 "candidate_rejection_errors": candidate_rejection_errors[:4],
             }
             if semantic_contract_conflict_candidate:
-                partial_summary["semantic_contract_conflict_candidate"] = dict(
-                    semantic_contract_conflict_candidate
-                )
+                partial_summary["semantic_contract_conflict_candidate"] = dict(semantic_contract_conflict_candidate)
             if deadline_detail:
                 partial_summary["deadline_blocker"] = deadline_detail
             scope_filter = workspace_quality_latest_task_boundary_scope_filter(partial_summary)
@@ -2303,6 +3407,14 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             repair_errors = executor._workspace_quality_repair_errors(latest_check_results or results)
             if not repair_errors:
                 break
+            if owner_override is None and owner_handoff_history:
+                reactivated_owner_targets = workspace_quality_residual_owner_handoff_targets(
+                    {},
+                    repair_errors,
+                    prior_summaries=owner_handoff_history,
+                )
+                if reactivated_owner_targets:
+                    owner_override = reactivated_owner_targets
             before_check_results = [dict(item) for item in (latest_check_results or results)]
             deadline_detail = workspace_repair_deadline_blocker(f"before_repair_round_{round_index + 1}")
             if deadline_detail:
@@ -2328,6 +3440,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 if seeded:
                     owner_override = seeded
             before_signature = executor._workspace_quality_diagnostic_signature(repair_errors)
+            active_repair_signature = tuple(before_signature)
             deterministic_probe_signature = _workspace_quality_deterministic_probe_signature(repair_errors)
             round_plan_probe = executor._workspace_quality_repair_plan_probe_report(repair_errors)
             # Oscillation uses AFTER codes from completed rounds only.
@@ -2555,6 +3668,11 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 round_requires_task_boundary_triage = executor._workspace_quality_summary_requires_task_boundary_triage(
                     dict(round_summary)
                 )
+            round_scope_filter = workspace_quality_latest_task_boundary_scope_filter(dict(round_summary))
+            if round_scope_filter:
+                handoff_projection = {"task_boundary_scope_filter": round_scope_filter}
+                if handoff_projection not in owner_handoff_history:
+                    owner_handoff_history.append(handoff_projection)
             deferred_owner_targets = executor._workspace_quality_deferred_owner_targets(dict(round_summary))
             if deferred_owner_targets and not hold_llm_for_plannable_deterministic:
                 # Target inference happens inside the Director adapter after the
@@ -2579,7 +3697,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                             deadline_detail=deadline_detail,
                         ),
                     )
-                owner_rebind_context = llm_repair_context()
+                owner_rebind_context = llm_repair_context(owner_rebind_rotation=True)
                 owner_rebind_context["factory_workspace_quality_owner_rebind"] = {
                     "required": True,
                     "source": "task_boundary_scope_filter",
@@ -2752,8 +3870,17 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     )
                 ):
                     candidate_rejection_errors = [round_error_text[:6000]]
-                    round_payload["candidate_rejection_errors_for_next_round"] = list(
-                        candidate_rejection_errors
+                    projected_summary = (
+                        projected_summary_raw if isinstance(projected_summary_raw, dict) else {}
+                    )
+                    candidate_rejection_target_files = [
+                        str(item or "").strip()
+                        for item in (projected_summary.get("repair_target_files") or [])
+                        if str(item or "").strip()
+                    ][:12]
+                    round_payload["candidate_rejection_errors_for_next_round"] = list(candidate_rejection_errors)
+                    round_payload["candidate_rejection_target_files_for_next_round"] = list(
+                        candidate_rejection_target_files
                     )
                 if round_error_code == "quality_repair_provider_timeout":
                     # A provider transport timeout has no semantic repair
@@ -2845,6 +3972,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 convergence_stop_reason = "repair_produced_no_effect_retry_same_director_task"
                 continue
             candidate_rejection_errors = []
+            candidate_rejection_target_files = []
             latest_check_results = []
             rerun_prepare_results = []
             rerun_results = []
@@ -2920,17 +4048,52 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 write_tool_evidence=round_write_tool_evidence,
                 before_results=before_check_results,
                 after_results=latest_check_results,
+                workspace=Path(executor.workspace),
             )
+            candidate_verifier_effect = repair_effect
+            after_codes = executor._workspace_quality_diagnostic_error_codes(after_signature)
+            after_plan_probe = executor._workspace_quality_repair_plan_probe_report(after_errors)
+            before_plannable_tools = _workspace_quality_plannable_source_tools(round_plan_probe)
+            after_plannable_tools = _workspace_quality_plannable_source_tools(after_plan_probe)
+            # A forward_unmask onto error codes already observed earlier in
+            # this loop (A -> B -> A ping-pong, or a slide back to a code a
+            # prior round already resolved) is oscillation, not phase
+            # advancement; it must keep feeding the stagnation breaker.
+            forward_unmask_advances = repair_effect == "forward_unmask" and not (
+                after_codes & seen_diagnostic_error_codes
+            )
+            newly_plannable_source_tools = sorted(
+                after_plannable_tools - before_plannable_tools - seen_plannable_source_tools
+            )
+            # Some compilers do not expose stable diagnostic codes for every
+            # phase. A verifier swap may still expose a concrete deterministic
+            # repair. Keep that candidate only when the new source_tool is
+            # executable; otherwise a same-count swap is a rejected trade.
+            plannable_repair_unmasked = repair_effect == "equal_count_swap" and bool(newly_plannable_source_tools)
+            if plannable_repair_unmasked:
+                round_payload["newly_plannable_source_tools"] = newly_plannable_source_tools
+            candidate_accepted = (
+                repair_effect in {"resolved", "progress"} or forward_unmask_advances or plannable_repair_unmasked
+            )
+            candidate_guard_present = (
+                isinstance(pending_round_attempt, Mapping) and pending_round_attempt.get("candidate_guard") is not None
+            )
+            candidate_rejected = candidate_guard_present and not candidate_accepted
             synthesis_verification_round = regression_synthesis_round_pending
             regression_synthesis_round_pending = False
             before_test_identities = _workspace_quality_failing_test_identities(repair_errors)
             current_test_identities = _workspace_quality_failing_test_identities(after_errors)
-            if not verifier_passed and repair_effect in {
-                "equal_count_swap",
-                "forward_unmask",
-                "progress",
-                "regression",
-            }:
+            if (
+                not candidate_rejected
+                and not verifier_passed
+                and repair_effect
+                in {
+                    "equal_count_swap",
+                    "forward_unmask",
+                    "progress",
+                    "regression",
+                }
+            ):
                 prior_regression_guard_errors = list(regression_guard_errors)
                 after_signature_set = set(after_signature)
 
@@ -2949,21 +4112,11 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         )
                     )
 
-                replaced_errors = [
-                    error
-                    for error in repair_errors
-                    if not still_current(error)
-                ]
+                replaced_errors = [error for error in repair_errors if not still_current(error)]
                 reintroduced_regression_guard_errors = [
-                    error
-                    for error in prior_regression_guard_errors
-                    if still_current(error)
+                    error for error in prior_regression_guard_errors if still_current(error)
                 ]
-                if (
-                    replaced_errors
-                    and reintroduced_regression_guard_errors
-                    and not regression_synthesis_round_granted
-                ):
+                if replaced_errors and reintroduced_regression_guard_errors and not regression_synthesis_round_granted:
                     # Live L3-22: A -> B -> A can change cardinality (one
                     # gravity test versus two floor tests).  Regression guards
                     # therefore belong to every real diagnostic transition,
@@ -2973,9 +4126,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     regression_synthesis_round_granted = True
                     regression_synthesis_round_pending = True
                     round_payload["regression_synthesis_round_granted"] = True
-                    round_payload["reintroduced_regression_guard_errors"] = (
-                        reintroduced_regression_guard_errors[:6]
-                    )
+                    round_payload["reintroduced_regression_guard_errors"] = reintroduced_regression_guard_errors[:6]
                 current_error_set = {str(item or "").strip() for item in after_errors if str(item or "").strip()}
                 merged_guards: list[str] = []
                 merged_guard_test_identities: set[str] = set()
@@ -3006,7 +4157,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         )
             semantic_contract_conflict_this_round = False
             if (
-                synthesis_verification_round
+                not candidate_rejected
+                and synthesis_verification_round
                 and not verifier_passed
                 and regression_synthesis_union_test_identities
                 and not current_test_identities < regression_synthesis_union_test_identities
@@ -3021,12 +4173,11 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     "pm_ce_restart_allowed": False,
                     "recommended_route": "same_ce_stage_contract_feasibility_review",
                 }
-                round_payload["semantic_contract_conflict_candidate"] = dict(
-                    semantic_contract_conflict_candidate
-                )
+                round_payload["semantic_contract_conflict_candidate"] = dict(semantic_contract_conflict_candidate)
                 semantic_contract_conflict_this_round = True
             elif (
-                causal_reanalysis_this_round
+                not candidate_rejected
+                and causal_reanalysis_this_round
                 and not verifier_passed
                 and before_test_identities
                 and current_test_identities
@@ -3050,16 +4201,59 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     "pm_ce_restart_allowed": False,
                     "recommended_route": "same_ce_stage_contract_feasibility_review",
                 }
-                round_payload["semantic_contract_conflict_candidate"] = dict(
-                    semantic_contract_conflict_candidate
-                )
+                round_payload["semantic_contract_conflict_candidate"] = dict(semantic_contract_conflict_candidate)
                 semantic_contract_conflict_this_round = True
             settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
                 executor,
                 pending_round_attempt,
-                accepted=repair_effect in {"resolved", "progress"},
+                accepted=candidate_accepted,
                 reason=f"workspace_quality_repair_{repair_effect}",
             )
+            candidate_guard_receipt = (
+                dict(settled_attempt.get("candidate_guard_receipt") or {})
+                if isinstance(settled_attempt, Mapping)
+                else {}
+            )
+            if candidate_guard_receipt:
+                round_payload["candidate_guard_receipt"] = candidate_guard_receipt
+            if candidate_rejected:
+                round_payload["candidate_verifier_effect"] = candidate_verifier_effect
+                round_payload["candidate_residual_errors"] = after_errors[:10]
+                rollback_status = str(candidate_guard_receipt.get("status") or "").strip()
+                if rollback_status not in {"restored", "closed"}:
+                    round_payload["verifier_effect"] = "candidate_rollback_failed"
+                    round_payload["verifier_authoritative_success"] = False
+                    convergence_stop_reason = "quality_repair_candidate_rollback_failed"
+                    break
+                # CAS restoration makes the pre-round verifier snapshot
+                # authoritative again. Preserve the rejected candidate's
+                # diagnostics as structured feedback, but never let its bytes
+                # or verifier result become the next repair baseline.
+                candidate_rejection_errors = [str(item)[:6000] for item in after_errors[:4]]
+                round_payload["candidate_rejection_errors_for_next_round"] = list(candidate_rejection_errors)
+                # CAS restoration makes every rejected candidate
+                # non-authoritative, including stagnant and equal-count
+                # outcomes. Keep its exact mutation owner for the next bounded
+                # round; otherwise causal targeting rotates horizontally to a
+                # symptom file even though the primary frontier did not move.
+                # Existing max-round/non-progress fuses remain authoritative.
+                candidate_rejection_target_files = [
+                    str(item or "").strip()
+                    for item in (round_summary.get("repair_target_files") or [])
+                    if str(item or "").strip()
+                ][:12]
+                round_payload["candidate_rejection_target_files_for_next_round"] = list(
+                    candidate_rejection_target_files
+                )
+                latest_check_results = [dict(item) for item in before_check_results]
+                after_errors = list(repair_errors)
+                after_signature = before_signature
+                after_codes = executor._workspace_quality_diagnostic_error_codes(after_signature)
+                after_plan_probe = round_plan_probe
+                after_plannable_tools = before_plannable_tools
+                current_test_identities = before_test_identities
+                repair_effect = "candidate_rejected_rolled_back"
+                verifier_passed = False
             round_payload.update(
                 {
                     "verifier_effect": repair_effect,
@@ -3078,34 +4272,6 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 projected_summary["verifier_effect"] = repair_effect
                 if settled_attempt is not None:
                     projected_summary["task_runtime_repair_attempt"] = settled_attempt
-            after_codes = executor._workspace_quality_diagnostic_error_codes(after_signature)
-            after_plan_probe = executor._workspace_quality_repair_plan_probe_report(after_errors)
-            before_plannable_tools = _workspace_quality_plannable_source_tools(round_plan_probe)
-            after_plannable_tools = _workspace_quality_plannable_source_tools(after_plan_probe)
-            # A forward_unmask onto error codes already observed earlier in
-            # this loop (A -> B -> A ping-pong, or a slide back to a code a
-            # prior round already resolved) is oscillation, not phase
-            # advancement; it must keep feeding the stagnation breaker.
-            forward_unmask_advances = repair_effect == "forward_unmask" and not (
-                after_codes & seen_diagnostic_error_codes
-            )
-            newly_plannable_source_tools = sorted(
-                after_plannable_tools - before_plannable_tools - seen_plannable_source_tools
-            )
-            # Some compilers do not expose stable diagnostic codes for every
-            # phase. Go's ``cannot convert`` -> ``undefined: math`` live L3-22
-            # transition is one example: the error count stayed equal and the
-            # generic code extractor returned an empty set, but the second
-            # verifier result newly exposed an executable deterministic import
-            # repair. Stopping after that round discarded a concrete next
-            # action. Grant exactly one bounded continuation for a newly
-            # plannable source_tool; repeating the same tool remains stagnant
-            # and still trips the existing cycle breaker/hard cap.
-            plannable_repair_unmasked = repair_effect == "equal_count_swap" and bool(
-                newly_plannable_source_tools
-            )
-            if plannable_repair_unmasked:
-                round_payload["newly_plannable_source_tools"] = newly_plannable_source_tools
             round_task_id = ""
             projected_for_task = round_payload.get("repair_summary")
             if isinstance(projected_for_task, Mapping):
@@ -3188,6 +4354,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             residual_owner_targets = workspace_quality_residual_owner_handoff_targets(
                 round_summary,
                 after_errors,
+                prior_summaries=owner_handoff_history,
             )
             if leftover_targets_should_force_owner_rotate(residual_owner_targets, claimed_round_targets):
                 # Live L3-22 r41: round 8 reduced diagnostics 7 -> 6 by
@@ -3267,9 +4434,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             "provider_transport_retry_granted": provider_transport_retry_granted,
         }
         if semantic_contract_conflict_candidate:
-            repair_summary["semantic_contract_conflict_candidate"] = dict(
-                semantic_contract_conflict_candidate
-            )
+            repair_summary["semantic_contract_conflict_candidate"] = dict(semantic_contract_conflict_candidate)
         scope_filter = workspace_quality_latest_task_boundary_scope_filter(repair_summary)
         if scope_filter:
             repair_summary["task_boundary_scope_filter"] = scope_filter

@@ -51,6 +51,16 @@ if TYPE_CHECKING:
     pass
 
 
+_SESSION_TERMINAL_EXECUTION_EVENT_TYPES = frozenset(
+    {
+        "cancelled",
+        "completed",
+        "failed",
+        "suspended",
+    }
+)
+
+
 class _FactsEventsMixin(_ServiceMixinBase):
     """Method group extracted losslessly from TaskRuntimeService."""
 
@@ -237,6 +247,7 @@ class _FactsEventsMixin(_ServiceMixinBase):
         event_type_str = str(event_type or "").strip().lower() or "unknown"
         try:
             transition_id, transition_timestamp = self._execution_transition_identity(
+                event_type=event_type_str,
                 session=session,
             )
         except (RuntimeError, ValueError) as exc:
@@ -339,18 +350,28 @@ class _FactsEventsMixin(_ServiceMixinBase):
     def _execution_transition_identity(
         self,
         *,
+        event_type: str,
         session: TaskExecutionSession | None,
     ) -> tuple[str, str | None]:
         """Return one event identity and an optional stable transition time.
 
         New terminal transitions already carry their identifier because
         ``mark_completed``/``mark_failed`` generate it before the session write.
-        The write below is a compatibility migration for terminal sessions
-        persisted before the field existed. Non-terminal events always receive
-        a fresh identifier so heartbeat facts can never collapse.
+        Reuse that identifier only for the event that projects the terminal
+        outcome. A later control event can legitimately carry the same terminal
+        session as evidence (for example ``reopened`` or
+        ``same_task_local_rework_prepared``); reusing the terminal identifier for
+        those events collapses distinct actions into one FactStream idempotency
+        key. The write below remains a compatibility migration for terminal
+        sessions persisted before the field existed.
         """
 
-        if session is None or not is_terminal_session_status(session.status):
+        event_type_str = str(event_type or "").strip().lower()
+        if (
+            event_type_str not in _SESSION_TERMINAL_EXECUTION_EVENT_TYPES
+            or session is None
+            or not is_terminal_session_status(session.status)
+        ):
             return f"task-transition-{uuid.uuid4().hex}", None
 
         transition_id = str(session.terminal_transition_id or "").strip()

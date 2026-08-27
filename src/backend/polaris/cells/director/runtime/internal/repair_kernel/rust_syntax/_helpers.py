@@ -586,7 +586,18 @@ def _rust_method_self_signature_operation(
     return None
 
 
-def _parse_rust_line_suggestions(diagnostics: Sequence[RepairDiagnostic]) -> list[tuple[str, int, str]]:
+def _parse_rust_line_suggestions(
+    diagnostics: Sequence[RepairDiagnostic],
+    *,
+    allow_import_companion: bool = False,
+) -> list[tuple[str, int, str]]:
+    # rustc can emit both an authoritative import help and secondary line
+    # rewrites for the same unresolved symbol.  The secondary rewrite is not
+    # independently valid: it leaves the short symbol out of scope.  Route the
+    # whole diagnostic to the import planner instead of creating a planned-but-
+    # ineffective line edit (live L3-23: DecisionOutcome stayed E0433).
+    if not allow_import_companion and _parse_rust_trait_import_suggestions(diagnostics):
+        return []
     suggestions: list[tuple[str, int, str]] = []
     seen: set[tuple[str, int, str]] = set()
     text = _ANSI_ESCAPE_RE.sub(
@@ -859,6 +870,19 @@ def _rust_import_line_from_suggestion_lines(lines: Sequence[str]) -> str:
     return ""
 
 
+def _rust_import_suggested_line_number(diagnostic: RepairDiagnostic, import_line: str) -> int | None:
+    text = _ANSI_ESCAPE_RE.sub("", str(diagnostic.raw or diagnostic.message or ""))
+    for match in _RUST_FIELD_RENAME_PLUS_LINE_RE.finditer(text):
+        code = str(match.group("code") or "").strip()
+        parsed = _RUST_USE_IMPORT_IN_TEXT_RE.search(code)
+        if parsed is None or str(parsed.group("import") or "").strip() != import_line:
+            continue
+        line_number = _to_int(match.group("line"))
+        if line_number is not None and line_number > 0:
+            return line_number
+    return None
+
+
 def _rust_incompatible_copy_derive_operation(
     *,
     path: str,
@@ -1042,6 +1066,7 @@ def _rust_line_suggestion_operation(
     line_number: int,
     code: str,
     diagnostic: RepairDiagnostic,
+    allow_non_unique_line_anchor: bool = False,
 ) -> RepairOperation | None:
     if not path.endswith(".rs"):
         return None
@@ -1053,7 +1078,8 @@ def _rust_line_suggestion_operation(
     replacement = f"{_prefer_vec_generic(expected, str(code or '').rstrip())}{_line_ending(expected)}"
     if expected == replacement:
         return None
-    if content.count(expected) != 1:
+    unique_line_anchor = content.count(expected) == 1
+    if not unique_line_anchor and not allow_non_unique_line_anchor:
         return None
     line_start = sum(len(item) for item in lines[:index])
     return RepairOperation(
@@ -1069,7 +1095,8 @@ def _rust_line_suggestion_operation(
             "edit_strategy": "text_replace",
             "span_based": True,
             "line_number": line_number,
-            "unique_context": True,
+            "unique_context": unique_line_anchor,
+            "line_anchor_authoritative": allow_non_unique_line_anchor,
             "diagnostic_id": diagnostic.diagnostic_id,
         },
     )
@@ -1214,8 +1241,29 @@ def _rust_trait_import_operation(
     if any(line.strip() == import_line for line in lines):
         return None
 
-    insert_index = _rust_use_insert_index(lines)
-    anchor = _rust_trait_import_anchor(lines, insert_index, import_line)
+    suggested_line = _rust_import_suggested_line_number(diagnostic, import_line)
+    suggested_expected = (
+        lines[suggested_line - 1]
+        if suggested_line is not None and suggested_line <= len(lines)
+        else ""
+    )
+    # Rustc commonly renders a top-level import suggestion as ``1 + use ...``
+    # even when the canonical insertion point belongs after crate attributes and
+    # existing imports.  Only use the diagnostic line as an authoritative anchor
+    # when it proves a nested lexical scope via indentation; top-level imports
+    # continue through the existing syntax-aware insertion policy.
+    anchor: tuple[int, str, str] | None
+    if suggested_expected[:1].isspace() and suggested_expected.strip():
+        assert suggested_line is not None
+        insert_index = suggested_line - 1
+        expected = suggested_expected
+        indent_match = re.match(r"\s*", expected)
+        indent = str(indent_match.group(0) if indent_match is not None else "")
+        newline = _rust_file_newline(lines)
+        anchor = (insert_index, expected, f"{indent}{import_line}{newline}{expected}")
+    else:
+        insert_index = _rust_use_insert_index(lines)
+        anchor = _rust_trait_import_anchor(lines, insert_index, import_line)
     if anchor is None:
         return None
     anchor_index, expected, replacement = anchor

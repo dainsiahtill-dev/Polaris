@@ -1,0 +1,79 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "L3-24-R43-QUALITY-REPAIR-OWNER-COLLAPSE",
+  "status": "FIXED_UNIT_VALIDATED_LIVE_REVALIDATION_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_227c6cd873b7",
+  "bench_run_id": "240e25f39a11",
+  "workspace": "/tmp/factory-bench-l3-24-r43/workspaces/240e25f39a11-d4d3947741c8034c/L3-24-023d7314133040b6/d35bad9bb917b28ec575589b",
+  "observed_at": "2026-08-26T18:49:15+08:00",
+  "symptom": {
+    "stage": "quality_gate",
+    "result": "failed",
+    "repair_rounds": 3,
+    "convergence_stop_reason": "three_nonprogress_repairs_without_verified_progress",
+    "forced_repair_target_files": [
+      "tests/test_cipher_engine.py"
+    ],
+    "actual_causal_targets": [
+      "tests/test_product.py",
+      "CMakeLists.txt",
+      "src/cipher_engine.cpp",
+      "src/ink_visibility.cpp",
+      "src/main.cpp",
+      "src/moon_phase.cpp"
+    ]
+  },
+  "dynamic_debug_evidence": {
+    "backend_root": "/home/dains/Documents/polaris/src/backend",
+    "launch_source_fingerprint": "188dd85e863060ad",
+    "process_source_fingerprint": "188dd85e863060ad",
+    "final_provider_request_observation": "Director repair request exposed only edit_file and forced tests/test_cipher_engine.py while CMakeLists.txt and production C++ files were read-only",
+    "reproduction": "Feeding the exact r43 artifact_quality_errors and TaskRuntime owner evidence into the live target selector returned tests/test_product.py before the fix and CMakeLists.txt after the fix",
+    "diagnostic_inflation_before": 79,
+    "diagnostic_inflation_breakdown_before": {
+      "artifact_quality_error": 77,
+      "workspace_validation_failed": 1,
+      "python_assertionerror": 1
+    },
+    "diagnostic_count_after_command_envelope_normalization": 11
+  },
+  "root_causes": [
+    {
+      "module": "factory.pipeline.workspace_quality",
+      "cause": "A mixed current owner set was intersected in verifier order, so a behavioral observer test became the single write target even though production owners were present."
+    },
+    {
+      "module": "director.runtime.repair_kernel.diagnostics",
+      "cause": "The workspace-validation regex stopped at the first closing parenthesis inside a multiline python -c command; command source lines were projected as repair diagnostics."
+    }
+  ],
+  "fixes": [
+    {
+      "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "change": "For normalized behavioral runtime failures, prefer an in-scope production owner before an observer test; test-only/compiler-owned diagnostics remain narrow."
+    },
+    {
+      "file": "src/backend/polaris/cells/director/runtime/internal/repair_kernel/diagnostics.py",
+      "change": "Parse and remove the balanced command envelope before normalizing verifier output, preserving command provenance in the verifier receipt."
+    }
+  ],
+  "regressions": [
+    "test_workspace_quality_behavior_claim_does_not_collapse_mixed_owner_to_observer_test",
+    "test_workspace_validation_multiline_python_command_does_not_become_repair_diagnostics"
+  ],
+  "verification": {
+    "pytest": "169 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "git_diff_check": "passed"
+  },
+  "constraints": {
+    "target_project_modified": false,
+    "pm_ce_restart_allowed": false,
+    "next_boundary": "same Director task / quality repair",
+    "live_revalidation_required": true
+  },
+  "next_action": "Run fresh isolated L3-24 r44 with the standard 5400-second project budget and verify CMake/production repair ownership plus COMPLETED_VERIFIED evidence."
+}

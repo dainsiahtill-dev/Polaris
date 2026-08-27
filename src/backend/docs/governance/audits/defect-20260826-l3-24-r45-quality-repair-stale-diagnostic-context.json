@@ -1,0 +1,98 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "L3-24-R45-QUALITY-REPAIR-STALE-DIAGNOSTIC-CONTEXT",
+  "status": "FIXED_UNIT_VALIDATED_LIVE_REVALIDATION_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_0f9b7dff58b8",
+  "bench_run_id": "66afe0c0b054",
+  "workspace": "/tmp/factory-bench-l3-24-r45/workspaces/66afe0c0b054-ee69810a6bdd7884/L3-24-023d7314133040b6/6d282a9cb3ea0c80d9609f0e",
+  "symptom": {
+    "stage": "quality_gate",
+    "current_error": "invisible_diary/cli.cpp:112: no matching Cipher default constructor",
+    "misleading_anchor": "invisible_diary/cli.cpp:18 include context",
+    "terminal_reason": "three_nonprogress_repairs_without_verified_progress"
+  },
+  "final_request_evidence": {
+    "context_snapshot_refs": [
+      "5046307301f663a2e9d8ce32",
+      "23a21ea28fc017ec60cf5f7a",
+      "100c0dcec4f1b653530f853e",
+      "0bcd4d008364086f0a196252",
+      "494ed2be5908915b19c68309"
+    ],
+    "role_identity_ok": true,
+    "edit_file_forced": true,
+    "pm_contract_present": true,
+    "ce_blueprint_present": true,
+    "target_content_present": true,
+    "failure_evidence_present": true
+  },
+  "dynamic_debug_evidence": {
+    "tool_outcome_source": ".polaris/runtime/events/roles.kernel.turn_outcomes.jsonl",
+    "accepted_edit": {
+      "target": "invisible_diary/cli.cpp",
+      "effect": "run_encode default Cipher replaced by unique_ptr construction",
+      "before_hash_prefix": "d3f",
+      "after_hash_prefix": "0a4c",
+      "replacements": 1
+    },
+    "rolled_back_edits": {
+      "count": 3,
+      "effect": "move or remove the memory include without touching run_decode",
+      "candidate_guard": "restored"
+    },
+    "exact_replay_before": {
+      "primary_order": ["invisible_diary/cli.cpp:18", "invisible_diary/cli.cpp:112"],
+      "resolved_compiler_context_replayed": true
+    },
+    "exact_replay_after": {
+      "primary_order": ["invisible_diary/cli.cpp:112", "invisible_diary/cli.cpp:18"],
+      "resolved_compiler_context_negative_only": true,
+      "current_run_decode_in_historical_atoms": false
+    }
+  },
+  "root_cause": {
+    "module": "roles.adapters.director.quality_gate.prompt_and_targets",
+    "cause": "Historical compiler transcripts were preserved as raw actionable-looking text. Nested unittest output used literal newline escapes, so whole-physical-line error classification also promoted include/note locations when another token on the line contained error:."
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py",
+    "change": "Use immediate-suffix error classification; parse nested literal-newline compiler transcripts into path/function/message atoms; subtract current atoms; render compiler history as compact negative-only constraints while preserving behavior guards."
+  },
+  "verification": {
+    "focused_pytest": "32 passed",
+    "exact_r45_replay": "passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "broader_shared_tree_regression": "201 passed after dynamically closing three generic target-selection regressions and correcting one unrealistic Go compiler fixture",
+    "fresh_isolated_l3_24": "pending"
+  },
+  "companion_regressions": [
+    {
+      "id": "GO_ASSERTION_MISCLASSIFIED_AS_COMPILER",
+      "root_cause": "The Go compiler path regex allowed path:line without a required column, so verifier assertion locations could steal compiler ownership.",
+      "fix": "Require the real path:line:column: Go compiler form; retain behavior-source discovery for assertion locations.",
+      "validation": "Go source-owner, commandless behavior, raw compiler, and workspace owner regression tests pass."
+    },
+    {
+      "id": "TEST_ANCHOR_DISCARDED_CAUSAL_SOURCE",
+      "root_cause": "The test-primary-anchor fence deferred the whole repair even after TAP analysis selected an explicit task-owned implementation source.",
+      "fix": "Keep fail-closed deferral only when no explicit in-scope production source exists.",
+      "validation": "TAP repair reaches forced edit_file while out-of-scope-only Go verifier evidence still defers."
+    },
+    {
+      "id": "REPAIR_ROTATION_NEVER_REVISITED_CAUSAL_TARGET",
+      "root_cause": "Single-target rotation permanently removed the first target after attempt one.",
+      "fix": "Cycle alternatives, then revisit the first causal target.",
+      "validation": "Rotation regression passes."
+    }
+  ],
+  "constraints": {
+    "target_project_modified": false,
+    "static_analysis_used_as_root_cause_proof": false,
+    "tool_normalization_changed": false,
+    "candidate_transaction_changed": false
+  },
+  "next_action": "Run fresh isolated L3-24 and audit final requests, tool effects, verifier frontier, TaskRuntime, Run Ledger, QA, and ProjectOutcome."
+}

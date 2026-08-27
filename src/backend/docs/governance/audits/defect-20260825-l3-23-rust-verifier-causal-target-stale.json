@@ -1,0 +1,53 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "20260825-l3-23-rust-verifier-causal-target-stale",
+  "status": "CLOSED",
+  "severity": "P0",
+  "module_id": "M10_director_quality_repair_scope",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_e0cda86d03da",
+  "workspace": "/tmp/factory-bench-l3-23-r19/workspaces/57417bb3ee24-6701852dbc6bd93e/L3-23-2956ab31bd653d97/fecb0ae8f35639fdf3b3e47c",
+  "symptom": "The first QA repair cleared Rust E0599 failures in src/lib.rs. Cargo revalidation then exposed three patience_* behavior failures, but every later Director request remained hard-authorized to src/lib.rs and could not edit the causal implementation file src/patience.rs.",
+  "dynamic_evidence": {
+    "qa_report": ".polaris/runtime/qa/workspace-validation.json generated 2026-08-25T10:53:55.398717+00:00",
+    "initial_effect": "src/lib.rs changed three PatienceTracker.add calls to register; E0599 disappeared",
+    "residual_verifier": "cargo test: 14 passed, 3 failed; all failures named patience_* in tests/edges.rs",
+    "final_request_context_snapshot_ref": "dcef08e112dde06657bb12bc",
+    "final_request_scope": [
+      "factory_workspace_quality_repair.target_files=['src/lib.rs']",
+      "Authorized tool target paths: src/lib.rs",
+      "Do not touch sibling files"
+    ],
+    "provider_reasoning": "The Director identified src/patience.rs as the behavior owner but stated that the active tool scope allowed only src/lib.rs.",
+    "offline_exact_run_recalculation": "resolve_director_causal_quality_repair_target_files returned ['src/patience.rs'] from the retained QA residuals and exact workspace.",
+    "tdd_red": "Integration regression returned repair_target_files=['src/lib.rs'] before the fix."
+  },
+  "root_cause": "Rust behavior-test causal target discovery existed at the Factory-facing public resolver but was not consumed by the Director materialization-quality repair loop. Current verifier diagnostics therefore contributed only the out-of-scope test file, leaving current_in_scope_candidates empty and preserving the stale Factory-forced src/lib.rs target after the diagnostic class changed.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_repair_loop.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_rust_causal_quality_targets.py"
+    ],
+    "behavior": "Feed the existing fail-closed Rust behavior owner resolver into current explicit quality targets. The existing CE task-scope partition remains authoritative; an unambiguous in-scope causal target replaces a disjoint stale Factory target.",
+    "safety": [
+      "No target-project write",
+      "No PM or Chief Engineer restart",
+      "No cross-task scope widening",
+      "Ambiguous causal ownership remains fail-closed",
+      "Factory and TaskRuntime JobToken authority remain unchanged"
+    ]
+  },
+  "verification": {
+    "tdd": "RED src/lib.rs; GREEN src/patience.rs",
+    "focused_pytest": "21 passed",
+    "ruff": "PASS",
+    "mypy": "PASS",
+    "exact_run_offline_recalculation": "PASS: ['src/patience.rs']",
+    "live_revalidation": "PASS on same run: final request authorized only src/patience.rs, three real edit_file effects landed, and cargo failures decreased from 3 to 2 without PM/CE restart"
+  },
+  "known_unrelated_baseline": {
+    "suite": "test_director_adapter_quality_repair_a.py + test_director_adapter_quality_repair_b.py",
+    "result": "102 passed, 8 failed",
+    "dynamic_disproof": "The same 8 failures reproduced after monkeypatching _rust_test_behavior_repair_target_files to return []; they are pre-existing dirty-tree baselines outside this Rust change."
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "L3-24-R44-CE-STRUCTURAL-ITEM-MISCLASSIFICATION",
+  "status": "FIXED_UNIT_VALIDATED_LIVE_REVALIDATION_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_fc45480be499",
+  "bench_run_id": "8ee93454f52e",
+  "workspace": "/tmp/factory-bench-l3-24-r44/workspaces/8ee93454f52e-1b0e476c6449fee8/L3-24-023d7314133040b6/d6ee166a6cc00157cc6bc2f5",
+  "observed_at": "2026-08-26T19:23:14+08:00",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "result": "failed",
+    "error_code": "chief_engineer.semantic_repair_exhausted",
+    "root_cause_hint": "chief_engineer.semantic_patch_invalid:ValueError:behavior invariant references unknown completion obligations",
+    "llm_calls": 3,
+    "generated_blueprints": 0,
+    "expected_blueprints": 1
+  },
+  "final_request_evidence": {
+    "primary_context_snapshot_ref": "89b6324358f8a416220f6988",
+    "first_repair_context_snapshot_ref": "43ebb28c3b4f5c73845b80ae",
+    "final_repair_context_snapshot_ref": "4500a149975475ce3a922fb9",
+    "role_identity_ok": true,
+    "required_refs_present": [
+      "pm_contract",
+      "target_files"
+    ],
+    "structured_tool": "submit_structured_role_output",
+    "structured_tool_schema_valid": true
+  },
+  "dynamic_debug_evidence": {
+    "probe": "sys.settrace over the exact persisted semantic candidate",
+    "first_exception_function": "_normalize_behavior_invariant_row",
+    "first_exception_line": 293,
+    "caller_exception_line": 641,
+    "exception_type": "_UnsafePortfolioStructuralRecoveryError",
+    "exception_message": "construction_plan.item[0] is not a behavior invariant",
+    "misclassified_exact_row": {
+      "owner_file": "include/invisible_diary/moon_phase.hpp",
+      "owner_task_id": "TASK-1",
+      "symbol_kind": "class"
+    },
+    "before_fix": {
+      "recovered": false,
+      "repair_codes": []
+    },
+    "after_fix_exact_replay": {
+      "recovered": true,
+      "repair_codes": [
+        "remove_task_local_invariant_from_shared_contract"
+      ],
+      "remaining_shared_invariants": 0,
+      "remaining_task_behavior_refs": 0,
+      "preserved_construction_items": 5
+    }
+  },
+  "root_cause": {
+    "module": "chief_engineer.blueprint.semantic_repair",
+    "cause": "The structural-recovery classifier treated any construction_plan.item row sharing any behavior-invariant key as an invariant. owner_task_id is also a legitimate symbol-declaration field, so an exact CE symbol row was misclassified. The resulting exception rolled back the whole structural recovery transaction, preserving otherwise safely removable task-local invariants and their stale obligation aliases into bounded LLM repair."
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+    "change": "Classify lifted behavior rows only by behavior-specific discriminator keys; owner_task_id alone no longer identifies a behavior invariant. Ambiguous partial behavior rows still fail closed."
+  },
+  "regression": "test_portfolio_structural_recovery_preserves_symbol_item_with_owner_task_id",
+  "verification": {
+    "tdd_red": "1 failed",
+    "targeted_pytest": "134 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_candidate_replay": "passed"
+  },
+  "constraints": {
+    "target_project_modified": false,
+    "static_analysis_used_as_root_cause_proof": false,
+    "live_revalidation_required": true
+  },
+  "next_action": "Run fresh isolated L3-24 r45 and require CE to produce one blueprint before auditing Director and QA boundaries."
+}

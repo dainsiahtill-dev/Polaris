@@ -1,0 +1,43 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "20260825-l3-23-rust-verifier-source-context-missing",
+  "status": "FIXED_PENDING_LIVE_REVALIDATION",
+  "severity": "P0",
+  "module_id": "M10_director_quality_repair_context",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_e0cda86d03da",
+  "workspace": "/tmp/factory-bench-l3-23-r19/workspaces/57417bb3ee24-6701852dbc6bd93e/L3-23-2956ab31bd653d97/fecb0ae8f35639fdf3b3e47c",
+  "symptom": "After the causal target was corrected to src/patience.rs, Director made three real edits. Cargo failures decreased from three to two, then the remaining same/smaller tick behavior failures stagnated across bounded repair rounds.",
+  "dynamic_evidence": {
+    "final_request_context_snapshot_refs": [
+      "965707b93c064ea9ff2085d5",
+      "2b656b35c20cbbc5e1bff207"
+    ],
+    "provider_request": "Director identity, PM contract, CE blueprint, target file, failure feedback, workspace quality evidence, and forced edit_file were present; authorized target was src/patience.rs.",
+    "physical_effects": "Three runtime file_edit events modified src/patience.rs at 11:13:12, 11:13:35, and 11:13:59 UTC.",
+    "verifier_progress": "cargo test moved from 14 passed / 3 failed to 15 passed / 2 failed; later rounds remained 15/2.",
+    "missing_context": "No FAILING VERIFIER SOURCE CONTEXT block appeared for Rust panics even though the repair prompt's causal-reanalysis directive required deriving setup, fixture state, update, and predicate.",
+    "exact_format": "thread '<test>' panicked at tests/edges.rs:<line>:<column>"
+  },
+  "root_cause": "_verifier_source_context_block recognized Python traceback, Go assertion, and Node TAP/stack locations but not Rust panic locations. The final request therefore carried left/right assertion summaries and product source only, omitting the enclosing Rust test setup that established last_tick before same/smaller tick calls.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_quality_repair_verifier_context.py"
+    ],
+    "behavior": "Parse Rust panicked-at source locations and project the complete enclosing Rust test function as bounded read-only evidence. Test files never enter authorized write targets.",
+    "safety": [
+      "No target-project write by the main Agent",
+      "Verifier source is read-only evidence",
+      "No write-scope expansion",
+      "Ambiguous or missing source paths remain fail-closed"
+    ]
+  },
+  "verification": {
+    "tdd": "RED without Rust verifier context; GREEN with enclosing test function and unchanged src/patience.rs-only authorization",
+    "focused_pytest": "42 passed",
+    "ruff": "PASS",
+    "mypy": "PASS",
+    "live_revalidation": "PENDING same-run QA-only retry after isolated backend reload"
+  }
+}

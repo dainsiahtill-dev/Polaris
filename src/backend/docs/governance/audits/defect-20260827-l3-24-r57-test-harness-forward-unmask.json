@@ -1,0 +1,37 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "l3-24-r57-test-harness-forward-unmask",
+  "status": "FIXED_UNIT_VERIFIED_LIVE_PENDING",
+  "severity": "P1",
+  "factory_run_id": "factory_e5c6b591e82d",
+  "project_id": "L3-24",
+  "symptom": "A valid import-sys edit was physically applied, classified equal_count_swap, rolled back, and repeated three times.",
+  "root_cause": "Workspace-quality convergence compared top-level diagnostic cardinality but did not recognize removal of a Python harness NameError when the replacement diagnostics were the same compiler frontier already proven by an independent verifier.",
+  "dynamic_evidence": {
+    "before_hash": "c50b8b4bd225f70f2d3afd17405e913c8bb81e7bbbafb85a48994617d59195d8",
+    "candidate_hash": "e100ebb84912dbc54241930c59e65afc3ddf2a6fed006310626c60b44ce9949b",
+    "candidate_guard_status": "restored",
+    "repeated_candidate_rounds": 3,
+    "final_request_snapshot_ref": "a009f1fa02091e3763b33eb0"
+  },
+  "scope": {
+    "modified_domain": "Polaris Factory workspace-quality convergence",
+    "generated_project_modified": false
+  },
+  "fix": {
+    "classification": "existing_compiler_frontier_test_harness_reduction",
+    "fail_closed_condition": "novel compiler messages are not progress",
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ]
+  },
+  "verification": {
+    "characterization_tests": "104 passed",
+    "ruff": "pass",
+    "mypy": "pass",
+    "live_r58": "pending"
+  },
+  "next_action": "Run a fresh isolated L3-24 r58 and dynamically verify accepted import repair plus production-TU routing."
+}

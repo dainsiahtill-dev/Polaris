@@ -44,9 +44,28 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
     TaskRuntimeExecutionAttemptIdentityV1,
 )
 
+from ._execution_attempt_helpers import (
+    _project_deferred_repair_results_for_test,
+    _test_execution_attempt,
+    _test_execution_attempt_context,
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _tool_properties(definition: dict[str, Any]) -> dict[str, Any]:
+    """Return one native tool schema's properties after the registry refactor."""
+
+    function = definition.get("function")
+    if not isinstance(function, dict):
+        return {}
+    parameters = function.get("parameters")
+    if not isinstance(parameters, dict):
+        return {}
+    properties = parameters.get("properties")
+    return dict(properties) if isinstance(properties, dict) else {}
 
 
 def _run_go_materialization_quality_schedule(
@@ -91,13 +110,6 @@ def _make_adapter(tmp_path: Any, task_runtime: Any = None) -> DirectorAdapter:
     else:
         adapter = DirectorAdapter(workspace=str(workspace), task_runtime=task_runtime)
     return adapter
-
-
-from ._execution_attempt_helpers import (
-    _project_deferred_repair_results_for_test,
-    _test_execution_attempt,
-    _test_execution_attempt_context,
-)
 
 
 def _install_test_deferred_projection(
@@ -1006,6 +1018,86 @@ def test_cpp_class_member_error_keeps_use_site_not_class_header(tmp_path: Any) -
     assert "src/engine/generator.cpp" in targets
     assert "src/main.cpp" in targets
     assert "src/models/robot.hpp" not in targets
+
+
+def test_cpp_compile_target_parser_keeps_full_header_path(tmp_path: Any) -> None:
+    """Regression: GCC header diagnostics must not be split into path suffixes.
+
+    Live L3-24 r34 exposed ``include/.../moon_phase.hpp:42:64: error``.
+    The zero-width lookahead splitter cut that path once at every character,
+    eventually probing only ``e.hpp`` and returning no causal repair target.
+    """
+
+    from polaris.cells.roles.adapters.internal.director.quality_gate._language_targets import (
+        _embedded_cpp_compile_repair_target_files,
+        _explicit_artifact_quality_repair_target_files,
+    )
+
+    header = tmp_path / "include" / "invisible_diary" / "moon_phase.hpp"
+    header.parent.mkdir(parents=True)
+    header.write_text("#pragma once\n", encoding="utf-8")
+    diagnostic = (
+        "### FAILING_TUS src/diary.cpp src/main.cpp src/moon_phase.cpp\n"
+        "### src/diary.cpp\n"
+        "In file included from include/invisible_diary/diary.hpp:26,\n"
+        "                 from src/diary.cpp:9:\n"
+        "include/invisible_diary/moon_phase.hpp:42:64: error: "
+        "unable to find numeric literal operator 'operator\"\"_289_240'\n"
+    )
+
+    assert _embedded_cpp_compile_repair_target_files(diagnostic, tmp_path) == [
+        "include/invisible_diary/moon_phase.hpp"
+    ]
+    assert _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[diagnostic],
+        changed_files=["src/diary.cpp", "src/main.cpp", "src/moon_phase.cpp"],
+        workspace_full=str(tmp_path),
+    ) == ["include/invisible_diary/moon_phase.hpp"]
+
+
+def test_cpp_linker_target_parser_includes_unique_declaration_owner_header(tmp_path: Any) -> None:
+    """Undefined-reference repair must include the CE-owned declaration home.
+
+    A linker diagnostic names object-file use sites, but editing those sites
+    cannot reliably create the missing implementation.  The repair batch must
+    also expose the unique existing header that declares the unresolved public
+    symbols, while remaining inside the later TaskRuntime/JobToken scope gate.
+    """
+
+    from polaris.cells.roles.adapters.internal.director.quality_gate._language_targets import (
+        _embedded_cpp_compile_repair_target_files,
+    )
+
+    header = tmp_path / "include" / "invisible_ink_diary" / "moon_phase.hpp"
+    header.parent.mkdir(parents=True)
+    header.write_text(
+        "#pragma once\n"
+        "namespace invisible_ink_diary {\n"
+        "enum class MoonPhase;\n"
+        "const char* moon_token(MoonPhase phase);\n"
+        "double moon_illumination(unsigned char phase);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    (src / "cipher_engine.cpp").write_text("int cipher() { return 0; }\n", encoding="utf-8")
+    diagnostic = (
+        "/usr/bin/ld: CMakeFiles/app.dir/src/main.cpp.o: in function `main':\n"
+        "main.cpp:(.text+0x10): undefined reference to "
+        "`invisible_ink_diary::moon_token(invisible_ink_diary::MoonPhase)'\n"
+        "/usr/bin/ld: CMakeFiles/app.dir/src/cipher_engine.cpp.o: undefined reference to "
+        "`invisible_ink_diary::moon_illumination(unsigned char)'\n"
+        "collect2: error: ld returned 1 exit status\n"
+    )
+
+    targets = _embedded_cpp_compile_repair_target_files(diagnostic, tmp_path)
+
+    assert targets[0] == "include/invisible_ink_diary/moon_phase.hpp"
+    assert "src/main.cpp" in targets
+    assert "src/cipher_engine.cpp" in targets
+    assert "include/invisible_ink_diary/moon_phase.hpp" in targets
 
 
 def test_cpp_undeclared_type_maps_to_existing_owner_header(tmp_path: Any) -> None:
@@ -2107,7 +2199,10 @@ async def test_existing_html_quality_fallback_requires_edit_not_read_or_command(
         item["function"]["name"] for item in adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
     ]
     assert "read_file" not in forced_names
-    assert set(forced_names) == {"edit_file", "write_file", "execute_command"}
+    # A proven existing single target uses the strict one-effect surface: one
+    # edit, followed by platform-owned revalidation.  Wider write/command tools
+    # reintroduced the read/write ambiguity this regression is meant to block.
+    assert forced_names == ["edit_file"]
     assert adapter.repair_context["metadata"]["tool_contract"]["required_tools"] == ["edit_file"]
 
 

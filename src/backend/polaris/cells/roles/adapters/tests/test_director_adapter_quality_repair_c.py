@@ -310,6 +310,9 @@ class TestQualityRepairMissingTargetContractC:
         assert "src/web.ts(52,11)" in message
         assert "TS2552" in message
         assert "EXISTING FAILED TARGET FILES" in message
+        assert "Do NOT attempt to fix failures whose causal owner is outside" in message
+        assert "Cover every target-scoped Quality error" in message
+        assert "Cover every listed verifier diagnostic" not in message
 
     def test_repair_message_names_missing_targets_and_hides_changed_paths(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -632,4 +635,3 @@ class TestQualityRepairMissingTargetContractC:
         # The repair-specific changed-file line remains count-based; the
         # original task contract may still legitimately name the target path.
         assert "1 file(s) were already written and failed quality gates" in message
-

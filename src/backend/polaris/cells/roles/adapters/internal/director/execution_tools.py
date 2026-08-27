@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import re
 import shlex
+from collections.abc import Sequence
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Never, SupportsIndex
@@ -152,6 +153,96 @@ def _director_write_allowed_scope(tool_kwargs: dict[str, Any] | None) -> list[st
         if scope:
             return scope
     return []
+
+
+_CPP_LOCAL_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*"([^"\r\n]+)"', re.MULTILINE)
+_CPP_LOCAL_INCLUDE_SUFFIXES = frozenset({".cuh", ".h", ".hh", ".hpp", ".hxx", ".inc", ".ipp"})
+_CPP_SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".cu", ".cuh", ".h", ".hh", ".hpp", ".hxx"})
+
+
+def _precommit_declared_local_include_guard(
+    *,
+    workspace: Path,
+    rel_path: str,
+    after_content: str,
+    allowed_scope: Sequence[str] | None,
+) -> dict[str, Any]:
+    """Reject an invented project-local C/C++ header before it reaches disk.
+
+    A quoted include may name an external/generated header, so this guard only
+    claims project ownership when the include namespace already exists in the
+    workspace or is represented by another authorized target.  Missing headers
+    that are explicitly authorized remain valid because a later tool call in
+    the same Director batch may materialize them.
+    """
+
+    if Path(rel_path).suffix.lower() not in _CPP_SOURCE_SUFFIXES:
+        return {"ok": True}
+
+    normalized_scope = {
+        str(item or "").replace("\\", "/").strip("/")
+        for item in (allowed_scope or ())
+        if str(item or "").strip()
+    }
+    source_parent = Path(rel_path.replace("\\", "/")).parent
+    missing: list[str] = []
+    for raw_token in _CPP_LOCAL_INCLUDE_RE.findall(str(after_content or "")):
+        token = raw_token.replace("\\", "/").strip().lstrip("./")
+        token_path = Path(token)
+        if (
+            not token
+            or token_path.suffix.lower() not in _CPP_LOCAL_INCLUDE_SUFFIXES
+            or token_path.is_absolute()
+            or ".." in token_path.parts
+        ):
+            continue
+
+        candidates = {
+            token,
+            (source_parent / token_path).as_posix(),
+            (Path("include") / token_path).as_posix(),
+            (Path("src") / token_path).as_posix(),
+        }
+        if any((workspace / candidate).is_file() for candidate in candidates):
+            continue
+        if normalized_scope.intersection(candidates):
+            continue
+
+        namespace = token_path.parts[0] if token_path.parts else ""
+        namespace_roots = {
+            f"include/{namespace}",
+            f"src/{namespace}",
+            (source_parent / namespace).as_posix(),
+        }
+        workspace_owns_namespace = any((workspace / root).is_dir() for root in namespace_roots)
+        scope_owns_namespace = any(
+            any(item == root or item.startswith(f"{root}/") for root in namespace_roots)
+            for item in normalized_scope
+        )
+        if workspace_owns_namespace or scope_owns_namespace:
+            missing.append(token)
+
+    if not missing:
+        return {"ok": True}
+
+    unique_missing = list(dict.fromkeys(missing))
+    return {
+        "ok": False,
+        "blocked": True,
+        "retryable": True,
+        "error_type": "undeclared_local_include_dependency",
+        "error": (
+            f"Write rejected before commit because {rel_path} imports missing project-local header(s) "
+            f"outside the authorized target scope: {', '.join(unique_missing)}"
+        ),
+        "suggestion": (
+            "Retry the same Director task using an existing/declared interface, or include the header only when "
+            "it is already present in the authorized target_files. Do not invent an out-of-scope project file."
+        ),
+        "file": rel_path,
+        "missing_local_includes": unique_missing,
+        "allowed_scope": sorted(normalized_scope),
+    }
 
 
 def _is_package_manifest_path(rel_path: str) -> bool:
@@ -471,6 +562,20 @@ class DirectorToolExecutor:
         self.workspace = workspace
         self._message_bus = message_bus
         self._worker_id = worker_id
+        self._authorized_scope: tuple[str, ...] = ()
+
+    def _bind_authorized_scope(self, authorized_scope: Sequence[str]) -> None:
+        """Bind the DEO capability scope before the first physical effect."""
+        self._assert_physical_execution_authority()
+        self._authorized_scope = tuple(
+            sorted(
+                {
+                    str(item or "").replace("\\", "/").strip("/")
+                    for item in authorized_scope
+                    if str(item or "").strip()
+                }
+            )
+        )
 
     def _assert_physical_execution_authority(self) -> None:
         if type(self) is not DirectorToolExecutor or self not in _DIRECTED_EFFECT_PHYSICAL_EXECUTOR_INSTANCES:
@@ -505,10 +610,24 @@ class DirectorToolExecutor:
     ) -> dict[str, Any]:
         """Validate a pending write and return KernelOne-compatible policy evidence."""
         normalized_rel = str(rel_path or "").replace("\\", "/").strip("/")
+        # This validator is also reused as an unbound policy-preview helper by
+        # DirectorEffectPolicySnapshotPort.  That evidence-only port does not
+        # own the physical executor's private scope binding.  Preserve the
+        # authoritative physical binding when present, while falling back to
+        # the request-carried capability scope for snapshot evaluation.
+        allowed_scope = list(getattr(self, "_authorized_scope", ())) or _director_write_allowed_scope(tool_kwargs)
+        dependency_guard = _precommit_declared_local_include_guard(
+            workspace=workspace,
+            rel_path=normalized_rel,
+            after_content=new_content,
+            allowed_scope=allowed_scope,
+        )
+        if not dependency_guard.get("ok"):
+            return dependency_guard
         package_write = _is_package_manifest_path(normalized_rel)
         verdict = validate_tool_write_policy(
             changed_files=[normalized_rel] if normalized_rel else [],
-            allowed_scope=_director_write_allowed_scope(tool_kwargs),
+            allowed_scope=allowed_scope,
             agents_md=_read_workspace_agents_policy_text(workspace, normalized_rel),
             operation=operation,
             package_before=old_content if package_write else None,

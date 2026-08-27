@@ -71,6 +71,25 @@ _KNOWN_EVENTS = frozenset(
     }
 )
 _TERMINAL_STATUSES = frozenset({"completed_verified", "model_ceiling"})
+_DISPATCH_ERROR_MESSAGE_LIMIT = 512
+
+
+def _dispatch_error_evidence(exc: Exception) -> dict[str, str]:
+    """Preserve bounded owner failure evidence for exact-run diagnosis.
+
+    The convergence cursor previously retained only ``RuntimeError``.  That
+    erased the TaskRuntime refusal code (for example a local-rework budget or
+    lease conflict), making distinct owner failures observationally identical.
+    """
+
+    error_code = str(getattr(exc, "error_code", "") or getattr(exc, "code", "") or "").strip()
+    error_message = str(exc).strip()
+    evidence = {"error_type": type(exc).__name__}
+    if error_code:
+        evidence["error_code"] = error_code[:_DISPATCH_ERROR_MESSAGE_LIMIT]
+    if error_message:
+        evidence["error_message"] = error_message[:_DISPATCH_ERROR_MESSAGE_LIMIT]
+    return evidence
 
 
 @dataclass(frozen=True, slots=True)
@@ -1182,7 +1201,7 @@ class ProjectCompletionConvergenceEngineV1:
                         "identity": command.identity.as_payload(),
                         "action_id": action.action_id,
                         "claim_id": claim.claim_id,
-                        "error_type": type(exc).__name__,
+                        **_dispatch_error_evidence(exc),
                     },
                     expected_previous_seq=claim_event.seq,
                 )

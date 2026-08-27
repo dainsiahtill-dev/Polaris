@@ -1,0 +1,61 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-DIRECTOR-REPAIR-STATE-CONTINUITY",
+  "status": "OPEN_TDD",
+  "severity": "P0",
+  "title": "Upstream compiler progress is rolled back as downstream unittest regression",
+  "scope": "factory.pipeline workspace-quality repair convergence",
+  "first_observed_run_id": "factory_6674c7b43558",
+  "exact_workspace": "/tmp/factory-bench-l3-24-r07/workspaces/fdda7d314bef-de3c55248448c823/L3-24-023d7314133040b6/0aa8c0376fd2e819b08efdf3",
+  "symptom": {
+    "project_id": "L3-24",
+    "repair_round": 1,
+    "candidate_verifier_effect": "regression",
+    "settled_effect": "candidate_rejected_rolled_back",
+    "candidate_guard_status": "restored",
+    "affected_file": "src/inkwell/diary.cpp",
+    "before_sha256": "ee2f2e9cf5887f2a63000d1e2fc423b0da7d80b095d31b08f74c8db645aaf656",
+    "candidate_after_sha256": "91926d29508539fa07764a0a221bff79bbaff5d06b1eda88299bd5b087844643"
+  },
+  "dynamic_evidence": {
+    "workspace_validation": ".polaris/runtime/qa/workspace-validation.json",
+    "turn_outcomes": ".polaris/runtime/events/roles.kernel.turn_outcomes.jsonl",
+    "before_failing_translation_units": [
+      "src/inkwell/diary.cpp",
+      "src/inkwell/moon_phase.cpp",
+      "tests/test_ink_diary_cli.cpp"
+    ],
+    "candidate_failing_translation_units": [
+      "src/inkwell/moon_phase.cpp",
+      "tests/test_ink_diary_cli.cpp"
+    ],
+    "compile_barrier_change": "3_to_2",
+    "tool_effect": "authoritative edit_file receipt committed",
+    "candidate_guard_receipt": "status=restored; restored_files=[src/inkwell/diary.cpp]",
+    "downstream_effect": "unittest still failed because remaining moon_phase.cpp compile blocker prevented the shared CMake build"
+  },
+  "root_cause": {
+    "classification": "verifier_phase_ordering_causes_compile_progress_rollback",
+    "owner": "factory.pipeline",
+    "mechanism": "_workspace_quality_repair_effect evaluates workspace_quality_verifier_regressed before checking an explicit reduction in upstream compiler barrier identities. Derivative unittest setup errors therefore override real compiler progress and force candidate rollback.",
+    "why_general": "Any project whose test runner invokes a shared build can report more downstream test errors while an edited source file has already left the compiler failure frontier. Counting downstream fanout before compiler-frontier reduction loses valid same-task repair progress across languages and build systems."
+  },
+  "hypothesis": "If the same authoritative compile verifier reports a strict subset of explicit failing translation-unit identities after a real write, classify the candidate as accepted progress before derivative unittest fanout; true test-only regressions must remain regression.",
+  "planned_fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": "Preserve candidates only when an explicit FAILING_TUS set strictly decreases for the same verifier command. Return progress, not forward_unmask, because residual compile identities are already-seen diagnostics and the oscillation gate intentionally rejects non-novel forward-unmask phases. Do not reorder generic diagnostic progress ahead of regression and do not relax unittest discovery/fanout guards without compiler-frontier evidence."
+  },
+  "required_verification": [
+    "TDD RED proves current effect is regression for 3-to-2 FAILING_TUS plus derivative unittest fanout",
+    "GREEN proves effect is accepted progress",
+    "existing unittest fanout and discovery-collapse regression tests remain green",
+    "ruff, format, mypy and targeted pytest evidence",
+    "fresh isolated L3-24 bench proves candidate bytes persist into the next Director repair round without PM/CE restart"
+  ],
+  "target_project_modified": false,
+  "remaining_risk": "OPEN until fresh isolated live revalidation proves same-run Director convergence behavior."
+}

@@ -18,8 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _GO_COMPILE_COMMAND = ("go", "test", "-run", "^$", "./...")
+_RUST_COMPILE_COMMAND = ("cargo", "check", "--quiet")
 _DEFAULT_TIMEOUT_SECONDS = 30
 _GO_DIAGNOSTIC_RE = re.compile(r"^.+?:\d+(?::\d+)?:\s+\S")
+_RUST_DIAGNOSTIC_RE = re.compile(r"^error(?:\[E\d+\])?:")
 _SHADOW_IGNORED_NAMES = frozenset(
     {
         ".git",
@@ -55,6 +57,8 @@ def _run_compile(command: tuple[str, ...], *, cwd: Path, timeout_seconds: int) -
     env = os.environ.copy()
     env.setdefault("GOTOOLCHAIN", "local")
     env.setdefault("GOPROXY", "off")
+    env.setdefault("CARGO_NET_OFFLINE", "true")
+    env.setdefault("CARGO_TERM_COLOR", "never")
     return subprocess.run(
         list(command),
         cwd=str(cwd),
@@ -70,11 +74,17 @@ def _shadow_ignore(_directory: str, names: list[str]) -> set[str]:
     return {name for name in names if name in _SHADOW_IGNORED_NAMES}
 
 
-def _diagnostic_signatures(result: subprocess.CompletedProcess[str]) -> tuple[str, ...]:
-    """Extract stable Go compiler diagnostic lines from a verifier result."""
+def _diagnostic_signatures(
+    result: subprocess.CompletedProcess[str],
+    *,
+    diagnostic_pattern: re.Pattern[str],
+) -> tuple[str, ...]:
+    """Extract stable compiler diagnostic lines from a verifier result."""
 
     output = "\n".join(part for part in (result.stderr, result.stdout) if part)
-    return tuple(dict.fromkeys(line.strip() for line in output.splitlines() if _GO_DIAGNOSTIC_RE.match(line)))
+    return tuple(
+        dict.fromkeys(line.strip() for line in output.splitlines() if diagnostic_pattern.match(line))
+    )
 
 
 def check_candidate_workspace_compile(
@@ -84,7 +94,7 @@ def check_candidate_workspace_compile(
     *,
     timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS,
 ) -> CandidateCompileCheckResult:
-    """Reject a Go candidate when it provably worsens workspace compilation.
+    """Reject a supported source candidate when it worsens compilation.
 
     The shadow copy keeps generated-project bytes untouched.  A baseline that
     already fails compilation remains repairable, but is not permission to
@@ -95,20 +105,53 @@ def check_candidate_workspace_compile(
 
     root = Path(workspace).resolve()
     rel = Path(str(filename).replace("\\", "/"))
-    command = _GO_COMPILE_COMMAND
-    if rel.suffix.lower() != ".go":
-        return CandidateCompileCheckResult(False, False, False, False, command, "", "unsupported extension")
-    if not (root / "go.mod").is_file():
-        return CandidateCompileCheckResult(False, False, False, False, command, "", "go.mod not found")
+    suffix = rel.suffix.lower()
+    command: tuple[str, ...]
+    if suffix == ".go":
+        command = _GO_COMPILE_COMMAND
+        manifest = root / "go.mod"
+        diagnostic_pattern = _GO_DIAGNOSTIC_RE
+    elif suffix == ".rs":
+        command = _RUST_COMPILE_COMMAND
+        manifest = root / "Cargo.toml"
+        diagnostic_pattern = _RUST_DIAGNOSTIC_RE
+    else:
+        return CandidateCompileCheckResult(
+            False,
+            False,
+            False,
+            False,
+            _GO_COMPILE_COMMAND,
+            "",
+            "unsupported extension",
+        )
+    if not manifest.is_file():
+        return CandidateCompileCheckResult(
+            False,
+            False,
+            False,
+            False,
+            command,
+            "",
+            f"{manifest.name} not found",
+        )
     if shutil.which(command[0]) is None:
-        return CandidateCompileCheckResult(False, False, False, False, command, "", "go unavailable")
+        return CandidateCompileCheckResult(
+            False,
+            False,
+            False,
+            False,
+            command,
+            "",
+            f"{command[0]} unavailable",
+        )
 
     try:
         before = _run_compile(command, cwd=root, timeout_seconds=timeout_seconds)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return CandidateCompileCheckResult(False, False, False, False, command, "", str(exc))
     before_ok = before.returncode == 0
-    before_diagnostics = _diagnostic_signatures(before)
+    before_diagnostics = _diagnostic_signatures(before, diagnostic_pattern=diagnostic_pattern)
 
     try:
         with tempfile.TemporaryDirectory(prefix="polaris-compile-candidate-", dir=str(root.parent)) as temp_dir:
@@ -125,7 +168,7 @@ def check_candidate_workspace_compile(
 
     after_ok = after.returncode == 0
     raw_error = (after.stderr or after.stdout or "").strip()
-    after_diagnostics = _diagnostic_signatures(after)
+    after_diagnostics = _diagnostic_signatures(after, diagnostic_pattern=diagnostic_pattern)
     regression = (not after_ok) and (
         before_ok
         or (bool(before_diagnostics) and len(after_diagnostics) > len(before_diagnostics))

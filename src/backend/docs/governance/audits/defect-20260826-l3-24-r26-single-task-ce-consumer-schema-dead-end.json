@@ -1,0 +1,77 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-R26-SINGLE-TASK-CE-CONSUMER-SCHEMA-DEAD-END",
+  "status": "FIXED_LIVE_VERIFIED",
+  "severity": "P0",
+  "owner_cell": "chief_engineer.blueprint",
+  "factory_run_id": "factory_24bc63cd241e",
+  "workspace": "/tmp/factory-bench-l3-24-r26/workspaces/4888754e61ad-a311d0e4e3155995/L3-24-023d7314133040b6/3e9a0be7d21d4efeec55a12f",
+  "target_project_mutated_by_main_agent": false,
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "chief_engineer.semantic_repair_exhausted",
+    "root_cause_hint": "chief_engineer.semantic_patch_invalid:ValueError:consumer_task_ids must not contain owner_task_id",
+    "generated_blueprints": "0/1",
+    "director_effect_receipts": 0
+  },
+  "dynamic_evidence": {
+    "initial_context_snapshot_ref": "ccbeadaef93725fb61252ba1",
+    "schema_repair_context_snapshot_ref": "8282962aece79c372f853df3",
+    "semantic_repair_context_snapshot_ref": "5fbd0ab16027427dbad0a247",
+    "final_request_role": "chief_engineer",
+    "final_request_tool": "submit_structured_role_output",
+    "tool_calls_count": 1,
+    "task_ids": [
+      "TASK-1"
+    ],
+    "pre_fix_tool_schema": {
+      "consumer_task_ids.minItems": 1
+    },
+    "semantic_validator": "consumer_task_ids must not contain owner_task_id",
+    "provider_reasoning": "The model explicitly concluded that a one-task portfolio requires consumer_task_ids=[] and must not invent another task.",
+    "post_fix_replay": {
+      "consumer_task_ids.minItems": null,
+      "parsed_consumer_task_ids": [],
+      "operations": [
+        "behavior_invariant_upsert",
+        "task_behavior_ref_replace"
+      ]
+    }
+  },
+  "root_cause": {
+    "classification": "strict_provider_schema_and_semantic_validator_define_empty_legal_domain",
+    "detail": "For a one-task portfolio, immutable authority exposes only TASK-1. The provider schema required at least one consumer_task_id while semantic validation prohibited owner TASK-1 from being a consumer. No legal payload existed. The model identified the only honest value, an empty consumer set, but the platform schema forbade it.",
+    "not_root_causes": [
+      "Director materialization",
+      "weak model",
+      "missing provider tool",
+      "context truncation",
+      "generated target project defect"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/contracts/_behavior.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py",
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_01.py"
+    ],
+    "behavior": "Allow an owned behavior invariant to have no cross-task consumers. Provider parsing mechanically removes a redundant self-consumer even when the remaining set is empty. Both primary CE and semantic-repair provider schemas now represent that legal value.",
+    "preserved_guards": [
+      "owner_task_id remains required and PM-authorized",
+      "consumer task ids remain unique and must belong to the candidate task set",
+      "owner cannot appear in consumer_task_ids",
+      "cross-task test ownership still requires a real shared invariant",
+      "no sibling task may be invented",
+      "no generated project file is modified"
+    ]
+  },
+  "verification": {
+    "targeted_pytest": "264 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_semantic_patch_replay": "empty consumer set accepted and preserved",
+    "fresh_isolated_bench": "L3-24 r27 factory_b3a0d4f469fa completed chief_engineer_review and entered director_dispatch"
+  },
+  "next_action": "Continue exact-run observation of r27 Director and QA; do not restart PM or Chief Engineer."
+}

@@ -1,0 +1,36 @@
+schema_version: polaris.verification_card.v1
+verification_id: vc-20260827-l3-24-r51-ce-semantic-identity-split
+defect_id: L3-24-R51-CE-SEMANTIC-IDENTITY-SPLIT
+factory_run_id: factory_590232b2123d
+target_project_mutated: false
+classification: pattern
+dynamic_debug:
+  exact_run: true
+  causal_audit_api: true
+  final_provider_request_audited: true
+  exact_provider_output_audited: true
+  semantic_candidate_replayed: true
+pre_fix:
+  stage: chief_engineer_review
+  error_code: chief_engineer.semantic_repair_exhausted
+  reused_obligation_id: OBL-TEST-EXTRA
+  baseline_path: tests/test_cli_edge.py
+  baseline_applicability: optional
+  proposed_path: tests/test_cli_edge.cpp
+  proposed_applicability: required
+  result: immutable path rejection
+root_cause:
+  provider_contract_gap: immutable upsert identity was implicit
+  normalization_gap: applicability equality incorrectly gated safe artifact splitting
+post_fix:
+  provider_context_field: upsert_identity_policy
+  old_optional_row_preserved: true
+  new_required_row_minted: true
+  ambiguous_identity_change_rejected: true
+gates:
+  tdd_red: pass
+  exact_r51_shape_regression: pass
+  ce_factory_tests_139: pass
+  ruff: pass
+  mypy: pass
+  fresh_isolated_r52: CE passed; Director running

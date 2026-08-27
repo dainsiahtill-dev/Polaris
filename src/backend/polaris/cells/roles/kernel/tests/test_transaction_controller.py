@@ -334,6 +334,60 @@ class TestFinalAnswerPath:
         )
         return response, plan.tool_definition
 
+    def test_structured_output_validation_error_preserves_final_request_evidence(self) -> None:
+        """Schema rejection must not erase provider evidence needed by recovery."""
+        from polaris.cells.roles.kernel.internal.kernel.transaction_factory import (
+            _normalize_structured_output_response_with_error_evidence,
+        )
+
+        contract = RoleStructuredOutputContractV1(
+            schema_name="test_result",
+            description="Submit the test result.",
+            json_schema={
+                "type": "object",
+                "properties": {"result": {"type": "string"}},
+                "required": ["result"],
+                "additionalProperties": False,
+            },
+        )
+        plan = resolve_structured_output_transport(
+            {STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY: contract.to_context_projection()}
+        )
+        assert plan is not None
+        final_request_audit = {
+            "final_request_tokens": 7500,
+            "context_window_tokens": 1_000_000,
+        }
+        response = {
+            "content": "",
+            "tool_calls": [
+                {
+                    "type": "tool_use",
+                    "name": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "input": {"unexpected": "schema-invalid"},
+                    "id": "call-invalid-structured-result",
+                }
+            ],
+            "model": "deepseek-v4-flash",
+            "usage": {
+                "provider": "anthropic_compat",
+                "model": "deepseek-v4-flash",
+                "context_snapshot_ref": "4e35aa84ae0a10507cd01bfc",
+                "final_request_context_audit": final_request_audit,
+            },
+        }
+
+        with pytest.raises(ValueError, match="structured_output_payload_schema_mismatch") as raised:
+            _normalize_structured_output_response_with_error_evidence(response, plan)
+
+        error_metadata = getattr(raised.value, "llm_response_metadata", {})
+        assert error_metadata["provider"] == "anthropic_compat"
+        assert error_metadata["model"] == "deepseek-v4-flash"
+        assert error_metadata["context_snapshot_ref"] == "4e35aa84ae0a10507cd01bfc"
+        assert error_metadata["final_request_context_audit"] == final_request_audit
+        assert getattr(raised.value, "llm_response_model", "") == "deepseek-v4-flash"
+        assert getattr(raised.value, "llm_response_error_category", "") == "output_validation_failed"
+
     @pytest.mark.asyncio
     async def test_validated_structured_result_does_not_require_executable_dispatch(
         self, mock_llm_provider, mock_tool_runtime

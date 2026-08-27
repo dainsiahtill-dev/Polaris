@@ -1,0 +1,49 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "20260825-l3-23-quality-owner-handoff-not-consumed",
+  "status": "FIXED_PENDING_LIVE_REVALIDATION",
+  "severity": "P0",
+  "module_id": "M06_workspace_quality_owner_routing",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_c98d1f237b7d",
+  "workspace": "/tmp/factory-bench-l3-23-r11/workspaces/3dff9aa9eccd-8402dc494b4362aa/L3-23-2956ab31bd653d97/45fc4c15faf6979033900315",
+  "symptom": "QA repair reduced diagnostics but later verifier rounds re-exposed test-owned failures; the typed owner_task_retry handoff from an earlier round was no longer available, so the same source-task owner kept the lease until the global nonprogress fuse fired.",
+  "dynamic_evidence": {
+    "diagnostic_counts": [7, 10, 11, 6, 2, 3, 3, 3],
+    "terminal_stop": "three_nonprogress_repairs_without_verified_progress",
+    "terminal_residuals": [
+      "E0432 missing fantasy_restaurant::engine::priority_breakdown in tests/product.rs",
+      "E0425 missing priority_breakdown in tests/edge_cases.rs",
+      "E0507 shared-reference move in tests/restaurant_flow.rs"
+    ],
+    "provider_request_audit": "PASS: role identity, tools, tool_choice, response format and context coverage were present",
+    "scope_handoff": "owner_task_retry handoff for test-owned files existed in an earlier quality_repair round but was absent from the current-round-only routing input"
+  },
+  "root_cause": "Workspace-quality repair treated an explicit typed owner handoff as round-local evidence. Compiler diagnostics can be temporarily hidden by an upstream repair and return later; dropping prior handoffs loses the canonical owner route.",
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_evidence.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py"
+    ],
+    "behavior": "Keep a bounded history of typed owner_task_retry handoffs and reactivate only targets explicitly named by the current verifier residual. The next Director claim still derives write authority from canonical TaskRuntime and JobToken.",
+    "safety": [
+      "No PM or Chief Engineer restart",
+      "No target-project modification",
+      "No cross-scope write grant",
+      "No early owner rebind before verifier revalidation",
+      "Existing global nonprogress fuse remains active"
+    ]
+  },
+  "verification": {
+    "focused_pytest": "6 passed, 69 deselected",
+    "characterization_pytest": "74 passed, 1 pre-existing unrelated Go causal-target baseline failure deselected",
+    "ruff": "PASS",
+    "mypy": "PASS",
+    "live_revalidation": "PENDING L3-23 r12 isolated bench"
+  },
+  "known_unrelated_baseline": {
+    "test": "test_workspace_quality_go_residual_claims_causal_implementation_owner",
+    "failure": "main.go absent from causal target candidates",
+    "relation": "Function is outside this change; track separately rather than weakening or misattributing the gate"
+  }
+}

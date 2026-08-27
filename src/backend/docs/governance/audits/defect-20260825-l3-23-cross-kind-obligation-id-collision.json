@@ -1,0 +1,53 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "20260825-l3-23-cross-kind-obligation-id-collision",
+  "status": "CLOSED",
+  "severity": "P0",
+  "module_id": "M05_chief_engineer_completion_contract_normalization",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_ac0b193d7682",
+  "workspace": "/tmp/factory-bench-l3-23-r12/workspaces/4ab71f159fa1-980ec6fa52661223/L3-23-2956ab31bd653d97/1f4b44f57739b250eb9bf19d",
+  "symptom": "Fresh isolated run stopped in chief_engineer_review after 69.3 seconds with 0/3 blueprints and invalid_project_completion_contract; Director and QA never ran.",
+  "final_request_evidence": {
+    "context_snapshot_ref": "dc9a1e13dbfd995f9cff3331",
+    "role_identity_ok": true,
+    "required_refs_present": ["pm_contract", "target_files"],
+    "structured_output_tool": "submit_structured_role_output",
+    "tool_schema_valid": true,
+    "coverage_pass": true
+  },
+  "dynamic_evidence": {
+    "candidate_ref": "runtime/state/blueprints/semantic-repair/L3-23/factory_ac0b193d7682/bf21e74807f5775179692731b3a2c2c752c4ecad6c899aa20c439b3a7a3a349c.json",
+    "provider_call_count": 1,
+    "structural_recovery": "chief_engineer.portfolio_structural_recovered",
+    "error": "duplicate obligation_id across project completion obligations",
+    "collision": {
+      "obligation_id": "OBL-ENTRY-001",
+      "artifact": "src/bin/fantasy_queue.rs",
+      "entrypoint_source": "src/bin/fantasy_queue.rs",
+      "owner_task_id": "TASK-2"
+    }
+  },
+  "root_cause": "CE output and semantic-repair code allow one identifier to describe artifact and entrypoint views, while ProjectCompletionObligationsV1 requires global ID uniqueness. The completion compiler had no bounded cross-kind normalization, so a semantically aligned same-path/same-owner pair failed after Provider success.",
+  "required_fix": "Split only a provably equivalent artifact/entrypoint cross-kind ID collision into a stable entrypoint ID before authoritative contract construction. Preserve artifact identity, owner, path, command authority and fail closed for mismatched path/owner collisions. Do not weaken global uniqueness.",
+  "required_tests": [
+    "same-path same-owner artifact/entrypoint collision normalizes and builds",
+    "mismatched-path or mismatched-owner collision remains rejected",
+    "behavior coverage referring to retained artifact ID is not deleted",
+    "all final artifact/entrypoint/verification IDs remain globally unique"
+  ],
+  "verification": {
+    "targeted_pytest": "3 passed",
+    "chief_engineer_suites": "246 passed",
+    "ruff": "PASS",
+    "mypy": "PASS"
+  },
+  "live_revalidation": {
+    "factory_run_id": "factory_330ca51c70e1",
+    "work_dir": "/tmp/factory-bench-l3-23-r13",
+    "backend_fresh": true,
+    "chief_engineer_result": "3/3 blueprints",
+    "director_result": "TaskRuntime canonical projection reached completed",
+    "verdict": "The repaired cross-kind obligation contract crossed CE and Director on a fresh isolated run."
+  }
+}

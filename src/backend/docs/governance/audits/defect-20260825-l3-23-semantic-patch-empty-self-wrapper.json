@@ -1,0 +1,57 @@
+{
+  "schema_version": "polaris.platform-defect.v1",
+  "defect_id": "L3-23-R09-STRUCTURED-OUTPUT-EMPTY-SELF-WRAPPER",
+  "recorded_at": "2026-08-25T01:38:50Z",
+  "status": "FIX_IMPLEMENTED_UNIT_VERIFIED_AWAITING_LIVE_REVALIDATION",
+  "severity": "P0",
+  "scope": "roles.kernel.structured_output_transport",
+  "exact_run": {
+    "factory_run_id": "factory_92072d4c9cec",
+    "project_id": "L3-23",
+    "attempt": "r09",
+    "workspace": "/tmp/factory-bench-l3-23-r09/workspaces/e6f4f32779e8-5029cc6e468f495b/L3-23-2956ab31bd653d97/7dfdcfaab021bf71efcd24c8",
+    "context_snapshot_ref": "faaeded58bf7db2725705efd",
+    "call_id": "04e2e330a827493e873e7f070ed5e1da"
+  },
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "chief_engineer.semantic_repair_exhausted",
+    "detail": "structured_output_payload_schema_mismatch:task_behavior_ref_replacements.task_behavior_ref_replacements:'' is not of type 'array'",
+    "generated_blueprints": 0,
+    "expected_blueprints": 3
+  },
+  "dynamic_evidence": {
+    "provider_role": "chief_engineer",
+    "provider_tool": "submit_structured_role_output",
+    "native_tool_calls": 1,
+    "argument_shape": {
+      "task_behavior_ref_replacements": {
+        "task_behavior_ref_replacements": ""
+      }
+    },
+    "schema_shape": "task_behavior_ref_replacements is an empty-allowed object whose additionalProperties values are arrays"
+  },
+  "root_cause": {
+    "category": "provider_protocol_container_wrapper_not_normalized",
+    "summary": "The generic structured-output transport normalized item wrappers, JSON-string containers, displaced members, and missing empty containers, but not an empty scalar nested under a self-named object wrapper.",
+    "not_target_project_bug": true,
+    "not_semantic_authority_change": true
+  },
+  "fix": {
+    "source_file": "src/backend/polaris/cells/roles/kernel/internal/structured_output_transport.py",
+    "test_file": "src/backend/polaris/cells/roles/kernel/tests/test_structured_output_transport.py",
+    "normalization_policy": "schema_proven_self_named_empty_wrapper_v1",
+    "guardrails": [
+      "Only normalize a single self-named key whose value is null or an empty string.",
+      "Only normalize when the exact caller schema proves an empty object/array is valid.",
+      "Preserve non-empty values, sibling keys, and non-empty container contracts."
+    ]
+  },
+  "verification": {
+    "red_test": "exact r09 schema mismatch reproduced",
+    "structured_output_transport_suite": "41 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_revalidation": "pending fresh isolated L3-23 run"
+  }
+}

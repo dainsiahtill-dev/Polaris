@@ -1,0 +1,67 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-CE-DEPTH-DEFICIT-PROJECTION",
+  "status": "CLOSED_LIVE",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_dd4c02efc25d",
+  "workspace": "/tmp/factory-bench-l3-24-r06/workspaces/8419b80a6ae5-8f0704d65bc6d9c3/L3-24-023d7314133040b6/c2becaed9c151dcd462b90fc",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "chief_engineer.semantic_repair_exhausted",
+    "factory_result": "0/2 blueprints; Director was never reached",
+    "post_patch_validation": "project_completion_contract delivery depth infeasible: test_files=1 < 2"
+  },
+  "dynamic_evidence": {
+    "context_snapshot_ref": "f165fe53cd92c9c0af9f503f",
+    "call_id": "d5d3b8285a824bafa9bb0a59c0729162",
+    "provider_tool_call_id": "call_01a03972b4d97ee3b871b324",
+    "provider_args_hash_prefix": "aab2b5936e56",
+    "final_request_role": "chief_engineer",
+    "final_request_context_audit": "passed",
+    "final_request_tokens": 7975,
+    "candidate_ref": ".polaris/runtime/state/blueprints/semantic-repair/L3-24/factory_dd4c02efc25d/a01579ede55d204f30630984f7b86a76809b77804f4c1c2a1b909413a784c2b6.json",
+    "candidate_test_artifacts": [
+      "tests/test_product.py",
+      "tests/invisible_diary_asserts.py",
+      "tests/invisible_diary_ledger_test.py"
+    ],
+    "candidate_valid_cpp_test_count": 0,
+    "required_cpp_test_count": 2,
+    "provider_patch_added": "tests/invisible_diary_test.cpp",
+    "post_patch_valid_cpp_test_count": 1
+  },
+  "root_causes": [
+    {
+      "code": "semantic_repair_depth_delta_not_projected",
+      "detail": "The final request exposed min_test_files=2 but not the validator-authoritative current valid count or missing delta. Three Python test rows were invalid under the C++ owner's allowed suffixes. The provider correctly added one C++ test, but one bounded semantic patch could not infer that two distinct additions were required."
+    }
+  ],
+  "fixes": [
+    {
+      "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "change": "Project project_chief_engineer_portfolio_delivery_depth_feasibility into the semantic repair provider context, reusing the final validator's exact authority and language filtering."
+    },
+    {
+      "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "change": "Require one atomic semantic patch to add at least each authoritative deficit count of distinct authorized artifacts."
+    }
+  ],
+  "verification": {
+    "tdd_red_provider_context": "KeyError: delivery_depth_feasibility",
+    "tdd_red_prompt": "objective omitted exact deficit-count instruction",
+    "tdd_green": "2 passed",
+    "full_targeted_suites": "124 passed",
+    "ruff": "passed",
+    "mypy": "targeted four-file gate reported 58 pre-existing errors outside the new deficit projection behavior; no green claim",
+    "live_retry": "fresh isolated L3-24 r07 factory_6674c7b43558 crossed chief_engineer_review with usable blueprints and reached Director plus QA"
+  },
+  "safety": {
+    "target_project_modified": false,
+    "single_depth_authority": "project_chief_engineer_portfolio_delivery_depth_feasibility",
+    "wrong_language_artifacts_counted": false,
+    "pm_scope_widened": false,
+    "deterministic_filename_invention": false
+  },
+  "next_action": "Closed. Preserve r07 as live evidence; route the next exact-run failure to the Director repair state-continuity defect."
+}

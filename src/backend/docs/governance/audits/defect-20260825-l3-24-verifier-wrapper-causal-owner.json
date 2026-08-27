@@ -1,0 +1,67 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-VERIFIER-WRAPPER-CAUSAL-OWNER",
+  "status": "CLOSED_UNIT_PENDING_LIVE",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_2ae2ee249b77",
+  "workspace": "/tmp/factory-bench-l3-24-r04/workspaces/1ed7c4cca754-42a45c8cd0248866/L3-24-023d7314133040b6/372fca0803a673ce2d895b49",
+  "symptom": {
+    "stage": "quality_gate",
+    "compiled_translation_unit": "src/engine.cpp",
+    "authorized_repair_target": "tests/test_product.py",
+    "physical_edit": "tests/test_product.py changed source-file minimum from 5 to 4",
+    "result": "C++ compilation stayed red and the verifier was weakened"
+  },
+  "dynamic_evidence": {
+    "context_snapshot_ref": "556607c82a7b747892808dcb",
+    "call_id": "f919839b3531494396af246d3e3f30b1",
+    "final_request_role": "director",
+    "final_request_tools": [
+      "edit_file"
+    ],
+    "final_request_authorized_paths": [
+      "tests/test_product.py"
+    ],
+    "final_request_diagnostic": "### FAILING_TUS src/engine.cpp; src/engine.cpp:17:54: error: no match for operator+ between std::string and std::size_t",
+    "independent_reproduction": "g++ -std=c++17 -Iinclude -fsyntax-only src/engine.cpp reproduced the same error",
+    "effect_receipt": ".polaris/runtime/file-edits/events.jsonl records the tests/test_product.py threshold edit",
+    "current_exact_request_replay": {
+      "diagnostic_targets": [
+        "src/engine.cpp",
+        "tests/test_product.py"
+      ],
+      "claimed_write_target": "src/engine.cpp"
+    }
+  },
+  "root_causes": [
+    {
+      "code": "verifier_wrapper_ranked_before_compiler_owned_translation_unit",
+      "detail": "A unittest traceback named its observer before the embedded compiler site. Repair bootstrap then read and authorized only the Python verifier wrapper although the official failing-translation-unit marker named src/engine.cpp."
+    }
+  ],
+  "fixes": [
+    {
+      "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_03.py",
+      "change": "When official verifier evidence contains a ### FAILING_TUS marker, project its existing translation-unit targets ahead of traceback observers. Keep wrapper files as later read context only."
+    },
+    {
+      "file": "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py",
+      "change": "Add exact C++ compiler plus unittest-wrapper regression proving src/engine.cpp receives the single write claim."
+    }
+  ],
+  "verification": {
+    "targeted_regressions": "3 passed",
+    "ruff": "passed",
+    "exact_final_request_replay": "passed; marker present, ordered targets start with src/engine.cpp, write claim is src/engine.cpp",
+    "live_retry": "pending fresh isolated L3-24 r05"
+  },
+  "safety": {
+    "target_project_modified": false,
+    "compiler_marker_required": true,
+    "python_traceback_routing_regression": "passed",
+    "go_path_routing_regression": "passed",
+    "ambiguous_diagnostics": "retain existing fail-closed routing"
+  },
+  "next_action": "Run fresh isolated L3-24 r05 and inspect its exact quality-repair final provider request before changing status to CLOSED_LIVE."
+}

@@ -1,0 +1,87 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-R24-CPP-CLI-BEHAVIOR-TARGET-LOCALIZATION",
+  "status": "FIXED_LIVE_VERIFIED",
+  "severity": "P0",
+  "owner_cell": "factory.pipeline.workspace_quality",
+  "factory_run_id": "factory_10c5a8295711",
+  "workspace": "/tmp/factory-bench-l3-24-r24/workspaces/cd6bc392e9f5-b9e7854868423431/L3-24-023d7314133040b6/f0ec4758f4abd05aaada4b7d",
+  "target_project_mutated_by_main_agent": false,
+  "symptom": {
+    "stage": "quality_gate",
+    "build": "passed",
+    "cpp_syntax": "passed",
+    "behavior_failures": 5,
+    "later_provider_target": "tests/test_product.py",
+    "candidate_rollbacks": 3,
+    "convergence_stop": "three_nonprogress_repairs_without_verified_progress"
+  },
+  "dynamic_evidence": {
+    "causal_audit_root": "director.runtime.repair_coverage_gap",
+    "failed_required_modalities": ["command"],
+    "missing_required_modalities": [],
+    "first_source_repair_context_snapshot_ref": "0a9a2a834fd435db16d3890f",
+    "later_test_repair_context_snapshot_refs": [
+      "b31b1cdb37d25a63d26323ae",
+      "9023c5193b34f5f03bf58ba2",
+      "4e294e25cb53fe5fe1386d46",
+      "1953ed118071b978ac800ca5"
+    ],
+    "final_unittest_failures": [
+      "test_boundary_key_normalization",
+      "test_boundary_phase_modulo",
+      "test_invalid_phase",
+      "test_invalid_subcommand",
+      "test_normal_round_trip"
+    ],
+    "exact_runtime_probe_before": {
+      "has_failing_tus_marker": false,
+      "unclaimed_frontier": ["src/main.cpp", "tests/test_product.py"],
+      "language_causal_targets": ["src/cli.cpp", "src/main.cpp"]
+    },
+    "exact_factory_replay_after": [
+      "src/cli.cpp",
+      "src/main.cpp",
+      "tests/test_product.py"
+    ],
+    "fresh_r25_live_evidence": {
+      "factory_run_id": "factory_fa026e3e4792",
+      "causal_production_targets": [
+        "src/cipher.cpp",
+        "src/moon_phase.cpp",
+        "src/main.cpp",
+        "src/diary.cpp"
+      ],
+      "test_wrapper_misrouting_recurred": false,
+      "downstream_blocker": "Factory owner claim hint collapsed the four-file production frontier to src/cipher.cpp; tracked separately as L3-24-R25-CLAIM-HINT-ERASED-SIBLING-FRONTIER"
+    }
+  },
+  "root_cause": {
+    "classification": "cpp_cli_candidate_gap_plus_false_compiler_frontier_blocked_observer_reordering",
+    "detail": "The runtime-smoke CLI resolver recognized unknown/invalid subcommand behavior but its canonical CLI entrypoint candidates omitted C and C++. It therefore fanned out through changed sources. Factory then treated workspace_quality_unclaimed_failing_tu_targets output as compiler authority even though the diagnostic had no ### FAILING_TUS marker; the outer unittest observer remained first and subsequent repair turns mutated tests instead of the production CLI.",
+    "not_root_causes": [
+      "missing Director edit_file tool",
+      "provider context truncation",
+      "missing PM or Chief Engineer authority",
+      "missing command receipt",
+      "candidate rollback failure"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_language_targets.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_quality_repair_b.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": "Add existing C/C++ cli/main entrypoints to runtime-smoke causal candidates. Only let unclaimed translation-unit frontier block production-before-observer ordering when the verifier emitted the authoritative ### FAILING_TUS marker. Preserve genuine compiler diagnostics and test-only failures."
+  },
+  "verification": {
+    "factory_targeting_tests": "6 passed",
+    "language_targeting_tests": "8 passed",
+    "source_ruff": "passed",
+    "source_mypy": "passed",
+    "shared_test_file_ruff": "not used as a gate because an unrelated active test-file split currently leaves pre-existing unused imports and E402 findings"
+  },
+  "next_action": "Closed. Preserve the production-before-observer invariant; continue through the separately tracked r25 multi-file owner-frontier defect."
+}

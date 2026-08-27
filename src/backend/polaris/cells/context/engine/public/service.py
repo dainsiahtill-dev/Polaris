@@ -18,6 +18,10 @@ from polaris.cells.context.engine.internal.precision_mode import (
     route_by_cost_model,
 )
 from polaris.kernelone.context.runtime_feature_flags import resolve_context_os_enabled
+from polaris.kernelone.llm.engine.context_store_retention import (
+    ContextSnapshotAuditPinError,
+    ContextSnapshotAuditPinRepository,
+)
 from polaris.kernelone.llm.engine.internal.context_hash import validate_context_hash
 from polaris.kernelone.memory.integration import (
     get_persona_text,
@@ -29,7 +33,9 @@ from .contracts import (
     BuildRoleContextCommandV1,
     ContextEngineError,
     ContextResolvedEventV1,
+    FactoryRunContextSnapshotsResultV1,
     FinalProviderRequestAuditResultV1,
+    QueryFactoryRunContextSnapshotsV1,
     QueryFinalProviderRequestAuditV1,
     ResolveRoleContextQueryV1,
     RoleContextResultV1,
@@ -389,6 +395,34 @@ def query_final_provider_request_audit(
     )
 
 
+def query_factory_run_context_snapshots(
+    query: QueryFactoryRunContextSnapshotsV1,
+) -> FactoryRunContextSnapshotsResultV1:
+    """Read immutable final-request audit pins for one exact Factory run."""
+
+    try:
+        pins = ContextSnapshotAuditPinRepository(workspace=query.workspace).query_factory_run_pins(
+            query.factory_run_id
+        )
+    except (ContextSnapshotAuditPinError, OSError, RuntimeError, ValueError) as exc:
+        return FactoryRunContextSnapshotsResultV1(
+            ok=False,
+            status="unavailable",
+            workspace=query.workspace,
+            factory_run_id=query.factory_run_id,
+            pins=(),
+            error_code="factory_run_context_snapshot_query_failed",
+            error_message=str(exc),
+        )
+    return FactoryRunContextSnapshotsResultV1(
+        ok=True,
+        status="available" if pins else "missing",
+        workspace=query.workspace,
+        factory_run_id=query.factory_run_id,
+        pins=tuple(pin.to_record() for pin in pins),
+    )
+
+
 def _build_context_request(
     run_id: str,
     step: int,
@@ -600,12 +634,15 @@ __all__ = [
     "BuildRoleContextCommandV1",
     "ContextEngineError",
     "ContextResolvedEventV1",
+    "FactoryRunContextSnapshotsResultV1",
     "FinalProviderRequestAuditResultV1",
+    "QueryFactoryRunContextSnapshotsV1",
     "QueryFinalProviderRequestAuditV1",
     "ResolveRoleContextQueryV1",
     "RoleContextResultV1",
     "build_context_window",
     "get_anthropomorphic_context_v2",
     "get_search_service",
+    "query_factory_run_context_snapshots",
     "query_final_provider_request_audit",
 ]

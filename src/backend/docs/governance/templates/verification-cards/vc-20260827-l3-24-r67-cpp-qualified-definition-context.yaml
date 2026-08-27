@@ -1,0 +1,51 @@
+card_id: "vc-20260827-l3-24-r67-cpp-qualified-definition-context"
+bug_summary: >-
+  Director C++ quality-repair final requests label real class-qualified member
+  definitions as declaration-only, contradicting the injected current source
+  body and misleading same-task repair.
+classification: pattern
+bug_path:
+  file: "polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py"
+  method: "_cpp_defined_function_names"
+  symptom: "Moonlight::days_since_1900 body exists but prompt says DECLARED BUT NOT DEFINED"
+assumptions:
+  - id: A1
+    statement: "The contradiction exists in an exact final provider request."
+    status: verified_true
+    evidence: >-
+      factory_308086628a50 snapshots 3b0669cf25511c3525c2231b and
+      886a4f6fc0a13c8dce1a4679 contain both the method bodies and the false
+      declaration-only table.
+  - id: A2
+    statement: "The physical verifier failure is reproducible without modifying target source."
+    status: verified_true
+    evidence: >-
+      Exact unittest replay rebuilt the C++ target and returned cpp_unit
+      pass=29 fail=2.
+  - id: A3
+    statement: "The failure is in qualified-definition recognition, not header discovery."
+    status: verified_true
+    evidence: >-
+      moonlight.hpp and moonlight.cpp are both present in final request evidence;
+      free functions are recognized while Moonlight:: methods are omitted.
+pre_mortem:
+  failure_point: >-
+    An over-broad regex could classify declarations, calls or control statements
+    as definitions and hide a genuine linker defect.
+  risk_zone:
+    - "polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py"
+verification_plan:
+  unit_tests:
+    - file: "polaris/cells/roles/adapters/tests/test_director_quality_repair_verifier_context.py"
+      description: "Qualified member bodies are defined; genuine declaration-only aliases remain declaration-only."
+      expected: "Member names appear only in the defined table."
+      status: passed
+  integration_tests:
+    - description: "Focused roles.adapters quality-repair regressions"
+      command: >-
+        PYTHONPATH=src/backend python -m pytest -q
+        src/backend/polaris/cells/roles/adapters/tests/test_director_quality_repair_verifier_context.py
+      status: passed
+  manual_check:
+    - description: "Fresh isolated final provider request contains no false declaration-only Moonlight methods."
+      status: pending

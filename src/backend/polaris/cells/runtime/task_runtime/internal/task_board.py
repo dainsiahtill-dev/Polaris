@@ -921,6 +921,22 @@ class TaskBoard:
             task = self._cache.get(task_id)
             return copy.deepcopy(task) if task is not None else None
 
+    def get_persisted(self, task_id: int) -> Task | None:
+        """Reload one durable row before returning its deep copy.
+
+        Multiple ``TaskRuntimeService`` instances may own the same workspace
+        inside one backend process.  A quality-rework owner can therefore
+        reopen a row after a long-lived Director service cached its terminal
+        predecessor.  Claim/lease authority must read the atomic on-disk row,
+        not that process-local cache.  Keep this narrow single-row refresh
+        explicit so ordinary projection reads retain their existing cost.
+        """
+        import copy
+
+        with self.transaction():
+            task = self._load_task_from_disk(task_id)
+            return copy.deepcopy(task) if task is not None else None
+
     def get_task(self, task_id: int | str) -> dict[str, Any] | None:
         """Compatibility helper: get task as dict, supports 'task-N' tokens."""
         try:

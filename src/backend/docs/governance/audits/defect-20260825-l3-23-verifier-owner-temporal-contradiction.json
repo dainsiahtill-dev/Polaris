@@ -1,0 +1,69 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-23-R07-VERIFIER-OWNER-TEMPORAL-CONTRADICTION",
+  "status": "FIX_IMPLEMENTED_UNIT_VERIFIED_AWAITING_LIVE_REVALIDATION",
+  "severity": "P0",
+  "project_id": "L3-23",
+  "factory_run_id": "factory_d24d3b846959",
+  "workspace": "/tmp/factory-bench-l3-23-r07/workspaces/4396b48992c9-460073dfe5b52ec4/L3-23-2956ab31bd653d97/1b22245a203f5d39bbbb1b70",
+  "head_at_diagnosis": "f3d3bb63284015b958719039b159c2d6a032d015",
+  "symptom": {
+    "task_id": "TASK-1",
+    "stage": "director_dispatch",
+    "error_code": "director_materialization_quality_failed",
+    "physical_effects": {"created_files": 16, "rust_source_files": 15, "source_lines": 1223},
+    "verifier_failure": "cargo build/check required src/bin/fantasy_restaurant.rs before its owner task could materialize it"
+  },
+  "dynamic_evidence": {
+    "task_runtime_event_log": ".polaris/runtime/events/task_runtime.execution.jsonl",
+    "director_journal": ".polaris/runtime/runs/director-0d71a2ac3072/logs/journal.enriched.jsonl",
+    "final_provider_request_snapshot": ".polaris/runtime/contexts/1f/1f9107d6e39816827d107499",
+    "current_task_allowed_write_paths_excludes": ["src/bin/fantasy_restaurant.rs"],
+    "task_completion_projection": {
+      "task_id": "TASK-1",
+      "owned_verifier": {
+        "obligation_id": "OBL-V-BUILD",
+        "owner_task_id": "TASK-1",
+        "command": "cargo build",
+        "covers_obligation_ids": ["OBL-BIN-RUNNER", "OBL-CORE-DOMAIN", "OBL-ENGINE-RULES", "OBL-LIB-ENTRY", "OBL-MANIFEST"]
+      },
+      "conflicting_dependency_artifact": {
+        "obligation_id": "OBL-BIN-RUNNER",
+        "owner_task_id": "TASK-2",
+        "path": "src/bin/fantasy_restaurant.rs",
+        "applicability": "required"
+      }
+    },
+    "director_repair_behavior": "Director attempted write/edit for the missing bin and was correctly denied by DEO scope authority"
+  },
+  "root_cause": {
+    "category": "chief_engineer_completion_contract_temporal_authority",
+    "summary": "The completion compiler preferred an exact verifier authority hash even when that task did not own or depend on every artifact covered by the verifier.",
+    "why_director_cannot_fix": "TASK-1 capability correctly forbids writing TASK-2's entrypoint; retrying Director with the same contradictory contract cannot converge.",
+    "not_model_quality": true
+  },
+  "fix": {
+    "source_file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+    "test_file": "src/backend/polaris/cells/chief_engineer/blueprint/public/tests/test_public_contractsa.py",
+    "behavior": [
+      "Require verifier owner dependency closure to contain every covered artifact owner.",
+      "Preserve exact committed argv/cwd while rebinding.",
+      "Choose the earliest unique dependency-complete owner.",
+      "Fail closed when covered owners are parallel or no unique dependency-complete owner exists."
+    ],
+    "pm_ce_restart_on_director_failure": false,
+    "permission_widening": false
+  },
+  "verification": {
+    "red_test": "2 selected tests failed before implementation",
+    "targeted_tests": "2 passed",
+    "completion_contract_suite": "182 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_revalidation": "pending fresh isolated L3-23 r08"
+  },
+  "residual_risk": [
+    "Fresh provider output may expose another independent platform defect after this P0 is removed.",
+    "Live revalidation must prove TASK-1 no longer fails on TASK-2-owned entrypoint and that later owner executes the verifier."
+  ]
+}

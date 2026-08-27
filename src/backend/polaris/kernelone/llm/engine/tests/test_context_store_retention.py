@@ -616,6 +616,35 @@ class TestPinnedContextSnapshotRetention:
         assert report.removed_files == 1
         assert repository.query_snapshot_pins(pin.context_snapshot_ref) == (pin,)
 
+    def test_exact_factory_run_pin_query_recovers_child_role_snapshots(self, tmp_path: Path) -> None:
+        """Exact-run audit must not depend on parent journal correlation alone."""
+
+        repository = self._repository(tmp_path)
+        pm_pin = repository.persist_snapshot_and_pin(
+            snapshot={"schema_version": "llm.provider_request_snapshot.v2", "role": "pm"},
+            factory_run_id="factory-exact",
+            role="pm",
+            verification_scope="factory",
+            request_freeze_id="freeze-pm",
+            provider_request_id="req-pm",
+            composite_request_hash="a" * 64,
+            snapshot_source="roles.kernel.final_provider_attempt",
+        )
+        repository.persist_snapshot_and_pin(
+            snapshot={"schema_version": "llm.provider_request_snapshot.v2", "role": "director"},
+            factory_run_id="factory-foreign",
+            role="director",
+            verification_scope="factory",
+            request_freeze_id="freeze-foreign",
+            provider_request_id="req-foreign",
+            composite_request_hash="b" * 64,
+            snapshot_source="roles.kernel.final_provider_attempt",
+        )
+
+        pins = repository.query_factory_run_pins("factory-exact")
+
+        assert pins == (pm_pin,)
+
     def test_pinned_snapshot_ref_refuses_non_identical_replacement(self, tmp_path: Path) -> None:
         repository = self._repository(tmp_path)
         pin = self._persist(repository)

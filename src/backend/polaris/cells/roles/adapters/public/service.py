@@ -377,8 +377,18 @@ def _project_public_materialization_repair_kernel_summary(
 class _PublicPostExecutionRepairAdapter:
     """Minimal adapter surface for public post-execution schedule callers."""
 
-    def __init__(self, workspace: str | Path) -> None:
+    def __init__(
+        self,
+        workspace: str | Path,
+        *,
+        artifact_quality_errors: tuple[str, ...] = (),
+    ) -> None:
         self.workspace = str(Path(workspace))
+        # Post-execution planners consume verifier diagnostics from the adapter
+        # boundary.  Dropping them made coverage report an executable repair
+        # while the actual runner received no diagnostics and returned
+        # ``repair_not_planned``.
+        self.artifact_quality_errors = artifact_quality_errors
         self._execution = None
 
     def _update_task_progress(self, *_args: Any, **_kwargs: Any) -> None:
@@ -389,6 +399,8 @@ def run_director_post_execution_repair_schedule(
     workspace: str | Path,
     *,
     task_id: str = "roles-adapters-post-execution-repair",
+    artifact_quality_errors: list[str] | tuple[str, ...] = (),
+    execution_attempt: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Run the runtime-owned Director post-execution repair schedule.
 
@@ -402,8 +414,12 @@ def run_director_post_execution_repair_schedule(
     )
 
     return run_post_execution_language_repairs(
-        _PublicPostExecutionRepairAdapter(workspace),
+        _PublicPostExecutionRepairAdapter(
+            workspace,
+            artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),
+        ),
         task_id=task_id,
+        execution_attempt=execution_attempt,
     )
 
 
@@ -442,15 +458,22 @@ def resolve_director_causal_quality_repair_target_files(
     """
 
     from ..internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
         _go_runtime_smoke_repair_target_files,
         _javascript_runtime_smoke_repair_target_files,
         _python_runtime_smoke_repair_target_files,
+        _rust_test_behavior_repair_target_files,
         _semantic_quality_repair_target_files,
     )
 
     errors = list(artifact_quality_errors)
     changed = list(changed_files)
     candidates = [
+        *_explicit_artifact_quality_repair_target_files(
+            artifact_quality_errors=errors,
+            changed_files=changed,
+            workspace_full=workspace_full,
+        ),
         *_python_runtime_smoke_repair_target_files(
             artifact_quality_errors=errors,
             changed_files=changed,
@@ -466,6 +489,11 @@ def resolve_director_causal_quality_repair_target_files(
             changed_files=changed,
             workspace_full=workspace_full,
         ),
+        *_rust_test_behavior_repair_target_files(
+            artifact_quality_errors=errors,
+            changed_files=changed,
+            workspace_full=workspace_full,
+        ),
         *_semantic_quality_repair_target_files(
             artifact_quality_errors=errors,
             changed_files=changed,
@@ -473,11 +501,7 @@ def resolve_director_causal_quality_repair_target_files(
         ),
     ]
     return list(
-        dict.fromkeys(
-            str(path or "").strip().replace("\\", "/")
-            for path in candidates
-            if str(path or "").strip()
-        )
+        dict.fromkeys(str(path or "").strip().replace("\\", "/") for path in candidates if str(path or "").strip())
     )
 
 
@@ -533,26 +557,92 @@ async def run_director_materialization_quality_repair(
     llm_call_timeout: float,
     artifact_quality_errors: list[str],
     changed_files: list[str],
+    repair_target_files: list[str],
     repair_attempt: int = 1,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     """Run Director's materialization-quality repair through the roles public boundary."""
 
     from ..internal.director.quality_gate import _run_materialization_quality_repair_retry
+    from ..internal.director.quality_gate._candidate_guard import (
+        DirectorQualityRepairCandidateGuard,
+    )
     from ..internal.director_adapter import DirectorAdapter
 
-    adapter = DirectorAdapter(str(workspace))
-    return await _run_materialization_quality_repair_retry(
-        adapter,
-        task=dict(task),
-        target_task_id=target_task_id,
-        run_id=run_id,
-        context=dict(context),
-        original_message=original_message,
-        llm_call_timeout=llm_call_timeout,
-        artifact_quality_errors=list(artifact_quality_errors),
-        changed_files=list(changed_files),
-        repair_attempt=repair_attempt,
+    # Factory already resolved the causal implementation paths and claimed a
+    # JobToken over them.  Preserve that explicit cross-Cell authority.  Do
+    # not re-derive the rollback scope from a mutable context or the broader
+    # owner task row: live L3-23 edited src/patience.rs while a second
+    # inference snapshotted src/lib.rs, then reported a rollback that never
+    # restored the physical candidate.
+    target_files: list[str] = []
+    seen_target_files: set[str] = set()
+    raw_owner_targets = task.get("target_files") or ()
+    owner_targets = (
+        [raw_owner_targets]
+        if isinstance(raw_owner_targets, str)
+        else list(raw_owner_targets)
+        if isinstance(raw_owner_targets, (list, tuple))
+        else []
     )
+    # The Provider's narrow intent is not a transactional rollback boundary:
+    # native tools can legally choose another already-authorized materialized
+    # implementation path after reading the failing tests. Snapshot the bounded
+    # authorized/materialized universe, then the guard seals and restores only
+    # paths whose hashes actually changed.
+    for item in [*repair_target_files, *owner_targets]:
+        normalized = str(item or "").strip()
+        if not normalized or normalized in seen_target_files:
+            continue
+        seen_target_files.add(normalized)
+        target_files.append(normalized)
+    try:
+        candidate_guard = await DirectorQualityRepairCandidateGuard.capture(
+            workspace=workspace,
+            candidate_id=f"{run_id}:{target_task_id}:quality-repair-{repair_attempt}",
+            target_files=target_files,
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        return [], {
+            "attempted": True,
+            "success": False,
+            "write_tool_evidence": False,
+            "error_code": "quality_repair_candidate_snapshot_failed",
+            "error": f"quality_repair_candidate_snapshot_failed:{type(exc).__name__}:{exc}",
+        }
+
+    adapter = DirectorAdapter(str(workspace))
+    try:
+        results, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task=dict(task),
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=dict(context),
+            original_message=original_message,
+            llm_call_timeout=llm_call_timeout,
+            artifact_quality_errors=list(artifact_quality_errors),
+            changed_files=list(changed_files),
+            repair_attempt=repair_attempt,
+        )
+    except BaseException:
+        await candidate_guard.seal_effect()
+        await candidate_guard.rollback(reason="quality_repair_provider_boundary_failed")
+        raise
+
+    normalized_summary = dict(summary)
+    mutation_committed = bool(normalized_summary.get("write_tool_evidence")) or any(
+        str(item.get("tool") or "").strip() in {"write_file", "edit_file", "delete_file"} and bool(item.get("success"))
+        for item in results
+        if isinstance(item, dict)
+    )
+    if mutation_committed:
+        normalized_summary["candidate_guard_seal"] = await candidate_guard.seal_effect()
+        normalized_summary["_candidate_guard"] = candidate_guard
+    else:
+        normalized_summary["candidate_guard_seal"] = candidate_guard.accept(
+            reason="quality_repair_produced_no_mutation"
+        )
+    return [dict(item) for item in results], normalized_summary
 
 
 _logger = logging.getLogger(__name__)

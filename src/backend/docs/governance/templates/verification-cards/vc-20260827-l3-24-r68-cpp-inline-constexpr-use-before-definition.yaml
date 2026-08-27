@@ -1,0 +1,42 @@
+verification_card:
+  id: vc-20260827-l3-24-r68-cpp-inline-constexpr-use-before-definition
+  status: implementation_and_exact_copy_replay_verified
+  owner: director.runtime
+  exact_run: factory_e32d2196f20b
+  classification: repair_coverage_gap
+  immutable_target_workspace: true
+  symptom:
+    verifier: cmake configure plus single-threaded CMake build
+    diagnostic: "include/lunaris/invisible_diary.hpp:42:56: error: ‘DEFAULT_CIPHER_ALPHABET’ was not declared in this scope"
+  dynamic_evidence:
+    compiler_reproduced: true
+    definition_exists_later_same_file: true
+    definition_kind: inline_constexpr_variable
+    coverage_before: uncovered
+    director_pm_ce_restart: false
+    unrelated_candidate_rollbacks: correct
+  root_cause:
+    rule: cpp.use_before_definition
+    gap: existing executable rule accepted only later free functions in source files
+  invariants:
+    - generated Bench workspace stays read-only
+    - one existing unambiguous same-scope inline constexpr definition may move
+    - no API type initializer or declaration is invented
+    - conditional and ambiguous cases fail closed
+    - effect is one edit_file receipt
+    - verifier evidence remains authoritative
+  tests:
+    tdd_red: 3 failed
+    focused_green: 8 passed
+    repair_kernel_regression: 193 passed
+    ruff: passed
+    mypy: passed
+    exact_copy_public_run_receipt: passed
+    exact_copy_cmake_build: passed
+  fresh_bench:
+    project: L3-24
+    mode: isolated
+    status: pending
+  next_frontier:
+    exact_copy_unittest: 21 tests, 11 failures
+    classification: pending fresh-run causal audit

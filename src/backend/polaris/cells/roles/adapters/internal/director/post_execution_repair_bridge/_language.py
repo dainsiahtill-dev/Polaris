@@ -246,6 +246,7 @@ def _run_cpp_runtime_repair(
         source_tool=source_tool,
         execution_attempt=execution_attempt,
         base_files=base_files,
+        artifact_quality_errors=_post_execution_artifact_quality_errors(adapter),
         allowed_paths=tuple(base_files.keys()),
         advisor_notes=advisor_notes,
         use_editor=False,

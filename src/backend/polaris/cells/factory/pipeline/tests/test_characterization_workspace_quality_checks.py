@@ -18,12 +18,17 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
 from polaris.cells.factory.pipeline.internal.factory_workspace_quality_impl import (
     _workspace_quality_authoritative_owner_paths,
     _workspace_quality_causal_repair_target_files,
+    _workspace_quality_cpp_linker_topology_repair_targets,
+    _workspace_quality_cpp_standard_compatibility_repair_targets,
     _workspace_quality_llm_claim_target_files,
     _workspace_quality_test_shortfall_owner_targets,
 )
 from polaris.cells.factory.pipeline.tests._characterization_helpers import (
     _executor,
     _with_task_runtime_authority,
+)
+from polaris.cells.roles.adapters.internal.director.quality_gate._candidate_guard import (
+    DirectorQualityRepairCandidateGuard,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TaskRuntimeExecutionAttemptIdentityV1,
@@ -761,6 +766,150 @@ class TestRunWorkspaceQualityChecks:
         assert rounds[0]["residual_owner_handoff_targets"] == ["physics/gravity_test.go"]
         assert rounds[1]["verifier_effect"] == "resolved"
 
+    @pytest.mark.asyncio
+    async def test_workspace_quality_reactivates_prior_owner_handoff_after_diagnostic_unmask(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-reactivated-owner-handoff",
+            config=FactoryConfig(name="quality-reactivated-owner-handoff"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-25T00:00:00+00:00",
+        )
+        state = {"phase": 0}
+        owner_target_calls: list[list[str] | None] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            errors = (
+                "src/lib.rs:30: unresolved import engine::priority_breakdown\n"
+                "tests/restaurant_flow.rs:16: cannot move out of a shared reference"
+                if state["phase"] == 0
+                else "src/lib.rs:30: unresolved import engine::priority_breakdown"
+                if state["phase"] == 1
+                else "tests/restaurant_flow.rs:16: cannot move out of a shared reference"
+                if state["phase"] == 2
+                else ""
+            )
+            return {
+                "command": command,
+                "exit_code": 0 if state["phase"] == 3 else 1,
+                "passed": state["phase"] == 3,
+                "stdout_tail": errors,
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def fake_apply_workspace_quality_deterministic_repairs(
+            *,
+            run: FactoryRun,
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            assert run.id == "factory-quality-reactivated-owner-handoff"
+            assert repair_attempt in {1, 2, 3}
+            assert artifact_quality_errors
+            return [], {"attempted": False, "success": False, "source_tools": [], "tool_results": 0}
+
+        async def fake_apply_workspace_quality_llm_repairs(
+            *,
+            run: FactoryRun,
+            context: dict[str, Any],
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+            interface_discrepancy_evidence: dict[str, Any] | None = None,
+            owner_target_files: list[str] | None = None,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del context, artifact_quality_errors, interface_discrepancy_evidence
+            assert run.id == "factory-quality-reactivated-owner-handoff"
+            owner_target_calls.append(owner_target_files)
+            if repair_attempt == 1:
+                assert owner_target_files is None
+                state["phase"] = 1
+                return (
+                    [{"success": True, "tool": "edit_file", "file": "src/lib.rs", "operation": "modify"}],
+                    {
+                        "stage": "quality_repair",
+                        "task_id": "TASK-1",
+                        "repair_target_files": ["src/lib.rs"],
+                        "tool_results": 1,
+                        "write_tool_evidence": True,
+                        "task_boundary_scope_filter": {
+                            "deferred": True,
+                            "owner_task_retry_handoff_requests": [
+                                {
+                                    "target_file": "tests/restaurant_flow.rs",
+                                    "owner_step_id": "TASK-3",
+                                    "owner_found": True,
+                                    "status": "owner_found",
+                                    "recommended_route": "owner_task_retry",
+                                }
+                            ],
+                        },
+                    },
+                )
+            if repair_attempt == 2:
+                assert owner_target_files is None
+                state["phase"] = 2
+                return (
+                    [{"success": True, "tool": "edit_file", "file": "src/lib.rs", "operation": "modify"}],
+                    {
+                        "stage": "quality_repair",
+                        "task_id": "TASK-1",
+                        "repair_target_files": ["src/lib.rs"],
+                        "tool_results": 1,
+                        "write_tool_evidence": True,
+                    },
+                )
+            assert repair_attempt == 3
+            assert owner_target_files == ["tests/restaurant_flow.rs"]
+            state["phase"] = 3
+            return (
+                [
+                    {
+                        "success": True,
+                        "tool": "edit_file",
+                        "file": "tests/restaurant_flow.rs",
+                        "operation": "modify",
+                    }
+                ],
+                {
+                    "stage": "quality_repair",
+                    "task_id": "TASK-3",
+                    "repair_target_files": ["tests/restaurant_flow.rs"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["cargo", "test"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fake_apply_workspace_quality_llm_repairs)
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 2},
+        )
+
+        assert passed is True
+        assert owner_target_calls == [None, None, ["tests/restaurant_flow.rs"]]
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        rounds = payload["repair"]["rounds"]
+        assert rounds[1]["residual_owner_handoff_extra_round_granted"] is True
+        assert rounds[1]["residual_owner_handoff_targets"] == ["tests/restaurant_flow.rs"]
+        assert rounds[2]["verifier_effect"] == "resolved"
+
     def test_workspace_quality_owner_score_ignores_project_wide_target_inventory(
         self,
         tmp_path: Path,
@@ -847,6 +996,398 @@ class TestRunWorkspaceQualityChecks:
             fallback_target_files=[],
         ) == ["main.go"]
 
+    def test_workspace_quality_llm_claim_does_not_let_test_owner_hide_causal_cpp_sources(self) -> None:
+        """L3-24 r23: an old observer lease cannot override current causality."""
+
+        assert _workspace_quality_llm_claim_target_files(
+            owner_target_files=["tests/test_product.py"],
+            diagnostic_target_files=[
+                "src/invisible_diary/cipher.cpp",
+                "src/invisible_diary/diary_text.cpp",
+                "src/invisible_diary/errors.cpp",
+                "src/invisible_diary/main.cpp",
+                "tests/test_product.py",
+            ],
+            fallback_target_files=[],
+        ) == ["src/invisible_diary/cipher.cpp"]
+
+    def test_workspace_quality_llm_claim_keeps_test_owner_when_no_causal_source_exists(self) -> None:
+        """A true test-only diagnostic remains owned by the authored test."""
+
+        assert _workspace_quality_llm_claim_target_files(
+            owner_target_files=["tests/test_product.py"],
+            diagnostic_target_files=["tests/test_product.py"],
+            fallback_target_files=["src/invisible_diary/main.cpp"],
+        ) == ["tests/test_product.py"]
+
+    def test_workspace_quality_llm_claim_prefers_cpp_failing_tu_over_mixed_test_owner(self) -> None:
+        """L3-24 r59: an explicit compiler frontier outranks its unittest observer.
+
+        The exact verifier evidence named ``src/core/cipher.cpp`` as the only
+        failing C++ translation unit, while a derived Python acceptance test
+        appeared first in the mixed TaskRuntime owner set.  Factory must lease
+        the physical compiler owner; otherwise every forced ``edit_file`` turn
+        can mutate only the observer test and can never repair the primary
+        compiler defect.
+        """
+
+        assert _workspace_quality_llm_claim_target_files(
+            owner_target_files=[
+                "CMakeLists.txt",
+                "include/invisible_diary/cipher.hpp",
+                "src/core/cipher.cpp",
+                "tests/test_acceptance.py",
+            ],
+            diagnostic_target_files=[
+                "tests/test_acceptance.py",
+                "src/core/cipher.cpp",
+                "include/invisible_diary/cipher.hpp",
+                "CMakeLists.txt",
+            ],
+            fallback_target_files=[],
+            compiler_diagnostic_target_files=["src/core/cipher.cpp"],
+        ) == ["src/core/cipher.cpp"]
+
+    def test_workspace_quality_llm_claim_keeps_authored_cpp_test_compiler_owner(self) -> None:
+        """L3-24 r62: a compiler-failing test TU owns its exact source defect.
+
+        The test translation unit itself attempted to mutate a const value.
+        Runtime assertion and delivery-depth residuals also named production
+        sources, but those secondary failures cannot replace the compiler's
+        exact ``tests/cpp_unit.cpp:line:column`` mutation authority.
+        """
+
+        assert _workspace_quality_llm_claim_target_files(
+            owner_target_files=None,
+            diagnostic_target_files=[
+                "src/inkwell/cipher.cpp",
+                "src/inkwell/cli_main.cpp",
+                "tests/test_product.py",
+                "tests/cpp_unit.cpp",
+            ],
+            fallback_target_files=[],
+            compiler_diagnostic_target_files=["tests/cpp_unit.cpp"],
+        ) == ["tests/cpp_unit.cpp"]
+
+    def test_workspace_quality_mixed_cpp_test_compile_failure_stays_on_test_tu(self, tmp_path: Path) -> None:
+        """L3-24 r62: mixed secondary residuals must not erase compiler causality."""
+
+        for relative_path in (
+            "src/inkwell/cipher.cpp",
+            "src/inkwell/cli_main.cpp",
+            "tests/cpp_unit.cpp",
+            "tests/test_product.py",
+        ):
+            path = tmp_path / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("// fixture\n", encoding="utf-8")
+        executor = _executor(tmp_path)
+        errors = [
+            "tests/cpp_unit.cpp:125:14: error: no match for 'operator=' "
+            "(operand types are 'const std::string' and 'const char [15]')",
+            "FAIL: test_cli_builtin_default_scenario (test_product.TestInkwellCLI)\n"
+            f'  File "{tmp_path / "tests" / "test_product.py"}", line 161, in test_cli_builtin_default_scenario\n'
+            "AssertionError: 3 != 0 : builtin failed:",
+            "delivery_depth_contract_failed: implementation depth metrics: "
+            "prod_files=6, prod_lines=635; failures: production_source_lines=635 < 650",
+        ]
+
+        targets = _workspace_quality_causal_repair_target_files(
+            executor,
+            artifact_quality_errors=errors,
+        )
+
+        assert targets[0] == "tests/cpp_unit.cpp"
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_llm_repair_wires_cpp_frontier_into_mixed_owner_claim(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The live Factory wrapper must pass compiler-frontier authority through."""
+
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        targets = [
+            "CMakeLists.txt",
+            "include/invisible_diary/cipher.hpp",
+            "src/core/cipher.cpp",
+            "tests/test_acceptance.py",
+        ]
+        for relative_path in targets:
+            path = tmp_path / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("// fixture\n", encoding="utf-8")
+        run = FactoryRun(
+            id="factory-cpp-compiler-frontier-owner",
+            config=FactoryConfig(name="cpp-compiler-frontier-owner", stages=["quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-27T00:00:00+00:00",
+        )
+        TaskRuntimeService(str(tmp_path)).ensure_task_row(
+            external_task_id="TASK-1",
+            subject="C++ compiler owner",
+            description="Own compiler source and acceptance observer",
+            metadata={
+                "external_task_id": "TASK-1",
+                "factory_run_id": run.id,
+                "target_files": targets,
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": targets,
+                },
+            },
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_run_director_materialization_quality_repair(
+            workspace: str,
+            **kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del workspace
+            captured.update(kwargs)
+            return [], {"attempted": True, "success": False, "tool_results": 0}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_run_director_materialization_quality_repair,
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "_workspace_quality_causal_repair_target_files",
+            lambda _executor, *, artifact_quality_errors: [
+                "tests/test_acceptance.py",
+                "src/core/cipher.cpp",
+                "include/invisible_diary/cipher.hpp",
+                "CMakeLists.txt",
+            ],
+        )
+
+        await _executor(tmp_path)._apply_workspace_quality_llm_repairs(
+            run=run,
+            context={},
+            artifact_quality_errors=[
+                "### FAILING_TUS src/core/cipher.cpp\n"
+                "### src/core/cipher.cpp\n"
+                "src/core/cipher.cpp:97:22: error: no matching function for call to to_hex"
+            ],
+            repair_attempt=2,
+            owner_target_files=[
+                "tests/test_acceptance.py",
+                "src/core/cipher.cpp",
+                "include/invisible_diary/cipher.hpp",
+                "CMakeLists.txt",
+            ],
+        )
+
+        assert captured["target_task_id"] == "TASK-1"
+        assert captured["context"]["director_quality_repair"]["repair_target_files"] == [
+            "src/core/cipher.cpp"
+        ]
+        assert captured["repair_target_files"] == ["src/core/cipher.cpp"]
+
+    def test_workspace_quality_behavior_claim_does_not_collapse_mixed_owner_to_observer_test(self) -> None:
+        """L3-24 r43: behavior plus CMake failure must claim production first.
+
+        The deterministic owner evidence contained the observer test, the
+        CMake manifest, and four causal C++ sources.  Because the complete
+        owner set was current, the generic owner intersection selected the
+        first row (the test) and forced every LLM repair onto that read-only
+        observer.  Behavioral repair must start from a production owner; a
+        genuine test-only diagnostic still follows the test-owner case above.
+        """
+
+        assert _workspace_quality_llm_claim_target_files(
+            owner_target_files=[
+                "tests/test_product.py",
+                "CMakeLists.txt",
+                "src/cipher_engine.cpp",
+                "src/ink_visibility.cpp",
+                "src/main.cpp",
+                "src/moon_phase.cpp",
+            ],
+            diagnostic_target_files=[
+                "tests/test_product.py",
+                "CMakeLists.txt",
+                "src/cipher_engine.cpp",
+                "src/ink_visibility.cpp",
+                "src/main.cpp",
+                "src/moon_phase.cpp",
+            ],
+            fallback_target_files=[],
+            prefer_production_owner=True,
+        ) == ["CMakeLists.txt"]
+
+    def test_cpp_linker_claim_keeps_same_owner_declaration_topology(self) -> None:
+        """A one-path lease claim must not erase the linker mutation frontier."""
+
+        targets = _workspace_quality_cpp_linker_topology_repair_targets(
+            artifact_quality_errors=[
+                "/usr/bin/ld: main.cpp.o: undefined reference to `pkg::moon_token(pkg::MoonPhase)'"
+            ],
+            authoritative_owner_paths=[
+                "src/main.cpp",
+                "src/cipher_engine.cpp",
+                "include/pkg/moon_phase.hpp",
+            ],
+            claimed_owner_candidates=["include/pkg/moon_phase.hpp"],
+            diagnostic_targets=[
+                "include/pkg/moon_phase.hpp",
+                "src/main.cpp",
+                "src/cipher_engine.cpp",
+            ],
+        )
+
+        assert targets == [
+            "include/pkg/moon_phase.hpp",
+            "src/main.cpp",
+            "src/cipher_engine.cpp",
+        ]
+
+    def test_cpp_standard_compatibility_keeps_declaration_and_definition_atomic(self, tmp_path: Path) -> None:
+        """L3-24 r52: C++17 API replacement must include every same-owner use."""
+
+        fixture_files = {
+            "include/pkg/cipher.hpp": "std::vector<int> decode(std::span<const int> input);\n",
+            "src/cipher.cpp": "std::vector<int> decode(std::span<const int> input) { return {}; }\n",
+            "src/main.cpp": "auto value = decode(std::span<const int>{});\n",
+            "CMakeLists.txt": "set(CMAKE_CXX_STANDARD 17)\n",
+        }
+        for relative_path, content in fixture_files.items():
+            path = tmp_path / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+        targets = _workspace_quality_cpp_standard_compatibility_repair_targets(
+            artifact_quality_errors=[
+                "include/pkg/cipher.hpp:1:31: error: ‘std::span’ has not been declared\n"
+                "src/cipher.cpp:1:32: note: ‘std::span’ is only available from C++20 onwards"
+            ],
+            workspace=tmp_path,
+            authoritative_owner_paths=list(fixture_files),
+            claimed_owner_candidates=["include/pkg/cipher.hpp"],
+            diagnostic_targets=["include/pkg/cipher.hpp"],
+        )
+
+        assert targets == [
+            "include/pkg/cipher.hpp",
+            "src/cipher.cpp",
+            "src/main.cpp",
+        ]
+
+    def test_workspace_quality_causal_targets_put_cpp_cli_before_unittest_observer(self, tmp_path: Path) -> None:
+        """L3-24 r24: behavior observation is read context, not mutation owner."""
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "cli.cpp").write_text("int run_cli() { return 0; }\n", encoding="utf-8")
+        (tmp_path / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_product.py").write_text("import unittest\n", encoding="utf-8")
+        error = (
+            "FAIL: test_invalid_subcommand (test_product.TestCliBehaviour.test_invalid_subcommand)\n"
+            "Invalid input: unknown subcommand must exit non-zero.\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{tmp_path / "tests" / "test_product.py"}", line 186, in test_invalid_subcommand\n'
+            "AssertionError: 0 == 0"
+        )
+
+        class _Executor:
+            workspace = tmp_path
+
+            @staticmethod
+            def _workspace_quality_repair_diagnostic_target_files(_errors: list[str]) -> list[str]:
+                return ["tests/test_product.py"]
+
+            @staticmethod
+            def _workspace_quality_repair_changed_files() -> list[str]:
+                return ["src/cli.cpp", "src/main.cpp", "tests/test_product.py"]
+
+        assert _workspace_quality_causal_repair_target_files(
+            _Executor(),
+            artifact_quality_errors=[error],
+        ) == ["src/cli.cpp", "src/main.cpp", "tests/test_product.py"]
+
+    def test_workspace_quality_test_harness_exception_keeps_test_owner(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """L3-24 r30: harness/runtime exceptions are not behavior assertions.
+
+        Once the C++ compiler frontier was green, unittest reported a missing
+        per-test binary and a subprocess decode failure.  Causal discovery
+        still named the already-green production source, so four Provider
+        turns were forced back onto ``src/cipher.cpp`` while the two failing
+        test files were read-only.  A project-local harness exception must
+        retain the direct test owner; ordinary assertion failures continue to
+        use the production-owner rule above.
+        """
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "cipher.cpp").write_text("int shift() { return 0; }\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_product.py").write_text("import unittest\n", encoding="utf-8")
+        (tmp_path / "tests" / "test_helpers.py").write_text("import subprocess\n", encoding="utf-8")
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.resolve_director_causal_quality_repair_target_files",
+            lambda **_kwargs: ["src/cipher.cpp"],
+        )
+
+        class _Executor:
+            workspace = tmp_path
+
+            @staticmethod
+            def _workspace_quality_repair_diagnostic_target_files(_errors: list[str]) -> list[str]:
+                return ["tests/test_product.py", "tests/test_helpers.py"]
+
+            @staticmethod
+            def _workspace_quality_repair_changed_files() -> list[str]:
+                return ["src/cipher.cpp", "tests/test_product.py", "tests/test_helpers.py"]
+
+        errors = [
+            "ERROR: test_decode_empty_cipher_succeeds\n"
+            "Traceback (most recent call last):\n"
+            f'  File "{tmp_path / "tests" / "test_product.py"}", line 175, in test_decode_empty_cipher_succeeds\n'
+            f'  File "{tmp_path / "tests" / "test_helpers.py"}", line 38, in run\n'
+            "FileNotFoundError: [Errno 2] No such file or directory: '/tmp/ink_build/invisible_ink_diary'\n"
+            "ERROR: test_cli_outputs_all_visible_keywords\n"
+            "UnicodeDecodeError: 'utf-8' codec can't decode byte 0x81"
+        ]
+
+        targets = _workspace_quality_causal_repair_target_files(
+            _Executor(),
+            artifact_quality_errors=errors,
+        )
+        claim_targets = _workspace_quality_llm_claim_target_files(
+            owner_target_files=["src/cipher.cpp"],
+            diagnostic_target_files=targets,
+            fallback_target_files=[],
+        )
+
+        assert targets == ["tests/test_product.py", "tests/test_helpers.py"]
+        assert claim_targets == ["tests/test_product.py"]
+
+    def test_workspace_quality_line_repair_claims_direct_diagnostic_owner_before_probe_companions(self) -> None:
+        """Read-only plan-probe companions must not steal the edit owner.
+
+        Live L3-23 r19: rustc E0308 named ``tests/edges.rs`` and the executable
+        plan selected the line-suggestion repair, but ``Cargo.toml`` and
+        ``src/lib.rs`` were appended only as plan-probe context.  Re-ranking
+        non-test paths leased TASK-1 repeatedly instead of the TASK-3 test
+        owner, producing no-commit/equal-count repair loops.
+        """
+
+        assert workspace_quality_impl._workspace_quality_primary_claim_target_files(
+            plan_probe={
+                "plannable_source_tools": ["deterministic_rust_line_suggestion_repair"],
+            },
+            direct_diagnostic_target_files=["tests/edges.rs", "Cargo.toml", "src/lib.rs"],
+            causal_diagnostic_target_files=["tests/edges.rs", "Cargo.toml", "src/lib.rs"],
+            fallback_target_files=[],
+        ) == ["tests/edges.rs"]
+
     def test_workspace_quality_go_residual_claims_causal_implementation_owner(self, tmp_path: Path) -> None:
         """L3-22: Go test wrappers must not lease before causal sources are known."""
 
@@ -863,9 +1404,9 @@ class TestRunWorkspaceQualityChecks:
             "Workspace validation command failed (go test ./...):\n"
             "--- FAIL: TestBubbleValidMethod (0.00s)\n"
             "models/model_test.go:32: expected ErrInvalidRadius\n"
-            "engine/engine_test.go:98: eng.Floor undefined "
+            "engine/engine_test.go:98:14: eng.Floor undefined "
             "(type *engine.Engine has no field or method Floor)\n"
-            "main_test.go:113: cannot convert totalTime/dt+0.5 (untyped float constant) to type int"
+            "main_test.go:113:12: cannot convert totalTime/dt+0.5 (untyped float constant) to type int"
         ]
 
         targets = _workspace_quality_causal_repair_target_files(
@@ -979,6 +1520,553 @@ class TestRunWorkspaceQualityChecks:
             "internal/sandbox/seed.go",
         ]
 
+    def test_behavior_frontier_preserves_current_causal_order(self) -> None:
+        """L3-24 r38: CLI evidence must outrank stale CE owner file order.
+
+        The live causal resolver ranked ``src/main.cpp`` first for two CLI
+        output assertions.  Reordering that evidence back into the CE owner's
+        stable file order selected ``src/diary/diary_book.cpp`` instead, so
+        three Provider turns tried to repair CLI text in the wrong module and
+        were rolled back for invented API members.  Behavioral routing must
+        preserve current causal order; compiler owner-rebind rotation keeps
+        the historical stable-owner ordering by default.
+        """
+
+        ranked = workspace_quality_impl._workspace_quality_rank_owner_rebind_candidates(
+            owner_candidates=[
+                "src/diary/diary_book.cpp",
+                "src/main.cpp",
+                "src/ink/visibility.cpp",
+            ],
+            diagnostic_targets=[
+                "src/main.cpp",
+                "src/ink/visibility.cpp",
+                "src/diary/diary_book.cpp",
+                "tests/test_cli_invocation.py",
+            ],
+            prefer_diagnostic_order=True,
+        )
+
+        assert ranked == [
+            "src/main.cpp",
+            "src/ink/visibility.cpp",
+            "src/diary/diary_book.cpp",
+        ]
+
+    def test_claimed_production_owner_keeps_complete_current_sibling_frontier(self) -> None:
+        """L3-24 r25: first-path owner claim must not erase sibling residuals."""
+
+        expanded = workspace_quality_impl._workspace_quality_expand_claimed_owner_production_frontier(
+            authoritative_owner_paths=[
+                "CMakeLists.txt",
+                "tests/test_product.py",
+                "src/cipher.cpp",
+                "src/diary.cpp",
+                "src/main.cpp",
+                "src/moon_phase.cpp",
+            ],
+            claimed_owner_candidates=["src/cipher.cpp"],
+            diagnostic_targets=[
+                "src/cipher.cpp",
+                "src/moon_phase.cpp",
+                "src/main.cpp",
+                "src/diary.cpp",
+                "build/CMakeFiles/generated.cpp",
+            ],
+        )
+
+        assert expanded == [
+            "src/cipher.cpp",
+            "src/diary.cpp",
+            "src/main.cpp",
+            "src/moon_phase.cpp",
+        ]
+
+    def test_claimed_test_owner_remains_narrow(self) -> None:
+        """Production-frontier widening must not fan one test claim across siblings."""
+
+        expanded = workspace_quality_impl._workspace_quality_expand_claimed_owner_production_frontier(
+            authoritative_owner_paths=[
+                "internal/physics/step_test.go",
+                "internal/sandbox/sandbox_test.go",
+                "main_test.go",
+            ],
+            claimed_owner_candidates=["internal/sandbox/sandbox_test.go"],
+            diagnostic_targets=[
+                "internal/physics/step_test.go",
+                "internal/sandbox/sandbox_test.go",
+                "main_test.go",
+            ],
+        )
+
+        assert expanded == ["internal/sandbox/sandbox_test.go"]
+
+    @pytest.mark.asyncio
+    async def test_cpp_linker_repair_keeps_multi_target_topology_after_claim(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """L3-24 r41: one claim path must not force a use-site-only edit."""
+
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-cpp-linker-topology",
+            config=FactoryConfig(name="cpp-linker-topology", stages=["quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-26T00:00:00+00:00",
+        )
+        targets = [
+            "include/pkg/moon_phase.hpp",
+            "src/main.cpp",
+            "src/cipher_engine.cpp",
+        ]
+        for rel in targets:
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("// fixture\n", encoding="utf-8")
+        TaskRuntimeService(str(tmp_path)).ensure_task_row(
+            external_task_id="TASK-1",
+            subject="C++ topology owner",
+            description="Own the moon declarations and callers",
+            metadata={
+                "external_task_id": "TASK-1",
+                "factory_run_id": run.id,
+                "target_files": targets,
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": targets,
+                },
+            },
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_run_director_materialization_quality_repair(
+            workspace: str,
+            **kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del workspace
+            captured.update(kwargs)
+            return [], {"attempted": True, "success": False, "tool_results": 0}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_run_director_materialization_quality_repair,
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "_workspace_quality_causal_repair_target_files",
+            lambda _executor, *, artifact_quality_errors: targets,
+        )
+
+        await executor._apply_workspace_quality_llm_repairs(
+            run=run,
+            context={},
+            artifact_quality_errors=[
+                "/usr/bin/ld: main.cpp.o: undefined reference to `pkg::moon_token(pkg::MoonPhase)'"
+            ],
+            repair_attempt=1,
+        )
+
+        assert captured["target_task_id"] == "TASK-1"
+        assert captured["context"]["target_files"] == targets
+        assert captured["context"]["director_quality_repair"]["repair_target_files"] == targets
+        assert captured["context"]["director_quality_repair"]["write_only_single_target"] is None
+        assert captured["context"]["director_quality_repair"]["topology_multi_target"] is True
+        assert captured["repair_target_files"] == targets
+
+    @pytest.mark.asyncio
+    async def test_cpp_standard_compatibility_repair_removes_single_target_contract(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """L3-24 r52: one claim hint must not force a partial API edit."""
+
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-cpp-standard-compatibility",
+            config=FactoryConfig(name="cpp-standard-compatibility", stages=["quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-27T00:00:00+00:00",
+        )
+        targets = [
+            "include/pkg/cipher.hpp",
+            "src/cipher.cpp",
+            "src/main.cpp",
+        ]
+        contents = {
+            targets[0]: "std::vector<int> decode(std::span<const int> input);\n",
+            targets[1]: "std::vector<int> decode(std::span<const int> input) { return {}; }\n",
+            targets[2]: "auto value = decode(std::span<const int>{});\n",
+        }
+        for relative_path, content in contents.items():
+            path = tmp_path / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        TaskRuntimeService(str(tmp_path)).ensure_task_row(
+            external_task_id="TASK-1",
+            subject="C++17 cipher owner",
+            description="Own declaration, definition, and caller",
+            metadata={
+                "external_task_id": "TASK-1",
+                "factory_run_id": run.id,
+                "target_files": targets,
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": targets,
+                },
+            },
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_run_director_materialization_quality_repair(
+            workspace: str,
+            **kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del workspace
+            captured.update(kwargs)
+            return [], {"attempted": True, "success": False, "tool_results": 0}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_run_director_materialization_quality_repair,
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "_workspace_quality_causal_repair_target_files",
+            lambda _executor, *, artifact_quality_errors: [targets[0]],
+        )
+
+        await executor._apply_workspace_quality_llm_repairs(
+            run=run,
+            context={},
+            artifact_quality_errors=[
+                "include/pkg/cipher.hpp:1:31: error: ‘std::span’ has not been declared\n"
+                "src/cipher.cpp:1:32: note: ‘std::span’ is only available from C++20 onwards"
+            ],
+            repair_attempt=1,
+        )
+
+        quality_context = captured["context"]["director_quality_repair"]
+        assert captured["target_task_id"] == "TASK-1"
+        assert captured["context"]["target_files"] == targets
+        assert quality_context["repair_target_files"] == targets
+        assert quality_context["write_only_single_target"] is None
+        assert quality_context["atomic_multi_target"] is True
+        assert captured["repair_target_files"] == targets
+
+    @pytest.mark.asyncio
+    async def test_behavior_repair_rotates_claimed_production_frontier_without_owner_rebind(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """L3-24 r36: a claim hint must not become the only mutation path.
+
+        The behavior verifier exposed a same-task C++ frontier, but Factory
+        used ``app/main.cpp`` to claim TASK-1 and then forced all three repair
+        rounds back onto that one path.  The diagnostic-signature cursor must
+        rotate the already-authorized production siblings even when no
+        explicit deferred owner-rebind payload is present.
+        """
+
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-cpp-behavior-frontier",
+            config=FactoryConfig(name="cpp-behavior-frontier", stages=["quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-26T00:00:00+00:00",
+        )
+        targets = [
+            "app/main.cpp",
+            "src/cipher.cpp",
+            "src/diary_codec.cpp",
+            "tests/test_product.py",
+        ]
+        for rel in targets:
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("// fixture\n", encoding="utf-8")
+
+        TaskRuntimeService(str(tmp_path)).ensure_task_row(
+            external_task_id="TASK-1",
+            subject="C++ application owner",
+            description="Own the CLI and cipher implementation",
+            metadata={
+                "external_task_id": "TASK-1",
+                "factory_run_id": run.id,
+                "target_files": targets,
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": targets,
+                },
+            },
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_run_director_materialization_quality_repair(
+            workspace: str,
+            **kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del workspace
+            captured.update(kwargs)
+            return [], {"attempted": True, "success": False, "tool_results": 0}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_run_director_materialization_quality_repair,
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "_workspace_quality_causal_repair_target_files",
+            lambda _executor, *, artifact_quality_errors: [
+                "app/main.cpp",
+                "src/cipher.cpp",
+                "src/diary_codec.cpp",
+                "tests/test_product.py",
+            ],
+        )
+
+        await executor._apply_workspace_quality_llm_repairs(
+            run=run,
+            context={"_factory_workspace_quality_target_rotation_index": 1},
+            artifact_quality_errors=[
+                "======================================================================\n"
+                "FAIL: test_decode_round_trip_recovers_plaintext "
+                "(test_product.InvisibleInkProductTests.test_decode_round_trip_recovers_plaintext)\n"
+                "----------------------------------------------------------------------\n"
+                "Traceback (most recent call last):\n"
+                f'  File "{tmp_path / "tests/test_product.py"}", line 179, '
+                "in test_decode_round_trip_recovers_plaintext\n"
+                '    self.assertIn("title=Bloom", dec.stdout)\n'
+                "AssertionError: 'title=Bloom' not found in corrupted output\n"
+            ],
+            repair_attempt=2,
+        )
+
+        assert captured["target_task_id"] == "TASK-1"
+        assert captured["context"]["target_files"] == ["src/cipher.cpp"]
+        assert captured["context"]["director_quality_repair"]["repair_target_files"] == [
+            "src/cipher.cpp"
+        ]
+        assert captured["repair_target_files"] == ["src/cipher.cpp"]
+
+    @pytest.mark.asyncio
+    async def test_cli_contract_failure_pins_owned_entrypoint_instead_of_rotating_domain_sources(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """L3-24 r56: argv/command failures belong to the owned CLI entrypoint.
+
+        The exact run forced ``src/cipher.cpp`` because behavior repair rotated
+        the whole CE production frontier.  The verifier instead proved CLI
+        boundary defects: a required option rejected valid decrypt calls and a
+        declared command was unknown.  The same-task repair must therefore pin
+        the CE-owned entrypoint, while leaving ordinary domain-behavior failures
+        on the existing bounded sibling rotation.
+        """
+
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-cpp-cli-contract-owner",
+            config=FactoryConfig(name="cpp-cli-contract-owner", stages=["quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-27T00:00:00+00:00",
+        )
+        targets = [
+            "src/cipher.cpp",
+            "src/cli/main.cpp",
+            "src/diary.cpp",
+            "src/entry.cpp",
+            "tests/test_acceptance.py",
+            "tests/test_product.py",
+        ]
+        for rel in targets:
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("// fixture\n", encoding="utf-8")
+
+        TaskRuntimeService(str(tmp_path)).ensure_task_row(
+            external_task_id="TASK-1",
+            subject="C++ CLI and domain owner",
+            description="Own the CLI boundary and domain implementation",
+            metadata={
+                "external_task_id": "TASK-1",
+                "factory_run_id": run.id,
+                "target_files": targets,
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": targets,
+                },
+            },
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_run_director_materialization_quality_repair(
+            workspace: str,
+            **kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del workspace
+            captured.update(kwargs)
+            return [], {"attempted": True, "success": False, "tool_results": 0}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_run_director_materialization_quality_repair,
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "_workspace_quality_causal_repair_target_files",
+            lambda _executor, *, artifact_quality_errors: [
+                "src/cipher.cpp",
+                "src/cli/main.cpp",
+                "src/diary.cpp",
+                "src/entry.cpp",
+                "tests/test_acceptance.py",
+                "tests/test_product.py",
+            ],
+        )
+
+        await executor._apply_workspace_quality_llm_repairs(
+            run=run,
+            context={"_factory_workspace_quality_target_rotation_index": 0},
+            artifact_quality_errors=[
+                "Workspace validation command failed "
+                "(python -m unittest discover -s tests -p test_*.py -v):\n"
+                "======================================================================\n"
+                "FAIL: test_phase_list_contains_all_five_phases "
+                "(test_product.InvisibleDiaryCliTests.test_phase_list_contains_all_five_phases)\n"
+                "----------------------------------------------------------------------\n"
+                "Traceback (most recent call last):\n"
+                '  File "tests/test_product.py", line 121, '
+                "in test_phase_list_contains_all_five_phases\n"
+                '    self.assertEqual(rc, 0, msg=f"phase-list failed: {err!r}")\n'
+                "AssertionError: 2 != 0 : phase-list failed: "
+                '"error: unknown command \'phase-list\'. Try \'help\'.\\n"\n',
+            ],
+            repair_attempt=1,
+        )
+
+        assert captured["target_task_id"] == "TASK-1"
+        assert captured["context"]["target_files"] == ["src/cli/main.cpp"]
+        assert captured["context"]["director_quality_repair"]["repair_target_files"] == [
+            "src/cli/main.cpp"
+        ]
+        assert captured["repair_target_files"] == ["src/cli/main.cpp"]
+
+    @pytest.mark.asyncio
+    async def test_behavior_repair_compile_rejection_feedback_stays_on_rejected_target(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """L3-24 r37: rollback diagnostics must keep the same mutation target.
+
+        A rejected ``src/moon_phase.cpp`` candidate produced a concrete C++
+        declaration mismatch.  The next round carried that diagnostic but
+        rotated write authority to ``src/ink_renderer.cpp``, making the
+        feedback impossible to act on.  A compile-regression retry remains
+        inside the same immutable TaskRuntime owner, but must pin the rejected
+        file until that candidate diagnostic is consumed.
+        """
+
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-cpp-rejected-target-pin",
+            config=FactoryConfig(name="cpp-rejected-target-pin", stages=["quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-26T00:00:00+00:00",
+        )
+        targets = [
+            "src/main.cpp",
+            "src/moon_phase.cpp",
+            "src/ink_renderer.cpp",
+            "tests/test_product.py",
+        ]
+        for rel in targets:
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("// fixture\n", encoding="utf-8")
+
+        TaskRuntimeService(str(tmp_path)).ensure_task_row(
+            external_task_id="TASK-1",
+            subject="C++ behavior owner",
+            description="Own CLI, moon phase, and renderer behavior",
+            metadata={
+                "external_task_id": "TASK-1",
+                "factory_run_id": run.id,
+                "target_files": targets,
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": targets,
+                },
+            },
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_run_director_materialization_quality_repair(
+            workspace: str,
+            **kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del workspace
+            captured.update(kwargs)
+            return [], {"attempted": True, "success": False, "tool_results": 0}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_run_director_materialization_quality_repair,
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "_workspace_quality_causal_repair_target_files",
+            lambda _executor, *, artifact_quality_errors: targets,
+        )
+
+        await executor._apply_workspace_quality_llm_repairs(
+            run=run,
+            context={
+                # Without the rejection pin this cursor selects ink_renderer.
+                "_factory_workspace_quality_target_rotation_index": 2,
+                "director_quality_repair": {
+                    "candidate_rejection_errors": [
+                        "src/moon_phase.cpp:123: error: no declaration matches last_day_of_phase"
+                    ],
+                    "candidate_rejection_target_files": ["src/moon_phase.cpp"],
+                },
+            },
+            artifact_quality_errors=[
+                "======================================================================\n"
+                "FAIL: test_moon_phase_varies_with_day "
+                "(test_product.TestCLIBinary.test_moon_phase_varies_with_day)\n"
+                "----------------------------------------------------------------------\n"
+                "Traceback (most recent call last):\n"
+                f'  File "{tmp_path / "tests/test_product.py"}", line 141, '
+                "in test_moon_phase_varies_with_day\n"
+                "    self.assertEqual(a.returncode, 0)\n"
+                "AssertionError: 4 != 0\n"
+            ],
+            repair_attempt=9,
+        )
+
+        assert captured["target_task_id"] == "TASK-1"
+        assert captured["context"]["target_files"] == ["src/moon_phase.cpp"]
+        assert captured["context"]["director_quality_repair"]["repair_target_files"] == [
+            "src/moon_phase.cpp"
+        ]
+        assert captured["repair_target_files"] == ["src/moon_phase.cpp"]
+
     def test_workspace_quality_go_compile_failure_keeps_direct_test_owner(self, tmp_path: Path) -> None:
         """Compiler diagnostics in an authored test still belong to that test."""
 
@@ -1016,8 +2104,7 @@ class TestRunWorkspaceQualityChecks:
         targets = _workspace_quality_causal_repair_target_files(
             executor,
             artifact_quality_errors=[
-                "internal/bubbletea/note_test.go:115:9: assignment mismatch: "
-                "1 variable but b.Assign returns 2 values"
+                "internal/bubbletea/note_test.go:115:9: assignment mismatch: 1 variable but b.Assign returns 2 values"
             ],
         )
 
@@ -1040,9 +2127,7 @@ class TestRunWorkspaceQualityChecks:
             },
         }
 
-        assert _workspace_quality_authoritative_owner_paths(metadata, run_id="factory-owner") == [
-            "engine/physics.go"
-        ]
+        assert _workspace_quality_authoritative_owner_paths(metadata, run_id="factory-owner") == ["engine/physics.go"]
 
     def test_workspace_quality_resolves_unique_package_local_go_test_path(self, tmp_path: Path) -> None:
         """Go emits engine_test.go while the project owner path includes engine/."""
@@ -1055,8 +2140,7 @@ class TestRunWorkspaceQualityChecks:
 
         targets = executor._workspace_quality_repair_diagnostic_target_files(
             [
-                "--- FAIL: TestStepAppliesGravity (0.00s)\n"
-                "    engine_test.go:61: bubble did not fall",
+                "--- FAIL: TestStepAppliesGravity (0.00s)\n    engine_test.go:61: bubble did not fall",
                 "# musicbubble\n./main.go:55:15: cannot convert totalTime / step",
             ]
         )
@@ -1154,8 +2238,7 @@ class TestRunWorkspaceQualityChecks:
             executor,
             run_id="factory-test-depth-owner",
             artifact_quality_errors=[
-                "delivery_depth_contract_failed: test_source_files=1 < 2; "
-                "test_assertion_count=1 < 10",
+                "delivery_depth_contract_failed: test_source_files=1 < 2; test_assertion_count=1 < 10",
                 "Ran 0 tests in 0.000s",
             ],
         ) == ["tests/test_product.py", "tests/test_behavior.py"]
@@ -1324,6 +2407,40 @@ class TestRunWorkspaceQualityChecks:
             "tests/test_product.py",
         ]
         assert claim_targets == ["src/dream_subway/line_editor.py"]
+
+    def test_workspace_quality_repair_ranks_cpp_failing_tu_before_unittest_wrapper(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A unittest observer must not steal write authority from a red C++ TU."""
+
+        source = tmp_path / "src" / "engine.cpp"
+        wrapper = tmp_path / "tests" / "test_product.py"
+        source.parent.mkdir(parents=True)
+        wrapper.parent.mkdir(parents=True)
+        source.write_text("int broken = missing_symbol;\n", encoding="utf-8")
+        wrapper.write_text("import unittest\n", encoding="utf-8")
+        executor = _executor(tmp_path)
+        diagnostic = "\n".join(
+            [
+                "### FAILING_TUS src/engine.cpp",
+                "### src/engine.cpp",
+                "src/engine.cpp:1:14: error: 'missing_symbol' was not declared in this scope",
+                "Traceback (most recent call last):",
+                f'  File "{wrapper}", line 18, in test_cmake_build_and_cli',
+                "AssertionError: 2 != 0: g++ failed",
+            ]
+        )
+
+        targets = executor._workspace_quality_repair_diagnostic_target_files([diagnostic])
+        claim_targets = _workspace_quality_llm_claim_target_files(
+            owner_target_files=None,
+            diagnostic_target_files=targets,
+            fallback_target_files=["tests/test_product.py"],
+        )
+
+        assert targets[:2] == ["src/engine.cpp", "tests/test_product.py"]
+        assert claim_targets == ["src/engine.cpp"]
 
     def test_workspace_quality_claims_exact_owner_of_current_causal_source(
         self,
@@ -1502,6 +2619,7 @@ class TestRunWorkspaceQualityChecks:
             llm_call_timeout: float,
             artifact_quality_errors: list[str],
             changed_files: list[str],
+            repair_target_files: list[str],
             repair_attempt: int,
         ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             del workspace, run_id, original_message, llm_call_timeout, artifact_quality_errors, changed_files
@@ -1510,6 +2628,7 @@ class TestRunWorkspaceQualityChecks:
                     "task": task,
                     "target_task_id": target_task_id,
                     "context": context,
+                    "repair_target_files": repair_target_files,
                     "repair_attempt": repair_attempt,
                 }
             )
@@ -1572,6 +2691,195 @@ class TestRunWorkspaceQualityChecks:
             "target_file": expected_target
         }
         assert "step_test.go" not in captured["context"]["target_files"]
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_deferred_rebind_replaces_stale_owner_hint_with_current_cpp_tu(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """L3-24 r13: a stale header hint must not hide current failing TUs.
+
+        The live repair loop kept rebinding TASK-1 through ``cipher.hpp`` even
+        though ``FAILING_TUS`` named ``cli.cpp`` and ``moon_phase.cpp``.  The
+        JobToken owner remains TASK-1, but Provider mutation intent must follow
+        the current verifier evidence rather than the previous round's hint.
+        """
+
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-cpp-stale-owner-hint",
+            config=FactoryConfig(name="cpp-stale-owner-hint", stages=["quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-26T00:00:00+00:00",
+        )
+        targets = [
+            "include/invisible_ink_diary/cipher.hpp",
+            "src/cli.cpp",
+            "src/moon_phase.cpp",
+        ]
+        for rel in targets:
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("// fixture\n", encoding="utf-8")
+
+        TaskRuntimeService(str(tmp_path)).ensure_task_row(
+            external_task_id="TASK-1",
+            subject="C++ application owner",
+            description="Own the header and current failing translation units",
+            metadata={
+                "external_task_id": "TASK-1",
+                "factory_run_id": run.id,
+                "target_files": targets,
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": targets,
+                },
+            },
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_run_director_materialization_quality_repair(
+            workspace: str,
+            **kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del workspace
+            captured.update(kwargs)
+            return [], {"attempted": True, "success": False, "tool_results": 0}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_run_director_materialization_quality_repair,
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "_workspace_quality_causal_repair_target_files",
+            lambda _executor, *, artifact_quality_errors: ["src/cli.cpp", "src/moon_phase.cpp"],
+        )
+
+        await executor._apply_workspace_quality_llm_repairs(
+            run=run,
+            context={
+                "factory_workspace_quality_owner_rebind": {
+                    "required": True,
+                    "source": "task_boundary_scope_filter",
+                }
+            },
+            artifact_quality_errors=[
+                "### FAILING_TUS src/cli.cpp src/moon_phase.cpp\n"
+                "### src/cli.cpp\nsrc/cli.cpp:115:5: error: cli has not been declared"
+            ],
+            repair_attempt=1,
+            owner_target_files=["include/invisible_ink_diary/cipher.hpp"],
+        )
+
+        assert captured["target_task_id"] == "TASK-1"
+        assert captured["context"]["target_files"] == ["src/cli.cpp"]
+        assert captured["repair_target_files"] == ["src/cli.cpp"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("rotation_index", "expected_target"),
+        [
+            (0, "src/cli/main.cpp"),
+            (1, "include/invisible_diary/cipher_engine.cpp"),
+        ],
+    )
+    async def test_workspace_quality_owner_rebind_rotation_uses_current_diagnostic_signature_cursor(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        rotation_index: int,
+        expected_target: str,
+    ) -> None:
+        """L3-24 r32: a changed residual set must restart at its causal head.
+
+        The preceding round repaired ``tests/test_product.py``.  The next
+        verifier signature named an empty-body CLI failure whose ordered
+        causal candidates were ``main.cpp`` then ``cipher_engine.cpp``.  The
+        old global ``repair_attempt`` modulo skipped ``main.cpp`` and spent
+        every physical retry editing/rolling back the cipher file.  Rotation
+        is scoped to the current diagnostic signature instead: cursor zero
+        selects the causal head and only a repeated identical signature moves
+        to the sibling target.
+        """
+
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-cpp-behavior-cursor",
+            config=FactoryConfig(name="cpp-behavior-cursor", stages=["quality_gate"]),
+            status=FactoryRunStatus.RECOVERING,
+            created_at="2026-08-26T00:00:00+00:00",
+        )
+        targets = [
+            "src/cli/main.cpp",
+            "include/invisible_diary/cipher_engine.cpp",
+        ]
+        for rel in targets:
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("// fixture\n", encoding="utf-8")
+
+        TaskRuntimeService(str(tmp_path)).ensure_task_row(
+            external_task_id="TASK-1",
+            subject="C++ application owner",
+            description="Own CLI and cipher behavior",
+            metadata={
+                "external_task_id": "TASK-1",
+                "factory_run_id": run.id,
+                "target_files": targets,
+                "control_plane_job_token": {
+                    "factory_run_id": run.id,
+                    "allowed_write_paths": targets,
+                },
+            },
+        )
+        captured: dict[str, Any] = {}
+
+        async def fake_run_director_materialization_quality_repair(
+            workspace: str,
+            **kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del workspace
+            captured.update(kwargs)
+            return [], {"attempted": True, "success": False, "tool_results": 0}
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.run_director_materialization_quality_repair",
+            fake_run_director_materialization_quality_repair,
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "_workspace_quality_causal_repair_target_files",
+            lambda _executor, *, artifact_quality_errors: targets,
+        )
+
+        await executor._apply_workspace_quality_llm_repairs(
+            run=run,
+            context={
+                "_factory_workspace_quality_target_rotation_index": rotation_index,
+                "factory_workspace_quality_owner_rebind": {
+                    "required": True,
+                    "source": "task_boundary_scope_filter",
+                },
+            },
+            artifact_quality_errors=[
+                "FAIL: test_empty_body_encode_is_handled\n"
+                "AssertionError: 2 != 0 : stderr=encode failed"
+            ],
+            # A global round number greater than one must not skip the head of
+            # a newly changed diagnostic signature.
+            repair_attempt=4,
+            owner_target_files=targets,
+        )
+
+        assert captured["target_task_id"] == "TASK-1"
+        assert captured["context"]["target_files"] == [expected_target]
+        assert captured["repair_target_files"] == [expected_target]
 
     def test_workspace_quality_owner_score_matches_cmake_lists_case_aliases(
         self,
@@ -2081,16 +3389,12 @@ class TestRunWorkspaceQualityChecks:
 
         before = OrchestrationStageExecutor._workspace_quality_diagnostic_signature(
             [
-                "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
-                "    engine_test.go:112: bubble still moving downward",
+                "--- FAIL: TestStepClampsOnFloor (0.00s)\n    engine_test.go:112: bubble still moving downward",
                 "engine/engine.go:71:19: cannot convert gravity to float64",
             ]
         )
         after = OrchestrationStageExecutor._workspace_quality_diagnostic_signature(
-            [
-                "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
-                "    engine_test.go:112: bubble still moving downward"
-            ]
+            ["--- FAIL: TestStepClampsOnFloor (0.00s)\n    engine_test.go:112: bubble still moving downward"]
         )
 
         assert (
@@ -2108,18 +3412,14 @@ class TestRunWorkspaceQualityChecks:
 
         before = OrchestrationStageExecutor._workspace_quality_diagnostic_signature(
             [
-                "--- FAIL: TestStepSettlesAtFloor (0.00s)\n"
-                "    step_test.go:137: Y = 0, want 1",
-                "internal/bubbletea/note_test.go:115:9: assignment mismatch: "
-                "1 variable but b.Assign returns 2 values",
+                "--- FAIL: TestStepSettlesAtFloor (0.00s)\n    step_test.go:137: Y = 0, want 1",
+                "internal/bubbletea/note_test.go:115:9: assignment mismatch: 1 variable but b.Assign returns 2 values",
             ]
         )
         after = OrchestrationStageExecutor._workspace_quality_diagnostic_signature(
             [
-                "--- FAIL: TestStepSettlesAtFloor (0.00s)\n"
-                "    step_test.go:137: Y = 0, want 1",
-                "--- FAIL: TestNotesForScale (0.00s)\n"
-                "    note_test.go:159: unknown note name",
+                "--- FAIL: TestStepSettlesAtFloor (0.00s)\n    step_test.go:137: Y = 0, want 1",
+                "--- FAIL: TestNotesForScale (0.00s)\n    note_test.go:159: unknown note name",
             ]
         )
 
@@ -2166,6 +3466,253 @@ class TestRunWorkspaceQualityChecks:
                 ),
             )
             == "regression"
+        )
+
+    def test_workspace_quality_compile_barrier_reduction_outranks_derivative_unittest_fanout(self) -> None:
+        """Keep an edit that removes one explicit compiler-frontier file.
+
+        Live L3-24 round 1 reduced ``FAILING_TUS`` from three translation
+        units to two.  The remaining compiler blocker made unittest's shared
+        build fail in more test cases, so the generic fanout guard classified
+        the real compiler progress as regression and rolled the file back.
+        Upstream compiler-frontier reduction is authoritative progress; the
+        derivative test setup fanout must not erase it.
+        """
+
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+        compile_command = ["python", "-c", "cpp-syntax-check"]
+        test_command = ["python", "-m", "unittest", "discover", "-s", "tests"]
+
+        assert (
+            classify(
+                before_signature=("cpp:diary", "cpp:moon", "cpp:test"),
+                after_signature=("cpp:moon", "cpp:test"),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=(
+                    {
+                        "command": compile_command,
+                        "passed": False,
+                        "diagnostic_excerpt": (
+                            "### FAILING_TUS src/inkwell/diary.cpp "
+                            "src/inkwell/moon_phase.cpp tests/test_ink_diary_cli.cpp\n"
+                        ),
+                    },
+                    {
+                        "command": test_command,
+                        "passed": False,
+                        "stderr_tail": "Ran 4 tests\n\nFAILED (errors=3)",
+                    },
+                ),
+                after_results=(
+                    {
+                        "command": compile_command,
+                        "passed": False,
+                        "diagnostic_excerpt": (
+                            "### FAILING_TUS src/inkwell/moon_phase.cpp tests/test_ink_diary_cli.cpp\n"
+                        ),
+                    },
+                    {
+                        "command": test_command,
+                        "passed": False,
+                        "stderr_tail": "Ran 4 tests\n\nFAILED (errors=4)",
+                    },
+                ),
+            )
+            == "progress"
+        )
+
+    def test_workspace_quality_linker_clear_outranks_newly_runnable_unittest_fanout(self) -> None:
+        """L3-24 r54: linker-green candidate must survive deeper test failures."""
+
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+        build_command = ["cmake", "--build", "build"]
+        test_command = ["python", "-m", "unittest", "discover", "-s", "tests"]
+
+        assert (
+            classify(
+                before_signature=("undefined reference to moon_clock::abs_day_from_ymd", "test:cmake", "depth"),
+                after_signature=("test:wrong-key", "test:ctest", "test:cmake", "depth"),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=(
+                    {
+                        "command": build_command,
+                        "passed": False,
+                        "stderr_tail": "undefined reference to moon_clock::abs_day_from_ymd\nld returned 1 exit status",
+                    },
+                    {
+                        "command": test_command,
+                        "passed": False,
+                        "stderr_tail": "Ran 4 tests\n\nFAILED (failures=1)",
+                    },
+                ),
+                after_results=(
+                    {"command": build_command, "passed": True, "stdout_tail": "CMake build passed"},
+                    {
+                        "command": test_command,
+                        "passed": False,
+                        "stderr_tail": "Ran 4 tests\n\nFAILED (failures=4)",
+                    },
+                ),
+            )
+            == "progress"
+        )
+
+    def test_workspace_quality_compiler_diagnostic_frontier_reduction_is_progress(self) -> None:
+        """Keep an edit that removes one compiler error inside still-red TUs.
+
+        Live L3-24 r29 added the missing ``<cstdint>`` include and removed the
+        ``std::int64_t`` diagnostic, but another shared header kept every
+        translation unit red.  ``FAILING_TUS`` and top-level verifier counts
+        therefore stayed unchanged, and the candidate guard rolled back real
+        causal progress as an equal-count swap.
+        """
+
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+        command = ["python", "-c", "cpp-syntax-check"]
+        failing_units = "### FAILING_TUS src/cipher.cpp tests/test_cipher.cpp\n"
+        missing_cstdint = (
+            "include/invisible_ink/cipher.hpp:84:27: error: "
+            "‘int64_t’ is not a member of ‘std’"
+        )
+        exception_spec = (
+            "src/cipher.cpp:142:6: error: declaration of "
+            "‘std::string Cipher::encode()’ has a different exception specifier"
+        )
+
+        assert (
+            classify(
+                before_signature=("cpp_compile:four command-level errors",),
+                after_signature=("cpp_compile:four command-level errors",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=(
+                    {
+                        "command": command,
+                        "passed": False,
+                        "diagnostic_excerpt": f"{failing_units}{missing_cstdint}\n{exception_spec}\n",
+                    },
+                ),
+                after_results=(
+                    {
+                        "command": command,
+                        "passed": False,
+                        "diagnostic_excerpt": f"{failing_units}{exception_spec}\n",
+                    },
+                ),
+            )
+            == "progress"
+        )
+
+    def test_workspace_quality_compiler_diagnostic_swap_is_not_progress(self) -> None:
+        """Removing one compiler error while adding another stays fail-closed."""
+
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+        command = ["python", "-c", "cpp-syntax-check"]
+        failing_units = "### FAILING_TUS src/cipher.cpp tests/test_cipher.cpp\n"
+
+        assert (
+            classify(
+                before_signature=("cpp_compile:four command-level errors",),
+                after_signature=("cpp_compile:four command-level errors",),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=(
+                    {
+                        "command": command,
+                        "passed": False,
+                        "diagnostic_excerpt": (
+                            f"{failing_units}"
+                            "include/cipher.hpp:84:27: error: ‘int64_t’ is not a member of ‘std’\n"
+                        ),
+                    },
+                ),
+                after_results=(
+                    {
+                        "command": command,
+                        "passed": False,
+                        "diagnostic_excerpt": (
+                            f"{failing_units}"
+                            "src/cipher.cpp:142:6: error: declaration has a different exception specifier\n"
+                        ),
+                    },
+                ),
+            )
+            != "progress"
+        )
+
+    def test_workspace_quality_cpp_include_barrier_requires_verified_repair(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Keep a corrected include, but reject deletion that hides its diagnostic.
+
+        Live L3-24 r58 produced the correct ``#include <vector>`` edit.  The
+        verifier's per-TU excerpt truncation then exposed more later compiler
+        errors and Factory rolled the edit back.  A prior candidate deleted the
+        include block entirely and reduced the same diagnostic count, so count
+        reduction alone is unsafe: current disk state must prove the directive
+        became a valid include.
+        """
+
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+        command = ["python", "-c", "cpp-syntax-check"]
+        header = tmp_path / "include" / "invisible_diary" / "moon_cipher.hpp"
+        header.parent.mkdir(parents=True)
+        before_diagnostic = (
+            f"{header}:17:10: error: #include expects \"FILENAME\" or <FILENAME>\n"
+            "   17 | #include vector\n"
+            "      |          ^~~~~~\n"
+            "src/moon_cipher.cpp:42:18: error: expected primary-expression before ')' token"
+        )
+        after_diagnostic = (
+            "src/moon_cipher.cpp:42:18: error: expected primary-expression before ')' token\n"
+            "src/moon_cipher.cpp:48:11: error: 'MoonPhase' was not declared in this scope"
+        )
+
+        header.write_text("\n" * 16 + "#include <vector>\n", encoding="utf-8")
+        assert (
+            classify(
+                before_signature=(before_diagnostic,),
+                after_signature=(after_diagnostic,),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=({"command": command, "passed": False, "stderr_tail": before_diagnostic},),
+                after_results=({"command": command, "passed": False, "stderr_tail": after_diagnostic},),
+                workspace=tmp_path,
+            )
+            == "progress"
+        )
+
+        header.write_text("\n" * 16, encoding="utf-8")
+        assert (
+            classify(
+                before_signature=(before_diagnostic,),
+                after_signature=(after_diagnostic,),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=({"command": command, "passed": False, "stderr_tail": before_diagnostic},),
+                after_results=({"command": command, "passed": False, "stderr_tail": after_diagnostic},),
+                workspace=tmp_path,
+            )
+            != "progress"
+        )
+
+        outside_header = tmp_path.parent / "outside-moon-cipher.hpp"
+        outside_header.write_text("\n" * 16 + "#include <vector>\n", encoding="utf-8")
+        outside_diagnostic = before_diagnostic.replace(str(header), str(outside_header))
+        assert (
+            classify(
+                before_signature=(outside_diagnostic,),
+                after_signature=(after_diagnostic,),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=({"command": command, "passed": False, "stderr_tail": outside_diagnostic},),
+                after_results=({"command": command, "passed": False, "stderr_tail": after_diagnostic},),
+                workspace=tmp_path,
+            )
+            != "progress"
         )
 
     def test_workspace_quality_repair_effect_accepts_real_test_failure_reduction(self) -> None:
@@ -2356,16 +3903,13 @@ class TestRunWorkspaceQualityChecks:
         assert (
             classify(
                 before_signature=(
-                    "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
-                    "engine_test.go:112: bubble still moving downward",
+                    "--- FAIL: TestStepClampsOnFloor (0.00s)\nengine_test.go:112: bubble still moving downward",
                     "main_test.go:113:15: cannot convert totalTime / dt + 0.5 "
                     "(untyped float constant 30.5) to type int",
                 ),
                 after_signature=(
-                    "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
-                    "engine_test.go:112: bubble still moving downward",
-                    "--- FAIL: TestRunEndToEndViaLibraryAPI (0.00s)\n"
-                    "main_test.go:148: bubble still moving downward",
+                    "--- FAIL: TestStepClampsOnFloor (0.00s)\nengine_test.go:112: bubble still moving downward",
+                    "--- FAIL: TestRunEndToEndViaLibraryAPI (0.00s)\nmain_test.go:148: bubble still moving downward",
                 ),
                 verifier_passed=False,
                 write_tool_evidence=True,
@@ -2382,6 +3926,42 @@ class TestRunWorkspaceQualityChecks:
             )
             == "equal_count_swap"
         )
+        # Live L3-24 r09: fixing the last failing C++ translation unit moved
+        # the same CMake verifier from compilation into the linker.  The
+        # linker has no ``FAILING_TUS`` list, so signature cardinality alone
+        # mislabeled this real phase advance as ``equal_count_swap`` and
+        # needlessly failed/reopened the same Director task.
+        assert (
+            classify(
+                before_signature=(
+                    "tests/test_moon_cipher.cpp: error: 'invalid_argument' is not a member of 'std'",
+                ),
+                after_signature=(
+                    "undefined reference to `invisible_diary::io::read_invisible_diary'",
+                ),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=(
+                    {
+                        "command": ["cmake", "--build", "build"],
+                        "passed": False,
+                        "stderr_tail": "### FAILING_TUS tests/test_moon_cipher.cpp",
+                    },
+                ),
+                after_results=(
+                    {
+                        "command": ["cmake", "--build", "build"],
+                        "passed": False,
+                        "stderr_tail": (
+                            "undefined reference to `invisible_diary::io::read_invisible_diary'\n"
+                            "collect2: error: ld returned 1 exit status"
+                        ),
+                    },
+                ),
+            )
+            == "progress"
+        )
+
         # Live L3-21: fixing a missing dataclass import moved unittest from a
         # module-level _FailedTest/NameError into 34 executed tests.  The newly
         # visible assertion failures increased the residual count, but the
@@ -2402,6 +3982,36 @@ class TestRunWorkspaceQualityChecks:
                     "InvalidLineError: duplicate station\n"
                     "Ran 34 tests in 0.184s",
                     "delivery_depth_contract_failed: test_source_files=1 < 2",
+                ),
+                verifier_passed=False,
+                write_tool_evidence=True,
+            )
+            == "forward_unmask"
+        )
+        # Live L3-24 r10: repairing one broken ``setUpClass`` assertion let
+        # three real CLI tests execute.  Their UnicodeDecodeError failures are
+        # a deeper product/runtime phase, not a regression caused by the
+        # test-harness edit.  The second class still had the same setup
+        # barrier, so raw diagnostic count increased 4 -> 6 even though the
+        # setup frontier strictly shrank 2 -> 1.
+        assert (
+            classify(
+                before_signature=(
+                    "ERROR: setUpClass (test_product.CppBuildTests)\n"
+                    "TypeError: TestCase.assertEqual() missing 1 required positional argument: 'second'",
+                    "ERROR: setUpClass (test_product.CppUnitDriverTests)\n"
+                    "TypeError: TestCase.assertEqual() missing 1 required positional argument: 'second'",
+                    "FAIL: test_minimum_source_file_count\nAssertionError: 4 not greater than or equal to 5",
+                    "delivery_depth_contract_failed: production_source_lines=223 < 650",
+                ),
+                after_signature=(
+                    "ERROR: test_cli_cipher_round_trip_line\nUnicodeDecodeError: invalid start byte",
+                    "ERROR: test_cli_keeps_other_entries_hidden\nUnicodeDecodeError: invalid start byte",
+                    "ERROR: test_cli_outputs_all_visible_keywords\nUnicodeDecodeError: invalid start byte",
+                    "ERROR: setUpClass (test_product.CppUnitDriverTests)\n"
+                    "TypeError: TestCase.assertEqual() missing 1 required positional argument: 'second'",
+                    "FAIL: test_minimum_source_file_count\nAssertionError: 4 not greater than or equal to 5",
+                    "delivery_depth_contract_failed: production_source_lines=223 < 650",
                 ),
                 verifier_passed=False,
                 write_tool_evidence=True,
@@ -2431,6 +4041,125 @@ class TestRunWorkspaceQualityChecks:
                 write_tool_evidence=False,
             )
             == "no_op"
+        )
+
+    def test_workspace_quality_repair_effect_counts_repeated_cpp_diagnostics(self) -> None:
+        """Removing one repeated compiler occurrence is monotonic progress.
+
+        Live L3-24 r46 fixed the first unqualified ``Mode`` occurrence in
+        ``src/invisible_ink.cpp``.  The next identical occurrence then became
+        the compiler frontier while a separate translation unit stayed red.
+        Set-based compiler identities discarded occurrence multiplicity, so
+        Factory mislabeled the valid edit ``equal_count_swap`` and rolled it
+        back twice.
+        """
+
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+        command = ["g++", "-std=c++17", "-fsyntax-only", "src/invisible_ink.cpp"]
+        before_compiler = "\n".join(
+            (
+                "src/invisible_ink.cpp:95:31: error: ‘Mode’ was not declared in this scope",
+                "src/invisible_ink.cpp:101:30: error: expected primary-expression before ‘(’ token",
+                "src/invisible_ink.cpp:101:31: error: ‘Mode’ is not a class, namespace, or enumeration",
+                "src/invisible_ink.cpp:107:30: error: expected primary-expression before ‘(’ token",
+                "src/invisible_ink.cpp:107:31: error: ‘Mode’ is not a class, namespace, or enumeration",
+                "src/moon_phase.cpp:21:41: error: unable to find numeric literal operator",
+            )
+        )
+        after_compiler = "\n".join(
+            (
+                "src/invisible_ink.cpp:101:31: error: ‘Mode’ was not declared in this scope",
+                "src/invisible_ink.cpp:107:30: error: expected primary-expression before ‘(’ token",
+                "src/invisible_ink.cpp:107:31: error: ‘Mode’ is not a class, namespace, or enumeration",
+                "src/moon_phase.cpp:21:41: error: unable to find numeric literal operator",
+            )
+        )
+
+        assert (
+            classify(
+                before_signature=(before_compiler, "build failed", "delivery depth failed"),
+                after_signature=(after_compiler, "build still failed", "delivery depth failed"),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=({"command": command, "passed": False, "stderr_tail": before_compiler},),
+                after_results=({"command": command, "passed": False, "stderr_tail": after_compiler},),
+            )
+            == "progress"
+        )
+
+    def test_workspace_quality_repair_effect_accepts_test_harness_unmask_of_existing_compiler_frontier(
+        self,
+    ) -> None:
+        """A harness-only NameError may unmask an already-proven compiler blocker.
+
+        Live L3-24 r57 repaired ``tests/test_engine_contracts.py`` by adding the
+        missing ``sys`` import.  The unittest command then stopped failing in
+        its Python harness and surfaced the same C++ diagnostics already
+        reported by the independent syntax verifier.  Raw diagnostic
+        cardinality stayed equal, so Factory rolled the valid edit back and
+        repeated it three times.  Preserve this narrow causal advance without
+        accepting a candidate that introduces a new compiler error.
+        """
+
+        classify = OrchestrationStageExecutor._workspace_quality_repair_effect
+        compiler_command = ["g++", "-std=c++17", "-fsyntax-only", "src/diary/diary_book.cpp"]
+        test_command = ["python", "-m", "unittest", "discover", "-s", "tests"]
+        compiler_error = (
+            "src/diary/diary_book.cpp:40:15: error: "
+            "'DiaryValidationError' was not declared in this scope"
+        )
+        harness_error = (
+            "ERROR: setUpClass (test_engine_contracts.EngineContractTests)\n"
+            "NameError: name 'sys' is not defined\nFAILED (errors=1)"
+        )
+        unmasked_error = (
+            "ERROR: setUpClass (test_engine_contracts.EngineContractTests)\n"
+            f"{compiler_error}\n"
+            "RuntimeError: engine contract driver failed to compile\nFAILED (errors=1)"
+        )
+
+        before_results = (
+            {"command": compiler_command, "passed": False, "stderr_tail": compiler_error},
+            {"command": test_command, "passed": False, "stderr_tail": harness_error},
+        )
+        after_results = (
+            {"command": compiler_command, "passed": False, "stderr_tail": compiler_error},
+            {"command": test_command, "passed": False, "stderr_tail": unmasked_error},
+        )
+        assert (
+            classify(
+                before_signature=(compiler_error, harness_error),
+                after_signature=(compiler_error, unmasked_error),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=before_results,
+                after_results=after_results,
+            )
+            == "progress"
+        )
+
+        novel_compiler_error = (
+            "src/diary/diary_book.cpp:52:39: error: "
+            "'cipher' has not been declared"
+        )
+        novel_after_results = (
+            {"command": compiler_command, "passed": False, "stderr_tail": compiler_error},
+            {
+                "command": test_command,
+                "passed": False,
+                "stderr_tail": unmasked_error.replace(compiler_error, novel_compiler_error),
+            },
+        )
+        assert (
+            classify(
+                before_signature=(compiler_error, harness_error),
+                after_signature=(compiler_error, unmasked_error.replace(compiler_error, novel_compiler_error)),
+                verifier_passed=False,
+                write_tool_evidence=True,
+                before_results=before_results,
+                after_results=novel_after_results,
+            )
+            != "progress"
         )
 
     def test_workspace_quality_diagnostic_error_codes_extraction(self) -> None:
@@ -2579,10 +4308,7 @@ class TestRunWorkspaceQualityChecks:
                 "stdout_tail": (
                     "ok"
                     if state["repaired"]
-                    else (
-                        "tests/test_product.py: Ran 0 tests\n"
-                        "src/main.py:16: ImportError: cannot import name 'main'"
-                    )
+                    else ("tests/test_product.py: Ran 0 tests\nsrc/main.py:16: ImportError: cannot import name 'main'")
                 ),
                 "stderr_tail": "",
                 "error": "",
@@ -3260,10 +4986,7 @@ class TestRunWorkspaceQualityChecks:
         payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
         rounds = payload["repair"]["rounds"]
         assert rounds[0]["regression_guard_errors"] == []
-        assert any(
-            "TestStepClampsOnFloor" in str(item)
-            for item in rounds[0]["regression_guard_errors_for_next_round"]
-        )
+        assert any("TestStepClampsOnFloor" in str(item) for item in rounds[0]["regression_guard_errors_for_next_round"])
         assert any("TestStepClampsOnFloor" in str(item) for item in rounds[1]["regression_guard_errors"])
         assert rounds[1]["regression_synthesis_round_granted"] is True
 
@@ -3291,18 +5014,9 @@ class TestRunWorkspaceQualityChecks:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-08-22T00:00:00+00:00",
         )
-        failure_a = (
-            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
-            "    engine_test.go:112: still moving downward"
-        )
-        failure_b = (
-            "--- FAIL: TestStepAppliesGravity (0.00s)\n"
-            "    engine_test.go:69: velocity=-4.905 want 4.905"
-        )
-        failure_c = (
-            "--- FAIL: TestStepWithRestitutionBounces (0.00s)\n"
-            "    engine_test.go:87: velocity=-1 want positive"
-        )
+        failure_a = "--- FAIL: TestStepClampsOnFloor (0.00s)\n    engine_test.go:112: still moving downward"
+        failure_b = "--- FAIL: TestStepAppliesGravity (0.00s)\n    engine_test.go:69: velocity=-4.905 want 4.905"
+        failure_c = "--- FAIL: TestStepWithRestitutionBounces (0.00s)\n    engine_test.go:87: velocity=-1 want positive"
         command_calls = 0
         llm_contexts: list[dict[str, object]] = []
 
@@ -3399,12 +5113,9 @@ class TestRunWorkspaceQualityChecks:
         assert len(repair["rounds"]) == 4
         assert repair["rounds"][2]["regression_synthesis_round_granted"] is True
         assert any(
-            "TestStepClampsOnFloor" in str(item)
-            for item in repair["rounds"][2]["reintroduced_regression_guard_errors"]
+            "TestStepClampsOnFloor" in str(item) for item in repair["rounds"][2]["reintroduced_regression_guard_errors"]
         )
-        assert (
-            repair["convergence_stop_reason"] == "named_test_semantic_contract_conflict_candidate"
-        ), repair
+        assert repair["convergence_stop_reason"] == "named_test_semantic_contract_conflict_candidate", repair
         conflict = repair["semantic_contract_conflict_candidate"]
         assert conflict["owner_task_id"] == "TASK-3"
         assert conflict["synthesis_union_test_identities"] == [
@@ -3412,6 +5123,158 @@ class TestRunWorkspaceQualityChecks:
             "go:teststepclampsonfloor",
         ]
         assert conflict["residual_test_identities"] == ["go:teststepwithrestitutionbounces"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("candidate_diagnostic", "expected_candidate_effect"),
+        [
+            ("tests/product.rs:77: product contract regressed", "equal_count_swap"),
+            ("tests/edges.rs:42: edge contract still failed", "stagnant"),
+        ],
+    )
+    async def test_rejected_llm_candidate_restores_pre_round_bytes_and_diagnostics(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        candidate_diagnostic: str,
+        expected_candidate_effect: str,
+    ) -> None:
+        """A verifier-rejected LLM edit is not the next repair round's baseline.
+
+        Live L3-23 changed ``src/patience.rs`` from product-green/edges-red to
+        product-red/edges-green. Factory detected the reintroduced regression,
+        but retained the rejected bytes, so subsequent rounds oscillated. The
+        candidate transaction must CAS-restore both the file and the pre-round
+        verifier authority while retaining the rejected diagnostic as feedback.
+        """
+
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-rejected-candidate-rollback",
+            config=FactoryConfig(name="quality-rejected-candidate-rollback"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-08-25T00:00:00+00:00",
+        )
+        source_path = tmp_path / "src" / "patience.rs"
+        source_path.parent.mkdir(parents=True)
+        source_path.write_text("pre-round\n", encoding="utf-8")
+        failure_before = "tests/edges.rs:42: edge contract still failed"
+        llm_contexts: list[dict[str, object]] = []
+        llm_errors: list[list[str]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            diagnostic = (
+                candidate_diagnostic
+                if source_path.read_text(encoding="utf-8") == "candidate\n"
+                else failure_before
+            )
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": diagnostic,
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        async def no_deterministic_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            del kwargs
+            return [], {"attempted": True, "success": False, "write_tool_evidence": False}
+
+        async def staged_llm_effect(**kwargs: object) -> tuple[list[dict[str, object]], dict[str, object]]:
+            llm_contexts.append(dict(kwargs["context"]))
+            llm_errors.append([str(item) for item in kwargs["artifact_quality_errors"]])
+            if len(llm_contexts) > 1:
+                return [], {
+                    "attempted": True,
+                    "success": False,
+                    "task_id": "TASK-1",
+                    "repair_target_files": ["src/patience.rs"],
+                    "write_tool_evidence": False,
+                }
+            guard = await DirectorQualityRepairCandidateGuard.capture(
+                workspace=tmp_path,
+                candidate_id="candidate-round-1",
+                target_files=["src/patience.rs"],
+            )
+            source_path.write_text("candidate\n", encoding="utf-8")
+            await guard.seal_effect()
+
+            class Attempt:
+                session_id = "candidate-session"
+
+            return (
+                [
+                    {
+                        "tool": "edit_file",
+                        "success": True,
+                        "result": {"file": "src/patience.rs", "operation": "modify"},
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "task_id": "TASK-1",
+                    "repair_target_files": ["src/patience.rs"],
+                    "write_tool_evidence": True,
+                    "_pending_task_runtime_repair_attempt": {
+                        "task_row_id": "task-row-1",
+                        "execution_attempt": Attempt(),
+                        "task_id": "TASK-1",
+                        "mutation_committed": False,
+                        "candidate_guard": guard,
+                    },
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["cargo", "test"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
+        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", no_deterministic_effect)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", staged_llm_effect)
+        monkeypatch.setattr(
+            executor,
+            "_settle_director_stage_materialization_attempt",
+            lambda **_kwargs: {"success": True},
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "workspace_quality_unclaimed_failing_tu_targets",
+            lambda *_args, **_kwargs: [],
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "workspace_quality_unclaimed_residual_targets",
+            lambda *_args, **_kwargs: [],
+        )
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "leftover_targets_should_force_owner_rotate",
+            lambda *_args, **_kwargs: False,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 2},
+        )
+
+        assert passed is False
+        assert source_path.read_text(encoding="utf-8") == "pre-round\n"
+        assert len(llm_contexts) >= 2
+        retry_quality = llm_contexts[1]["director_quality_repair"]
+        assert isinstance(retry_quality, dict)
+        assert retry_quality["candidate_rejection_target_files"] == ["src/patience.rs"]
+        assert any(failure_before in str(item) for item in llm_errors[1])
+        assert any(candidate_diagnostic in str(item) for item in retry_quality["candidate_rejection_errors"])
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        first_round = payload["repair"]["rounds"][0]
+        assert first_round["candidate_guard_receipt"]["status"] == "restored"
+        assert first_round["candidate_verifier_effect"] == expected_candidate_effect
+        assert first_round["candidate_rejection_target_files_for_next_round"] == ["src/patience.rs"]
+        assert first_round["verifier_effect"] == "candidate_rejected_rolled_back"
 
     @pytest.mark.asyncio
     async def test_workspace_quality_count_changing_aba_carries_regression_guards(
@@ -3670,9 +5533,7 @@ class TestRunWorkspaceQualityChecks:
         assert repair["success"] is True
         assert repair["convergence_stop_reason"] == "verifier_passed"
         assert repair["rounds"][1]["verifier_effect"] == "equal_count_swap"
-        assert repair["rounds"][1]["newly_plannable_source_tools"] == [
-            "deterministic_go_missing_stdlib_import_repair"
-        ]
+        assert repair["rounds"][1]["newly_plannable_source_tools"] == ["deterministic_go_missing_stdlib_import_repair"]
 
     @pytest.mark.asyncio
     async def test_workspace_quality_rust_forward_unmask_chain_runs_to_verifier(
@@ -4360,9 +6221,57 @@ class TestRunWorkspaceQualityChecks:
                 "blueprint_id": "ce_TASK-1",
                 "runtime_blueprint_path": ".polaris/blueprints/ce_TASK-1.json",
                 "role": "director",
+                "task_completion_projection": {
+                    "task_id": "TASK-1",
+                    "project_id": "L2-08",
+                    "run_id": "factory-context",
+                    "project_contract_hash": "c" * 64,
+                    "owned_artifacts": [
+                        {
+                            "obligation_id": "O-RULES",
+                            "owner_task_id": "TASK-1",
+                            "path": "src/engine/rules.js",
+                        }
+                    ],
+                },
             },
         )
         captured: dict[str, Any] = {}
+        settlement_order: list[str] = []
+
+        class FakeArtifactReceipt:
+            def __init__(self, command: Any) -> None:
+                for name in (
+                    "workspace",
+                    "project_id",
+                    "run_id",
+                    "completion_contract_hash",
+                    "obligation_id",
+                    "owner_task_id",
+                    "path",
+                ):
+                    setattr(self, name, getattr(command, name))
+                self.artifact_hash = "a" * 64
+                self.receipt_hash = "b" * 64
+                self.receipt_ref = "execution-broker://project-verification/artifact/" + "b" * 64
+
+        def fake_record_project_artifact(command: Any) -> FakeArtifactReceipt:
+            settlement_order.append("artifact_receipt")
+            return FakeArtifactReceipt(command)
+
+        monkeypatch.setattr(factory_workspace_quality_impl, "ProjectArtifactReceiptV1", FakeArtifactReceipt)
+        monkeypatch.setattr(
+            factory_workspace_quality_impl,
+            "record_project_artifact",
+            fake_record_project_artifact,
+        )
+        original_settle = executor._settle_director_stage_materialization_attempt
+
+        def tracking_settle(**kwargs: Any) -> dict[str, Any]:
+            settlement_order.append("task_runtime_settle")
+            return original_settle(**kwargs)
+
+        monkeypatch.setattr(executor, "_settle_director_stage_materialization_attempt", tracking_settle)
 
         async def fake_run_director_materialization_quality_repair(
             workspace: str,
@@ -4375,6 +6284,7 @@ class TestRunWorkspaceQualityChecks:
             llm_call_timeout: float,
             artifact_quality_errors: list[str],
             changed_files: list[str],
+            repair_target_files: list[str],
             repair_attempt: int,
         ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             await asyncio.sleep(0.01)
@@ -4403,6 +6313,7 @@ class TestRunWorkspaceQualityChecks:
                     "llm_call_timeout": llm_call_timeout,
                     "artifact_quality_errors": artifact_quality_errors,
                     "changed_files": changed_files,
+                    "repair_target_files": repair_target_files,
                     "repair_attempt": repair_attempt,
                     "attempt_validation": attempt_validation,
                 }
@@ -4526,9 +6437,129 @@ class TestRunWorkspaceQualityChecks:
         )
         assert settled is not None
         assert settled["outcome"] == "completed"
+        assert settled["project_artifact_receipt_count"] == 1
+        assert settled["project_artifact_receipts"][0]["path"] == "src/engine/rules.js"
+        assert settlement_order == ["artifact_receipt", "task_runtime_settle"]
         task_rows = TaskRuntimeService(str(tmp_path)).list_task_rows(include_terminal=True)
         owner_row = next(row for row in task_rows if row["metadata"].get("external_task_id") == "TASK-1")
         assert owner_row["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_receipt_refresh_failure_blocks_successful_settlement(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        settlement_statuses: list[str] = []
+
+        def fail_artifact_refresh(_pending: Any) -> tuple[dict[str, str], ...]:
+            raise RuntimeError("receipt owner unavailable")
+
+        def record_settlement(**kwargs: Any) -> dict[str, Any]:
+            settlement_statuses.append(str(kwargs["stage_status"]))
+            return {"success": True}
+
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "_record_workspace_quality_repair_artifact_receipts",
+            fail_artifact_refresh,
+        )
+        monkeypatch.setattr(executor, "_settle_director_stage_materialization_attempt", record_settlement)
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=1,
+            external_task_id="TASK-1",
+            session_id="quality-receipt-failure",
+            attempt=1,
+            role_id="director",
+            worker_id="director-quality-repair",
+            run_id="factory-receipt-failure",
+            lease_expires_at=4_102_444_800.0,
+        )
+
+        settled = await workspace_quality_impl._settle_pending_workspace_quality_repair_attempt(
+            executor,
+            {
+                "task_id": "TASK-1",
+                "task_row_id": "1",
+                "execution_attempt": identity,
+                "task_completion_projection": {"task_id": "TASK-1"},
+            },
+            accepted=True,
+            reason="post_repair_verifier_passed",
+        )
+
+        assert settled is not None
+        assert settled["outcome"] == "failed"
+        assert settlement_statuses == ["failed"]
+        assert settled["project_artifact_receipt_count"] == 0
+        assert settled["artifact_receipt_error"].startswith(
+            "workspace_quality_repair_artifact_receipt_refresh_failed:RuntimeError:"
+        )
+
+    @pytest.mark.asyncio
+    async def test_workspace_quality_real_mutation_refreshes_receipt_when_verifier_makes_no_progress(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failed repair settlement must not erase its real artifact effect."""
+
+        executor = _executor(tmp_path)
+        calls: list[str] = []
+
+        def record_artifact(_pending: Any) -> tuple[dict[str, str], ...]:
+            calls.append("artifact_receipt")
+            return (
+                {
+                    "obligation_id": "O-SOURCE",
+                    "path": "src/engine.py",
+                    "artifact_hash": "a" * 64,
+                    "receipt_hash": "b" * 64,
+                    "receipt_ref": "execution-broker://artifact/current",
+                },
+            )
+
+        def record_settlement(**kwargs: Any) -> dict[str, Any]:
+            calls.append(f"settle:{kwargs['stage_status']}")
+            return {"success": True}
+
+        monkeypatch.setattr(
+            workspace_quality_impl,
+            "_record_workspace_quality_repair_artifact_receipts",
+            record_artifact,
+        )
+        monkeypatch.setattr(executor, "_settle_director_stage_materialization_attempt", record_settlement)
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=str(tmp_path),
+            task_id=1,
+            external_task_id="TASK-1",
+            session_id="quality-real-mutation-no-progress",
+            attempt=1,
+            role_id="director",
+            worker_id="director-quality-repair",
+            run_id="factory-real-mutation-no-progress",
+            lease_expires_at=4_102_444_800.0,
+        )
+
+        settled = await workspace_quality_impl._settle_pending_workspace_quality_repair_attempt(
+            executor,
+            {
+                "task_id": "TASK-1",
+                "task_row_id": "1",
+                "execution_attempt": identity,
+                "task_completion_projection": {"task_id": "TASK-1"},
+                "mutation_committed": True,
+            },
+            accepted=False,
+            reason="workspace_quality_repair_no_progress",
+        )
+
+        assert settled is not None
+        assert settled["outcome"] == "failed"
+        assert settled["project_artifact_receipt_count"] == 1
+        assert calls == ["artifact_receipt", "settle:failed"]
 
     @pytest.mark.asyncio
     async def test_workspace_quality_ignores_deterministic_results_without_write_evidence(
@@ -4958,9 +6989,7 @@ class TestRunWorkspaceQualityChecks:
                 "exit_code": 1,
                 "passed": False,
                 "stdout_tail": (
-                    "--- FAIL: TestStepAppliesGravity (0.00s)\n"
-                    "    engine_test.go:69: velocity=-4.905 want 4.905\n"
-                    "FAIL"
+                    "--- FAIL: TestStepAppliesGravity (0.00s)\n    engine_test.go:69: velocity=-4.905 want 4.905\nFAIL"
                 ),
                 "stderr_tail": "",
                 "error": "",
@@ -4998,9 +7027,7 @@ class TestRunWorkspaceQualityChecks:
                     "plan_probe_preaudit": {
                         "status": "coverage_matched_but_unplannable",
                         "plannable_source_tools": [],
-                        "covered_unplannable_source_tools": [
-                            "deterministic_go_test_assertion_align_repair"
-                        ],
+                        "covered_unplannable_source_tools": ["deterministic_go_test_assertion_align_repair"],
                         "covered_unplannable_diagnostic_count": 1,
                     },
                 },
@@ -5584,3 +7611,38 @@ def test_residual_owner_handoff_targets_require_explicit_owner_and_live_diagnost
     )
 
     assert targets == ["physics/gravity_test.go"]
+
+
+def test_residual_owner_handoff_targets_reactivate_prior_round_when_diagnostic_returns() -> None:
+    from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
+        workspace_quality_residual_owner_handoff_targets,
+    )
+
+    prior = {
+        "stage": "quality_repair",
+        "task_boundary_scope_filter": {
+            "owner_task_retry_handoff_requests": [
+                {
+                    "target_file": "tests/restaurant_flow.rs",
+                    "owner_step_id": "TASK-3",
+                    "owner_found": True,
+                    "status": "owner_found",
+                    "recommended_route": "owner_task_retry",
+                }
+            ]
+        },
+    }
+
+    hidden = workspace_quality_residual_owner_handoff_targets(
+        {},
+        ["src/lib.rs:30: unresolved import engine::priority_breakdown"],
+        prior_summaries=[prior],
+    )
+    returned = workspace_quality_residual_owner_handoff_targets(
+        {},
+        ["tests/restaurant_flow.rs:16: cannot move out of a shared reference"],
+        prior_summaries=[prior],
+    )
+
+    assert hidden == []
+    assert returned == ["tests/restaurant_flow.rs"]

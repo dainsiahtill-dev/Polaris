@@ -14,6 +14,7 @@ CPP_PLACEHOLDER_DECLARATION_SOURCE_TOOL = "deterministic_cpp_placeholder_declara
 CPP_POST_SOURCE_TOOL = "deterministic_cpp_post_repair"
 CPP_STANDARD_INCLUDE_SOURCE_TOOL = "deterministic_cpp_standard_include_repair"
 CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL = "deterministic_cpp_struct_getter_field_access_repair"
+CPP_USE_BEFORE_DEFINITION_SOURCE_TOOL = "deterministic_cpp_use_before_definition_repair"
 
 _CPP_HEADER_EXTENSIONS = (".h", ".hh", ".hpp", ".hxx")
 _CPP_SOURCE_EXTENSIONS = (".c", ".cc", ".cpp", ".cxx")
@@ -34,6 +35,15 @@ _STRUCT_FIELD_RE = re.compile(
     re.MULTILINE,
 )
 _UINT_TYPE_RE = re.compile(r"\bstd::uint(?:8|16|32|64)_t\b")
+_CPP_UNDECLARED_IDENTIFIER_RE = re.compile(
+    r"[‘'`](?P<identifier>[A-Za-z_][A-Za-z0-9_]*)[’'`]\s+was not declared in this scope"
+)
+_CPP_FUNCTION_DEFINITION_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<head>[^;{}=]+?\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"\((?P<params>[^;{}()]*)\)\s*"
+    r"(?:(?:const|constexpr|noexcept(?:\s*\([^)]*\))?|override|final|&|&&)\s*)*)\{\s*$"
+)
+_CPP_CONTROL_FLOW_PREFIXES = ("if", "for", "while", "switch", "catch", "return")
 
 
 def repair_cpp_include_paths_text(
@@ -338,6 +348,77 @@ def build_cpp_missing_private_members_plan(
     )
 
 
+def build_cpp_use_before_definition_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str = "commit",
+) -> RepairPlan | None:
+    """Repair one unambiguous same-file C++ declaration-order diagnostic.
+
+    The rule is intentionally narrow: either forward-declare one later free
+    function in a source file, or move one existing later same-scope
+    ``inline constexpr`` variable definition before its compiler-proven use.
+    Anything ambiguous remains unplanned rather than inventing C++ API surface.
+    """
+
+    normalized_base_files = {
+        normalized_path: str(content or "")
+        for path, content in dict(base_files or {}).items()
+        if (normalized_path := _normalize_repair_path(path))
+        and (_is_cpp_source_path(normalized_path) or _is_cpp_header_path(normalized_path))
+        and not _is_generated_build_path(normalized_path)
+    }
+    for diagnostic in diagnostics:
+        if diagnostic.code != "cpp_compile_error":
+            continue
+        identifier_match = _CPP_UNDECLARED_IDENTIFIER_RE.search(
+            "\n".join((str(diagnostic.message or ""), str(diagnostic.raw or "")))
+        )
+        if identifier_match is None:
+            continue
+        identifier = identifier_match.group("identifier")
+        path = _unique_cpp_diagnostic_path(diagnostic.path, normalized_base_files)
+        if not path:
+            continue
+        edit = _cpp_use_before_definition_edit(
+            path=path,
+            content=normalized_base_files[path],
+            diagnostic=diagnostic,
+            identifier=identifier,
+        )
+        if edit is None:
+            continue
+        expected, replacement, definition_line, span_start, span_end, definition_kind = edit
+        return RepairPlan(
+            rule_id="cpp.use_before_definition",
+            source_tool=CPP_USE_BEFORE_DEFINITION_SOURCE_TOOL,
+            operations=(
+                RepairOperation(
+                    kind="text_replace",
+                    path=path,
+                    span_start=span_start,
+                    span_end=span_end,
+                    expected=expected,
+                    replacement=replacement,
+                    before_hash=sha256_text(normalized_base_files[path]),
+                    metadata={
+                        "repair_kind": "cpp_use_before_definition",
+                        "identifier": identifier,
+                        "definition_line": definition_line,
+                        "definition_kind": definition_kind,
+                    },
+                ),
+            ),
+            diagnostics=(diagnostic,),
+            mode=mode,
+            risk_level="low",
+            priority=1,
+            metadata={"archetype": "missing_dependency"},
+        )
+    return None
+
+
 def build_cpp_struct_getter_field_access_plan(
     *,
     base_files: Mapping[str, str],
@@ -499,6 +580,7 @@ def build_cpp_post_plan(
             build_cpp_include_path_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
             build_cpp_standard_include_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
             build_cpp_missing_private_members_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
+            build_cpp_use_before_definition_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
             build_cpp_struct_getter_field_access_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
             build_cpp_placeholder_declaration_plan(base_files=base_files, diagnostics=diagnostics, mode=mode),
         )
@@ -593,6 +675,10 @@ def _strip_include_trailing_garbage(content: str) -> str:
 _CPP_PREAMBLE_DIRECTIVES = frozenset({"pragma", "include", "ifndef", "ifdef", "if", "define", "endif", "else", "elif"})
 _MEMORY_TYPE_RE = re.compile(r"\bstd::(?:unique_ptr|shared_ptr|weak_ptr|make_unique|make_shared)\b")
 _CMATH_SYMBOL_RE = re.compile(r"\b(?:std::(?:isfinite|isnan|isinf|hypot|fabs|sqrt|pow|abs)|isfinite|isnan|isinf)\s*\(")
+_STDEXCEPT_TYPE_RE = re.compile(
+    r"\bstd::(?:logic_error|domain_error|invalid_argument|length_error|out_of_range|"
+    r"runtime_error|range_error|overflow_error|underflow_error)\b"
+)
 
 
 def _is_cpp_preamble_line(line: str) -> bool:
@@ -666,6 +752,8 @@ def _missing_standard_includes(content: str) -> list[str]:
         additions.append("#include <memory>")
     if _CMATH_SYMBOL_RE.search(content) and "#include <cmath>" not in content:
         additions.append("#include <cmath>")
+    if _STDEXCEPT_TYPE_RE.search(content) and "#include <stdexcept>" not in content:
+        additions.append("#include <stdexcept>")
     return additions
 
 
@@ -765,6 +853,224 @@ def _normalize_repair_path(path: str) -> str:
     return normalized
 
 
+def _unique_cpp_diagnostic_path(
+    diagnostic_path: str | None,
+    base_files: Mapping[str, str],
+) -> str:
+    raw_path = str(diagnostic_path or "").strip().replace("\\", "/")
+    normalized = _normalize_repair_path(raw_path)
+    if normalized in base_files:
+        return normalized
+    candidates = tuple(path for path in base_files if raw_path == path or raw_path.endswith(f"/{path}"))
+    return candidates[0] if len(candidates) == 1 else ""
+
+
+def _cpp_use_before_definition_edit(
+    *,
+    path: str,
+    content: str,
+    diagnostic: RepairDiagnostic,
+    identifier: str,
+) -> tuple[str, str, int, int, int, str] | None:
+    del path
+    lines = str(content or "").splitlines(keepends=True)
+    if not lines or diagnostic.line is None:
+        return None
+    diagnostic_index = int(diagnostic.line) - 1
+    if diagnostic_index < 0 or diagnostic_index >= len(lines):
+        return None
+    if re.search(rf"\b{re.escape(identifier)}\s*\(", lines[diagnostic_index]) is None:
+        return _cpp_inline_constexpr_variable_reorder_edit(
+            content=content,
+            lines=lines,
+            diagnostic_index=diagnostic_index,
+            identifier=identifier,
+        )
+
+    line_depths = _cpp_brace_depths_at_line_start(lines)
+    caller_index = _nearest_cpp_free_function_definition(lines, diagnostic_index)
+    if caller_index is None:
+        return None
+    caller_depth = line_depths[caller_index]
+    later_definitions: list[tuple[int, re.Match[str]]] = []
+    for index in range(diagnostic_index + 1, len(lines)):
+        match = _cpp_free_function_definition_match(lines[index], identifier=identifier)
+        if match is None or line_depths[index] != caller_depth:
+            continue
+        if index > 0 and lines[index - 1].lstrip().startswith("template"):
+            continue
+        later_definitions.append((index, match))
+    if len(later_definitions) != 1:
+        return None
+
+    definition_index, definition_match = later_definitions[0]
+    prefix = "".join(lines[:caller_index])
+    if re.search(rf"\b{re.escape(identifier)}\s*\([^;{{}}]*\)\s*;", prefix):
+        return None
+
+    params = definition_match.group("params")
+    if "=" in params:
+        return None
+    signature = definition_match.group("head").strip()
+    if not signature or content.count(lines[caller_index]) != 1:
+        return None
+    indent = definition_match.group("indent")
+    newline = "\r\n" if lines[caller_index].endswith("\r\n") else "\n"
+    expected = lines[caller_index]
+    replacement = f"{indent}{signature};{newline}{newline}{expected}"
+    span_start = content.index(expected)
+    return expected, replacement, definition_index + 1, span_start, span_start + len(expected), "free_function"
+
+
+def _cpp_inline_constexpr_variable_reorder_edit(
+    *,
+    content: str,
+    lines: Sequence[str],
+    diagnostic_index: int,
+    identifier: str,
+) -> tuple[str, str, int, int, int, str] | None:
+    """Move one existing later inline-constexpr definition before a class use."""
+
+    if re.search(rf"\b{re.escape(identifier)}\b", lines[diagnostic_index]) is None:
+        return None
+    definition_start_re = re.compile(
+        rf"^\s*inline\s+constexpr\s+[^;{{}}()=\n]+?\b{re.escape(identifier)}"
+        rf"(?:\s*\[[^\]\n]*\])?\s*=\s*"
+    )
+    line_depths = _cpp_brace_depths_at_line_start(lines)
+    definitions: list[tuple[int, int]] = []
+    for start in range(diagnostic_index + 1, len(lines)):
+        if definition_start_re.match(lines[start]) is None:
+            continue
+        end = start
+        while end < len(lines) and ";" not in lines[end] and end - start < 7:
+            end += 1
+        if end >= len(lines) or ";" not in lines[end]:
+            continue
+        definition_text = "".join(lines[start : end + 1])
+        if definition_text.count(";") != 1 or "#" in definition_text:
+            continue
+        definitions.append((start, end))
+    if len(definitions) != 1:
+        return None
+
+    definition_start, definition_end = definitions[0]
+    definition_depth = line_depths[definition_start]
+    anchor_index: int | None = None
+    for index in range(diagnostic_index, -1, -1):
+        if line_depths[index] != definition_depth:
+            continue
+        if re.match(r"^\s*(?:class|struct)\s+[A-Za-z_][A-Za-z0-9_]*\b", lines[index]):
+            anchor_index = index
+            break
+    if anchor_index is None or anchor_index >= definition_start:
+        return None
+    guarded_region = "".join(lines[anchor_index : definition_end + 1])
+    if re.search(r"^\s*#\s*(?:if|ifdef|ifndef|elif|else|endif)\b", guarded_region, re.MULTILINE):
+        return None
+
+    expected = guarded_region
+    if content.count(expected) != 1:
+        return None
+    definition_text = "".join(lines[definition_start : definition_end + 1])
+    before_definition = "".join(lines[anchor_index:definition_start])
+    newline = "\r\n" if lines[anchor_index].endswith("\r\n") else "\n"
+    replacement = f"{definition_text}{newline}{before_definition}"
+    span_start = content.index(expected)
+    return (
+        expected,
+        replacement,
+        definition_start + 1,
+        span_start,
+        span_start + len(expected),
+        "inline_constexpr_variable",
+    )
+
+
+def _nearest_cpp_free_function_definition(
+    lines: Sequence[str],
+    diagnostic_index: int,
+) -> int | None:
+    for index in range(diagnostic_index, -1, -1):
+        if _cpp_free_function_definition_match(lines[index]) is not None:
+            return index
+    return None
+
+
+def _cpp_free_function_definition_match(
+    line: str,
+    *,
+    identifier: str | None = None,
+) -> re.Match[str] | None:
+    match = _CPP_FUNCTION_DEFINITION_LINE_RE.match(str(line or "").rstrip("\r\n"))
+    if match is None:
+        return None
+    name = match.group("name")
+    if identifier is not None and name != identifier:
+        return None
+    head = match.group("head").strip()
+    prefix = head[: head.rfind(name)].strip()
+    if not prefix or any(prefix.startswith(f"{token} ") for token in _CPP_CONTROL_FLOW_PREFIXES):
+        return None
+    if re.search(rf"\b[A-Za-z_][A-Za-z0-9_]*::{re.escape(name)}\b", head):
+        return None
+    if any(token in prefix for token in ("->", ".", "[", "]")):
+        return None
+    return match
+
+
+def _cpp_brace_depths_at_line_start(lines: Sequence[str]) -> tuple[int, ...]:
+    depths: list[int] = []
+    depth = 0
+    in_block_comment = False
+    for line in lines:
+        depths.append(depth)
+        visible, in_block_comment = _cpp_strip_non_code_for_braces(line, in_block_comment)
+        depth += visible.count("{") - visible.count("}")
+        if depth < 0:
+            return tuple(-1 for _ in lines)
+    return tuple(depths)
+
+
+def _cpp_strip_non_code_for_braces(line: str, in_block_comment: bool) -> tuple[str, bool]:
+    output: list[str] = []
+    index = 0
+    quote = ""
+    escaped = False
+    while index < len(line):
+        char = line[index]
+        next_char = line[index + 1] if index + 1 < len(line) else ""
+        if in_block_comment:
+            if char == "*" and next_char == "/":
+                in_block_comment = False
+                index += 2
+                continue
+            index += 1
+            continue
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            index += 1
+            continue
+        if char == "/" and next_char == "*":
+            in_block_comment = True
+            index += 2
+            continue
+        if char == "/" and next_char == "/":
+            break
+        if char in {'"', "'"}:
+            quote = char
+            index += 1
+            continue
+        output.append(char)
+        index += 1
+    return "".join(output), in_block_comment
+
+
 def _is_generated_build_path(path: str) -> bool:
     parts = tuple(part for part in str(path or "").split("/") if part)
     return "build" in parts or "cmake-build" in parts
@@ -814,6 +1120,7 @@ __all__ = [
     "CPP_POST_SOURCE_TOOL",
     "CPP_STANDARD_INCLUDE_SOURCE_TOOL",
     "CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL",
+    "CPP_USE_BEFORE_DEFINITION_SOURCE_TOOL",
     "build_cpp_failing_smoke_translation_unit_plan",
     "build_cpp_include_path_plan",
     "build_cpp_missing_private_members_plan",
@@ -821,6 +1128,7 @@ __all__ = [
     "build_cpp_post_plan",
     "build_cpp_standard_include_plan",
     "build_cpp_struct_getter_field_access_plan",
+    "build_cpp_use_before_definition_plan",
     "repair_cpp_failing_smoke_translation_unit_text",
     "repair_cpp_include_paths_text",
     "repair_cpp_invalid_placeholder_declarations_text",

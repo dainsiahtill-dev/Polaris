@@ -1,0 +1,73 @@
+{
+  "schema_version": "polaris.platform_defect.v1",
+  "defect_id": "L3-24-R42-SCHEMA-REPAIR-STRUCTURAL-RECOVERY",
+  "recorded_at": "2026-08-26T18:20:00+08:00",
+  "status": "FIXED_PENDING_FRESH_BENCH",
+  "severity": "P0",
+  "factory_run_id": "factory_b506080ffbec",
+  "project_id": "L3-24",
+  "workspace": "/tmp/factory-bench-l3-24-r42/workspaces/69be833e5a08-981c94fc587bae60/L3-24-023d7314133040b6/149ea45ab77320b487c72dba",
+  "target_project_modified": false,
+  "dynamic_evidence": {
+    "terminal_stage": "chief_engineer_review",
+    "terminal_error_code": "chief_engineer.semantic_repair_exhausted",
+    "terminal_root_cause_hint": "chief_engineer.semantic_patch_invalid:ValueError:behavior invariant owner/consumer is outside candidate task set",
+    "provider_call_count": 3,
+    "final_context_snapshot_ref": "62c26a15bb2f3adb8e87a1ef",
+    "final_role_identity": "chief_engineer",
+    "final_request_coverage_pass": true,
+    "final_tool_name": "submit_structured_role_output",
+    "candidate_hash": "bc255e704df5e5226cee0605f069bf724be437c4072d8037acc6b0ecc0678437",
+    "diagnosis_hash": "36f07ab86f0a40a383f2b0e7df95daec2a2f1e3f80993d6239872b031ecc592c",
+    "authoritative_task_ids": [
+      "TASK-1"
+    ],
+    "invalid_invariant_count": 5,
+    "invalid_shape": "owner_task_id=TASK-1 and consumer_task_ids=[TASK-1] in a one-task portfolio",
+    "provider_patch_shape": "consumer_task_ids used invented VERIFY-* identifiers outside the authoritative task set",
+    "exact_normalizer_result": {
+      "recovered": true,
+      "repair_codes": [
+        "remove_task_local_invariant_from_shared_contract"
+      ],
+      "invariant_count_before": 5,
+      "invariant_count_after": 0,
+      "task_behavior_refs_after": []
+    }
+  },
+  "root_causes": [
+    {
+      "code": "chief_engineer.required_property_merge_skips_structural_recovery",
+      "cause": "A schema-proven required-property patch was merged into the frozen full CE candidate, but the composed portfolio bypassed normalize_chief_engineer_portfolio_tool_arguments because the structural recovery branch used elif. The schema-valid one-task owner-only shared invariants were frozen and routed into a typed semantic repair whose legal consumer set was empty.",
+      "owner": "factory.pipeline + chief_engineer.blueprint"
+    }
+  ],
+  "platform_fixes": [
+    "Run every non-semantic full CE schema-repair result through structural recovery after required-property composition",
+    "Preserve strict cross-task invariant validation; do not invent sibling tasks or relax candidate task authority",
+    "Add an exact r42 regression proving a one-task required-property repair removes task-local shared invariants before semantic diagnosis"
+  ],
+  "verification": [
+    {
+      "command": "pytest test_required_property_schema_repair_normalizes_single_task_local_invariants",
+      "result": "observed RED before fix, then 1 passed"
+    },
+    {
+      "command": "pytest test_characterization_ce_handoff.py -k 'schema_repair or structural_recovery or semantic'",
+      "result": "19 passed"
+    },
+    {
+      "command": "pytest test_characterization_ce_handoff.py test_semantic_repair.py",
+      "result": "133 passed"
+    },
+    {
+      "command": "ruff check changed CE files; mypy _mixin_02.py",
+      "result": "pass"
+    }
+  ],
+  "remaining_risks": [
+    "Fresh isolated L3-24 must prove the CE stage crosses this exact boundary and reaches Director or a new independently attributed residual",
+    "The provider may still emit invalid semantic patches for genuine multi-task invariants; strict validation remains required"
+  ],
+  "next_action": "Run fresh isolated L3-24 with full budget, then dynamically audit the exact new terminal edge before any further edit or retry."
+}

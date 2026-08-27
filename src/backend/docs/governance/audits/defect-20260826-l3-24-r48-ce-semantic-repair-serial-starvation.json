@@ -1,0 +1,76 @@
+{
+  "schema_version": "polaris.defect.v1",
+  "defect_id": "L3-24-R48-CE-SEMANTIC-REPAIR-SERIAL-STARVATION",
+  "status": "FIXED_UNIT_AND_EXACT_REPLAY_VALIDATED_FRESH_LIVE_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_fb181a3f18bc",
+  "workspace": "/tmp/factory-bench-l3-24-r48/workspaces/12d7d5f95c3b-d3e56433fe64e30d/L3-24-023d7314133040b6/994ea0683b62791033a56f94",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "generated_blueprints": "0/1",
+    "error_code": "chief_engineer.semantic_repair_exhausted",
+    "terminal_detail": "project_completion_contract delivery depth infeasible: prod_files=4 < 7",
+    "director_reached": false
+  },
+  "final_request_evidence": {
+    "semantic_round_1_context_snapshot_ref": "310866c523980b11474a0eea",
+    "semantic_round_2_context_snapshot_ref": "31bf3d4b5295a362bbaff6e1",
+    "role_identity_ok": true,
+    "pm_contract_present": true,
+    "target_files_present": true,
+    "structured_submission_tool_present": true,
+    "final_request_evidence_coverage_pass": true,
+    "provider_http_success": true
+  },
+  "dynamic_debug_evidence": {
+    "initial_candidate_hash": "7a25fcb1dc74c11b2327155e57ddf1adb174092534b4f647f5446247de1cf6e2",
+    "round_1_errors": [
+      "project_completion_contract entrypoint command is not executable proof-of-work; obligation_id='OBL-014'; reason=verification command must provide proof-of-work, not help/version introspection"
+    ],
+    "round_1_allowed_operations": [
+      "entrypoint_upsert"
+    ],
+    "round_2_candidate_hash": "87dc872c94db55eba6de794c2635872b303c5715cc61a51cd8ec251235c36416",
+    "round_2_errors": [
+      "project_completion_contract entrypoint command is not executable proof-of-work; obligation_id='OBL-014'; reason=argv[28] must be an exact non-empty string"
+    ],
+    "terminal_unmasked_error": "project_completion_contract delivery depth infeasible: prod_files=4 < 7",
+    "exact_replay_after_fix": {
+      "errors": [
+        "chief_engineer.entrypoint_contract.invalid",
+        "chief_engineer.delivery_depth.prod_files_below_minimum"
+      ],
+      "allowed_operations": [
+        "entrypoint_upsert",
+        "artifact_upsert"
+      ]
+    },
+    "ce_review": ".polaris/runtime/state/blueprints/factory_fb181a3f18bc.review.json",
+    "candidate_store": ".polaris/runtime/state/blueprints/semantic-repair/L3-24/factory_fb181a3f18bc"
+  },
+  "root_cause": {
+    "module": "factory.pipeline.chief_engineer_output_validation",
+    "cause": "_chief_engineer_portfolio_output_errors suppressed independently computable delivery-depth deficits whenever an entrypoint semantic error existed. The bounded semantic-repair loop therefore spent one provider round per newly unmasked error and exhausted its two-round budget before artifact_upsert authority was exposed."
+  },
+  "fix": {
+    "file": "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_01.py",
+    "strategy": "Treat entrypoint semantic errors as compatible with delivery-depth projection so one atomic diagnosis can authorize entrypoint_upsert and artifact_upsert without exposing structural or unsupported errors."
+  },
+  "verification": {
+    "tdd_red": "1 failed: entrypoint error present while prod/test depth deficits were absent",
+    "focused_green": "1 passed",
+    "full_targeted_pytest": "138 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_r48_candidate_replay": "entrypoint invalid plus prod_files=4<7; both operations authorized",
+    "fresh_isolated_l3_24": "pending"
+  },
+  "constraints": {
+    "target_project_modified": false,
+    "dynamic_debug_required": true,
+    "semantic_repair_round_budget_increased": false,
+    "unsupported_structural_errors_exposed_to_semantic_patch": false
+  },
+  "next_action": "Run fresh isolated L3-24 r49 and prove the first CE semantic patch receives both independent residuals and reaches Director or a new exact boundary."
+}

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from polaris.cells.roles.adapters.internal.director.quality_gate._prompt_and_targets import (
     _build_materialization_quality_repair_message,
+    _resolve_cpp_quoted_include,
 )
 
 
@@ -72,6 +73,53 @@ def test_quality_repair_includes_go_assertion_source_as_read_only_context(tmp_pa
     assert "positive Y means downward" in message
     assert "Authorized tool target paths:\n- engine/engine.go" in message
     assert "Authorized tool target paths:\n- engine/engine_test.go" not in message
+
+
+def test_quality_repair_includes_rust_panic_test_body_as_read_only_context(tmp_path: Path) -> None:
+    """Rust assertion panics must expose the full test setup without granting test writes."""
+
+    source_dir = tmp_path / "src"
+    tests_dir = tmp_path / "tests"
+    source_dir.mkdir()
+    tests_dir.mkdir()
+    (source_dir / "patience.rs").write_text(
+        "pub struct PatienceTracker;\n",
+        encoding="utf-8",
+    )
+    test_lines = [
+        "use fantasy_restaurant::patience::PatienceTracker;",
+        "",
+        "#[test]",
+        "fn patience_tick_with_same_value_is_a_noop() {",
+        "    let mut tracker = PatienceTracker::new();",
+        '    tracker.add_party("a", 5);',
+        "    tracker.tick(2); // establishes last_tick before the repeated tick",
+        '    let before = tracker.remaining("a");',
+        "    assert_eq!(tracker.tick(2), None);",
+        '    assert_eq!(tracker.remaining("a"), before);',
+        "}",
+    ]
+    (tests_dir / "edges.rs").write_text("\n".join(test_lines) + "\n", encoding="utf-8")
+    assertion_line = test_lines.index('    assert_eq!(tracker.remaining("a"), before);') + 1
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair the Rust behavior failure.",
+        artifact_quality_errors=[
+            "---- patience_tick_with_same_value_is_a_noop stdout ----\n"
+            "thread 'patience_tick_with_same_value_is_a_noop' panicked at "
+            f"tests/edges.rs:{assertion_line}:5:\n"
+            "assertion `left == right` failed\n  left: Some(3)\n right: Some(5)"
+        ],
+        changed_files=["src/patience.rs", "tests/edges.rs"],
+        repair_target_files=["src/patience.rs"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "FAILING VERIFIER SOURCE CONTEXT (READ-ONLY EVIDENCE; NEVER EDIT THESE FILES)" in message
+    assert f"tests/edges.rs around line {assertion_line} (READ-ONLY)" in message
+    assert "establishes last_tick before the repeated tick" in message
+    assert "Authorized tool target paths:\n- src/patience.rs" in message
+    assert "Authorized tool target paths:\n- tests/edges.rs" not in message
 
 
 def test_quality_repair_includes_bounded_go_sibling_verifier_contract(tmp_path: Path) -> None:
@@ -193,13 +241,9 @@ def test_quality_repair_includes_previous_go_failure_as_regression_guard(tmp_pat
 
     message = _build_materialization_quality_repair_message(
         original_message="Repair the Go behavior failure.",
-        artifact_quality_errors=[
-            "--- FAIL: TestStepAppliesGravity (0.00s)\n"
-            "    engine_test.go:6: velocity=-4.905"
-        ],
+        artifact_quality_errors=["--- FAIL: TestStepAppliesGravity (0.00s)\n    engine_test.go:6: velocity=-4.905"],
         regression_guard_errors=[
-            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
-            "    engine_test.go:12: still moving downward: 98.1"
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n    engine_test.go:12: still moving downward: 98.1"
         ],
         changed_files=["engine/engine.go", "engine/engine_test.go"],
         repair_target_files=["engine/engine.go"],
@@ -223,12 +267,21 @@ def test_quality_repair_prompt_carries_rejected_candidate_diagnostic(tmp_path: P
     engine = tmp_path / "engine"
     engine.mkdir()
     (engine / "engine.go").write_text("package engine\nfunc Step() {}\n", encoding="utf-8")
+    (engine / "engine_test.go").write_text(
+        "package engine\n\n"
+        "func TestStepPreservesFloor(t *testing.T) {\n"
+        "    world := worldOnFloorWithGravityY(9.81)\n"
+        "    got := Step(world)\n"
+        '    if got.Velocity.Y != 0 { t.Fatalf("floor regression: %v", got.Velocity.Y) }\n'
+        "}\n",
+        encoding="utf-8",
+    )
 
     message = _build_materialization_quality_repair_message(
         original_message="Repair the Go behavior failure.",
         artifact_quality_errors=["--- FAIL: TestStep (0.00s)\n    engine_test.go:6: wrong value"],
         candidate_rejection_errors=[
-            "source_compile_regression: Edit rejected before commit: engine/engine.go: undefined: DefaultDT"
+            "--- FAIL: TestStepPreservesFloor (0.00s)\n    engine_test.go:6: floor regression: -9.81"
         ],
         changed_files=["engine/engine.go"],
         repair_target_files=["engine/engine.go"],
@@ -236,7 +289,9 @@ def test_quality_repair_prompt_carries_rejected_candidate_diagnostic(tmp_path: P
     )
 
     assert "PREVIOUS CANDIDATE REJECTED BEFORE COMMIT" in message
-    assert "undefined: DefaultDT" in message
+    assert "floor regression: -9.81" in message
+    assert "REJECTED CANDIDATE VERIFIER SOURCE CONTEXT" in message
+    assert "worldOnFloorWithGravityY(9.81)" in message
     assert "do not repeat that rejected edit" in message
     assert "Authorized tool target paths:\n- engine/engine.go" in message
 
@@ -260,8 +315,7 @@ def test_quality_repair_causal_reanalysis_rejects_another_unreachable_branch_edi
     message = _build_materialization_quality_repair_message(
         original_message="Repair the Go behavior failure.",
         artifact_quality_errors=[
-            "--- FAIL: TestStepClampsOnFloor (0.00s)\n"
-            "    engine_test.go:6: still moving downward: 98.1"
+            "--- FAIL: TestStepClampsOnFloor (0.00s)\n    engine_test.go:6: still moving downward: 98.1"
         ],
         changed_files=["engine/engine.go"],
         repair_target_files=["engine/engine.go"],
@@ -530,11 +584,7 @@ def test_quality_repair_includes_go_callee_definition_for_test_owner(tmp_path: P
     physics = tmp_path / "internal" / "physics"
     physics.mkdir(parents=True)
     (physics / "step.go").write_text(
-        "package physics\n\n"
-        "type World struct{}\n\n"
-        "func ApplyGravity(w *World) float64 {\n"
-        "\treturn 9.8\n"
-        "}\n",
+        "package physics\n\ntype World struct{}\n\nfunc ApplyGravity(w *World) float64 {\n\treturn 9.8\n}\n",
         encoding="utf-8",
     )
     (physics / "step_test.go").write_text(
@@ -549,8 +599,7 @@ def test_quality_repair_includes_go_callee_definition_for_test_owner(tmp_path: P
     message = _build_materialization_quality_repair_message(
         original_message="Repair the Go compiler failure.",
         artifact_quality_errors=[
-            "internal/physics/step_test.go:5:12: assignment mismatch: "
-            "1 variable but ApplyGravity returns 1 value"
+            "internal/physics/step_test.go:5:12: assignment mismatch: 1 variable but ApplyGravity returns 1 value"
         ],
         changed_files=["internal/physics/step_test.go"],
         repair_target_files=["internal/physics/step_test.go"],
@@ -577,11 +626,7 @@ def test_quality_repair_includes_go_package_inventory_for_unresolved_test_symbol
         encoding="utf-8",
     )
     (sandbox / "sandbox_test.go").write_text(
-        "package sandbox\n\n"
-        "func TestScenario(t *testing.T) {\n"
-        "\t_ = Run(nil)\n"
-        "\t_ = append([]bubbleType(nil))\n"
-        "}\n",
+        "package sandbox\n\nfunc TestScenario(t *testing.T) {\n\t_ = Run(nil)\n\t_ = append([]bubbleType(nil))\n}\n",
         encoding="utf-8",
     )
 
@@ -774,6 +819,111 @@ def test_quality_repair_projects_existing_cpp_enum_and_included_header_api(tmp_p
     assert "Do not invent Partial" in message
 
 
+def test_quality_repair_projects_complete_cpp_class_contract_from_read_only_header(tmp_path: Path) -> None:
+    """Repair context must preserve methods inside class bodies, including inline definitions.
+
+    Exact-run regression: L3-24 r11 only projected ``class Diary {`` from
+    ``diary.hpp``. Director then redefined the existing inline ``size()`` and
+    invented undeclared ``empty``/``clear`` methods while editing diary.cpp.
+    """
+
+    include = tmp_path / "include" / "invisible_diary"
+    src = tmp_path / "src" / "invisible_diary"
+    include.mkdir(parents=True)
+    src.mkdir(parents=True)
+    (src / "diary.cpp").write_text(
+        '#include "invisible_diary/diary.hpp"\nnamespace InvisibleDiary {}\n',
+        encoding="utf-8",
+    )
+    (include / "diary.hpp").write_text(
+        "#pragma once\n"
+        "#include <cstddef>\n"
+        "#include <vector>\n"
+        "namespace InvisibleDiary {\n"
+        "class Diary {\n"
+        "public:\n"
+        "    std::size_t size() const noexcept { return entries_.size(); }\n"
+        "    const int& entry(std::size_t index) const;\n"
+        "private:\n"
+        "    std::vector<int> entries_;\n"
+        "};\n"
+        "Diary make_diary(std::size_t reserve_count) noexcept;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair implementation depth without changing public contracts.",
+        artifact_quality_errors=[
+            "implementation depth metrics: prod_lines=499; failures: production_source_lines=499 < 650"
+        ],
+        changed_files=["src/invisible_diary/diary.cpp"],
+        repair_target_files=["src/invisible_diary/diary.cpp"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "std::size_t size() const noexcept { return entries_.size(); }" in message
+    assert "const int& entry(std::size_t index) const;" in message
+    assert "std::vector<int> entries_;" in message
+    assert "Diary make_diary(std::size_t reserve_count) noexcept;" in message
+
+
+def test_quality_repair_projects_parent_relative_cpp_header_contract(tmp_path: Path) -> None:
+    """Parent-relative includes must retain their in-workspace read-only API.
+
+    Exact-run regression: L3-24 r50 repaired ``src/ink_ledger.cpp``, which
+    includes ``../include/core_engine/ink_ledger.hpp``. The repair request
+    omitted that header while requiring public-contract preservation, so two
+    attempts invented incompatible method signatures and were rolled back.
+    """
+
+    include = tmp_path / "include" / "core_engine"
+    src = tmp_path / "src"
+    include.mkdir(parents=True)
+    src.mkdir(parents=True)
+    (src / "ink_ledger.cpp").write_text(
+        '#include "../include/core_engine/ink_ledger.hpp"\nnamespace invisible_diary {}\n',
+        encoding="utf-8",
+    )
+    (include / "ink_ledger.hpp").write_text(
+        "#pragma once\n"
+        "#include <string>\n"
+        "namespace invisible_diary {\n"
+        "class InkLedger {\n"
+        "public:\n"
+        "    std::string render_visible_block(int moon_day) const;\n"
+        "    std::string debug_dump() const;\n"
+        "    void clear();\n"
+        "};\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair behavior without changing public contracts.",
+        artifact_quality_errors=["test_revealed_block_exposes_plaintext: expected plaintext missing"],
+        changed_files=["src/ink_ledger.cpp"],
+        repair_target_files=["src/ink_ledger.cpp"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "include/core_engine/ink_ledger.hpp" in message
+    assert "std::string render_visible_block(int moon_day) const;" in message
+    assert "std::string debug_dump() const;" in message
+    assert "void clear();" in message
+
+
+def test_cpp_parent_relative_header_resolution_rejects_workspace_escape(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    importer = src / "engine.cpp"
+    importer.write_text('#include "../../outside.hpp"\n', encoding="utf-8")
+    outside = tmp_path.parent / "outside.hpp"
+    outside.write_text("void must_not_leak();\n", encoding="utf-8")
+
+    assert _resolve_cpp_quoted_include(tmp_path, importer, "../../outside.hpp") is None
+
+
 def test_quality_repair_prompt_names_leftover_cmake_include_roots(tmp_path: Path) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate._prompt_and_targets import (
         _build_materialization_quality_repair_message,
@@ -872,3 +1022,115 @@ def test_quality_repair_prompt_remaps_linker_undefined_ref_to_defined_sibling(tm
     assert "Remint the use-site" in message or "remap the use-site" in message.lower()
     assert "LEFTOVER CMAKE MUST NOT GENERATE TRANSLATION UNITS" in message
     assert "file(WRITE)" in message
+
+
+def test_quality_repair_prompt_recognizes_repair_target_as_header_implementation(tmp_path: Path) -> None:
+    """An included header may be implemented in ``src/``, not beside ``include/``.
+
+    Live L3-24 r39 repaired ``src/cipher.cpp`` while its public header lived at
+    ``include/invisible_diary/cipher.hpp``.  The prompt scanned only a sibling
+    ``include/invisible_diary/cipher.cpp``, falsely labelled real definitions as
+    declaration-only, and told Director not to call the API it was repairing.
+    """
+
+    from polaris.cells.roles.adapters.internal.director.quality_gate._prompt_and_targets import (
+        _build_materialization_quality_repair_message,
+    )
+
+    include = tmp_path / "include" / "invisible_diary"
+    src = tmp_path / "src"
+    include.mkdir(parents=True)
+    src.mkdir(parents=True)
+    (include / "cipher.hpp").write_text(
+        "#pragma once\nnamespace invisible_diary {\nint encrypt(int value);\nint decrypt(int value);\n}\n",
+        encoding="utf-8",
+    )
+    (src / "cipher.cpp").write_text(
+        '#include "invisible_diary/cipher.hpp"\n'
+        "namespace invisible_diary {\n"
+        "int encrypt(int value) { return value + 1; }\n"
+        "int decrypt(int value) { return value - 1; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    message = _build_materialization_quality_repair_message(
+        original_message="Repair cipher behavior.",
+        artifact_quality_errors=["tests/cpp_golden.cpp:60 cipher round-trip failed"],
+        changed_files=["src/cipher.cpp"],
+        repair_target_files=["src/cipher.cpp"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert "EXISTING DEFINED C++ FUNCTIONS" in message
+    defined_block = message.split("EXISTING DEFINED C++ FUNCTIONS", 1)[1]
+    assert "- encrypt" in defined_block
+    assert "- decrypt" in defined_block
+    declaration_block = message.split("DECLARED BUT NOT DEFINED", 1)[1] if "DECLARED BUT NOT DEFINED" in message else ""
+    assert "- encrypt" not in declaration_block
+    assert "- decrypt" not in declaration_block
+
+
+def test_quality_repair_prompt_recognizes_qualified_member_function_definitions(tmp_path: Path) -> None:
+    """A concrete ``Type::method`` body must not be called declaration-only.
+
+    Exact L3-24 r67 final-request evidence injected complete
+    ``Moonlight::days_since_1900`` and ``Moonlight::phase_from_date`` bodies,
+    then contradicted itself by placing both names under ``DECLARED BUT NOT
+    DEFINED``.  That false linker guidance steered a same-task semantic repair
+    while the target was correctly scoped and physically editable.
+    """
+
+    from polaris.cells.roles.adapters.internal.director.quality_gate._prompt_and_targets import (
+        _cpp_defined_and_declaration_only_names,
+    )
+
+    src = tmp_path / "src" / "inkwell"
+    src.mkdir(parents=True)
+    (src / "moonlight.hpp").write_text(
+        "#pragma once\n"
+        "#include <string>\n"
+        "namespace inkwell {\n"
+        "enum class MoonPhase { NewMoon, FullMoon, Unknown };\n"
+        "class Moonlight {\n"
+        "public:\n"
+        "    static long days_since_1900(const std::string& iso);\n"
+        "    static MoonPhase phase_from_date(const std::string& iso);\n"
+        "    static std::string normalize_label(std::string label);\n"
+        "    static long declaration_only(const std::string& iso);\n"
+        "};\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (src / "moonlight.cpp").write_text(
+        '#include "moonlight.hpp"\n'
+        "#include <algorithm>\n"
+        "#include <cctype>\n"
+        "namespace inkwell {\n"
+        "long Moonlight::days_since_1900(const std::string& iso) { return iso.empty() ? -1 : 0; }\n"
+        "MoonPhase Moonlight::phase_from_date(const std::string& iso) {\n"
+        "    return iso.empty() ? MoonPhase::Unknown : MoonPhase::FullMoon;\n"
+        "}\n"
+        "std::string Moonlight::normalize_label(std::string label)\n"
+        "{\n"
+        "    std::transform(label.begin(), label.end(), label.begin(),\n"
+        "                   [](unsigned char c) { return std::tolower(c); });\n"
+        "    return label;\n"
+        "}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    defined_names, declaration_only = _cpp_defined_and_declaration_only_names(
+        workspace=tmp_path,
+        headers=[src / "moonlight.hpp"],
+        repair_target_files=["src/inkwell/moonlight.cpp"],
+    )
+
+    assert "days_since_1900" in defined_names
+    assert "phase_from_date" in defined_names
+    assert "normalize_label" in defined_names
+    assert "transform" not in defined_names
+    assert "days_since_1900" not in declaration_only
+    assert "phase_from_date" not in declaration_only
+    assert "declaration_only" in declaration_only

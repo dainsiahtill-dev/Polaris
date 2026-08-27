@@ -1,0 +1,56 @@
+{
+  "schema_version": "polaris.dynamic_debug_defect.v1",
+  "defect_id": "l3-23-ce-authority-before-behavior-audit-20260825",
+  "status": "CLOSED_FRESH_BENCH_VERIFIED",
+  "severity": "P0",
+  "project_id": "L3-23",
+  "run_id": "factory_d92ab0f0917f",
+  "attempt": "r16",
+  "symptom": "CE semantic repair exhausted after diagnosing cross-task behavior for test_owner=TASK-1; Director and QA never ran.",
+  "exact_run_evidence": {
+    "workspace": "/tmp/factory-bench-l3-23-r16/workspaces/afbbf8d1a3bc-a4931e69ce64fa1b/L3-23-2956ab31bd653d97/027a71798eb72a8894ad3768",
+    "candidate_hash": "de2227697ac5bb4b5759c18b82982435b105bae896f2fd0224904502fd8314b8",
+    "final_request_snapshot_ref": "9846c88c8ad939cc9f161d0f",
+    "final_request_audit": "PASS: CE identity, PM contract, target files, failure feedback, native structured-output tool, and token audit were present.",
+    "provider_calls": 3,
+    "director_started": false,
+    "qa_started": false
+  },
+  "root_cause": "Factory raw CE evidence validation audited behavior ownership using provider artifact rows and task IDs before applying immutable CE task/path authority. Unauthorized TASK-1 test rows therefore became apparent completion facts. The wrapper then returned on that behavior error before the authority-aware delivery-depth projection could expose test_files=1<2, so the bounded semantic repair lacked artifact_upsert authority.",
+  "fix": {
+    "chief_engineer_projection": "project_chief_engineer_portfolio_delivery_depth_feasibility now projects authorized_artifact_obligation_ids from immutable task/path authority.",
+    "factory_behavior_audit": "chief_engineer_portfolio_output_errors filters artifact rows by those authorized obligation IDs before production/test owner linkage.",
+    "atomic_diagnosis": "Authority-compatible behavior errors can be co-reported with delivery-depth deficits, preserving one typed artifact+behavior repair round."
+  },
+  "exact_candidate_replay": {
+    "authorized_artifact_count": 11,
+    "actual": {"prod_files": 8, "test_files": 1},
+    "deficit": {"metric": "test_files", "actual": 1, "required": 2, "deficit": 1},
+    "behavior_test_owner": "TASK-3",
+    "diagnostic_codes": [
+      "chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing",
+      "chief_engineer.delivery_depth.test_files_below_minimum"
+    ],
+    "allowed_operations": [
+      "behavior_invariant_upsert",
+      "task_behavior_ref_replace",
+      "artifact_upsert"
+    ]
+  },
+  "verification": {
+    "tdd_red": "2 failed: missing authorized projection field; false test_owner=TASK-DOMAIN behavior error",
+    "targeted_regressions": "2 passed",
+    "ce_factory_suite": "341 passed",
+    "ruff": "passed",
+    "mypy": "passed"
+  },
+  "automatic_audit_rule": "Whenever CE semantic repair starts, compare every artifact owner/path against immutable CE authority before using that row in behavior or depth diagnosis; record both authorized IDs and rejected rows.",
+  "target_project_modified": false,
+  "fresh_bench_verification": {
+    "attempt": "r17",
+    "run_id": "factory_8981ac280732",
+    "result": "The authority-aware diagnosis advanced to a typed repair containing artifact_upsert plus behavior operations; the prior false TASK-1 test-owner-only diagnosis did not recur.",
+    "next_independent_failure": "Provider returned a schema-closed semantic patch with an unexpected top-level when member; Director remained unstarted."
+  },
+  "next_action": "Closed. Track the independent structured-output transport defect in defect-20260825-l3-23-semantic-patch-duplicate-root-member.json."
+}

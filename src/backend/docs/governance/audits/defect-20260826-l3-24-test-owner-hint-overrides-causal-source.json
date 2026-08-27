@@ -1,0 +1,86 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-R23-TEST-OWNER-HINT-OVERRIDES-CAUSAL-SOURCE",
+  "status": "FIXED_LIVE_VERIFIED",
+  "severity": "P0",
+  "owner_cell": "factory.pipeline.workspace_quality",
+  "factory_run_id": "factory_6c40e77ee83a",
+  "head": "f3d3bb63284015b958719039b159c2d6a032d015",
+  "workspace": "/tmp/factory-bench-l3-24-r23/workspaces/d13dfa6b52e4-d98af080c0dfac72/L3-24-023d7314133040b6/67196c4d04bc2ebc35318c22",
+  "symptom": {
+    "stage": "quality_gate",
+    "repair_rounds": 4,
+    "final_failed_assertions": 4,
+    "delivery_depth_failure": "production_source_lines=373 < 650",
+    "repeated_final_provider_target": "tests/test_product.py",
+    "convergence_stop": "three_nonprogress_repairs_without_verified_progress"
+  },
+  "dynamic_evidence": {
+    "director_repair_snapshot_refs": [
+      "b2145dd5f92e8d7a0c6cf031",
+      "e14718280853520dd8dc81e0",
+      "82cea13db4d4c0df1eebf4b8",
+      "da62eaf31ef94fb88b689355"
+    ],
+    "resolver_targets": [
+      "src/invisible_diary/cipher.cpp",
+      "src/invisible_diary/diary_text.cpp",
+      "src/invisible_diary/errors.cpp",
+      "src/invisible_diary/main.cpp",
+      "tests/test_product.py"
+    ],
+    "persisted_runtime_smoke_targets": [
+      "src/invisible_diary/cipher.cpp",
+      "src/invisible_diary/diary_text.cpp",
+      "src/invisible_diary/errors.cpp",
+      "src/invisible_diary/main.cpp"
+    ],
+    "persisted_explicit_quality_targets": [
+      "src/invisible_diary/cipher.cpp",
+      "src/invisible_diary/diary_text.cpp",
+      "src/invisible_diary/errors.cpp",
+      "src/invisible_diary/main.cpp",
+      "tests/test_product.py"
+    ],
+    "actual_provider_contract": "Authorized tool target paths contained only tests/test_product.py and explicitly prohibited exploring or editing other files.",
+    "exact_function_replay_before": {
+      "owner_target_files": ["tests/test_product.py"],
+      "selected": ["tests/test_product.py"]
+    },
+    "candidate_results": [
+      "round 1 reduced six residuals to five by editing the observer test",
+      "round 2 was rolled back as regression",
+      "rounds 3 and 4 were rolled back as equal-count swaps"
+    ]
+  },
+  "root_cause": {
+    "classification": "stale_test_owner_hint_overrode_current_causal_mutation_authority",
+    "detail": "_workspace_quality_llm_claim_target_files treated an all-test owner hint as authoritative whenever it was a subset of the current diagnostic target set. Normalized unittest behavior failures legitimately contain both the traceback observer and production causal sources, so this branch discarded the stronger source evidence and forced every Provider turn to mutate the test wrapper.",
+    "authority_order": "Current verifier causal source selects mutation intent; CE completion projection and JobToken bound authorization; a prior test owner hint is routing evidence only.",
+    "not_root_causes": [
+      "Director model refused to edit production code",
+      "missing edit_file tool",
+      "tool argument normalization failure",
+      "candidate rollback failure",
+      "missing CE owned_artifact authority"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": "When current diagnostics include production causal targets and the entire prior owner hint is test-only, select the first causal production source. Keep true test-only diagnostics on the test owner. TaskRuntime claim, CE ownership and JobToken still fail closed around the selected path."
+  },
+  "verification": {
+    "targeted_pytest": "5 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_r23_replay_after": ["src/invisible_diary/cipher.cpp"],
+    "test_only_control_replay_after": ["tests/test_product.py"],
+    "fresh_r24_factory_run_id": "factory_10c5a8295711",
+    "fresh_r24_first_code_repair_context_snapshot_ref": "0a9a2a834fd435db16d3890f",
+    "fresh_r24_live_result": "The first behavior repair final provider request authorized src/cli.cpp instead of the stale tests/test_product.py owner hint; the production edit changed the artifact hash and C++ syntax plus CMake build subsequently passed."
+  },
+  "next_action": "Closed. Track the independent r24 C/C++ CLI target-localization defect separately."
+}

@@ -1,0 +1,56 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-R10-PYTHON-SETUP-FORWARD-UNMASK",
+  "status": "FIXED_UNIT_LIVE_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_e7995943ed77",
+  "workspace": "/tmp/factory-bench-l3-24-r10/workspaces/2cb41c10b0a5-28b232222b34c866/L3-24-023d7314133040b6/cd852967e67ccdf18319131b",
+  "symptom": "The third same-task Director quality-repair candidate cleared one unittest setUpClass barrier and exposed three real CLI runtime errors, but candidate guarding classified the deeper execution as regression and rolled the edit back.",
+  "dynamic_evidence": {
+    "initial_director": "TaskRuntime canonical completion succeeded; 14 write_file effects materialized a CMake project whose compile and link passed.",
+    "quality_gate": ".polaris/runtime/qa/workspace-validation.json",
+    "file_edit_events": ".polaris/runtime/file-edits/events.jsonl",
+    "round_effects": [
+      "candidate_rejected_rolled_back:equal_count_swap",
+      "candidate_rejected_rolled_back:equal_count_swap",
+      "candidate_rejected_rolled_back:regression"
+    ],
+    "round_3_before_setup_barriers": 2,
+    "round_3_after_setup_barriers": 1,
+    "round_3_new_deeper_tests": [
+      "test_cli_cipher_round_trip_line",
+      "test_cli_keeps_other_entries_hidden",
+      "test_cli_outputs_all_visible_keywords"
+    ],
+    "round_3_new_runtime_error": "UnicodeDecodeError",
+    "actual_effect_path": "tests/test_product.py",
+    "candidate_rolled_back": true,
+    "target_project_manually_modified": false
+  },
+  "root_cause": {
+    "category": "factory_quality_candidate_phase_misclassification",
+    "owner": "polaris.cells.factory.pipeline",
+    "detail": "_workspace_quality_repair_effect treated a strict reduction of exact unittest setUpClass barriers followed by named test-method execution as a raw diagnostic-count regression."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": "Classify a strict reduction of TestCase.assertEqual setUpClass barriers plus newly visible named test-method failures as forward_unmask. Other Python exception churn remains fail-closed."
+  },
+  "validation": {
+    "tdd_red": "Exact L3-24 signature returned regression before the fix.",
+    "targeted_pytest": "1 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_bench": "pending"
+  },
+  "remaining_risks": [
+    "The next repair phase may still need causal target rotation from a Python verifier wrapper to the C++ CLI implementation.",
+    "Delivery-depth deficits remain an independent platform planning/materialization concern.",
+    "The compile-to-link progress fix was not exercised because r10 compiled and linked on its initial Director turn."
+  ],
+  "next_action": "Run fresh isolated L3-24 on current Polaris source and verify the setup-barrier candidate is retained so same-task repair advances to the CLI/runtime residual."
+}

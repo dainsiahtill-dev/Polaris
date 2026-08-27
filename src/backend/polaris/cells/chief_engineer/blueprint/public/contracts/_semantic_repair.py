@@ -218,12 +218,13 @@ class ChiefEngineerSemanticRepairDiagnosisV1:
 
 @dataclass(frozen=True, slots=True)
 class ChiefEngineerSemanticRepairPatchV1:
-    """Typed, upsert-only CE semantic patch. No free-form path or delete surface."""
+    """Typed CE semantic patch with diagnosis-scoped entrypoint replacement."""
 
     base_candidate_hash: str
     diagnosis_hash: str
     artifact_upserts: tuple[ArtifactObligationV1, ...] = ()
     entrypoint_upserts: tuple[EntrypointObligationV1, ...] = ()
+    entrypoint_remove_obligation_ids: tuple[str, ...] = ()
     behavior_invariant_upserts: tuple[ChiefEngineerBehaviorInvariantV1, ...] = ()
     task_behavior_ref_replacements: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     operations: tuple[ChiefEngineerSemanticRepairOperationV1, ...] = field(init=False)
@@ -247,10 +248,14 @@ class ChiefEngineerSemanticRepairPatchV1:
             )
             for task_id, values in self.task_behavior_ref_replacements.items()
         }
+        entrypoint_removals = _strict_unique_string_tuple(
+            "entrypoint_remove_obligation_ids",
+            self.entrypoint_remove_obligation_ids,
+        )
         operations: list[ChiefEngineerSemanticRepairOperationV1] = []
         if self.artifact_upserts:
             operations.append("artifact_upsert")
-        if self.entrypoint_upserts:
+        if self.entrypoint_upserts or entrypoint_removals:
             operations.append("entrypoint_upsert")
         if self.behavior_invariant_upserts:
             operations.append("behavior_invariant_upsert")
@@ -264,6 +269,7 @@ class ChiefEngineerSemanticRepairPatchV1:
             "diagnosis_hash": diagnosis_hash,
             "artifact_upserts": [value.to_dict() for value in self.artifact_upserts],
             "entrypoint_upserts": [value.to_dict() for value in self.entrypoint_upserts],
+            "entrypoint_remove_obligation_ids": list(entrypoint_removals),
             "behavior_invariant_upserts": [value.to_dict() for value in self.behavior_invariant_upserts],
             "task_behavior_ref_replacements": {key: list(value) for key, value in sorted(refs.items())},
             "operations": operations,
@@ -272,6 +278,7 @@ class ChiefEngineerSemanticRepairPatchV1:
         object.__setattr__(self, "diagnosis_hash", diagnosis_hash)
         object.__setattr__(self, "artifact_upserts", tuple(self.artifact_upserts))
         object.__setattr__(self, "entrypoint_upserts", tuple(self.entrypoint_upserts))
+        object.__setattr__(self, "entrypoint_remove_obligation_ids", entrypoint_removals)
         object.__setattr__(self, "behavior_invariant_upserts", tuple(self.behavior_invariant_upserts))
         object.__setattr__(self, "task_behavior_ref_replacements", refs)
         object.__setattr__(self, "operations", tuple(operations))
@@ -284,6 +291,7 @@ class ChiefEngineerSemanticRepairPatchV1:
             "diagnosis_hash": self.diagnosis_hash,
             "artifact_upserts": [value.to_dict() for value in self.artifact_upserts],
             "entrypoint_upserts": [value.to_dict() for value in self.entrypoint_upserts],
+            "entrypoint_remove_obligation_ids": list(self.entrypoint_remove_obligation_ids),
             "behavior_invariant_upserts": [value.to_dict() for value in self.behavior_invariant_upserts],
             "task_behavior_ref_replacements": {
                 key: list(value) for key, value in sorted(self.task_behavior_ref_replacements.items())
@@ -309,7 +317,8 @@ class ChiefEngineerSemanticRepairPatchV1:
             "behavior_invariant_upserts",
             "task_behavior_ref_replacements",
         }
-        if set(payload) != expected_fields:
+        optional_fields = {"entrypoint_remove_obligation_ids"}
+        if not expected_fields.issubset(payload) or set(payload) - expected_fields - optional_fields:
             raise ValueError("semantic repair provider patch fields are invalid")
         all_operations: frozenset[ChiefEngineerSemanticRepairOperationV1] = frozenset(
             {
@@ -334,6 +343,15 @@ class ChiefEngineerSemanticRepairPatchV1:
 
         artifact_rows = rows("artifact_upserts") if "artifact_upsert" in enabled_operations else ()
         entrypoint_rows = rows("entrypoint_upserts") if "entrypoint_upsert" in enabled_operations else ()
+        raw_entrypoint_removals = (
+            payload.get("entrypoint_remove_obligation_ids", [])
+            if "entrypoint_upsert" in enabled_operations
+            else []
+        )
+        if not isinstance(raw_entrypoint_removals, list) or any(
+            not isinstance(value, str) for value in raw_entrypoint_removals
+        ):
+            raise TypeError("entrypoint_remove_obligation_ids must contain strings")
         behavior_rows = (
             rows("behavior_invariant_upserts") if "behavior_invariant_upsert" in enabled_operations else ()
         )
@@ -415,12 +433,10 @@ class ChiefEngineerSemanticRepairPatchV1:
                 remaining_consumers = [
                     task_id for task_id in raw_consumer_task_ids if task_id != owner_task_id
                 ]
-                # Match the safe structural recovery used for the primary CE
-                # result. Removing a redundant self-reference is mechanical;
-                # inventing a missing external consumer is not. Owner-only
-                # rows therefore remain invalid and fail closed below.
-                if remaining_consumers:
-                    consumer_task_ids = remaining_consumers
+                # Removing a redundant self-reference is mechanical. An empty
+                # result is valid for a task-local invariant in a one-task
+                # portfolio; inventing a sibling consumer is never allowed.
+                consumer_task_ids = remaining_consumers
             example_rows = row["verification_examples"]
             if not isinstance(example_rows, list) or any(not isinstance(item, Mapping) for item in example_rows):
                 raise TypeError("verification_examples must contain mappings")
@@ -450,6 +466,7 @@ class ChiefEngineerSemanticRepairPatchV1:
             diagnosis_hash=payload["diagnosis_hash"],
             artifact_upserts=tuple(artifacts),
             entrypoint_upserts=tuple(entrypoints),
+            entrypoint_remove_obligation_ids=tuple(raw_entrypoint_removals),
             behavior_invariant_upserts=tuple(behaviors),
             task_behavior_ref_replacements={str(key): tuple(value) for key, value in refs.items()},
         )

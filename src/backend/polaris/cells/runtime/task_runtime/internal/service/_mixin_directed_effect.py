@@ -46,6 +46,7 @@ from ._helpers import (
     _TASK_SESSION_FILE_PATTERN,
     _canonical_sha256,
     _DirectedEffectRecoverySessionSweep,
+    _is_execution_task_row_update_status,
     _normalize_owner_rework_handoff_record,
     logger,
 )
@@ -1177,14 +1178,19 @@ class _DirectedEffectMixin(_ServiceMixinBase):
                     rework_attempt=int(record.get("rework_attempt") or 0),
                     task_row=row,
                 )
-        if len(records) >= command.max_rework_attempts:
+        diagnostic_records = [
+            record
+            for record in records
+            if str(record.get("diagnostic_id") or "").strip() == command.diagnostic_id
+        ]
+        if len(diagnostic_records) >= command.max_rework_attempts:
             return self._same_task_local_rework_result(
                 ok=False,
                 code="same_task_local_rework_budget_exhausted",
-                reason="Same-task local rework budget is exhausted",
+                reason="Same-task local rework budget is exhausted for this diagnostic",
                 external_task_id=external_task_id,
                 runtime_task_id=str(runtime_task_id),
-                rework_attempt=len(records),
+                rework_attempt=len(diagnostic_records),
                 task_row=row,
             )
 
@@ -1199,7 +1205,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
                 task_row=row,
             )
 
-        rework_attempt = len(records) + 1
+        rework_attempt = len(diagnostic_records) + 1
         record = {
             "schema_version": "task-runtime.same-task-local-rework-record/1",
             "factory_run_id": command.factory_run_id,
@@ -1302,6 +1308,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
         task_rows: Sequence[Mapping[str, Any]],
         *,
         factory_run_id: str,
+        ignore_inactive_foreign_bindings: bool = False,
     ) -> list[dict[str, Any]]:
         """Return Factory authority conflicts from observable row projections.
 
@@ -1325,11 +1332,18 @@ class _DirectedEffectMixin(_ServiceMixinBase):
             metadata_map = metadata if isinstance(metadata, Mapping) else {}
             row_factory_run_id = str(metadata_map.get("factory_run_id") or "").strip()
             fact_factory_run_id = self._execution_fact_factory_run_id(task_row)
+            active_execution_row = _is_execution_task_row_update_status(
+                task_row.get("status") or task_row.get("execution_state") or task_row.get("state")
+            )
             for source, owner in (
                 ("task_row", row_factory_run_id),
                 ("execution_fact", fact_factory_run_id),
             ):
-                if owner and owner != factory_run_id:
+                if (
+                    owner
+                    and owner != factory_run_id
+                    and not (ignore_inactive_foreign_bindings and not active_execution_row)
+                ):
                     conflicts.append(
                         {
                             "kind": "foreign_factory_run_binding",

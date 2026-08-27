@@ -1159,12 +1159,33 @@ class _DirectorEffectPolicySnapshotPort:
             or not self._path_is_allowed(target_state.target_path, restriction.allowed_paths)
             or not self._path_is_allowed(target_state.target_path, policy_paths)
         ):
+            logger.warning(
+                "Director effect path-scope denied target=%s restriction_paths=%s "
+                "policy_paths=%s scopes_equal=%s restriction_match=%s policy_match=%s",
+                target_state.target_path,
+                list(restriction.allowed_paths),
+                list(policy_paths),
+                policy_paths == restriction.allowed_paths,
+                self._path_is_allowed(target_state.target_path, restriction.allowed_paths),
+                self._path_is_allowed(target_state.target_path, policy_paths),
+            )
             return self._snapshot_denial(request, "deo_path_scope_denied", target_state), observed
         try:
             policy_result = self._validate_write_policy(request, observed, policy_paths)
-        except (AttributeError, KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
             # Malformed thawed arguments (e.g. nested list content) must deny with a
             # typed tool-normalization code, not bubble as authorization hash drift.
+            # Keep the content itself out of logs, but retain the failing boundary,
+            # target, exception type, and message.  Without this evidence r17 made
+            # 30 valid native writes look like model-generated blank content.
+            logger.warning(
+                "Director effect write-policy preview failed tool=%s target=%s "
+                "error_type=%s error=%s",
+                request.normalized_tool_name,
+                target_state.target_path,
+                type(exc).__name__,
+                exc,
+            )
             return self._snapshot_denial(request, "deo_tool_normalization_failed", target_state), observed
         if not bool(policy_result.get("ok")):
             return self._snapshot_denial(request, "deo_director_policy_denied", target_state), observed

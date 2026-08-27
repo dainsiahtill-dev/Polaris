@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 from polaris.cells.chief_engineer.blueprint.public import (
     ArtifactObligationV1,
     ChiefEngineerBehaviorExampleV1,
@@ -16,6 +18,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     ChiefEngineerSemanticRepairDiagnosisV1,
     ChiefEngineerSemanticRepairPatchV1,
     EntrypointObligationV1,
+    bind_chief_engineer_semantic_repair_provider_patch,
     build_chief_engineer_semantic_repair_patch_schema,
     chief_engineer_semantic_repair_task_set_hash,
     compose_chief_engineer_semantic_repair,
@@ -273,6 +276,134 @@ def test_behavior_and_entrypoint_patch_validate_authority_and_refs(tmp_path) -> 
     assert construction["shared_behavior_contract"]["invariants"][0]["owner_task_id"] == "TASK-1"
 
 
+def test_entrypoint_patch_can_remove_diagnosed_obsolete_row_and_add_same_owner_replacement(tmp_path) -> None:
+    """Exact L3-24 r35: typed repair must replace, not preserve, an invalid help-only entrypoint."""
+
+    seed = _candidate(tmp_path)
+    payload = json.loads(json.dumps(seed.candidate, ensure_ascii=False))
+    payload["project_completion_contract"]["obligations"]["entrypoints"] = [
+        {
+            "obligation_id": "TASK-1::cli_help",
+            "kind": "cli",
+            "applicability": "required",
+            "owner_task_id": "TASK-1",
+            "source_path": "src/main.py",
+            "runtime_path": None,
+            "command": "python src/main.py --help",
+        }
+    ]
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=seed.workspace,
+        project_id=seed.project_id,
+        run_id=seed.run_id,
+        pm_contract_hash=seed.pm_contract_hash,
+        task_ids=seed.task_ids,
+        task_set_hash=seed.task_set_hash,
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.entrypoint_contract.invalid",),
+        allowed_operations=("entrypoint_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        entrypoint_remove_obligation_ids=("TASK-1::cli_help",),
+        entrypoint_upserts=(
+            EntrypointObligationV1(
+                obligation_id="TASK-1::cli_demo",
+                kind="cli",
+                applicability="required",
+                owner_task_id="TASK-1",
+                source_path="src/main.py",
+                command="python src/main.py encode --text hello --key moon",
+            ),
+        ),
+    )
+
+    repaired, receipt = compose_chief_engineer_semantic_repair(candidate, diagnosis, patch, tasks=_tasks())
+
+    entrypoints = repaired.candidate["project_completion_contract"]["obligations"]["entrypoints"]
+    assert [row["obligation_id"] for row in entrypoints] == ["TASK-1::cli_demo"]
+    assert set(receipt.changed_semantic_ids) >= {"TASK-1::cli_help", "TASK-1::cli_demo"}
+
+
+def test_entrypoint_patch_rejects_unknown_removal_id(tmp_path) -> None:
+    candidate = _candidate(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.entrypoint_contract.invalid",),
+        allowed_operations=("entrypoint_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        entrypoint_remove_obligation_ids=("missing-entrypoint",),
+        entrypoint_upserts=(
+            EntrypointObligationV1(
+                obligation_id="TASK-1::cli_demo",
+                kind="cli",
+                applicability="required",
+                owner_task_id="TASK-1",
+                source_path="src/main.py",
+                command="python src/main.py encode --text hello --key moon",
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="unknown entrypoint obligation ids"):
+        compose_chief_engineer_semantic_repair(candidate, diagnosis, patch, tasks=_tasks())
+
+
+def test_entrypoint_patch_rejects_removal_without_same_owner_replacement(tmp_path) -> None:
+    seed = _candidate(tmp_path)
+    payload = json.loads(json.dumps(seed.candidate, ensure_ascii=False))
+    payload["project_completion_contract"]["obligations"]["entrypoints"] = [
+        {
+            "obligation_id": "TASK-2::cli_help",
+            "kind": "cli",
+            "applicability": "required",
+            "owner_task_id": "TASK-2",
+            "source_path": None,
+            "runtime_path": "README.md",
+            "command": "README.md --help",
+        }
+    ]
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=seed.workspace,
+        project_id=seed.project_id,
+        run_id=seed.run_id,
+        pm_contract_hash=seed.pm_contract_hash,
+        task_ids=seed.task_ids,
+        task_set_hash=seed.task_set_hash,
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.entrypoint_contract.invalid",),
+        allowed_operations=("entrypoint_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        entrypoint_remove_obligation_ids=("TASK-2::cli_help",),
+        entrypoint_upserts=(
+            EntrypointObligationV1(
+                obligation_id="TASK-1::cli_demo",
+                kind="cli",
+                applicability="required",
+                owner_task_id="TASK-1",
+                source_path="src/main.py",
+                command="python src/main.py encode --text hello --key moon",
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="same-owner same-kind replacement"):
+        compose_chief_engineer_semantic_repair(candidate, diagnosis, patch, tasks=_tasks())
+
+
 def test_atomic_test_artifact_and_behavior_binding_can_reference_same_patch_id(tmp_path) -> None:
     """Exact L3-23 r06: depth and cross-task coverage close in one typed patch."""
 
@@ -354,6 +485,60 @@ def test_atomic_test_artifact_and_behavior_binding_can_reference_same_patch_id(t
     assert invariant["covered_obligation_ids"] == ["artifact-main", "artifact-product-test"]
 
 
+def test_cpp_task_accepts_pm_authorized_python_test_harness_patch(tmp_path) -> None:
+    """Exact L3-24 r21: verifier language may differ from product language."""
+
+    candidate = _candidate(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.test_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        artifact_upserts=(
+            ArtifactObligationV1(
+                obligation_id="artifact-moon-key-test",
+                path="tests/test_moon_key.py",
+                semantic_role="test",
+                applicability="required",
+                owner_task_id="TASK-1",
+            ),
+        ),
+    )
+    tasks = (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-1",
+            objective="Implement and verify the C++ CLI.",
+            target_files=("CMakeLists.txt", "tests/test_product.py"),
+            scope_paths=("CMakeLists.txt", "tests"),
+            topology_authority="chief_engineer",
+            required_source_kinds=("domain_modules", "tests"),
+            primary_language="cpp",
+            allowed_source_suffixes=(".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"),
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-2",
+            objective="Document the project.",
+            target_files=("README.md",),
+            scope_paths=("README.md",),
+        ),
+    )
+
+    repaired, receipt = compose_chief_engineer_semantic_repair(
+        candidate,
+        diagnosis,
+        patch,
+        tasks=tasks,
+    )
+
+    artifacts = repaired.candidate["project_completion_contract"]["obligations"]["artifacts"]
+    assert artifacts[-1]["path"] == "tests/test_moon_key.py"
+    assert artifacts[-1]["semantic_role"] == "test"
+    assert receipt.changed_semantic_ids == ("artifact-moon-key-test",)
+
+
 def test_behavior_patch_replaces_invalid_baseline_before_strict_rehydration(tmp_path) -> None:
     """Exact r25: semantic repair must be able to replace its diagnosed defect."""
 
@@ -366,9 +551,7 @@ def test_behavior_patch_replaces_invalid_baseline_before_strict_rehydration(tmp_
             "owner_task_id": "TASK-1",
             "consumer_task_ids": ["TASK-1", "TASK-2"],
             "covered_obligation_ids": ["artifact-main", "verify-build"],
-            "verification_examples": [
-                {"given": "value", "when": "round trip", "then": "same value"}
-            ],
+            "verification_examples": [{"given": "value", "when": "round trip", "then": "same value"}],
         }
     ]
     candidate = ChiefEngineerSemanticRepairCandidateV1(
@@ -584,6 +767,102 @@ def test_provider_patch_parser_rejects_derived_or_unknown_fields(tmp_path) -> No
         ChiefEngineerSemanticRepairPatchV1.from_provider_dict({**payload, "patch_hash": patch.patch_hash})
 
 
+def test_provider_patch_parser_accepts_diagnosis_scoped_entrypoint_removal(tmp_path) -> None:
+    candidate = _candidate(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.entrypoint_contract.invalid",),
+        allowed_operations=("entrypoint_upsert",),
+    )
+    payload = {
+        "base_candidate_hash": candidate.candidate_hash,
+        "diagnosis_hash": diagnosis.diagnosis_hash,
+        "artifact_upserts": [],
+        "entrypoint_upserts": [
+            {
+                "obligation_id": "TASK-1::cli_demo",
+                "kind": "cli",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+                "source_path": "src/main.py",
+                "runtime_path": None,
+                "command": "python src/main.py encode --text hello --key moon",
+            }
+        ],
+        "entrypoint_remove_obligation_ids": ["TASK-1::cli_help"],
+        "behavior_invariant_upserts": [],
+        "task_behavior_ref_replacements": {},
+    }
+
+    patch = ChiefEngineerSemanticRepairPatchV1.from_provider_dict(
+        payload,
+        allowed_operations=diagnosis.allowed_operations,
+    )
+    schema = build_chief_engineer_semantic_repair_patch_schema(
+        allowed_operations=diagnosis.allowed_operations,
+    )
+
+    assert patch.entrypoint_remove_obligation_ids == ("TASK-1::cli_help",)
+    assert schema["properties"]["entrypoint_remove_obligation_ids"]["items"]["type"] == "string"
+    assert "entrypoint_remove_obligation_ids" not in schema["required"]
+
+
+def test_provider_patch_binding_uses_active_transaction_hashes_and_audits_provider_echo(
+    tmp_path: Path,
+) -> None:
+    """Opaque CAS identity is server authority, not model-authored content.
+
+    Exact L3-23 r14: the provider returned a useful typed patch but copied one
+    nibble of ``base_candidate_hash`` incorrectly.  The response belongs to the
+    currently awaited semantic-repair turn, so the platform must bind it to the
+    active candidate/diagnosis while retaining the mismatched echo as audit
+    evidence.  Semantic operation validation remains unchanged and fail-closed.
+    """
+
+    candidate = _candidate(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.prod_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    provider_hash = candidate.candidate_hash[:27] + "e" + candidate.candidate_hash[28:]
+    raw_patch = {
+        "base_candidate_hash": provider_hash,
+        "diagnosis_hash": diagnosis.diagnosis_hash,
+        "artifact_upserts": [
+            {
+                "obligation_id": "artifact-domain",
+                "path": "src/domain.py",
+                "semantic_role": "source",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            }
+        ],
+        "entrypoint_upserts": [],
+        "behavior_invariant_upserts": [],
+        "task_behavior_ref_replacements": {},
+    }
+
+    patch, binding = bind_chief_engineer_semantic_repair_provider_patch(
+        raw_patch,
+        candidate=candidate,
+        diagnosis=diagnosis,
+    )
+
+    assert patch.base_candidate_hash == candidate.candidate_hash
+    assert patch.diagnosis_hash == diagnosis.diagnosis_hash
+    assert binding == {
+        "schema_version": "chief_engineer.semantic_repair_provider_binding.v1",
+        "authority_source": "active_semantic_repair_transaction",
+        "provider_base_candidate_hash": provider_hash,
+        "provider_diagnosis_hash": diagnosis.diagnosis_hash,
+        "bound_base_candidate_hash": candidate.candidate_hash,
+        "bound_diagnosis_hash": diagnosis.diagnosis_hash,
+        "base_candidate_hash_match": False,
+        "diagnosis_hash_match": True,
+    }
+
+
 def test_provider_patch_parser_removes_owner_from_nonempty_consumer_set(tmp_path) -> None:
     """Exact L3-22 r23: semantic patch must reuse safe primary-output recovery."""
 
@@ -605,9 +884,7 @@ def test_provider_patch_parser_removes_owner_from_nonempty_consumer_set(tmp_path
                 "owner_task_id": "TASK-1",
                 "consumer_task_ids": ["TASK-1", "TASK-2"],
                 "covered_obligation_ids": ["artifact-main"],
-                "verification_examples": [
-                    {"given": "input", "when": "processed", "then": "output"}
-                ],
+                "verification_examples": [{"given": "input", "when": "processed", "then": "output"}],
             }
         ],
         "task_behavior_ref_replacements": {"TASK-2": ["behavior-main"]},
@@ -622,11 +899,11 @@ def test_provider_patch_parser_removes_owner_from_nonempty_consumer_set(tmp_path
 
     owner_only_payload = json.loads(json.dumps(payload))
     owner_only_payload["behavior_invariant_upserts"][0]["consumer_task_ids"] = ["TASK-1"]
-    with pytest.raises(ValueError, match="consumer_task_ids must not contain owner_task_id"):
-        ChiefEngineerSemanticRepairPatchV1.from_provider_dict(
-            owner_only_payload,
-            allowed_operations=diagnosis.allowed_operations,
-        )
+    owner_only_patch = ChiefEngineerSemanticRepairPatchV1.from_provider_dict(
+        owner_only_payload,
+        allowed_operations=diagnosis.allowed_operations,
+    )
+    assert owner_only_patch.behavior_invariant_upserts[0].consumer_task_ids == ()
 
 
 def test_provider_patch_parser_ignores_untrusted_groups_outside_diagnosis_authority(tmp_path) -> None:
@@ -668,9 +945,7 @@ def test_provider_patch_parser_ignores_untrusted_groups_outside_diagnosis_author
                 "owner_task_id": "TASK-1",
                 "consumer_task_ids": ["TASK-1"],
                 "covered_obligation_ids": ["artifact-main"],
-                "verification_examples": [
-                    {"given": "input", "when": "processed", "then": "output"}
-                ],
+                "verification_examples": [{"given": "input", "when": "processed", "then": "output"}],
             }
         ],
         "task_behavior_ref_replacements": {},
@@ -779,9 +1054,7 @@ def test_composer_normalizes_safe_shared_artifact_group_before_behavior_repair(t
     )
     diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
         candidate_hash=candidate.candidate_hash,
-        diagnostic_codes=(
-            "chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing",
-        ),
+        diagnostic_codes=("chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing",),
         allowed_operations=(
             "behavior_invariant_upsert",
             "task_behavior_ref_replace",
@@ -872,9 +1145,7 @@ def test_structural_recovery_splits_safe_shared_artifact_group_transactionally(t
             "owner_task_id": "TASK-1",
             "consumer_task_ids": ["TASK-2"],
             "covered_obligation_ids": ["artifact-shared-group", "verify-build"],
-            "verification_examples": [
-                {"given": "input", "when": "processed", "then": "shared output"}
-            ],
+            "verification_examples": [{"given": "input", "when": "processed", "then": "shared output"}],
         }
     ]
 
@@ -890,12 +1161,89 @@ def test_structural_recovery_splits_safe_shared_artifact_group_transactionally(t
     assert invariant["covered_obligation_ids"] == [*artifact_ids, "verify-build"]
 
 
+def test_structural_recovery_splits_artifact_group_colliding_with_its_covering_verifier(tmp_path) -> None:
+    """Exact L3-24: verifier identity survives while grouped test artifacts receive unique ids."""
+
+    payload = json.loads(json.dumps(_candidate(tmp_path).candidate, ensure_ascii=False))
+    payload["construction_plan"]["project_interface_contract"] = {
+        "provider_declarations": [],
+        "consumer_declarations": [],
+    }
+    obligations = payload["project_completion_contract"]["obligations"]
+    obligations["artifacts"] = [
+        {
+            "obligation_id": "verify-tests",
+            "path": "tests/test_product.py",
+            "semantic_role": "test",
+            "applicability": "required",
+            "owner_task_id": "TASK-2",
+        },
+        {
+            "obligation_id": "verify-tests",
+            "path": "tests/test_deterministic.py",
+            "semantic_role": "test",
+            "applicability": "required",
+            "owner_task_id": "TASK-2",
+        },
+    ]
+    obligations["verification"] = [
+        {
+            "obligation_id": "verify-tests",
+            "modality": "test",
+            "command_authority_hash": "test-authority",
+            "applicability": "required",
+            "owner_task_id": "TASK-2",
+            "covers_obligation_ids": ["verify-tests"],
+        }
+    ]
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(payload)
+
+    assert recovery.recovered is True
+    repaired = recovery.payload["project_completion_contract"]["obligations"]
+    artifact_ids = [row["obligation_id"] for row in repaired["artifacts"]]
+    assert len(artifact_ids) == len(set(artifact_ids)) == 2
+    assert "verify-tests" not in artifact_ids
+    assert repaired["verification"][0]["obligation_id"] == "verify-tests"
+    assert set(repaired["verification"][0]["covers_obligation_ids"]) == set(artifact_ids)
+
+
 def test_patch_schema_has_no_delete_or_freeform_path_surface() -> None:
     schema = build_chief_engineer_semantic_repair_patch_schema()
     rendered = json.dumps(schema, ensure_ascii=False, sort_keys=True)
     assert "delete" not in rendered
     assert "json_pointer" not in rendered
     assert schema["additionalProperties"] is False
+
+
+def test_patch_schema_validates_only_diagnosis_authorized_operation_items() -> None:
+    """Exact L3-24 r02: ignored entrypoint noise must not kill artifact repair."""
+
+    schema = build_chief_engineer_semantic_repair_patch_schema(
+        allowed_operations=("artifact_upsert",),
+    )
+    payload = {
+        "base_candidate_hash": "a" * 64,
+        "diagnosis_hash": "b" * 64,
+        "artifact_upserts": [
+            {
+                "obligation_id": "artifact-test-cpp",
+                "path": "tests/test_compile.cpp",
+                "semantic_role": "test",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            }
+        ],
+        "entrypoint_upserts": [{"command": ""}],
+        "behavior_invariant_upserts": [],
+        "task_behavior_ref_replacements": {},
+    }
+
+    Draft202012Validator(schema).validate(payload)
+    strict_payload = json.loads(json.dumps(payload))
+    strict_payload["artifact_upserts"][0]["path"] = ""
+    with pytest.raises(ValidationError):
+        Draft202012Validator(schema).validate(strict_payload)
 
 
 def test_provider_context_projects_current_rows_and_task_authority(tmp_path) -> None:
@@ -916,6 +1264,21 @@ def test_provider_context_projects_current_rows_and_task_authority(tmp_path) -> 
     assert projected["diagnosis_hash"] == diagnosis.diagnosis_hash
     assert projected["allowed_operations"] == ["artifact_upsert"]
     assert projected["current"]["artifacts"][0]["obligation_id"] == "artifact-main"
+    assert projected["upsert_identity_policy"]["artifact_upsert"] == {
+        "id_field": "obligation_id",
+        "immutable_fields": ["path", "semantic_role", "owner_task_id"],
+        "existing_identities": {
+            "artifact-main": {
+                "path": "src/main.py",
+                "semantic_role": "source",
+                "owner_task_id": "TASK-1",
+            }
+        },
+        "new_identity_rule": (
+            "If the desired path, semantic_role, or owner_task_id differs from an existing obligation, "
+            "mint a new unique obligation_id and leave the existing row unchanged."
+        ),
+    }
     assert "entrypoints" not in projected["current"]
     assert projected["task_authority"]["TASK-1"] == {
         "target_files": ["src/main.py"],
@@ -930,6 +1293,84 @@ def test_provider_context_projects_current_rows_and_task_authority(tmp_path) -> 
         "delegated_artifact_roles": [],
     }
     assert projected["repair_feasible"] is True
+
+
+def test_provider_context_counts_cross_language_test_harnesses(tmp_path) -> None:
+    """A test-shaped harness may verify a product written in another language."""
+
+    seed = _candidate(tmp_path)
+    payload = json.loads(json.dumps(seed.candidate, ensure_ascii=False))
+    payload["project_completion_contract"]["obligations"]["artifacts"] = [
+        {
+            "obligation_id": "artifact-engine",
+            "path": "src/engine.cpp",
+            "semantic_role": "source",
+            "applicability": "required",
+            "owner_task_id": "TASK-1",
+        },
+        *[
+            {
+                "obligation_id": f"artifact-python-test-{index}",
+                "path": path,
+                "semantic_role": "test",
+                "applicability": "required",
+                "owner_task_id": "TASK-1",
+            }
+            for index, path in enumerate(
+                (
+                    "tests/test_product.py",
+                    "tests/invisible_diary_asserts.py",
+                    "tests/invisible_diary_ledger_test.py",
+                ),
+                start=1,
+            )
+        ],
+    ]
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=seed.workspace,
+        project_id=seed.project_id,
+        run_id=seed.run_id,
+        pm_contract_hash=seed.pm_contract_hash,
+        task_ids=seed.task_ids,
+        task_set_hash=seed.task_set_hash,
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.test_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    tasks = (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-1",
+            objective="Implement and test the C++ diary engine.",
+            target_files=("src/engine.cpp",),
+            scope_paths=("src", "tests"),
+            topology_authority="chief_engineer",
+            required_source_kinds=("domain_modules", "tests"),
+            primary_language="cpp",
+            allowed_source_suffixes=(".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx"),
+            delivery_depth_contract={"minimums": {"min_prod_files": 1, "min_test_files": 2}},
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-2",
+            objective="Document the project.",
+            target_files=("README.md",),
+            scope_paths=("README.md",),
+        ),
+    )
+
+    projected = project_chief_engineer_semantic_repair_provider_context(
+        candidate,
+        diagnosis,
+        tasks=tasks,
+    )
+
+    assert projected["delivery_depth_feasibility"]["actual"] == {
+        "prod_files": 1,
+        "test_files": 3,
+    }
+    assert projected["delivery_depth_feasibility"]["deficits"] == []
 
 
 def test_behavior_repair_context_includes_allowed_completion_verification_ids(tmp_path) -> None:
@@ -1110,10 +1551,7 @@ def test_composer_allows_safe_source_artifact_under_delegated_topology_authority
         tasks=_tasks(expandable=False, delegated=True),
     )
 
-    paths = {
-        row["path"]
-        for row in repaired.candidate["project_completion_contract"]["obligations"]["artifacts"]
-    }
+    paths = {row["path"] for row in repaired.candidate["project_completion_contract"]["obligations"]["artifacts"]}
     assert "src/support.py" in paths
 
 
@@ -1168,9 +1606,10 @@ def test_artifact_patch_preserves_unchanged_legacy_entrypoint_without_rehydratin
         tasks=_tasks(),
     )
 
-    assert repaired.candidate["project_completion_contract"]["obligations"]["entrypoints"] == payload[
-        "project_completion_contract"
-    ]["obligations"]["entrypoints"]
+    assert (
+        repaired.candidate["project_completion_contract"]["obligations"]["entrypoints"]
+        == payload["project_completion_contract"]["obligations"]["entrypoints"]
+    )
 
 
 @pytest.mark.parametrize("path", ("tests/test_support.py", "README.extra.md", "pyproject.toml"))
@@ -1427,12 +1866,128 @@ def test_composer_rebinds_existing_artifact_when_frozen_owner_is_uniquely_unauth
         tasks=tasks,
     )
 
-    artifact = repaired.candidate["project_completion_contract"]["obligations"][
-        "artifacts"
-    ][0]
+    artifact = repaired.candidate["project_completion_contract"]["obligations"]["artifacts"][0]
     assert artifact["owner_task_id"] == "TASK-2"
     assert receipt.changed_semantic_ids == ("OBL-LIB-ENTRY",)
     assert receipt.patch_hash != patch.patch_hash
+
+
+def test_depth_composer_rebinds_all_uniquely_unauthorized_frozen_test_owners(
+    tmp_path: Path,
+) -> None:
+    """Depth repair must normalize the frozen baseline, not only repeated rows.
+
+    Exact L3-23 r14 froze three ``tests/*.rs`` artifacts under TASK-2 even
+    though TASK-2 delegates only domain/entrypoint topology and TASK-3 is the
+    unique tests authority.  Requiring the provider to repeat every bad row is
+    token waste and left valid test delivery invisible to feasibility checks.
+    """
+
+    base = _candidate(tmp_path)
+    payload = json.loads(json.dumps(base.candidate, ensure_ascii=False))
+    payload["construction_plan"]["task_plans"]["TASK-3"] = {"behavior_invariant_refs": []}
+    payload["project_completion_contract"]["obligations"]["artifacts"] = [
+        {
+            "obligation_id": "artifact-main",
+            "path": "src/lib.rs",
+            "semantic_role": "source",
+            "applicability": "required",
+            "owner_task_id": "TASK-1",
+        },
+        {
+            "obligation_id": "artifact-test-a",
+            "path": "tests/domain.rs",
+            "semantic_role": "test",
+            "applicability": "required",
+            "owner_task_id": "TASK-2",
+        },
+        {
+            "obligation_id": "artifact-test-b",
+            "path": "tests/behavior.rs",
+            "semantic_role": "test",
+            "applicability": "required",
+            "owner_task_id": "TASK-2",
+        },
+    ]
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=base.workspace,
+        project_id=base.project_id,
+        run_id=base.run_id,
+        pm_contract_hash=base.pm_contract_hash,
+        task_ids=("TASK-1", "TASK-2", "TASK-3"),
+        task_set_hash=chief_engineer_semantic_repair_task_set_hash(("TASK-1", "TASK-2", "TASK-3")),
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.test_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        artifact_upserts=(
+            ArtifactObligationV1(
+                obligation_id="artifact-product-test",
+                path="tests/product.rs",
+                semantic_role="test",
+                applicability="required",
+                owner_task_id="TASK-3",
+            ),
+        ),
+    )
+    tasks = (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-1",
+            objective="Implement Rust domain modules",
+            target_files=("Cargo.toml",),
+            scope_paths=("Cargo.toml",),
+            topology_authority="chief_engineer",
+            required_source_kinds=("domain_modules",),
+            primary_language="rust",
+            allowed_source_suffixes=(".rs",),
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-2",
+            objective="Implement Rust entrypoint",
+            target_files=("Cargo.toml",),
+            scope_paths=("Cargo.toml",),
+            topology_authority="chief_engineer",
+            required_source_kinds=("domain_modules", "entrypoint"),
+            primary_language="rust",
+            allowed_source_suffixes=(".rs",),
+        ),
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-3",
+            objective="Implement Rust tests",
+            target_files=("tests/product.rs",),
+            scope_paths=("tests/product.rs",),
+            topology_authority="chief_engineer",
+            required_source_kinds=("tests",),
+            primary_language="rust",
+            allowed_source_suffixes=(".rs",),
+        ),
+    )
+
+    repaired, receipt = compose_chief_engineer_semantic_repair(
+        candidate,
+        diagnosis,
+        patch,
+        tasks=tasks,
+    )
+
+    test_rows = [
+        row
+        for row in repaired.candidate["project_completion_contract"]["obligations"]["artifacts"]
+        if row["semantic_role"] == "test"
+    ]
+    assert {row["owner_task_id"] for row in test_rows} == {"TASK-3"}
+    assert {row["path"] for row in test_rows} == {
+        "tests/domain.rs",
+        "tests/behavior.rs",
+        "tests/product.rs",
+    }
+    assert {"artifact-test-a", "artifact-test-b"}.issubset(receipt.changed_semantic_ids)
 
 
 def test_composer_keeps_authorized_patch_subset_and_drops_extra_operation(tmp_path) -> None:
@@ -1534,10 +2089,7 @@ def test_composer_preserves_frozen_baseline_path_alias_while_adding_unique_artif
         tasks=_tasks(expandable=False, delegated=True),
     )
 
-    paths = [
-        row["path"]
-        for row in repaired.candidate["project_completion_contract"]["obligations"]["artifacts"]
-    ]
+    paths = [row["path"] for row in repaired.candidate["project_completion_contract"]["obligations"]["artifacts"]]
     assert paths.count("src/main.py") == 2
     assert paths.count("src/support.py") == 1
     assert receipt.changed_semantic_ids == ("artifact-support",)
@@ -1636,9 +2188,7 @@ def test_composer_keeps_unique_depth_upserts_and_drops_one_redundant_path_alias(
     paths = [row["path"] for row in artifacts]
     assert paths.count("src/main.py") == 2
     assert "src/support.py" in paths
-    assert "artifact-main-depth-alias" not in {
-        row["obligation_id"] for row in artifacts
-    }
+    assert "artifact-main-depth-alias" not in {row["obligation_id"] for row in artifacts}
     assert receipt.changed_semantic_ids == ("artifact-support",)
     assert receipt.patch_hash != patch.patch_hash
 
@@ -1728,6 +2278,175 @@ def test_composer_rejects_mutating_existing_artifact_identity(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="immutable semantic identity"):
         compose_chief_engineer_semantic_repair(candidate, diagnosis, patch, tasks=_tasks())
+
+
+def test_depth_repair_splits_reused_artifact_id_and_expands_verifier_refs(tmp_path) -> None:
+    """Exact L3-23 r08: provider group-id reuse means split, not identity mutation.
+
+    A depth repair may naturally reuse the existing test obligation id while
+    proposing a second same-owner/same-role physical test file.  The platform
+    can normalize that shape without weakening immutable identity: preserve the
+    original row, mint a deterministic id for the new path, and expand verifier
+    coverage atomically.
+    """
+
+    seed = _candidate(tmp_path)
+    payload = json.loads(json.dumps(seed.candidate, ensure_ascii=False))
+    obligations = payload["project_completion_contract"]["obligations"]
+    obligations["artifacts"].append(
+        {
+            "obligation_id": "artifact-tests",
+            "path": "tests/product.py",
+            "semantic_role": "test",
+            "applicability": "required",
+            "owner_task_id": "TASK-2",
+        }
+    )
+    obligations["verification"] = [
+        {
+            "obligation_id": "verify-tests",
+            "modality": "test",
+            "covers_obligation_ids": ["artifact-tests"],
+        }
+    ]
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=seed.workspace,
+        project_id=seed.project_id,
+        run_id=seed.run_id,
+        pm_contract_hash=seed.pm_contract_hash,
+        task_ids=seed.task_ids,
+        task_set_hash=seed.task_set_hash,
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.test_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        artifact_upserts=(
+            ArtifactObligationV1(
+                obligation_id="artifact-tests",
+                path="tests/engine_decisions.py",
+                semantic_role="test",
+                applicability="required",
+                owner_task_id="TASK-2",
+            ),
+        ),
+    )
+    tasks = (
+        _tasks()[0],
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-2",
+            objective="Verify product behavior.",
+            target_files=("tests/product.py",),
+            scope_paths=("tests/product.py",),
+            topology_authority="chief_engineer",
+            required_source_kinds=("tests",),
+            primary_language="python",
+            allowed_source_suffixes=(".py",),
+        ),
+    )
+
+    repaired, receipt = compose_chief_engineer_semantic_repair(
+        candidate,
+        diagnosis,
+        patch,
+        tasks=tasks,
+    )
+
+    repaired_obligations = repaired.candidate["project_completion_contract"]["obligations"]
+    test_rows = [row for row in repaired_obligations["artifacts"] if row["semantic_role"] == "test"]
+    rows_by_path = {row["path"]: row for row in test_rows}
+    assert set(rows_by_path) == {"tests/product.py", "tests/engine_decisions.py"}
+    assert rows_by_path["tests/product.py"]["obligation_id"] == "artifact-tests"
+    minted_id = rows_by_path["tests/engine_decisions.py"]["obligation_id"]
+    assert minted_id.startswith("artifact-normalized-")
+    assert repaired_obligations["verification"][0]["covers_obligation_ids"] == [
+        "artifact-tests",
+        minted_id,
+    ]
+    assert minted_id in receipt.changed_semantic_ids
+
+
+def test_depth_repair_splits_optional_existing_test_when_new_path_is_required(tmp_path) -> None:
+    """Exact L3-24 r51: applicability may change when a reused ID is split.
+
+    The frozen CE candidate contained one optional Python harness.  Repair
+    reused its obligation ID for a required C++ test at a new authorized path.
+    Applicability is mutable payload, not semantic identity: preserve the old
+    optional row and mint a new ID for the required physical test.
+    """
+
+    seed = _candidate(tmp_path)
+    payload = json.loads(json.dumps(seed.candidate, ensure_ascii=False))
+    obligations = payload["project_completion_contract"]["obligations"]
+    obligations["artifacts"].append(
+        {
+            "obligation_id": "OBL-TEST-EXTRA",
+            "path": "tests/test_cli_edge.py",
+            "semantic_role": "test",
+            "applicability": "optional",
+            "owner_task_id": "TASK-1",
+        }
+    )
+    candidate = ChiefEngineerSemanticRepairCandidateV1(
+        workspace=seed.workspace,
+        project_id=seed.project_id,
+        run_id=seed.run_id,
+        pm_contract_hash=seed.pm_contract_hash,
+        task_ids=seed.task_ids,
+        task_set_hash=seed.task_set_hash,
+        candidate=payload,
+    )
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.test_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        artifact_upserts=(
+            ArtifactObligationV1(
+                obligation_id="OBL-TEST-EXTRA",
+                path="tests/test_cli_edge.cpp",
+                semantic_role="test",
+                applicability="required",
+                owner_task_id="TASK-1",
+            ),
+        ),
+    )
+    tasks = (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-1",
+            objective="Implement and verify the C++ CLI.",
+            target_files=("tests/test_product.py",),
+            scope_paths=("tests",),
+            topology_authority="chief_engineer",
+            required_source_kinds=("tests",),
+            primary_language="cpp",
+            allowed_source_suffixes=(".cpp",),
+        ),
+        _tasks()[1],
+    )
+
+    repaired, receipt = compose_chief_engineer_semantic_repair(
+        candidate,
+        diagnosis,
+        patch,
+        tasks=tasks,
+    )
+
+    rows = repaired.candidate["project_completion_contract"]["obligations"]["artifacts"]
+    rows_by_path = {row["path"]: row for row in rows}
+    assert rows_by_path["tests/test_cli_edge.py"]["applicability"] == "optional"
+    new_row = rows_by_path["tests/test_cli_edge.cpp"]
+    assert new_row["applicability"] == "required"
+    assert new_row["obligation_id"].startswith("artifact-normalized-")
+    assert new_row["obligation_id"] in receipt.changed_semantic_ids
 
 
 def test_composer_rejects_foreign_language_source_under_delegated_topology(tmp_path) -> None:
@@ -1938,9 +2657,7 @@ def test_portfolio_structural_recovery_normalizes_provider_array_wrappers() -> N
                     "consumer_task_ids": {"item": ["TASK-3"]},
                     "covered_obligation_ids": {"item": ["VERIFY-1"]},
                     "statement": "Lifted singleton invariant",
-                    "verification_examples": {
-                        "item": {"given": "x", "when": "y", "then": "z"}
-                    },
+                    "verification_examples": {"item": {"given": "x", "when": "y", "then": "z"}},
                 },
             },
             "item": [
@@ -1965,9 +2682,9 @@ def test_portfolio_structural_recovery_normalizes_provider_array_wrappers() -> N
     recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
 
     assert recovery.recovered is True
-    assert malformed["construction_plan"]["shared_behavior_contract"]["item"][
-        "consumer_task_ids"
-    ] == {"item": ["TASK-3"]}
+    assert malformed["construction_plan"]["shared_behavior_contract"]["item"]["consumer_task_ids"] == {
+        "item": ["TASK-3"]
+    }
     construction = recovery.payload["construction_plan"]
     assert set(construction) == {
         "task_plans",
@@ -2003,6 +2720,113 @@ def test_portfolio_structural_recovery_normalizes_provider_array_wrappers() -> N
         "remove_redundant_lifted_task_plan",
         "unwrap_behavior_invariant_array_items",
     }
+
+
+def test_portfolio_structural_recovery_partitions_mixed_construction_items() -> None:
+    """Move proven invariant rows while preserving unrelated lifted plan content."""
+
+    phase = {
+        "phase_id": "PHASE-2",
+        "files": {"item": ["src/main.cpp"]},
+        "deliverables": {"item": ["Build the CLI"]},
+    }
+    malformed = {
+        "construction_plan": {
+            "task_plans": {
+                "TASK-1": {"behavior_invariant_refs": ["INV-LOCAL"]},
+            },
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {"invariants": []},
+            "item": [
+                {
+                    "invariant_id": "INV-LOCAL",
+                    "owner_task_id": "TASK-1",
+                    "consumer_task_ids": {"item": "TASK-1"},
+                    "covered_obligation_ids": {"item": "OBL-SOURCE"},
+                    "statement": "Task-local behavior",
+                    "verification_examples": {"item": []},
+                },
+                phase,
+                "src/main.cpp",
+            ],
+        }
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(
+        malformed,
+        authoritative_task_ids=("TASK-1",),
+    )
+
+    assert recovery.recovered is True
+    assert set(recovery.repair_codes) >= {
+        "move_construction_items_to_behavior_invariants",
+        "remove_task_local_invariant_from_shared_contract",
+    }
+    construction = recovery.payload["construction_plan"]
+    assert construction["item"] == [phase, "src/main.cpp"]
+    assert construction["shared_behavior_contract"]["invariants"] == []
+    assert construction["task_plans"]["TASK-1"]["behavior_invariant_refs"] == []
+
+
+def test_portfolio_structural_recovery_preserves_symbol_item_with_owner_task_id() -> None:
+    """A lifted symbol row is not an invariant merely because both carry an owner."""
+
+    symbol_row = {
+        "owner_file": "include/invisible_diary/cipher.hpp",
+        "owner_task_id": "TASK-1",
+        "symbol_kind": "class",
+    }
+    malformed = {
+        "construction_plan": {
+            "task_plans": {
+                "TASK-1": {"behavior_invariant_refs": ["INV-LOCAL"]},
+            },
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+            "shared_behavior_contract": {
+                "invariants": [
+                    {
+                        "invariant_id": "INV-LOCAL",
+                        "owner_task_id": "TASK-1",
+                        "consumer_task_ids": ["TASK-1"],
+                        "covered_obligation_ids": ["OBF-SRC-CIPHER"],
+                        "statement": "Cipher round trips preserve diary text.",
+                        "verification_examples": [],
+                    }
+                ]
+            },
+            "item": [symbol_row],
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [
+                    {
+                        "obligation_id": "OBF-SRC-CIPHER",
+                        "path": "src/cipher.cpp",
+                        "semantic_role": "source",
+                    }
+                ],
+                "entrypoints": [],
+                "verification": [],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(
+        malformed,
+        authoritative_task_ids=("TASK-1",),
+    )
+
+    assert recovery.recovered is True
+    assert recovery.payload["construction_plan"]["item"] == [symbol_row]
+    assert recovery.payload["construction_plan"]["shared_behavior_contract"]["invariants"] == []
+    assert recovery.payload["construction_plan"]["task_plans"]["TASK-1"]["behavior_invariant_refs"] == []
+    assert recovery.repair_codes == ("remove_task_local_invariant_from_shared_contract",)
 
 
 def test_portfolio_structural_recovery_refuses_conflicting_lifted_task_plan() -> None:
@@ -2055,9 +2879,7 @@ def test_portfolio_structural_recovery_moves_missing_lifted_task_plans_before_be
                         "consumer_task_ids": ["TASK-2"],
                         "covered_obligation_ids": ["VERIFY-1"],
                         "statement": "A shared behavior",
-                        "verification_examples": [
-                            {"given": "x", "when": "y", "then": "z"}
-                        ],
+                        "verification_examples": [{"given": "x", "when": "y", "then": "z"}],
                     }
                 ]
             },
@@ -2084,9 +2906,7 @@ def test_portfolio_structural_recovery_moves_missing_lifted_task_plans_before_be
     }
     assert set(construction["task_plans"]) == {"TASK-1", "TASK-2", "TASK-3"}
     assert construction["task_plans"]["TASK-2"]["behavior_invariant_refs"] == ["INV-SHARED"]
-    assert construction["task_plans"]["TASK-2"]["implementation_phases"] == {
-        "item": {"phase_label": "author"}
-    }
+    assert construction["task_plans"]["TASK-2"]["implementation_phases"] == {"item": {"phase_label": "author"}}
     assert construction["shared_behavior_contract"]["invariants"][0]["consumer_task_ids"] == [
         "TASK-1",
         "TASK-3",
@@ -2131,9 +2951,10 @@ def test_portfolio_structural_recovery_removes_owner_from_real_consumer_set() ->
     assert recovery.repair_codes == ("remove_behavior_owner_from_consumers",)
     invariant = recovery.payload["construction_plan"]["shared_behavior_contract"]["invariants"][0]
     assert invariant["consumer_task_ids"] == ["TASK-2"]
-    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0][
-        "consumer_task_ids"
-    ] == ["TASK-1", "TASK-2"]
+    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0]["consumer_task_ids"] == [
+        "TASK-1",
+        "TASK-2",
+    ]
 
 
 def test_portfolio_structural_recovery_refuses_owner_only_consumer_set() -> None:
@@ -2195,9 +3016,7 @@ def test_portfolio_structural_recovery_removes_proven_task_local_invariant_from_
     construction = recovery.payload["construction_plan"]
     assert construction["shared_behavior_contract"]["invariants"] == []
     assert construction["task_plans"]["TASK-1"]["behavior_invariant_refs"] == []
-    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0][
-        "invariant_id"
-    ] == "INV-LOCAL"
+    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0]["invariant_id"] == "INV-LOCAL"
 
 
 def test_portfolio_structural_recovery_rebinds_owner_only_consumer_from_task_refs() -> None:
@@ -2231,9 +3050,9 @@ def test_portfolio_structural_recovery_rebinds_owner_only_consumer_from_task_ref
     assert recovery.repair_codes == ("rebind_behavior_consumers_from_task_refs",)
     invariant = recovery.payload["construction_plan"]["shared_behavior_contract"]["invariants"][0]
     assert invariant["consumer_task_ids"] == ["TASK-1"]
-    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0][
-        "consumer_task_ids"
-    ] == ["TASK-2"]
+    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0]["consumer_task_ids"] == [
+        "TASK-2"
+    ]
 
 
 def test_portfolio_structural_recovery_removes_only_unknown_mixed_obligation_refs() -> None:
@@ -2282,9 +3101,11 @@ def test_portfolio_structural_recovery_removes_only_unknown_mixed_obligation_ref
     assert recovery.repair_codes == ("remove_unknown_behavior_obligation_refs",)
     invariant = recovery.payload["construction_plan"]["shared_behavior_contract"]["invariants"][0]
     assert invariant["covered_obligation_ids"] == ["ART-main.go", "VER-go-test"]
-    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0][
-        "covered_obligation_ids"
-    ] == ["ART-main.go", "ART-main_test.go", "VER-go-test"]
+    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0]["covered_obligation_ids"] == [
+        "ART-main.go",
+        "ART-main_test.go",
+        "VER-go-test",
+    ]
 
 
 def test_portfolio_structural_recovery_refuses_unknown_only_obligation_refs() -> None:
@@ -2376,9 +3197,10 @@ def test_portfolio_structural_recovery_maps_known_verifier_coverage_aliases() ->
     assert recovery.repair_codes == ("map_behavior_obligation_aliases_to_verification",)
     invariant = recovery.payload["construction_plan"]["shared_behavior_contract"]["invariants"][0]
     assert invariant["covered_obligation_ids"] == ["OBL-VERIFY-TEST"]
-    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0][
-        "covered_obligation_ids"
-    ] == ["OBL-RULE-GRAVITY", "OBL-RULE-DAMPING"]
+    assert malformed["construction_plan"]["shared_behavior_contract"]["invariants"][0]["covered_obligation_ids"] == [
+        "OBL-RULE-GRAVITY",
+        "OBL-RULE-DAMPING",
+    ]
 
 
 def test_portfolio_structural_recovery_closes_consumed_verifier_aliases() -> None:
@@ -2434,9 +3256,10 @@ def test_portfolio_structural_recovery_closes_consumed_verifier_aliases() -> Non
     verifier = recovery.payload["project_completion_contract"]["obligations"]["verification"][0]
     assert invariant["covered_obligation_ids"] == ["VER-GO-BUILD"]
     assert verifier["covers_obligation_ids"] == ["ART-MODULE"]
-    assert malformed["project_completion_contract"]["obligations"]["verification"][0][
-        "covers_obligation_ids"
-    ] == ["OBL-MODULE-COMPILE", "ART-MODULE"]
+    assert malformed["project_completion_contract"]["obligations"]["verification"][0]["covers_obligation_ids"] == [
+        "OBL-MODULE-COMPILE",
+        "ART-MODULE",
+    ]
 
 
 def test_portfolio_structural_recovery_keeps_unconsumed_unknown_verifier_refs() -> None:
@@ -2513,7 +3336,74 @@ def test_portfolio_structural_recovery_infers_missing_artifact_roles_from_unambi
         "test",
         "docs",
     ]
-    assert all("semantic_role" not in row for row in malformed["project_completion_contract"]["obligations"]["artifacts"])
+    assert all(
+        "semantic_role" not in row for row in malformed["project_completion_contract"]["obligations"]["artifacts"]
+    )
+
+
+def test_portfolio_structural_recovery_replaces_invalid_artifact_role_from_unambiguous_path() -> None:
+    """Exact L3-24 r47: provider alias ``build`` must not strand CMakeLists."""
+
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [
+                    {
+                        "obligation_id": "ART-BUILD",
+                        "path": "CMakeLists.txt",
+                        "semantic_role": "build",
+                    }
+                ],
+                "entrypoints": [],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is True
+    assert recovery.repair_codes == ("infer_invalid_artifact_semantic_roles",)
+    artifact = recovery.payload["project_completion_contract"]["obligations"]["artifacts"][0]
+    assert artifact["semantic_role"] == "manifest"
+    assert malformed["project_completion_contract"]["obligations"]["artifacts"][0]["semantic_role"] == "build"
+
+
+def test_portfolio_structural_recovery_refuses_ambiguous_invalid_artifact_role() -> None:
+    """An unknown provider enum remains fail-closed when the path proves no role."""
+
+    malformed = {
+        "construction_plan": {
+            "task_plans": {},
+            "project_interface_contract": {
+                "provider_declarations": [],
+                "consumer_declarations": [],
+            },
+        },
+        "project_completion_contract": {
+            "obligations": {
+                "artifacts": [
+                    {
+                        "obligation_id": "ART-UNKNOWN",
+                        "path": "payload.data",
+                        "semantic_role": "build",
+                    }
+                ],
+                "entrypoints": [],
+            }
+        },
+    }
+
+    recovery = normalize_chief_engineer_portfolio_tool_arguments(malformed)
+
+    assert recovery.recovered is False
+    assert recovery.payload == malformed
 
 
 def test_portfolio_structural_recovery_refuses_ambiguous_missing_artifact_role() -> None:

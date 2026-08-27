@@ -1,0 +1,92 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "L3-24-R32-DIAGNOSTIC-SCOPED-TARGET-ROTATION",
+  "status": "FIX_IMPLEMENTED_LIVE_VALIDATION_PENDING",
+  "severity": "P0",
+  "scope": "Polaris meta-platform only",
+  "target_project_modified_by_debugger": false,
+  "exact_run": {
+    "factory_run_id": "factory_870b3ac36729",
+    "workspace": "/tmp/factory-bench-l3-24-r32/workspaces/fdc27f7eaf21-47890d89a326856a/L3-24-023d7314133040b6/9da3dc44995a3c3339ea01ba",
+    "project_id": "L3-24",
+    "terminal": "qa_failed",
+    "wall_clock_seconds": 643.4
+  },
+  "dynamic_evidence": {
+    "canonical_build": "CMake configure/build passed; five translation units passed syntax validation with workspace include roots",
+    "entrypoint": "build/invisible_diary --help compiled and returned exit code 0",
+    "accepted_test_harness_effect": {
+      "path": "tests/test_product.py",
+      "before_sha256": "606e4ebb2b0ac472c25691e91a5228a13330d90848ea0f1f59b64cf56003d97d",
+      "after_sha256": "7d8b28a44452d00619c91b937fff3ac87d56e3f8dc5075c870bfc792b06d68ad",
+      "receipt_hash": "93fb317d0063ef8f7d6c1b851db0254880442a24f63eac91be852b7ffe14ab68"
+    },
+    "final_residuals": [
+      "test_empty_body_encode_is_handled: process returned 2 and stderr encode failed",
+      "delivery_depth_contract: prod_files=5 and prod_lines=386 below level-3 minimums"
+    ],
+    "byte_level_replay": {
+      "wrong_phase_decode_return_code": 0,
+      "wrong_phase_stdout_hex": "706c61696e3d4357d3dc455680c84f56c58e31703fe3243224c6c5024dc9cf4c0a",
+      "wrong_phase_utf8_decode": "UnicodeDecodeError at byte 0xd3",
+      "empty_body_encode_return_code": 2,
+      "empty_body_stderr": "encode failed"
+    },
+    "current_causal_resolver_order": [
+      "src/cli/main.cpp",
+      "include/invisible_diary/cipher_engine.cpp",
+      "include/invisible_diary/diary_entry.cpp",
+      "include/invisible_diary/diary_book.cpp",
+      "include/invisible_diary/moon_phase_calendar.cpp",
+      "tests/test_product.py"
+    ],
+    "misrouted_physical_attempts": [
+      {
+        "path": "include/invisible_diary/cipher_engine.cpp",
+        "before_sha256": "9c33042bfd0f285c190fb24bfa2d0254dbf62ed9e778041a14c82ffb1b9e2432",
+        "candidate_after_sha256": "80dac27725551aa8283c3d7d29d54fad59ba046076e27d5daf8abca3a4b6712d",
+        "settlement": "candidate rejected and rolled back"
+      },
+      {
+        "path": "include/invisible_diary/cipher_engine.cpp",
+        "before_sha256": "9c33042bfd0f285c190fb24bfa2d0254dbf62ed9e778041a14c82ffb1b9e2432",
+        "candidate_after_sha256": "037623fbc8",
+        "settlement": "candidate rejected and rolled back"
+      },
+      {
+        "path": "include/invisible_diary/cipher_engine.cpp",
+        "before_sha256": "9c33042bfd0f285c190fb24bfa2d0254dbf62ed9e778041a14c82ffb1b9e2432",
+        "candidate_after_sha256": "86b3f206c9",
+        "settlement": "candidate rejected and rolled back"
+      }
+    ]
+  },
+  "root_cause": {
+    "classification": "workspace_quality_repair_rotation_state_leaked_across_diagnostic_signatures",
+    "mechanism": "After the test-harness repair changed the verifier residual set, the ordered causal frontier correctly began with src/cli/main.cpp. Explicit owner rebind nevertheless chose (global repair_attempt - 1) modulo the new candidate list, so round 2 skipped the new causal head and selected cipher_engine.cpp. Provider retries then remained single-target and could not repair CLI exit behavior or delivery depth.",
+    "why_static_analysis_was_insufficient": "Only exact-run effect receipts, validation history, current hashes, byte-level executable replay, and the live causal resolver output showed that target inference was correct but the rotation epoch was stale."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": "Maintain a target-rotation cursor per immutable verifier diagnostic signature. A changed residual signature starts at causal candidate zero; repeated LLM owner-rebind attempts for the same signature advance the cursor. Direct legacy callers without the scoped cursor retain prior round-based behavior."
+  },
+  "verification": {
+    "tdd_red": "rotation_index=0 with repair_attempt=4 incorrectly selected cipher_engine.cpp",
+    "targeted_green": "6 passed covering signature cursor, existing owner rebind rotation, and stale C++ TU replacement",
+    "new_regression_cases": "2 passed: cursor 0 selects main.cpp; cursor 1 selects cipher_engine.cpp",
+    "ruff": "passed",
+    "mypy": "passed",
+    "full_characterization": "91 relevant tests expected green; one pre-existing unrelated Go behavior-owner assertion remains red",
+    "fresh_isolated_bench": "pending L3-24 r33"
+  },
+  "required_invariants": [
+    "A changed verifier diagnostic signature resets provider target rotation to its ordered causal head.",
+    "Only repeated LLM repair attempts for the same diagnostic signature rotate to sibling candidates.",
+    "Rotation never expands the claimed CE/JobToken write authority.",
+    "Rejected candidates are rolled back before the next verifier-owned decision."
+  ],
+  "residual_risk": "Delivery-depth expansion is an independent residual class and may require its own authorized artifact-upsert transaction after the empty-body behavior repair converges."
+}

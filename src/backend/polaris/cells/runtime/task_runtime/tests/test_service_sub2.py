@@ -2,22 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import multiprocessing as mp
-import sys
 import threading
 import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import replace
 from pathlib import Path
-from queue import Empty
-from typing import Any, Callable, NamedTuple, NoReturn, cast
+from typing import Any, Callable, NamedTuple, NoReturn
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
-    FactStreamError,
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
 )
@@ -30,34 +25,22 @@ from polaris.cells.events.fact_stream.public.service import (
 from polaris.cells.runtime.task_runtime.internal import service as service_module
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
-    build_task_runtime_execution_event_payload,
-    terminal_session_timestamp,
 )
 from polaris.cells.runtime.task_runtime.internal.task_board import (
-    InvalidTaskStateTransitionError,
     TaskBoard,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
     OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
     SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1,
     BindRuntimeTaskToFactoryRunCommandV1,
-    FenceExpiredFactoryRunSessionsCommandV1,
-    HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     OwnerReworkExecutionAuthorizationV1,
     PrepareOwnerReworkExecutionCommandV1,
     PrepareSameTaskLocalReworkCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
-    TaskRuntimeExecutionFactV1,
-    ValidateTaskRuntimeExecutionAttemptQueryV1,
 )
 from polaris.cells.runtime.task_runtime.public.service import (
     TaskRuntimeService,
-    bind_runtime_task_to_factory_run,
-    heartbeat_task_runtime_execution_attempt,
-    query_observable_task_rows,
-    reset_runtime_task_records,
-    validate_task_runtime_execution_attempt,
 )
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -85,6 +68,35 @@ def _create_bootstrapped_task_runtime_service(workspace: str | Path) -> TaskRunt
     workspace_path.mkdir(parents=True, exist_ok=True)
     _bootstrap_task_runtime_fact_stream(workspace_path)
     return TaskRuntimeService(str(workspace_path))
+
+
+def _append_terminal_fact_event(
+    workspace: Path,
+    *,
+    task_id: str,
+    event_type: str,
+    status: str,
+    run_id: str,
+) -> None:
+    """Append a fact-only terminal event without mutating the file row."""
+
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type=event_type,
+            source="runtime.task_runtime",
+            task_id=task_id,
+            run_id=run_id,
+            payload={
+                "task_id": task_id,
+                "run_id": run_id,
+                "event_type": event_type,
+                "status": status,
+                "execution_state": status,
+            },
+        )
+    )
 
 
 def _multiprocess_claim_execution(
@@ -827,6 +839,147 @@ def test_get_task_prefers_rematerialized_pending_row_over_stale_terminal_sibling
     assert isinstance(resolved, dict)
     assert resolved["id"] == live_id
     assert resolved["status"] == "pending"
+
+
+def test_get_task_prefers_newer_failed_attempt_over_older_reopened_pending_sibling(
+    tmp_path: Path,
+) -> None:
+    """A stale pending sibling must not hide the latest failed owner attempt.
+
+    Live L3-23 r19: TASK-3 rows 3 and 6 were both reopened.  Row 6 then
+    failed during same-run lease recovery, while older row 3 remained pending
+    in the fact overlay.  External-id lookup preferred *any* live row over the
+    newer failed attempt, so ``ensure_task_row(TASK-3)`` reused stale row 3
+    instead of materializing a repair owner.  Director consequently retried
+    TASK-1/2 only and returned the unchanged Rust verifier failure to QA.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    external_id = "TASK-3"
+
+    stale_pending = service.create_task_row(
+        subject="older reopened owner",
+        metadata={"external_task_id": external_id, "pm_task_id": external_id},
+    )
+    stale_pending_id = int(stale_pending["id"])
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="reopened",
+            source="runtime.task_runtime",
+            task_id=str(stale_pending_id),
+            run_id="factory-current",
+            payload={
+                "task_id": str(stale_pending_id),
+                "run_id": "factory-current",
+                "event_type": "reopened",
+                "status": "pending",
+                "execution_state": "pending",
+                "fact_event_seq": 10,
+                "task_row_snapshot": {
+                    "id": stale_pending_id,
+                    "metadata": {"external_task_id": external_id, "pm_task_id": external_id},
+                },
+            },
+        )
+    )
+
+    latest_failed = service.create_task_row(
+        subject="newer failed owner",
+        metadata={"external_task_id": external_id, "pm_task_id": external_id},
+    )
+    latest_failed_id = int(latest_failed["id"])
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type="failed",
+            source="runtime.task_runtime",
+            task_id=str(latest_failed_id),
+            run_id="factory-current",
+            payload={
+                "task_id": str(latest_failed_id),
+                "run_id": "factory-current",
+                "event_type": "failed",
+                "status": "failed",
+                "execution_state": "failed",
+                "fact_event_seq": 20,
+                "task_row_snapshot": {
+                    "id": latest_failed_id,
+                    "metadata": {"external_task_id": external_id, "pm_task_id": external_id},
+                },
+            },
+        )
+    )
+
+    resolved = service.get_task(external_id)
+    assert isinstance(resolved, dict)
+    assert resolved["id"] == latest_failed_id
+    assert resolved["status"] == "failed"
+
+    rematerialized = service.ensure_task_row(external_task_id=external_id, subject="repair owner")
+    assert int(rematerialized["id"]) not in {stale_pending_id, latest_failed_id}
+    assert rematerialized["status"] == "pending"
+
+
+def test_factory_settlement_ignores_inactive_foreign_rows_but_reset_still_refuses_them(
+    tmp_path: Path,
+) -> None:
+    """A completed/aborted sibling Factory run is history, not an active child.
+
+    L3-23 recovery left cancelled rows from a failed ``director_resume`` run in
+    the shared TaskRuntime fact stream. Those terminal rows must not permanently
+    block the original run's same-run QA/Director repair re-entry. Destructive
+    reset authority remains stricter: it must still refuse to delete any row
+    owned by the sibling run.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = _create_bootstrapped_task_runtime_service(workspace)
+
+    original_run_id = "factory-original"
+    sibling_run_id = "factory-failed-resume"
+    service.create_task_row(
+        subject="original repair owner",
+        metadata={"factory_run_id": original_run_id, "external_task_id": "TASK-1"},
+    )
+    sibling = service.create_task_row(
+        subject="terminal sibling row",
+        metadata={"factory_run_id": sibling_run_id, "external_task_id": "TASK-2"},
+    )
+    cancelled = service.cancel_task_row_for_factory_abort(
+        sibling["id"],
+        factory_run_id=sibling_run_id,
+        reason="failed resume closed",
+    )
+    assert cancelled is not None
+    assert cancelled["status"] == "cancelled"
+
+    original_settlement = service.query_factory_run_settlement(factory_run_id=original_run_id)
+    assert original_settlement["settled"] is True
+    assert original_settlement["active_session_count"] == 0
+    assert original_settlement["conflicts"] == []
+
+    # The inverse query sees the original row as foreign but merely pending.
+    # It has no claimed/in-progress execution and no active session, so it must
+    # not prevent the failed sibling run from draining and releasing its lease.
+    sibling_settlement = service.query_factory_run_settlement(factory_run_id=sibling_run_id)
+    assert sibling_settlement["settled"] is True
+    assert sibling_settlement["active_session_count"] == 0
+    assert sibling_settlement["conflicts"] == []
+
+    reset = service.reset_records(factory_run_id=original_run_id)
+    assert reset["ok"] is False
+    assert reset["code"] == "task_runtime_reset_authority_conflict"
+    assert any(
+        conflict.get("kind") == "foreign_factory_run_binding"
+        and conflict.get("existing_factory_run_id") == sibling_run_id
+        for conflict in reset["conflicts"]
+    )
 
 
 def test_ensure_task_row_recreates_board_file_when_fact_row_is_a_ghost(
@@ -1850,6 +2003,188 @@ def test_prepare_same_task_local_rework_reopens_exact_factory_owner_and_reclaims
         run_id="director-local-rework",
         external_task_id="TASK-1",
     )
+    assert retried["success"] is True
+    assert retried["task"]["metadata"]["last_failure"] == diagnostic
+
+
+def test_same_task_local_rework_budget_is_scoped_to_current_diagnostic(
+    tmp_path: Path,
+) -> None:
+    """Older resolved diagnostics must not permanently exhaust one task owner.
+
+    Live L3-23 r19 retained one older diagnostic authorization plus two
+    authorizations for the current Rust failure.  The third current repair was
+    rejected because the budget counted all task-lifetime records.  Budgeting
+    belongs to the current diagnostic episode; a fourth attempt for that same
+    diagnostic must still fail closed.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    service = _create_bootstrapped_task_runtime_service(workspace)
+    owner = service.ensure_task_row(external_task_id="TASK-1", subject="source owner")
+    owner_id = int(owner["id"])
+    assert service.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace),
+            task_id=str(owner_id),
+            factory_run_id="factory-current",
+        )
+    ).ok
+
+    def command(*, action_char: str, claim_char: str, diagnostic_id: str) -> PrepareSameTaskLocalReworkCommandV1:
+        diagnostic = {
+            "diagnostic_id": diagnostic_id,
+            "obligation_id": "obligation-1",
+            "owner_task_id": "TASK-1",
+            "affected_target": "src/lib.rs",
+            "allowed_next_action": "publish_owner_rework",
+            "required_verifier_ids": ["cargo.test"],
+        }
+        return PrepareSameTaskLocalReworkCommandV1(
+            schema_version=SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1,
+            workspace=str(workspace),
+            factory_run_id="factory-current",
+            external_task_id="TASK-1",
+            completion_contract_hash="a" * 64,
+            action_id=action_char * 64,
+            diagnostic_id=diagnostic_id,
+            obligation_id="obligation-1",
+            action_kind="publish_owner_rework",
+            owner_snapshot_hash="b" * 64,
+            owner_bundle_hash="c" * 64,
+            dispatch_claim={
+                "identity": {
+                    "workspace": str(workspace.resolve()),
+                    "run_id": "factory-current",
+                    "completion_contract_hash": "a" * 64,
+                },
+                "action_id": action_char * 64,
+                "claim_id": claim_char * 64,
+                "attempt_ordinal": 1,
+            },
+            diagnostic=diagnostic,
+        )
+
+    old = service.prepare_same_task_local_rework(
+        command(action_char="d", claim_char="e", diagnostic_id="diagnostic-old")
+    )
+    current_one = service.prepare_same_task_local_rework(
+        command(action_char="f", claim_char="1", diagnostic_id="diagnostic-current")
+    )
+    current_two = service.prepare_same_task_local_rework(
+        command(action_char="2", claim_char="3", diagnostic_id="diagnostic-current")
+    )
+    current_three = service.prepare_same_task_local_rework(
+        command(action_char="4", claim_char="5", diagnostic_id="diagnostic-current")
+    )
+    current_four = service.prepare_same_task_local_rework(
+        command(action_char="6", claim_char="7", diagnostic_id="diagnostic-current")
+    )
+
+    assert old.ok is True
+    assert current_one.ok is True
+    assert current_two.ok is True
+    assert current_three.ok is True
+    assert current_three.rework_attempt == 3
+    assert current_four.ok is False
+    assert current_four.code == "same_task_local_rework_budget_exhausted"
+
+
+def test_same_task_local_rework_is_claimable_by_preexisting_service_instance(
+    tmp_path: Path,
+) -> None:
+    """A long-lived Director service must observe another service's reopen.
+
+    Factory quality rework and Director dispatch may hold distinct
+    ``TaskRuntimeService`` instances for the same workspace.  The Director
+    instance can therefore cache the terminal TaskBoard row before the quality
+    owner reopens it.  Claim authority must refresh that raw owner row before
+    comparing it with the terminal execution session; otherwise the persisted
+    ``pending`` row and execution fact are ignored and the retry is rejected as
+    ``task_terminal``.
+    """
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    quality_service = _create_bootstrapped_task_runtime_service(workspace)
+    owner = quality_service.ensure_task_row(external_task_id="TASK-1", subject="source owner")
+    owner_id = int(owner["id"])
+    assert (
+        quality_service.bind_task_to_factory_run(
+            BindRuntimeTaskToFactoryRunCommandV1(
+                workspace=str(workspace),
+                task_id=str(owner_id),
+                factory_run_id="factory-current",
+            )
+        ).ok
+        is True
+    )
+    claimed = quality_service.claim_execution(
+        owner_id,
+        worker_id="director-initial",
+        role_id="director",
+        run_id="director-initial",
+        external_task_id="TASK-1",
+    )
+    assert claimed["success"] is True
+    assert _settle_claimed_execution_attempt(
+        quality_service,
+        claimed,
+        outcome="completed",
+        summary="done",
+    )["success"]
+
+    # Construct Director after terminal settlement, but before QA reopens the
+    # row.  Its TaskBoard cache now holds the exact stale terminal row observed
+    # in the live L3-23 r19 failure.
+    director_service = TaskRuntimeService(str(workspace))
+
+    diagnostic = {
+        "diagnostic_id": "diagnostic-cross-service",
+        "obligation_id": "obligation-1",
+        "owner_task_id": "TASK-1",
+        "affected_target": "src/lib.rs",
+        "allowed_next_action": "run_deterministic_repair",
+        "required_verifier_ids": ["cargo.test"],
+    }
+    prepared = quality_service.prepare_same_task_local_rework(
+        PrepareSameTaskLocalReworkCommandV1(
+            schema_version=SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1,
+            workspace=str(workspace),
+            factory_run_id="factory-current",
+            external_task_id="TASK-1",
+            completion_contract_hash="a" * 64,
+            action_id="b" * 64,
+            diagnostic_id="diagnostic-cross-service",
+            obligation_id="obligation-1",
+            action_kind="run_deterministic_repair",
+            owner_snapshot_hash="c" * 64,
+            owner_bundle_hash="d" * 64,
+            dispatch_claim={
+                "identity": {
+                    "workspace": str(workspace.resolve()),
+                    "run_id": "factory-current",
+                    "completion_contract_hash": "a" * 64,
+                },
+                "action_id": "b" * 64,
+                "claim_id": "e" * 64,
+                "attempt_ordinal": 1,
+            },
+            diagnostic=diagnostic,
+        )
+    )
+    assert prepared.ok is True
+    assert prepared.reopened is True
+
+    retried = director_service.claim_execution(
+        owner_id,
+        worker_id="director-local-rework",
+        role_id="director",
+        run_id="director-local-rework",
+        external_task_id="TASK-1",
+    )
+
     assert retried["success"] is True
     assert retried["task"]["metadata"]["last_failure"] == diagnostic
 

@@ -1,0 +1,77 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-R27-DEFERRED-REPAIR-PREPARED-SUBSET-PARTITION",
+  "status": "FIXED_UNIT_VERIFIED_LIVE_REVALIDATION_PENDING",
+  "severity": "P0",
+  "owner_cell": "roles.kernel",
+  "factory_run_id": "factory_b3a0d4f469fa",
+  "workspace": "/tmp/factory-bench-l3-24-r27/workspaces/a489f6d8e18f-25c45d552531783a/L3-24-023d7314133040b6/db98c4d7e34a344be5ea1330",
+  "target_project_mutated_by_main_agent": false,
+  "symptom": {
+    "stage": "quality_gate_same_task_director_repair",
+    "error_type": "ValueError",
+    "error": "directed-effect dispatch and abort call ids must partition the prepared inventory",
+    "retry_scope": "same_director_task_only",
+    "pm_ce_restart_observed": false
+  },
+  "dynamic_evidence": {
+    "backend_log": "/home/dains/.polaris/instances/factory-bench-l3-24-r27-l3-24-run-a489f6d8e18f-8aea06bfc669292b/logs/backend.log:1412",
+    "parent_binding_id": "deo_parent_v1_21959b573e5f394c7502894189d8ffb5a8f5a3e9dc2d03c1",
+    "prepared_inventory_member_count": 2,
+    "prepared_call_ids": [
+      "deferred-repair-b848dba748088fbfe632a58e",
+      "deferred-repair-292d26ee92d21f1d79f8d3d7"
+    ],
+    "prepared_members_reached_effect_started": 0,
+    "prepared_members_aborted_by_rollover": 2,
+    "subsequent_parent_binding_id": "deo_parent_v1_7f53d85ffd188c0cc2533bc9908b65e360955cd5f7b71962",
+    "subsequent_parent_receipt_count": 2,
+    "terminal_run": {
+      "status": "failed",
+      "last_successful_stage": "director_dispatch",
+      "failed_stage": "quality_gate",
+      "same_task_repair_attempts": 3
+    }
+  },
+  "root_cause": {
+    "classification": "deferred_followup_partition_not_projected_to_policy_authorized_prepared_inventory",
+    "detail": "The authoritative policy guard soft-denies individual deferred repair members and TaskRuntime seals only authorized candidates into the DEO parent. The deferred follow-up executor nevertheless forwarded the original pre-policy forward/rollback call-id partition, bindings and dispatch batch to ToolBatchRuntime. The runtime correctly rejected that stale partition before any effect could execute.",
+    "not_root_causes": [
+      "weak model",
+      "missing PM contract",
+      "missing Chief Engineer blueprint",
+      "generated target project mutation by the main agent",
+      "ToolBatchRuntime partition invariant being too strict"
+    ]
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_executor_core.py",
+      "src/backend/polaris/cells/roles/kernel/tests/test_deferred_repair_followup.py"
+    ],
+    "behavior": "Project deferred forward ids, rollback ids, effect bindings, rollback activation and dispatch invocations onto the exact prepared DEO inventory. Preserve each forward/rollback repair pair atomically; a partially prepared pair fails closed with a specific audited error instead of leaking a generic partition ValueError.",
+    "preserved_guards": [
+      "ToolBatchRuntime still requires dispatch plus abort to exactly partition the authoritative prepared parent",
+      "forward and rollback call ids remain disjoint and unique",
+      "rollback activation remains bound to its prepared forward",
+      "policy-denied members never execute",
+      "target project remains read-only evidence"
+    ]
+  },
+  "verification": {
+    "red_test": "production-shaped two-repair follow-up failed because four original ids were passed to a two-member prepared parent",
+    "targeted_pytest": "38 passed",
+    "ruff": "pending final rerun",
+    "mypy": "passed",
+    "fresh_isolated_bench": "pending"
+  },
+  "remaining_exact_run_failure": {
+    "stage": "quality_gate",
+    "primary_compile_diagnostic": "C++17 rejects std::chrono::sys_days/year_month_day",
+    "missing_declared_files": [
+      "src/diary_entry.cpp",
+      "tests/test_cipher_engine.cpp"
+    ],
+    "next_debug_action": "Audit the exact same-task repair provider request, normalized edit arguments, policy denial evidence and post-repair verifier frontier before any additional platform edit."
+  }
+}

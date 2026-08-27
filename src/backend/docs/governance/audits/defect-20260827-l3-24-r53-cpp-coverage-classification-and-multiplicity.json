@@ -1,0 +1,75 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-R53-CPP-COVERAGE-CLASSIFICATION-AND-MULTIPLICITY",
+  "status": "FIX_IMPLEMENTED_EXACT_REPLAY_VERIFIED_FRESH_REVALIDATION_PENDING",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_c0070638f82f",
+  "workspace": "/tmp/factory-bench-l3-24-r53/workspaces/1cb82f9605a9-ea0d0651e8fe8363/L3-24-023d7314133040b6/9032e2782abbb5a20c00efda",
+  "generated_project_mutated": false,
+  "symptom": {
+    "factory_status": "QA_FAILED",
+    "responsible_cell": "director.runtime",
+    "retry_boundary": "same_director_task_repair_only",
+    "pm_ce_restart_allowed": false,
+    "compiler_error": "src/diary.cpp contained two distinct cipher_ undeclared occurrences",
+    "observed_coverage_before_fix": "only the first occurrence survived normalization and cpp.standard_include falsely matched because an enclosing function signature contained std::string"
+  },
+  "dynamic_evidence": {
+    "qa_workspace_validation": ".polaris/runtime/qa/workspace-validation.json",
+    "director_event_log": ".polaris/runtime/events/director.llm.events.jsonl",
+    "execution_event_log": ".polaris/runtime/events/execution.control_plane.jsonl",
+    "final_request_context_refs": [
+      "3fb690b6e2996aa0d23ea051",
+      "32c881e3fe8384b375b44c03"
+    ],
+    "tool_calls": {
+      "materialization_write_file": 13,
+      "repair_round_edit_file": [6, 2]
+    },
+    "candidate_behavior": [
+      "candidate edits were physically applied and verifier-tested",
+      "invalid candidates were rolled back",
+      "the tool transport was not the failure source"
+    ],
+    "exact_replay_after_fix": {
+      "total_diagnostics": 2,
+      "locations": [23, 45],
+      "matched_rule_ids": [[], []],
+      "coverage_status": ["coverage_gap", "coverage_gap"]
+    }
+  },
+  "root_causes": [
+    {
+      "code": "cpp_standard_include_raw_blob_false_positive",
+      "cause": "cpp.standard_include matched raw_terms=std:: against the complete compiler blob, so unrelated errors inside std::string function signatures falsely claimed missing-standard-include coverage."
+    },
+    {
+      "code": "cpp_multi_error_blob_first_occurrence_collapse",
+      "cause": "The generic C++ blob path called _normalize_one_error once; regex search retained only the first GCC/Clang location even when the same message occurred at multiple source lines."
+    }
+  ],
+  "fixes": [
+    {
+      "file": "src/backend/polaris/cells/director/runtime/internal/repair_kernel/registry/_rules_pre_typescript.py",
+      "change": "Match cpp.standard_include against the diagnostic message rather than unrelated source excerpts in the raw blob."
+    },
+    {
+      "file": "src/backend/polaris/cells/director/runtime/internal/repair_kernel/diagnostics.py",
+      "change": "Split multi-error GCC/Clang transcripts into one diagnostic per distinct path/line/column/message occurrence before stable-id deduplication."
+    },
+    {
+      "file": "src/backend/polaris/cells/director/runtime/tests/test_cpp_standard_compatibility_coverage.py",
+      "change": "Add exact r53 regressions for false std::string coverage and occurrence multiplicity."
+    }
+  ],
+  "validation": {
+    "targeted_tests": "4 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_r53_replay": "passed",
+    "fresh_isolated_bench": "pending r54",
+    "unrelated_current_head_failures": "Four JavaScript/npm coverage tests in test_repair_kernel_contract_3 fail independently; their inputs have zero C++ regex matches and are tracked separately."
+  },
+  "next_action": "Run fresh isolated L3-24 r54; dynamically inspect the first remaining causal frontier without modifying the generated project."
+}

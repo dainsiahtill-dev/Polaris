@@ -455,7 +455,7 @@ class DirectorPatchExecutor:
         from .helpers import low_quality_pattern_match
 
         for pattern in low_quality_patterns:
-            if low_quality_pattern_match(pattern, content):
+            if low_quality_pattern_match(pattern, content, rel_path=rel_path):
                 return f"{rel_path}:{pattern.pattern}", domain_hit, readable
         for pattern in patch_residue_patterns:
             if pattern.search(content):

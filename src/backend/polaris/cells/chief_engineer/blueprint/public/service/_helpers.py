@@ -155,10 +155,13 @@ def _ce_artifact_role_matches_path(
     allowed_source_suffixes: tuple[str, ...] = (),
 ) -> bool:
     if semantic_role == "test":
-        return _is_ce_test_topology_path(path) and _is_ce_source_topology_path(
-            path,
-            allowed_source_suffixes=allowed_source_suffixes,
-        )
+        # Test harnesses are allowed to use a different implementation language
+        # from the product (for example, Python unittest driving a C++ binary).
+        # PM path/scope authority is checked separately by the caller, so the
+        # product-language suffix fence must not reject an explicitly authorized
+        # cross-language verifier.  Keep the path test-shaped and require a known
+        # source suffix; production source/entrypoint roles remain language-bound.
+        return _is_ce_test_topology_path(path) and _is_ce_source_topology_path(path)
     if semantic_role in {"source", "entrypoint"}:
         return _is_ce_production_source_path(path, allowed_source_suffixes=allowed_source_suffixes)
     return True

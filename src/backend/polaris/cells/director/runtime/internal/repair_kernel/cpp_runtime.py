@@ -22,12 +22,14 @@ from .cpp_syntax import (
     CPP_POST_SOURCE_TOOL,
     CPP_STANDARD_INCLUDE_SOURCE_TOOL,
     CPP_STRUCT_GETTER_FIELD_ACCESS_SOURCE_TOOL,
+    CPP_USE_BEFORE_DEFINITION_SOURCE_TOOL,
     build_cpp_include_path_plan,
     build_cpp_missing_private_members_plan,
     build_cpp_placeholder_declaration_plan,
     build_cpp_post_plan,
     build_cpp_standard_include_plan,
     build_cpp_struct_getter_field_access_plan,
+    build_cpp_use_before_definition_plan,
 )
 from .diagnostics import normalize_artifact_quality_errors
 from .executor import EditFileFn, TransactionalRepairExecutor, WriteFileFn
@@ -107,6 +109,33 @@ class CppMissingPrivateMembersRun:
     """Internal execution result for C++ missing private member repairs."""
 
     planning: CppMissingPrivateMembersPlanning
+    ok: bool
+    execution_result: RepairExecutionResult | None = None
+    plan_decision: PolicyDecision | None = None
+    composition_decision: PolicyDecision | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class CppUseBeforeDefinitionPlanning:
+    """Internal planning result for C++ declaration-order repairs."""
+
+    diagnostics: tuple[RepairDiagnostic, ...]
+    plan: RepairPlan | None
+    composition: CompositionResult | None
+    advisor_notes: tuple[RepairAdvisorNote, ...] = ()
+
+    @property
+    def source_tool(self) -> str:
+        return self.plan.source_tool if self.plan is not None else CPP_USE_BEFORE_DEFINITION_SOURCE_TOOL
+
+
+@dataclass(frozen=True)
+class CppUseBeforeDefinitionRun:
+    """Internal execution result for C++ declaration-order repairs."""
+
+    planning: CppUseBeforeDefinitionPlanning
     ok: bool
     execution_result: RepairExecutionResult | None = None
     plan_decision: PolicyDecision | None = None
@@ -261,6 +290,30 @@ def plan_cpp_missing_private_members_repair(
         planner=build_cpp_missing_private_members_plan,
     )
     return CppMissingPrivateMembersPlanning(
+        diagnostics=planning.diagnostics,
+        plan=planning.plan,
+        composition=planning.composition,
+        advisor_notes=planning.advisor_notes,
+    )
+
+
+def plan_cpp_use_before_definition_repair(
+    *,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> CppUseBeforeDefinitionPlanning:
+    """Plan safe C++ same-translation-unit forward declarations."""
+
+    planning = _plan_cpp_repair(
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+        planner=build_cpp_use_before_definition_plan,
+    )
+    return CppUseBeforeDefinitionPlanning(
         diagnostics=planning.diagnostics,
         plan=planning.plan,
         composition=planning.composition,
@@ -518,6 +571,42 @@ def run_cpp_missing_private_members_repair(
     )
 
 
+def run_cpp_use_before_definition_repair(
+    *,
+    workspace: str | Path,
+    base_files: Mapping[str, str],
+    artifact_quality_errors: Sequence[str],
+    writer: WriteFileFn,
+    editor: EditFileFn | None = None,
+    allowed_paths: Sequence[str] | None = None,
+    advisor_notes: Sequence[RepairAdvisorNote] | None = None,
+    mode: str = "commit",
+) -> CppUseBeforeDefinitionRun:
+    """Run C++ declaration-order repair through Plan→Compose→Policy→Execute."""
+
+    normalized_base = _normalize_base_files(base_files)
+    planning = plan_cpp_use_before_definition_repair(
+        base_files=normalized_base,
+        artifact_quality_errors=artifact_quality_errors,
+        advisor_notes=advisor_notes,
+        mode=mode,
+    )
+    return cast(
+        CppUseBeforeDefinitionRun,
+        _run_cpp_repair(
+            workspace=workspace,
+            normalized_base=normalized_base,
+            planning=planning,
+            writer=writer,
+            editor=editor,
+            allowed_paths=allowed_paths,
+            not_planned_message="No safe C++ use-before-definition repair plan.",
+            composition_missing_message="C++ use-before-definition repair composition was not produced.",
+            run_cls=CppUseBeforeDefinitionRun,
+        ),
+    )
+
+
 def run_cpp_struct_getter_field_access_repair(
     *,
     workspace: str | Path,
@@ -682,16 +771,20 @@ __all__ = [
     "CppStandardIncludeRun",
     "CppStructGetterFieldAccessPlanning",
     "CppStructGetterFieldAccessRun",
+    "CppUseBeforeDefinitionPlanning",
+    "CppUseBeforeDefinitionRun",
     "plan_cpp_include_path_repair",
     "plan_cpp_missing_private_members_repair",
     "plan_cpp_placeholder_declaration_repair",
     "plan_cpp_post_repair",
     "plan_cpp_standard_include_repair",
     "plan_cpp_struct_getter_field_access_repair",
+    "plan_cpp_use_before_definition_repair",
     "run_cpp_include_path_repair",
     "run_cpp_missing_private_members_repair",
     "run_cpp_placeholder_declaration_repair",
     "run_cpp_post_repair",
     "run_cpp_standard_include_repair",
     "run_cpp_struct_getter_field_access_repair",
+    "run_cpp_use_before_definition_repair",
 ]

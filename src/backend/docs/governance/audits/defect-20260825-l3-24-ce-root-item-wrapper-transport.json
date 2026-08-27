@@ -1,0 +1,68 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-CE-ROOT-ITEM-WRAPPER-TRANSPORT",
+  "status": "CLOSED_LIVE",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_5cfa85633c66",
+  "workspace": "/tmp/factory-bench-l3-24-r05/workspaces/643c86c64bf2-6728464ea95d23b7/L3-24-023d7314133040b6/b8f25c45e271796f05b0f2d1",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "chief_engineer.llm_review_failed",
+    "physical_provider_result": "semantic patch request completed with one native submit_structured_role_output tool call",
+    "strict_transport_result": "structured_output_payload_schema_mismatch:$:Additional properties are not allowed ('item' was unexpected)",
+    "factory_result": "0/2 blueprints; Director was never reached"
+  },
+  "dynamic_evidence": {
+    "context_snapshot_ref": "3eb66964dd3eb27c6ca60ad9",
+    "call_id": "74144d9d72a24f6f9636cf90c212fc6f",
+    "provider_tool_call_id": "call_2137791aafc34c838be6fd",
+    "provider_args_hash": "0024a30a3a0d75895efe51eb1aa7264aba343fcac5536c95c9325eb47f3fa56a",
+    "final_request_role": "chief_engineer",
+    "final_request_tool": "submit_structured_role_output",
+    "final_request_schema": "chief_engineer_semantic_repair_patch",
+    "final_request_context_audit": "passed",
+    "provider_completion_tokens": 755,
+    "provider_tool_calls": 1,
+    "provider_tool_errors": 0,
+    "strict_validator_unknown_root_shape": {
+      "item": "dict"
+    },
+    "candidate_ref": ".polaris/runtime/state/blueprints/semantic-repair/L3-24/factory_5cfa85633c66/a1e2adc5a1a0b7fb5cda4ae0deee63bd2c697eee2da43013badd786e73b42f79.json",
+    "redaction_boundary": "raw provider args were redacted; the retained strict-validator shape and native-call evidence prove a single unexpected root item member, not its original bytes"
+  },
+  "root_causes": [
+    {
+      "code": "schema_proven_root_item_wrapper_not_normalized",
+      "detail": "The transport normalized provider item/items envelopes only for array-typed fields. A strict provider serialized the entire closed-object CE semantic patch as one root item envelope; strict JSON Schema validation rejected protocol noise before semantic composition."
+    }
+  ],
+  "fixes": [
+    {
+      "file": "src/backend/polaris/cells/roles/kernel/internal/structured_output_transport.py",
+      "change": "Add root-only schema-proven item/items envelope recovery for closed object schemas that do not declare either wrapper key. Preserve nested-object fail-closed behavior and require final strict schema validation."
+    },
+    {
+      "file": "src/backend/polaris/cells/roles/kernel/tests/test_structured_output_transport.py",
+      "change": "Add exact CE semantic patch regression plus sibling-key and schema-owned-item safety cases."
+    }
+  ],
+  "verification": {
+    "tdd_red": "exact regression failed with the r05 Additional properties ('item' was unexpected error",
+    "transport_suite": "48 passed",
+    "chief_engineer_semantic_repair_suite": "67 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_retry": "fresh isolated L3-24 r06 factory_dd4c02efc25d accepted the final semantic patch through strict transport; no root item schema mismatch recurred"
+  },
+  "safety": {
+    "target_project_modified": false,
+    "root_only": true,
+    "closed_object_schema_required": true,
+    "wrapper_must_be_only_root_member": true,
+    "schema_declared_item_property_preserved": true,
+    "nested_object_wrapper_behavior": "unchanged and fail-closed",
+    "final_strict_schema_validation_required": true
+  },
+  "next_action": "Closed. Track the independent r06 delivery-depth deficit projection defect separately."
+}

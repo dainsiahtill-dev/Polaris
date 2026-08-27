@@ -1,0 +1,43 @@
+{
+  "defect_id": "l3-24-r66-cpp-runtime-symbol-callsite-owner",
+  "status": "closed",
+  "severity": "P0",
+  "scope": "polaris_platform",
+  "exact_run": {
+    "factory_run_id": "factory_308086628a50",
+    "project_id": "L3-24",
+    "workspace": "/tmp/factory-bench-l3-24-r62/workspaces/20a2c7aac706-7f3d362e2e3b5856/L3-24-023d7314133040b6/efd1cd44d948a70e8f2ea082",
+    "diagnosis_attempt": "r66",
+    "live_validation_attempt": "r67"
+  },
+  "symptom": "A Python unittest wrapper reported two C++ runtime assertion failures for Moonlight::phase_from_date and Moonlight::days_since_1900, but Director quality repair authorized the unrelated first changed production file src/inkwell/cipher.cpp.",
+  "dynamic_evidence": [
+    "The exact r66 workspace-validation residual contained only Moonlight::phase_from_date and Moonlight::days_since_1900 assertion failures.",
+    "Calling the current public causal-target resolver against that exact persisted residual returned tests/cpp_unit.cpp followed by src/inkwell/cipher.cpp and the broad changed-file frontier.",
+    "Calling _cpp_runtime_qualified_symbol_owner_target_files against the exact same residual returned an empty list even though src/inkwell/moonlight.cpp contains the qualified definition.",
+    "Instrumented helper inputs showed that tests/cpp_unit.cpp and src/inkwell/moonlight.cpp both contained the same qualified symbol text; the helper treated the test call-site as a second product owner and rejected the definition as ambiguous.",
+    "After the fix, the exact resolver returned tests/cpp_unit.cpp plus src/inkwell/moonlight.cpp, and Factory's production-owner filter returned only src/inkwell/moonlight.cpp.",
+    "r67 context snapshots 3b0669cf25511c3525c2231b and 886a4f6fc0a13c8dce1a4679 prove the real final provider request carried claim_hint_target_files, authorized_target_files, and repair target_files equal to only src/inkwell/moonlight.cpp, with its current UTF-8 body present.",
+    "r67 produced three physical edit_file effects on src/inkwell/moonlight.cpp. Candidate guards revalidated the exact unittest, classified every candidate as stagnant, restored the file hashes, and stopped at the three-nonprogress fuse. No candidate drifted to cipher.cpp."
+  ],
+  "root_cause": "The qualified-symbol owner resolver searched test translation units together with production C/C++ sources. A test call expression and its product definition therefore became two textual owners; the unique-owner guard failed and routing fell back to changed-file order.",
+  "fix": {
+    "source": "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_language_targets.py",
+    "tests": "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_quality_repair_b.py",
+    "invariant": "Runtime qualified-symbol product-owner discovery excludes test-like C/C++ translation units. Compiler diagnostics retain their separate exact test-owner route."
+  },
+  "verification": {
+    "focused_red_green": "new regression failed before the source fix and passed after it",
+    "director_quality_suite": "64 passed in 15.05s",
+    "factory_candidate_suite": "110 passed in 53.65s",
+    "ruff_production_sources": "passed",
+    "mypy_production_sources": "passed",
+    "live_r67": "real provider scope and all three physical edits stayed on src/inkwell/moonlight.cpp; candidate rollback and hard fuse remained fail-closed"
+  },
+  "target_project_modified": false,
+  "residual": {
+    "status": "open_separate_root_cause",
+    "classification": "semantic_quality_repair_stagnation",
+    "description": "Owner routing and mutation/rollback accounting are now correct. MiniMax-M3 identified the Moonlight failure but emitted three incorrect date/phase edits; the edit-only repair surface provided no dynamic probe tool. A separate design must prove whether a bounded read-only diagnostic-probe subturn improves semantic convergence without restoring read-only repair loops."
+  }
+}

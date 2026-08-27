@@ -981,7 +981,10 @@ async def test_failed_claim_retries_same_action_id_with_new_claim(tmp_path: Path
     assert len(port.effects) == 1
     events = await store.get_events(second.workflow_id)
     claims = [event for event in events if event.event_type == "project_completion.dispatch_claimed.v1"]
+    failed = next(event for event in events if event.event_type == "project_completion.action_dispatch_failed.v1")
     assert [event.payload["attempt_ordinal"] for event in claims] == [1, 2]
+    assert failed.payload["error_type"] == "RuntimeError"
+    assert failed.payload["error_message"] == "transient"
 
 
 @pytest.mark.asyncio

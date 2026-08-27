@@ -79,6 +79,29 @@ _TEST_SUMMARY_FAIL_RE: Any
 _is_generated_quality_repair_target: Any
 _is_typescript_command_config_path: Any
 
+_RUST_FAILED_TEST_NAME_RE = re.compile(r"(?m)^----\s+(?P<name>[A-Za-z_]\w*)\s+stdout\s+----$")
+_RUST_BEHAVIOR_TYPE_RE = re.compile(r"\b[A-Z][A-Za-z0-9_]*\b")
+_RUST_BEHAVIOR_TYPE_DEFINITION_RE = re.compile(
+    r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait|type)\s+(?P<name>[A-Z][A-Za-z0-9_]*)\b"
+)
+_CPP_RUNTIME_QUALIFIED_SYMBOL_RE = re.compile(
+    r"\b(?P<type>[A-Z][A-Za-z0-9_]*)\s*::\s*(?P<member>[A-Za-z_][A-Za-z0-9_]*)\b"
+)
+_CPP_IMPLEMENTATION_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"})
+
+
+def _is_test_like_cpp_path(rel_path: str) -> bool:
+    """Return whether a C/C++ path is an observing test, not a product owner."""
+
+    normalized = str(rel_path or "").replace("\\", "/").lower()
+    name = Path(normalized).name
+    stem = Path(name).stem
+    return Path(name).suffix in _CPP_IMPLEMENTATION_SUFFIXES and (
+        "/tests/" in f"/{normalized.lstrip('/')}"
+        or stem.startswith("test_")
+        or stem.endswith(("_test", "_tests", "_spec"))
+    )
+
 
 def _python_runtime_smoke_repair_target_files(
     *,
@@ -107,7 +130,16 @@ def _python_runtime_smoke_repair_target_files(
         if not _looks_like_python_runtime_smoke_quality_error(text):
             continue
         if workspace_root is not None and workspace_root.is_dir() and _looks_like_python_test_behavior_failure(text):
-            symbol_owner_targets = _python_test_failure_symbol_owner_target_files(text, workspace_root)
+            symbol_owner_targets = _dedupe_preserve_order(
+                [
+                    *_python_test_failure_symbol_owner_target_files(text, workspace_root),
+                    *_python_test_failure_cross_language_owner_target_files(
+                        text,
+                        changed_files=changed_files,
+                        workspace_root=workspace_root,
+                    ),
+                ]
+            )
             targets.extend(_embedded_rust_compile_repair_target_files(text, workspace_root))
             if _looks_like_python_missing_module_failure(text):
                 targets.extend(
@@ -122,8 +154,6 @@ def _python_runtime_smoke_repair_target_files(
             if cli_subcommand_failure:
                 entrypoints = _workspace_cli_entrypoint_repair_target_files(workspace_root)
                 targets.extend(entrypoints or _changed_source_repair_target_files(changed_files, workspace_root))
-            if not regex_source_failure and not cli_subcommand_failure:
-                targets.extend(_python_test_harness_changed_source_target_files(text, changed_files, workspace_root))
             failed_test_targets = _python_unittest_failure_test_target_files(text, workspace_root)
             symbol_owners_cover_failures = bool(symbol_owner_targets) and len(symbol_owner_targets) >= max(
                 1, len(failed_test_targets)
@@ -131,6 +161,14 @@ def _python_runtime_smoke_repair_target_files(
             if symbol_owners_cover_failures:
                 targets.extend(symbol_owner_targets)
             else:
+                if not regex_source_failure and not cli_subcommand_failure:
+                    targets.extend(
+                        _python_test_harness_changed_source_target_files(
+                            text,
+                            changed_files,
+                            workspace_root,
+                        )
+                    )
                 for rel in failed_test_targets:
                     targets.extend(
                         _python_runtime_smoke_imported_source_target_files(
@@ -220,6 +258,115 @@ def _looks_like_embedded_rust_compile_failure(text: str) -> bool:
     return "error[" in lowered or ".rs:" in lowered or "could not compile" in lowered
 
 
+def _rust_test_function_body(source: str, test_name: str) -> str:
+    """Return one Rust test body using a bounded brace scan."""
+
+    signature = re.search(
+        rf"(?m)^\s*(?:pub\s+)?fn\s+{re.escape(test_name)}\s*\([^)]*\)[^{{]*\{{",
+        source,
+    )
+    if signature is None:
+        return ""
+    brace_start = source.find("{", signature.start())
+    if brace_start < 0:
+        return ""
+    depth = 0
+    for index in range(brace_start, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[brace_start + 1 : index]
+    return ""
+
+
+def _rust_test_behavior_repair_target_files(
+    *,
+    artifact_quality_errors: list[str],
+    changed_files: list[str],
+    workspace_full: str,
+) -> list[str]:
+    """Resolve a Rust behavioral test failure to one unambiguous source module.
+
+    Cargo assertion output names the observing integration test, not the module
+    that owns the behavior. Use failed test names plus referenced Rust types to
+    identify one existing production module. Ambiguity remains fail-closed;
+    TaskRuntime/JobToken still supplies the later mutation authority.
+    """
+
+    workspace_root = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
+    if workspace_root is None or not workspace_root.is_dir():
+        return []
+    diagnostic_blob = "\n".join(str(item or "") for item in artifact_quality_errors)
+    failed_names = _dedupe_preserve_order(
+        [str(match.group("name") or "") for match in _RUST_FAILED_TEST_NAME_RE.finditer(diagnostic_blob)]
+    )
+    if not failed_names:
+        return []
+    test_paths = _dedupe_preserve_order(
+        [
+            rel
+            for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(diagnostic_blob)
+            if (rel := _normalize_declared_task_path(str(match.group("path") or ""))).endswith(".rs")
+            and (rel.startswith("tests/") or "/tests/" in rel)
+            and _workspace_path_exists_case_insensitive(workspace_root, rel)
+        ]
+    )
+    if not test_paths:
+        return []
+
+    referenced_types: list[str] = []
+    for rel in test_paths:
+        try:
+            source = (workspace_root / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for test_name in failed_names:
+            body = _rust_test_function_body(source, test_name)
+            referenced_types.extend(_RUST_BEHAVIOR_TYPE_RE.findall(body))
+    referenced_type_set = set(referenced_types)
+    if not referenced_type_set:
+        return []
+
+    changed_sources = _dedupe_preserve_order(
+        [
+            rel
+            for item in changed_files
+            if (rel := _normalize_declared_task_path(str(item or ""))).endswith(".rs")
+            and not rel.startswith("tests/")
+            and "/tests/" not in rel
+            and _workspace_path_exists_case_insensitive(workspace_root, rel)
+        ]
+    )
+    owner_paths: list[str] = []
+    for rel in changed_sources:
+        try:
+            source = (workspace_root / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        defined_types = {str(match.group("name") or "") for match in _RUST_BEHAVIOR_TYPE_DEFINITION_RE.finditer(source)}
+        if defined_types.intersection(referenced_type_set):
+            owner_paths.append(rel)
+    owner_paths = _dedupe_preserve_order(owner_paths)
+    if not owner_paths:
+        return []
+
+    title_tokens = {token for name in failed_names for token in name.casefold().split("_") if token}
+    title_matched = [
+        rel
+        for rel in owner_paths
+        if (Path(rel).stem.casefold() if Path(rel).name != "mod.rs" else Path(rel).parent.name.casefold())
+        in title_tokens
+    ]
+    if len(title_matched) == 1:
+        return title_matched
+    if len(owner_paths) == 1:
+        return owner_paths
+    return []
+
+
 def _looks_like_embedded_cpp_compile_failure(text: str) -> bool:
     lowered = str(text or "").lower()
     if "error:" in lowered and re.search(r"\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx):\d+", lowered):
@@ -261,28 +408,90 @@ def _workspace_relative_cpp_repair_target(raw_path: str, workspace_root: Path) -
     return rel
 
 
+def _cpp_undefined_reference_declaration_target_files(text: str, workspace_root: Path) -> list[str]:
+    """Map linker-only undefined references to unique existing header owners.
+
+    Linker output names object-file use sites, not the public declaration that
+    owns a missing definition.  Expose only unambiguous existing declaration
+    homes; the later TaskRuntime/JobToken partition remains authoritative and
+    rejects headers owned by another task.
+    """
+
+    blob = str(text or "")
+    if "undefined reference" not in blob.lower():
+        return []
+    symbol_names = _dedupe_preserve_order(
+        [
+            str(match.group("symbol") or "")
+            for match in re.finditer(
+                r"undefined reference to\s+[`'‘’\"](?:[A-Za-z_]\w*::)*(?P<symbol>[A-Za-z_]\w*)\s*\(",
+                blob,
+                flags=re.IGNORECASE,
+            )
+            if str(match.group("symbol") or "")
+        ]
+    )
+    if not symbol_names:
+        return []
+
+    ignored = {"build", "cmake-build", ".polaris", "runtime", "out", "target"}
+    header_suffixes = {".h", ".hh", ".hpp", ".hxx"}
+    try:
+        header_paths = sorted(
+            (
+                path
+                for path in workspace_root.rglob("*")
+                if path.is_file()
+                and path.suffix.lower() in header_suffixes
+                and not any(part in ignored for part in path.parts)
+            ),
+            key=lambda path: path.as_posix(),
+        )
+    except OSError:
+        return []
+
+    owners: list[str] = []
+    for symbol_name in symbol_names:
+        declaration_re = re.compile(rf"\b{re.escape(symbol_name)}\s*\(")
+        matches: list[str] = []
+        for path in header_paths:
+            try:
+                source = path.read_text(encoding="utf-8")
+                rel = path.resolve().relative_to(workspace_root.resolve()).as_posix()
+            except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+                continue
+            if declaration_re.search(source):
+                matches.append(rel)
+        unique_matches = _dedupe_preserve_order(matches)
+        if len(unique_matches) == 1:
+            owners.extend(unique_matches)
+    return _dedupe_preserve_order(owners)[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT]
+
+
 def _embedded_cpp_compile_repair_target_files(text: str, workspace_root: Path) -> list[str]:
-    """Return first g++ ``path:line: error:`` site per diagnostic (use site)."""
+    """Return concrete g++ ``path:line: error:`` sites from the diagnostic."""
 
     if not _looks_like_embedded_cpp_compile_failure(text):
         return []
     targets: list[str] = []
     blob = str(text or "")
-    blocks = re.split(
-        r"(?=(?:[A-Za-z]:)?[^\s:'\"]+\.(?:c|cc|cpp|cxx|h|hh|hpp|hxx):\d+(?::\d+)?:\s+error:)",
-        blob,
-        flags=re.IGNORECASE,
-    )
-    if len(blocks) <= 1:
-        blocks = [blob]
-    for block in blocks:
-        match = _CPP_ERROR_USE_SITE_RE.search(block)
-        if match is None:
-            continue
+    # Do not split on a zero-width lookahead here.  ``re.split`` evaluates the
+    # lookahead at every character that can begin a suffix matching the full
+    # diagnostic, so ``include/pkg/moon_phase.hpp`` was fragmented into
+    # one-character blocks and finally parsed as the nonexistent ``e.hpp``.
+    # Iterate the already-bounded diagnostic-site regex instead; each match is
+    # a complete causal path and preserves headers as first-class repair
+    # targets.
+    for match in _CPP_ERROR_USE_SITE_RE.finditer(blob):
         rel = _workspace_relative_cpp_repair_target(str(match.group("path") or ""), workspace_root)
         if rel:
             targets.append(rel)
     if "undefined reference" in blob.lower():
+        # Declaration homes own the missing-definition contract.  Put them
+        # before object-file callers so a bounded Factory claim may identify
+        # the task with one path without collapsing mutation intent onto a
+        # use-site that cannot define the absent public symbol.
+        targets.extend(_cpp_undefined_reference_declaration_target_files(blob, workspace_root))
         stems: list[str] = []
         for match in re.finditer(
             r"(?:(?P<obj>[A-Za-z_][\w-]*)\.cpp\.o|(?P<file>[A-Za-z_][\w-]*\.cpp):)",
@@ -317,11 +526,17 @@ def _embedded_cpp_compile_repair_target_files(text: str, workspace_root: Path) -
 
 
 def _cpp_cmake_lists_repair_target_files(text: str, workspace_root: Path) -> list[str]:
-    """Return existing any-case CMake lists when official basename is missing.
+    """Return the CMake manifest that owns a failing source-list contract.
 
     Live L2-15: quality emitted ``cmakelists.txt:1:1: error: official
     CMakeLists.txt basename required``. ``.txt`` is not a semantic source
     suffix, so the docs owner never entered repair_target_files.
+
+    Live L3-24 r27: the existing manifest referenced absent, undeclared source
+    files.  QA retained ``CMake Error at CMakeLists.txt`` plus ``Cannot find
+    source file``, but causal owner discovery returned no manifest.  The absent
+    path cannot be written outside CE/JobToken scope; the manifest is the legal
+    owner that can reconcile its declared source list.
     """
 
     lowered = str(text or "").lower()
@@ -337,6 +552,8 @@ def _cpp_cmake_lists_repair_target_files(text: str, workspace_root: Path) -> lis
             "official leftover cmake requires target_include_directories",
             "forbids generated linker-bridge",
             "file(write)/target_sources binary_dir",
+            "cannot find source file",
+            "no sources given to target",
         )
     ):
         return []
@@ -388,7 +605,9 @@ def _workspace_rust_source_repair_target_files(workspace_root: Path) -> list[str
 
 
 _GO_RUN_COMMAND_TARGET_RE = re.compile(r"(?:^|[\s(>])go\s+run\s+(?P<target>(?!-)[^\s'\"\n]+)")
-_GO_COMPILE_PATH_RE = re.compile(r"(?P<path>(?:[A-Za-z]:)?[^\s:()'\"\n]+?\.go):\d+:\d+")
+_GO_COMPILE_PATH_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z]:)?[^\s:()'\"\n]+?\.go):(?P<line>\d+):(?P<column>\d+):"
+)
 _GO_MISSING_MEMBER_TYPE_RE = re.compile(
     r"type\s+\*?(?:(?P<package_name>[A-Za-z_][A-Za-z0-9_]*)\.)?"
     r"(?P<type_name>[A-Za-z_][A-Za-z0-9_]*)\s+has\s+no\s+field\s+or\s+method",
@@ -546,9 +765,7 @@ def _go_test_behavior_repair_target_files(
     workspace_root: Path,
 ) -> list[str]:
     lowered = str(text or "").lower()
-    commandless_test_output = bool(
-        "--- fail:" in lowered and _GO_TEST_ASSERTION_LOCATION_RE.search(str(text or ""))
-    )
+    commandless_test_output = bool("--- fail:" in lowered and _GO_TEST_ASSERTION_LOCATION_RE.search(str(text or "")))
     if "--- fail:" not in lowered or ("go test" not in lowered and not commandless_test_output):
         return []
 
@@ -575,7 +792,15 @@ def _go_test_behavior_repair_target_files(
         production_files=production_files,
         workspace_root=workspace_root,
     )
-    if package_sources:
+    root_level_integration_test = any(
+        Path(test_rel).parent == Path(".")
+        and Path(test_rel).name.casefold()
+        == Path(_normalize_declared_task_path(str(match.group("path") or ""))).name.casefold()
+        for match in _GO_TEST_ASSERTION_FILE_RE.finditer(str(text or ""))
+        for test_rel in changed_files
+        if Path(test_rel).name.endswith("_test.go")
+    )
+    if package_sources and not root_level_integration_test:
         return package_sources
 
     matched: list[str] = []
@@ -584,7 +809,7 @@ def _go_test_behavior_repair_target_files(
         if tokens:
             matched.extend(_go_production_files_matching_tokens(production_files, tokens))
 
-    return _dedupe_preserve_order([*matched, *production_files])
+    return _dedupe_preserve_order([*matched, *package_sources, *production_files])
 
 
 def _go_assertion_package_source_files(
@@ -611,9 +836,14 @@ def _go_assertion_package_source_files(
         package_dir = Path(candidates[0]).parent
         # Root-level integration tests commonly exercise imported internal
         # packages; their test-title tokens remain the stronger causal clue.
-        # Package-local tests under a subdirectory own a concrete Go package
-        # and can safely rank that package's production files.
+        # An exact root-level ``name_test.go -> name.go`` companion is still an
+        # unambiguous production owner, so preserve it before falling back to
+        # title-token inference. Package-local tests under a subdirectory own
+        # a concrete Go package and can safely rank that package's sources.
         if package_dir == Path("."):
+            companion = Path(candidates[0]).name.removesuffix("_test.go") + ".go"
+            if companion in production_files and _workspace_path_exists_case_insensitive(workspace_root, companion):
+                targets.append(companion)
             continue
         for rel in production_files:
             if Path(rel).parent != package_dir:
@@ -976,6 +1206,22 @@ def _looks_like_python_runtime_smoke_quality_error(text: str) -> bool:
     token = str(text or "").lower()
     if "python runtime smoke" in token:
         return True
+    # Workspace validation normalizes unittest output into one durable block
+    # per failed test.  Those blocks intentionally omit the outer command
+    # wrapper, but retain the unittest result row, an in-workspace traceback,
+    # and the concrete exception.  Treat that schema-preserving normalized
+    # form as runtime evidence; path existence and JobToken scope are still
+    # checked before any later mutation authority is granted.  Live L3-24 r22
+    # otherwise collapsed a cross-language Python-harness/C++-product failure
+    # onto the observer test for every repair round.
+    normalized_unittest_block = bool(
+        re.search(r"(?m)^\s*(?:fail|error):\s+", token)
+        and "traceback (most recent call last)" in token
+        and any(hint in token for hint in ("assertionerror", "typeerror", "attributeerror"))
+        and _PYTHON_TRACEBACK_FILE_RE.search(str(text or ""))
+    )
+    if normalized_unittest_block:
+        return True
     python_runtime_anchor = bool(
         re.search(r"(?:^|[\s(>])(?:\S*/)?pytest(?:\s|$)", token)
         or re.search(r"(?:^|[\s(>])unittest(?:\s|$)", token)
@@ -1040,6 +1286,35 @@ _SOURCE_REPAIR_EXTENSIONS: frozenset[str] = frozenset(
 
 
 _CLI_ENTRYPOINT_REPAIR_CANDIDATES: tuple[str, ...] = (
+    # CLI behavior failures are not limited to script-language entrypoints.
+    # Prefer the command parser/orchestrator before the thin ``main`` wrapper
+    # for compiled C/C++ projects.  Without these candidates a Python unittest
+    # harness around a C++ CLI fell back to every changed source file, leaving
+    # Factory unable to localize an ``unknown subcommand`` failure (L3-24 r24).
+    "src/cli.cpp",
+    "cli.cpp",
+    "app/cli.cpp",
+    "src/main.cpp",
+    "main.cpp",
+    "app/main.cpp",
+    "src/cli.cc",
+    "cli.cc",
+    "app/cli.cc",
+    "src/main.cc",
+    "main.cc",
+    "app/main.cc",
+    "src/cli.cxx",
+    "cli.cxx",
+    "app/cli.cxx",
+    "src/main.cxx",
+    "main.cxx",
+    "app/main.cxx",
+    "src/cli.c",
+    "cli.c",
+    "app/cli.c",
+    "src/main.c",
+    "main.c",
+    "app/main.c",
     "src/main.rs",
     "main.rs",
     "src/main.py",
@@ -1308,6 +1583,132 @@ def _python_test_failure_symbol_owner_target_files(text: str, workspace_root: Pa
     return _dedupe_preserve_order(targets)
 
 
+def _python_test_file_uses_subprocess(test_path: Path) -> bool:
+    """Prove that a Python test observes an external executable."""
+
+    try:
+        if test_path.stat().st_size > 512_000:
+            return False
+        tree = ast.parse(test_path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, SyntaxError, UnicodeDecodeError, ValueError):
+        return False
+    subprocess_aliases = {
+        alias.asname or alias.name
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name == "subprocess"
+    }
+    direct_subprocess_calls = {
+        alias.asname or alias.name
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.module == "subprocess"
+        for alias in node.names
+        if alias.name in {"call", "check_call", "check_output", "Popen", "run"}
+    }
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name) and node.func.id in direct_subprocess_calls:
+            return True
+        if (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in subprocess_aliases
+            and node.func.attr in {"call", "check_call", "check_output", "Popen", "run"}
+        ):
+            return True
+    return False
+
+
+def _cpp_runtime_qualified_symbol_owner_target_files(
+    text: str,
+    *,
+    changed_files: list[str],
+    workspace_root: Path,
+) -> list[str]:
+    """Map runtime ``Type::method`` evidence to unique C/C++ definitions."""
+
+    symbols = _dedupe_preserve_order(
+        [
+            f"{match.group('type')}::{match.group('member')}"
+            for match in _CPP_RUNTIME_QUALIFIED_SYMBOL_RE.finditer(str(text or ""))
+        ]
+    )
+    if not symbols:
+        return []
+    candidate_paths: list[tuple[str, Path]] = []
+    for item in changed_files:
+        rel = _normalize_declared_task_path(str(item or ""))
+        if not rel or Path(rel).suffix.casefold() not in _CPP_IMPLEMENTATION_SUFFIXES:
+            continue
+        # A runtime assertion commonly repeats the exact qualified call that
+        # failed.  Counting that use-site as a second ``Type::method`` owner
+        # makes the actual product definition look ambiguous and degrades to
+        # broad changed-file order.  Live L3-24 r66 then authorized only
+        # ``cipher.cpp`` even though both failures named Moonlight methods.
+        # Test translation units are read-only observers for this resolver;
+        # compiler diagnostics still route to them through the separate exact
+        # compiler-owner path.
+        if _is_test_like_cpp_path(rel):
+            continue
+        if _is_generated_quality_repair_target(rel, workspace_root):
+            continue
+        path = workspace_root / rel
+        if path.is_file():
+            candidate_paths.append((rel, path))
+
+    targets: list[str] = []
+    for symbol in symbols:
+        owner_pattern = re.compile(rf"\b{re.escape(symbol)}\s*\(")
+        owners: list[str] = []
+        for rel, path in candidate_paths:
+            try:
+                if path.stat().st_size > 512_000:
+                    continue
+                source = path.read_text(encoding="utf-8")
+            except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+                continue
+            if owner_pattern.search(source):
+                owners.append(rel)
+        unique_owners = _dedupe_preserve_order(owners)
+        if len(unique_owners) == 1:
+            targets.extend(unique_owners)
+    return _dedupe_preserve_order(targets)
+
+
+def _python_test_failure_cross_language_owner_target_files(
+    text: str,
+    *,
+    changed_files: list[str],
+    workspace_root: Path,
+) -> list[str]:
+    """Resolve a Python observer onto proven native CLI implementation owners."""
+
+    if not _looks_like_python_test_behavior_failure(text):
+        return []
+    test_targets = _dedupe_preserve_order(
+        [
+            *_python_unittest_failure_test_target_files(text, workspace_root),
+            *[
+                rel
+                for rel in _python_runtime_smoke_traceback_repair_target_files(text, workspace_root)
+                if _is_test_like_python_path(rel)
+            ],
+        ]
+    )
+    observes_external_cli = any(
+        _python_test_file_uses_subprocess(workspace_root / rel) for rel in test_targets
+    )
+    entrypoints = _workspace_cli_entrypoint_repair_target_files(workspace_root) if observes_external_cli else []
+    qualified_owners = _cpp_runtime_qualified_symbol_owner_target_files(
+        text,
+        changed_files=changed_files,
+        workspace_root=workspace_root,
+    )
+    return _dedupe_preserve_order([*entrypoints, *qualified_owners])
+
+
 def _python_runtime_smoke_missing_module_source_targets(text: str, workspace_root: Path) -> list[str]:
     """Infer missing import-root Python module targets from traceback text."""
 
@@ -1480,6 +1881,11 @@ _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS: tuple[str, ...] = (
     "official leftover cmake requires target_include_directories",
     "forbids generated linker-bridge",
     "file(write)/target_sources binary_dir",
+    # CMake source-list failures are owned by the existing manifest.  The
+    # missing path may be outside CE/JobToken scope; routing the manifest lets
+    # Director reconcile the legal source list without fabricating authority.
+    "cannot find source file",
+    "no sources given to target",
     # javac diagnostics (L1-07 Java projects).
     "cannot find symbol",
 )
@@ -1599,7 +2005,11 @@ def _explicit_artifact_quality_repair_target_files(
     """Return explicit failing artifact paths from syntax/format quality errors."""
 
     joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
-    if not any(hint in joined_errors for hint in _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS):
+    has_explicit_hint = any(hint in joined_errors for hint in _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS)
+    has_cpp_compile_diagnostic = any(
+        _looks_like_embedded_cpp_compile_failure(str(item or "")) for item in artifact_quality_errors
+    )
+    if not has_explicit_hint and not has_cpp_compile_diagnostic:
         return []
 
     workspace_root = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
@@ -1623,7 +2033,9 @@ def _explicit_artifact_quality_repair_target_files(
     imported_source_candidates: list[str] = []
     for item in artifact_quality_errors:
         text = str(item or "")
-        if not any(hint in text.lower() for hint in _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS):
+        item_has_explicit_hint = any(hint in text.lower() for hint in _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS)
+        item_has_cpp_compile_diagnostic = _looks_like_embedded_cpp_compile_failure(text)
+        if not item_has_explicit_hint and not item_has_cpp_compile_diagnostic:
             continue
         failed_title_targets = _failed_test_title_target_files(text, workspace_root, changed_source_files)
         candidates.extend(failed_title_targets)
@@ -1642,7 +2054,7 @@ def _explicit_artifact_quality_repair_target_files(
             rust_targets = _embedded_rust_compile_repair_target_files(text, workspace_root)
             candidates.extend(rust_targets)
             priority_candidates.extend(rust_targets)
-        if _looks_like_embedded_cpp_compile_failure(text):
+        if item_has_cpp_compile_diagnostic:
             cpp_use_sites = _embedded_cpp_compile_repair_target_files(text, workspace_root)
             candidates.extend(cpp_use_sites)
             priority_candidates.extend(cpp_use_sites)
@@ -1661,7 +2073,16 @@ def _explicit_artifact_quality_repair_target_files(
         candidates.extend(cpp_declaration_targets)
         explicit_paths = [match.group("path") for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(text)]
         if _looks_like_python_test_behavior_failure(text):
-            symbol_owner_targets = _python_test_failure_symbol_owner_target_files(text, workspace_root)
+            symbol_owner_targets = _dedupe_preserve_order(
+                [
+                    *_python_test_failure_symbol_owner_target_files(text, workspace_root),
+                    *_python_test_failure_cross_language_owner_target_files(
+                        text,
+                        changed_files=changed_files,
+                        workspace_root=workspace_root,
+                    ),
+                ]
+            )
             failed_test_targets = _python_unittest_failure_test_target_files(text, workspace_root)
             symbol_owners_cover_failures = bool(symbol_owner_targets) and len(symbol_owner_targets) >= max(
                 1, len(failed_test_targets)
@@ -1741,6 +2162,22 @@ def _explicit_artifact_quality_repair_target_files(
         for rel in _dedupe_preserve_order(candidates)
         if not _is_generated_quality_repair_target(rel, workspace_root)
     ]
+    cmake_source_list_failure = any(
+        hint in joined_errors for hint in ("cannot find source file", "no sources given to target")
+    )
+    if cmake_source_list_failure and "CMakeLists.txt" in deduped_candidates:
+        # A missing path is a derivative symptom of the manifest's source-list
+        # contract.  Put the existing, in-scope manifest ahead of compile
+        # use-sites so Factory does not spend a repair round editing code that
+        # cannot make CMake configure successfully.
+        deduped_candidates = [
+            "CMakeLists.txt",
+            *(item for item in deduped_candidates if item != "CMakeLists.txt"),
+        ]
+        priority_candidates = [
+            "CMakeLists.txt",
+            *(item for item in priority_candidates if item != "CMakeLists.txt"),
+        ]
     if imported_source_candidates:
         non_config_candidates = [rel for rel in deduped_candidates if not _is_typescript_command_config_path(rel)]
         if non_config_candidates:
@@ -2110,6 +2547,7 @@ __all__ = [
     "_python_unittest_failure_test_target_files",
     "_python_unittest_module_candidate_paths",
     "_resolve_javascript_relative_import_target",
+    "_rust_test_behavior_repair_target_files",
     "_typescript_source_repair_target_for_javascript_output",
     "_workspace_cli_entrypoint_repair_target_files",
     "_workspace_go_entrypoint_repair_target_files",

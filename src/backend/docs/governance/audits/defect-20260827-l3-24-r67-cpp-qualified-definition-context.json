@@ -1,0 +1,38 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "l3-24-r67-cpp-qualified-definition-context",
+  "status": "IMPLEMENTED_LIVE_REVALIDATION_PENDING",
+  "severity": "P0",
+  "scope": "roles.adapters.director.quality_gate",
+  "target_project_modified": false,
+  "exact_run": {
+    "factory_run_id": "factory_308086628a50",
+    "context_snapshot_refs": [
+      "3b0669cf25511c3525c2231b",
+      "886a4f6fc0a13c8dce1a4679"
+    ],
+    "verifier_result": "cpp_unit: pass=29 fail=2"
+  },
+  "symptom": "Final provider request contains concrete Moonlight member bodies but labels the same methods DECLARED BUT NOT DEFINED.",
+  "root_cause": {
+    "classification": "platform_context_projection",
+    "code": "cpp_qualified_member_definition_not_recognized",
+    "detail": "_CPP_DEFINED_FUNCTION_RE required an unqualified terminal name after the return type and missed Type::method definitions."
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate/_prompt_and_targets.py",
+      "src/backend/polaris/cells/roles/adapters/tests/test_director_quality_repair_verifier_context.py"
+    ],
+    "behavior": "Recognize qualified member definitions without treating qualified calls followed by lambda bodies as definitions."
+  },
+  "verification": {
+    "red_proof": "qualified member methods absent from defined_names; std::transform false-positive reproduced",
+    "focused_pytest": "26 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "exact_workspace_replay": "Moonlight methods now defined; no transform false-positive; no declaration-only contradiction",
+    "fresh_isolated_bench": "pending"
+  },
+  "residual_risk": "Semantic repair may still need a bounded diagnostic probe if corrected final-request evidence alone does not converge."
+}

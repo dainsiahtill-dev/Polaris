@@ -1,0 +1,45 @@
+{
+  "schema_version": "polaris.dynamic_debug_defect.v1",
+  "defect_id": "l3-23-semantic-patch-duplicate-root-member-20260825",
+  "status": "CLOSED_LOCAL_PENDING_FRESH_BENCH",
+  "severity": "P0",
+  "project_id": "L3-23",
+  "run_id": "factory_8981ac280732",
+  "attempt": "r17",
+  "symptom": "CE generated a native submit_structured_role_output call, but strict validation rejected one unexpected top-level when member and aborted before Director.",
+  "exact_run_evidence": {
+    "workspace": "/tmp/factory-bench-l3-23-r17/workspaces/dd54d3166867-1998acea07efd1a0/L3-23-2956ab31bd653d97/4245c205766ef42f405c017a",
+    "final_request_snapshot_ref": "69b84a4bb088bec49f082c02",
+    "request_start_snapshot_ref": "dbb8740721c5ab24c2a727ca",
+    "call_id": "9c41bd6038bc42b19af73b870bbd7d6d",
+    "tool_call_id": "call_01a0374a99cf78919367b56a",
+    "arguments_hash": "429b72b6d988d6f829b0b356aaa30682f4926600b672d92d5bed2a3125eeec8a",
+    "final_request_token_estimate": 10294,
+    "context_window_tokens": 1000000,
+    "tool": "submit_structured_role_output",
+    "provider": "anthropic_compat",
+    "model": "MiniMax-M3",
+    "strict_error": "structured_output_payload_schema_mismatch:$:Additional properties are not allowed ('when' was unexpected)",
+    "unknown_root_shape": {"when": "str"},
+    "director_started": false,
+    "qa_started": false
+  },
+  "root_cause": "An Anthropic-compatible structured-result transport can repeat a correctly serialized nested scalar at the schema-closed root. Existing normalization handled uniquely relocatable object members, but intentionally could not relocate a field such as when into an array because no authoritative array index exists.",
+  "safety_boundary": "Do not guess an array destination and do not discard arbitrary unknown fields. Remove a root member only when the same schema-declared descendant name and canonical JSON value already exist in the payload. Non-duplicates remain fail-closed, and the complete strict schema still validates afterwards.",
+  "fix": {
+    "file": "src/backend/polaris/cells/roles/kernel/internal/structured_output_transport.py",
+    "policy": "schema_proven_duplicate_root_members_v1",
+    "evidence_projection": "schema_normalization_details.duplicate_root_members"
+  },
+  "verification": {
+    "tdd_red": "1 failed and 1 passed before implementation",
+    "targeted_shape_tests": "9 passed",
+    "full_transport_suite": "45 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "negative_case": "A same-named root when with a different value remains rejected."
+  },
+  "automatic_audit_rule": "For every additionalProperties root failure, log only unknown key/type plus normalization policy; accept a duplicate-root recovery only with schema-declared descendant equality and successful final strict validation.",
+  "target_project_modified": false,
+  "next_action": "Run fresh isolated L3-23 r18. If the real when is a duplicate shadow, require schema_proven_duplicate_root_members_v1 evidence and progress beyond CE; otherwise retain fail-closed and instrument a more precise value-hash/path audit."
+}

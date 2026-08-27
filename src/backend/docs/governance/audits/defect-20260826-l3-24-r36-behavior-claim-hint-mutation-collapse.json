@@ -1,0 +1,77 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-R36-BEHAVIOR-CLAIM-HINT-MUTATION-COLLAPSE",
+  "status": "CLOSED_LIVE_VALIDATED",
+  "severity": "P0",
+  "factory_run_id": "factory_e9d4d1beb939",
+  "project_id": "L3-24",
+  "workspace": "/tmp/factory-bench-l3-24-r36/workspaces/86550777f5ad-7821257e91507108/L3-24-023d7314133040b6/30593f1716954ff0d88789ba",
+  "symptom": {
+    "stage": "quality_gate",
+    "repair_rounds": 3,
+    "repair_target_files_by_round": [
+      ["app/main.cpp"],
+      ["app/main.cpp"],
+      ["app/main.cpp"]
+    ],
+    "verifier_effect_by_round": [
+      "candidate_rejected_rolled_back",
+      "candidate_rejected_rolled_back",
+      "candidate_rejected_rolled_back"
+    ],
+    "terminal_reason": "three_nonprogress_repairs_without_verified_progress"
+  },
+  "dynamic_evidence": {
+    "final_request_context_snapshot_refs": [
+      "a3d57e945589cb23c19572bc",
+      "7fc44e980108ad075e247143",
+      "d025a1d6c628af54571de0db",
+      "cd84d9e77046aa1a43527812",
+      "2483a9842365d9737440b1af"
+    ],
+    "final_request_authorization": "Only write app/main.cpp; tool_choice forced edit_file; sibling reads and edits forbidden",
+    "model_diagnosis": "decode path applies the cipher forward instead of inverting it",
+    "normalized_causal_candidates": [
+      "app/main.cpp",
+      "src/cipher.cpp",
+      "src/diary_book.cpp",
+      "src/diary_codec.cpp",
+      "src/diary_entry.cpp",
+      "src/moon_calendar.cpp",
+      "tests/test_cipher_unit.cpp",
+      "tests/test_product.py"
+    ],
+    "final_restored_app_main_sha256": "1f50eb28efe6f23f04cd2363efcfaf112904c7d6083d39667055f0ec00ebbf3a"
+  },
+  "root_cause": {
+    "classification": "factory_quality_repair_authority_projection",
+    "summary": "Factory correctly used app/main.cpp as a single TaskRuntime owner-claim hint, then incorrectly reused that hint as the only mutation scope. The existing same-owner production-frontier expansion ran only for explicit deferred owner-rebind calls, so ordinary behavioral verifier repair never rotated to causal siblings inside the already-claimed CE/JobToken boundary.",
+    "first_causal_boundary": "_apply_workspace_quality_llm_repairs claim-to-mutation projection",
+    "not_model_failure": true,
+    "not_target_project_fix": true
+  },
+  "fix": {
+    "files": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py"
+    ],
+    "behavior": "After the canonical owner claim, behavioral runtime failures restore and signature-rotate the current production frontier strictly within the claimed CE/JobToken owner. Real compiler diagnostics remain narrow; test-only owners remain narrow.",
+    "secondary_fix": "The generic observer-plus-production branch no longer preempts the existing Go behavior-specific routing for go test assertions."
+  },
+  "verification": {
+    "tdd_red": "expected src/cipher.cpp at rotation index 1, got app/main.cpp",
+    "target_test": "1 passed",
+    "factory_characterization": "93 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_validation": {
+      "run_id": "factory_33a1503321f4",
+      "workspace": "/tmp/factory-bench-l3-24-r37/workspaces/a09283dda0de-be3ef88f0f2efbda/L3-24-023d7314133040b6/339672f591d55c335ce1c330",
+      "result": "The quality loop rotated main.cpp, cipher.cpp, moon_phase.cpp, ink_renderer.cpp, and diary.cpp inside the claimed CE/JobToken boundary. Accepted rounds reduced behavioral failures from 6 to 5 and then 5 to 3; the former app/main.cpp-only collapse did not recur."
+    }
+  },
+  "residual_risk": [
+    "The exact r35 CE entrypoint removal branch is still unit/integration proven but was not exercised by r36 because CE passed without semantic repair.",
+    "r36 also retained an independent delivery-depth residual after behavior repairs failed; it must be reassessed only after functional verifier progress."
+  ]
+}

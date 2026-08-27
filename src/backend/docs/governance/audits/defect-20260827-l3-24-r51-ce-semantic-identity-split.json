@@ -1,0 +1,67 @@
+{
+  "schema_version": "polaris.defect_record.v1",
+  "defect_id": "L3-24-R51-CE-SEMANTIC-IDENTITY-SPLIT",
+  "status": "FIXED_LIVE_CE_CLOSED_R52_DIRECTOR_RUNNING",
+  "severity": "P0",
+  "recorded_at": "2026-08-27T00:19:17+08:00",
+  "repository_head": "f3d3bb63284015b958719039b159c2d6a032d015",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_590232b2123d",
+  "workspace": "/tmp/factory-bench-l3-24-r51/workspaces/804f81ed9801-81c2583d7f91b2e5/L3-24-023d7314133040b6/ca62eca90e16011815202005",
+  "symptom": "Fresh isolated run stopped in chief_engineer_review before Director because a typed delivery-depth patch reused an existing optional test obligation id for a required test at a different path.",
+  "dynamic_evidence": {
+    "causal_status": "chain_incomplete",
+    "responsible_layer": "chief_engineer.blueprint",
+    "retry_scope": "same_ce_stage",
+    "error_code": "chief_engineer.semantic_repair_exhausted",
+    "root_cause_hint": "chief_engineer.semantic_patch_invalid:ValueError:semantic repair cannot mutate immutable semantic identity: obligation_id='OBL-TEST-EXTRA':fields=['path']",
+    "context_snapshot_ref": "e73626a81b39dd15d2824057",
+    "provider_patch": {
+      "obligation_id": "OBL-TEST-EXTRA",
+      "path": "tests/test_cli_edge.cpp",
+      "semantic_role": "test",
+      "applicability": "required",
+      "owner_task_id": "TASK-1"
+    },
+    "baseline_row": {
+      "obligation_id": "OBL-TEST-EXTRA",
+      "path": "tests/test_cli_edge.py",
+      "semantic_role": "test",
+      "applicability": "optional",
+      "owner_task_id": "TASK-1"
+    }
+  },
+  "root_cause": {
+    "classification": "CE_SEMANTIC_REPAIR_IDENTITY_CONTRACT_AND_SPLIT_NORMALIZATION_GAP",
+    "owner": "polaris.cells.chief_engineer.blueprint and polaris.cells.factory.pipeline",
+    "mechanism": "The provider request did not publish immutable upsert identity as a machine policy. The deterministic depth split normalizer also required equal applicability although applicability is excluded from immutable artifact identity, so the safe optional-to-required split was skipped.",
+    "not_caused_by": [
+      "Director tools",
+      "target project code",
+      "PM restart",
+      "provider reachability"
+    ]
+  },
+  "fix": {
+    "source_files": [
+      "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py"
+    ],
+    "behavior": "Publish upsert_identity_policy in authoritative CE patch context; instruct the provider to mint a new ID for a changed immutable identity; split reused IDs by immutable fields only, preserving the old row and minting the new authorized artifact.",
+    "fail_closed_preserved": true,
+    "target_project_modified": false
+  },
+  "regression_tests": [
+    "test_provider_context_projects_current_rows_and_task_authority",
+    "test_schema_repair_semantic_deficit_uses_typed_final_patch",
+    "test_depth_repair_splits_optional_existing_test_when_new_path_is_required"
+  ],
+  "verification": {
+    "tdd_red": "reproduced immutable path rejection",
+    "pytest": "139 passed",
+    "ruff": "passed",
+    "mypy": "passed",
+    "fresh_isolated_bench": "r52 factory_20818f28c5e3 passed PM and Chief Engineer; Director running"
+  },
+  "next_action": "Finish fresh isolated L3-24 r52 Director and QA; dynamically audit the exact next boundary; do not modify the generated project."
+}

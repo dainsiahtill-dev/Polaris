@@ -1,0 +1,37 @@
+card_id: vc-20260826-l3-24-r48-ce-atomic-semantic-diagnosis
+classification: chief_engineer_semantic_repair_convergence
+status: unit_and_exact_replay_closed_live_revalidation_pending
+bench_status: schedulable_after_local_gates
+scope:
+  platform_only: true
+  target_project_edits: forbidden
+observed_failure:
+  project_id: L3-24
+  factory_run_id: factory_fb181a3f18bc
+  stage: chief_engineer_review
+  error_code: chief_engineer.semantic_repair_exhausted
+  terminal_detail: "prod_files=4 < 7"
+root_cause:
+  code: repairable_residuals_serialized_across_bounded_rounds
+  owner: factory.pipeline.chief_engineer_output_validation
+  summary: >-
+    Entrypoint semantic errors suppressed independently computable delivery-depth
+    deficits, so two provider rounds were consumed before artifact repair authority
+    became visible.
+fix:
+  behavior: report entrypoint and depth residuals in one atomic diagnosis
+  allowed_operations:
+    - entrypoint_upsert
+    - artifact_upsert
+  preserved: structural and unsupported errors remain fail-closed
+required_gates:
+  tdd_red: pass
+  focused_pytest: pass
+  full_targeted_pytest: pass
+  ruff: pass
+  mypy: pass
+  exact_r48_replay: pass
+  fresh_isolated_l3_24: pending
+sign_off:
+  owner: Codex /root
+  opened_at: "2026-08-26"

@@ -1,0 +1,38 @@
+{
+  "defect_id": "l3-24-r64-r66-rejected-owner-drift",
+  "status": "closed",
+  "severity": "P0",
+  "scope": "polaris_platform",
+  "exact_run": {
+    "factory_run_id": "factory_308086628a50",
+    "project_id": "L3-24",
+    "workspace": "/tmp/factory-bench-l3-24-r62/workspaces/20a2c7aac706-7f3d362e2e3b5856/L3-24-023d7314133040b6/efd1cd44d948a70e8f2ea082",
+    "validation_attempts": ["r64", "r65", "r66"]
+  },
+  "symptom": "A rejected workspace-quality candidate was restored on disk, but the next repair round forgot the exact file that had been mutated. Equal-count and stagnant candidates could therefore rotate to an unrelated owner.",
+  "dynamic_evidence": [
+    "r64 exposed equal-count candidate rejection followed by owner drift.",
+    "A pytest PDB run disproved the first overly broad test: an ordinary equal-count verifier outcome without a candidate transaction must not emit candidate-rejection ownership.",
+    "r65 exposed the deeper case: a stagnant cli_main.cpp candidate was restored, but the next round drifted to diary.cpp.",
+    "r66 live same-run QA recovery kept all three rejected attempts on src/inkwell/cipher.cpp; every candidate guard restored bytes and no attempt drifted to cli_main.cpp or diary.cpp.",
+    "The existing three-nonprogress hard fuse still terminated the loop."
+  ],
+  "root_cause": "candidate_rejection_target_files_for_next_round was emitted only for selected verifier-effect classes instead of for every candidate_rejected transaction. Restoration makes every rejected candidate non-authoritative regardless of whether the verifier classified it as regression, equal-count swap, or stagnant.",
+  "fix": {
+    "source": "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+    "tests": "src/backend/polaris/cells/factory/pipeline/tests/test_characterization_workspace_quality_checks.py",
+    "invariant": "Every candidate_rejected round preserves the exact normalized repair_target_files for the next same-diagnostic retry; accepted candidates do not gain this projection."
+  },
+  "verification": {
+    "focused_tests": "3 passed",
+    "characterization_suite": "110 passed in 94.30s",
+    "ruff": "passed",
+    "mypy": "passed",
+    "live_r66": "3/3 rejected candidates restored and retried src/inkwell/cipher.cpp; hard fuse remained active"
+  },
+  "target_project_modified": false,
+  "residual": {
+    "status": "open_separate_root_cause",
+    "description": "The current verifier frontier now contains two Moonlight semantic failures, yet initial causal target selection still chooses src/inkwell/cipher.cpp. This is a separate exact-run routing defect and remains root_cause_unproven pending final-request and selector-input tracing."
+  }
+}

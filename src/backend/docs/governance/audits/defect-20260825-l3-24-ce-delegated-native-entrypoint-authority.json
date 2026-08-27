@@ -1,0 +1,69 @@
+{
+  "schema_version": "polaris.defect_manifest.v1",
+  "defect_id": "L3-24-CE-DELEGATED-NATIVE-ENTRYPOINT-AUTHORITY",
+  "status": "CLOSED_LIVE",
+  "severity": "P0",
+  "project_id": "L3-24",
+  "factory_run_id": "factory_4009c5b45f0b",
+  "workspace": "/tmp/factory-bench-l3-24-r03/workspaces/1a80e38833d3-36a4ea526d94a117/L3-24-023d7314133040b6/ab033d6cb6dde1a1f5ba4c57",
+  "symptom": {
+    "stage": "chief_engineer_review",
+    "error_code": "invalid_project_completion_contract",
+    "root_cause_hint": "ChiefEngineerBlueprintErrorV1: invalid project completion contract: application project requires a required entrypoint",
+    "director_dispatched": false
+  },
+  "dynamic_evidence": {
+    "pm_topology_authority": "chief_engineer",
+    "pm_required_source_kinds": [
+      "domain_modules",
+      "public_headers",
+      "entrypoint"
+    ],
+    "pm_entrypoint_targets": [],
+    "pm_placeholder_entrypoint_command": "./build/polaris_app",
+    "ce_entrypoint": {
+      "source_path": "src/cli/invisible_diary_cli.cpp",
+      "runtime_path": "build/invisible_diary",
+      "command": "./build/invisible_diary",
+      "owner_task_id": "TASK-1",
+      "applicability": "required"
+    },
+    "ce_source_artifact_present": true,
+    "semantic_repair_preserved_entrypoint": true,
+    "drop_point": "Completion authority normalization supported delegated Python entrypoints only; the C++ row did not exactly match PM's generic command, was dropped, and could not be reprojected because PM intentionally delegated the path."
+  },
+  "root_causes": [
+    {
+      "code": "ce_native_entrypoint_topology_delegation_has_no_bounded_command_resolver",
+      "detail": "PM delegated native entrypoint topology but command authority normalization had only a Python package resolver. Exact PM command matching and exact PM path fallback cannot work when CE is the authorized topology owner."
+    }
+  ],
+  "fixes": [
+    {
+      "file": "src/backend/polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+      "change": "Add a bounded delegated native entrypoint resolver. It accepts only a required owner-scoped source artifact with authorized source suffix, a safe relative bin/build/dist/target runtime path, and a single-token command exactly naming that runtime path. It mints no shell authority."
+    }
+  ],
+  "verification": {
+    "chief_engineer_public_contract_tests": "189 passed",
+    "semantic_repair_and_factory_handoff_tests": "123 passed",
+    "native_entrypoint_regressions": "4 passed",
+    "live_retry_factory_run_id": "factory_2ae2ee249b77",
+    "live_retry_result": "Chief Engineer completed and Factory advanced to director_dispatch. Persisted completion authority contains required src/main.cpp -> build/invisible_diary -> ./build/invisible_diary plus a matching entrypoint VerificationCommandAuthorityV1.",
+    "negative_cases": [
+      "multi-token command rejected",
+      "parent-directory runtime path rejected",
+      "command/runtime mismatch rejected"
+    ],
+    "ruff": "passed",
+    "mypy": "new error count is zero; one pre-existing error remains at _portfolio.py:262"
+  },
+  "safety": {
+    "target_project_modified": false,
+    "shell_metacharacter_or_extra_argv": "fail_closed",
+    "runtime_path_escape": "fail_closed",
+    "missing_source_artifact_or_owner": "fail_closed",
+    "source_suffix_outside_pm_authority": "fail_closed"
+  },
+  "next_action": "Closed live. Dynamically audit the active Director stage and continue from its first failing owner."
+}
