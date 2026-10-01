@@ -888,10 +888,6 @@ def _grant_hash_after(
     )
 
 
-
-
-
-
 def test_inventory_intent_has_exact_record_and_is_frozen() -> None:
     intent = _intent(contingency_kind=None)
 
@@ -2357,6 +2353,3 @@ def test_task5_operation_result_effect_claimed_requires_valid_grant(tmp_path: Pa
             state="EFFECT_STARTED",
             version=grant.operation_version,
         )
-
-
-@pytest.mark.parametrize("mismatch", ("operation", "state", "version"))

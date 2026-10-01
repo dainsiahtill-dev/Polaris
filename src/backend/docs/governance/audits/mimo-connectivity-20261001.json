@@ -1,0 +1,64 @@
+{
+  "schema_version": "polaris.external_engineering_audit.v1",
+  "record_kind": "external_engineering_audit",
+  "authoritative_platform_state": false,
+  "scope": "saved MiMo provider connection plus actual Settings connection-button delivery",
+  "model": "mimo-v2.6-pro",
+  "provider_id": "openai_compat-1790791202289",
+  "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+  "api_path": "/v1/chat/completions",
+  "credential_changed": false,
+  "firewall_or_system_proxy_changed": false,
+  "target_project_manually_modified": false,
+  "windows_and_wsl_tls_probe": "both HTTP405 for unsupported unauthenticated GET; transport reachable",
+  "saved_provider_health": {"ok": true, "latency_ms": 11239},
+  "defects": [
+    {
+      "id": "NET-MIMO-01",
+      "status": "live_ui_verified",
+      "symptom": "Settings connection test remained running after a physical successful provider response",
+      "baseline_http_trace": "http-427798e5eb",
+      "baseline_report": "1dd903e1",
+      "baseline_provider_latency_ms": 2478,
+      "baseline_ui_running_after_s": 47.58,
+      "root_cause": "Global llm publisher subject and synthetic workspace differed from workspace-bound runtime.v2 subscriber subject",
+      "fix": "Canonical scoped llm-test subject mapping and actual bound workspace envelope using existing KernelOne roots"
+    },
+    {
+      "id": "NET-MIMO-02",
+      "status": "local_verified",
+      "root_cause": "HTTP normalization accepted empty dotted tokens or truncation-invalid ids that subscriber grammar rejects",
+      "fix": "Validate normalized id through actual subject builder before scheduling; HTTP400 INVALID_TEST_RUN_ID"
+    }
+  ],
+  "verification": {
+    "related_pytest": "47 passed in 10.20s after final implementation",
+    "ruff": "pass on two production files and both regression test files",
+    "mypy": "pass on two production files, follow-imports=silent",
+    "diff_check": "pass",
+    "independent_review": "no unresolved concrete blocker; original id finding fixed",
+    "live_browser_duration_s": 6.07,
+    "live_browser_status": "success",
+    "live_browser_test_run_id": "llm-test-d3742cbd-e747-46b8-978a-6b62f231d7ae",
+    "received_ws_types": ["start", "suite_start", "suite_result", "suite_complete", "complete"],
+    "received_ws_workspace_key": "unattended-local-20261001-control-f88935d4de94",
+    "browser_request_failures": [],
+    "report_polling": false,
+    "live_provider_http_trace": "http-79b95e00f8",
+    "live_provider_http_status": 200,
+    "live_provider_latency_ms": 5372,
+    "additional_current_report": "41a4685b",
+    "additional_current_report_summary": "1/1 PASS, mimo-v2.6-pro, 4754ms"
+  },
+  "effective_roles_after_restart": ["pm", "chief_engineer", "director", "qa"],
+  "isolated_frontend": "http://127.0.0.1:5174/",
+  "isolated_backend": "http://127.0.0.1:49978",
+  "preserved_foreign_frontend": "5173 is currently Starwave; not touched",
+  "boundaries": [
+    "Initial unspecified CLI ConnectionRefused source not reproduced or claimed fixed",
+    "Connection success is not native tool, deep interview, Bench or unattended-development qualification",
+    "No whole-repository certification or reconnect/replay guarantee",
+    "MiMo full role readiness and current Bench admission remain to be evaluated"
+  ],
+  "next_action": "Serial MiMo response/thinking/qualification/interview readiness; then current isolated diagnostic Bench admission"
+}

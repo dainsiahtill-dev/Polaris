@@ -9,7 +9,6 @@ import textwrap
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, replace
-from datetime import datetime
 from pathlib import Path
 from threading import Barrier, Lock
 from typing import Any, cast, get_args, get_type_hints
@@ -41,15 +40,12 @@ from polaris.cells.runtime.task_runtime.public import (
     DirectedEffectClaimGrantV1,
     DirectedEffectInventoryCodeV1,
     DirectedEffectInventoryContingencyKindV1,
-    DirectedEffectInventoryEffectTypeV1,
-    DirectedEffectInventoryExecutionModeV1,
     DirectedEffectInventoryIntentV1,
     DirectedEffectInventoryMemberV1,
     DirectedEffectInventoryProjectionV1,
     DirectedEffectInventoryResultV1,
     DirectedEffectOperationCodeV1,
     DirectedEffectOperationIdentityV1,
-    DirectedEffectOperationResultV1,
     DirectedEffectParentBindingV1,
     DirectedEffectParentRegistryIdentityV1,
     EnrollDirectedEffectOperationStreamCommandV1,
@@ -888,8 +884,6 @@ def _grant_hash_after(
     )
 
 
-
-
 def test_task4_historical_ready_inventory_survives_parent_close_and_stale_replay_cas(
     tmp_path: Path,
 ) -> None:
@@ -1272,50 +1266,78 @@ def test_task5_ambiguous_post_durable_claim_reconciliation_returns_exact_grant(
     assert len(_runtime_events(identity.workspace, binding.operation_stream_token)) == 2
 
 
-@pytest.mark.parametrize("proof_failure", ("receipt", "canonical_replay"))
-def test_task5_claim_receipt_or_canonical_proof_failure_never_returns_grant(
+def test_task5_corrupt_claim_receipt_never_returns_grant(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    proof_failure: str,
 ) -> None:
     identity, binding, sealed, finalize = _runtime_ready_candidate(tmp_path)
     assert _runtime_finalize_inventory(finalize).code == "inventory_ready"
-    if proof_failure == "receipt":
 
-        def tamper_receipt(receipt: Any) -> Any:
-            return replace(receipt, event_id=f"{receipt.event_id}-tampered")
+    def tamper_receipt(receipt: Any) -> Any:
+        return replace(receipt, event_id=f"{receipt.event_id}-tampered")
 
-        monkeypatch.setattr(
-            deo_internal.DirectedEffectOperationRepository,
-            "_after_guarded_commit",
-            staticmethod(tamper_receipt),
-        )
-    else:
-        real_append = deo_internal.append_if_guarded_snapshot
-        append_calls = 0
-
-        def append_then_fail_exact_replay(guarded_command: Any) -> Any:
-            nonlocal append_calls
-            append_calls += 1
-            if append_calls == 1:
-                return real_append(guarded_command)
-            raise FactStreamError(
-                "simulated claim canonical replay failure",
-                code="append_write_failed",
-                details={"phase": "claim_exact_replay"},
-            )
-
-        monkeypatch.setattr(
-            deo_internal,
-            "append_if_guarded_snapshot",
-            append_then_fail_exact_replay,
-        )
+    monkeypatch.setattr(
+        deo_internal.DirectedEffectOperationRepository,
+        "_after_guarded_commit",
+        staticmethod(tamper_receipt),
+    )
 
     rejected = claim_directed_effect(_runtime_claim_command(identity, binding, sealed.members[0]))
 
     assert rejected.ok is False
     assert rejected.code == "guarded_receipt_mismatch"
     assert rejected.claim_grant is None
+    assert len(_runtime_events(identity.workspace, binding.operation_stream_token)) == 2
+
+
+@pytest.mark.parametrize(
+    "tampered_field",
+    (None, "event_id", "workspace", "stream", "storage_path", "appended_at", "appended_seq", "semantic_digest"),
+)
+def test_task5_confirmation_outage_never_authorizes_unvalidated_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tampered_field: str | None,
+) -> None:
+    identity, binding, sealed, finalize = _runtime_ready_candidate(tmp_path)
+    assert _runtime_finalize_inventory(finalize).code == "inventory_ready"
+    real_append = deo_internal.append_if_guarded_snapshot
+    append_calls = 0
+
+    def append_then_fail_exact_replay(guarded_command: Any) -> Any:
+        nonlocal append_calls
+        append_calls += 1
+        if append_calls == 1:
+            return real_append(guarded_command)
+        raise FactStreamError(
+            "simulated claim canonical replay failure",
+            code="append_write_failed",
+            details={"phase": "claim_exact_replay"},
+        )
+
+    monkeypatch.setattr(deo_internal, "append_if_guarded_snapshot", append_then_fail_exact_replay)
+    if tampered_field is not None:
+
+        def corrupt_receipt(receipt: Any) -> Any:
+            value = getattr(receipt, tampered_field)
+            return replace(receipt, **{tampered_field: value + 1 if isinstance(value, int) else f"{value}-tampered"})
+
+        monkeypatch.setattr(
+            deo_internal.DirectedEffectOperationRepository,
+            "_after_guarded_commit",
+            staticmethod(corrupt_receipt),
+        )
+    command = _runtime_claim_command(identity, binding, sealed.members[0])
+    original = claim_directed_effect(command)
+    replay = claim_directed_effect(command)
+
+    assert original.ok is False
+    assert original.code == "guarded_receipt_mismatch"
+    assert original.claim_grant is None
+    assert replay.ok is True
+    assert replay.code == "idempotent_replay"
+    assert replay.claim_grant is None
+    assert append_calls == 2
     assert len(_runtime_events(identity.workspace, binding.operation_stream_token)) == 2
 
 
@@ -1552,6 +1574,17 @@ _AUTHORITY_SUCCESS_CODES = (
 )
 
 
+def _literal_union_values(annotation: object) -> frozenset[str]:
+    values: set[str] = set()
+    for argument in get_args(annotation):
+        if isinstance(argument, str):
+            values.add(argument)
+        else:
+            values.update(_literal_union_values(argument))
+    return frozenset(values)
+
+
+@pytest.mark.parametrize("code", _INVENTORY_SUCCESS_CODES)
 def test_inventory_result_accepts_each_success_code_with_projection(
     tmp_path: Path,
     code: str,

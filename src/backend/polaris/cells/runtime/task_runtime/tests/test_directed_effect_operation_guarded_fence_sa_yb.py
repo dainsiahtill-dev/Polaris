@@ -1500,6 +1500,10 @@ def _forbidden_closure_references(
 
 
 def _module_context_for_path(path: Path, *, polaris_root: Path) -> tuple[str, bool]:
+    if path.name == "_repository_class.source":
+        # The class executes with _repository as its defining module. Audit
+        # that exact source, not the retired monofile or frozen mirror.
+        path = path.with_name("_repository.py")
     relative = path.relative_to(polaris_root)
     parts = list(relative.with_suffix("").parts)
     is_package = parts[-1] == "__init__"
@@ -1510,14 +1514,18 @@ def _module_context_for_path(path: Path, *, polaris_root: Path) -> tuple[str, bo
 
 def _production_python_files() -> tuple[Path, ...]:
     cell_root = Path(inspect.getfile(deo_internal)).resolve().parents[1]
-    return tuple(path for path in sorted(cell_root.rglob("*.py")) if "tests" not in path.relative_to(cell_root).parts)
+    sources = set(cell_root.rglob("*.py"))
+    sources.add(Path(deo_internal.DirectedEffectOperationRepository._mutate.__code__.co_filename))
+    return tuple(path for path in sorted(sources) if "tests" not in path.relative_to(cell_root).parts)
 
 
 def _polaris_production_python_files() -> tuple[Path, ...]:
     polaris_root = Path(inspect.getfile(deo_internal)).resolve().parents[4]
+    sources = set(polaris_root.rglob("*.py"))
+    sources.add(Path(deo_internal.DirectedEffectOperationRepository._mutate.__code__.co_filename))
     return tuple(
         path
-        for path in sorted(polaris_root.rglob("*.py"))
+        for path in sorted(sources)
         if "tests" not in path.relative_to(polaris_root).parts and path.name != "conftest.py"
     )
 
@@ -1971,7 +1979,8 @@ def test_parent_admission_has_one_service_owned_writer_and_no_recursive_validati
         ast.parse(dedent(inspect.getsource(runtime_public_service.admit_directed_effect_parent)))
     )
     service_calls = _called_names(_service_method_tree("admit_directed_effect_parent"))
-    assert append_owners == {"admit_parent_with_validated_authority"}
+    assert append_owners == {"admit_parent_with_validated_authority", "_append_unsealed_failure_close"}
+    assert "_append_unsealed_failure_close" in _called_names(_method_tree("_settle_parent_for_terminal_intent"))
     assert "validate_attempt" not in repository_calls
     assert "validate_execution_attempt" not in repository_calls
     assert "_get_session_lock" not in repository_calls
@@ -2002,6 +2011,7 @@ def test_all_active_to_inactive_writers_reach_the_common_pre_barrier() -> None:
     settlement_calls = set().union(
         settlement_orchestrator_calls,
         _called_names(_service_method_tree("_settle_active_execution_attempt_locked")),
+        _called_names(_service_method_tree("_settle_execution_attempt_without_lease_check_locked")),
         _called_names(_service_method_tree("_prepare_terminal_settlement_intent_locked")),
         _called_names(_service_method_tree("_settle_replayed_execution_attempt_locked")),
     )
@@ -2044,9 +2054,10 @@ def test_guarded_success_validates_all_public_receipt_fields_via_exact_replay() 
             if isinstance(node, ast.Constant) and isinstance(node.value, str)
         }
         assert result_constants.isdisjoint(receipt_fields)
-    assert "append_if_guarded_snapshot" in _called_names(_method_tree("_confirm_guarded_append"))
+    for method in ("_confirm_guarded_append", "_reconcile_operation_append"):
+        assert "_canonical_receipt_for_durable_transition" in _called_names(_method_tree(method))
+    assert "append_if_guarded_snapshot" in _called_names(_method_tree("_canonical_receipt_for_durable_transition"))
     assert "append_if_guarded_snapshot" in _called_names(_method_tree("_confirm_inventory_append"))
-    assert "append_if_guarded_snapshot" in _called_names(_method_tree("_reconcile_operation_append"))
     assert "append_if_guarded_snapshot" in _called_names(_method_tree("_reconcile_inventory_append"))
 
 
@@ -2232,5 +2243,3 @@ def test_deo_symbol_surface_has_no_forbidden_imports_or_implicit_enrollment() ->
     for writer in ("seal_inventory", "finalize_inventory"):
         reachable_names = {owner.rsplit(".", maxsplit=1)[-1] for owner in _reachable_repository_methods(writer)}
         assert reachable_names.isdisjoint(enrollment_calls)
-
-

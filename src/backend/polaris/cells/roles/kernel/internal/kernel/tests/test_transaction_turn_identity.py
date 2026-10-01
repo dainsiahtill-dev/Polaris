@@ -97,18 +97,24 @@ def _claim_task_runtime_attempt(
     return runtime, TaskRuntimeExecutionAttemptIdentityV1.from_record(claim["execution_attempt"])
 
 
-def test_public_authority_renews_atomically_and_rejects_stale_settlement(tmp_path: Path) -> None:
+def test_public_authority_renews_atomically_and_rejects_stale_terminal_replay(tmp_path: Path) -> None:
     runtime, initial = _claim_task_runtime_attempt(tmp_path / "workspace")
     authority = create_task_runtime_execution_attempt_authority(initial)
 
     heartbeat = authority.heartbeat(
-        lease_ttl_seconds=120,
+        lease_ttl_seconds=240,
         lock_timeout_seconds=0.5,
         context_summary="authority-regression",
     )
     assert heartbeat.success is True
     renewed = heartbeat.identity
     assert isinstance(renewed, TaskRuntimeExecutionAttemptIdentityV1)
+    assert renewed.lease_expires_at != initial.lease_expires_at
+
+    # R171: an active same-owner lease is renewable TTL, not a fencing token.
+    # Terminal settlement pins its winning identity; only then must a different
+    # lease snapshot fail replay. Keep this rejection assertion at that boundary.
+    settled = authority.settle(outcome="completed", summary="renewed identity", lock_timeout_seconds=0.5)
 
     stale = runtime.settle_execution_attempt(
         SettleTaskRuntimeExecutionAttemptCommandV1(
@@ -119,8 +125,6 @@ def test_public_authority_renews_atomically_and_rejects_stale_settlement(tmp_pat
             lock_timeout_seconds=0.5,
         )
     )
-    settled = authority.settle(outcome="completed", summary="renewed identity", lock_timeout_seconds=0.5)
-
     assert stale["success"] is False
     assert stale["code"] == "lease_version_mismatch"
     assert settled.success is True

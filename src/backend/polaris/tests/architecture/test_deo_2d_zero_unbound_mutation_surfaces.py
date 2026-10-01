@@ -8,7 +8,7 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
-from polaris.cells.runtime.task_runtime.tests.test_directed_effect_operation_guarded_fence import (
+from polaris.cells.runtime.task_runtime.tests.test_directed_effect_operation_guarded_fence_sa_ya import (
     _analyze_source,
     _module_context_for_path,
 )
@@ -236,6 +236,13 @@ def test_only_mutation_port_constructs_and_calls_physical_director_executor() ->
     assert observed_findings == {
         (MUTATION_PORT, "import", "<module>", EXECUTOR_MODULE),
         (MUTATION_PORT, "import", "<module>", EXECUTOR_FACTORY),
+        (MUTATION_PORT, "import", "<module>", EXECUTOR_CLASS),
+        (
+            MUTATION_PORT,
+            "name_load",
+            "_DirectorDirectedEffectMutationPort._execute_physical",
+            EXECUTOR_CLASS,
+        ),
         (
             MUTATION_PORT,
             "call",

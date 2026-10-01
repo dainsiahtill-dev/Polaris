@@ -1500,6 +1500,10 @@ def _forbidden_closure_references(
 
 
 def _module_context_for_path(path: Path, *, polaris_root: Path) -> tuple[str, bool]:
+    if path.name == "_repository_class.source":
+        # The class executes with _repository as its defining module. Audit
+        # that exact source, not the retired monofile or frozen mirror.
+        path = path.with_name("_repository.py")
     relative = path.relative_to(polaris_root)
     parts = list(relative.with_suffix("").parts)
     is_package = parts[-1] == "__init__"
@@ -1510,14 +1514,18 @@ def _module_context_for_path(path: Path, *, polaris_root: Path) -> tuple[str, bo
 
 def _production_python_files() -> tuple[Path, ...]:
     cell_root = Path(inspect.getfile(deo_internal)).resolve().parents[1]
-    return tuple(path for path in sorted(cell_root.rglob("*.py")) if "tests" not in path.relative_to(cell_root).parts)
+    sources = set(cell_root.rglob("*.py"))
+    sources.add(Path(deo_internal.DirectedEffectOperationRepository._mutate.__code__.co_filename))
+    return tuple(path for path in sorted(sources) if "tests" not in path.relative_to(cell_root).parts)
 
 
 def _polaris_production_python_files() -> tuple[Path, ...]:
     polaris_root = Path(inspect.getfile(deo_internal)).resolve().parents[4]
+    sources = set(polaris_root.rglob("*.py"))
+    sources.add(Path(deo_internal.DirectedEffectOperationRepository._mutate.__code__.co_filename))
     return tuple(
         path
-        for path in sorted(polaris_root.rglob("*.py"))
+        for path in sorted(sources)
         if "tests" not in path.relative_to(polaris_root).parts and path.name != "conftest.py"
     )
 
@@ -2305,5 +2313,4 @@ def test_source_analysis_handles_conditional_named_and_boxed_protected_assignmen
         reference.kind == "unresolved_protected_assignment" and reference.owner == "<module>"
         for reference in analysis.references
     )
-
 

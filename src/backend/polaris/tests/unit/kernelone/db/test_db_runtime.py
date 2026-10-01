@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from unittest.mock import MagicMock
 
 import pytest
+from polaris.infrastructure.db.adapters import SqliteAdapter
 from polaris.kernelone.db.contracts import SQLAlchemyConnectOptions, SQLiteConnectOptions
 from polaris.kernelone.db.errors import DatabaseConnectionError, DatabaseDriverNotAvailableError
 from polaris.kernelone.db.runtime import KernelDatabase, KernelDatabaseHealth
+
+
+def test_native_sqlite_connection_error_preserves_physical_cause(tmp_path) -> None:
+    missing = tmp_path / "missing.sqlite"
+    database = KernelDatabase(str(tmp_path), sqlite_adapter=SqliteAdapter())
+    with pytest.raises(DatabaseConnectionError) as caught:
+        database.sqlite(missing.as_uri() + "?mode=ro", uri=True, ensure_parent=False)
+    assert isinstance(caught.value.__cause__, sqlite3.OperationalError)
+    assert not missing.exists()
 
 
 class TestKernelDatabaseHealth:

@@ -3308,6 +3308,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
     if run_commands and not prepare_failed and not all(bool(item.get("passed")) for item in results):
         max_rounds = int(context.get("workspace_quality_repair_max_rounds") or _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS)
         max_rounds = max(1, min(max_rounds, _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS))
+        extra_round_limit = 2
         latest_check_results = [item for item in results if str(item.get("phase") or "") == "check"]
         repair_rounds: list[dict[str, Any]] = []
         source_tools: list[str] = []
@@ -3406,6 +3407,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 "artifact_quality_errors": repair_errors[:10],
                 "evidence": evidence[:12],
                 "max_rounds": max_rounds,
+                "extra_round_limit": extra_round_limit,
+                "extra_rounds_consumed": max(0, len(repair_rounds) - max_rounds),
                 "rounds": repair_rounds,
                 "consecutive_stagnant_rounds": consecutive_stagnant_rounds,
                 "nonprogress_rounds_since_last_progress": nonprogress_rounds_since_last_progress,
@@ -3420,6 +3423,10 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 partial_summary["semantic_contract_conflict_candidate"] = dict(semantic_contract_conflict_candidate)
             if deadline_detail:
                 partial_summary["deadline_blocker"] = deadline_detail
+                partial_summary["convergence_stop_reason"] = "quality_repair_deadline_insufficient"
+                if repair_rounds and repair_rounds[-1].get("execution_status") == "in_progress":
+                    repair_rounds[-1]["execution_status"] = "interrupted"
+                    repair_rounds[-1]["interruption_reason"] = "quality_repair_deadline_insufficient"
             scope_filter = workspace_quality_latest_task_boundary_scope_filter(partial_summary)
             if scope_filter:
                 partial_summary["task_boundary_scope_filter"] = scope_filter
@@ -3438,13 +3445,22 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
 
         forced_next_owner_targets: list[str] = []
         leftover_extra_pending = False
-        for round_index in range(max_rounds + 2):
+        for round_index in range(max_rounds + extra_round_limit):
             if not leftover_rotate_allows_quality_extra_round(
                 round_index=round_index,
                 max_rounds=max_rounds,
                 leftover_extra_pending=(leftover_extra_pending or provider_transport_retry_pending),
+                extra_cap=extra_round_limit,
             ):
+                convergence_stop_reason = "repair_round_budget_exhausted"
                 break
+            budget_admission = (
+                "scheduled_round"
+                if round_index < max_rounds
+                else "provider_transport_retry"
+                if provider_transport_retry_pending
+                else "residual_owner_rotation"
+            )
             leftover_extra_pending = False
             provider_transport_retry_pending = False
             residual_frontier_handoff_this_round = residual_frontier_handoff_pending
@@ -3454,9 +3470,11 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             owner_override = list(forced_next_owner_targets) or None
             forced_next_owner_targets = []
             if latest_check_results and all(bool(item.get("passed")) for item in latest_check_results):
+                convergence_stop_reason = "verifier_passed"
                 break
             repair_errors = executor._workspace_quality_repair_errors(latest_check_results or results)
             if not repair_errors:
+                convergence_stop_reason = "failed_verifier_diagnostics_unavailable"
                 break
             if owner_override is None and owner_handoff_history:
                 reactivated_owner_targets = workspace_quality_residual_owner_handoff_targets(
@@ -3503,6 +3521,20 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             deterministic_skipped_repeated_no_commit = cached_deterministic_context is not None
             round_repair_results: list[dict[str, Any]]
             round_summary: dict[str, Any]
+            round_payload: dict[str, Any] = {
+                "round": round_index + 1,
+                "budget_admission": budget_admission,
+                "attempted": True,
+                "execution_status": "in_progress",
+                "artifact_quality_errors": repair_errors[:10],
+            }
+
+            def record_round_start(phase: str, *, payload: dict[str, Any] = round_payload) -> None:
+                if not payload.get("budget_charged"):
+                    repair_rounds.append(payload)
+                    payload["budget_charged"] = True
+                payload["last_execution_phase"] = phase
+
             if deterministic_skipped_repeated_no_commit:
                 round_repair_results = []
                 round_summary = {
@@ -3537,10 +3569,27 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         }
                     )
             else:
+                record_round_start("deterministic_repair")
                 round_repair_results, round_summary = await executor._apply_workspace_quality_deterministic_repairs(
                     run=run,
                     artifact_quality_errors=repair_errors,
                     repair_attempt=round_index + 1,
+                )
+                # Early deadline exits before LLM fallback must retain the
+                # already-executed attempt and its effect evidence.
+                round_payload.update(
+                    {
+                        "tool_results": len(round_repair_results),
+                        "repair_summary": executor._workspace_quality_repair_summary_projection(
+                            round_summary, repair_errors
+                        ),
+                        "evidence": executor._workspace_quality_repair_evidence(round_repair_results),
+                        "write_tool_evidence": bool(round_summary.get("write_tool_evidence"))
+                        or any(
+                            executor._workspace_quality_repair_result_has_mutation(item)
+                            for item in round_repair_results
+                        ),
+                    }
                 )
             round_requires_task_boundary_triage = executor._workspace_quality_summary_requires_task_boundary_triage(
                 dict(round_summary)
@@ -3595,6 +3644,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                                 deadline_detail=deadline_detail,
                             ),
                         )
+                    record_round_start("llm_repair")
                     round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
                         run=run,
                         context=llm_repair_context(),
@@ -3644,6 +3694,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                             deadline_detail=deadline_detail,
                         ),
                     )
+                record_round_start("llm_repair")
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
                     run=run,
                     context=llm_repair_context(),
@@ -3673,6 +3724,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                             deadline_detail=deadline_detail,
                         ),
                     )
+                record_round_start("llm_repair")
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
                     run=run,
                     context=llm_repair_context(),
@@ -3708,6 +3760,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                             deadline_detail=deadline_detail,
                         ),
                     )
+                record_round_start("llm_repair")
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
                     run=run,
                     context=llm_repair_context(),
@@ -3754,6 +3807,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     "source": "task_boundary_scope_filter",
                     "requested_target_files": deferred_owner_targets,
                 }
+                record_round_start("llm_repair")
                 round_repair_results, round_summary = await executor._apply_workspace_quality_llm_repairs(
                     run=run,
                     context=owner_rebind_context,
@@ -3820,19 +3874,25 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 normalized_round_summary,
                 repair_errors,
             )
-            round_payload: dict[str, Any] = {
-                "round": round_index + 1,
-                "attempted": True,
-                "artifact_quality_errors": repair_errors[:10],
-                "regression_guard_errors": regression_guard_errors[:6],
-                "candidate_rejection_errors": candidate_rejection_errors[:4],
-                "director_runtime_repair_coverage": executor._workspace_quality_repair_coverage_report(repair_errors),
-                "plan_probe_preaudit": round_plan_probe,
-                "tool_results": len(round_repair_results),
-                "source_tools": round_source_tools,
-                "write_tool_evidence": round_write_tool_evidence,
-                "evidence": round_evidence,
-            }
+            record_round_start("repair_result_projection")
+            round_payload.update(
+                {
+                    "round": round_index + 1,
+                    "budget_admission": budget_admission,
+                    "attempted": True,
+                    "artifact_quality_errors": repair_errors[:10],
+                    "regression_guard_errors": regression_guard_errors[:6],
+                    "candidate_rejection_errors": candidate_rejection_errors[:4],
+                    "director_runtime_repair_coverage": executor._workspace_quality_repair_coverage_report(
+                        repair_errors
+                    ),
+                    "plan_probe_preaudit": round_plan_probe,
+                    "tool_results": len(round_repair_results),
+                    "source_tools": round_source_tools,
+                    "write_tool_evidence": round_write_tool_evidence,
+                    "evidence": round_evidence,
+                }
+            )
             if causal_reanalysis_this_round:
                 round_payload["causal_reanalysis_required"] = True
             if summary_projection:
@@ -3841,7 +3901,6 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     task_boundary_triage_required = True
                     task_boundary_triage_summary = summary_projection
                     round_payload["task_boundary_triage_required"] = True
-            repair_rounds.append(round_payload)
             if round_requires_task_boundary_triage:
                 settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
                     executor,
@@ -4064,7 +4123,10 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     return write_workspace_validation_failure(
                         "factory_quality_gate_workspace_checks_deadline_insufficient",
                         deadline_detail,
-                        repair_override=current_workspace_repair_summary(residual_errors=repair_errors),
+                        repair_override=current_workspace_repair_summary(
+                            residual_errors=repair_errors,
+                            deadline_detail=deadline_detail,
+                        ),
                     )
                 results.append(result)
                 rerun_prepare_results.append(result)
@@ -4098,7 +4160,10 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         return write_workspace_validation_failure(
                             "factory_quality_gate_workspace_checks_deadline_insufficient",
                             deadline_detail,
-                            repair_override=current_workspace_repair_summary(residual_errors=repair_errors),
+                            repair_override=current_workspace_repair_summary(
+                                residual_errors=repair_errors,
+                                deadline_detail=deadline_detail,
+                            ),
                         )
                     results.append(result)
                     latest_check_results.append(result)
@@ -4330,6 +4395,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 verifier_passed = False
             round_payload.update(
                 {
+                    "execution_status": "revalidated",
                     "verifier_effect": repair_effect,
                     "verifier_authoritative_success": verifier_passed,
                     "diagnostic_count_before": len(before_signature),
@@ -4483,6 +4549,12 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     continue
                 convergence_stop_reason = "two_consecutive_stagnant_repairs"
                 break
+        else:
+            # Exhausting the finite scheduled-plus-extension iterator is a
+            # budget decision even if the last accepted candidate progressed.
+            # Preserve its receipts and residuals; never leave a retry hint or
+            # an empty string pretending to be the terminal stop reason.
+            convergence_stop_reason = "repair_round_budget_exhausted"
         residual_failures = [item for item in latest_check_results if not bool(item.get("passed"))]
         residual_errors = executor._workspace_quality_repair_errors(residual_failures) if residual_failures else []
         residual_coverage_report = executor._workspace_quality_repair_coverage_report(residual_errors)
@@ -4501,6 +4573,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             "artifact_quality_errors": repair_errors[:10],
             "evidence": evidence[:12],
             "max_rounds": max_rounds,
+            "extra_round_limit": extra_round_limit,
+            "extra_rounds_consumed": max(0, len(repair_rounds) - max_rounds),
             "rounds": repair_rounds,
             "consecutive_stagnant_rounds": consecutive_stagnant_rounds,
             "nonprogress_rounds_since_last_progress": nonprogress_rounds_since_last_progress,

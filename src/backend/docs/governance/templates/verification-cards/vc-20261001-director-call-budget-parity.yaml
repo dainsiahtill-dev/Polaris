@@ -1,0 +1,34 @@
+id: vc-20261001-director-call-budget-parity
+classification: pattern
+status: local_verified_live_pending
+owner: director.tasking
+blueprint: ../../../blueprints/POLARIS_DIRECTOR_CALL_BUDGET_PARITY_20261001.md
+assumptions:
+  - id: A1
+    claim: Call-scoped output limits are lost during strategy application.
+    evidence: Adapter evidence 7000 and final physical payload 128000 on the same repair; strategy unconditionally overwrites aliases.
+  - id: A2
+    claim: Strategy output budget is a ceiling, not a required minimum.
+    evidence: Canonical request resolver already gives explicit context budgets precedence.
+  - id: A3
+    claim: Budget correction does not authorize effects or alter task contracts.
+    evidence: Keep contract/envelope hashing and all scope/JobToken/DEO guards unchanged.
+pre_mortem:
+  - Accidentally alter task envelope hashes or shared profile objects.
+  - Clamp only prompt text while the physical payload remains larger.
+  - Claim a corrected cap proves multi-file feasibility or whole-project completion.
+verification:
+  - Cross-boundary native payload regression RED then GREEN.
+  - Explicit smaller cap preserved; defaults cannot enlarge a call limit.
+  - Invalid booleans and non-positive budgets ignored.
+  - Stream and non-stream payloads agree with execution-budget projection.
+  - Owner and affected budget suites; Ruff and Mypy.
+target_project_manual_edit: forbidden
+results:
+  red: 10_failed_4_passed_expected_budget_amplification
+  integration_and_request: 285_passed
+  tasking_full_owner: 411_passed
+  adapter_split_restored: 66_passed
+  ruff: pass
+  mypy: 3_files_pass
+  factory_completed_verified: false

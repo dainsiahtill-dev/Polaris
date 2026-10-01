@@ -251,16 +251,34 @@ def _merge_same_role_messages(messages: list[dict[str, Any]]) -> list[dict[str, 
     return merged
 
 
-def build_openai_native_messages(messages: object) -> list[dict[str, str]]:
-    """Project frozen role messages to the OpenAI chat message protocol."""
+def build_openai_native_messages(
+    messages: object,
+    *,
+    fallback_prompt: str | None = None,
+) -> list[dict[str, str]]:
+    """Normalize OpenAI messages once for both native authority and adapters.
+
+    Convert each supplemental system/tool turn before adjacent-role merging;
+    merging first loses protocol markers and makes the authorized wire differ
+    from the adapter's wire. ``fallback_prompt`` retains the unfrozen adapter's
+    legacy userless-input behavior; frozen projections use a continuation only.
+    """
 
     if type(messages) is not list:
         raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_messages_invalid")
     normalized: list[dict[str, str]] = []
     seen_non_system = False
-    for raw in _merge_same_role_messages(messages):
-        role = str(raw["role"])
-        content = str(raw["content"])
+    for raw in messages:
+        if not isinstance(raw, dict):
+            continue
+        role = str(raw.get("role") or "").strip().lower()
+        content = str(raw.get("content") or "")
+        if not content.strip():
+            continue
+        if role == "tool":
+            role, content = "user", f"【工具结果】\n{content}"
+        elif role not in {"system", "user", "assistant"}:
+            role = "user"
         if role == "system" and seen_non_system:
             role, content = "user", f"【系统提示】\n{content}"
         if role != "system":
@@ -272,7 +290,10 @@ def build_openai_native_messages(messages: object) -> list[dict[str, str]]:
     if not normalized:
         raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_messages_empty")
     if not any(message["role"] == "user" for message in normalized):
-        normalized.append({"role": "user", "content": "(continue)"})
+        prompt_text = str(fallback_prompt or "").strip()
+        combined_len = sum(len(message["content"]) for message in normalized)
+        user_content = "(continue)" if not prompt_text or len(prompt_text) <= combined_len * 0.9 else prompt_text
+        normalized.append({"role": "user", "content": user_content})
     return normalized
 
 

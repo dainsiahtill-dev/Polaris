@@ -2,23 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import multiprocessing as mp
-import sys
-import threading
 import time
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import replace
 from pathlib import Path
-from queue import Empty
 from types import SimpleNamespace
-from typing import Any, Callable, NamedTuple, NoReturn, cast
+from typing import Any, Callable, NamedTuple, NoReturn
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
-    FactStreamError,
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
 )
@@ -31,34 +24,23 @@ from polaris.cells.events.fact_stream.public.service import (
 from polaris.cells.runtime.task_runtime.internal import service as service_module
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
     TaskExecutionSession,
-    build_task_runtime_execution_event_payload,
-    terminal_session_timestamp,
 )
 from polaris.cells.runtime.task_runtime.internal.task_board import (
-    InvalidTaskStateTransitionError,
     TaskBoard,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
     OWNER_REWORK_EXECUTION_AUTHORIZATION_SCHEMA_V1,
-    SAME_TASK_LOCAL_REWORK_AUTHORIZATION_SCHEMA_V1,
-    BindRuntimeTaskToFactoryRunCommandV1,
-    FenceExpiredFactoryRunSessionsCommandV1,
-    HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     OwnerReworkExecutionAuthorizationV1,
     PrepareOwnerReworkExecutionCommandV1,
-    PrepareSameTaskLocalReworkCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
-    TaskRuntimeExecutionFactV1,
-    ValidateTaskRuntimeExecutionAttemptQueryV1,
 )
 from polaris.cells.runtime.task_runtime.public.service import (
     TaskRuntimeService,
-    bind_runtime_task_to_factory_run,
-    heartbeat_task_runtime_execution_attempt,
-    query_observable_task_rows,
-    reset_runtime_task_records,
-    validate_task_runtime_execution_attempt,
+)
+from polaris.cells.runtime.task_runtime.tests._read_model_test_helpers import (
+    _assert_task_row_read_model_fallback_coverage,
+    _assert_task_row_read_model_projection_parity_coverage,
 )
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -1995,13 +1977,14 @@ def test_observable_task_rows_projection_reads_execution_fact_stream_once(
     workspace.mkdir(parents=True, exist_ok=True)
     service = _create_bootstrapped_task_runtime_service(workspace)
     query_calls = 0
+    real_query = service._query_execution_fact_events
 
     def query_execution_facts(*, limit: int = 500, offset: int = 0) -> SimpleNamespace:
         nonlocal query_calls
         query_calls += 1
-        assert limit == 500
-        assert offset == 0
-        return SimpleNamespace(total=0, events=())
+        assert 0 < limit <= 500
+        assert offset >= 0
+        return real_query(limit=limit, offset=offset)
 
     monkeypatch.setattr(service, "_query_execution_fact_events", query_execution_facts)
     monkeypatch.setattr(service, "_list_file_task_rows", lambda *args, **kwargs: [])
@@ -2012,10 +1995,16 @@ def test_observable_task_rows_projection_reads_execution_fact_stream_once(
     assert projection.rows == ()
     assert query_calls == 1
 
-    # Cache is projection-scoped: a separate authority query must observe the
-    # stream again instead of reusing stale cross-query state.
+    # Unchanged durable head can reuse the canonical result across queries.
     service.query_observable_task_rows_projection()
+    assert query_calls == 1
+
+    # A real owner write advances the head. The next query must refresh facts,
+    # not trust the cached empty projection.
+    created = service.create_task_row(subject="cache invalidation after owner advance")
+    refreshed = service.query_observable_task_rows_projection()
     assert query_calls == 2
+    assert [row["id"] for row in refreshed.rows] == [created["id"]]
 
 
 def test_task_row_read_model_fallback_coverage_reports_full_file_coverage(

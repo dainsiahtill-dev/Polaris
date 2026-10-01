@@ -135,3 +135,28 @@ class TestResolveLancedbPath:
             str(tmp_path), "$LANCEDB_PATH", allow_unmanaged_absolute=True, ensure_exists=False
         )
         assert "env_lancedb" in result
+
+
+@pytest.mark.parametrize("kind", ["sqlite", "lancedb"])
+def test_managed_resolution_failure_never_creates_bare_runtime(tmp_path: Path, kind: str) -> None:
+    with (
+        patch("polaris.kernelone.db.policy.resolve_logical_path", side_effect=ValueError("managed root rejected")),
+        pytest.raises(DatabasePathError),
+    ):
+        if kind == "sqlite":
+            resolve_sqlite_path(
+                str(tmp_path), "runtime/db/rejected.sqlite", allow_unmanaged_absolute=True, ensure_parent=True
+            )
+        else:
+            resolve_lancedb_path(
+                str(tmp_path), "runtime/lancedb/rejected", allow_unmanaged_absolute=True, ensure_exists=True
+            )
+    assert not (tmp_path / "runtime").exists()
+
+
+def test_invalid_relative_sqlite_path_is_not_unmanaged_permission(tmp_path: Path) -> None:
+    with (
+        patch("polaris.kernelone.db.policy.normalize_logical_rel_path", side_effect=ValueError("invalid path")),
+        pytest.raises(DatabasePathError),
+    ):
+        resolve_sqlite_path(str(tmp_path), "bad/path.sqlite", allow_unmanaged_absolute=True, ensure_parent=False)

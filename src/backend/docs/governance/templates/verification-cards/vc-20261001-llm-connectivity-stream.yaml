@@ -1,0 +1,39 @@
+id: VC-20261001-LLM-CONNECTIVITY-STREAM
+classification: pattern
+status: live_ui_verified_scoped_gates_pass
+owner: delivery_http_and_runtime_v2_transport
+assumptions:
+  - id: A1
+    statement: The saved MiMo endpoint and credential are currently reachable.
+    evidence: Saved-provider health POST ok=true, 11239ms; Windows and WSL TLS GET 405.
+  - id: A2
+    statement: The UI hang is not a physical provider timeout in the reproduced attempt.
+    evidence: http-427798e5eb POST 200 in 2478ms; report 1dd903e1 PASS; UI running after 47.58s.
+  - id: A3
+    statement: Producer and bound runtime.v2 consumer must use the same scoped subject.
+    evidence: Current publisher global llm namespace differs from the actual subject builder.
+premortem:
+  - Mapping the old global subject would leak another workspace's test events.
+  - Accepting wildcard test ids could widen the subscription beyond the requested test.
+  - Mock-only frontend transport tests miss real producer/consumer subject mismatch.
+verification:
+  - Real producer envelopes match the bound consumer subject and workspace metadata.
+  - Different workspace cannot consume the test subject.
+  - Wildcard and malformed test channel ids are rejected.
+  - Existing router/runtime.v2 regression suites and scoped lint/type checks.
+  - Fresh browser test reaches terminal status through WebSocket with no polling.
+guardrails:
+  target_project_modified: false
+  credentials_changed: false
+  firewall_changed: false
+  main_or_starwave_ports_changed: false
+  new_state_owner: false
+evidence:
+  red: 11 routing cases failed; both invalid normalized HTTP id cases returned200 before fix
+  green: 47 passed; Ruff pass; scoped Mypy2files pass; diff check pass
+  live: MiMo HTTP200 and five real workspace-bound WS event types; UI success in6.07s
+  report: docs/governance/audits/mimo-connectivity-20261001.json
+open_proof_obligations:
+  - Deep role readiness and native tool execution, separate from basic connectivity.
+  - Original unspecified CLI ConnectionRefused origin.
+  - Reconnect/replay and publication failure recovery beyond this scoped routing defect.

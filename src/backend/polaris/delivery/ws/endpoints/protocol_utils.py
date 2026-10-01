@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 from polaris.delivery.ws.endpoints.models import V2_CHANNEL_TO_SUBJECT
 
@@ -98,6 +99,13 @@ def build_v2_subscription_subjects(workspace_key: str, channels: list[str]) -> l
             session_id = ch[len("chat:") :].strip()
             if session_id and _is_safe_subject_token(session_id):
                 subjects.add(f"hp.runtime.chat.{session_id}")
+            continue
+        if ch.startswith("llm-test:"):
+            run_id = ch[len("llm-test:") :]
+            # Match normalized HTTP test ids, without allowing Nats wildcards
+            # or empty dot-separated tokens to broaden the subscription.
+            if 1 <= len(run_id) <= 96 and re.fullmatch(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*", run_id):
+                subjects.add(resolve_v2_subject(workspace_key, f"llm.test.{run_id}"))
             continue
         subjects.add(resolve_v2_subject(workspace_key, ch))
     return list(subjects)

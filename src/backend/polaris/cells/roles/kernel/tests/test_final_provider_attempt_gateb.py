@@ -64,6 +64,12 @@ from polaris.kernelone.llm.engine.contracts import FrozenFinalProviderAttemptV1,
 from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.types import Usage
 
+from polaris.cells.roles.kernel.tests._final_provider_attempt_gate_helpers import (
+    _bootstrap,
+    _gate,
+    _wire_request,
+)
+
 
 class _Response:
     def __init__(self, *, status_code: int = 200, text: str = "", headers: dict[str, str] | None = None) -> None:
@@ -82,6 +88,7 @@ class ClientResponseError(RuntimeError):
 
 
 
+@pytest.mark.asyncio
 async def test_async_stream_cleanup_system_exit_is_cancelled_and_preserves_both_errors(
     tmp_path: Path,
 ) -> None:

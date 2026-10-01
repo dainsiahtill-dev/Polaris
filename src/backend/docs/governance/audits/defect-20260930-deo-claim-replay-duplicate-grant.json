@@ -1,0 +1,60 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "DEO-CLAIM-EXACT-REPLAY-DUPLICATE-GRANT",
+  "severity": "P0",
+  "status": "LOCAL_VERIFIED_FRESH_BENCH_NOT_RUN",
+  "owner_cell": "runtime.task_runtime",
+  "plan_package": "P04a",
+  "baseline_head": "0d475c60474f2b1ea4a06ea136c0f817d2c49bfa",
+  "dynamic_reproduction": {
+    "test": "test_task5_real_process_exact_claim_race_has_one_grant_single_winner",
+    "process_count": 2,
+    "observed_claim_codes": ["effect_claimed", "effect_claimed"],
+    "expected_claim_codes": ["effect_claimed", "idempotent_replay"],
+    "durable_operation_event_count": 2,
+    "duplicate_physical_effect_observed": false,
+    "interpretation": "Durable claim transition was unique but dispatch authorization was reissued to the losing replay invocation."
+  },
+  "root_cause": {
+    "confidence": "proven_real_process_public_command_reproduction",
+    "cause": "R139 restored a claim grant on any exact durable EFFECT_STARTED replay, bypassing the existing append-ownership nonce. The process-local dispatch fence cannot establish cross-process claim single-winner authority.",
+    "ack_recovery_path": "The original invocation already uses nonce-bound guarded append confirmation/reconciliation; this remains the only grant-bearing recovery path."
+  },
+  "fix": {
+    "ordinary_replay": "Read-only idempotent observation without claim grant.",
+    "post_commit_ack_or_drift": "Reconcile original guarded receipt, without entering generic pre-append replay or appending a second transition.",
+    "files": [
+      "src/backend/polaris/cells/runtime/task_runtime/internal/directed_effect_operation/_repository_class.source",
+      "src/backend/polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py",
+      "src/backend/polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_operation_sb.py"
+    ]
+  },
+  "verification": {
+    "red_real_process_race": true,
+    "red_sequential_replay": true,
+    "red_post_fsync_ack_and_drift": true,
+    "targeted_owner_and_lifecycle": "175 passed in 42.93s",
+    "mypy_public_wrapper_and_test": "Success: no issues found in 2 source files",
+    "source_template_static_baseline": "Canonical .source and modified production files Ruff-clean after explicit imports; not whole-repository lint certification.",
+    "full_taskruntime_and_lifecycle_suite": "893 passed, 10 multiprocessing fork warnings in 261.26s",
+    "confirmation_outage_and_ack_loss": "10 passed; damaged or independently unconfirmed receipt never grants dispatch",
+    "fresh_bench": "not_run"
+  },
+  "additional_baseline_findings": [
+    "Operation and inventory test splits stranded parametrization decorators and omitted a frozen-binding forgery helper.",
+    "Read-only lease-independent readiness characterization incorrectly required old lease-version refusal after heartbeat. Mutation authorization remains separately tested.",
+    "Package introspection was backed by frozen _module_surface.source instead of executed _repository_class.source; now canonical source is used.",
+    "Historical confirmation outage fallback compared an observed receipt with itself; removed after dynamic corruption+outage reproduction. Original nonce-bound ACK recovery remains tested."
+  ],
+  "guardrails": {
+    "target_project_manually_modified": false,
+    "public_authority_expanded": false,
+    "main_ports_touched": false,
+    "provider_calls": 0
+  },
+  "residual_risks": [
+    "Grant-level race tests alone do not certify every serialized/new-process dispatch context or external effect exactly-once.",
+    "Independent confirmation outage parks durable operation for recovery rather than authorizing unproven physical effect.",
+    "Full fresh project completion and N-batch qualification remain unverified."
+  ]
+}

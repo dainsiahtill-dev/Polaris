@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from polaris.cells.runtime.projection.public.service import resolve_workspace_runtime_context
 from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import tests as tests_router
 from polaris.delivery.http.routers._shared import require_auth
@@ -117,12 +118,14 @@ class TestLlmTestsRouter:
             )
 
         assert response.status_code == 200
+        workspace_context = resolve_workspace_runtime_context(configured_workspace=".", default_workspace=".")
+        expected_subject = f"hp.runtime.{workspace_context.workspace_key}.llm.test.run-1"
         assert response.json() == {
             "ok": True,
             "test_run_id": "run-1",
             "status": "started",
             "channel": "llm-test:run-1",
-            "subject": "hp.runtime.llm.test.run-1",
+            "subject": expected_subject,
             "transport": "nats-jetstream",
         }
         assert len(scheduled) == 1
@@ -139,7 +142,35 @@ class TestLlmTestsRouter:
             "complete",
         ]
         assert {payload["channel"] for _, payload in published} == {"llm-test:run-1"}
-        assert {subject for subject, _ in published} == {"hp.runtime.llm.test.run-1"}
+        assert {subject for subject, _ in published} == {expected_subject}
+        assert {payload["workspace_key"] for _, payload in published} == {workspace_context.workspace_key}
+
+    @pytest.mark.parametrize("run_id", ["a..b", "x" * 95 + ".suffix"])
+    def test_jetstream_rejects_ids_that_cannot_be_subscribed(self, run_id, monkeypatch):
+        """No accepted HTTP job may advertise an invalid/unsubscribable subject."""
+        client = _build_client()
+
+        async def no_external_effects(**kwargs):
+            return None
+
+        monkeypatch.setattr(tests_router, "_run_llm_test_jetstream", no_external_effects)
+        with patch(
+            "polaris.delivery.http.routers.tests.resolve_llm_test_execution_context",
+            return_value=SimpleNamespace(
+                role="connectivity",
+                effective_provider_id="provider-1",
+                model="model-1",
+                suites=["connectivity"],
+                use_direct_config=False,
+                provider_cfg=None,
+            ),
+        ):
+            response = client.post(
+                "/v2/llm/test/jetstream",
+                json={"role": "connectivity", "provider_id": "provider-1", "model": "model-1", "test_run_id": run_id},
+            )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "INVALID_TEST_RUN_ID"
 
 
 class TestLlmTestReport:

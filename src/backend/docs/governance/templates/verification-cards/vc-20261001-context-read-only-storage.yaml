@@ -1,0 +1,23 @@
+id: VC-20261001-CONTEXT-READ-ONLY-STORAGE
+classification: structural
+status: red_pending
+owner: factory.cognitive_runtime_and_kernelone.db
+assumptions:
+  - query_on_absent_namespace_must_not_create_directory_schema_or_writer
+  - managed_layout_rejection_is_not_permission_for_unmanaged_fallback
+  - read_only_existing_database_must_include_committed_live_wal_data
+premortem:
+  - ensure_parent_false_still_calls_writable_layout_resolution
+  - immutable_true_silently_ignores_live_wal
+  - cached_or_injected_store_can_leak_another_workspace
+  - closed_readonly_store_must_not_accept_writes
+verification:
+  - absent_handoff_and_receipt_queries_preserve_absent_namespace
+  - real_existing_handoff_and_wal_remain_visible_without_schema_or_writer_start
+  - readonly_write_refusal_and_workspace_mismatch
+  - sqlite_lancedb_managed_rejection_never_creates_bare_runtime
+  - context_adapter_public_service_and_database_store_regressions
+guardrails:
+  target_project_modified: false
+  readonly_query_initializes_authority: false
+  new_storage_owner: false

@@ -502,6 +502,14 @@ class TestStreamExecutorInvokeStreamErrors:
                 "provider": "anthropic_compat",
                 "index": None,
                 "content_block_index": 0,
+                "assembly": {
+                    "argument_source": "stream_fragments",
+                    "complete_snapshot_count": 0,
+                    "delta_count": 2,
+                    "explicit_complete_count": 0,
+                    "fragment_count": 1,
+                    "provisional_placeholder_count": 1,
+                },
             },
         }
         assert semantic[2].chunk == "answer-after-tool"

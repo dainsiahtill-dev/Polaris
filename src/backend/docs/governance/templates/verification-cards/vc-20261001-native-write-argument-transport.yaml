@@ -1,0 +1,27 @@
+id: vc-20261001-native-write-argument-transport
+classification: pattern
+status: before_implementation
+owner: kernelone.llm.toolkit.tool_normalization
+blueprint: ../../../blueprints/POLARIS_NATIVE_WRITE_ARGUMENT_TRANSPORT_20261001.md
+assumptions:
+  - id: A1
+    claim: Observed argument bytes can be recovered without another model call.
+    evidence: All nine raw SHA and decoded SHA values match exact reconstructed JSON strings.
+  - id: A2
+    claim: Schema-gated single-file map is a recoverable argument envelope, not authorization.
+    evidence: Explicit file slot label, required file/content string schema, one string body, exact terminal marker only.
+  - id: A3
+    claim: Scope and target-state gates must remain authoritative.
+    evidence: Existing DEO scope and classification suites plus outside-target rejection regressions.
+pre_mortem:
+  - Accidentally strip XML from file content or accept multiple competing targets.
+  - Normalize a custom tool whose captured schema has different argument semantics.
+  - Treat decoded path as authorization or replay failed effects without a new epoch.
+verification:
+  - literal positive tests RED before implementation
+  - wrong schema/tool and ambiguous/unsafe envelopes stay closed
+  - original bodies preserved, idempotence, one captured snapshot
+  - exact nine-call parser and normalizer replay with SHA parity
+  - DEO policy regressions, Ruff, Mypy, then same-run Director
+target_project_manual_edit: forbidden
+

@@ -833,6 +833,18 @@ class RoleRuntimeService(
 
         if "repo_intelligence" in context_override:
             metadata["repo_intelligence_enabled"] = True
+        # This is a submission identity, never execution authority. Do not
+        # replace any caller/TaskRuntime scope, including an explicitly empty
+        # or malformed scope that the transaction kernel must reject.
+        existing_scope = (
+            any(
+                key in metadata
+                for key in ("execution_attempt_id", "turn_request_id", "execution_id", "task_runtime_session_id")
+            )
+            or "runtime_execution" in metadata
+        )
+        if not existing_scope:
+            metadata["turn_request_id"] = command.turn_request_id
         prompt_appendix = str(metadata.pop("prompt_appendix", "") or "").strip() or None
         validate_output = bool(metadata.get("validate_output", True))
         max_retries = int(metadata.get("max_retries", 1))

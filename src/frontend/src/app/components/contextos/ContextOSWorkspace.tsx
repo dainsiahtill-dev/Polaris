@@ -69,6 +69,7 @@ import {
   type WorkerCard,
 } from './contextOSData';
 import { buildTelemetryFromStream, type ContextOSEvent } from './contextOSTelemetry';
+import { meaningfulContextOSEvents } from './contextOSEventVisibility';
 import { ContextViewerModal } from './ContextViewerModal';
 import { ContextStoreStatsPanel } from './ContextStoreStatsPanel';
 
@@ -681,7 +682,7 @@ function PipelineDetailModal({
 }) {
   const Icon = STAGE_ICONS[stage.id] ?? Activity;
   const style = STATE_STYLES[stage.state];
-  const recentEvents = telemetry.events.slice(0, 6);
+  const recentEvents = meaningfulContextOSEvents(telemetry.events).slice(0, 6);
   const projectionEvents = telemetry.events.filter((event) => event.isProjection).slice(0, 6);
   const callEvents = telemetry.events.filter((event) => event.isCall || event.hasUsage).slice(0, 6);
   const receiptEvents = telemetry.events.filter((event) => event.contextSnapshotRef || event.contextSnapshotDegraded || event.contextHash).slice(0, 6);
@@ -1216,7 +1217,7 @@ function StructureMetric({
 function ContextStructurePanel({ model, telemetry }: { model: ContextOSModel; telemetry: ReturnType<typeof buildTelemetryFromStream> }) {
   const roleWindowTotal = model.roles.reduce((sum, role) => sum + (role.internalContext.workingMemoryItems ?? 0), 0);
   const activeRoles = model.roles.filter((role) => role.internalContext.eventCount > 0);
-  const newestEvents = telemetry.events.slice(0, 8);
+  const newestEvents = meaningfulContextOSEvents(telemetry.events).slice(0, 8);
 
   return (
     <SectionCard
@@ -1530,7 +1531,7 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
           <span>最近事件</span>
           {hasTruncation && (
             <span className="font-mono normal-case text-text-dim">
-              展示最近 {displayedEvents} 条 · 共 {ctx.eventCount} 条
+              展示最近 {displayedEvents} 条关键事件 · 原始观测 {ctx.eventCount} 条
             </span>
           )}
         </div>
@@ -1561,7 +1562,7 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
             data-testid={`contextos-role-panel-empty-events-${role.id}`}
           >
             <Activity className="h-4 w-4 text-text-dim/30" />
-            <div className="text-[11px] text-text-dim">该角色暂无实时观测事件</div>
+            <div className="text-[11px] text-text-dim">该角色暂无关键进展事件</div>
           </div>
         )}
       </div>

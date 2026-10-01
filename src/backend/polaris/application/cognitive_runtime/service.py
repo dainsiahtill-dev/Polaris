@@ -293,6 +293,7 @@ class CognitiveRuntimeService:
         self._store = store
         self._store_workspace_key: str | None = None
         self._stores: dict[str, CognitiveRuntimeSqliteStore] = {}
+        self._read_stores: dict[str, CognitiveRuntimeSqliteStore] = {}
         self._context_memory_services: dict[str, RoleSessionContextMemoryService] = {}
 
     @staticmethod
@@ -327,6 +328,8 @@ class CognitiveRuntimeService:
     def _store_for(self, workspace: str) -> CognitiveRuntimeSqliteStore:
         key = self._workspace_key(workspace)
         if self._store is not None:
+            if self._workspace_key(self._store.workspace) != key:
+                raise ValueError("Injected Cognitive Runtime store is bound to a different workspace")
             if self._store_workspace_key is None:
                 self._store_workspace_key = key
             elif self._store_workspace_key != key:
@@ -336,6 +339,17 @@ class CognitiveRuntimeService:
         if store is None:
             store = CognitiveRuntimeSqliteStore(workspace)
             self._stores[key] = store
+        return store
+
+    def _store_for_read(self, workspace: str) -> CognitiveRuntimeSqliteStore | None:
+        key = self._workspace_key(workspace)
+        if self._store is not None:
+            return self._store_for(workspace)
+        store = self._stores.get(key) or self._read_stores.get(key)
+        if store is None:
+            store = CognitiveRuntimeSqliteStore.open_existing_read_only(workspace)
+            if store is not None:
+                self._read_stores[key] = store
         return store
 
     def close(self) -> None:
@@ -355,6 +369,9 @@ class CognitiveRuntimeService:
         for store in self._stores.values():
             store.close()
         self._stores.clear()
+        for store in self._read_stores.values():
+            store.close()
+        self._read_stores.clear()
 
     def resolve_context(
         self,
@@ -581,7 +598,8 @@ class CognitiveRuntimeService:
         workspace: str,
         receipt_id: str,
     ) -> RuntimeReceipt | None:
-        return self._store_for(workspace).get_receipt(receipt_id)
+        store = self._store_for_read(workspace)
+        return store.get_receipt(receipt_id) if store is not None else None
 
     def export_handoff_pack(
         self,
@@ -694,7 +712,8 @@ class CognitiveRuntimeService:
         workspace: str,
         handoff_id: str,
     ) -> ContextHandoffPack | None:
-        return self._store_for(workspace).get_handoff_pack(handoff_id)
+        store = self._store_for_read(workspace)
+        return store.get_handoff_pack(handoff_id) if store is not None else None
 
     def rehydrate_handoff_pack(
         self,

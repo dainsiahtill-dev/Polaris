@@ -1,14 +1,8 @@
 from __future__ import annotations
 
-import json
-import multiprocessing as mp
-import operator
-import os
-import threading
-import time
-from collections import UserDict
 from collections.abc import Callable, Mapping
-from dataclasses import FrozenInstanceError, fields, replace
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal, cast
 
@@ -18,7 +12,6 @@ from polaris.cells.events.fact_stream.public import (
     AppendIfGuardedSnapshotCommandV1,
     BootstrapFactStreamWorkspaceCommandV1,
     FactStreamError,
-    FactStreamQueryResultV1,
     GuardedFactAppendedV1,
     GuardedFactEventV1,
     GuardedFactSnapshotV1,
@@ -30,17 +23,11 @@ from polaris.cells.events.fact_stream.public import (
 )
 from polaris.cells.runtime.task_runtime.internal import (
     directed_effect_operation as deo_internal,
-    service as task_runtime_service_internal,
 )
-from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoardFileLockTimeoutError
 from polaris.cells.runtime.task_runtime.public import (
     DIRECTED_EFFECT_OPERATION_SCHEMA_V1,
     DIRECTED_EFFECT_OPERATION_SCHEMA_V2,
-    DIRECTED_EFFECT_OPERATION_SCHEMA_V3,
-    DIRECTED_EFFECT_OPERATION_SCHEMA_V4,
     DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
-    DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V2,
-    DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V3,
     AbortDirectedEffectOperationCommandV1,
     AdmitDirectedEffectOperationCommandV1,
     AdmitDirectedEffectParentBatchCommandV1,
@@ -53,21 +40,15 @@ from polaris.cells.runtime.task_runtime.public import (
     DirectedEffectOperationResultV1,
     DirectedEffectOperationStateV1,
     DirectedEffectParentBindingV1,
-    DirectedEffectParentReadinessProjectionV1,
-    DirectedEffectParentReadinessResultV1,
-    DirectedEffectParentReadinessStateCountV1,
-    DirectedEffectRecoverySweepResultV1,
     EnrollDirectedEffectOperationStreamCommandV1,
     EnrollDirectedEffectParentRegistryStreamCommandV1,
     FinalizeDirectedEffectInventoryAdmissionCommandV1,
     GetDirectedEffectInventoryQueryV1,
     GetDirectedEffectOperationQueryV1,
     GetDirectedEffectParentReadinessQueryV1,
-    GetDirectedEffectParentRegistryQueryV1,
     HeartbeatTaskRuntimeExecutionAttemptCommandV1,
     MarkDirectedEffectRecoveryPendingCommandV1,
     ParentCorrelationV1,
-    ReconcileAmbiguousDirectedEffectsCommandV1,
     SealDirectedEffectInventoryCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
@@ -75,7 +56,6 @@ from polaris.cells.runtime.task_runtime.public import (
     abort_directed_effect_operation,
     admit_directed_effect_operation,
     admit_directed_effect_parent,
-    admit_directed_effect_parent_batch,
     claim_directed_effect,
     commit_directed_effect_receipt,
     dead_letter_directed_effect_operation,
@@ -85,10 +65,8 @@ from polaris.cells.runtime.task_runtime.public import (
     get_directed_effect_inventory,
     get_directed_effect_operation,
     get_directed_effect_parent_readiness,
-    get_directed_effect_parent_registry,
     heartbeat_task_runtime_execution_attempt,
     mark_directed_effect_recovery_pending,
-    reconcile_ambiguous_directed_effects,
     seal_directed_effect_inventory,
 )
 from polaris.kernelone.storage import resolve_storage_roots
@@ -631,10 +609,7 @@ def _close_parent(binding: DirectedEffectParentBindingV1) -> None:
     )
 
 
-
-
-
-
+@pytest.mark.parametrize("crash_stage", ("intent", "child", "parent", "terminal"))
 def test_settlement_replays_each_durable_crash_boundary_without_duplicate_facts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -775,6 +750,25 @@ _BINDING_MISMATCH_CASES = (
 )
 
 
+def _forge_binding_field(
+    binding: DirectedEffectParentBindingV1,
+    field_path: str,
+) -> DirectedEffectParentBindingV1:
+    """Corrupt an isolated frozen DTO without letting its constructor reject it first."""
+
+    forged = deepcopy(binding)
+    owner: object = forged
+    parts = field_path.split(".")
+    for part in parts[:-1]:
+        owner = getattr(owner, part)
+    name = parts[-1]
+    current = getattr(owner, name)
+    value = current + 1 if type(current) is int else f"tampered-{current}"
+    object.__setattr__(owner, name, value)
+    return forged
+
+
+@pytest.mark.parametrize("field_path,expected_code", _BINDING_MISMATCH_CASES)
 def test_operation_enrollment_rejects_complete_binding_mismatch_before_maintenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1085,6 +1079,64 @@ def test_non_drift_error_after_real_commit_reconciles_strict_durable_event(
     assert len(events) == 1
     assert result.evidence["event_id"] == events[0]["event_id"]
     assert result.evidence["appended_seq"] == events[0]["seq"]
+
+
+@pytest.mark.parametrize("error_code", ["append_write_failed", "target_snapshot_drift"])
+def test_claim_acknowledgement_loss_recovers_original_grant_without_replay_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_code: str,
+) -> None:
+    """Only the nonce-bound invocation that crossed fsync may recover a claim grant."""
+
+    identity = _attempt(tmp_path)
+    _enroll_parent(identity)
+    binding = _admit_parent(identity)
+    _enroll_operation(identity, binding)
+    (admission,) = _seal_operation_commands(identity, binding, _operation_command(identity, binding))
+    admitted = admit_directed_effect_operation(admission)
+    assert admitted.snapshot is not None
+    _finalize_operation_inventory(identity, binding)
+    command = ClaimDirectedEffectCommandV1(
+        workspace=identity.workspace,
+        task_id=identity.task_id,
+        execution_attempt=identity,
+        parent_binding=binding,
+        tool_call_id=admission.tool_call_id,
+        effect_id=admission.effect_id,
+        expected_version=1,
+        expected_seq=admitted.snapshot.source_head_seq + 1,
+        actor=admission.actor,
+        intended_effect_fingerprint=admission.intended_effect_fingerprint,
+        policy_verdict_hash=admission.policy_verdict_hash,
+        expected_receipt_binding_hash=admission.expected_receipt_binding_hash,
+    )
+    commits: list[GuardedFactAppendedV1] = []
+
+    def lose_ack(receipt: GuardedFactAppendedV1) -> None:
+        commits.append(receipt)
+        raise FactStreamError(
+            "simulated claim acknowledgement loss after fsync",
+            code=error_code,
+            details={"boundary": "after_fsync"},
+        )
+
+    monkeypatch.setattr(
+        deo_internal.DirectedEffectOperationRepository,
+        "_after_guarded_commit",
+        staticmethod(lose_ack),
+    )
+    result = claim_directed_effect(command)
+
+    assert result.code == "effect_claimed"
+    assert result.claim_grant is not None
+    assert result.evidence["reconciled_after_guarded_error"] is True
+    assert len(commits) == 1
+    assert result.claim_grant.claim_event_id == commits[0].event_id
+    replay = claim_directed_effect(command)
+    assert replay.code == "idempotent_replay"
+    assert replay.claim_grant is None
+    assert len(commits) == 1
 
 
 def test_non_drift_error_without_durable_event_returns_typed_failure(
@@ -1476,7 +1528,7 @@ def test_parent_readiness_fails_closed_for_stale_or_invalid_bindings(
     assert result.projection is None
 
 
-def test_parent_readiness_fails_closed_for_stale_attempt(tmp_path: Path) -> None:
+def test_parent_readiness_observes_stable_attempt_across_heartbeat(tmp_path: Path) -> None:
     identity = _attempt(tmp_path)
     _enroll_parent(identity)
     binding = _admit_parent(identity)
@@ -1486,7 +1538,7 @@ def test_parent_readiness_fails_closed_for_stale_attempt(tmp_path: Path) -> None
             workspace=identity.workspace,
             identity=identity,
             lease_ttl_seconds=120,
-            context_summary="make readiness query identity stale",
+            context_summary="renew the same lease-independent readiness identity",
             lock_timeout_seconds=5.0,
         )
     )
@@ -1494,9 +1546,10 @@ def test_parent_readiness_fails_closed_for_stale_attempt(tmp_path: Path) -> None
 
     result = get_directed_effect_parent_readiness(_readiness_query(identity, binding))
 
-    assert result.ok is False
-    assert result.code == "lease_version_mismatch"
-    assert result.projection is None
+    assert result.ok is True
+    assert result.code == "readiness_observed"
+    assert result.projection is not None
+    assert result.projection.enforcement == "not_enabled"
 
 
 def test_parent_readiness_fails_closed_when_operation_stream_is_unenrolled(tmp_path: Path) -> None:
@@ -1660,5 +1713,3 @@ def test_parent_readiness_fails_closed_for_corrupt_or_ambiguous_operation_facts(
         "observed_operation": forged_operation.to_record(),
     }
     assert result.projection is None
-
-

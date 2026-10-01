@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 # Debug-tracing controls are part of this cell's observable surface: delivery
@@ -25,8 +26,15 @@ from polaris.kernelone.events.sourcing import (
     append_if_guarded_snapshot as _append_if_guarded_snapshot,
     read_guarded_fact_snapshot as _read_guarded_fact_snapshot,
 )
-from polaris.kernelone.fs import LockedRegularFileError, LockedRegularFileSetV1, LockMaintenanceProofV1
+from polaris.kernelone.fs import (
+    GuardedRegularFileSnapshotError,
+    LockedRegularFileError,
+    LockedRegularFileSetV1,
+    LockMaintenanceProofV1,
+    read_guarded_regular_file_snapshot,
+)
 from polaris.kernelone.fs.locked_regular_file import default_platform_lock_root
+from polaris.kernelone.storage import resolve_runtime_path
 
 from .contracts import (
     AppendFactEventCommandV1,
@@ -338,6 +346,25 @@ def _find_existing_idempotent_event(
         offset = result.next_offset
 
 
+def _query_failure_storage_observation(query: QueryFactEventsV1) -> dict[str, Any]:
+    """Bounded read-only leaf evidence; never enroll or authorize a stream."""
+    try:
+        logical = JsonlEventStore(query.workspace).stream_logical_path(query.stream)
+        physical = Path(resolve_runtime_path(query.workspace, logical))
+        try:
+            read_guarded_regular_file_snapshot(physical.parent, physical.name, 1)
+        except GuardedRegularFileSnapshotError as exc:
+            missing = exc.code == "guarded_snapshot_missing" and exc.details.get("name") == physical.name
+            return {
+                "storage_path": logical,
+                "stream_leaf_presence": "missing" if missing else "unknown",
+                "storage_observation_code": exc.code,
+            }
+        return {"storage_path": logical, "stream_leaf_presence": "present"}
+    except (OSError, ValueError, EventSourcingError):
+        return {"stream_leaf_presence": "unknown"}
+
+
 def query_fact_events(query: QueryFactEventsV1) -> FactStreamQueryResultV1:
     """Query canonical fact events with pagination and optional filters."""
     _reject_ordinary_segmented_stream(query.stream)
@@ -363,6 +390,7 @@ def query_fact_events(query: QueryFactEventsV1) -> FactStreamQueryResultV1:
                 "limit": query.limit,
                 "strict_integrity": query.strict_integrity,
                 **_failure_details(exc),
+                **_query_failure_storage_observation(query),
             },
         ) from exc
 

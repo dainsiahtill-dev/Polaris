@@ -1,0 +1,46 @@
+{
+  "schema_version": "polaris.machine_readable_defect.v1",
+  "defect_id": "DIRECTOR-CAPABILITY-DIRECTORY-AS-EXACT-ACT-FILES",
+  "severity": "P0",
+  "status": "LOCAL_INTEGRATION_VERIFIED_FRESH_BENCH_NOT_RUN",
+  "owner_cell": "roles.adapters",
+  "plan_package": "P04",
+  "baseline_head": "0d475c60474f2b1ea4a06ea136c0f817d2c49bfa",
+  "symptom": "Bound directory capability src/ authorizes target src/a.py, yet physical Director write fails as out-of-scope; no effect receipt reaches ToolBatchRuntime.",
+  "dynamic_evidence": {
+    "kind": "real_public_claim_fence_physical_mutation_in_test_workspace",
+    "test": "test_production_mutation_port_receipt_reaches_tool_batch_runtime",
+    "debugger": "pytest --pdb at failing physical receipt assertion",
+    "bound_authorization_scope": ["src/"],
+    "bound_effect_target": "src/a.py",
+    "physical_error": "Changed files exceed act.files scope: ['src/a.py']",
+    "provider_request_audit": "not_applicable_no_provider_call",
+    "live_bench_same_signature_confirmed": false
+  },
+  "root_cause": "Physical adapter bound capability scope directly into exact-file WriteGate act.files. Directory capability and current exact effect target are distinct contracts.",
+  "fix": {
+    "immutable_target_source": "prepared.context.bound_snapshot.snapshot.baseline_target_state_evidence",
+    "scope_narrowing": "Validate immutable target against canonical same-Cell capability matcher; physical executor permits only that exact target, with original scope retained for dependency checks.",
+    "no_file_effect": "Command/no-file-state does not fabricate a file target.",
+    "global_writegate_modified": false,
+    "files": [
+      "src/backend/polaris/cells/roles/adapters/internal/director/execution_tools.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py"
+    ]
+  },
+  "verification": {
+    "red_real_mutation_receipt_tests": 2,
+    "scope_integration_and_architecture": "25 passed in 22.37s",
+    "affected_adapter_receipt_settlement_cascade": "201 passed in 73.33s",
+    "mypy_scope_and_mutation_files": "3 source files pass",
+    "required_denials": ["sibling write", "target outside capability", "traversal", "absolute target", "AGENTS.md forbidden write"],
+    "fresh_bench": "not_run"
+  },
+  "guardrails": {
+    "target_project_manually_modified": false,
+    "global_policy_loosened": false,
+    "provider_calls": 0,
+    "new_branch_created": false
+  },
+  "residual_risk": "Control-plane claim/physical receipt proof is local integrated evidence, not fresh end-to-end runnable qualification."
+}

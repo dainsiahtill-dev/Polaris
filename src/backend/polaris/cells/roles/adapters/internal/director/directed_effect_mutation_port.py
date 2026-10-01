@@ -695,7 +695,11 @@ class _DirectorDirectedEffectMutationPort:
                     repair_target = str(prepared.repair_binding.effect.target_path or "").strip()
                     if repair_target:
                         authorized_scope.append(repair_target)
-                executor._bind_authorized_scope(authorized_scope)
+                target_state = prepared.context.bound_snapshot.snapshot.baseline_target_state_evidence
+                executor._bind_authorized_scope(
+                    authorized_scope,
+                    effect_target=None if target_state.is_no_file_state else target_state.target_path,
+                )
             failure_kind = "physical_executor_exception"
             raw_result = executor.execute_tool(
                 prepared.tool_name,

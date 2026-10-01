@@ -1,0 +1,27 @@
+id: VC-20261001-ROLE-SESSION-REQUEST-IDENTITY
+classification: pattern
+status: red_pending
+owner_cell: roles.runtime
+plan_package: P05
+assumptions:
+  - id: A1
+    statement: Ordinary public session requests currently lack first-class transaction identity.
+    evidence: Live b05c1476 denied before Provider; shared command/preparation contain only run/session labels.
+  - id: A2
+    statement: Submission correlation identity does not grant mutation authority.
+    evidence: Existing guarded-session and DEO policy must remain unchanged and be retested.
+premortem:
+  - Minting ids in preparation instead of immutable command breaks replay/serialization.
+  - Injecting id alongside an existing execution scope creates conflicting authority fields.
+  - Random fallback for malformed explicit scope hides a real contract error.
+verification:
+  - Real identity derivation RED/GREEN from public session command projection.
+  - Independent commands differ; same and serialized commands retain nonce.
+  - Existing flat/nested TaskRuntime scope preserved; malformed/conflicting remains denied.
+  - Guarded missing authority denied before kernel access.
+  - roles.runtime owner and kernel identity regressions; native CLI probe unchanged.
+guardrails:
+  kernel_guard_weakened: false
+  evaluator_case_or_judge_changed: false
+  target_project_modified: false
+  new_durable_state_owner: false

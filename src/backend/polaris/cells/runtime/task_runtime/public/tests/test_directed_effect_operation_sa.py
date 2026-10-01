@@ -2,26 +2,18 @@ from __future__ import annotations
 
 import json
 import multiprocessing as mp
-import operator
 import os
 import threading
 import time
-from collections import UserDict
-from collections.abc import Callable, Mapping
-from dataclasses import FrozenInstanceError, fields, replace
+from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal, cast
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
     AppendFactEventCommandV1,
-    AppendIfGuardedSnapshotCommandV1,
     BootstrapFactStreamWorkspaceCommandV1,
-    FactStreamError,
-    FactStreamQueryResultV1,
-    GuardedFactAppendedV1,
-    GuardedFactEventV1,
-    GuardedFactSnapshotV1,
     QueryFactEventsV1,
     append_fact_event,
     bootstrap_fact_stream_workspace,
@@ -34,8 +26,6 @@ from polaris.cells.runtime.task_runtime.internal import (
 )
 from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoardFileLockTimeoutError
 from polaris.cells.runtime.task_runtime.public import (
-    DIRECTED_EFFECT_OPERATION_SCHEMA_V1,
-    DIRECTED_EFFECT_OPERATION_SCHEMA_V2,
     DIRECTED_EFFECT_OPERATION_SCHEMA_V3,
     DIRECTED_EFFECT_OPERATION_SCHEMA_V4,
     DIRECTED_EFFECT_PARENT_REGISTRY_SCHEMA_V1,
@@ -53,9 +43,6 @@ from polaris.cells.runtime.task_runtime.public import (
     DirectedEffectOperationResultV1,
     DirectedEffectOperationStateV1,
     DirectedEffectParentBindingV1,
-    DirectedEffectParentReadinessProjectionV1,
-    DirectedEffectParentReadinessResultV1,
-    DirectedEffectParentReadinessStateCountV1,
     DirectedEffectRecoverySweepResultV1,
     EnrollDirectedEffectOperationStreamCommandV1,
     EnrollDirectedEffectParentRegistryStreamCommandV1,
@@ -84,7 +71,6 @@ from polaris.cells.runtime.task_runtime.public import (
     finalize_directed_effect_inventory_admission,
     get_directed_effect_inventory,
     get_directed_effect_operation,
-    get_directed_effect_parent_readiness,
     get_directed_effect_parent_registry,
     heartbeat_task_runtime_execution_attempt,
     mark_directed_effect_recovery_pending,
@@ -629,10 +615,6 @@ def _close_parent(binding: DirectedEffectParentBindingV1) -> None:
             strict_integrity=True,
         )
     )
-
-
-
-
 
 
 def test_explicit_enrollment_order_fails_closed_without_implicit_maintenance(tmp_path: Path) -> None:
@@ -2092,6 +2074,3 @@ def test_terminal_operation_settlement_matrix_preserves_fact_order_and_outcome_p
     assert terminal_fact["task_id"] == str(identity.task_id)
     assert terminal_fact["event_type"] == outcome
     assert terminal_fact["session_id"] == identity.session_id
-
-
-@pytest.mark.parametrize("crash_stage", ("intent", "child", "parent", "terminal"))

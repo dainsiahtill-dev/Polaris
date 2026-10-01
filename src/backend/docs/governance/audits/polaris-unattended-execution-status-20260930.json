@@ -1,0 +1,165 @@
+{
+  "schema_version": "polaris.engineering_execution_status.v1",
+  "record_kind": "external_engineering_audit",
+  "authoritative_platform_state": false,
+  "updated_at_utc": "2026-10-01 01:55:00 UTC",
+  "latest_checkpoint": {
+    "note": "Prior aggregate fields below are historical checkpoint values, not recomputed current totals.",
+    "model": "mimo-v2.6-pro",
+    "generic_deep_tests": "32_of_32_passed",
+    "fresh_canary": "factory_9aa169804636_failed; PM_and_CE_passed; Director_native_message_drift",
+    "native_message_fix": "366_focused_tests_passed_M04_passed_exact_replay_and_live_dispatch_verified",
+    "same_run_recovery": "Director_only_preserved_PM_CE",
+    "live_provider_response": "HTTP_200_621449ms_29315_completion_tokens_9_write_calls",
+    "current_residual": "Same-run retry reused two tasks, third failed logical660s timeout; same physical HTTP returned200 onlyat852020ms. Factory failed with drain settled and0late effects. Controlled physical deadline/cancellation proof next.",
+    "director_budget_fix": "RED10_of14; tasking_owner411PASS; request_budget285PASS; adapter_split66PASS; Ruff_MypyPASS",
+    "native_assignment_alias_fix": "RED10_of52_then_wrapperRED2; tools_registry658PASS; body_hash_preserved_exact_candidate_replay; Ruff_MypyPASS; no_new_live_alias_effect_proof",
+    "project_completed_verified": false,
+    "full_release_gate": "not_green; last_full_run_346_pass_8_fail_1_skip; one_cross_cell_test_fence_fixed_and_retested",
+    "defect_record": "src/backend/docs/governance/audits/defect-20261001-mimo-native-write-arguments.json"
+  },
+  "workspace": "/home/dains/Documents/polaris",
+  "baseline_head": "0d475c60474f2b1ea4a06ea136c0f817d2c49bfa",
+  "execution_checkout": "main",
+  "new_branch_created": false,
+  "committed": false,
+  "preexisting_dirty_paths_preserved": [
+    ".serena/project.yml"
+  ],
+  "source_fingerprints": [
+    {
+      "path": "src/backend/polaris/cells/runtime/task_runtime/internal/directed_effect_operation/_repository_class.source",
+      "sha256": "b00381b4bca6e58b5d820f6d3a541bb9823eecede69cc86af2fa4928f0041e0b"
+    },
+    {
+      "path": "src/backend/polaris/cells/runtime/task_runtime/internal/directed_effect_operation/__init__.py",
+      "sha256": "d72f2ba44b010990dd19ac6348830635a3ca3affa496eefa734740ac69981157"
+    },
+    {
+      "path": "src/backend/polaris/cells/runtime/task_runtime/internal/directed_effect_operation/_repository.py",
+      "sha256": "16e2811b28f2324aca17fbc10817f75bf381f612b1f362cb89a3fba02e23dc41"
+    },
+    {
+      "path": "src/backend/polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py",
+      "sha256": "29526552baaa577732a2774c182c3fe98563756a3a90bab62c32bb57d6512488"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/adapters/internal/director/execution_tools.py",
+      "sha256": "9f9ef20c1ce2aa7718c48adc9228087b53d16088665df0d4702dc887749ff2dc"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/adapters/internal/director/directed_effect_mutation_port.py",
+      "sha256": "fbe05a05a5b62c78a75da07d17583063f81dbad146b6f2f741c7883eb3375f16"
+    },
+    {
+      "path": "src/backend/polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py",
+      "sha256": "52a9345d0e5a1f52aecefecddf2f7cceb8978e9a1d822fdbfc554d52633fe614"
+    }
+  ],
+  "plan": "docs/superpowers/plans/2026-09-30-polaris-unattended-development.md",
+  "progress_document": "src/backend/docs/governance/POLARIS_UNATTENDED_IMPLEMENTATION_PROGRESS_20260930.md",
+  "package_status": {
+    "P00": "owner_baseline_green_remaining_registry_and_qualification_reconciliation",
+    "P01": "stop_reason_and_budget_local_verified_cancel_and_typed_continuation_open",
+    "P02": "planned_owner_observation_consistency_not_dynamically_verified",
+    "P04": "claim_confirmation_scope_local_verified_remaining_crash_context_fence_matrix",
+    "P03": "pending_P01_P02_P04",
+    "P05": "partial_native_message_argument_alias_and_budget_local_verified_full_retry_matrix_open",
+    "P06": "planned",
+    "P08a": "planned_before_P07",
+    "P07": "planned",
+    "P08b": "planned_after_P07",
+    "P09": "partial_user_approved_heartbeat_visibility_browser_verified",
+    "P10": "planned",
+    "P11": "planned",
+    "P12": "planned",
+    "P13": "fresh_L1_01_attempted_failed_provider_token_plan_2067_operator_action_required",
+    "P14": "ongoing_docs_memory"
+  },
+  "tests": [
+    {
+      "scope": "TaskRuntime full owner plus roles lifecycle",
+      "passed": 893,
+      "failed": 0,
+      "warnings": 10,
+      "seconds": 261.26,
+      "log": ".superpowers/sdd/2026-09-30-polaris-unattended-development/p00-final-fix-pass.log"
+    },
+    {
+      "scope": "workspace quality deadline stop evidence",
+      "passed": 152,
+      "failed": 0,
+      "seconds": 64.06,
+      "log": ".superpowers/sdd/2026-09-30-polaris-unattended-development/p01-final-fix-pass.log"
+    },
+    {
+      "scope": "physical scope adapter receipt architecture settlement cascade",
+      "passed": 201,
+      "failed": 0,
+      "seconds": 73.33,
+      "log": ".superpowers/sdd/2026-09-30-polaris-unattended-development/p04-scope-and-cascade-final.log"
+    }
+  ],
+  "static_checks": {
+    "ruff_modified_production_and_actual_exec_source": "pass",
+    "mypy_checked_source_file_counts": [
+      2,
+      3
+    ],
+    "mypy_exec_source_fully_certified": false,
+    "git_diff_check": "pass",
+    "whole_repository_certified": false
+  },
+  "review": {
+    "mode": "read_only",
+    "important_findings": 3,
+    "minor_findings": 0,
+    "fix_pass": "all_three_reproduced_and_fixed_with_TDD",
+    "independent_re_review": "not_run_per_single_fix_pass_protocol",
+    "additional_physical_scope_defect": "dynamically_root_caused_after_review_and_integration_verified"
+  },
+  "physical_proof_level": "local_integrated_public_claim_fence_filesystem_effect_receipt_in_scratch_workspace",
+  "fresh_unattended_completion": false,
+  "provider_calls": 2,
+  "provider_call_count_basis": "semantic_PM_and_CE_call_start_events; transport_retries_not_included",
+  "bench_runs": 1,
+  "target_project_manually_modified": false,
+  "main_ports_touched": false,
+  "bench_admission": "cascade9_of9_passed_user_authorized_basic_fresh_canary_executed_no_full_platform_qualification",
+  "fresh_attempt": {
+    "factory_run_id": "factory_03f36dec6eb1",
+    "backend_fingerprint": "7d902b5fc26cfbaf",
+    "backend_fresh": true,
+    "result": "failed_at_chief_engineer_review_provider_quota",
+    "runnable": "0/1",
+    "elapsed_seconds": 44.7,
+    "report": "src/backend/docs/governance/audits/fresh-l1-01-20261001-r01-provider-quota.json",
+    "evidence_archive": "/home/dains/.polaris/audit_archives/unattended-foundation-20261001/fresh-l1-01-09c333642ee9"
+  },
+  "isolated_servers": {
+    "control_frontend": "http://127.0.0.1:5174/",
+    "control_backend": "http://127.0.0.1:49978",
+    "project_frontend": "http://127.0.0.1:5175/",
+    "project_backend": "http://127.0.0.1:49979",
+    "state": "running_preserved_for_operator_inspection_and_recovery"
+  },
+  "latest_m05_fix": {
+    "case": "failed_or_suspended_never_sealed_no_child_parent_strict_CAS_close",
+    "new_branch_tests": "15 passed",
+    "fact_stream_public_tests": "157 passed",
+    "m05_full_tests": "71 passed",
+    "source_fingerprints_above": "previous_2026_09_30_checkpoint_not_the_7d902b5fc26cfbaf_fresh_attempt"
+  },
+  "mimo_transition": {
+    "authorization": "user selected already configured MiMo Token Plan provider",
+    "model": "mimo-v2.6-pro",
+    "roles": ["pm", "chief_engineer", "director", "qa"],
+    "credentials_preserved": true,
+    "connection_and_live_ui": "verified",
+    "deep_role_qualification": "generic_readiness_32_of32_pass",
+    "native_tool_qualification": "blocked_before_provider_by_transaction_identity_unbound",
+    "report": "src/backend/docs/governance/audits/mimo-connectivity-20261001.json",
+    "deep_report": "src/backend/docs/governance/audits/mimo-deep-qualification-20261001.json"
+  },
+  "next_action": "Controlled reproduction of logical timeout versus physical HTTP lifetime at KernelOne/provider governed boundary, then total-deadline/cancellation and typed recovery design. No identical paid retry before proof. Preserve PM/CE/target artifacts. FullP05, output feasibility/retry floors, P04/P02/P03 and fresh full-budget completion remain open."
+}

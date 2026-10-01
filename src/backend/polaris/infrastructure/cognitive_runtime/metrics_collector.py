@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 from polaris.infrastructure.db.adapters import SqliteAdapter
 from polaris.kernelone.db import KernelDatabase
 
+from .sqlite_store import CognitiveRuntimeSqliteStore
+
 if TYPE_CHECKING:
     import sqlite3
 
@@ -87,6 +89,8 @@ class CognitiveRuntimeMetricsCollector:
         self._workspace = workspace
         self._db_path = db_path or self.DEFAULT_DB_PATH
         self._kernel_db = kernel_db
+        self._owns_kernel_db = kernel_db is None
+        self._reader_store: CognitiveRuntimeSqliteStore | None = None
         self._db: KernelDatabase | None = None
         self._conn: sqlite3.Connection | None = None
 
@@ -101,19 +105,13 @@ class CognitiveRuntimeMetricsCollector:
                     sqlite_adapter=SqliteAdapter(),
                     allow_unmanaged_absolute=True,
                 )
-            resolved_path = self._kernel_db.resolve_sqlite_path(self._db_path, ensure_parent=False)
-            self._conn = self._kernel_db.sqlite(
-                resolved_path,
-                timeout_seconds=10.0,
-                check_same_thread=True,
-                row_factory="row",
-                pragmas={
-                    "journal_mode": "WAL",
-                    "busy_timeout": 5000,
-                    "synchronous": "NORMAL",
-                },
-                ensure_parent=False,
+            self._reader_store = CognitiveRuntimeSqliteStore(
+                self._workspace,
+                db_path=self._db_path,
+                kernel_db=self._kernel_db,
+                read_only=True,
             )
+            self._conn = self._reader_store._connect_read_only()
             return self._conn
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning(
@@ -129,7 +127,10 @@ class CognitiveRuntimeMetricsCollector:
             with contextlib.suppress(Exception):
                 self._conn.close()
             self._conn = None
-        if self._kernel_db is not None:
+        if self._reader_store is not None:
+            self._reader_store.close()
+            self._reader_store = None
+        if self._owns_kernel_db and self._kernel_db is not None:
             with contextlib.suppress(Exception):
                 self._kernel_db.close()
             self._kernel_db = None

@@ -108,6 +108,13 @@ from polaris.cells.roles.runtime.public.service import (
     execute_role_task_market_lifecycle,
     instantiate_role_runtime_object,
 )
+from polaris.cells.roles.runtime.public.tests._object_contract_fixtures import (
+    _capability_ports,
+    _commit_envelope,
+    _mixed_role_capability_ports,
+    _pm_mount_table,
+    _role_runtime_effect_is_allowed,
+)
 from polaris.cells.runtime.projection.public.contracts import RuntimeProjectionQueryV1, RuntimeProjectionResultV1
 from polaris.cells.runtime.task_market.public import (
     AcknowledgeTaskStageCommandV1,
@@ -2259,28 +2266,3 @@ def test_role_state_commit_receipt_rejects_refs_outside_source_of_truth(
 ) -> None:
     with pytest.raises(ValueError, match=expected_error):
         RoleStateCommitReceipt(**payload)
-
-
-@pytest.mark.parametrize(
-    "payload, expected_error",
-    (
-        (
-            {
-                "runtime_receipt_refs": (
-                    "factory.cognitive_runtime:receipt-1",
-                    "factory.cognitive_runtime:receipt-1",
-                ),
-            },
-            "runtime_receipt_refs must not contain duplicate refs",
-        ),
-        (
-            {
-                "handoff_pack_refs": (
-                    "factory.cognitive_runtime:handoff:handoff-1",
-                    "factory.cognitive_runtime:handoff:handoff-1",
-                ),
-            },
-            "handoff_pack_refs must not contain duplicate refs",
-        ),
-    ),
-)

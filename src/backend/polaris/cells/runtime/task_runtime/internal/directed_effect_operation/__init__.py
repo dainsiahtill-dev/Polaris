@@ -166,7 +166,10 @@ from ._helpers import (
 )
 from ._repository import DirectedEffectOperationRepository
 
-_SURFACE_PATH = _Path(__file__).resolve().parent / "_module_surface.source"
+# Introspection must expose the same source that the repository executes.
+# The historical monofile path remains only for path-depth compatibility;
+# a separately frozen monolith would make debug/review observe stale code.
+_SURFACE_PATH = _Path(__file__).resolve().parent / "_repository_class.source"
 _SURFACE_TEXT = _SURFACE_PATH.read_text(encoding="utf-8")
 # Historical monofile path: .../internal/directed_effect_operation.py
 # parents[4] == polaris package root (used by characterization path math).

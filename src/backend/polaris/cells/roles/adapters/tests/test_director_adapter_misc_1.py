@@ -59,6 +59,11 @@ from polaris.kernelone.events.final_request_evidence import (
     looks_like_workspace_quality_evidence_payload,
 )
 
+from ._execution_attempt_helpers import (
+    _project_deferred_repair_results_for_test,
+    _test_execution_attempt,
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -108,10 +113,40 @@ def _make_adapter(tmp_path: Any, task_runtime: Any = None) -> DirectorAdapter:
     return adapter
 
 
-from ._execution_attempt_helpers import (
-    _project_deferred_repair_results_for_test,
-    _test_execution_attempt,
-)
+def _run_runtime_director_repair(
+    tmp_path: Any,
+    *,
+    source_tool: str,
+    artifact_quality_errors: list[str],
+    relative_paths: tuple[str, ...],
+    task_id: str = "task-1",
+    use_editor: bool = True,
+) -> list[dict[str, Any]]:
+    """Plan through the deferred boundary, then apply only in test scope.
+
+    Restored from the pre-split fixture; production remains plan-only.
+    """
+    workspace = Path(tmp_path)
+    base_files = {
+        relative_path: (workspace / relative_path).read_text(encoding="utf-8") for relative_path in relative_paths
+    }
+    deferred = run_runtime_repair_with_director_tools(
+        _make_adapter(tmp_path),
+        workspace_path=workspace,
+        task_id=task_id,
+        source_tool=source_tool,
+        execution_attempt=_test_execution_attempt(workspace, task_id),
+        base_files=base_files,
+        artifact_quality_errors=artifact_quality_errors,
+        allowed_paths=relative_paths,
+        use_editor=use_editor,
+    )
+    return _project_deferred_repair_results_for_test(workspace, deferred)
+
+
+def _assert_execute_method_attr_missing(name: str) -> None:
+    with pytest.raises(AttributeError, match=name):
+        getattr(execute_method_module, name)
 
 
 def _install_test_deferred_projection(
@@ -241,7 +276,7 @@ def test_prepare_role_dialogue_context_bounds_forced_write_retry_budget() -> Non
 
 
 def test_prepare_role_dialogue_context_derives_stable_distinct_subinvocation_identity() -> None:
-    original = {
+    original: dict[str, Any] = {
         "metadata": {
             "task_runtime_session_id": "task-runtime-session-7",
             "runtime_execution": {
@@ -1346,7 +1381,8 @@ async def test_execute_director_task_does_not_call_llm_when_exact_claim_conflict
     class FakeAdapter:
         workspace = str(tmp_path)
         role_id = "director"
-        task_runtime = object()
+        task_runtime = SimpleNamespace(_board=SimpleNamespace(get=lambda task_id: task))
+        _task_row_needs_rematerialize = DirectorAdapter._task_row_needs_rematerialize
         _state_tracker = FakeStateTracker()
         _execution = FakeExecution()
 

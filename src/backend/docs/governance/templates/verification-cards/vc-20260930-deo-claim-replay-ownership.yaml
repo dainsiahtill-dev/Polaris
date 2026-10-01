@@ -1,0 +1,37 @@
+id: VC-20260930-DEO-CLAIM-REPLAY-OWNERSHIP
+classification: pattern
+status: local_verified_fresh_bench_not_run
+owner_cell: runtime.task_runtime
+plan_package: P04a
+source_head: 0d475c60474f2b1ea4a06ea136c0f817d2c49bfa
+assumptions:
+  - id: A1
+    statement: Ordinary exact replay must not mint another physical dispatch grant.
+    evidence: Real two-process regression returns effect_claimed twice.
+  - id: A2
+    statement: Ambiguous acknowledgement recovery must retain the original append ownership nonce.
+    evidence: Guarded append confirmation already rechecks the exact idempotency key and durable transition.
+  - id: A3
+    statement: A process-local fence cannot replace cross-process durable claim single-winner authority.
+    evidence: Fence entries and context identities are bound to creator PID.
+premortem:
+  - Removing replay grant without testing post-fsync loss could strand the original invocation.
+  - Treating a losing contender as an ambiguous original writer could grant duplicate dispatch.
+verification:
+  - Two competing real processes yield one grant and one observation-only replay.
+  - Sequential identical public claim does not issue a second grant.
+  - Post-fsync ACK loss confirms the original claim and issues its grant once.
+  - Post-commit drift reconciles before ordinary replay without another append.
+  - Semantic mismatch, expired attempt, corrupted receipt and parent closure remain fail-closed.
+  - Confirmation-outage matrix includes every receipt field and never authorizes an unvalidated grant.
+evidence:
+  owner_and_lifecycle: 893 passed, 10 historical multiprocessing fork warnings
+  confirmation_outage_and_ack_loss: 10 passed
+  fresh_bench: not_run
+open_proof_obligations:
+  - Serialized/new-process dispatch context and late expired fence physical-effect matrix.
+  - Fresh unattended project and N-batch qualification.
+guardrails:
+  target_project_modified: false
+  public_authority_expanded: false
+  second_receipt_owner: false

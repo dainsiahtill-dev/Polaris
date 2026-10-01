@@ -563,11 +563,12 @@ class DirectorToolExecutor:
         self._message_bus = message_bus
         self._worker_id = worker_id
         self._authorized_scope: tuple[str, ...] = ()
+        self._authorized_effect_target: str | None = None
 
-    def _bind_authorized_scope(self, authorized_scope: Sequence[str]) -> None:
+    def _bind_authorized_scope(self, authorized_scope: Sequence[str], *, effect_target: str | None = None) -> None:
         """Bind the DEO capability scope before the first physical effect."""
         self._assert_physical_execution_authority()
-        self._authorized_scope = tuple(
+        normalized_scope = tuple(
             sorted(
                 {
                     str(item or "").replace("\\", "/").strip("/")
@@ -576,6 +577,20 @@ class DirectorToolExecutor:
                 }
             )
         )
+        target = None
+        if effect_target is not None:
+            # Same Cell's canonical capability matcher. The mutation port
+            # supplies its immutable DEO target, never provider tool metadata.
+            from .directed_effect_policy_snapshot import (
+                _DirectorEffectPolicySnapshotPort,
+                _normalize_relative_workspace_path,
+            )
+
+            target = _normalize_relative_workspace_path(effect_target)
+            if target is None or not _DirectorEffectPolicySnapshotPort._path_is_allowed(target, normalized_scope):
+                raise DirectorToolExecutionAuthorityError("deo_path_scope_denied")
+        self._authorized_scope = normalized_scope
+        self._authorized_effect_target = target
 
     def _assert_physical_execution_authority(self) -> None:
         if type(self) is not DirectorToolExecutor or self not in _DIRECTED_EFFECT_PHYSICAL_EXECUTOR_INSTANCES:
@@ -616,6 +631,19 @@ class DirectorToolExecutor:
         # authoritative physical binding when present, while falling back to
         # the request-carried capability scope for snapshot evaluation.
         allowed_scope = list(getattr(self, "_authorized_scope", ())) or _director_write_allowed_scope(tool_kwargs)
+        effect_target = getattr(self, "_authorized_effect_target", None)
+        if effect_target is not None:
+            if normalized_rel != effect_target:
+                return {
+                    "ok": False,
+                    "error": "Director write policy denied: path differs from bound effect target",
+                    "error_type": "director_write_policy_denied",
+                    "blocked": True,
+                }
+            # WriteGate act.files is exact, whereas capability scope may name
+            # a directory. Materialize only the already-validated effect target
+            # into that exact list; preserve capability scope for dependency checks.
+            allowed_scope.append(effect_target)
         dependency_guard = _precommit_declared_local_include_guard(
             workspace=workspace,
             rel_path=normalized_rel,

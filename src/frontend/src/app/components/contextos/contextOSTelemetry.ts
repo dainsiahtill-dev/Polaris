@@ -43,6 +43,9 @@ export interface ContextOSEvent {
   /** 从结构化 meta / 事件名 / 摘要推断出的角色归属，不改变原始 actor。 */
   roleHints: string[];
   name: string;
+  /** Semantic stream type and severity preserved before display-title projection. */
+  sourceEventType?: string;
+  sourceSeverity?: string;
   kind: string;
   /** 流通道 / 事件子类（llm / system / process …），缺省 unknown。 */
   mode: string;
@@ -920,6 +923,8 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     actor,
     roleHints,
     name: nonEmptyString(log.title) || streamEvent || nonEmptyString(meta['streamEvent']),
+    sourceEventType: streamEvent || nonEmptyString(meta['type']),
+    sourceSeverity: log.level,
     kind: channel || 'stream',
     mode: channel || 'unknown',
     iteration: null,

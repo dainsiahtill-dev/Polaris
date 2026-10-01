@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-import ast
 import hashlib
-import inspect
 import json
-import operator
-import textwrap
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from threading import Barrier, Lock
-from typing import Any, cast, get_args, get_type_hints
+from typing import Any, cast
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
@@ -37,17 +33,12 @@ from polaris.cells.runtime.task_runtime.public import (
     AdmitDirectedEffectOperationCommandV1,
     AdmitDirectedEffectParentCommandV1,
     ClaimDirectedEffectCommandV1,
-    DirectedEffectAuthorityFailureCodeV1,
     DirectedEffectClaimGrantV1,
-    DirectedEffectInventoryCodeV1,
     DirectedEffectInventoryContingencyKindV1,
-    DirectedEffectInventoryEffectTypeV1,
-    DirectedEffectInventoryExecutionModeV1,
     DirectedEffectInventoryIntentV1,
     DirectedEffectInventoryMemberV1,
     DirectedEffectInventoryProjectionV1,
     DirectedEffectInventoryResultV1,
-    DirectedEffectOperationCodeV1,
     DirectedEffectOperationIdentityV1,
     DirectedEffectOperationResultV1,
     DirectedEffectParentBindingV1,
@@ -60,10 +51,8 @@ from polaris.cells.runtime.task_runtime.public import (
     SealDirectedEffectInventoryCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
     TaskRuntimeService,
-    abort_directed_effect_operation,
     admit_directed_effect_operation,
     admit_directed_effect_parent,
-    claim_directed_effect,
     enroll_directed_effect_operation_stream,
     enroll_directed_effect_parent_registry_stream,
     seal_directed_effect_inventory,
@@ -888,10 +877,7 @@ def _grant_hash_after(
     )
 
 
-
-
-
-
+@pytest.mark.parametrize("mismatch", ("operation", "state", "version"))
 def test_operation_result_rejects_mismatched_claim_grant(
     tmp_path: Path,
     mismatch: str,
@@ -1482,7 +1468,13 @@ def test_task4_fixed_timestamp_concurrent_exact_mutation_is_one_fresh_and_one_ty
             assert tz is not None
             return cls.fromtimestamp(fixed_instant.timestamp(), cast(Any, tz))
 
-    monkeypatch.setattr(deo_internal, "datetime", FixedDateTime)
+    # The split repository executes in its defining source namespace, not the
+    # package facade. Freeze the real payload clock, preserving the race.
+    monkeypatch.setitem(
+        deo_internal.DirectedEffectOperationRepository._inventory_seal_payload.__globals__,
+        "datetime",
+        FixedDateTime,
+    )
     barrier = Barrier(2)
     counter_lock = Lock()
     prepare_count = 0
@@ -1895,5 +1887,3 @@ def test_task4_query_rejects_ready_fact_bound_to_forged_operation_prefix(
     assert rejected.evidence["prefix_failure_code"] == "inventory_member_conflict"
     assert _runtime_events(identity.workspace, binding.registry_stream_token) == registry_before
     assert _runtime_events(identity.workspace, binding.operation_stream_token) == operation_before
-
-

@@ -1,0 +1,28 @@
+id: vc-20261001-write-argument-assignment-alias
+classification: pattern
+status: local_verified_live_pending
+owner: kernelone.tool_execution.ToolSpecRegistry
+blueprint: ../../../blueprints/POLARIS_WRITE_ARGUMENT_ASSIGNMENT_ALIAS_20261001.md
+assumptions:
+  - claim: The native write carries a body but no registered file argument.
+    evidence: Exact typed invocation content length26889 and keys content,file=path; DEO normalization rejection.
+  - claim: Only the exact declarative synonym is unambiguous.
+    evidence: Captured write schema requires file/content; arbitrary assignment keys remain unsupported.
+pre_mortem:
+  - Conflicting alias silently selects a target.
+  - Mutable registry adds an alias to an older captured invocation.
+  - Normalization bypasses the exact effect target or modifies body bytes.
+verification:
+  - Native parser and captured normalizer RED then GREEN.
+  - Conflict/canonical ambiguity rejected; other tools and old snapshots unchanged.
+  - Scratch physical writer accepts only bound target and retains scope denials.
+target_project_manual_edit: forbidden
+results:
+  red: 10_failed_42_passed_expected_alias_and_scope_failure
+  wrapper_red: 2_failed_expected_guard_bypass_then_fixed
+  tools_registry_normalization: 658_passed
+  mypy: 4_files_pass
+  ruff: pass
+  exact_candidate_replay: body_sha_unchanged_no_effect_grant
+  factory_completed_verified: false
+  live_attempt: logical_timeout660_before_late_http200_at852_no_alias_effect_proof

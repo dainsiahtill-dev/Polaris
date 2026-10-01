@@ -1535,15 +1535,10 @@ async def test_post_claim_policy_capture_failure_seals_recovery_pending(
     assert current.state == "RECOVERY_PENDING"
 
 
-async def test_claim_exact_replay_rehydrates_grant_after_durable_effect_started(
+async def test_claim_exact_replay_observes_state_without_new_dispatch_grant(
     tmp_path: Path,
 ) -> None:
-    """R139: durable EFFECT_STARTED must rehydrate a claim grant on exact replay.
-
-    Ambiguous append confirmation historically returned idempotent_replay without
-    a grant, so lifecycle denied deo_claim_failed while the operation stream
-    already held EFFECT_STARTED (orphan multi-write batch failure).
-    """
+    """An ordinary later invocation observes the claim without gaining dispatch authority."""
 
     workspace = tmp_path / "claim-exact-replay-grant"
     attempt = _setup_attempt(str(workspace))
@@ -1606,11 +1601,12 @@ async def test_claim_exact_replay_rehydrates_grant_after_durable_effect_started(
     assert first.claim_grant is not None
     second = claim_directed_effect(command)
     assert second.ok is True
-    assert second.code == "effect_claimed"
+    assert second.code == "idempotent_replay"
     assert second.state == "EFFECT_STARTED"
-    assert second.claim_grant is not None
-    assert second.claim_grant.grant_hash == first.claim_grant.grant_hash
-    assert second.claim_grant.claim_event_seq == first.claim_grant.claim_event_seq
+    assert second.idempotent is True
+    assert second.claim_grant is None
+    assert second.snapshot is not None
+    assert second.snapshot.last_event_id == first.claim_grant.claim_event_id
 
 
 async def test_second_claim_uses_current_operation_stream_head_after_first_receipt(

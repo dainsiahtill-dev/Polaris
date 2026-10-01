@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import sqlite3
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from polaris.domain.cognitive_runtime import (
@@ -19,6 +21,8 @@ from polaris.domain.cognitive_runtime import (
 from polaris.infrastructure.db.adapters import SqliteAdapter
 from polaris.kernelone.constants import DEFAULT_SHORT_TIMEOUT_SECONDS
 from polaris.kernelone.db import KernelDatabase
+from polaris.kernelone.storage import normalize_logical_rel_path
+from polaris.kernelone.storage.layout import resolve_existing_storage_roots_read_only
 
 
 @dataclass(slots=True)
@@ -38,12 +42,30 @@ class CognitiveRuntimeSqliteStore:
         *,
         db_path: str = "runtime/cognitive_runtime/cognitive_runtime.sqlite",
         kernel_db: KernelDatabase | None = None,
+        read_only: bool = False,
     ) -> None:
+        self._read_only = bool(read_only)
+        self._closed = False
+        self._owns_kernel_db = kernel_db is None
         self._kernel_db = kernel_db or KernelDatabase(
             workspace,
             sqlite_adapter=SqliteAdapter(),
             allow_unmanaged_absolute=True,
         )
+        if self._read_only:
+            if os.path.isabs(db_path):
+                self._db_path = os.path.abspath(db_path)
+            else:
+                logical = normalize_logical_rel_path(db_path)
+                if not logical.startswith("runtime/"):
+                    raise ValueError("read-only Cognitive Runtime DB requires a runtime path")
+                roots = resolve_existing_storage_roots_read_only(workspace)
+                if roots is None:
+                    raise FileNotFoundError("Cognitive Runtime namespace is unavailable")
+                self._db_path = os.path.join(roots.runtime_root, logical[len("runtime/") :])
+            if not os.path.isfile(self._db_path):
+                raise FileNotFoundError(self._db_path)
+            return
         self._db_path = self._kernel_db.resolve_sqlite_path(db_path, ensure_parent=True)
         self._init_schema()
         self._write_queue: queue.Queue[_WriteTask | None] = queue.Queue(maxsize=1000)  # 有界队列防止内存泄漏
@@ -55,6 +77,32 @@ class CognitiveRuntimeSqliteStore:
             daemon=True,
         )
         self._writer_thread.start()
+
+    @property
+    def workspace(self) -> str:
+        return self._kernel_db.workspace
+
+    @classmethod
+    def open_existing_read_only(cls, workspace: str) -> CognitiveRuntimeSqliteStore | None:
+        """Observe an existing namespace; never initialize one during a query."""
+        try:
+            return cls(workspace, read_only=True)
+        except FileNotFoundError:
+            return None
+
+    def _connect_read_only(self) -> sqlite3.Connection:
+        if self._closed:
+            raise RuntimeError("Cognitive Runtime SQLite store is closed")
+        uri = Path(self._db_path).absolute().as_uri() + "?mode=ro"
+        return self._kernel_db.sqlite(
+            uri,
+            timeout_seconds=DEFAULT_SHORT_TIMEOUT_SECONDS,
+            check_same_thread=False,
+            row_factory="row",
+            uri=True,
+            pragmas={"query_only": True, "busy_timeout": 30000},
+            ensure_parent=False,
+        )
 
     def _connect(self) -> sqlite3.Connection:
         return self._kernel_db.sqlite(
@@ -162,7 +210,7 @@ class CognitiveRuntimeSqliteStore:
                 break
             try:
                 task.result = self._run_write_task(task.fn)
-            except (RuntimeError, ValueError) as exc:
+            except (RuntimeError, ValueError, sqlite3.Error, OSError) as exc:
                 task.error = exc
             finally:
                 task.done.set()
@@ -188,6 +236,8 @@ class CognitiveRuntimeSqliteStore:
         raise RuntimeError("write task failed without sqlite error")
 
     def _submit_write(self, fn: Any) -> Any:
+        if self._read_only:
+            raise RuntimeError("Cognitive Runtime SQLite store is read-only")
         if self._writer_stop.is_set():
             raise RuntimeError("Cognitive Runtime SQLite store is closed")
         task = _WriteTask(fn=fn, done=threading.Event())
@@ -220,7 +270,7 @@ class CognitiveRuntimeSqliteStore:
         return receipt
 
     def get_receipt(self, receipt_id: str) -> RuntimeReceipt | None:
-        conn = self._connect()
+        conn = self._connect_read_only()
         try:
             row = conn.execute(
                 "SELECT receipt_json FROM cognitive_runtime_receipts WHERE receipt_id = ?",
@@ -253,7 +303,7 @@ class CognitiveRuntimeSqliteStore:
         sql += " ORDER BY created_at DESC LIMIT ?"
         params.append(max(1, int(limit)))
 
-        conn = self._connect()
+        conn = self._connect_read_only()
         try:
             rows = conn.execute(sql, tuple(params)).fetchall()
         finally:
@@ -286,7 +336,7 @@ class CognitiveRuntimeSqliteStore:
         return handoff
 
     def get_handoff_pack(self, handoff_id: str) -> ContextHandoffPack | None:
-        conn = self._connect()
+        conn = self._connect_read_only()
         try:
             row = conn.execute(
                 "SELECT handoff_json FROM cognitive_runtime_handoffs WHERE handoff_id = ?",
@@ -318,7 +368,7 @@ class CognitiveRuntimeSqliteStore:
         return mapping
 
     def get_diff_mapping(self, mapping_id: str) -> DiffCellMapping | None:
-        conn = self._connect()
+        conn = self._connect_read_only()
         try:
             row = conn.execute(
                 "SELECT mapping_json FROM cognitive_runtime_diff_mappings WHERE mapping_id = ?",
@@ -351,7 +401,7 @@ class CognitiveRuntimeSqliteStore:
         return request
 
     def get_projection_request(self, request_id: str) -> ProjectionCompileRequest | None:
-        conn = self._connect()
+        conn = self._connect_read_only()
         try:
             row = conn.execute(
                 "SELECT request_json FROM cognitive_runtime_projection_requests WHERE request_id = ?",
@@ -387,7 +437,7 @@ class CognitiveRuntimeSqliteStore:
         return decision
 
     def get_promotion_decision(self, decision_id: str) -> PromotionDecisionRecord | None:
-        conn = self._connect()
+        conn = self._connect_read_only()
         try:
             row = conn.execute(
                 "SELECT decision_json FROM cognitive_runtime_promotion_decisions WHERE decision_id = ?",
@@ -420,7 +470,7 @@ class CognitiveRuntimeSqliteStore:
         return entry
 
     def get_rollback_ledger_entry(self, rollback_id: str) -> RollbackLedgerEntry | None:
-        conn = self._connect()
+        conn = self._connect_read_only()
         try:
             row = conn.execute(
                 "SELECT rollback_json FROM cognitive_runtime_rollback_ledger WHERE rollback_id = ?",
@@ -433,6 +483,13 @@ class CognitiveRuntimeSqliteStore:
         return RollbackLedgerEntry.from_mapping(json.loads(str(row["rollback_json"])))
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._read_only:
+            if self._owns_kernel_db:
+                self._kernel_db.close()
+            return
         if not self._writer_stop.is_set():
             self._writer_stop.set()
             self._write_queue.put(None)

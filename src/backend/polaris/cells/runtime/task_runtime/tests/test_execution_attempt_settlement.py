@@ -192,6 +192,239 @@ def _settle(
     )
 
 
+@pytest.mark.parametrize("outcome", ("failed", "suspended"))
+def test_never_sealed_parent_can_close_with_failure_proof_without_dispatch(
+    tmp_path: Path,
+    outcome: TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+) -> None:
+    service, _task_id, identity = _claim_attempt(tmp_path / "workspace")
+    _enroll_parent_registry(identity)
+    _admit_parent(identity)
+
+    settled = _settle(service, identity, outcome=outcome)
+    replay = _settle(service, identity, outcome=outcome)
+
+    assert settled["success"] is True, settled
+    assert replay["success"] is True and replay["idempotent"] is True
+    events = _registry_events(identity)
+    assert len(events) == 2
+    proof = events[-1]["payload"]
+    assert proof["settlement_outcome"] == outcome
+    assert proof["operation_source_head_seq"] == 0
+    assert all(
+        proof[name] == 0 for name in ("receipt_count", "failed_receipt_count", "dead_letter_count", "aborted_count")
+    )
+    assert proof["terminal_intent_hash"]
+    assert proof["close_evidence_hash"]
+
+
+def test_never_sealed_parent_cannot_be_completed(tmp_path: Path) -> None:
+    service, _task_id, identity = _claim_attempt(tmp_path / "workspace")
+    _enroll_parent_registry(identity)
+    _admit_parent(identity)
+
+    rejected = _settle(service, identity, outcome="completed")
+
+    assert rejected["success"] is False
+    assert rejected["code"] == "settlement_parent_close_required"
+    assert len(_registry_events(identity)) == 1
+
+
+@pytest.mark.parametrize("enrolled", (False, True))
+def test_unsealed_failure_close_rejects_contradictory_child_facts(tmp_path: Path, enrolled: bool) -> None:
+    from polaris.kernelone.storage import resolve_runtime_path
+
+    service, _task_id, identity = _claim_attempt(tmp_path / "workspace")
+    _enroll_parent_registry(identity)
+    binding = _admit_parent(identity)
+    if enrolled:
+        assert enroll_directed_effect_operation_stream(
+            EnrollDirectedEffectOperationStreamCommandV1(execution_attempt=identity, parent_binding=binding)
+        ).ok
+        append_fact_event(
+            AppendFactEventCommandV1(
+                workspace=identity.workspace,
+                stream=binding.operation_stream_token,
+                event_type="fixture.legacy_effect_started",
+                source="fixture",
+                payload={"state": "EFFECT_STARTED"},
+                expected_seq=1,
+                strict_integrity=True,
+                durability="fsync",
+            )
+        )
+    else:
+        path = Path(resolve_runtime_path(identity.workspace, f"runtime/events/{binding.operation_stream_token}.jsonl"))
+        path.write_text('{"legacy_effect":"EFFECT_STARTED"}\n', encoding="utf-8")
+
+    rejected = _settle(service, identity, "failed")
+
+    assert rejected["success"] is False
+    assert rejected["code"] == "settlement_directed_effect_unresolved"
+    assert len(_registry_events(identity)) == 1
+
+
+def test_unsealed_failure_close_recovers_post_fsync_ack_without_duplicate_fact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, task_id, identity = _claim_attempt(tmp_path / "workspace")
+    _enroll_parent_registry(identity)
+    _admit_parent(identity)
+
+    def lost_ack(_receipt: object) -> None:
+        raise FactStreamError("lost no-effect close ACK", code="append_write_failed")
+
+    monkeypatch.setattr(
+        deo_internal.DirectedEffectOperationRepository, "_after_unsealed_parent_close", staticmethod(lost_ack)
+    )
+    settled = _settle(service, identity, "failed")
+    replay = _settle(service, identity, "failed")
+    conflict = _settle(service, identity, "suspended")
+
+    assert settled["success"] is True
+    assert replay["success"] is True and replay["idempotent"] is True
+    assert conflict["success"] is False
+    assert len(_registry_events(identity)) == 2
+    assert _terminal_fact_count(tmp_path / "workspace", task_id) == 1
+
+
+@pytest.mark.parametrize("race_window", ("before_fresh_read", "before_append"))
+def test_unsealed_failure_close_cas_rejects_concurrent_inventory_seal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race_window: str,
+) -> None:
+    from polaris.cells.runtime.task_runtime.public.contracts import DirectedEffectInventoryMemberV1
+    from polaris.cells.runtime.task_runtime.public.tests.test_directed_effect_inventoryb import (
+        _expected_runtime_inventory,
+        _intent,
+    )
+
+    service, _task_id, identity = _claim_attempt(tmp_path / "workspace")
+    _enroll_parent_registry(identity)
+    binding = _admit_parent(identity)
+    repository_type = deo_internal.DirectedEffectOperationRepository
+    member_record, inventory_hash = _expected_runtime_inventory(binding, _intent(contingency_kind=None))
+    repository = repository_type()
+    registry = repository._load_registry(identity.workspace, binding.registry_identity)
+    payload = repository._inventory_seal_payload(
+        registry=registry,
+        binding=binding,
+        members=(DirectedEffectInventoryMemberV1.from_record(member_record),),
+        inventory_hash=inventory_hash,
+        actor="fixture.concurrent_seal",
+    )
+    original_append = deo_internal.append_fact_event
+
+    def publish_seal() -> None:
+        original_append(
+            AppendFactEventCommandV1(
+                workspace=identity.workspace,
+                stream=binding.registry_stream_token,
+                event_type=deo_internal._PARENT_INVENTORY_SEALED_EVENT_TYPE,
+                source="runtime.task_runtime",
+                payload=payload,
+                expected_seq=2,
+                strict_integrity=True,
+                durability="fsync",
+            )
+        )
+
+    if race_window == "before_fresh_read":
+        original_close = repository_type._append_unsealed_failure_close
+
+        def racing_close(self: Any, *args: Any, **kwargs: Any) -> Any:
+            publish_seal()
+            return original_close(self, *args, **kwargs)
+
+        monkeypatch.setattr(repository_type, "_append_unsealed_failure_close", racing_close)
+    else:
+
+        def racing_append(command: Any) -> Any:
+            if command.event_type == deo_internal._PARENT_CLOSED_EVENT_TYPE:
+                publish_seal()
+            return original_append(command)
+
+        monkeypatch.setattr(deo_internal, "append_fact_event", racing_append)
+
+    rejected = _settle(service, identity, "failed")
+
+    assert rejected["success"] is False
+    events = _registry_events(identity)
+    assert len(events) == 2
+    assert events[-1]["event_type"] == deo_internal._PARENT_INVENTORY_SEALED_EVENT_TYPE
+    assert not any(event["event_type"] == deo_internal._PARENT_CLOSED_EVENT_TYPE for event in events)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("receipt_count", True),
+        ("operation_source_head_seq", 1),
+        ("receipt_summary_hash", "f" * 64),
+        ("settlement_outcome", "completed"),
+        ("binding_id", "foreign-binding"),
+        ("schema_version", "foreign-schema"),
+    ),
+)
+def test_unsealed_failure_close_rejects_forged_outcome_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    from dataclasses import replace
+
+    service, task_id, identity = _claim_attempt(tmp_path / "workspace")
+    _enroll_parent_registry(identity)
+    _admit_parent(identity)
+    original = deo_internal.append_fact_event
+
+    def forged(command: Any) -> Any:
+        if command.event_type == deo_internal._PARENT_CLOSED_EVENT_TYPE:
+            command = replace(command, payload={**command.payload, field: value})
+        return original(command)
+
+    monkeypatch.setattr(deo_internal, "append_fact_event", forged)
+    rejected = _settle(service, identity, "failed")
+
+    assert rejected["success"] is False
+    session = service._read_session(task_id)
+    assert session is not None and session.status == "active"
+    assert _terminal_fact_count(tmp_path / "workspace", task_id) == 0
+
+
+def test_unsealed_failure_close_crash_resumes_pending_intent_with_new_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    service, task_id, identity = _claim_attempt(workspace)
+    _enroll_parent_registry(identity)
+    _admit_parent(identity)
+
+    def crash(_receipt: object) -> None:
+        raise RuntimeError("simulated process death after no-effect close")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            deo_internal.DirectedEffectOperationRepository, "_after_unsealed_parent_close", staticmethod(crash)
+        )
+        with pytest.raises(RuntimeError, match="simulated process death"):
+            _settle(service, identity, "failed")
+    interrupted = service._read_session(task_id)
+    assert interrupted is not None and interrupted.status == "active"
+    assert interrupted.metadata["pending_terminal_intent"]
+    assert len(_registry_events(identity)) == 2
+
+    recovered = _settle(TaskRuntimeService(str(workspace)), identity, "failed")
+
+    assert recovered["success"] is True
+    assert len(_registry_events(identity)) == 2
+    assert _terminal_fact_count(workspace, task_id) == 1
+
+
 def _hold_session_lock(workspace: str, task_id: int, ready_path: str, hold_seconds: float) -> None:
     """Hold the real cross-process session lock for the bounded-timeout case."""
 

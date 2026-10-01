@@ -1,0 +1,36 @@
+id: vc-20261001-openai-native-message-parity
+classification: pattern
+status: reproduced_before_fix
+owner: kernelone.llm.engine.provider_native_request
+blueprint: ../../../blueprints/POLARIS_OPENAI_NATIVE_MESSAGE_PARITY_20261001.md
+assumptions:
+  - id: A1
+    claim: Director was refused before physical provider dispatch.
+    evidence: factory_9aa169804636 director error physical_wire_messages_drift; no Director HTTP request.
+  - id: A2
+    claim: Adjacent mid-system conversion order causes the mismatch.
+    evidence: exact frozen payload replay; messages only; two omitted markers, 14 characters.
+  - id: A3
+    claim: Content drift must remain fail-closed after normalization unification.
+    evidence: existing B3.5 content/tool/route/body drift rejection suites must remain green.
+pre_mortem:
+  - Accidentally alter Anthropic merging or bypass exact-wire equality.
+  - Change legacy empty-input or all-system prompt behavior.
+  - Misreport replay or connectivity as autonomous project qualification.
+scope:
+  allowed:
+    - polaris/kernelone/llm/engine/provider_native_request.py
+    - polaris/infrastructure/llm/providers/provider_helpers/_core.py
+    - related component tests and governance evidence
+  forbidden:
+    - generated Bench target source
+    - Bench thresholds or judges
+    - final_provider_attempt_qualification equality bypass
+verification:
+  - failing literal mid-system test before production edit
+  - actual invoke/stream/Responses body parity and immutable inputs
+  - native/provider/B3.5 rejection regressions
+  - exact saved Director request replay
+  - same-run Director retry only after gate acceptance
+remaining_risk: Physical dispatch and project completion require independent live proof.
+

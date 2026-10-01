@@ -12,6 +12,7 @@
 - 三者必须共同使用，不能用其中一个替代另两个。标准顺序：加载适用 Skill -> CodeGraph 定位/审计 -> RTK 执行与验证 -> Caveman 压缩汇报。
 
 ## 0) 后端权威入口（2026-03-22）
+- **用户事件降噪**：成功的 stage/task/worker 心跳仅用于保活与审计，禁止刷入普通“最近事件”或重复通知。展示过滤必须在窗口截取之前；不删底层事实，不隐藏心跳失败/告警、阶段切换、工具结果或交付进展。仅有保活或当前窗口缺少调用证据，不能宣称模型从未执行；前端验收需真实 runtime.v2 推送、无 reload/产品轮询。
 - 对于任何 `src/backend` 任务，必须先读 `src/backend/AGENTS.md`。
 - 统一架构执行标准入口：`src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md`。
 - 后端强制规则：`Cell` 开发先复用已有 Cell 公开能力；所有新开发必须基于 `KernelOne` 底座能力与契约链路。

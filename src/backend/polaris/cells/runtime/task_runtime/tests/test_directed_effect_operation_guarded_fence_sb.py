@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import ast
 import inspect
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from pathlib import Path
 from textwrap import dedent
 
-import pytest
 from polaris.cells.runtime.task_runtime import public as task_runtime_public
 from polaris.cells.runtime.task_runtime.internal import (
     directed_effect_operation as deo_internal,
@@ -15,11 +14,6 @@ from polaris.cells.runtime.task_runtime.internal import (
 from polaris.cells.runtime.task_runtime.public import (
     contracts as runtime_public_contracts,
     service as runtime_public_service,
-)
-from polaris.cells.runtime.task_runtime.public.contracts import (
-    DirectedEffectParentReadinessProjectionV1,
-    DirectedEffectParentReadinessResultV1,
-    DirectedEffectParentReadinessStateCountV1,
 )
 
 _DEO_INTERNAL_MODULE = "polaris.cells.runtime.task_runtime.internal.directed_effect_operation"
@@ -1500,6 +1494,10 @@ def _forbidden_closure_references(
 
 
 def _module_context_for_path(path: Path, *, polaris_root: Path) -> tuple[str, bool]:
+    if path.name == "_repository_class.source":
+        # The class executes with _repository as its defining module. Audit
+        # that exact source, not the retired monofile or frozen mirror.
+        path = path.with_name("_repository.py")
     relative = path.relative_to(polaris_root)
     parts = list(relative.with_suffix("").parts)
     is_package = parts[-1] == "__init__"
@@ -1510,14 +1508,18 @@ def _module_context_for_path(path: Path, *, polaris_root: Path) -> tuple[str, bo
 
 def _production_python_files() -> tuple[Path, ...]:
     cell_root = Path(inspect.getfile(deo_internal)).resolve().parents[1]
-    return tuple(path for path in sorted(cell_root.rglob("*.py")) if "tests" not in path.relative_to(cell_root).parts)
+    sources = set(cell_root.rglob("*.py"))
+    sources.add(Path(deo_internal.DirectedEffectOperationRepository._mutate.__code__.co_filename))
+    return tuple(path for path in sorted(sources) if "tests" not in path.relative_to(cell_root).parts)
 
 
 def _polaris_production_python_files() -> tuple[Path, ...]:
     polaris_root = Path(inspect.getfile(deo_internal)).resolve().parents[4]
+    sources = set(polaris_root.rglob("*.py"))
+    sources.add(Path(deo_internal.DirectedEffectOperationRepository._mutate.__code__.co_filename))
     return tuple(
         path
-        for path in sorted(polaris_root.rglob("*.py"))
+        for path in sorted(sources)
         if "tests" not in path.relative_to(polaris_root).parts and path.name != "conftest.py"
     )
 
@@ -1533,7 +1535,7 @@ def test_deo3_terminal_authority_has_no_cross_cell_internal_or_parent_close_bypa
     polaris_root = Path(inspect.getfile(deo_internal)).resolve().parents[4]
     protected_consumers = (
         polaris_root / "cells/control_plane/run_ledger/public/projection.py",
-        polaris_root / "cells/control_plane/run_ledger/public/tool_lifecycle.py",
+        *sorted((polaris_root / "cells/control_plane/run_ledger/public/tool_lifecycle").rglob("*.py")),
         polaris_root / "cells/roles/adapters/internal/director/directed_effect_mutation_port.py",
     )
     forbidden_internal_prefix = "polaris.cells.runtime.task_runtime.internal"
@@ -1560,20 +1562,23 @@ def test_deo3_terminal_authority_has_no_cross_cell_internal_or_parent_close_bypa
     terminal_parent_callers: list[tuple[str, str]] = []
     for path in _production_python_files():
         relative_path = path.relative_to(Path(inspect.getfile(deo_internal)).resolve().parents[1]).as_posix()
-        if relative_path == "internal/directed_effect_operation.py":
+        if relative_path == "internal/directed_effect_operation/_repository_class.source":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         terminal_parent_callers.extend(
             (relative_path, owner) for owner in _call_owners(tree, "settle_parent_for_terminal_intent")
         )
     assert terminal_parent_callers == [
-        ("internal/service.py", "_settle_active_execution_attempt_locked"),
+        ("internal/service/_mixin_execution.py", "_settle_execution_attempt_without_lease_check_locked"),
     ]
     assert "_settle_active_execution_attempt_locked" in _called_names(
         _service_method_tree("_settle_execution_attempt_locked")
     )
-    assert "settle_parent_for_terminal_intent" in _called_names(
+    assert "_settle_execution_attempt_without_lease_check_locked" in _called_names(
         _service_method_tree("_settle_active_execution_attempt_locked")
+    )
+    assert "settle_parent_for_terminal_intent" in _called_names(
+        _service_method_tree("_settle_execution_attempt_without_lease_check_locked")
     )
 
 
@@ -1590,6 +1595,8 @@ def test_inventory_and_operation_writer_paths_exactly_own_deo3_states() -> None:
         "_close_by_parent",
         "_commit_restart_dead_letter",
         "_commit_restart_recovery_pending",
+        "_terminalize_open_parent_residuals_for_batch_rollover",
+        "_terminalize_open_parent_residuals_for_batch_rollover",
         "abort",
         "admit",
         "claim",
@@ -1602,6 +1609,7 @@ def test_inventory_and_operation_writer_paths_exactly_own_deo3_states() -> None:
         "_close_by_parent": {"CLOSED_BY_PARENT"},
         "_commit_restart_dead_letter": {"DEAD_LETTER"},
         "_commit_restart_recovery_pending": {"RECOVERY_PENDING"},
+        "_terminalize_open_parent_residuals_for_batch_rollover": {"ABORTED", "DEAD_LETTER"},
         "abort": {"ABORTED"},
         "admit": {"INTENT_COMMITTED"},
         "claim": {"EFFECT_STARTED"},
@@ -1649,59 +1657,66 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
     expected_owners = {
         "append_fact_event": {
             (
-                "internal/directed_effect_operation.py",
+                "internal/directed_effect_operation/_repository_class.source",
+                "DirectedEffectOperationRepository._append_unsealed_failure_close",
+            ),
+            (
+                "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository.admit_parent_with_validated_authority",
             ),
-            ("internal/service.py", "TaskRuntimeService._append_execution_fact_with_cas"),
+            ("internal/service/_late_bindings.py", "append_fact_event"),
             ("internal/task_board.py", "TaskBoard._append_terminal_event"),
         },
         "AppendFactEventCommandV1": {
             (
-                "internal/directed_effect_operation.py",
+                "internal/directed_effect_operation/_repository_class.source",
+                "DirectedEffectOperationRepository._append_unsealed_failure_close",
+            ),
+            (
+                "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository.admit_parent_with_validated_authority",
             ),
-            ("internal/service.py", "TaskRuntimeService._append_execution_fact_with_cas"),
+            ("internal/service/_mixin_facts_events.py", "_FactsEventsMixin._append_execution_fact_with_cas"),
             ("internal/task_board.py", "TaskBoard._append_terminal_event"),
         },
         "append_if_guarded_snapshot": {
-            ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository._confirm_guarded_append"),
-            ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository._confirm_inventory_append"),
             (
-                "internal/directed_effect_operation.py",
+                "internal/directed_effect_operation/_repository_class.source",
+                "DirectedEffectOperationRepository._canonical_receipt_for_durable_transition",
+            ),
+            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository._confirm_inventory_append"),
+            (
+                "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._confirm_inventory_ready_append",
             ),
-            ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository._mutate"),
+            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository._mutate"),
             (
-                "internal/directed_effect_operation.py",
+                "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._reconcile_inventory_append",
             ),
             (
-                "internal/directed_effect_operation.py",
-                "DirectedEffectOperationRepository._reconcile_operation_append",
-            ),
-            (
-                "internal/directed_effect_operation.py",
+                "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._append_parent_settlement_close",
             ),
             (
-                "internal/directed_effect_operation.py",
+                "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._append_parent_batch_rollover_close",
             ),
-            ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository.finalize_inventory"),
-            ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository.seal_inventory"),
+            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository.finalize_inventory"),
+            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository.seal_inventory"),
         },
         "GuardedFactEventV1": {
             (
-                "internal/directed_effect_operation.py",
+                "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._append_parent_batch_rollover_close",
             ),
-            ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository._mutate"),
+            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository._mutate"),
             (
-                "internal/directed_effect_operation.py",
+                "internal/directed_effect_operation/_repository_class.source",
                 "DirectedEffectOperationRepository._parent_settlement_close_command",
             ),
-            ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository.finalize_inventory"),
-            ("internal/directed_effect_operation.py", "DirectedEffectOperationRepository.seal_inventory"),
+            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository.finalize_inventory"),
+            ("internal/directed_effect_operation/_repository_class.source", "DirectedEffectOperationRepository.seal_inventory"),
         },
     }
     restricted_writer_constants = {
@@ -1752,9 +1767,25 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
             observed[target].add((relative_path, reference.owner))
 
     assert observed == expected_owners
+    # The split service calls its owner-local late-binding adapter, which then
+    # calls the public FactStream writer. Preserve both hops of that boundary.
+    assert "append_fact_event" in _called_names(_service_method_tree("_append_execution_fact_with_cas"))
     assert dynamic_writer_getattrs == []
-    assert protected_sentinels == []
+    # The owner-local package adapter intentionally supports late-bound test
+    # injection. Keep that single declared seam visible, not a global waiver
+    # for unknown protected provenance. Any additional site fails this gate.
+    assert protected_sentinels == [
+        ("internal/service/_late_bindings.py", "append_fact_event", "unresolved_protected_assignment"),
+    ]
     allowed_terminal_writer_violations = {
+        (
+            "DirectedEffectOperationRepository._append_unsealed_failure_close",
+            f"{_FACT_STREAM_PUBLIC}.AppendFactEventCommandV1",
+        ),
+        (
+            "DirectedEffectOperationRepository._append_unsealed_failure_close",
+            f"{_FACT_STREAM_PUBLIC}.append_fact_event",
+        ),
         (
             "DirectedEffectOperationRepository._parent_settlement_close_command",
             f"{_FACT_STREAM_PUBLIC}.GuardedFactEventV1",
@@ -1780,15 +1811,15 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
             )
         )
         expected = (
-            allowed_terminal_writer_violations if relative_path == "internal/directed_effect_operation.py" else set()
+            allowed_terminal_writer_violations if relative_path == "internal/directed_effect_operation/_repository_class.source" else set()
         )
         assert violations == expected, relative_path
 
-    repository_analysis = analyses["internal/directed_effect_operation.py"]
+    repository_analysis = analyses["internal/directed_effect_operation/_repository_class.source"]
     allowed_guarded_owners = {
         owner
         for path, owner in expected_owners["append_if_guarded_snapshot"]
-        if path == "internal/directed_effect_operation.py"
+        if path == "internal/directed_effect_operation/_repository_class.source"
     }
     for root in (
         "seal_inventory",
@@ -1823,7 +1854,16 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
                 ),
             )
             if root == "admit_parent_batch_with_validated_authority"
-            else ()
+            else (
+                _QualifiedReference(
+                    owner="DirectedEffectOperationRepository._append_unsealed_failure_close",
+                    target="append_fact_event", kind="conservative_forbidden_call",
+                ),
+                _QualifiedReference(
+                    owner="DirectedEffectOperationRepository._append_unsealed_failure_close",
+                    target=f"{_FACT_STREAM_PUBLIC}.append_fact_event", kind="call",
+                ),
+            ) if root == "_settle_parent_for_terminal_intent" else ()
         )
         assert forbidden_closure_references == expected_forbidden_closure_references, root
         writer_violations = set(
@@ -1843,6 +1883,14 @@ def test_all_taskruntime_factstream_writer_references_have_closed_owners() -> No
                 (
                     "DirectedEffectOperationRepository._append_parent_settlement_close",
                     f"{_FACT_STREAM_PUBLIC}.append_if_guarded_snapshot",
+                ),
+                (
+                    "DirectedEffectOperationRepository._append_unsealed_failure_close",
+                    f"{_FACT_STREAM_PUBLIC}.AppendFactEventCommandV1",
+                ),
+                (
+                    "DirectedEffectOperationRepository._append_unsealed_failure_close",
+                    f"{_FACT_STREAM_PUBLIC}.append_fact_event",
                 ),
             }
             if root == "_settle_parent_for_terminal_intent"
@@ -2096,13 +2144,13 @@ def test_deo_2b_production_claimant_constructor_and_consumer_surface_is_exact() 
         ),
         (
             "cells/roles/kernel/internal/directed_effect_lifecycle.py",
-            "claim_execution_context",
-            "DirectedEffectExecutionContextV1",
+            "_claim_operation",
+            "claim_operation",
         ),
         (
             "cells/roles/kernel/internal/directed_effect_lifecycle.py",
             "claim_execution_context",
-            "claim_operation",
+            "DirectedEffectExecutionContextV1",
         ),
         (
             "cells/roles/kernel/internal/tool_batch_runtime.py",
@@ -2120,7 +2168,7 @@ def test_deo_2b_production_claimant_constructor_and_consumer_surface_is_exact() 
             "DirectedEffectExecutionContextV1",
         ),
         (
-            "cells/runtime/task_runtime/internal/directed_effect_operation.py",
+            "cells/runtime/task_runtime/internal/directed_effect_operation/_repository_class.source",
             "_claim_grant",
             "DirectedEffectClaimGrantV1",
         ),

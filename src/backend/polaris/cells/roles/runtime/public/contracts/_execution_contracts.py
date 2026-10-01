@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
+from uuid import uuid4
 
 from polaris.cells.roles.kernel.public.structured_output_contracts import (
     RoleStructuredOutputContractV1,
@@ -77,9 +78,7 @@ class ExecuteRoleTaskCommandV1:
             self.structured_output_contract,
             RoleStructuredOutputContractV1,
         ):
-            raise TypeError(
-                "structured_output_contract must be RoleStructuredOutputContractV1 or None"
-            )
+            raise TypeError("structured_output_contract must be RoleStructuredOutputContractV1 or None")
         if self.execution_attempt is not None:
             supplied_session_id = (
                 _require_non_empty("session_id", self.session_id) if self.session_id is not None else None
@@ -94,7 +93,13 @@ class ExecuteRoleTaskCommandV1:
 
 @dataclass(frozen=True)
 class ExecuteRoleSessionCommandV1:
-    """Execute one user turn on an existing role session."""
+    """Execute one user turn on an existing role session.
+
+    ``turn_request_id`` identifies this submission, not its chat session and
+    not a mutation grant. Reuse the immutable command/id for request retries;
+    independent commands mint independent ids. Existing execution-attempt
+    scope remains authoritative when the request is prepared.
+    """
 
     role: str
     session_id: str
@@ -110,6 +115,7 @@ class ExecuteRoleSessionCommandV1:
     stream_options: StreamTurnOptions | None = None
     host_kind: str | None = None  # Task #2: unified host protocol
     timeout_seconds: int | None = None
+    turn_request_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "role", _require_non_empty("role", self.role))
@@ -120,6 +126,12 @@ class ExecuteRoleSessionCommandV1:
         object.__setattr__(self, "history", _normalize_history(self.history))
         object.__setattr__(self, "context", _to_dict_copy(self.context))
         object.__setattr__(self, "metadata", _to_dict_copy(self.metadata))
+        if self.turn_request_id is None:
+            object.__setattr__(self, "turn_request_id", f"turn-request-{uuid4().hex}")
+        elif not isinstance(self.turn_request_id, str):
+            raise TypeError("turn_request_id must be a string or None")
+        else:
+            object.__setattr__(self, "turn_request_id", _require_non_empty("turn_request_id", self.turn_request_id))
         if self.stream_options is not None and not isinstance(self.stream_options, StreamTurnOptions):
             raise TypeError("stream_options must be a StreamTurnOptions instance")
         if self.timeout_seconds is not None and self.timeout_seconds <= 0:

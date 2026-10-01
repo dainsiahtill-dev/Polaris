@@ -1,0 +1,107 @@
+{
+  "schema_version": "polaris.engineering_defect.v1",
+  "record_kind": "external_engineering_audit",
+  "authoritative_platform_state": false,
+  "defect_id": "P05-OPENAI-NATIVE-MESSAGE-DRIFT-20261001",
+  "status": "NATIVE_MESSAGE_FIX_LIVE_VERIFIED_NEXT_TOOL_PROTOCOL_BLOCKER_OPEN",
+  "owner": "kernelone.llm.engine.provider_native_request",
+  "factory_run_id": "factory_9aa169804636",
+  "project_id": "L1-01",
+  "provider_id": "openai_compat-1790791202289",
+  "model": "mimo-v2.6-pro",
+  "original_fresh_attempt": {
+    "result": "failed",
+    "seconds": 684.7,
+    "pm": "success",
+    "chief_engineer": "success_after_bounded_schema_reconstruction",
+    "director": "rejected_before_transport",
+    "source_files": 0,
+    "runnable": false
+  },
+  "first_cause": "physical_wire_messages_drift",
+  "secondary_symptom": "director.canonical_task_boundary_missing",
+  "root_cause_class": "platform_provider_native_normalization",
+  "root_cause": "Native authority merged consecutive system messages before role conversion, while provider adapter converted each mid-system turn before merge. Two markers disappeared from expected native body; exact wire guard correctly refused the inconsistent body.",
+  "evidence": {
+    "frozen_context_snapshot_ref": "36fc1de468a8486e2acc06c3",
+    "failure_context_snapshot_ref": "96b275d4b9faf11ab8bc7296",
+    "pm_completed_snapshot_ref": "025e931f7cbc9ace7e84b991",
+    "ce_completed_physical_snapshot_ref": "4cebcf4207ebbb984dc5f2b7",
+    "original_expected_user_chars": 20623,
+    "original_actual_user_chars": 20637,
+    "drifted_body_keys": ["messages"],
+    "director_http_requests_before_rejection": 0,
+    "archive": "/home/dains/.polaris/audit_archives/unattended-mimo-20261001/r02-original",
+    "original_report": "/tmp/factory-bench-unattended-l1-01-mimo-20261001-r02/factory_audits.json"
+  },
+  "context_audit": {
+    "pm_role_identity": "verified_from_actual_snapshot",
+    "ce_role_identity": "verified_from_final_physical_request",
+    "director_role_identity": "verified_from_frozen_semantic_request",
+    "director_physical_request": "not_dispatched_due_to_pre_reservation_rejection",
+    "director_native_tools": ["write_file"],
+    "director_required_contract_coverage": "frozen_pm_ce_targets_present",
+    "qa": "not_reached"
+  },
+  "repair_files": [
+    "src/backend/polaris/kernelone/llm/engine/provider_native_request.py",
+    "src/backend/polaris/infrastructure/llm/providers/provider_helpers/_core.py"
+  ],
+  "validation": {
+    "new_regression_red": "5_failed_before_implementation",
+    "combined_focused_suite": "366_passed_2_existing_deprecation_warnings",
+    "m04_module_gate": "PASS_4.1s",
+    "ruff": "PASS",
+    "mypy_production_files": 2,
+    "exact_saved_payload_b35_validation": "PASS",
+    "forged_content_b35_validation": "REJECTED_physical_wire_messages_drift",
+    "whole_repository": "not_certified"
+  },
+  "split_gate_repair": {
+    "original_tests": 57,
+    "retained_tests": 57,
+    "restored_parameter_cases": 2,
+    "focused_physical_gate_tests": "73_passed",
+    "assertions_weakened": false,
+    "invoker_patch_namespace_migrations": 3
+  },
+  "same_run_recovery": {
+    "requested_stage": "director_dispatch",
+    "pm_ce_restart_allowed": false,
+    "status": "director_recovering_with_tool_protocol_and_repair_timeout_residual",
+    "classification": "engineering_assisted_not_fresh_autonomous"
+  },
+  "live_same_run_evidence": {
+    "backend_port": 49980,
+    "frontend_port": 5176,
+    "retry_stage": "director_dispatch",
+    "last_successful_stage_preserved": "chief_engineer_review",
+    "call_id": "5e00312ddc5947cbb375b096b82c3428",
+    "actual_physical_snapshot_ref": "ead2c81e423df57e2afd5c47",
+    "http_status": 200,
+    "duration_ms": 621449,
+    "completion_tokens": 29315,
+    "native_write_file_calls": 9,
+    "tool_execution_result": "deo_tool_normalization_failed_before_effects",
+    "followup_llm_error": "Request timeout (120.0s)",
+    "later_nonphysical_rejections": "missing_required_refs=actual_sibling_exports",
+    "project_completed_verified": false
+  },
+  "wider_gate_result": {
+    "release_gate_components": "18_passed",
+    "last_full_kernelone_release_suite": "346_passed_8_failed_1_skipped_2_warnings",
+    "new_test_cross_cell_import_fence": "fixed_by_moving_private_consumer_test_to_kernel_owner; 17_focused_tests_passed",
+    "runtime_public_runtime_cell_kernel_runtime_static_fences_after_fix": "3_passed",
+    "remaining_full_suite_failures": "not_closed_or_full_rerun_certified; exact list in release report",
+    "report": "src/backend/workspace/meta/governance_reports/kernelone_release_gate_report.json"
+  },
+  "remaining_risks": [
+    "Native physical tool effect and artifact/verifier receipts not yet proved for this candidate",
+    "CE primary response used the full 16384 output tokens; bounded reconstruction passed but does not prove first-pass stability",
+    "Standalone tool-evaluation sandbox still has a separately diagnosed workspace-admission gap",
+    "P02/P03/P04 residual matrices and L1-L12 N-batch qualification remain open"
+  ],
+  "target_project_manually_modified": false,
+  "gate_equality_relaxed": false,
+  "next_action": "Restart only owned isolated instance and retry the same Director phase after terminal drain; inspect actual final wire/tools/receipts and preserve original failure."
+}

@@ -822,6 +822,25 @@ def _profile_binding(role_id: str = "pm") -> RoleProfileBinding:
 
 
 
+@pytest.mark.parametrize(
+    "payload, expected_error",
+    (
+        (
+            {"runtime_receipt_refs": (
+                "factory.cognitive_runtime:receipt-1",
+                "factory.cognitive_runtime:receipt-1",
+            )},
+            "runtime_receipt_refs must not contain duplicate refs",
+        ),
+        (
+            {"handoff_pack_refs": (
+                "factory.cognitive_runtime:handoff:handoff-1",
+                "factory.cognitive_runtime:handoff:handoff-1",
+            )},
+            "handoff_pack_refs must not contain duplicate refs",
+        ),
+    ),
+)
 def test_role_state_commit_receipt_rejects_duplicate_cognitive_runtime_refs(
     payload: _StateCommitReceiptKwargs,
     expected_error: str,
@@ -1847,5 +1866,4 @@ def test_role_runtime_chain_assembly_rejects_missing_required_role() -> None:
     assert result.chain is None
     assert result.missing_roles == ("qa",)
     assert result.error_code == "missing_required_chain_roles"
-
 

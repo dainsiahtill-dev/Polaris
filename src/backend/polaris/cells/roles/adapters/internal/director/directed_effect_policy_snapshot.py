@@ -55,11 +55,13 @@ from polaris.kernelone.llm.toolkit.executor.command_capability import (
     CommandCapabilityValidationInputV1,
     validate_command_capability,
 )
+from polaris.kernelone.llm.toolkit.tool_normalization.normalizers._shared import (
+    recover_write_body_string as _recover_write_body_string,
+)
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 from .execution_tools import (
     DirectorToolExecutor as _DirectorToolExecutor,
-    recover_write_body_string as _recover_write_body_string,
 )
 
 logger = logging.getLogger(__name__)

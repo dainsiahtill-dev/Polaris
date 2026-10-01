@@ -12,6 +12,8 @@ import logging
 import re
 from typing import Any
 
+from polaris.kernelone.llm.engine.provider_native_request import build_openai_native_messages
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,56 +79,17 @@ def build_chat_messages_payload(
             fallback.insert(0, {"role": "system", "content": str(system_prompt)})
         return fallback
 
-    normalized: list[dict[str, str]] = []
-    seen_non_system = False
-    for item in chat_messages:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "").strip().lower()
-        content = str(item.get("content") or "")
-        if not content.strip():
-            continue
-        if role == "tool":
-            role, content = "user", f"【工具结果】\n{content}"
-        elif role == "system":
-            if seen_non_system:
-                role, content = "user", f"【系统提示】\n{content}"
-        elif role not in ("user", "assistant"):
-            role = "user"
-        if role != "system":
-            seen_non_system = True
-        if normalized and normalized[-1]["role"] == role:
-            normalized[-1]["content"] = f"{normalized[-1]['content']}\n\n{content}"
-        else:
-            normalized.append({"role": role, "content": content})
-
-    if not normalized:
-        normalized = [{"role": "user", "content": prompt}]
-    if not any(m["role"] == "user" for m in normalized):
-        # Strict chat templates (vLLM qwen3) REJECT conversations without a
-        # user turn — observed live (factory-bench 2026-06-12) as intermittent
-        # 400 "No user query found in messages" killing whole planning runs:
-        # an all-system chat_messages array (user content empty → stripped)
-        # passed through untouched. This builder is the SSOT for
-        # template-acceptable messages, so the guarantee lives here; the
-        # warning keeps a trail to whichever upstream produced the userless
-        # array.
+    populated = [item for item in chat_messages if isinstance(item, dict) and str(item.get("content") or "").strip()]
+    if not populated:
+        return [{"role": "user", "content": prompt}]
+    if all(str(item.get("role") or "").strip().lower() in {"system", "assistant"} for item in populated):
         logger.warning(
             "chat_messages contained no user turn (roles=%s); appending user turn",
-            [m["role"] for m in normalized],
+            [item.get("role") for item in populated],
         )
-        prompt_text = str(prompt or "").strip()
-        combined_len = sum(len(m["content"]) for m in normalized)
-        # W1.5c-5: in the roles-kernel path prompt and chat_messages derive
-        # from the SAME messages — appending the full prompt would nearly
-        # double the payload (and the duplicate is never budget-accounted).
-        # When the array already carries (most of) the prompt content, a short
-        # continuation turn satisfies strict templates without the bloat.
-        if prompt_text and len(prompt_text) <= combined_len * 0.9:
-            normalized.append({"role": "user", "content": "(continue)"})
-        else:
-            normalized.append({"role": "user", "content": prompt_text or "(continue)"})
-    return normalized
+    # Same pure KernelOne owner as Factory's native request authority. Keep
+    # legacy fallback admission here, never a second role/merge algorithm.
+    return build_openai_native_messages(populated, fallback_prompt=prompt)
 
 
 __all__ = [

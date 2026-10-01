@@ -1,0 +1,211 @@
+{
+  "schema_version": "polaris.engineering_plan_baseline.v1",
+  "record_kind": "external_engineering_documentation",
+  "authoritative_platform_state": false,
+  "date": "2026-09-30",
+  "timezone": "Asia/Taipei",
+  "workspace": "/home/dains/Documents/polaris",
+  "source_head": "0d475c60474f2b1ea4a06ea136c0f817d2c49bfa",
+  "preexisting_dirty_paths": [".serena/project.yml"],
+  "task_scope": "historical_reconciliation_and_detailed_plan_only",
+  "implementation_started": false,
+  "product_code_modified": false,
+  "target_project_manually_modified": false,
+  "provider_calls_this_task": 0,
+  "bench_runs_this_task": 0,
+  "product_tests_executed_this_task": false,
+  "current_platform_global_gate_status": "not_revalidated",
+  "documents": {
+    "master_spec": "src/backend/docs/blueprints/POLARIS_UNATTENDED_DEVELOPMENT_MASTER_PLAN_20260930.md",
+    "implementation_plan": "docs/superpowers/plans/2026-09-30-polaris-unattended-development.md",
+    "refactor_decision": "src/backend/docs/blueprints/POLARIS_FOUNDATION_REFACTOR_DECISION_20260930.md"
+  },
+  "source_precedence": [
+    "current_user_constraints",
+    "applicable_AGENTS_and_architecture_rules",
+    "current_graph_and_public_owner_contracts",
+    "exact_archived_runtime_evidence_for_historical_claims",
+    "dated_historical_reports_and_memories",
+    "explicitly_labeled_proposals"
+  ],
+  "historical_evidence": [
+    {
+      "id": "L1-01-r44",
+      "factory_run_id": "factory_a05700ed9ffd",
+      "evidence_class": "ARCHIVED_RUNTIME",
+      "path": "/home/dains/.polaris/audit_archives/unattended-completion-20260812/r44/factory_audits.json",
+      "sha256": "d8d97c5694ff689c29a36fc09fc392334fc03fecf4d043be801cb17f612e5a5e",
+      "hash_matches_existing_proof_document": true,
+      "current_head_fresh_run_revalidated": false
+    },
+    {
+      "id": "L1-02-r48",
+      "factory_run_id": "factory_0dcb1e13baa7",
+      "evidence_class": "ARCHIVED_RUNTIME",
+      "path": "/home/dains/.polaris/audit_archives/unattended-completion-20260812/r48/factory-run.json",
+      "sha256": "23017506823a0055dfeb670b9da92407f59ee77506ffb59f31c34f800ee102af",
+      "observed_status": "completed",
+      "observed_phase": "completed",
+      "hash_matches_existing_proof_document": true,
+      "qualification": "historical_engineering_assisted_stage_recovery",
+      "current_head_fresh_run_revalidated": false
+    },
+    {
+      "id": "L3-24-r92",
+      "factory_run_id": "factory_2f185d17e083",
+      "evidence_class": "ARCHIVED_RUNTIME",
+      "audit_path": "/tmp/factory-bench-l3-24-r92/factory_audits.json",
+      "audit_sha256": "97ea1079a6e162724748a72439e5b5dc4f347fac9ab437ffa447cd56f3035762",
+      "validation_path": "/tmp/factory-bench-l3-24-r92/workspaces/2fe7e253010b-f94ff3b5c62771a2/L3-24-023d7314133040b6/b3db5341607a96dd1beb3d88/.polaris/runtime/qa/workspace-validation.json",
+      "validation_sha256": "5d50fe6c12bade5f53546d202d762e61c93b0500c583c69b3937015cc2a82f60",
+      "archive_read_only_this_task": true,
+      "historical_wall_clock_seconds": 1257.1,
+      "stage_successes": ["pm_planning", "chief_engineer_review", "director_dispatch"],
+      "failed_stage": "quality_gate",
+      "effective_syntax_and_cmake_build_passed": true,
+      "effective_unittest_passed": false,
+      "required_depth_passed": false,
+      "production_lines": 632,
+      "required_production_lines": 650,
+      "failed_tests": ["test_day_extremes_1_and_30", "test_reveal_missing_index_returns_error"],
+      "domain_shim_skipped": true,
+      "domain_skip_cause_proven": false,
+      "declared_max_rounds": 8,
+      "observed_rounds": 10,
+      "current_source_allows_up_to_two_conditional_extra_rounds": true,
+      "last_round_verifier_effect": "progress",
+      "last_round_diagnostics_before": 12,
+      "last_round_diagnostics_after": 3,
+      "nonprogress_rounds_since_last_progress": 0,
+      "observed_stop_reason": "",
+      "exact_historical_exit_branch_proven": false,
+      "completed_verified_claimed": false,
+      "live_trigger_of_r91_nested_shape_proven": false
+    }
+  ],
+  "current_source_inventory": {
+    "project_outcome_authority_exists": true,
+    "exact_run_causal_audit_exists": true,
+    "same_stage_factory_retry_exists": true,
+    "director_repair_convergence_scheduler_exists": true,
+    "taskruntime_deo_recovery_protocol_exists": true,
+    "runtime_test_pass_claimed": false,
+    "module_registry": {
+      "module_count": 10,
+      "sealed": ["M03_tool_batch_deo", "M04_final_request_context"],
+      "hardening": [
+        "M01_event_wait", "M02_physical_attempt_authority", "M05_stage_lease_heartbeat",
+        "M06_director_multi_task", "M07_factory_stage_chain", "M08_run_ledger_tool_lifecycle",
+        "M10_materialization_semantic_quality"
+      ],
+      "open": ["M09_four_pillars_gates"],
+      "cascade_includes_open_modules": false,
+      "classification_is_metadata_not_fresh_test_proof": true
+    },
+    "catalog": {
+      "path": "src/backend/scripts/factory_bench/projects_v2.json",
+      "projects": 120,
+      "levels": 12,
+      "projects_per_level": 10,
+      "primary_language_counts": {
+        "typescript": 18, "javascript": 17, "python": 19, "go": 17,
+        "rust": 17, "cpp": 16, "java": 16
+      },
+      "all_languages_supported_claimed": false
+    }
+  },
+  "hypotheses_requiring_dynamic_falsification": [
+    {
+      "id": "H1",
+      "question": "Does reissuing exact claim evidence after ambiguous acknowledgement ever permit a second physical effect across processes?",
+      "owner_package": "P04",
+      "status": "static_contract_and_test_disagreement_not_live_exploit_proof"
+    },
+    {
+      "id": "H2",
+      "question": "Can a terminal task safely release its lease when effect or child-process closure evidence is incomplete?",
+      "owner_package": "P04",
+      "status": "requires_fault_injection"
+    },
+    {
+      "id": "H3",
+      "question": "Can sequential owner observations compose a stale mixed-epoch successful ProjectOutcome during rework?",
+      "owner_package": "P02",
+      "status": "requires_fault_injection"
+    },
+    {
+      "id": "H4",
+      "question": "Which precise decision ended r92 while its final candidate progressed and stop_reason remained empty?",
+      "owner_package": "P01",
+      "status": "historical_branch_unproven"
+    }
+  ],
+  "work_packages": [
+    {"id":"P00","title":"Current evidence and policy baseline","depends_on":[],"status":"planned"},
+    {"id":"P01","title":"Dynamic stop and continuation decisions","depends_on":["P00"],"status":"planned"},
+    {"id":"P02","title":"Owner-bound ProjectOutcome consistency","depends_on":["P00"],"status":"planned"},
+    {"id":"P03","title":"Durable same-stage recovery and budgets","depends_on":["P01","P02","P04"],"status":"planned"},
+    {"id":"P04","title":"Claims fences effects receipts and settlement","depends_on":["P00"],"status":"planned"},
+    {"id":"P05","title":"Final request and tool execution consistency","depends_on":["P00"],"status":"planned"},
+    {"id":"P06","title":"CE feasibility and atomic candidate repair","depends_on":["P00","P05"],"status":"planned"},
+    {"id":"P07","title":"Transactional Director repair and causal progress","depends_on":["P03","P05","P06","P08a"],"status":"planned"},
+    {"id":"P08","title":"QA evidence and verifier invalidation","depends_on":["P08b"],"status":"planned"},
+    {"id":"P09","title":"Runtime identity instances and observation","depends_on":["P00","P04"],"status":"planned"},
+    {"id":"P10","title":"Language and project capability qualification","depends_on":["P06","P08"],"status":"planned"},
+    {"id":"P11","title":"Unattended scheduling and resource budgets","depends_on":["P03","P08","P09"],"status":"planned"},
+    {"id":"P12","title":"Module seals and cross-module admission","depends_on":["P02","P03","P04","P05","P06","P07","P08","P09","P10","P11"],"status":"planned"},
+    {"id":"P13","title":"Current frontier fresh canaries and N-batch","depends_on":["P12"],"status":"planned"},
+    {"id":"P14","title":"Continuous documentation and corrective memory","depends_on":["P00"],"status":"planned","continuous":true}
+  ],
+  "subpackages": [
+    {"id":"P08a","parent":"P08","title":"Typed verifier identity diagnostics and skip semantics","depends_on":["P02"],"status":"planned"},
+    {"id":"P08b","parent":"P08","title":"Verifier invalidation graph and final QA integration","depends_on":["P08a","P07"],"status":"planned"}
+  ],
+  "proposed_qualification_policy": {
+    "status": "proposal_not_activated",
+    "fresh_canaries": 3,
+    "level_batch_projects": 10,
+    "consecutive_batches": 3,
+    "planned_slots_per_level": 30,
+    "minimum_fresh_runs_per_level": 30,
+    "minimum_full_catalog_fresh_runs": 360,
+    "counting_axes": ["planned_slots", "started_fresh_runs", "physical_attempts"],
+    "single_run_budget_seconds": 5400,
+    "outer_guard_seconds": 6000,
+    "minimum_catalog_chain_budget_sum_hours": 540,
+    "minimum_catalog_outer_watchdog_plus_kill_grace_sum_hours": 603,
+    "engineering_assisted_recovery_counts_as_fresh_autonomous_success": false,
+    "historical_success_relabeling_allowed": false,
+    "existing_gate_policy_implicitly_changed": false
+  },
+  "plan_validation": {
+    "required": ["utf8_readable","relative_links_resolve","json_valid","work_package_dependencies_acyclic","referenced_existing_paths_checked","no_product_changes"],
+    "status": "passed_document_validation_only",
+    "document_validation_results": {
+      "utf8_readable": true,
+      "relative_links_resolve": true,
+      "json_valid": true,
+      "work_package_dependencies_acyclic": true,
+      "existing_source_paths_checked": 64,
+      "bash_blocks_syntax_checked": 4,
+      "archive_hashes_verified": 4,
+      "catalog_project_count_verified": 120,
+      "product_code_tests_run": false
+    },
+    "independent_review_domains": ["authority_and_durability", "repair_convergence", "validation_and_scheduling"],
+    "material_corrections_applied": [
+      "separate_taskruntime_DEO_receipt_owner_from_project_verification_receipts",
+      "avoid_factory_waiting_for_its_own_final_ProjectOutcome",
+      "preserve_existing_A009_physical_attempt_qualification",
+      "compare_baseline_candidate_hashes_without_requiring_hash_equality",
+      "allow_owner_revision_for_same_run_recovery_without_rewriting_history",
+      "run_typed_verifier_semantics_before_convergence_policy",
+      "separate_planned_slots_started_runs_and_physical_attempts",
+      "keep_Bench_catalog_queue_out_of_product_workflow_contracts",
+      "test_global_observer_and_context_workspace_isolation",
+      "distinguish_540_hour_chain_budget_from_603_hour_outer_guard_budget"
+    ],
+    "initial_document_check_failures": ["two_ambiguous_docs_graph_paths_corrected_to_src_backend_docs_graph"]
+  },
+  "next_action": "Execute P00 baseline verification; then replay P01 and independently falsify H1-H3 before changing the corresponding owners."
+}

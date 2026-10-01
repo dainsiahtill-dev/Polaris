@@ -301,6 +301,56 @@ def _unwrap_arguments_from_snapshot(
     """Unwrap provider envelopes without consulting the mutable registry."""
 
     namespace = _snapshot_argument_namespace(spec)
+    declared_arguments = spec.get("arguments")
+    required_string_fields = (
+        {
+            str(item.get("name") or "")
+            for item in declared_arguments
+            if isinstance(item, Mapping) and item.get("type") == "string" and item.get("required") is True
+        }
+        if isinstance(declared_arguments, list)
+        else set()
+    )
+    required_fields = (
+        {
+            str(item.get("name") or "")
+            for item in declared_arguments
+            if isinstance(item, Mapping) and item.get("required") is True
+        }
+        if isinstance(declared_arguments, list)
+        else set()
+    )
+    single_write_envelope_allowed = (
+        canonical_tool_name == "write_file"
+        and required_fields == {"file", "content"}
+        and required_fields.issubset(required_string_fields)
+        and not spec.get("parameter_any_of")
+    )
+
+    def _single_write_envelope(payload: Mapping[str, object]) -> dict[str, object] | None:
+        """Decode the named file slot only; never repair code or grant a path."""
+        if not single_write_envelope_allowed or len(payload) != 1:
+            return None
+        key, body = next(iter(payload.items()))
+        if not key.startswith("file/") or not isinstance(body, str):
+            return None
+        target = key.removeprefix("file/")
+        for terminal in ("</parameter>", "</parameter"):
+            if target.endswith(terminal):
+                target = target.removesuffix(terminal)
+                break
+        if (
+            not target
+            or target != target.strip()
+            or target.startswith("/")
+            or any(character in target for character in "\\:<>")
+            or any(ord(character) < 32 or ord(character) == 127 for character in target)
+            or any(component in {"", ".", ".."} for component in target.split("/"))
+        ):
+            return None
+        # Body bytes are immutable transport data. Ownership, protected paths,
+        # JobToken and before-state checks still belong to the downstream guard.
+        return {"file": target, "content": body}
 
     def _decode(value: object) -> dict[str, object] | None:
         if isinstance(value, Mapping):
@@ -315,6 +365,10 @@ def _unwrap_arguments_from_snapshot(
         normalized = {str(key): value for key, value in payload.items()}
         if depth >= 4:
             return normalized
+
+        recovered_write = _single_write_envelope(normalized)
+        if recovered_write is not None:
+            return recovered_write
 
         envelope_name = next(
             (
@@ -391,6 +445,19 @@ def normalize_tool_arguments_from_snapshot(
         alias_bindings=alias_bindings,
         arguments=arguments,
     )
+    # Validate AFTER all supported wrapper fast paths. The exact synonym must
+    # come from this captured registry, never a key split or a later lookup.
+    aliases = spec.get("arg_aliases")
+    if (
+        validated.canonical_tool_name == "write_file"
+        and isinstance(aliases, Mapping)
+        and aliases.get("file=path") == "file"
+        and "file=path" in unwrapped
+    ):
+        target = unwrapped["file=path"]
+        path_keys = {"file", *(str(key) for key, value in aliases.items() if value == "file")}
+        if any(key in unwrapped and unwrapped[key] != target for key in path_keys):
+            raise ValueError("conflicting_file_argument_alias")
     normalized: dict[str, Any] = SchemaDrivenNormalizer({validated.canonical_tool_name: spec}).normalize(
         validated.canonical_tool_name, unwrapped
     )

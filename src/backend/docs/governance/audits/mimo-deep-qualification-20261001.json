@@ -1,0 +1,55 @@
+{
+  "schema_version": "polaris.external_engineering_audit.v1",
+  "record_kind": "external_engineering_audit",
+  "authoritative_platform_state": false,
+  "model": "mimo-v2.6-pro",
+  "provider_id": "openai_compat-1790791202289",
+  "deep_readiness": {
+    "state": "verified",
+    "execution": "serial real POST /v2/llm/test through saved provider credential",
+    "suites": ["connectivity", "response", "thinking", "qualification", "interview"],
+    "total_cases": 32,
+    "passed_cases": 32,
+    "roles": [
+      {"role": "director", "report_id": "0a871c28", "passed": 8, "total": 8, "elapsed_s": 43.5},
+      {"role": "chief_engineer", "report_id": "48d90468", "passed": 8, "total": 8, "elapsed_s": 50.71},
+      {"role": "pm", "report_id": "2b81037c", "passed": 8, "total": 8, "elapsed_s": 44.06},
+      {"role": "qa", "report_id": "3bcd0b43", "passed": 8, "total": 8, "elapsed_s": 45.41}
+    ],
+    "boundary": "Generic readiness/normal provider invocation, not full role-specific Factory contracts or native tool effects"
+  },
+  "real_tool_probe": {
+    "state": "failed_before_provider_dispatch",
+    "run_id": "b05c1476",
+    "suite": "tool_calling_matrix",
+    "case": "l1_directory_listing",
+    "requested_cases": ["l1_directory_listing", "l3_edit_then_verify"],
+    "executed_cases": 1,
+    "provider_calls": 0,
+    "tool_calls": 0,
+    "physical_error": "transaction_identity_unbound",
+    "exception": "TransactionIdentityError",
+    "failure_site": "roles/kernel/internal/kernel/transaction_turn_id.py:_resolve_execution_scope",
+    "required_identity_fields": ["execution_attempt_id", "turn_request_id", "execution_id", "task_runtime_session_id"],
+    "forbidden_fix": "Do not restore run/task/session identity fallback, weaken kernel guard, fabricate grants, or change judge thresholds",
+    "primary_attribution": "evaluation-to-role transaction invocation contract integration gap",
+    "not_attributed_to": ["MiMo network", "MiMo native tool quality", "missing repo_tree in a physical provider request"],
+    "final_provider_request": "none; gate failed before any physical provider attempt",
+    "context_audit": "not_applicable_no_physical_request",
+    "audit_package": "/home/dains/.polaris/dev-workspaces/unattended-local-20261001-control/.polaris/runtime/llm_evaluations/mimo-tool-qualification-20261001.json",
+    "raw_report": "/home/dains/.polaris/dev-workspaces/unattended-local-20261001-control/.polaris/runtime/llm_evaluations/b05c1476/TOOL_CALLING_MATRIX_REPORT.json"
+  },
+  "cli_entry": {
+    "verified_canonical": "python -m polaris.delivery.cli agentic-eval",
+    "obsolete_documented_entry": "python -m polaris.delivery.cli.agentic_eval",
+    "obsolete_entry_dynamic_error": "package cannot be directly executed; no __main__",
+    "legacy_shim_restored": false
+  },
+  "refactor_plan": "not_complete",
+  "remaining_core_packages": ["P02 owner-read consistency", "P03 durable continuation", "P04 remaining cross-process/crash matrices", "downstream P05-P12 qualification"],
+  "new_factory_bench_started_after_mimo_switch": false,
+  "prior_factory_bench_result": "L1-01 r01 failed MiniMax quota; unchanged historical evidence",
+  "bench_ruling": "Single isolated diagnostic canary need not wait for every refactor package, but native tool qualification remains unproven and current admission must be checked separately; no full L1-L12 certification",
+  "target_project_manually_modified": false,
+  "next_action": "Repair/align legitimate invocation preparation against stable first-class identity without weakening the guard; rerun only failed tool probe, refresh affected gates, then isolated single-project diagnostic Bench"
+}

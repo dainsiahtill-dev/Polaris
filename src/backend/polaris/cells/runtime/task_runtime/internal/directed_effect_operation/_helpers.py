@@ -380,6 +380,7 @@ class _ParentSettlementPreparation:
     reduced: _OperationStreamReduction
     receipt_records: tuple[dict[str, object], ...]
     close_candidates: tuple[_Aggregate, ...]
+    pre_dispatch_abort: bool = False
 
 
 @dataclass(frozen=True, slots=True)

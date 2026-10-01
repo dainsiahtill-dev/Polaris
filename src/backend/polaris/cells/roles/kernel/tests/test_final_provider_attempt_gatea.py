@@ -42,6 +42,10 @@ from polaris.cells.roles.kernel.internal.llm_caller.final_request_metrics import
     validated_final_context_evidence,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
+from polaris.cells.roles.kernel.internal.llm_caller.invoker import (
+    _helpers as invoker_helpers,
+    _structured as invoker_structured,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import StreamEngine
 from polaris.cells.roles.kernel.public.physical_attempt_control import (
     FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
@@ -63,6 +67,23 @@ from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshot
 from polaris.kernelone.llm.engine.contracts import FrozenFinalProviderAttemptV1, bind_physical_provider_dispatch_port
 from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.types import Usage
+
+from polaris.cells.roles.kernel.tests._final_provider_attempt_gate_helpers import (  # noqa: F401
+    _AsyncPostContext,
+    _AsyncResponse,
+    _AsyncSession,
+    _AsyncStreamContent,
+    _assert_one_coverage_rejection_and_zero_physical_effects,
+    _bootstrap,
+    _failed_coverage_audit,
+    _gate,
+    _prepared_with_dispatch_port,
+    _qualified_factory_fixture,
+    _run_fixture_coroutine,
+    _wire_body,
+    _wire_body_from_semantic,
+    _wire_request,
+)
 
 
 class _Response:
@@ -98,6 +119,13 @@ def test_final_context_evidence_rejects_incomplete_claimed_physical_audit() -> N
     assert validated_final_context_evidence(_ForgedPort(), expected_port_type=_ForgedPort) is None
 
 
+@pytest.mark.parametrize(
+    ("case", "rejection_code"),
+    [
+        ("missing_tools", "final_request_evidence_coverage_failed"),
+        ("wrong_role", "final_request_role_identity_mismatch"),
+    ],
+)
 def test_port_owned_prequalification_rejection_covers_tools_and_role_without_effects(
     tmp_path: Path,
     case: str,
@@ -145,9 +173,9 @@ async def test_sync_prequalification_coverage_failure_records_one_rejection_and_
             return "forbidden"
 
     with (
-        patch.object(invoker_module, "context_snapshot_matches_frozen_attempt", return_value=True),
+        patch.object(invoker_helpers, "context_snapshot_matches_frozen_attempt", return_value=True),
         patch.object(
-            invoker_module,
+            invoker_helpers,
             "build_final_request_context_audit_for_request",
             return_value=_failed_coverage_audit(dispatch_port),
         ),
@@ -197,9 +225,9 @@ async def test_structured_prequalification_coverage_failure_records_one_rejectio
             "_prepare_llm_request",
             AsyncMock(return_value=prepared),
         ),
-        patch.object(invoker_module, "_store_call_start_context_snapshot", AsyncMock()),
+        patch.object(invoker_structured, "_store_call_start_context_snapshot", AsyncMock()),
         patch.object(
-            invoker_module,
+            invoker_structured,
             "build_final_request_context_audit_for_request",
             return_value=_failed_coverage_audit(dispatch_port),
         ),
@@ -764,7 +792,7 @@ def test_real_anthropic_provider_crosses_native_sidecar_and_factory_gate(
     )
     active_request = prepared.ai_request
     assert invoker_module.LLMInvoker._extract_final_context_snapshot_ref(prepared, active_request) == _final_ref
-    projected = invoker_module._with_final_request_context_audit(
+    projected = invoker_helpers._with_final_request_context_audit(
         {},
         prepared=prepared,
         active_request=active_request,
@@ -2567,6 +2595,3 @@ async def test_async_stream_consume_keyboard_interrupt_exits_response_and_record
     assert len(terminal) == 1
     assert terminal[0]["payload"]["status"] == "cancelled"
     assert "KeyboardInterrupt: consume interrupted" in terminal[0]["payload"]["error"]
-
-
-@pytest.mark.asyncio

@@ -1,0 +1,59 @@
+{
+  "schema_version": "polaris.engineering_ui_audit.v1",
+  "record_kind": "external_engineering_audit",
+  "authoritative_platform_state": false,
+  "status": "VERIFIED_USER_TIMELINE_HEARTBEAT_HIDDEN",
+  "user_requirement": "Pure high-frequency heartbeats must not be displayed as user events or repetitive notifications.",
+  "scope": "ContextOS recent role events, decision stream, recent structure events and TruthLog recent-event view",
+  "behavior": {
+    "successful_heartbeats": "hidden_before_recent_event_truncation",
+    "heartbeat_failures_and_warnings": "preserved",
+    "stage_task_tool_error_delivery_events": "preserved",
+    "raw_telemetry_lease_audit_and_freshness": "unchanged",
+    "missing_window_call_evidence": "does_not_prove_model_never_executed",
+    "product_polling_added": false,
+    "backend_source_modified_for_ui": false
+  },
+  "files": [
+    "src/frontend/src/app/components/contextos/contextOSEventVisibility.ts",
+    "src/frontend/src/app/components/contextos/contextOSTelemetry.ts",
+    "src/frontend/src/app/components/contextos/contextOSData/_model.ts",
+    "src/frontend/src/app/components/contextos/ContextOSWorkspace.tsx"
+  ],
+  "tests": {
+    "initial_red": "2_failed_2_passed_before_implementation",
+    "window_uncertainty_red": "1_failed_4_passed_before_summary_fix",
+    "contextos_suite": "296_passed_10_files",
+    "typescript": "PASS_tsc_noEmit_frontend_project",
+    "production_build": "PASS_4495_modules_35.86s",
+    "build_warning": "existing_large_chunk_warning_not_relaxed",
+    "git_diff_check": "PASS"
+  },
+  "live_browser": {
+    "frontend_port": 5176,
+    "backend_ports": [49980],
+    "observation_seconds": 35,
+    "ws_frames": 401,
+    "heartbeat_frames": 186,
+    "heartbeat_rows_before": 0,
+    "heartbeat_rows_after": 0,
+    "page_reload": false,
+    "http_queries_during_verified_wait": {},
+    "page_errors": [],
+    "critical_errors_remain_visible": "Director dispatch failure still visible in final role panel",
+    "screenshot": ".superpowers/sdd/2026-09-30-polaris-unattended-development/contextos-heartbeat-hidden-20261001.png",
+    "script": ".superpowers/sdd/2026-09-30-polaris-unattended-development/verify_contextos_heartbeat_ui.py"
+  },
+  "instruction_sync": ["CLAUDE.md", "src/frontend/AGENTS.md"],
+  "project_qualification": {
+    "factory_run_id": "factory_9aa169804636",
+    "latest_status": "failed_at_director_dispatch",
+    "ui_change_is_not_bench_success": true,
+    "target_project_manually_modified": false
+  },
+  "remaining_gaps": [
+    "Source observation windows may not contain historical LLM calls; UI now states this uncertainty rather than denying execution",
+    "Native write-envelope format remains exact-replay-qualified; the successful live nine-call batch used canonical parameters and is not independent evidence that the envelope decoder was exercised",
+    "Repair budget and global KernelOne release failures remain separate open platform work"
+  ]
+}

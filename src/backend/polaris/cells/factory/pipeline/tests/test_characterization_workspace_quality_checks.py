@@ -160,10 +160,12 @@ class TestRunWorkspaceQualityChecks:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("last_round_progress", (False, True))
     async def test_repair_summary_success_requires_rerun_to_pass(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        last_round_progress: bool,
     ) -> None:
         executor = _executor(tmp_path)
         run = FactoryRun(
@@ -181,7 +183,14 @@ class TestRunWorkspaceQualityChecks:
                 "command": command,
                 "exit_code": 2,
                 "passed": False,
-                "stdout_tail": "src/index.ts(1,10): error TS2305: missing export",
+                "stdout_tail": (
+                    "src/index.ts(1,10): error TS2305: missing export\n"
+                    + (
+                        "src/index.ts(2,10): error TS2305: missing another export"
+                        if last_round_progress and len(calls) == 1
+                        else ""
+                    )
+                ),
                 "stderr_tail": "",
                 "error": "",
             }
@@ -240,6 +249,16 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["revalidated"] is True
         assert payload["repair"]["residual_error_count"] == 1
         assert "TS2305" in payload["repair"]["residual_errors"][0]
+        assert payload["repair"]["convergence_stop_reason"] == "repair_round_budget_exhausted"
+        assert payload["repair"]["extra_round_limit"] == 2
+        assert payload["repair"]["extra_rounds_consumed"] == 0
+        assert payload["repair"]["rounds"][0]["budget_admission"] == "scheduled_round"
+        if last_round_progress:
+            final_round = payload["repair"]["rounds"][-1]
+            assert final_round["verifier_effect"] == "progress"
+            assert final_round["diagnostic_count_before"] == 2
+            assert final_round["diagnostic_count_after"] == 1
+            assert final_round["write_tool_evidence"] is True
 
     @pytest.mark.asyncio
     async def test_workspace_quality_delivery_depth_contract_enters_repair_loop(
@@ -765,6 +784,9 @@ class TestRunWorkspaceQualityChecks:
         assert rounds[0]["residual_owner_handoff_extra_round_granted"] is True
         assert rounds[0]["residual_owner_handoff_targets"] == ["physics/gravity_test.go"]
         assert rounds[1]["verifier_effect"] == "resolved"
+        assert rounds[1]["budget_admission"] == "residual_owner_rotation"
+        assert payload["repair"]["extra_round_limit"] == 2
+        assert payload["repair"]["extra_rounds_consumed"] == 1
 
     @pytest.mark.asyncio
     async def test_workspace_quality_reactivates_prior_owner_handoff_after_diagnostic_unmask(

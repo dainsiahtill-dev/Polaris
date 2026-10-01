@@ -1710,15 +1710,15 @@ describe('summarizeRoleContextState', () => {
     expect(summary.detail).toContain('没有观测到该角色的实时活动');
   });
 
-  it('把“有事件但无调用无 token”解读为待机而非执行（截图场景）', () => {
+  it('把“有观测但无调用无 token”标记为窗口证据不足，不推断从未执行', () => {
     // 截图：Director 19 条事件、0 投影、0 回执、0 调用、无 usage
     const summary = summarizeRoleContextState(
       makeCtx({ eventCount: 19, calls: 0, totalTokens: 0, projectionCount: 0, receiptCount: 0 }),
     );
     expect(summary.tone).toBe('idle');
-    expect(summary.headline).toContain('19 条事件');
-    expect(summary.headline).toContain('还未真正调用模型');
-    expect(summary.detail).toContain('不是真正的执行');
+    expect(summary.headline).toContain('19 条原始观测');
+    expect(summary.headline).toContain('暂无模型调用记录');
+    expect(summary.detail).toContain('不能据此断言模型未执行');
   });
 
   it('当事件附带装配次数时，摘要细节里带上装配计数', () => {

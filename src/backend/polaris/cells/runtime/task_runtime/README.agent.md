@@ -89,15 +89,24 @@ repository architecture fence are also closed.
   receipt-complete predecessor, and fail-closes unresolved or failed effects;
   callers cannot reuse an open parent or manufacture CAS values
 - a confirmed fresh claim returns exactly one `DirectedEffectClaimGrantV1`;
-  same-command reconciliation may return that grant, but idempotent replay never
+  nonce-bound reconciliation of the current append may return that grant, but idempotent replay never
   reissues it and never appends a new claim fact
+- canonical receipt confirmation must validate an independent public owner
+  receipt; a confirmation outage cannot turn the observed receipt into its own
+  proof. The operation remains durable and un-dispatched for recovery, not green.
+- repository introspection uses the actual executed `_repository_class.source`;
+  the frozen historical monolith is not execution or audit authority.
 
 ## Verification
 
-- `polaris/cells/runtime/task_runtime/tests/test_service.py`
-- `polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation.py`
+- `polaris/cells/runtime/task_runtime/tests/test_service_sa.py`
+- `polaris/cells/runtime/task_runtime/tests/test_service_sb.py`
+- `polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_operation_sa.py`
+- `polaris/cells/runtime/task_runtime/public/tests/test_directed_effect_operation_sb.py`
 - `polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_concurrency.py`
-- `polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py`
+- `polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence_sa_ya.py`
+- `polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence_sa_yb.py`
+- `polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence_sb.py`
 - `polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py`
 - `polaris/tests/test_runtime_projection_snapshot_tasks.py`
 - `polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py`

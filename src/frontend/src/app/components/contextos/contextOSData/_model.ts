@@ -7,6 +7,7 @@ import type { DialogueEvent } from '@/app/components/DialoguePanel';
 import type { LogEntry } from '@/types/log';
 import type { LlmRuntimeGateState, LlmRuntimeRoleBinding, LlmRuntimeRoleDetail } from '@/app/hooks/useLlmRuntimeGate';
 import type { SnapshotPayload } from '@/app/types/appContracts';
+import { meaningfulContextOSEvents } from '../contextOSEventVisibility';
 import {
   EMPTY_TELEMETRY,
   contextOSObservedTokens,
@@ -562,7 +563,7 @@ function telemetryDecisionKind(event: ContextOSEvent): string {
 }
 
 function deriveTelemetryDecisions(telemetry: ContextOSTelemetry, limit = 12): DecisionRow[] {
-  return telemetry.events.slice(0, limit).map((event) => ({
+  return meaningfulContextOSEvents(telemetry.events).slice(0, limit).map((event) => ({
     id: event.id,
     time: formatClock(event.ts) || '--:--:--',
     actor: safeText(event.actor),
@@ -1079,7 +1080,7 @@ export function buildContextOSModel(input: {
       title: role.title,
       courtTitle: role.courtTitle,
       state,
-      events: roleEvents.slice(0, MAX_ROLE_EVENTS),
+      events: meaningfulContextOSEvents(roleEvents).slice(0, MAX_ROLE_EVENTS),
       eventCount: roleEvents.length,
       projectionCount,
       receiptCount,
@@ -1309,13 +1310,13 @@ export function summarizeRoleContextState(ctx: RoleInternalContext): RoleContext
     };
   }
 
-  // 3. 有事件、但既无调用也无 token ——「事件观测 / 待机」而非执行。
+  // 3. 观测窗口可能只有保活；缺少调用证据不能证明模型从未执行。
   if (ctx.calls === 0 && ctx.totalTokens === 0) {
     const assembly = ctx.projectionCount > 0 ? `，上下文已装配 ${ctx.projectionCount} 次` : '';
     return {
       tone: 'idle',
-      headline: `已记录 ${ctx.eventCount} 条事件，但还未真正调用模型`,
-      detail: `事件持续到达${assembly}，但没有真实的模型调用或 token 消耗——属于「事件观测 / 待机」状态，不是真正的执行`,
+      headline: `本窗口有 ${ctx.eventCount} 条原始观测，暂无模型调用记录`,
+      detail: `保活或状态观测${assembly}不等于开发进展；本窗口没有调用或 usage 证据，不能据此断言模型未执行`,
     };
   }
 
@@ -1580,4 +1581,3 @@ function formatDurationMs(ms: number): string {
   const hours = Math.floor(minutes / 60);
   return `${hours}h ${minutes % 60}m`;
 }
-

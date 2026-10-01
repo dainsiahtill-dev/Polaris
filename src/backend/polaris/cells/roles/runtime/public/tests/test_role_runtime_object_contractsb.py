@@ -108,6 +108,11 @@ from polaris.cells.roles.runtime.public.service import (
     execute_role_task_market_lifecycle,
     instantiate_role_runtime_object,
 )
+from polaris.cells.roles.runtime.public.tests._object_contract_fixtures import (
+    _architect_validation_runtime_object,
+    _phase5_chain_steps,
+    _valid_phase5_chain_command,
+)
 from polaris.cells.runtime.projection.public.contracts import RuntimeProjectionQueryV1, RuntimeProjectionResultV1
 from polaris.cells.runtime.task_market.public import (
     AcknowledgeTaskStageCommandV1,
@@ -1001,6 +1006,13 @@ def test_role_runtime_chain_assembly_rejects_full_phase5_without_audit_evidence_
     assert result.metadata["required_owner_cell"] == "audit.evidence"
 
 
+@pytest.mark.parametrize(
+    ("missing_ref", "expected_error_code", "expected_owner_cell"),
+    (
+        ("handoff", "missing_handoff_ref", "factory.cognitive_runtime"),
+        ("runtime_receipt", "missing_runtime_receipt_ref", "factory.cognitive_runtime"),
+    ),
+)
 def test_role_runtime_chain_assembly_rejects_full_phase5_without_cognitive_runtime_ref(
     missing_ref: str,
     expected_error_code: str,

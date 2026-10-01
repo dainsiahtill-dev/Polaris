@@ -21,7 +21,9 @@ from polaris.cells.llm.provider_config.public.contracts import (
 from polaris.cells.llm.provider_config.public.service import resolve_llm_test_execution_context
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.schemas.common import LlmTestReportResponse, LlmTestTranscriptResponse
+from polaris.delivery.ws.endpoints.protocol_utils import build_v2_subscription_subjects, resolve_v2_subject
 from polaris.infrastructure.messaging.nats.nats_types import create_runtime_event
+from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
 from .jetstream_utils import publish_to_jetstream
@@ -86,9 +88,11 @@ def _track_jetstream_task(task: asyncio.Task[None]) -> None:
     task.add_done_callback(_discard)
 
 
-async def _publish_test_chunk(*, run_id: str, chunk: dict[str, Any], seq: int) -> bool:
+async def _publish_test_chunk(
+    *, workspace: str, workspace_key: str, run_id: str, chunk: dict[str, Any], seq: int
+) -> bool:
     envelope = create_runtime_event(
-        workspace_key="llm",
+        workspace_key=workspace_key,
         run_id=run_id,
         channel=f"llm-test:{run_id}",
         kind="llm.test.chunk",
@@ -97,10 +101,10 @@ async def _publish_test_chunk(*, run_id: str, chunk: dict[str, Any], seq: int) -
             "data": dict(chunk.get("data") or {}),
             "seq": int(seq),
         },
-        meta={"source": "llm_test_jetstream"},
+        meta={"source": "llm_test_jetstream", "workspace": workspace},
     )
     return await publish_to_jetstream(
-        subject=f"hp.runtime.llm.test.{run_id}",
+        subject=resolve_v2_subject(workspace_key, f"llm.test.{run_id}"),
         payload=envelope.to_dict(),
     )
 
@@ -180,9 +184,12 @@ async def _run_llm_test_jetstream(
 ) -> None:
     role = test_context.role or "connectivity"
     suites = list(test_context.suites)
+    workspace_roots = resolve_storage_roots(workspace)
     seq = 0
     try:
         await _publish_test_chunk(
+            workspace=str(workspace_roots.workspace_abs),
+            workspace_key=workspace_roots.workspace_key,
             run_id=run_id,
             chunk={
                 "type": "start",
@@ -216,27 +223,41 @@ async def _run_llm_test_jetstream(
         suites_payload = suites_dict if isinstance(suites_dict, dict) else {}
         for suite_name, suite_result in suites_payload.items():
             await _publish_test_chunk(
+                workspace=str(workspace_roots.workspace_abs),
+                workspace_key=workspace_roots.workspace_key,
                 run_id=run_id,
                 chunk={"type": "suite_start", "data": {"suite": suite_name}},
                 seq=seq,
             )
             seq += 1
             await _publish_test_chunk(
+                workspace=str(workspace_roots.workspace_abs),
+                workspace_key=workspace_roots.workspace_key,
                 run_id=run_id,
                 chunk={"type": "suite_result", "data": {"suite": suite_name, "result": suite_result}},
                 seq=seq,
             )
             seq += 1
             await _publish_test_chunk(
+                workspace=str(workspace_roots.workspace_abs),
+                workspace_key=workspace_roots.workspace_key,
                 run_id=run_id,
                 chunk={"type": "suite_complete", "data": {"suite": suite_name, "result": suite_result}},
                 seq=seq,
             )
             seq += 1
-        await _publish_test_chunk(run_id=run_id, chunk={"type": "complete", "data": report}, seq=seq)
+        await _publish_test_chunk(
+            workspace=str(workspace_roots.workspace_abs),
+            workspace_key=workspace_roots.workspace_key,
+            run_id=run_id,
+            chunk={"type": "complete", "data": report},
+            seq=seq,
+        )
     except (RuntimeError, ValueError, OSError, ConnectionError, TimeoutError) as exc:
         logger.warning("llm test jetstream execution failed: %s", exc)
         await _publish_test_chunk(
+            workspace=str(workspace_roots.workspace_abs),
+            workspace_key=workspace_roots.workspace_key,
             run_id=run_id,
             chunk={"type": "error", "data": {"error": str(exc) or type(exc).__name__}},
             seq=seq,
@@ -263,6 +284,15 @@ async def v2_llm_test_jetstream(request: Request, payload: LlmTestPayload) -> di
         raise _map_provider_config_error(exc) from exc
 
     run_id = _safe_event_id(payload.test_run_id, "llm-test")
+    workspace_roots = resolve_storage_roots(workspace)
+    channel = f"llm-test:{run_id}"
+    subjects = build_v2_subscription_subjects(workspace_roots.workspace_key, [channel])
+    if len(subjects) != 1:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_TEST_RUN_ID",
+            message="invalid test run id for runtime channel",
+        )
     task = asyncio.create_task(
         _run_llm_test_jetstream(
             settings=state.settings,
@@ -277,8 +307,8 @@ async def v2_llm_test_jetstream(request: Request, payload: LlmTestPayload) -> di
         "ok": True,
         "test_run_id": run_id,
         "status": "started",
-        "channel": f"llm-test:{run_id}",
-        "subject": f"hp.runtime.llm.test.{run_id}",
+        "channel": channel,
+        "subject": subjects[0],
         "transport": "nats-jetstream",
     }
 

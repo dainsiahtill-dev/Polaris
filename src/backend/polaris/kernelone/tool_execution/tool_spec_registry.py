@@ -1392,6 +1392,7 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         # runs, so the body lands instead of being silently dropped -> no_materialized_changes
         # (the #1 weak-Director write-tool wall). Additive: `content` itself is unchanged.
         "arg_aliases": {
+            "file=path": "file",
             "path": "file",
             "filepath": "file",
             "filePath": "file",

@@ -43,6 +43,31 @@ def is_managed_storage_path(workspace: str, path: str) -> bool:
     return any(_is_within(root, target) for root in roots)
 
 
+def _resolve_relative_database_path(workspace: str, token: str, *, kind: str, allow_unmanaged: bool) -> str:
+    """Separate managed namespaces from explicitly allowed relative DB paths."""
+    prefix = token.replace("\\", "/").split("/", 1)[0]
+    if prefix in {"runtime", "workspace", "config"}:
+        try:
+            logical = normalize_logical_rel_path(token)
+            return resolve_logical_path(workspace, logical)
+        except (RuntimeError, ValueError) as exc:
+            raise DatabasePathError(f"managed {kind} path resolution failed: {token}") from exc
+    try:
+        # The layout normalizer validates containment under a known prefix;
+        # it deliberately does not accept ordinary DB filenames directly.
+        logical = normalize_logical_rel_path(f"workspace/{token}")
+        if not logical.startswith("workspace/"):
+            raise ValueError("relative DB path escaped workspace")
+        resolved = _expand_path(os.path.join(workspace, logical[len("workspace/") :]))
+        if not _is_within(workspace, resolved):
+            raise ValueError("relative DB path escaped workspace")
+    except (RuntimeError, ValueError) as exc:
+        raise DatabasePathError(f"invalid {kind} path: {token}") from exc
+    if not allow_unmanaged and not is_managed_storage_path(workspace, resolved):
+        raise DatabasePathError(f"invalid {kind} path: {token}")
+    return resolved
+
+
 def resolve_sqlite_path(
     workspace: str,
     raw_path: str,
@@ -65,19 +90,9 @@ def resolve_sqlite_path(
         if not allow_unmanaged_absolute and not is_managed_storage_path(workspace, resolved):
             raise DatabasePolicyError(f"absolute sqlite path is outside managed storage roots: {resolved}")
     else:
-        try:
-            logical = normalize_logical_rel_path(token)
-            resolved = resolve_logical_path(workspace, logical)
-        except (RuntimeError, ValueError) as exc:
-            _logger.warning(
-                "kernelone.db.policy.resolve_sqlite_path failed for %s: %s",
-                token,
-                exc,
-                exc_info=True,
-            )
-            resolved = _expand_path(os.path.join(workspace, token))
-            if not allow_unmanaged_absolute and not is_managed_storage_path(workspace, resolved):
-                raise DatabasePathError(f"invalid sqlite path: {raw_path}") from exc
+        resolved = _resolve_relative_database_path(
+            workspace, token, kind="sqlite", allow_unmanaged=allow_unmanaged_absolute
+        )
 
     if ensure_parent:
         Path(resolved).parent.mkdir(parents=True, exist_ok=True)
@@ -102,19 +117,9 @@ def resolve_lancedb_path(
         if not allow_unmanaged_absolute and not is_managed_storage_path(workspace, resolved):
             raise DatabasePolicyError(f"absolute LanceDB path is outside managed storage roots: {resolved}")
     else:
-        try:
-            logical = normalize_logical_rel_path(token)
-            resolved = resolve_logical_path(workspace, logical)
-        except (RuntimeError, ValueError) as exc:
-            _logger.warning(
-                "kernelone.db.policy.resolve_lancedb_path failed for %s: %s",
-                token,
-                exc,
-                exc_info=True,
-            )
-            resolved = _expand_path(os.path.join(workspace, token))
-            if not allow_unmanaged_absolute and not is_managed_storage_path(workspace, resolved):
-                raise DatabasePathError(f"invalid LanceDB path: {raw_path}") from exc
+        resolved = _resolve_relative_database_path(
+            workspace, token, kind="LanceDB", allow_unmanaged=allow_unmanaged_absolute
+        )
 
     if ensure_exists:
         os.makedirs(resolved, exist_ok=True)

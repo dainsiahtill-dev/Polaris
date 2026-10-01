@@ -15,6 +15,7 @@ from polaris.cells.director.tasking.public.contracts import (
     TaskExecutionProfileV1,
     TaskExecutionStrategyV1,
 )
+from polaris.kernelone.llm.budget_policy import OUTPUT_BUDGET_CONTEXT_KEYS
 
 _DEFAULT_OUTPUT_BUDGETS: dict[str, int] = {
     "bugfix": 64_000,
@@ -322,7 +323,16 @@ def apply_execution_strategy_overrides(
     profile: TaskExecutionProfileV1,
     strategy: TaskExecutionStrategyV1,
 ) -> None:
-    """Write strategy controls into trusted runtime context and metadata."""
+    """Project strategy defaults without enlarging an admitted call ceiling."""
+
+    output_tokens = strategy.output_budget_tokens
+    for key in OUTPUT_BUDGET_CONTEXT_KEYS:
+        raw_limit = context.get(key)
+        if isinstance(raw_limit, bool):
+            continue
+        limit = _int_value(raw_limit)
+        if limit > 0:
+            output_tokens = min(output_tokens, limit)
 
     profile_payload = profile.to_dict()
     strategy_payload = strategy.to_dict()
@@ -356,8 +366,8 @@ def apply_execution_strategy_overrides(
     context["director_execution_envelope"] = execution_envelope_payload
     context["execution_envelope_hash"] = execution_envelope.envelope_hash
     context["_transaction_kernel_temperature_override"] = strategy.temperature
-    context["llm_max_tokens"] = strategy.output_budget_tokens
-    context["max_output_tokens"] = strategy.output_budget_tokens
+    context["llm_max_tokens"] = output_tokens
+    context["max_output_tokens"] = output_tokens
     context["task_execution_prompt_max_chars"] = strategy.prompt_max_chars
     context["task_execution_context_budget_policy"] = dict(strategy.context_budget_policy)
     context["task_execution_min_context_utilization"] = strategy.min_context_utilization
@@ -375,7 +385,7 @@ def apply_execution_strategy_overrides(
     metadata["temperature"] = strategy.temperature
     metadata["temperature_phase"] = strategy.temperature_phase
     metadata["temperature_source"] = strategy.source
-    metadata["llm_max_tokens"] = strategy.output_budget_tokens
-    metadata["max_output_tokens"] = strategy.output_budget_tokens
+    metadata["llm_max_tokens"] = output_tokens
+    metadata["max_output_tokens"] = output_tokens
     metadata["task_execution_strategy_source"] = strategy.source
     metadata["cognitive_strategy_override"] = _cognitive_strategy_override(strategy)

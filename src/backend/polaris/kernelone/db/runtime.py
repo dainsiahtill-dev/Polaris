@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 import threading
 from dataclasses import dataclass
 from typing import Any
@@ -98,7 +99,7 @@ class KernelDatabase:
         )
         try:
             conn = self._sqlite_adapter.connect(resolved_path, options)
-        except (RuntimeError, ValueError) as exc:
+        except (RuntimeError, ValueError, sqlite3.Error) as exc:
             raise DatabaseConnectionError(f"failed to connect sqlite database: {resolved_path}") from exc
         with self._sqlite_lock:
             self._sqlite_connections.append(conn)

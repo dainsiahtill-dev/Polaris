@@ -30,6 +30,18 @@ This file is a local hard gate for frontend work. It does not weaken the root
    and consumed through the shared transport. Components must not create a
    second realtime client.
 
+## User Event Visibility
+
+- Successful high-frequency heartbeats are health telemetry, not user progress
+  events. Hide them from ordinary recent-event lists and repeated notifications.
+- Keep durable runtime/lease audit facts, raw observations and freshness intact.
+  Filter before list truncation; never hide heartbeat failures, warnings, stage
+  transitions, tool results or delivery progress.
+- A heartbeat-only window does not prove the model never ran. Label missing
+  call evidence as unavailable in this observation window, not execution failure.
+- Verify with regression tests and real runtime.v2 browser push, without reload
+  or product polling. Do not publish synthetic audit events to a live project.
+
 ## Audit Checklist
 
 Before declaring frontend realtime work complete, grep the changed production
