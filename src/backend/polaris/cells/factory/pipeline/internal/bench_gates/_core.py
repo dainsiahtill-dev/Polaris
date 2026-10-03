@@ -487,10 +487,12 @@ def _smoke_static_web(workspace: Path, html_rel: str, *, timeout_s: int) -> dict
     """
     # Try Playwright first for real browser verification
     try:
+        from playwright.sync_api import Error as PlaywrightError
+
         return _smoke_static_web_playwright(workspace, html_rel, timeout_s=timeout_s)
     except ImportError:
         pass  # Playwright not available, fall back to HTTP check
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError, PlaywrightError) as exc:
         return {
             "kind": "web_playwright",
             "ok": False,
@@ -545,7 +547,7 @@ def _smoke_static_web(workspace: Path, html_rel: str, *, timeout_s: int) -> dict
 
 def _smoke_static_web_playwright(workspace: Path, html_rel: str, *, timeout_s: int) -> dict[str, Any]:
     """Use Playwright to verify the HTML entrypoint renders correctly."""
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
     handler = partial(_QuietStaticHandler, directory=str(workspace))
     started = time.time()
@@ -560,7 +562,13 @@ def _smoke_static_web_playwright(workspace: Path, html_rel: str, *, timeout_s: i
         missing_resources = _missing_html_local_resources(workspace, html_rel)
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            # A headless verifier must not inherit a stale graphical session.
+            # DISPLAY=127.0.0.1:0 reproducibly stalls native canvas painting on
+            # this host. Scope the isolation to Chromium, not the parent env.
+            browser_environment: dict[str, str | float | bool] = {
+                key: value for key, value in _os.environ.items() if key != "DISPLAY"
+            }
+            browser = p.chromium.launch(headless=True, env=browser_environment)
             page = browser.new_page()
             console_errors: list[str] = []
             browser_resource_failures: list[str] = []
@@ -684,12 +692,12 @@ def _smoke_static_web_playwright(workspace: Path, html_rel: str, *, timeout_s: i
                         )
                         blank_element = blank_handle.as_element()
                         blank_png = blank_element.screenshot(timeout=2000) if blank_element is not None else b""
-                    except (OSError, RuntimeError, ValueError) as exc:
+                    except (OSError, RuntimeError, ValueError, PlaywrightError) as exc:
                         canvas_screenshot_errors.append(str(exc))
                         continue
                     finally:
                         if blank_handle is not None:
-                            with suppress(OSError, RuntimeError, ValueError):
+                            with suppress(OSError, RuntimeError, ValueError, PlaywrightError):
                                 blank_handle.evaluate("(blank) => blank.remove()")
                     canvas_bytes = bytes(canvas_png)
                     blank_bytes = bytes(blank_png)

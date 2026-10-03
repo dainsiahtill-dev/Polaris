@@ -424,6 +424,38 @@ def test_execution_strategy_derives_large_budget_from_profile() -> None:
     assert "module_interface_contract" in strategy.evidence_requirements
 
 
+def test_observation_tags_cannot_change_test_task_execution_policy() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Write unit tests for the scoped rule engine",
+        metadata={"task_type": "tests", "project_type": "cli", "language": "typescript"},
+        target_files=["tests/rules.test.ts"],
+        scope_paths=["tests/rules.test.ts"],
+    )
+    production = resolve_director_execution_strategy(profile, metadata={"depends_on": ["TASK-1"]})
+    for observation in (
+        {"factory_bench_session_id": "session-1"},
+        {"factory_bench_project_id": "L1-01"},
+        {"factory_bench_project_workspace": "/tmp/example"},
+        {"factory_bench_level": 1},
+    ):
+        observed = resolve_director_execution_strategy(profile, metadata={"depends_on": ["TASK-1"], **observation})
+        assert observed.to_dict() == production.to_dict()
+
+
+def test_observation_tags_cannot_change_repair_task_execution_policy() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Repair the scoped configuration",
+        metadata={"task_type": "config", "phase": "repair", "project_type": "cli"},
+        target_files=["settings.json"],
+        scope_paths=["settings.json"],
+    )
+    production = resolve_director_execution_strategy(profile)
+    observed = resolve_director_execution_strategy(
+        profile, metadata={"factory_bench_level": 12, "factory_bench_project_id": "L12-01"}
+    )
+    assert observed.to_dict() == production.to_dict()
+
+
 def test_execution_strategy_overrides_project_to_context_gateway_controls() -> None:
     from polaris.cells.director.tasking.internal.execution_strategy import apply_execution_strategy_overrides
 

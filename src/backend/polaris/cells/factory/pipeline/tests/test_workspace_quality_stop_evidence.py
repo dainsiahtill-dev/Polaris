@@ -2,17 +2,49 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.cells.factory.pipeline.internal import factory_workspace_quality_impl as quality_impl
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryConfig,
     FactoryRun,
     FactoryRunStatus,
 )
 from polaris.cells.factory.pipeline.tests._characterization_helpers import _executor
+
+
+@pytest.fixture(autouse=True)
+def phase_only_validation_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise deadline phases, not CE/source/receipt or native sandbox authority."""
+
+    class PhaseLogicSession:
+        def __init__(self, executor: Any) -> None:
+            self.executor = executor
+
+        @classmethod
+        def from_factory(cls, executor: Any, _run: Any, _context: Any, **_kwargs: Any) -> PhaseLogicSession:
+            return cls(executor)
+
+        async def run_command(self, command: list[str], timeout_seconds: float) -> dict[str, Any]:
+            return await asyncio.to_thread(self.executor._run_workspace_quality_command, command, timeout_seconds)
+
+        def before_repair(self) -> None:
+            pass
+
+        def restored(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+        def candidate(self, **_kwargs: Any) -> None:
+            raise AssertionError("phase-only fixture does not authenticate native candidates")
+
+    monkeypatch.setattr(quality_impl, "NativeValidationSession", PhaseLogicSession)
 
 
 @pytest.mark.asyncio

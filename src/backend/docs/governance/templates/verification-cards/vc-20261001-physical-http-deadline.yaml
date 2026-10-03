@@ -1,0 +1,34 @@
+id: vc-20261001-physical-http-deadline
+classification: structural
+status: local_and_live_deadline_drain_verified_project_failed
+owner: kernelone.llm.engine
+blueprint: ../../../blueprints/POLARIS_PHYSICAL_HTTP_DEADLINE_20261001.md
+assumptions:
+  - claim: Idle timeout cannot enforce an invocation's total deadline.
+    evidence: Exact660/852s live trace and real localhost trickle RED.
+  - claim: A cancelled async await does not stop a synchronous worker.
+    evidence: Worker physical HTTP outlives logical timeout on same trace.
+  - claim: Existing aiohttp and attempt gates can preserve provider contracts.
+    evidence: Existing streaming transport and strict dispatch gate APIs.
+pre_mortem:
+  - Retry continues after caller cancellation.
+  - Physical transport kind lies or old route checks are weakened.
+  - Cancellation intent is treated as physical quiescence.
+  - Proxy or CA settings silently bypassed.
+verification:
+  - Real localhost trickle and cancellation RED/GREEN.
+  - Nested deadline cannot grow; worker cancellation stops retry.
+  - Ordinary response/status/headers unchanged.
+  - Strict physical gate and terminal conservation suites.
+  - Ruff/Mypy and affected cascade before live retry.
+target_project_manual_edit: forbidden
+results:
+  real_http_and_budget: 15_passed
+  strict_native_gate_and_core: 185_passed
+  expanded_provider_stream_context: 302_passed
+  cascade: 9_of9_pass
+  ruff_mypy: pass
+  whole_plan_and_fresh_project: not_verified
+  live_transport: aiohttp_total659_7s_expired_at_role660s
+  live_drain: settled_true_inflight_zero
+  live_project: failed_model_provider_timeout_no_new_effect

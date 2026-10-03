@@ -49,6 +49,7 @@ from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
 )
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
+from polaris.cells.roles.kernel.internal.transaction.intent_classifier import leading_instruction_delivery_contract
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import Phase, has_authoritative_write_receipt
 from polaris.cells.roles.kernel.internal.transaction.read_strategy import (
@@ -61,12 +62,13 @@ from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import R
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_allowed_tool_names_from_definitions,
     extract_continuation_prompt_metadata,
-    extract_latest_user_message,
+    extract_task_instruction,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
     RawLLMResponse,
+    TurnDecision,
     TurnDecisionKind,
     TurnId,
 )
@@ -985,7 +987,7 @@ class StreamOrchestrator:
             resolve_delivery_mode,
         )
 
-        latest_user_request = extract_latest_user_message(context)
+        latest_user_request = extract_task_instruction(context)
         # Guard: 如果 context 包含 orchestrator 续写 prompt（<Goal>/<Progress> XML 块），
         # 说明这是 continuation turn，delivery_mode 必须从 prompt contract 中恢复。
         _raw_user = str(
@@ -995,7 +997,10 @@ class StreamOrchestrator:
             )
         )
         _is_continuation_prompt = "<Goal>" in _raw_user and "<Progress>" in _raw_user
-        if _is_continuation_prompt:
+        explicit_instruction_contract = leading_instruction_delivery_contract(latest_user_request)
+        if explicit_instruction_contract is not None:
+            delivery_contract = explicit_instruction_contract
+        elif _is_continuation_prompt:
             _progress_match = re.search(r"当前阶段:\s*(\w+)", _raw_user)
             _parsed_progress = _progress_match.group(1) if _progress_match else "exploring"
             # 提取 recent_reads 用于关键词检测
@@ -1228,7 +1233,9 @@ class StreamOrchestrator:
         # PROPOSE_PATCH / ANALYZE_ONLY 边界保护：过滤 write tools（与 run 模式一致）。
         # 必须在 record_decision / TOOL_BATCH 执行之前应用，否则只读/提案契约下
         # 流式 Director 仍会真实写入 workspace（fail-open）。
-        decision = apply_delivery_mode_filter(decision, ledger)
+        # The mapping is projected from a decoder-validated decision above;
+        # only metadata changed. The filter supports that mapping compatibility.
+        decision = apply_delivery_mode_filter(cast(TurnDecision, decision), ledger)
 
         # R134: recover executable TOOL_BATCH from native write tools, else fail-closed
         # before FINAL_ANSWER / process terminal (mirrors non-stream decision_pipeline).
@@ -1245,6 +1252,7 @@ class StreamOrchestrator:
                     decoder=self.decoder,
                     turn_id=turn_id,
                     decision_metadata=decision_metadata,
+                    tool_definitions_present=bool(tool_definitions),
                     streaming=True,
                 )
             except RuntimeError as exc:
@@ -1281,7 +1289,7 @@ class StreamOrchestrator:
         result: dict
         batch_receipt: dict[str, Any] = {}
         forced_retry_result: dict | None = None
-        latest_user_request = extract_latest_user_message(context)
+        latest_user_request = extract_task_instruction(context)
         guard_mode = str(getattr(self.config, "mutation_guard_mode", "warn"))
         # 当 delivery contract 明确要求 MATERIALIZE_CHANGES 时，无视 guard_mode 强制 strict
         # 防止 LLM 以"请求确认"的 FINAL_ANSWER 逃避工具调用（用户已确认多次但仍不执行）

@@ -1,0 +1,54 @@
+{
+  "schema_version": "polaris.engineering_defect_audit.v1",
+  "status": "PARTIAL_VERIFIED_NOT_COMPLETED",
+  "factory_run_id": "factory_9aa169804636",
+  "source_fingerprint": "9de6779670687c0a",
+  "scope_defect": {
+    "status": "LIVE_REQUEST_PARITY_VERIFIED",
+    "start_ref": "393c3f19218015605ec1d018",
+    "physical_ref": "dc5ff2c5096c5b1ac480f322",
+    "action_target_count": 2,
+    "allowed_write_count": 2,
+    "semantic_audit_pass": true,
+    "physical_audit_pass": true,
+    "producer_to_receiver_gap_fixed": "request_facts task_write_guidance allowlist"
+  },
+  "local_gates": {
+    "focused": 31,
+    "request_boundary_related": 125,
+    "affected_failure_groups_recheck": 223,
+    "deo_authority": 32,
+    "cascade_before_fact_key_fix": "9/9 PASS",
+    "latest_affected_M04": "PASS",
+    "ruff_mypy": "PASS",
+    "full_repository_suite": "NOT_RUN",
+    "counts_are_not_additive": true
+  },
+  "live_residual": {
+    "status": "OPEN",
+    "category": "Context Budget or Provider generation; exact causality not yet qualified",
+    "error": "model_provider_timeout",
+    "logical_timeout_seconds": 660,
+    "transport_total_seconds": 659.7129,
+    "header_status": 200,
+    "header_is_not_completion": true,
+    "wire_max_tokens": 128000,
+    "task_ids_completed_by_reuse": [27, 28],
+    "task_id_failed": 29
+  },
+  "controlled_diagnostic": {
+    "body_hash": "c715452a0ea0141e057e52bb97b83cc3b7874b602a40c12454bde7a643e88d86",
+    "only_wire_change": "thinking.type=disabled",
+    "seconds": 59.894,
+    "completion_tokens": 2955,
+    "reasoning_tokens": 0,
+    "canonical_scoped_tool_calls": 2,
+    "effects_executed": 0,
+    "config_published": false,
+    "factory_qualification": false,
+    "quality_unverified": true
+  },
+  "next": "Parent verify and TDD the call-fact freeze before tool-plan budget defect; preserve authority and current successful artifacts",
+  "target_project_manual_edit": false,
+  "fresh_bench_acceptance": false
+}

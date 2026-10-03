@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from polaris.kernelone.audit.task_write_guidance import project_task_write_guidance, render_task_write_guidance
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
 from polaris.kernelone.events.final_request_evidence import (
     structured_context_coverage_flags,
@@ -19,11 +20,74 @@ from ._payloads import (
     _workspace_quality_evidence_payload,
 )
 from ._request_core import (
+    _execution_envelope,
     _execution_strategy_consistency_findings,
     _request_context,
     _request_messages,
     _resident_agi_coverage_flags,
 )
+
+
+def _task_write_guidance_findings(
+    *,
+    ai_request: Any,
+    messages: list[dict[str, Any]],
+    tools: Any,
+) -> list[dict[str, Any]]:
+    """Compare derived action guidance with the final request and admitted scope."""
+
+    if str(getattr(ai_request, "role", "")).strip().lower() != "director":
+        return []
+    envelope = _execution_envelope(ai_request)
+    write_tools = [
+        item
+        for item in (tools if isinstance(tools, list) else [])
+        if isinstance(item, dict)
+        and isinstance(item.get("function"), dict)
+        and item["function"].get("name") in {"write_file", "edit_file", "edit_blocks", "append_to_file", "delete_file"}
+    ]
+    if not envelope or not write_tools:
+        return []
+    context = _request_context(ai_request)
+    guidance = context.get("task_write_guidance")
+    if not isinstance(guidance, dict):
+        return [{"code": "task_write_guidance_missing", "severity": "error"}]
+    try:
+        expected = project_task_write_guidance(
+            envelope,
+            context.get("target_files", envelope.get("authorization", {}).get("target_files", [])),
+        )
+    except (TypeError, ValueError, AttributeError) as exc:
+        return [{"code": "task_write_guidance_scope_mismatch", "severity": "error", "reason": str(exc)}]
+    if (
+        guidance.get("schema_version") != "task.write_guidance.v1"
+        or guidance.get("write_targets") != expected["write_targets"]
+    ):
+        return [{"code": "task_write_guidance_scope_mismatch", "severity": "error"}]
+    # ContextOS currently serializes safe mapping values with repr; the adapter
+    # also emits a stable JSON view. Either must bind the exact same safe payload.
+    markers = (render_task_write_guidance(guidance), "task_write_guidance: " + str(guidance))
+    if not any(marker in str(message.get("content") or "") for marker in markers for message in messages):
+        return [{"code": "task_write_guidance_not_projected", "severity": "error"}]
+    for tool in write_tools:
+        function = tool["function"]
+        if function.get("name") != "write_file":
+            continue
+        properties = function.get("parameters", {}).get("properties", {})
+        file_schema = properties.get("file", {})
+        if "enum" not in file_schema:
+            continue  # Broad tools still pass the existing runtime path guard.
+        try:
+            pinned = project_task_write_guidance(envelope, file_schema["enum"])
+        except (TypeError, ValueError) as exc:
+            return [{"code": "task_write_tool_scope_mismatch", "severity": "error", "reason": str(exc)}]
+        # A single call may target only missing/failed owned files. Delivery
+        # completeness belongs to artifact/verifier gates, not tool exposure.
+        # Narrowing is safe; references or targets beyond the admitted action
+        # guidance remain an error and runtime authorization stays unchanged.
+        if pinned["reference_only_targets"] or not set(pinned["write_targets"]).issubset(expected["write_targets"]):
+            return [{"code": "task_write_tool_scope_mismatch", "severity": "error"}]
+    return []
 
 
 def _coverage_flags(

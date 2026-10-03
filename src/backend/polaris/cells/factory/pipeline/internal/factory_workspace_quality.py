@@ -32,7 +32,12 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.benchmark.factory_audit import check_workspace_delivery_depth_contract
-from polaris.kernelone.process import run_process_tree_safe
+from polaris.kernelone.process import (
+    ProcessTreeCancelledError,
+    ProcessTreeDrainError,
+    ProcessTreeRunControl,
+    run_process_tree_safe,
+)
 
 from . import factory_stage_helpers as helpers
 from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
@@ -40,9 +45,11 @@ from .factory_workspace_quality_evidence import (
     compact_compiler_error_blocks,
     compact_go_stack_overflow_diagnostic,
 )
+from .native_validation_group import VerificationGroup
 from .native_validation_sandbox import (
     NativeValidationContractError,
     NativeValidationSandboxError,
+    _validate_cargo_project_contract,
     cargo_native_test_count,
     is_cargo_test_command,
     sandboxed_cargo_test_command,
@@ -790,6 +797,50 @@ print(f"Java javac passed for {len(files)} source file(s)")
             cargo_test=False,
         )
 
+    def run_isolated_command(
+        self,
+        command: list[str],
+        timeout_seconds: float,
+        group: VerificationGroup,
+        cancel_control: ProcessTreeRunControl,
+    ) -> dict[str, Any]:
+        """Execute one verifier in the source-bound group; never fall back live."""
+        resolved = helpers.resolve_workspace_quality_command(command)
+        if not resolved:
+            return {
+                "command": command,
+                "exit_code": None,
+                "passed": False,
+                "error": f"executable not found: {command[0] if command else ''}",
+                "stdout_tail": "",
+                "stderr_tail": "",
+            }
+        if is_cargo_test_command(resolved):
+            group.assert_inputs_current()
+            try:
+                _validate_cargo_project_contract(self.workspace)
+            except NativeValidationContractError as exc:
+                return {
+                    "command": command,
+                    "exit_code": None,
+                    "passed": False,
+                    "error": f"native_validation_contract_invalid: {exc}",
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                    "native_test_count": 0,
+                    "verification_group": group.effects_summary(),
+                }
+        return self._run_resolved_command(
+            command=command,
+            resolved_command=resolved,
+            timeout_seconds=timeout_seconds,
+            started_at=datetime.now(timezone.utc).isoformat(),
+            sandbox_backend="bubblewrap_verification_group",
+            cargo_test=is_cargo_test_command(resolved),
+            verification_group=group,
+            cancel_control=cancel_control,
+        )
+
     def _run_resolved_command(
         self,
         *,
@@ -799,20 +850,31 @@ print(f"Java javac passed for {len(files)} source file(s)")
         started_at: str,
         sandbox_backend: str,
         cargo_test: bool,
+        verification_group: VerificationGroup | None = None,
+        cancel_control: ProcessTreeRunControl | None = None,
     ) -> dict[str, Any]:
         try:
-            completed = run_process_tree_safe(
-                resolved_command,
-                cwd=str(self.workspace),
-                encoding="utf-8",
-                errors="replace",
-                timeout=max(1.0, float(timeout_seconds or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS)),
-                env=workspace_quality_subprocess_env(workspace=self.workspace),
-            )
+            if verification_group is None:
+                completed = run_process_tree_safe(
+                    resolved_command,
+                    cwd=str(self.workspace),
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=max(1.0, float(timeout_seconds or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS)),
+                    env=workspace_quality_subprocess_env(workspace=self.workspace),
+                )
+            else:
+                prepared = verification_group.prepare_command(resolved_command)
+                completed = verification_group.execute_command(
+                    prepared,
+                    timeout=max(1.0, float(timeout_seconds or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS)),
+                    cancel_control=cancel_control,
+                    env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"},
+                )
             stdout = helpers.trim_command_output(completed.stdout)
             stderr = helpers.trim_command_output(completed.stderr)
             nested_diagnostics = ""
-            if not cargo_test:
+            if not cargo_test and verification_group is None:
                 nested_diagnostics = _nested_javac_diagnostics_from_output(
                     workspace=self.workspace,
                     stdout=stdout,
@@ -857,6 +919,8 @@ print(f"Java javac passed for {len(files)} source file(s)")
                 )
             if nested_diagnostics:
                 result["nested_diagnostics"] = nested_diagnostics
+            if verification_group is not None:
+                result["verification_group"] = verification_group.effects_summary()
             if zero_native_tests:
                 result["error"] = "cargo_test_zero_tests"
             elif masked_failure_reason:
@@ -890,7 +954,14 @@ print(f"Java javac passed for {len(files)} source file(s)")
                         "sandboxed": True,
                     }
                 )
+            if verification_group is not None:
+                result["verification_group"] = verification_group.effects_summary()
             return result
+        except (ProcessTreeCancelledError, ProcessTreeDrainError):
+            # These are physical lifecycle outcomes, not ordinary verifier
+            # failures. The async owner must await drain and retain staging
+            # whenever the process owner cannot prove its terminal boundary.
+            raise
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             result = {
                 "command": command,

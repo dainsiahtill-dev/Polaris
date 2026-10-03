@@ -80,6 +80,7 @@ from polaris.cells.roles.kernel.public.structured_output_contracts import (
 from polaris.cells.roles.kernel.tests._physical_attempt_control_test_double import (
     FactoryPhysicalAttemptTestControlPort as FactoryPhysicalAttemptLiveControlPort,
 )
+from polaris.kernelone.audit.task_write_guidance import project_task_write_guidance, render_task_write_guidance
 from polaris.kernelone.context.context_os.decision_log import build_context_result_id
 from polaris.kernelone.context.contracts import TurnEngineContextResult
 from polaris.kernelone.events.final_request_evidence import (
@@ -280,6 +281,39 @@ def test_role_request_fact_projection_prefers_context_and_records_conflicts() ->
     assert projection.sources["temperature"] == "role_turn.context.temperature"
     assert projection.sources["scope_paths"] == "role_turn.metadata.scope_paths"
     assert projection.conflict_keys == ("pm_task_contract", "temperature")
+
+
+@pytest.mark.asyncio
+async def test_write_guidance_survives_real_request_preparer_fact_boundary() -> None:
+    """A correct prompt cannot pass audit if its structured scope view is dropped."""
+    envelope = {"authorization": {"allowed_write_paths": ["main.go"], "target_files": ["main.go"]}}
+    guidance = project_task_write_guidance(envelope, ["main.go", "README.md"])
+    projection = project_role_request_facts(
+        context_override={"director_execution_envelope": envelope, "target_files": ["main.go"]},
+        metadata={"task_write_guidance": guidance},
+    )
+    projection.context_override.update(
+        {
+            request_preparer_module._TRANSACTION_KERNEL_PREBUILT_MESSAGES_KEY: [
+                {"role": "system", "content": render_task_write_guidance(guidance)},
+                {"role": "user", "content": "Create main.go"},
+            ],
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_DEFINITIONS_KEY: [],
+            request_preparer_module._TRANSACTION_KERNEL_FORCED_TOOL_CHOICE_KEY: "none",
+        }
+    )
+    prepared = await LLMRequestPreparer(workspace=".")._prepare_llm_request(
+        profile=_profile("director"),
+        system_prompt="You are Director.",
+        context=SimpleNamespace(message="Create main.go", domain="code", context_override=projection.context_override),
+        temperature=0.2,
+        max_tokens=4000,
+        stream=False,
+    )
+
+    assert prepared.ai_request.context["task_write_guidance"] == guidance
+    prepared.ai_request.context["task_write_guidance"]["write_targets"].append("other.go")
+    assert guidance["write_targets"] == ["main.go"]
 
 
 @pytest.mark.asyncio
@@ -1925,6 +1959,157 @@ async def test_factory_audit_replaces_observed_refs_with_authoritative_role_slot
         context_snapshot_ref=context_snapshot_ref,
     )
     assert qualified == bound
+
+
+@pytest.mark.asyncio
+async def test_factory_cutoff_cannot_erase_missing_request_specific_sibling_context(tmp_path: Path) -> None:
+    """r02 TASK-3: basic role authority must not hide missing sibling bodies."""
+
+    _, _, _, prepared = await _prepare_b33_factory_request("director", workspace=str(tmp_path))
+    port = prepared.factory_dispatch_port
+    assert port is not None
+    observed = build_final_request_context_audit_for_request(
+        ai_request=prepared.ai_request, prepared=prepared, profile=_profile("director")
+    )
+    coverage = observed["final_request_evidence_coverage"]
+    coverage["required_refs"] = ["pm_contract", "ce_blueprint", "target_files", "actual_sibling_exports"]
+    coverage["included_refs"] = ["pm_contract", "ce_blueprint", "target_files"]
+    coverage["missing_required_refs"] = ["actual_sibling_exports"]
+    coverage["pass"] = False
+    observed["context_quality"]["findings"].append(
+        {
+            "code": "missing_required_final_request_evidence",
+            "severity": "warning",
+            "missing_required_refs": ["actual_sibling_exports"],
+        }
+    )
+    original = copy.deepcopy(observed)
+
+    bound = port.bind_final_request_context_audit(observed)
+
+    # Cutoff slots remain the authority; supplemental evidence grants nothing.
+    assert bound["final_request_evidence_coverage"]["missing_required_refs"] == []
+    quality = bound["context_quality"]
+    assert quality["missing_required_refs"] == ["actual_sibling_exports"]
+    assert quality["final_request_evidence_coverage_pass"] is False
+    assert {
+        "code": "missing_required_request_context_evidence",
+        "severity": "error",
+        "missing_required_refs": ["actual_sibling_exports"],
+    } in quality["findings"]
+    assert bound["final_request_evidence_coverage"]["observed_missing_required_refs"] == ["actual_sibling_exports"]
+    assert observed == original
+    assert port.bind_final_request_context_audit(bound) == bound
+    frozen = prepared.factory_semantic_request
+    assert frozen is not None
+    payload = json.loads(frozen.canonical_final_payload_json)
+    ref = AIExecutor._store_context_messages_sync(
+        str(tmp_path),
+        payload["messages"],
+        frozen.identity.run_id,
+        frozen.identity.call_id,
+        {
+            "role": payload["role"],
+            "provider_id": payload["provider_id"],
+            "model": payload["model"],
+            "factory_final_request": final_request_snapshot_evidence(frozen),
+            "final_request_context_audit": bound,
+        },
+    )
+    bound["final_request_evidence_coverage"]["context_snapshot_ref"] = ref
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            maintenance_reason="test_missing_request_specific_context_rejection",
+            streams=(qualification_rejection_stream("factory-run-1"),),
+        )
+    )
+    with pytest.raises(FinalProviderAttemptQualificationError, match="final_request_context_quality_failed"):
+        port.qualify(final_request_context_audit=bound, context_snapshot_ref=ref)
+    assert port.final_context_evidence() is None
+    rejections = query_fact_events(
+        QueryFactEventsV1(workspace=str(tmp_path), stream=qualification_rejection_stream("factory-run-1"))
+    )
+    assert len(rejections.events) == 1
+    assert rejections.events[0]["payload"]["rejection_code"] == "final_request_context_quality_failed"
+
+
+@pytest.mark.asyncio
+async def test_factory_cutoff_keeps_satisfied_request_context_without_promoting_it_to_authority(tmp_path: Path) -> None:
+    _, _, _, prepared = await _prepare_b33_factory_request("director", workspace=str(tmp_path))
+    port = prepared.factory_dispatch_port
+    assert port is not None
+    observed = build_final_request_context_audit_for_request(
+        ai_request=prepared.ai_request, prepared=prepared, profile=_profile("director")
+    )
+    coverage = observed["final_request_evidence_coverage"]
+    coverage["required_refs"] = ["pm_contract", "ce_blueprint", "target_files", "actual_sibling_exports"]
+    coverage["included_refs"] = ["pm_contract", "ce_blueprint", "target_files", "actual_sibling_exports"]
+    coverage["missing_required_refs"] = []
+    bound = port.bind_final_request_context_audit(observed)
+    assert "actual_sibling_exports" not in bound["final_request_evidence_coverage"]["included_refs"]
+    assert bound["final_request_evidence_coverage"]["observed_missing_required_refs"] == []
+    assert bound["context_quality"]["missing_required_refs"] == []
+    assert bound["context_quality"]["final_request_evidence_coverage_pass"] is True
+
+
+@pytest.mark.parametrize("quality_value", [None, [], "absent"])
+@pytest.mark.asyncio
+async def test_factory_missing_request_context_fails_closed_without_quality_object(
+    tmp_path: Path, quality_value: Any
+) -> None:
+    _, _, _, prepared = await _prepare_b33_factory_request("director", workspace=str(tmp_path))
+    port = prepared.factory_dispatch_port
+    frozen = prepared.factory_semantic_request
+    assert port is not None and frozen is not None
+    observed = _b35_audit(frozen=frozen, context_snapshot_ref="")
+    observed["final_request_evidence_coverage"]["required_refs"].append("actual_sibling_exports")
+    observed["final_request_evidence_coverage"]["missing_required_refs"] = ["actual_sibling_exports"]
+    if quality_value != "absent":
+        observed["context_quality"] = quality_value
+    bound = port.bind_final_request_context_audit(observed)
+    assert bound["context_quality"]["final_request_evidence_coverage_pass"] is False
+    assert bound["context_quality"]["missing_required_refs"] == ["actual_sibling_exports"]
+    assert any(
+        finding["code"] == "missing_required_request_context_evidence" and finding["severity"] == "error"
+        for finding in bound["context_quality"]["findings"]
+    )
+    # Direct qualification must reject before even attempting snapshot reads.
+    with pytest.raises(FinalProviderAttemptQualificationError, match="final_request_context_quality_failed"):
+        qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=port._binding,
+            final_request_context_audit=bound,
+            context_snapshot_ref="a" * 24,
+        )
+
+
+@pytest.mark.parametrize("quality_value", [None, [], "absent"])
+@pytest.mark.asyncio
+async def test_rebinding_cannot_drop_existing_mandatory_context_rejection(tmp_path: Path, quality_value: Any) -> None:
+    _, _, _, prepared = await _prepare_b33_factory_request("director", workspace=str(tmp_path))
+    port = prepared.factory_dispatch_port
+    frozen = prepared.factory_semantic_request
+    assert port is not None and frozen is not None
+    observed = _b35_audit(frozen=frozen, context_snapshot_ref="")
+    observed["final_request_evidence_coverage"]["required_refs"].append("actual_sibling_exports")
+    observed["final_request_evidence_coverage"]["missing_required_refs"] = ["actual_sibling_exports"]
+    first = port.bind_final_request_context_audit(observed)
+    if quality_value == "absent":
+        first.pop("context_quality", None)
+    else:
+        first["context_quality"] = quality_value
+    rebound = port.bind_final_request_context_audit(first)
+    assert rebound["context_quality"]["missing_required_refs"] == ["actual_sibling_exports"]
+    with pytest.raises(FinalProviderAttemptQualificationError, match="final_request_context_quality_failed"):
+        qualify_final_provider_request(
+            workspace=str(tmp_path),
+            frozen=frozen,
+            binding=port._binding,
+            final_request_context_audit=rebound,
+            context_snapshot_ref="a" * 24,
+        )
 
 
 def test_b35_message_accounting_covers_complete_provider_message_objects() -> None:

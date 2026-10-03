@@ -150,7 +150,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if nats_enabled:
         try:
             phase_started_at = _startup_phase_started("nats.ensure_local_runtime")
-            await ensure_local_nats_runtime(str(getattr(nats_settings, "url", "") or ""))
+            await ensure_local_nats_runtime(
+                str(getattr(nats_settings, "url", "") or ""),
+                startup_timeout_seconds=float(getattr(nats_settings, "startup_timeout_sec", 60.0)),
+                allow_autostart=not bool(getattr(nats_settings, "user", "") or getattr(nats_settings, "password", "")),
+            )
             _startup_phase_completed("nats.ensure_local_runtime", phase_started_at)
         except (OSError, RuntimeError, ValueError) as exc:
             log_method = logger.critical if nats_required else logger.warning

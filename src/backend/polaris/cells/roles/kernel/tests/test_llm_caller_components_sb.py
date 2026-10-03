@@ -12,14 +12,10 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 import hashlib
-import time
-import warnings
-from dataclasses import fields
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from polaris.cells.roles.kernel.internal import context_gateway as context_gateway_module
@@ -29,53 +25,17 @@ from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     build_final_request_context_audit,
     build_final_request_context_audit_for_request,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.decision_caller import DecisionCaller
-from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
-    ERROR_CATEGORY_AUTH,
-    ERROR_CATEGORY_CANCELLED,
-    ERROR_CATEGORY_NETWORK,
-    ERROR_CATEGORY_RATE_LIMIT,
-    ERROR_CATEGORY_TIMEOUT,
-    ERROR_CATEGORY_UNKNOWN,
-    build_native_tool_unavailable_error,
-    build_text_response_fallback_instruction,
-    classify_error,
-    is_native_tool_calling_unsupported,
-    is_response_format_unsupported,
-    is_retryable_error,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.event_emitter import LLMEventEmitter
-from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import FinalizationCaller
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import (
-    LLMInvoker,
-    _clear_context_snapshot_context,
-    _physical_dispatch_port_for_request,
     _profile_lacks_forced_tool_choice,
     _required_tool_not_called_error,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
-    AnnotatedProviderFormatter,
-    NativeProviderFormatter,
-    create_formatter,
-)
 from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
     LLMRequestPreparer,
-    _ensure_core_role_identity,
     _ensure_current_user_message_final,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
-    LLMResponse,
     PreparedLLMRequest,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import (
-    StreamEngine,
-    _store_context_messages_accepts_provider_request,
-)
-from polaris.cells.roles.kernel.internal.structured_output_transport import (
-    STRUCTURED_OUTPUT_TOOL_NAME,
-    resolve_structured_output_transport,
-)
-from polaris.cells.roles.kernel.public import final_request_evidence_cutoff as cutoff_contract
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
     FACTORY_ROLE_EVIDENCE_CUTOFF_ACK_SCHEMA,
@@ -84,10 +44,6 @@ from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleEvidenceCutoffRequestV1,
     FactoryRoleSemanticRequestIdentityV1,
     bind_factory_role_evidence_authority,
-)
-from polaris.cells.roles.kernel.public.structured_output_contracts import (
-    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
-    RoleStructuredOutputContractV1,
 )
 from polaris.kernelone.audit.omniscient.dedup import LLMEventDeduplicator, set_global_llm_dedup
 from polaris.kernelone.context.contracts import TurnEngineContextResult
@@ -545,232 +501,6 @@ async def test_factory_physical_attempt_control_port_drift_during_acquire_fails_
     assert cutoff_port.resolve_count == 0
 
 
-
-
-async def test_factory_authority_mutation_after_bind_fails_before_cutoff(
-    field_name: str,
-    corrupted_value: object,
-    expected_exception: type[Exception],
-    expected_error: str,
-) -> None:
-    port = _B32CountingCutoffPort()
-    authority = FactoryRoleEvidenceAuthorityBindingV1(
-        schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
-        verification_scope="factory",
-        factory_run_id="factory-run-mutation",
-        role="director",
-        cutoff_port=port,
-        physical_attempt_control_port=_B32_PHYSICAL_ATTEMPT_CONTROL_PORT,
-        attempt_budget=3,
-        execution_authority_hash="a" * 64,
-    )
-
-    with bind_factory_role_evidence_authority(authority):
-        object.__setattr__(authority, field_name, corrupted_value)
-        with pytest.raises(expected_exception, match=expected_error):
-            await LLMRequestPreparer(workspace=".")._prepare_llm_request(
-                profile=_b32_profile(),
-                system_prompt="You are Director.",
-                context=_b32_context(),
-                temperature=0.2,
-                max_tokens=4000,
-                stream=False,
-                factory_semantic_identity=_b32_semantic_identity(),
-            )
-
-    assert port.acquire_count == 0
-    assert port.resolve_count == 0
-
-
-@pytest.mark.asyncio
-async def test_factory_authority_subclass_fails_before_cutoff(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class _AuthoritySubclass(FactoryRoleEvidenceAuthorityBindingV1):
-        pass
-
-    port = _B32CountingCutoffPort()
-    authority = _AuthoritySubclass(
-        schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
-        verification_scope="factory",
-        factory_run_id="factory-run-subclass",
-        role="director",
-        cutoff_port=port,
-        physical_attempt_control_port=_B32_PHYSICAL_ATTEMPT_CONTROL_PORT,
-        attempt_budget=3,
-        execution_authority_hash="a" * 64,
-    )
-    monkeypatch.setattr(
-        request_preparer_module,
-        "get_factory_role_evidence_authority_binding",
-        lambda: authority,
-    )
-
-    with pytest.raises(TypeError, match="factory_role_evidence_authority_binding_exact_type_required"):
-        await LLMRequestPreparer(workspace=".")._prepare_llm_request(
-            profile=_b32_profile(),
-            system_prompt="You are Director.",
-            context=_b32_context(),
-            temperature=0.2,
-            max_tokens=4000,
-            stream=False,
-            factory_semantic_identity=_b32_semantic_identity(),
-        )
-
-    assert port.acquire_count == 0
-    assert port.resolve_count == 0
-
-
-@pytest.mark.asyncio
-async def test_factory_authority_valid_drift_during_context_await_fails_before_cutoff(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    context_started = asyncio.Event()
-    context_release = asyncio.Event()
-
-    class _AwaitBarrierGateway:
-        def __init__(self, _profile: object, _workspace: object) -> None:
-            pass
-
-        async def build_context(
-            self,
-            _context: object,
-            *,
-            system_prompt: str,
-        ) -> TurnEngineContextResult:
-            context_started.set()
-            await context_release.wait()
-            return TurnEngineContextResult(
-                messages=(
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": "Implement."},
-                ),
-                token_estimate=10,
-            )
-
-    monkeypatch.setattr(context_gateway_module, "RoleContextGateway", _AwaitBarrierGateway)
-    old_port = _B32CountingCutoffPort()
-    new_port = _B32CountingCutoffPort()
-    authority = FactoryRoleEvidenceAuthorityBindingV1(
-        schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
-        verification_scope="factory",
-        factory_run_id="factory-run-before-await",
-        role="director",
-        cutoff_port=old_port,
-        physical_attempt_control_port=_B32_PHYSICAL_ATTEMPT_CONTROL_PORT,
-        attempt_budget=3,
-        execution_authority_hash="a" * 64,
-    )
-    context = SimpleNamespace(message="Implement.", domain="code", context_override={})
-
-    with bind_factory_role_evidence_authority(authority):
-        prepare_task = asyncio.create_task(
-            LLMRequestPreparer(workspace=".")._prepare_llm_request(
-                profile=_b32_profile(),
-                system_prompt="You are Director.",
-                context=context,
-                temperature=0.2,
-                max_tokens=4000,
-                stream=False,
-                factory_semantic_identity=_b32_semantic_identity(),
-            )
-        )
-        await context_started.wait()
-        object.__setattr__(authority, "factory_run_id", "factory-run-after-await")
-        object.__setattr__(authority, "cutoff_port", new_port)
-        object.__setattr__(authority, "attempt_budget", 4)
-        object.__setattr__(authority, "execution_authority_hash", "b" * 64)
-        context_release.set()
-        with pytest.raises(RuntimeError, match="factory_role_evidence_authority_binding_drift"):
-            await prepare_task
-
-    assert old_port.acquire_count == 0
-    assert old_port.resolve_count == 0
-    assert new_port.acquire_count == 0
-    assert new_port.resolve_count == 0
-
-
-@pytest.mark.asyncio
-async def test_factory_authority_port_drift_during_acquire_fails_before_resolve() -> None:
-    factory_run_id = "factory-run-acquire-await"
-    old_port = _B32AcquireBarrierCutoffPort(factory_run_id=factory_run_id)
-    new_port = _B32CountingCutoffPort()
-    authority = FactoryRoleEvidenceAuthorityBindingV1(
-        schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
-        verification_scope="factory",
-        factory_run_id=factory_run_id,
-        role="director",
-        cutoff_port=old_port,
-        physical_attempt_control_port=_B32_PHYSICAL_ATTEMPT_CONTROL_PORT,
-        attempt_budget=3,
-        execution_authority_hash="a" * 64,
-    )
-
-    with bind_factory_role_evidence_authority(authority):
-        prepare_task = asyncio.create_task(
-            LLMRequestPreparer(workspace=".")._prepare_llm_request(
-                profile=_b32_profile(),
-                system_prompt="You are Director.",
-                context=_b32_context(),
-                temperature=0.2,
-                max_tokens=4000,
-                stream=False,
-                factory_semantic_identity=_b32_semantic_identity(),
-            )
-        )
-        await old_port.acquire_started.wait()
-        object.__setattr__(authority, "cutoff_port", new_port)
-        old_port.acquire_release.set()
-        with pytest.raises(RuntimeError, match="factory_role_evidence_authority_binding_drift"):
-            await prepare_task
-
-    assert old_port.acquire_count == 1
-    assert old_port.resolve_count == 0
-    assert new_port.acquire_count == 0
-    assert new_port.resolve_count == 0
-
-
-@pytest.mark.asyncio
-async def test_factory_physical_attempt_control_port_drift_during_acquire_fails_before_resolve() -> None:
-    factory_run_id = "factory-run-physical-port-await"
-    cutoff_port = _B32AcquireBarrierCutoffPort(factory_run_id=factory_run_id)
-    original_physical_port = _B32PhysicalAttemptControlPort()
-    replacement_physical_port = _B32PhysicalAttemptControlPort()
-    authority = FactoryRoleEvidenceAuthorityBindingV1(
-        schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
-        verification_scope="factory",
-        factory_run_id=factory_run_id,
-        role="director",
-        cutoff_port=cutoff_port,
-        physical_attempt_control_port=original_physical_port,
-        attempt_budget=3,
-        execution_authority_hash="a" * 64,
-    )
-
-    with bind_factory_role_evidence_authority(authority):
-        prepare_task = asyncio.create_task(
-            LLMRequestPreparer(workspace=".")._prepare_llm_request(
-                profile=_b32_profile(),
-                system_prompt="You are Director.",
-                context=_b32_context(),
-                temperature=0.2,
-                max_tokens=4000,
-                stream=False,
-                factory_semantic_identity=_b32_semantic_identity(),
-            )
-        )
-        await cutoff_port.acquire_started.wait()
-        object.__setattr__(authority, "physical_attempt_control_port", replacement_physical_port)
-        cutoff_port.acquire_release.set()
-        with pytest.raises(RuntimeError, match="factory_role_evidence_authority_binding_drift"):
-            await prepare_task
-
-    assert cutoff_port.acquire_count == 1
-    assert cutoff_port.resolve_count == 0
-
-
-
-
 def test_final_provider_request_snapshot_summarizes_tools_and_choice() -> None:
     profile = Mock()
     profile.max_context_tokens = 32768
@@ -1091,6 +821,21 @@ def test_required_tool_not_called_error_rejects_wrong_native_tool_call() -> None
     )
 
     assert error == "required_tool_not_called: required_tools=write_file"
+
+
+def _zero_tool_prepared_request(options: dict[str, Any], context: dict[str, Any], messages: list[dict[str, str]]):
+    request = SimpleNamespace(context=context, options=options, input="", role="director")
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=None,
+        context_summary="summary",
+        request_options=dict(options),
+        ai_request=request,
+        native_tool_schemas=[],
+        native_tool_mode="disabled",
+    )
+    return request, prepared
 
 
 def test_required_tool_not_called_error_does_not_fire_on_zero_tool_request() -> None:
@@ -1872,5 +1617,3 @@ def test_final_request_context_audit_reads_role_context_policy_window() -> None:
 
     assert audit["context_window_tokens"] == 32768
     assert audit["context_window_utilization"] is not None
-
-

@@ -24,6 +24,35 @@ _pull_namespace(_chain)
 del _chain
 
 
+def _bootstrap_audit_workspace(workspace: str) -> dict[str, Any]:
+    """Explicit maintenance; failure cannot manufacture append authority."""
+
+    from polaris.cells.events.fact_stream.public import (
+        BootstrapFactStreamWorkspaceCommandV1,
+        FactStreamError,
+        bootstrap_fact_stream_workspace,
+        fact_stream_bootstrap_streams,
+    )
+
+    try:
+        bootstrap_fact_stream_workspace(
+            BootstrapFactStreamWorkspaceCommandV1(
+                workspace=workspace,
+                streams=fact_stream_bootstrap_streams(),
+                maintenance_reason="internal_harness_workspace_startup",
+            )
+        )
+    except (FactStreamError, OSError, RuntimeError, ValueError) as exc:
+        return {
+            "ok": False,
+            "non_authoritative": True,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "operation": "bootstrap_workspace",
+        }
+    return {"ok": True, "non_authoritative": True, "operation": "bootstrap_workspace"}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Polaris factory-bench full-chain runner")
     ap.add_argument("--project-ids", default="", help="comma-separated ids (e.g. L1-01,L1-02); empty = use --levels")
@@ -304,7 +333,21 @@ def main() -> int:
         project_backend_token = backend_token
         project_backend_audit_context = backend_audit_context
         launcher_instance_meta: dict[str, Any] = {"mode": launcher_instance_mode}
-        if launcher_instance_mode == "isolated":
+        # Backend lifespan may fail before enrolling its FactStream. Initialize
+        # the existing maintenance boundary now so negative launch evidence can
+        # be persisted without auto-enrollment or fabricated runtime receipts.
+        runtime_workspace_bootstrap = _bootstrap_audit_workspace(project_workspace)
+        if not runtime_workspace_bootstrap["ok"]:
+            workspace_switch_ok = False
+            launcher_instance_meta.update(
+                {
+                    "ok": False,
+                    "error": "runtime_storage_bootstrap_failed",
+                    "error_type": runtime_workspace_bootstrap["error_type"],
+                    "error_detail": runtime_workspace_bootstrap["error"],
+                }
+            )
+        elif launcher_instance_mode == "isolated":
             launch_receipt = _new_isolated_bench_launch_receipt(
                 bench_session_id=bench_session_id,
                 run_id=run_id,
@@ -418,6 +461,8 @@ def main() -> int:
             },
         )
         last_stage_event_key = ""
+        observed_factory_run_id = ""
+        last_observed_factory_status: dict[str, Any] = {}
 
         def _on_factory_stage_change(
             stage_status: str,
@@ -428,10 +473,14 @@ def main() -> int:
             _project_title: str = project_title,
             _project_workspace: Path = workspace,
         ) -> None:
-            nonlocal last_stage_event_key
+            nonlocal last_stage_event_key, observed_factory_run_id, last_observed_factory_status
             phase = str(status_payload.get("phase") or "").strip()
             run_status = str(status_payload.get("status") or stage_status or "").strip()
-            run_ref = str(status_payload.get("run_id") or "").strip()
+            raw_run_ref = status_payload.get("run_id")
+            run_ref = raw_run_ref.strip() if isinstance(raw_run_ref, str) else ""
+            if run_ref:
+                observed_factory_run_id = run_ref
+                last_observed_factory_status = dict(status_payload)
             event_payload_raw = status_payload.get("event_payload")
             event_payload: dict[str, Any] = event_payload_raw if isinstance(event_payload_raw, dict) else {}
             factory_event_type = str(event_payload.get("type") or status_payload.get("event_type") or "").strip()
@@ -475,7 +524,9 @@ def main() -> int:
 
         if project_backend_url and not workspace_switch_ok:
             error = (
-                "runtime_project_contamination"
+                "runtime_storage_bootstrap_failed"
+                if not runtime_workspace_bootstrap["ok"]
+                else "runtime_project_contamination"
                 if runtime_foreign_keys
                 else (
                     "measurement_contaminated"
@@ -586,6 +637,9 @@ def main() -> int:
                     "exception": type(exc).__name__,
                     "_runner_exception": True,
                 }
+                if observed_factory_run_id:
+                    chain["run_id"] = observed_factory_run_id
+                    chain["last_observed_status"] = last_observed_factory_status
         _emit_bench_event(
             workspace=base,
             project_id=pid,
@@ -608,18 +662,12 @@ def main() -> int:
         #   we send cancel, but the backend may still be mutating the
         #   workspace. Treat this as non-terminal and do not run final gates
         #   against a racing snapshot.
-        # - Otherwise: wait_run_until_terminal returned a terminal status dict
-        #   or a legacy subprocess reached an interrupted terminal state.
+        # - Normal transport is not a terminal fact: require observed backend
+        #   run identity and an explicit, identity-consistent terminal status.
         chain_error = str(chain.get("error") or "")
-        chain_is_terminal = _chain_reached_terminal(chain)
-        chain_attempt_started = bool(str(chain.get("run_id") or "").strip()) or chain_error not in {
-            "director_resume_run_missing",
-            "isolated_instance_start_failed",
-            "measurement_contaminated",
-            "runtime_project_contamination",
-            "start_failed",
-            "workspace_switch_failed",
-        }
+        chain_observation = _classify_chain_attempt(chain)
+        chain_is_terminal = chain_observation["terminal"]
+        chain_attempt_started = chain_observation["attempt_state"] == "observed"
         chain_results_raw = chain.get("chain_results")
         chain_results_for_status: dict[str, Any] = chain_results_raw if isinstance(chain_results_raw, dict) else {}
         chain_status_raw = str(chain_results_for_status.get("exit_class", ""))
@@ -636,6 +684,7 @@ def main() -> int:
         record["runtime_dirs"] = [str(path) for path in runtime_dirs]
         record["chain"] = chain
         record["launcher_instance"] = dict(launcher_instance_meta)
+        record["runtime_workspace_bootstrap"] = runtime_workspace_bootstrap
         if not chain_is_terminal:
             record["chain_diagnostics"] = _non_terminal_chain_diagnostics(
                 chain=chain,
@@ -692,16 +741,18 @@ def main() -> int:
         record["requested_project_id"] = requested_pid
         record["canonical_project_id"] = canonical_pid
         record["canonical_catalog_project_id"] = canonical_pid
-        record["factory_run_id"] = str(chain.get("run_id") or run_id)
+        record["factory_run_id"] = chain_observation["observed_run_id"]
         record["qa_invoked"] = (
             read_factory_qa_invocation_status(
                 Path(project_workspace),
                 record["factory_run_id"],
             )
             if chain_attempt_started
-            else {"invoked": False, "reason": "current_attempt_not_started"}
+            else {"invoked": False, "reason": "current_attempt_" + chain_observation["attempt_state"]}
         )
         record["chain_attempt_started"] = chain_attempt_started
+        record["chain_attempt_state"] = chain_observation["attempt_state"]
+        record["chain_observed_run_id"] = chain_observation["observed_run_id"]
         record["requested_instance_id"] = str(launcher_instance_meta.get("requested_instance_id") or "")
         record["instance_id"] = str(launcher_instance_meta.get("instance_id") or "")
         record["instance_launch_receipt"] = dict(launcher_instance_meta.get("launch_receipt") or {})
@@ -712,7 +763,17 @@ def main() -> int:
         record["backend_port"] = _url_port(project_backend_url)
         record["frontend_url"] = str(launcher_instance_meta.get("frontend_url") or "")
         record["frontend_port"] = _url_port(str(launcher_instance_meta.get("frontend_url") or ""))
-        if chain_is_terminal:
+        if not runtime_workspace_bootstrap["ok"]:
+            record["real_run_gate"] = _build_non_terminal_real_run_gate(
+                chain_phase=chain_phase_raw,
+                chain_status=chain_status_raw,
+            )
+            record["run_ledger"] = {
+                "available": False,
+                "error": "runtime_storage_bootstrap_failed",
+                "error_type": runtime_workspace_bootstrap["error_type"],
+            }
+        elif chain_is_terminal:
             record["real_run_gate"] = build_real_run_gate(
                 workspace,
                 record,
@@ -741,11 +802,21 @@ def main() -> int:
                 stage=chain_phase_raw or chain_status_raw or "chain_non_terminal",
                 gate_name="chain_non_terminal",
             )
-        record["run_ledger_projection"] = load_run_ledger_projection(
-            workspace,
-            run_id=run_id,
-            factory_run_id=record["factory_run_id"],
-            project_id=pid,
+        record["run_ledger_projection"] = (
+            load_run_ledger_projection(
+                workspace,
+                run_id=run_id,
+                factory_run_id=record["factory_run_id"],
+                # A prelaunch failure has only the exact harness attempt/workspace,
+                # not a Factory identity. Never fabricate one to satisfy the
+                # project-specific projection's cross-run leakage guard.
+                project_id=pid if chain_attempt_started else "",
+            )
+            if runtime_workspace_bootstrap["ok"]
+            else {
+                "available": False,
+                "error": "runtime_storage_bootstrap_failed",
+            }
         )
         record["task_boundary_verdict"] = _read_task_boundary_verdict_from_run_ledger_projection(
             record["run_ledger_projection"]

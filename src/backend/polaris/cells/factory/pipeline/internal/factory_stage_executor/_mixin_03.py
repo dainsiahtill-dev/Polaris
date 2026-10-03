@@ -76,14 +76,11 @@ class _Mixin03:
         *,
         diagnostics: list[str],
     ) -> list[str]:
-        """Resolve DEO write scope from owner targets plus plannable repairs.
+        """Discover repair/owner candidates, never DEO write permissions.
 
-        Some legitimate deterministic repairs create a derived target that is
-        absent from the CE target list (for example
-        ``dist/tests/verify.test.js`` referenced by the package verifier).  The
-        repair-kernel plan probe is read-only authority for those changed paths;
-        include them before minting the JobToken instead of letting DEO reject a
-        valid existing repair as out of scope.
+        Derived paths from a plan probe may help locate a causal owner. They
+        cannot authorize creation, mint a JobToken, or replace the owner's CE
+        completion slice. Commit consumes the strict original owner authority.
         """
 
         target_files = self._workspace_quality_repair_target_files()
@@ -125,6 +122,7 @@ class _Mixin03:
         diagnostics: list[str],
         factory_stage: str = "director_dispatch",
         deferred_tool_results: Sequence[Mapping[str, Any]] = (),
+        repair_task: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         return materialization_impl._director_stage_materialization_settle_commit_context(
             self,
@@ -133,6 +131,7 @@ class _Mixin03:
             diagnostics=diagnostics,
             factory_stage=factory_stage,
             deferred_tool_results=deferred_tool_results,
+            repair_task=repair_task,
         )
 
     @staticmethod

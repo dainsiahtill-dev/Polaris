@@ -725,6 +725,7 @@ cells:
         - GetExecutionProcessStatusQueryV1
         - GetManagedProcessReceiptQueryV1
         - QueryProjectArtifactReceiptV1
+        - QueryProjectArtifactSourceBaselineV1
         - QueryProjectVerificationReceiptV1
         - ResolveProjectArtifactAuthorityQueryV1
         - ResolveProjectVerificationAuthorityQueryV1
@@ -733,6 +734,7 @@ cells:
         - ExecutionProcessLaunchResultV1
         - ExecutionProcessWaitResultV1
         - ProjectArtifactReceiptV1
+        - ProjectArtifactSourceBaselineV1
         - ProjectArtifactExecutionAuthorityV1
         - ProjectVerificationCapabilityConsumptionV1
         - ProjectVerificationExecutionAuthorityV1
@@ -2404,6 +2406,7 @@ cells:
       - runtime.projection
       - director.runtime
       - events.fact_stream
+      - director.tasking
     subgraphs:
       - storage_archive_pipeline
       - execution_governance_pipeline

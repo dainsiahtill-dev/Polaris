@@ -172,6 +172,45 @@ def extract_platform_tool_contract(context: list[dict]) -> dict[str, Any]:
     return contract
 
 
+def extract_task_instruction(context: list[dict]) -> str:
+    """Classify current task intent without interpreting appended platform policy.
+
+    This is guidance, never capability authority. Only the latest user message
+    may supply an explicit instruction; earlier tasks and tool results cannot.
+    """
+
+    latest_user = extract_latest_user_message(context)
+    for message in reversed(context):
+        if not isinstance(message, Mapping) or str(message.get("role") or "").strip().lower() != "user":
+            continue
+        metadata = _mapping(message.get("metadata"))
+        for candidate in (
+            message.get("tool_contract"),
+            message.get("platform_tool_contract"),
+            metadata.get("tool_contract"),
+            metadata.get("platform_tool_contract"),
+        ):
+            contract = _mapping(candidate)
+            for key in ("task_instruction", "instruction"):
+                instruction = contract.get(key)
+                if instruction is None:
+                    continue
+                if type(instruction) is not str:
+                    raise ValueError("task_instruction_type_invalid")
+                if not instruction.strip():
+                    continue
+                # The existing control-plane mode restoration puts its marker
+                # first. Keep that precedence, not embedded examples/history.
+                from .intent_classifier import leading_instruction_mode_marker
+
+                marker = leading_instruction_mode_marker(latest_user)
+                if marker is not None:
+                    return marker + "\n" + instruction.strip()
+                return instruction.strip()
+        break
+    return latest_user
+
+
 def extract_platform_tool_contract_target_files(context: list[dict]) -> tuple[str, ...]:
     """Return explicit file targets carried by platform tool-contract metadata."""
     contract = extract_platform_tool_contract(context)
@@ -434,12 +473,31 @@ def build_single_batch_task_contract_hint(
         dedup_target_files.append(token)
     if single_quality_repair_target:
         dedup_target_files = [single_quality_repair_target]
+    # Natural-language path extraction includes inventories and sibling evidence.
+    # A governed call supplies a separate derived action view; it takes precedence
+    # over those references, without altering the original PM/CE contracts.
+    for message in reversed(context):
+        message_metadata = message.get("metadata") if isinstance(message, dict) else None
+        guidance = message_metadata.get("task_write_guidance") if isinstance(message_metadata, dict) else None
+        if isinstance(guidance, dict) and guidance.get("schema_version") == "task.write_guidance.v1":
+            dedup_target_files = _normalize_contract_path_values(guidance.get("write_targets"))
+            break
+    for definition in tool_definitions:
+        function = definition.get("function") if isinstance(definition, dict) else None
+        if not isinstance(function, dict) or function.get("name") != "write_file":
+            continue
+        parameters = function.get("parameters")
+        properties = parameters.get("properties") if isinstance(parameters, dict) else None
+        file_schema = properties.get("file") if isinstance(properties, dict) else None
+        if isinstance(file_schema, dict) and isinstance(file_schema.get("enum"), list):
+            # The current physical schema can be narrower than parent inventory,
+            # especially for one-target repair. Never demand a forbidden write.
+            dedup_target_files = _normalize_contract_path_values(file_schema["enum"])
+            break
 
     # Classify intent on the real task instruction when the platform contract
     # supplies one; tool-contract metadata must not pollute mutation detection.
-    _task_instruction = str(
-        platform_tool_contract.get("task_instruction") or platform_tool_contract.get("instruction") or latest_user
-    ).strip()
+    _task_instruction = extract_task_instruction(context)
     _requires_write = requires_mutation_intent(_task_instruction)
     _requires_verify = requires_verification_intent(_task_instruction)
     if single_quality_repair_target:

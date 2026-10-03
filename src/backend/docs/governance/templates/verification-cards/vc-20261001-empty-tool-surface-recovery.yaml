@@ -1,0 +1,33 @@
+id: vc-20261001-empty-tool-surface-recovery
+classification: pattern
+owner: roles.kernel
+status: local_verified_independently_reviewed_live_pending
+blueprint: ../../../blueprints/POLARIS_EMPTY_TOOL_SURFACE_RECOVERY_FENCE_20261001.md
+assumptions:
+  - claim: Recovery can undo empty-tool-surface suppression.
+    evidence: Exact test debugger executor calls2 repo_tree, LLM3, final late guard.
+  - claim: A late terminal guard proves zero execution.
+    evidence: False; executor seam already invoked before late block.
+pre_mortem:
+  - Recovery preserves an existing executable batch before checking empty surface.
+  - Only nonstream caller passes the captured surface.
+  - Fix accidentally suppresses native writes or rejects private result transport.
+verification:
+  - Exact controller zero-dispatch regression RED to GREEN.
+  - No-surface read, write, malformed and pre-existing batches denied before dispatch.
+  - Stream and nonstream surface propagation; authorized recovery unchanged.
+  - Structured output remains non-executable and provenance checked.
+target_project_manual_edit: forbidden
+results:
+  baseline: failure_executor_called_twice
+  physical_file_effects: unproven_fixture_uses_executor_mock
+  exact_regression: RED_executor2_then_GREEN_executor0
+  original_assertions: preserved
+  targeted: 25_passed
+  m03: pass
+  m04: pass
+  ruff: pass
+  mypy: owner_files_pass
+  expanded_kernel_suite: 104_passed_1_failed_legacy_readonly_exception_assertion
+  separate_failed_quality_projection: open
+  independent_review: no_important_findings_20_tests_passed

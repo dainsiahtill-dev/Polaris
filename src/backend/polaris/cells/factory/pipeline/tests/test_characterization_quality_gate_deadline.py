@@ -962,6 +962,20 @@ class TestQualityGateDeadlineHandling:
 
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
 
+        from types import SimpleNamespace
+
+        from polaris.cells.factory.pipeline.internal import factory_workspace_quality_impl as quality_impl
+
+        async def scoped_deadline_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            return fake_run_workspace_quality_command(command, timeout_seconds)
+
+        # This test isolates budget admission, not physical command authority.
+        # Real owner-backed execution is exercised in the group integration suite.
+        monkeypatch.setattr(
+            quality_impl.NativeValidationSession,
+            "from_factory",
+            lambda *_args, **_kwargs: SimpleNamespace(run_command=scoped_deadline_command, close=lambda: None),
+        )
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 70.0
         passed, artifact = await executor._run_workspace_quality_checks(
             run,

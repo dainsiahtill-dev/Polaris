@@ -1377,6 +1377,7 @@ class Settings(BaseModel):
             ("user", "KERNELONE_NATS_USER"),
             ("password", "KERNELONE_NATS_PASSWORD"),
             ("connect_timeout_sec", "KERNELONE_NATS_CONNECT_TIMEOUT"),
+            ("startup_timeout_sec", "KERNELONE_NATS_STARTUP_TIMEOUT"),
             ("reconnect_wait_sec", "KERNELONE_NATS_RECONNECT_WAIT"),
             ("max_reconnect_attempts", "KERNELONE_NATS_MAX_RECONNECT"),
             ("stream_name", "KERNELONE_NATS_STREAM_NAME"),

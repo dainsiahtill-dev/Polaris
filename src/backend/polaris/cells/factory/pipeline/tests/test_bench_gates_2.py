@@ -7,31 +7,19 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from polaris.cells.control_plane.verifier_policy.public import (
-    UpdateVerifierPolicyCommandV1,
-    update_verifier_policy,
-)
 from polaris.cells.factory.pipeline.internal import bench_gates
 from polaris.cells.factory.pipeline.internal.bench_gates import (
-    _collect_go_local_imports,
     _command_serves_build_output,
-    _discover_go_package_dirs,
     _go_command,
-    _go_version_of,
-    _infer_go_module_name,
-    _normalize_go_imports,
     _primary_source_language,
-    _read_go_mod_module,
-    _repair_go_import_subpath,
     _resolve_polaris_roots_runtime_dir,
-    _script_depends_on_build_output,
     aggregate_goal_audit,
-    apply_factory_bench_failure_taxonomy,
     build_llm_route_audit,
     build_real_run_gate,
     classify_factory_bench_failure,
     collect_llm_events,
 )
+from polaris.cells.factory.pipeline.tests._bench_gate_helpers import _disk_llm_event
 
 
 def _real_llm_event(
@@ -124,8 +112,6 @@ def _canonical_task_runtime_projection(
         ],
         "readiness": {"ready": authoritative, "blocking_reasons": []},
     }
-
-
 
 
 class TestCommandServesBuildOutput:
@@ -2589,5 +2575,3 @@ def test_go_project_uses_go_entrypoint_not_python(monkeypatch: Any, tmp_path: Pa
 # ---------------------------------------------------------------------------
 # Tests for Go import normalization detection (Repair Kernel owns mutation)
 # ---------------------------------------------------------------------------
-
-

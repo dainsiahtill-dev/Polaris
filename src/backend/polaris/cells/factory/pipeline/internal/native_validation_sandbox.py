@@ -9,6 +9,7 @@ Rust toolchain/cache paths required to compile the copy.
 
 from __future__ import annotations
 
+import importlib
 import os
 import re
 import shutil
@@ -18,7 +19,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-import tomllib
+try:
+    tomllib = importlib.import_module("tomllib")
+except ModuleNotFoundError as exc:
+    if exc.name != "tomllib":
+        raise
+    # Python 3.10 uses the explicitly declared runtime compatibility package.
+    # A missing/broken parser remains a hard import failure, never a fake parse.
+    tomllib = importlib.import_module("tomli")
 
 _CARGO_TEST_RUNNING_RE = re.compile(r"^\s*running\s+(?P<count>\d+)\s+tests?\s*$")
 _CARGO_TEST_RESULT_RE = re.compile(

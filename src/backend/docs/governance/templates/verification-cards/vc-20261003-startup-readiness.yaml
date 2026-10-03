@@ -1,0 +1,41 @@
+id: vc-20261003-startup-readiness
+classification: structural
+status: local_implemented_final_release_and_fresh_pending
+goal_scope: all_current_L1_L12_fresh_isolated_unattended_projects
+assumptions:
+  - claim: child_alive_implies_NATS_ready
+    verdict: false
+    evidence: server_runtime.ensure_running_returns_before_readiness
+  - claim: consumer_count_719_always_requires_more_than_8_seconds
+    verdict: false
+    evidence: copied_6_6GB_native_recovery_ready_in_2_931_seconds
+  - claim: r08_Factory_attempt_started
+    verdict: false
+    evidence: three_lifespan_failures_before_FactStream_bootstrap_and_no_role_runs
+  - claim: failed_isolated_launch_is_terminal_execution
+    verdict: false
+    evidence: current_classifier_true_but_chain_attempt_started_false
+  - claim: public_bootstrap_mints_successful_receipts
+    verdict: false
+    evidence: scratch_idempotent_bootstrap_creates_no_facts_or_ledger_rows
+premortem:
+  - global_NATS_shutdown_or_consumer_deletion_disrupts_other_instances
+  - startup_budget_changes_hide_actual_hung_or_dead_process
+  - harness_reporting_records_maintenance_as_successful_execution
+  - auth_or_TLS_endpoint_is_misclassified_and_replaced
+verification:
+  - real_protocol_readiness_and_owned_process_drain
+  - repeated_cancellation_during_cleanup_keeps_child_ownership_until_reaped
+  - delayed_existing_INFO_and_transient_socket_close_do_not_replace_service
+  - saturated_TCP_backlog_cannot_escape_monotonic_deadline
+  - native_SDK_error_retry_NotFound_stream_init_partial_connection_cleanup
+  - finite_startup_budget_native_config_propagation
+  - real_storage_failed_launch_negative_evidence_and_no_verifier
+  - relevant_suites_ruff_mypy_current_release_gate_independent_review
+  - fresh_isolated_L1_01_full_budget_only_after_local_acceptance
+residual_risks:
+  - exact_historical_IO_delay_not_proven
+  - shared_NATS_process_lifetime_and_cross_process_startup_ownership_open
+  - permanent_publisher_outage_recovery_unproven
+  - legacy_unsplit_runner_test_migration_and_IO_isolation_open
+  - generic_runner_exception_without_physical_Factory_ID_semantics_open

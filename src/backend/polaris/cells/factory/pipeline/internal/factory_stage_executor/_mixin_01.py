@@ -29,6 +29,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     classify_chief_engineer_pm_entrypoint_kind,
     derive_project_kind_authority_from_catalog_snapshot,
     project_chief_engineer_completion_contract_semantic_errors,
+    project_chief_engineer_effective_obligation_view,
     project_chief_engineer_portfolio_delivery_depth_feasibility,
     project_completion_catalog_snapshot_hash,
     project_completion_verifier_policy_snapshot_hash,
@@ -1529,6 +1530,7 @@ class _Mixin01:
         *,
         task_ids: tuple[str, ...] | None = None,
         tasks: tuple[ChiefEngineerPortfolioTaskV1, ...] = (),
+        authority_carrier: object | None = None,
     ) -> list[str]:
         """Validate the nested project-level CE output contract."""
 
@@ -1540,15 +1542,31 @@ class _Mixin01:
             if tasks
             else None
         )
+        effective_view = None
+        projection_errors: list[str] = []
+        if tasks:
+            try:
+                effective_view = project_chief_engineer_effective_obligation_view(
+                    payload, tasks=tasks, authority_carrier=authority_carrier
+                )
+                projection_errors.extend(
+                    "chief_engineer.completion_normalization:"
+                    + json.dumps(finding, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    for finding in effective_view["normalization_findings"]
+                )
+            except (TypeError, ValueError) as exc:
+                projection_errors.append(f"effective completion obligations invalid: {exc}")
         errors = ce_evidence.chief_engineer_portfolio_output_errors(
             payload,
             task_ids=tuple(task.task_id for task in tasks) or tuple(task_ids or ()),
+            effective_completion_obligation_ids=(
+                frozenset(effective_view["retained_completion_obligation_ids"]) if effective_view is not None else None
+            ),
             authorized_artifact_obligation_ids=(
-                frozenset(feasibility["authorized_artifact_obligation_ids"])
-                if feasibility is not None
-                else None
+                frozenset(feasibility["authorized_artifact_obligation_ids"]) if feasibility is not None else None
             ),
         )
+        errors.extend(projection_errors)
         errors.extend(project_chief_engineer_completion_contract_semantic_errors(payload))
         depth_compatible_errors = tuple(
             error

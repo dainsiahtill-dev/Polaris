@@ -756,7 +756,7 @@ def test_real_anthropic_provider_crosses_native_sidecar_and_factory_gate(
         posts.append(dict(kwargs))
         return _AnthropicResponse()
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     with bind_physical_provider_dispatch_port(dispatch_port):
         result = AnthropicProvider().invoke("unused fallback", str(payload["model"]), actual_config)
 
@@ -909,7 +909,7 @@ def test_governed_physical_http_attempt_persists_snapshot_pin_start_and_terminal
             "endpoint": "https://example.test/v1/chat/completions",
             "headers": {"Authorization": "Bearer secret"},
             "body": body,
-            "transport": {"kind": "requests.post", "timeout": 1},
+            "transport": {"kind": "aiohttp.ClientSession.post", "timeout": 1},
         },
     )
     physical_calls: list[dict[str, Any]] = []
@@ -918,7 +918,7 @@ def test_governed_physical_http_attempt_persists_snapshot_pin_start_and_terminal
         physical_calls.append(dict(kwargs))
         return _Response()
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {"Authorization": "Bearer secret"},
@@ -973,7 +973,7 @@ def test_governed_json_parse_failure_records_failed_physical_terminal(
             raise ValueError("invalid provider JSON")
 
     monkeypatch.setattr(
-        "polaris.infrastructure.llm.providers.provider_helpers.requests.post",
+        "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
         lambda *_args, **_kwargs: _InvalidJsonResponse(),
     )
     result = invoke_with_retry(
@@ -1023,7 +1023,7 @@ def test_governed_json_parse_failure_retries_as_new_failed_then_completed_attemp
         def sleep(self, seconds: float) -> None:
             self.current += seconds
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
@@ -1061,7 +1061,7 @@ def test_governed_extract_output_error_records_failed_terminal(
         raise extract_error
 
     monkeypatch.setattr(
-        "polaris.infrastructure.llm.providers.provider_helpers.requests.post",
+        "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
         lambda *_args, **_kwargs: _Response(),
     )
     result = invoke_with_retry(
@@ -1093,7 +1093,7 @@ def test_governed_usage_extraction_error_records_failed_terminal(
         raise ValueError("invalid provider usage")
 
     monkeypatch.setattr(
-        "polaris.infrastructure.llm.providers.provider_helpers.requests.post",
+        "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
         lambda *_args, **_kwargs: _Response(),
     )
     result = invoke_with_retry(
@@ -1131,7 +1131,7 @@ def test_governed_finalize_exception_records_failed_terminal(
 
     monkeypatch.setattr(provider_helpers.LLMResponseParser, "finalize_response", classmethod(_fail_finalize))
     monkeypatch.setattr(
-        "polaris.infrastructure.llm.providers.provider_helpers.requests.post",
+        "polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post",
         lambda *_args, **_kwargs: _Response(),
     )
     result = invoke_with_retry(
@@ -1175,7 +1175,7 @@ def test_governed_finalize_semantic_failure_keeps_physical_terminal_completed(
         physical_calls += 1
         return _TruncatedReasoningResponse()
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
@@ -1237,7 +1237,7 @@ def test_governed_success_parses_extracts_and_projects_usage_exactly_once(
         clock.advance(100.0)
         return Usage(prompt_tokens=1, completion_tokens=1, total_tokens=2)
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
@@ -1304,7 +1304,7 @@ def test_governed_provider_retry_creates_one_unique_lifecycle_pair_per_physical_
         assert response is rate_limited_response
         return original_retry_after_parser(response)
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     monkeypatch.setattr(provider_helpers, "_parse_retry_after_seconds", _parse_retry_after)
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
@@ -1360,7 +1360,7 @@ def test_governed_context_overflow_rewrite_requires_new_freeze_before_second_pos
         return next(responses)
 
     payload = _wire_body(gate)
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     with pytest.raises(
         qualification_module.FinalProviderAttemptQualificationError,
         match="physical_wire_max_tokens_drift",
@@ -1400,7 +1400,7 @@ def test_governed_http_failure_records_failed_terminal_and_preserves_response_bo
         physical_calls += 1
         return _Response(status_code=status_code, text=response_body)
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
@@ -1442,7 +1442,7 @@ def test_governed_snapshot_or_pin_failure_keeps_physical_http_count_zero(
         physical_calls += 1
         return _Response()
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     with pytest.raises(OSError, match="pin fsync failed"):
         invoke_with_retry(
             "https://example.test/v1/chat/completions",
@@ -1490,7 +1490,7 @@ def test_frozen_wire_is_detached_from_original_and_callback_cannot_mutate_author
         dispatched_bodies.append(dict(kwargs["json"]))
         return _Response()
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     result = invoke_with_retry(
         "https://example.test/v1/chat/completions",
         {},
@@ -1520,7 +1520,7 @@ def test_sync_cancellation_records_terminal_before_it_escapes(
     def _post(*_args: object, **_kwargs: object) -> _Response:
         raise KeyboardInterrupt("cancelled by caller")
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     with pytest.raises(KeyboardInterrupt, match="cancelled by caller"):
         invoke_with_retry(
             "https://example.test/v1/chat/completions",
@@ -1559,7 +1559,7 @@ def test_terminal_fsync_failure_blocks_successful_physical_result(
         physical_calls += 1
         return _Response()
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     with pytest.raises(OSError, match="terminal fsync failed"):
         invoke_with_retry(
             "https://example.test/v1/chat/completions",
@@ -1598,7 +1598,7 @@ def test_actual_pin_fsync_or_reread_failure_keeps_physical_http_count_zero(
             raise OSError("pin fsync reread failed")
         original_verify(self, path, expected)
 
-    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers.requests.post", _post)
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling.bounded_http_post", _post)
     gate, lifecycle = _gate(tmp_path)
     monkeypatch.setattr(ContextSnapshotAuditPinRepository, "_fsync_and_verify", _fail_pin_verify)
     with pytest.raises(OSError, match="pin fsync reread failed"):

@@ -17,6 +17,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
 _GO_COMPILE_COMMAND = ("go", "test", "-run", "^$", "./...")
 _RUST_COMPILE_COMMAND = ("cargo", "check", "--quiet")
 _DEFAULT_TIMEOUT_SECONDS = 30
@@ -82,9 +84,7 @@ def _diagnostic_signatures(
     """Extract stable compiler diagnostic lines from a verifier result."""
 
     output = "\n".join(part for part in (result.stderr, result.stdout) if part)
-    return tuple(
-        dict.fromkeys(line.strip() for line in output.splitlines() if diagnostic_pattern.match(line))
-    )
+    return tuple(dict.fromkeys(line.strip() for line in output.splitlines() if diagnostic_pattern.match(line)))
 
 
 def check_candidate_workspace_compile(
@@ -146,22 +146,23 @@ def check_candidate_workspace_compile(
             f"{command[0]} unavailable",
         )
 
-    try:
-        before = _run_compile(command, cwd=root, timeout_seconds=timeout_seconds)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return CandidateCompileCheckResult(False, False, False, False, command, "", str(exc))
-    before_ok = before.returncode == 0
-    before_diagnostics = _diagnostic_signatures(before, diagnostic_pattern=diagnostic_pattern)
-
+    before_ok = False
     try:
         with tempfile.TemporaryDirectory(prefix="polaris-compile-candidate-", dir=str(root.parent)) as temp_dir:
+            baseline = Path(temp_dir) / "baseline"
             shadow = Path(temp_dir) / "workspace"
-            shutil.copytree(root, shadow, ignore=_shadow_ignore)
+            shutil.copytree(root, baseline, ignore=_shadow_ignore)
+            # Freeze both independent inputs before a compiler can run init,
+            # TestMain or build scripts that rewrite source or create outputs.
+            shutil.copytree(baseline, shadow)
+            before = _run_compile(command, cwd=baseline, timeout_seconds=timeout_seconds)
+            before_ok = before.returncode == 0
+            before_diagnostics = _diagnostic_signatures(before, diagnostic_pattern=diagnostic_pattern)
             target = (shadow / rel).resolve()
             if shadow not in target.parents:
                 return CandidateCompileCheckResult(False, before_ok, False, False, command, "", "unsafe candidate path")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(str(content), encoding="utf-8", newline="")
+            filesystem = KernelFileSystem(str(shadow), get_default_adapter())
+            filesystem.workspace_write_bytes(str(target), str(content).encode("utf-8"))
             after = _run_compile(command, cwd=shadow, timeout_seconds=timeout_seconds)
     except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
         return CandidateCompileCheckResult(False, before_ok, False, False, command, "", str(exc))
@@ -170,8 +171,7 @@ def check_candidate_workspace_compile(
     raw_error = (after.stderr or after.stdout or "").strip()
     after_diagnostics = _diagnostic_signatures(after, diagnostic_pattern=diagnostic_pattern)
     regression = (not after_ok) and (
-        before_ok
-        or (bool(before_diagnostics) and len(after_diagnostics) > len(before_diagnostics))
+        before_ok or (bool(before_diagnostics) and len(after_diagnostics) > len(before_diagnostics))
     )
     return CandidateCompileCheckResult(
         checked=True,

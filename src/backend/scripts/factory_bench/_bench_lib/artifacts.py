@@ -5,6 +5,10 @@ Private helper module for run_factory_bench.
 
 from __future__ import annotations
 
+from typing import Literal, TypedDict
+
+from scripts.factory_bench.factory_http_client import TERMINAL_RUN_STATUSES
+
 # ruff: noqa: F821, E402
 # mypy: ignore-errors
 
@@ -249,7 +253,54 @@ def read_chain_results_from_runtime_dirs(runtime_dirs: list[Path]) -> dict[str, 
     return merged
 
 
-_NON_TERMINAL_CHAIN_ERRORS = {"start_failed", "workspace_switch_failed", "event_wait_timeout"}
+_NO_ATTEMPT_CHAIN_ERRORS = frozenset(
+    {
+        "director_resume_run_missing",
+        "isolated_instance_start_failed",
+        "measurement_contaminated",
+        "runtime_project_contamination",
+        "workspace_switch_failed",
+        "runtime_storage_bootstrap_failed",
+    }
+)
+# A start POST may be accepted before its response is lost or malformed.
+# Without observed backend identity, start_failed is unknown, not pre-dispatch.
+_NON_TERMINAL_CHAIN_ERRORS = _NO_ATTEMPT_CHAIN_ERRORS | {"event_wait_timeout", "start_failed"}
+
+
+class ChainAttemptObservation(TypedDict):
+    attempt_state: Literal["not_started", "unknown", "observed"]
+    observed_run_id: str
+    terminal: bool
+
+
+def _classify_chain_attempt(chain: dict[str, Any]) -> ChainAttemptObservation:
+    """Separate prelaunch facts, unknown transport, and observed backend runs."""
+
+    raw_run_id = chain.get("run_id")
+    run_id = raw_run_id.strip() if isinstance(raw_run_id, str) else ""
+    error = str(chain.get("error") or "")
+    state: Literal["not_started", "unknown", "observed"] = (
+        "observed" if run_id else "not_started" if error in _NO_ATTEMPT_CHAIN_ERRORS else "unknown"
+    )
+    status = chain.get("factory_terminal_status")
+    status_map = status if isinstance(status, Mapping) else {}
+    status_run_id = status_map.get("run_id")
+    identity_matches = status_run_id is None or (isinstance(status_run_id, str) and status_run_id.strip() == run_id)
+    terminal = bool(
+        run_id
+        and not chain.get("_runner_exception")
+        and error not in _NON_TERMINAL_CHAIN_ERRORS
+        and identity_matches
+        and str(status_map.get("status") or "").strip().lower() in TERMINAL_RUN_STATUSES
+    )
+    return {"attempt_state": state, "observed_run_id": run_id, "terminal": terminal}
+
+
+def _chain_attempt_started(chain: dict[str, Any]) -> bool:
+    """Compatibility boolean means observed execution, not transport certainty."""
+
+    return _classify_chain_attempt(chain)["attempt_state"] == "observed"
 
 
 def grade_chain_state(chain_results: dict[str, Any], exit_code: Any) -> str:
@@ -265,10 +316,7 @@ def grade_chain_state(chain_results: dict[str, Any], exit_code: Any) -> str:
 
 def _chain_reached_terminal(chain: dict[str, Any]) -> bool:
     """Return whether the runner has a definitive backend terminal state."""
-    chain_error = str(chain.get("error") or "")
-    if chain_error in _NON_TERMINAL_CHAIN_ERRORS:
-        return False
-    return not chain.get("_runner_exception")
+    return _classify_chain_attempt(chain)["terminal"]
 
 
 def _build_non_terminal_real_run_gate(*, chain_phase: str, chain_status: str) -> dict[str, Any]:

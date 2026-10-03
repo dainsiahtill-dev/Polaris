@@ -262,7 +262,7 @@ def test_hold_llm_when_crate_rewrite_is_still_plannable_without_mutation() -> No
     )
 
 
-def test_owned_unplannable_test_residual_is_not_interface_triage() -> None:
+def test_authorized_owned_unplannable_test_residual_does_not_repeat_triage() -> None:
     from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
         workspace_quality_summary_requires_task_boundary_triage,
     )
@@ -272,6 +272,7 @@ def test_owned_unplannable_test_residual_is_not_interface_triage() -> None:
             {
                 "stage": "runtime_plan_probe_unplannable",
                 "repair_target_files": ["tests/product.rs"],
+                "task_boundary_interface_discrepancy_retry_authorized": True,
                 "plan_probe_preaudit": {
                     "status": "coverage_matched_but_unplannable",
                     "plannable_source_tools": [],

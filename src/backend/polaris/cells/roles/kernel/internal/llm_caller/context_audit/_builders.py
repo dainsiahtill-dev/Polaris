@@ -17,6 +17,7 @@ from ._findings import (
     _context_quality_findings,
     _coverage_flags,
     _message_projection_findings,
+    _task_write_guidance_findings,
 )
 from ._payloads import (
     _request_metadata_summary,
@@ -166,6 +167,13 @@ def build_final_request_context_audit_for_request(
     )
     quality = _add_evidence_coverage_findings(quality, evidence_coverage)
     quality = _add_context_os_audit_findings(quality, context_os_audit)
+    scope_findings = _task_write_guidance_findings(
+        ai_request=ai_request,
+        messages=messages,
+        tools=tool_schema_payload,
+    )
+    quality["findings"].extend(scope_findings)
+    quality["context_needs_review"] = bool(quality["findings"])
     tool_execution_surface = _tool_execution_surface_audit(
         ai_request=ai_request,
         tool_schema_count=tool_schema_count,

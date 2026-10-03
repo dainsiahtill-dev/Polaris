@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-03T11:44:03Z",
+  "source": "engineering_evidence_not_platform_runtime_authority",
+  "goal_status": "ACTIVE",
+  "goal_scope": "all_current_120_L1_L12_fresh_isolated_unattended_projects",
+  "state": "fresh_r09_failed_new_CE_contract_recovery_gap",
+  "exact_failed_attempt": {
+    "attempt": "r08",
+    "runner_handle": 65559,
+    "exit_code": 1,
+    "instance_status": "failed",
+    "factory_attempt_started": false,
+    "provider_request_context_audit": "not_applicable_no_physical_attempt",
+    "runner_log": "/tmp/factory-bench-minimax-l1-01-20261003-r08.runner.log",
+    "instance_id": "factory-bench-minimax-l1-01-20261003-r08-l1-01-run-99e8c00c6b8d-161c545f7761e1f2"
+  },
+  "defects": [
+    {
+      "id": "STARTUP-READINESS",
+      "category": "runtime_environment_platform_lifecycle",
+      "symptom": "three owned NATS processes killed around eight seconds into recovery",
+      "root": "independent readiness cutoff and insufficient readiness/termination semantics; exact historical IO delay unproven",
+      "counterevidence": "copied 6.6GB store, 719 consumers, 526519 messages recovered in 2.931s",
+      "fix_files": ["polaris/infrastructure/messaging/nats/server_runtime.py", "polaris/config/nats_config.py", "polaris/bootstrap/config.py", "polaris/bootstrap/config_loader.py", "polaris/delivery/http/app_factory.py", "polaris/kernelone/config/flag_registry.py"],
+      "verification": "native startup19 tests and final affected group160 PASS; slow existing service, saturated backlog, repeated cancel cleanup and transient close RED to GREEN",
+      "status": "locally_verified_fresh_pending"
+    },
+    {
+      "id": "FAILED-LAUNCH-EVIDENCE",
+      "category": "platform_initialization_and_execution_classification",
+      "symptom": "never-started isolated launch marked terminal; real verifiers invoked; negative ledger append raises lock_authority_missing",
+      "root": "no-attempt category sets drift and harness append before explicit workspace maintenance",
+      "fix_files": ["scripts/factory_bench/_bench_lib/cli.py", "scripts/factory_bench/_bench_lib/artifacts.py"],
+      "verification": "real FactStream/ledger failed-launch cases, bootstrap rejection, no verifier/QA/Factory invocation and no fake Factory ID; current runner177 PASS",
+      "status": "locally_verified_fresh_pending"
+    },
+    {
+      "id": "PUBLISHER-SDK-BOUNDARY",
+      "category": "platform_runtime_event_transport",
+      "symptom": "native NoServersError escapes retry and terminates publisher thread",
+      "root": "SDK exceptions do not inherit RuntimeError; native NotFound omitted; partial client unowned until complete setup",
+      "fix_files": ["polaris/infrastructure/log_pipeline/jetstream_publisher.py"],
+      "verification": "three added RED/GREEN regressions; publisher5 PASS with bounded retry and real SDK exception classes",
+      "status": "locally_verified_permanent_outage_unproven"
+    },
+    {
+      "id": "TEST-MIGRATION-ISOLATION",
+      "category": "engineering_validation_gap",
+      "symptom": "legacy unsplit tests patch wrong facade and start four real instances; split runnerb missing shared fixtures",
+      "fix": "restore split helper imports; preserve mandatory-tests/CE-topology semantics; subsequent component runs in private OS PID/network namespace",
+      "verification": "all four host test instances stopped and PIDsnull; current split suites PASS",
+      "status": "legacy_unsplit_suite_OPEN_22_failures_observed"
+    }
+  ],
+  "local_gates": {"startup_group_passed": 160, "runner_group_passed": 177, "ruff_files": 16, "mypy_files": 10, "diff_check_exit": 0},
+  "review": {"initial_status": "changes_required", "important_findings_fixed_with_RED_GREEN": 3, "additional_regression": "transient_existing_socket_close", "second_review": "not_run_inline_protocol_uses_covering_tests"},
+  "final_release": {"handle": 41391, "status": "terminal", "exit_code": 0, "stages": 12, "all_stage_exit_codes_zero": true, "passed": 354, "skipped": 1, "warnings": 2, "duration_seconds": 275.74, "nats_source_hash": "03261df2a719d1c0be492051d91777fb3fb74925e7f164684674b4a24fc8d895", "report": ".superpowers/sdd/2026-10-03-startup-readiness-and-failure-evidence/release-final-source.json"},
+  "fresh_probe": {"attempt": "r09", "runner_handle": 15688, "status": "terminal", "exit_code": 1, "duration_seconds": 69.2, "project": "L1-01", "factory_run_id": "factory_925f19bc355d", "work_dir": "/tmp/factory-bench-minimax-l1-01-20261003-r09", "runner_log": "/tmp/factory-bench-minimax-l1-01-20261003-r09.runner.log", "timeout_seconds": 5400, "outer_guard_seconds": 6000, "launcher_instance_mode": "isolated", "bench_session_reporting": "off", "backend_startup": "success", "nats_readiness_ms": 2127, "workspace_binding_match": true, "stale_since_startup": false, "backend_fingerprint": "6af5401aa46bbd0a", "PM": "passed", "CE": "failed_0_of_3", "Director": "not_reached", "QA": "not_reached", "source_files": 0, "observed_models": {"pm": "MiniMax-M3", "chief_engineer": "MiniMax-M3"}, "completion_verified": false},
+  "new_exact_root": {"id": "R09-CE-INAPPLICABLE-ARTIFACT-PATH", "error_code": "invalid_project_completion_contract", "raw_arguments_hash": "c4b0cef7a7406254ed2e66ef4da60e2c155991d8c999f9a09d280d501b3af304", "raw_output_source": "r09 runtime/runs/factory_925f19bc355d/logs/journal.raw.jsonl complete.payload.result.structured_output", "json_pointer": "/project_completion_contract/obligations/artifacts/13", "row": {"applicability": "not_applicable", "obligation_id": "ART-assets-extra", "owner_task_id": null, "path": "assets/", "semantic_role": "assets"}, "dynamic_replay": "ArtifactObligationV1(**exact_raw_row) reproduces ValueError: path must not contain empty, dot, or parent components; zero filesystem effects", "strict_gate": "correct_under_current_canonical_path_contract", "platform_recovery_gap": "untyped invalid_project_completion_contract is raised rather than routed to bounded typed local semantic repair; no authority widening or arbitrary row deletion allowed", "status": "OPEN_diagnosed_not_fixed"},
+  "unclosed": ["shared_NATS_lifetime_and_cross_process_startup_owner", "generic_runner_exception_without_physical_Factory_ID", "legacy_unsplit_runner_suite_migration", "permanent_publisher_outage", "historical_recovery_IO_delay", "fresh_bound_model_project_completion", "all_120_and_N_batch"],
+  "next_action": "Preserve failed r09 and valid PM; design/test generic typed artifact-shape diagnosis and local CE semantic repair for inactive directory-like paths. Do not loosen path/scope guards, strip unsafe paths globally, edit target, or start another paid full run before local closure."
+}

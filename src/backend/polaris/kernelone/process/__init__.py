@@ -20,7 +20,14 @@ from .contracts import (
     ShellDisallowedError,
     SubprocessCommandExecutor,
 )
-from .process_tree import isolated_process_group_kwargs, run_process_tree_safe, signal_process_tree
+from .process_tree import (
+    ProcessTreeCancelledError,
+    ProcessTreeDrainError,
+    ProcessTreeRunControl,
+    isolated_process_group_kwargs,
+    run_process_tree_safe,
+    signal_process_tree,
+)
 from .runtime_control import (
     clear_director_stop_flag,
     clear_stop_flag,
@@ -40,6 +47,9 @@ __all__ = [
     "ProcessInfo",
     "ProcessStatus",
     "ProcessStreamSource",
+    "ProcessTreeCancelledError",
+    "ProcessTreeDrainError",
+    "ProcessTreeRunControl",
     "ShellDisallowedError",
     "StreamChunk",
     "StreamResult",

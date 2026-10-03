@@ -377,6 +377,29 @@ class RoleContextGateway:
                 "state_first_context_os_projection" if has_snapshot else "state_first_context_os_initial_projection"
             )
 
+        # Anchor the actual sanitized request, not whichever user happens to be
+        # last after supplemental/fallback history is appended. Empty inputs do
+        # not promote historical users into protected current instructions.
+        current_instruction = None
+        current_instruction_tokens = 0
+        sanitized_current = self._security.sanitize_user_message(
+            request.message, detect_injection=self._config.detect_prompt_injection
+        )
+        if sanitized_current:
+            current_instruction = {"role": "user", "content": sanitized_current}
+            if messages and messages[-1].get("role") == "user" and messages[-1].get("content") == sanitized_current:
+                current_instruction = messages.pop()
+            current_instruction_tokens = self._token_estimator.estimate([current_instruction])
+            if current_instruction_tokens > enforcement_budget_tokens:
+                raise BudgetExceededError(
+                    "current user instruction exceeds context enforcement budget",
+                    limit=enforcement_budget_tokens,
+                    requested=current_instruction_tokens,
+                    current=enforcement_budget_tokens,
+                    suggestion="reduce the current payload or use a larger context window; partial instructions are refused",
+                )
+        compression_budget_tokens = enforcement_budget_tokens - current_instruction_tokens
+
         # ── Fallback: Include tool messages from history when not in state-first mode ──
         if not state_first_mode_active and not has_snapshot and request.history:
             history_tool_messages = self._override_processor.extract_tool_messages_from_history(request.history)
@@ -411,7 +434,7 @@ class RoleContextGateway:
 
         # ── ContextOS routing audit telemetry ──
         raw_history_tokens = self._token_estimator.estimate(proj_input)
-        projected_tokens = self._token_estimator.estimate(messages)
+        projected_tokens = self._token_estimator.estimate(messages) + current_instruction_tokens
         route_counts: dict[str, int] = {}
         active_window_size = 0
         if _projection is not None:
@@ -425,14 +448,18 @@ class RoleContextGateway:
             budget_plan = _projection.snapshot.budget_plan
             if budget_plan is not None and budget_plan.validation_error:
                 logger.warning("BudgetPlan validation error: %s", budget_plan.validation_error)
-                messages = self._compression_engine.emergency_truncate(messages, max_tokens=enforcement_budget_tokens)
+                messages = self._compression_engine.emergency_truncate(
+                    messages,
+                    max_tokens=compression_budget_tokens,
+                    preserve_final_user=current_instruction is None,
+                )
                 sources.append("budget_violation_emergency_truncate")
 
         # 6. 估算token数
         token_estimate = self._token_estimator.estimate(messages)
-        original_token_estimate = token_estimate
+        original_token_estimate = token_estimate + current_instruction_tokens
         compression_applied = False
-        budget_pressure_detected = token_estimate > effective_context_budget_tokens
+        budget_pressure_detected = original_token_estimate > effective_context_budget_tokens
         context_decision_hints = {
             "source": "roles.kernel.context_gateway",
             "budget_pressure": bool(budget_pressure_detected),
@@ -441,12 +468,12 @@ class RoleContextGateway:
         }
 
         # 7. 应用统一压缩策略（预算 = min(角色策略, 模型窗口×0.85) − system prompt 预留）
-        if token_estimate > enforcement_budget_tokens:
+        if token_estimate > compression_budget_tokens:
             if state_first_mode_active:
                 messages, token_estimate = self._compression_engine.emergency_truncate_with_limit(
-                    messages, enforcement_budget_tokens
+                    messages, compression_budget_tokens, preserve_final_user=current_instruction is None
                 )
-                compression_applied = token_estimate <= enforcement_budget_tokens
+                compression_applied = token_estimate <= compression_budget_tokens
             elif not state_first_mode_active:
                 messages, token_estimate = self._compression_engine.apply_compression(messages, token_estimate)
                 compression_applied = True
@@ -458,11 +485,15 @@ class RoleContextGateway:
         # the turn before any write. Force the assembly under
         # enforcement_budget_tokens — which already reserves the role system_prompt
         # inserted just below — by truncating the oversized system planes.
-        if token_estimate > enforcement_budget_tokens:
+        if token_estimate > compression_budget_tokens:
             messages, token_estimate = self._compression_engine.emergency_truncate_with_limit(
-                messages, enforcement_budget_tokens
+                messages, compression_budget_tokens, preserve_final_user=current_instruction is None
             )
             compression_applied = True
+
+        if current_instruction is not None:
+            messages.append(current_instruction)
+            token_estimate += current_instruction_tokens
 
         # ADR-0090 I4.3: the role system prompt is prepended HERE, post-enforcement
         # and pre-budgeted — callers must not run a second projection to inject it.

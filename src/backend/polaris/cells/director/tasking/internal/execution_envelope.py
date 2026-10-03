@@ -18,9 +18,14 @@ from polaris.cells.director.tasking.public.contracts import (
     TaskExecutionProfileV1,
     TaskExecutionStrategyV1,
 )
+from polaris.kernelone.quality.scope_authority import (
+    normalize_declared_scope_path,
+    path_matches_any_declared_scope_candidate,
+)
 
 _MISSING_PREFIX = "missing:"
 _DEFAULT_POLICY_VERSION = "director.execution_envelope.v1"
+_EXECUTION_ENVELOPE_KEYS = ("execution_envelope", "task_execution_envelope", "director_execution_envelope")
 
 
 def _utc_now() -> str:
@@ -103,11 +108,12 @@ def _allowed_paths(
         _string_list(metadata.get("scope_paths")) or _string_list(token.get("scope_paths")) or list(profile.scope_paths)
     )
     context_files = _string_list(metadata.get("context_files")) or _string_list(token.get("context_files"))
-    allowed_write_paths = (
-        _string_list(metadata.get("allowed_write_paths"))
-        or _string_list(token.get("allowed_write_paths"))
-        or list(target_files)
-    )
+    if "allowed_write_paths" in metadata:
+        allowed_write_paths = _string_list(metadata["allowed_write_paths"])
+    elif "allowed_write_paths" in token:
+        allowed_write_paths = _string_list(token["allowed_write_paths"])
+    else:
+        allowed_write_paths = list(target_files)
     legacy_read_paths = _string_list(token.get("allowed_paths"))
     allowed_read_paths = (
         _string_list(metadata.get("allowed_read_paths"))
@@ -119,6 +125,88 @@ def _allowed_paths(
 
 def _allowed_commands(*, metadata: Mapping[str, Any], token: Mapping[str, Any]) -> list[str]:
     return _string_list(metadata.get("allowed_commands")) or _string_list(token.get("allowed_commands"))
+
+
+def collect_admitted_execution_envelopes(*sources: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    """Capture existing admission constraints before aliases/metadata are merged."""
+    envelopes: list[Mapping[str, Any]] = []
+    for source in sources:
+        for key in _EXECUTION_ENVELOPE_KEYS:
+            if key not in source:
+                continue
+            envelope = source[key]
+            if not isinstance(envelope, Mapping) or (key == "execution_envelope" and "authorization" not in envelope):
+                raise ValueError("director_execution_envelope_admission_invalid")
+            envelopes.append(envelope)
+    return tuple(envelopes)
+
+
+def _admitted_scope_list(value: Any, *, paths: bool) -> list[str]:
+    if not isinstance(value, (list, tuple)) or any(type(item) is not str for item in value):
+        raise ValueError("director_execution_envelope_admission_invalid")
+    rows: list[str] = []
+    for item in value:
+        token = item.strip().replace("\\", "/") if paths else item.strip()
+        if paths:
+            if token.startswith(("/", "~")) or ":" in token or ".." in token.split("/"):
+                raise ValueError("director_execution_envelope_admission_invalid")
+            token = normalize_declared_scope_path(token)
+        if not token:
+            raise ValueError("director_execution_envelope_admission_invalid")
+        if token not in rows:
+            rows.append(token)
+    return rows
+
+
+def _intersect_admitted_paths(current: list[str], admitted: list[str]) -> list[str]:
+    if not current or not admitted:
+        return []
+    # Exact glob equality is provable; arbitrary glob-language containment is
+    # not. Literal candidates use the shared KernelOne scope matcher. Never
+    # construct a new wildcard or broaden a scope to keep an inventory target.
+    return [
+        candidate
+        for candidate in dict.fromkeys([*current, *admitted])
+        if (
+            candidate in current and candidate in admitted
+            if any(char in candidate for char in "*?[")
+            else path_matches_any_declared_scope_candidate(candidate, current)
+            and path_matches_any_declared_scope_candidate(candidate, admitted)
+        )
+    ]
+
+
+def _constrain_admitted_authorization(
+    authorization: dict[str, Any], envelopes: tuple[Mapping[str, Any], ...]
+) -> dict[str, Any]:
+    constrained = dict(authorization)
+    required: list[str] = []
+    for envelope in envelopes:
+        # Budget-only compatibility hints do not carry an authorization grant.
+        if "authorization" not in envelope:
+            continue
+        admitted = envelope["authorization"]
+        if not isinstance(admitted, Mapping) or "allowed_write_paths" not in admitted:
+            raise ValueError("director_execution_envelope_admission_invalid")
+        for key in ("allowed_write_paths", "allowed_read_paths", "allowed_commands"):
+            if key not in admitted:
+                continue
+            paths = key != "allowed_commands"
+            ceiling = _admitted_scope_list(admitted[key], paths=paths)
+            current = _string_list(constrained.get(key))
+            constrained[key] = (
+                _intersect_admitted_paths(current, ceiling)
+                if paths
+                else [command for command in current if command in ceiling]
+            )
+        if "required_write_targets" in admitted:
+            required.extend(_admitted_scope_list(admitted["required_write_targets"], paths=True))
+    if required:
+        writes = _string_list(constrained.get("allowed_write_paths"))
+        if any(not path_matches_any_declared_scope_candidate(path, writes) for path in required):
+            raise ValueError("director_execution_envelope_admission_conflict")
+        constrained["required_write_targets"] = list(dict.fromkeys(required))
+    return constrained
 
 
 def build_execution_envelope(
@@ -133,6 +221,7 @@ def build_execution_envelope(
     metadata: Mapping[str, Any] | None = None,
     created_at: str | None = None,
     policy_version: str = _DEFAULT_POLICY_VERSION,
+    admitted_envelopes: tuple[Mapping[str, Any], ...] = (),
 ) -> ExecutionEnvelopeV1:
     """Build a hashable `polaris.execution_envelope.v1` payload."""
 
@@ -213,6 +302,10 @@ def build_execution_envelope(
         "capability_token_ref": str(token.get("token_id") or "").strip(),
         "capability_token_hash": stable_hash(token) if token else f"{_MISSING_PREFIX}capability_token",
     }
+    authorization = _constrain_admitted_authorization(
+        authorization,
+        (*admitted_envelopes, *collect_admitted_execution_envelopes(normalized_metadata)),
+    )
     model_policy = {
         "provider": _string_value(normalized_metadata, "provider", "provider_id"),
         "model": _string_value(normalized_metadata, "model", "model_id", default="missing:model"),
@@ -257,7 +350,7 @@ def build_execution_envelope(
         "expires_at": _string_value(normalized_metadata, "execution_envelope_expires_at"),
         "policy_version": policy_version,
     }
-    payload_without_hash = {
+    payload_without_hash: dict[str, Any] = {
         "schema_version": "polaris.execution_envelope.v1",
         "run_id": run_id,
         "task_id": task_id,

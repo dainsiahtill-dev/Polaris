@@ -16,6 +16,8 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+from nats.errors import Error as NATSError
+from nats.js.errors import NotFoundError
 from polaris.infrastructure.messaging.nats.client import NATSClient, NATSPayloadTooLargeError
 from polaris.infrastructure.messaging.nats.nats_types import JetStreamConstants
 
@@ -165,13 +167,12 @@ class JetStreamPublisher:
                 last_error = RuntimeError("publish returned False")
             except NATSPayloadTooLargeError as exc:
                 logger.error(
-                    "P0: JetStream publish rejected deterministic oversized payload; "
-                    "subject=%s error=%s",
+                    "P0: JetStream publish rejected deterministic oversized payload; subject=%s error=%s",
                     request.subject,
                     exc,
                 )
                 return
-            except (RuntimeError, ValueError) as exc:
+            except (NATSError, OSError, RuntimeError, ValueError) as exc:
                 last_error = exc
                 logger.warning(
                     "JetStream publish attempt %s/%s failed for %s: %s",
@@ -203,9 +204,11 @@ class JetStreamPublisher:
             await self._reset_client()
 
         client = NATSClient()
+        # Own the client before connection/stream initialization so a failed
+        # partial setup can be closed by the same bounded retry path.
+        self._client = client
         await client.connect()
         await self._ensure_runtime_stream(client)
-        self._client = client
         return client
 
     async def _reset_client(self) -> None:
@@ -215,7 +218,7 @@ class JetStreamPublisher:
             return
         try:
             await client.disconnect()
-        except (RuntimeError, ValueError):
+        except (NATSError, OSError, RuntimeError, ValueError):
             logger.debug("Failed to close JetStream publisher client", exc_info=True)
 
     async def _ensure_runtime_stream(self, client: NATSClient) -> None:
@@ -227,7 +230,7 @@ class JetStreamPublisher:
 
         try:
             await jetstream.stream_info(JetStreamConstants.STREAM_NAME)
-        except (OSError, RuntimeError, ValueError):
+        except NotFoundError:
             await jetstream.add_stream(
                 StreamConfig(
                     name=JetStreamConstants.STREAM_NAME,

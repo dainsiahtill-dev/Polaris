@@ -208,12 +208,12 @@ class TestKernelAuditRuntimeEmitEvent:
         assert result.event_id is not None
         assert len(mock_store._events) == 1
 
-    def test_emit_full_event(self, runtime: KernelAuditRuntime, mock_store: MockAuditStore) -> None:
+    def test_emit_full_event(self, runtime: KernelAuditRuntime, mock_store: MockAuditStore, tmp_path: Path) -> None:
         """Test emitting event with all fields."""
         result = runtime.emit_event(
             event_type=KernelAuditEventType.TOOL_EXECUTION,
             role="director",
-            workspace="/workspace/project",
+            workspace=str(tmp_path),
             task_id="task-abc",
             run_id="run-xyz",
             trace_id="trace-123",
@@ -225,6 +225,7 @@ class TestKernelAuditRuntimeEmitEvent:
         assert result.success is True
         assert result.event_id is not None
         assert len(mock_store._events) == 1
+        assert result.evidence_paths and all(Path(path).is_file() for path in result.evidence_paths)
 
         event = mock_store._events[0]
         assert event.event_type == KernelAuditEventType.TOOL_EXECUTION

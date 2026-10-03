@@ -280,7 +280,7 @@ def _resolve_polaris_home(env: Mapping[str, str] | None = None) -> Path:
        use it directly; otherwise append ``.polaris``.
     2. ``~/.polaris`` (platform home).
     """
-    active_env = env or os.environ
+    active_env = os.environ if env is None else env
     home_override = str(active_env.get("KERNELONE_HOME") or "").strip()
     if home_override:
         expanded = Path(home_override).expanduser().resolve()

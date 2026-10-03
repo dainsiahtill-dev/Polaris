@@ -1,0 +1,33 @@
+id: vc-20261001-call-fact-freeze-order
+classification: pattern
+owner: roles.kernel
+status: live_budget_parity_verified_project_incomplete
+blueprint: ../../../blueprints/POLARIS_CALL_FACT_FREEZE_ORDER_20261001.md
+assumptions:
+  - claim: Tool planning changes budget after kernel facts were copied.
+    evidence: transaction_turn_executor -> transaction_factory -> invocation_setup order; physical128000.
+  - claim: Earlier authority validation may be removed safely.
+    evidence: False; preserve early validation and final freshness recheck.
+  - claim: Propagation fix alone proves all timeout/quality issues solved.
+    evidence: Not proven; actual role and fresh project verification required.
+pre_mortem:
+  - Context assembly precedes stale-authority rejection.
+  - Kernel freeze moves but streaming still retains old order.
+  - Output floor or retry re-expands a governed ceiling.
+verification:
+  - Actual invocation order RED/GREEN, both modes.
+  - Zero effects on missing/stale authority.
+  - Final request preparation budget and unchanged caller identity.
+target_project_manual_edit: forbidden
+results:
+  actual_nonstream_order: RED128000_then_GREEN7000
+  streaming_preparation: GREEN7000
+  authority_context_race: denied_before_provider_dependency
+  initial_related_suite: 228_passed
+  latest_related_suite: 229_passed
+  cascade: 9_of_9_passed
+  ruff_mypy: pass
+  fresh_bench: not_run
+  live_semantic_max_tokens: 7000
+  live_retry_physical_max_tokens: 8000
+  live_residual: reasoning_truncated_length_zero_visible_output_zero_tools

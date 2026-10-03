@@ -15,6 +15,7 @@ import os
 import re
 import shlex
 import time
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
 
@@ -23,12 +24,14 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
+from polaris.kernelone.audit.task_write_guidance import project_task_write_guidance
 from polaris.kernelone.quality import (
     artifact_quality_issue_raw,
     artifact_quality_issues_for_errors,
     artifact_quality_issues_from_errors,
     build_scope_authority_decision,
     partition_paths_by_declared_scope,
+    path_matches_any_declared_scope_candidate,
     scope_authority_decision_summary,
 )
 
@@ -1482,7 +1485,61 @@ def _single_file_step_target(source: Any) -> str:
     return target.removeprefix("./")
 
 
+def _task_admitted_write_envelopes(task: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Validate every admitted source; only equivalent scope constraints deduplicate."""
+
+    values: list[Any] = []
+    retained = task.get("_quality_repair_admitted_write_envelopes")
+    if retained is not None:
+        if not isinstance(retained, (list, tuple)) or not retained:
+            raise ValueError("quality_repair_admitted_scope_view_invalid")
+        values.extend(retained)
+    metadata = task.get("metadata")
+    for source in (task, metadata if isinstance(metadata, Mapping) else {}):
+        for key in ("director_execution_envelope", "task_execution_envelope", "execution_envelope"):
+            if key in source:
+                values.append(source[key])
+    envelopes: list[Mapping[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    for envelope in values:
+        if not isinstance(envelope, Mapping):
+            raise ValueError("task_write_guidance_envelope_invalid")
+        project_task_write_guidance(envelope, [])
+        authorization = cast(Mapping[str, Any], envelope["authorization"])
+        allowed = cast(list[str] | tuple[str, ...], authorization["allowed_write_paths"])
+        signature = tuple(sorted(_normalize_declared_task_path(path).casefold() for path in allowed))
+        if signature not in seen:
+            seen.add(signature)
+            envelopes.append(envelope)
+    return envelopes
+
+
+def _task_admitted_write_envelope(task: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    envelopes = _task_admitted_write_envelopes(task)
+    return envelopes[0] if envelopes else None
+
+
+def _repair_task_with_admitted_write_scope(task: dict[str, Any], context: Mapping[str, Any]) -> dict[str, Any]:
+    """Derive a call-local task view; never rewrite the task contract or context."""
+
+    envelopes = [*_task_admitted_write_envelopes(task), *_task_admitted_write_envelopes(context)]
+    if not envelopes:
+        return task  # Existing non-authoritative legacy fixtures retain their scope hints.
+    scoped_task = dict(task)
+    # This non-authoritative view preserves the sources; it never creates a
+    # replacement envelope or lets the caller widen the claimed task's scope.
+    scoped_task["_quality_repair_admitted_write_envelopes"] = tuple(deepcopy(dict(value)) for value in envelopes)
+    return scoped_task
+
+
 def _task_write_scope_candidates(task: dict[str, Any], *, workspace_name: str = "") -> list[str]:
+    envelopes = _task_admitted_write_envelopes(task)
+    if envelopes:
+        hints = list(_extract_task_target_path_candidates(task))
+        for envelope in envelopes:
+            authorization = cast(Mapping[str, Any], envelope["authorization"])
+            hints.extend(cast(list[str] | tuple[str, ...], authorization["allowed_write_paths"]))
+        return _partition_paths_by_task_write_scope(hints, task=task, workspace_name=workspace_name)[0]
     return _dedupe_preserve_order(
         [
             normalized
@@ -1498,9 +1555,9 @@ def _task_write_scope_candidates(task: dict[str, Any], *, workspace_name: str = 
 
 
 def _path_within_task_write_scope(path: str, *, task: dict[str, Any], workspace_name: str = "") -> bool:
-    in_scope, _out_of_scope = partition_paths_by_declared_scope(
+    in_scope, _out_of_scope = _partition_paths_by_task_write_scope(
         [path],
-        _task_write_scope_candidates(task, workspace_name=workspace_name),
+        task=task,
         workspace_name=workspace_name,
     )
     return bool(in_scope)
@@ -1512,6 +1569,27 @@ def _partition_paths_by_task_write_scope(
     task: dict[str, Any],
     workspace_name: str = "",
 ) -> tuple[list[str], list[str]]:
+    envelopes = _task_admitted_write_envelopes(task)
+    if envelopes:
+        normalized_paths = _dedupe_preserve_order(
+            [
+                normalized
+                for path in paths
+                if (normalized := _normalize_declared_task_path(path, workspace_name=workspace_name))
+            ]
+        )
+        scopes = [
+            cast(list[str] | tuple[str, ...], cast(Mapping[str, Any], envelope["authorization"])["allowed_write_paths"])
+            for envelope in envelopes
+        ]
+        allowed: list[str] = []
+        denied: list[str] = []
+        for path in normalized_paths:
+            if all(path_matches_any_declared_scope_candidate(path, scope) for scope in scopes):
+                allowed.append(path)
+            else:
+                denied.append(path)
+        return allowed, denied
     in_scope, out_of_scope = partition_paths_by_declared_scope(
         _dedupe_preserve_order(paths),
         _task_write_scope_candidates(task, workspace_name=workspace_name),

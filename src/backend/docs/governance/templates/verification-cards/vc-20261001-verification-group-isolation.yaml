@@ -1,0 +1,48 @@
+id: vc-20261001-verification-group-isolation
+classification: structural
+owner: factory.pipeline
+status: task_one_interface_confirmed_implementation_in_progress
+blueprint: ../../../blueprints/POLARIS_VERIFICATION_GROUP_ISOLATION_20261001.md
+assumptions:
+  - claim: source-file rollback restores complete verification state.
+    evidence: False; real rejected tsc candidate left JS/declaration/map outputs.
+  - claim: current broker sandbox prevents derived-output pollution.
+    evidence: False; live workspace RW bind remains; explicit inputs alone are RO overlays.
+  - claim: existing Cargo copy sandbox is reusable mechanism.
+    evidence: source read and bwrap binary present; group/toolchain integration still requires tests.
+  - claim: current artifact receipt queries survive a failed repair epoch.
+    evidence: False; live read-only CE query passes but six TASK1 current receipt queries return None.
+pre_mortem:
+  - Unknown emitted JS included as fresh source.
+  - Copy-per-command discards build output needed by tests.
+  - Cancellation disposes copy while descendants survive.
+  - Clone pass promoted without matching live candidate source hash.
+verification:
+  - Real failed compiler emits only inside isolated group.
+  - Source authority and path/hash correspondence; drift/root/symlink negative.
+  - Shared build/test/start outputs; new candidate clean group.
+  - Process-tree timeout/cancel/drain before disposal.
+  - Failure receipts remain failed not missing; no fake seals or target cleanup.
+  - Historical source baseline is authenticated, byte-current and readonly; current receipt remains invalidated after epoch changes.
+  - Missing database/key are not created by a baseline query.
+  - Native DEO empty map/sequence kinds survive result projection and retain exact physical hash.
+implementation_bucket:
+  - focused_internal_native_validation_group
+  - owner_tests
+constraints:
+  - no_Cargo_rewrite
+  - input_hashes_are_read_constraints_not_authority
+  - observational_drained_bool_never_authorizes_disposal
+  - no_temp_finalizer_cleanup_before_physical_terminal_proof
+process_owner_task:
+  status: implementation_in_progress
+  dynamic_before: cancelled_awaiter_returned_worker_alive_then_grandchild_late_write
+  dynamic_control_probe: group_signal_and_worker_drain_prevented_late_write
+  public_control: single_use_ProcessTreeRunControl_cancel_only
+  old_run_api: compatible_optional_cancel_control
+  required_cases:
+    - pre_spawn_zero_launch
+    - repeated_cancel
+    - parent_normal_exit_closeFD_grandchild_late_write
+    - TERM_ignore_KILL_drain
+    - unproven_drain_retains_stage

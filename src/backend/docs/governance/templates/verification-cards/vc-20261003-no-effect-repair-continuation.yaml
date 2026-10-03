@@ -1,0 +1,18 @@
+id: vc-20261003-no-effect-repair-continuation
+classification: pattern
+owner: factory.pipeline
+evidence_run: factory_31d7535627e3
+status: red_test_pending
+assumptions:
+  - Empty repair results without a mutation claim are no-progress, not candidates.
+  - Positive mutation claims still require strict current persisted effect evidence.
+pre_mortem:
+  - Never skip candidate validation for claimed mutation with missing receipts.
+  - Never re-run unchanged verifiers or silently accept a no-op as progress.
+  - Never broaden target scope, discard a real failed command, or restart valid PM/CE.
+verification:
+  - Real Factory quality loop with CE baseline and bwrap failing verifier.
+  - Empty attempted owner settles failed and reaches existing bounded continuation.
+  - Claimed mutation without receipts remains candidate-not-qualified.
+  - Existing committed effect, rollback, registration and cancellation suites.
+  - Ruff, Mypy and fresh isolated project after local gates.

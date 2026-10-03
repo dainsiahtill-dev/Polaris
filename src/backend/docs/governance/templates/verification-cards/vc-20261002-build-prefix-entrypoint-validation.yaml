@@ -1,0 +1,25 @@
+id: build-prefix-entrypoint-validation-20261002
+classification: pattern
+owner: kernelone.quality
+status: local_verified_fresh_pending
+evidence:
+  run_id: factory_7244a26d3ae3
+  original_boundary_missing: tests/verify.test.mjs
+  later_stage_file_created_at: 2026-10-01T21:51:18.052031Z
+assumptions:
+  - Build command presence cannot prove arbitrary source or test files exist.
+  - Build-output deferral is not a successful verifier receipt.
+pre_mortem:
+  - Avoid comparing scanner and boundary facts from different epochs.
+  - Preserve legitimate dist output pre-build acceptance.
+verification:
+  - Direct package-script checker typed missing-source/test negative.
+  - Artifact evidence consumer retains missing target.
+  - Existing build-output positive tests.
+  - Quality and Director scope suites, Ruff, Mypy and independent review.
+fresh_bench_verified: false
+local_results:
+  regression: 3 RED to GREEN
+  quality_suite: 156 passed
+  independent_review: CLEAR; 31 in-memory checks passed
+  ruff_mypy: passed

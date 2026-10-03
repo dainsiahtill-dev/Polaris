@@ -69,7 +69,7 @@ def test_openai_chat_projection_is_endpoint_transport_and_body_exact() -> None:
     assert projection is not None
     assert projection.native_protocol == "openai_chat_completions"
     assert projection.exact_endpoint == "https://openai.test/v1/chat/completions"
-    assert projection.exact_transport_kind == "requests.post"
+    assert projection.exact_transport_kind == "aiohttp.ClientSession.post"
     assert projection.expected_body() == {
         "model": "model-1",
         "messages": [
@@ -88,7 +88,7 @@ def test_openai_chat_projection_is_endpoint_transport_and_body_exact() -> None:
         "mode": "invoke",
         "native_protocol": "openai_chat_completions",
         "exact_endpoint": "https://openai.test/v1/chat/completions",
-        "exact_transport_kind": "requests.post",
+        "exact_transport_kind": "aiohttp.ClientSession.post",
         "expected_body": projection.expected_body(),
     }
 

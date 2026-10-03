@@ -25,6 +25,8 @@ from typing import Any, Literal, cast
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.director.runtime.public import (
     DirectedEffectImmutableItemsV1,
+    DirectedEffectImmutableMapV1,
+    DirectedEffectImmutableSequenceV1,
     require_directed_effect_immutable_items,
 )
 from polaris.cells.roles.kernel.internal.directed_effect_lifecycle import (
@@ -531,6 +533,10 @@ class ToolBatchRuntime:
 
     @staticmethod
     def _thaw_directed_effect_value(value: object) -> object:
+        if isinstance(value, DirectedEffectImmutableMapV1):
+            return {key: ToolBatchRuntime._thaw_directed_effect_value(item) for key, item in value.items}
+        if isinstance(value, DirectedEffectImmutableSequenceV1):
+            return [ToolBatchRuntime._thaw_directed_effect_value(item) for item in value.items]
         items = getattr(value, "items", None)
         if isinstance(items, tuple):
             if all(isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) for item in items):

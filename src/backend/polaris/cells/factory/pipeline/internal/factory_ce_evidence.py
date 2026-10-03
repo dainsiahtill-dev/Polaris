@@ -313,6 +313,7 @@ def chief_engineer_portfolio_output_errors(
     *,
     task_ids: tuple[str, ...],
     authorized_artifact_obligation_ids: frozenset[str] | None = None,
+    effective_completion_obligation_ids: frozenset[str] | None = None,
 ) -> list[str]:
     """Validate the nested project-level CE output contract."""
 
@@ -466,6 +467,8 @@ def chief_engineer_portfolio_output_errors(
                         completion_cross_refs_valid = False
                         continue
                     completion_obligation_ids.add(obligation_id)
+            if completion_cross_refs_valid and effective_completion_obligation_ids is not None:
+                completion_obligation_ids = set(effective_completion_obligation_ids)
             if completion_cross_refs_valid:
                 for index, covered_ids in behavior_obligation_refs:
                     unknown_ids = sorted(set(covered_ids) - completion_obligation_ids)

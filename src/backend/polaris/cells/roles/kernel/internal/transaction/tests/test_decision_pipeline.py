@@ -238,6 +238,7 @@ def test_ensure_native_write_tool_batch_recovers_executable_batch_from_raw_calls
         decoder=decoder,
         turn_id="turn-r134",
         decision_metadata={"run_id": "director-r134", "task_id": "TASK-2", "role": "director"},
+        tool_definitions_present=True,
     )
     assert recovered["kind"] == TurnDecisionKind.TOOL_BATCH
     assert recovered["tool_batch"] is not None
@@ -270,6 +271,7 @@ def test_ensure_native_write_tool_batch_fail_closed_when_write_envelopes_unparse
             llm_response=response,
             decoder=TurnDecisionDecoder(),
             turn_id="turn-r134-drop",
+            tool_definitions_present=True,
             decision_metadata={
                 "run_id": "director-r134",
                 "task_id": "TASK-2",
@@ -307,8 +309,72 @@ def test_ensure_native_write_tool_batch_passthrough_when_batch_already_present()
         decoder=decoder,
         turn_id="turn-existing",
         decision_metadata={},
+        tool_definitions_present=True,
     )
     assert out is existing or out["kind"] == TurnDecisionKind.TOOL_BATCH
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("tool_name", ["read_file", "write_file"])
+def test_empty_tool_surface_rejects_existing_batch_before_passthrough(tool_name: str, streaming: bool) -> None:
+    """An already decoded batch is not permission to bypass the empty surface."""
+    response = RawLLMResponse(
+        content="",
+        model="gpt-test",
+        native_tool_calls=[
+            {
+                "id": "call-unexposed",
+                "type": "function",
+                "function": {"name": tool_name, "arguments": {"file": "a.txt", "content": "draft"}},
+            }
+        ],
+    )
+    decoder = TurnDecisionDecoder()
+    existing = decoder.recover_executable_tool_batch_decision(response, TurnId("turn-empty-surface"))
+    assert existing is not None
+    with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
+        ensure_native_write_tool_batch_or_fail(
+            decision=existing,
+            llm_response=response,
+            decoder=decoder,
+            turn_id="turn-empty-surface",
+            decision_metadata={},
+            tool_definitions_present=False,
+            streaming=streaming,
+        )
+
+
+def test_text_only_suppression_flag_cannot_hide_native_write() -> None:
+    response = RawLLMResponse(
+        content="draft",
+        model="gpt-test",
+        native_tool_calls=[
+            {
+                "id": "call-write",
+                "type": "function",
+                "function": {"name": "write_file", "arguments": {"file": "a.txt", "content": "draft"}},
+            }
+        ],
+    )
+    decision = TurnDecision(
+        turn_id=TurnId("turn-suppression-write"),
+        kind=TurnDecisionKind.FINAL_ANSWER,
+        visible_message="draft",
+        reasoning_summary=None,
+        tool_batch=None,
+        finalize_mode=FinalizeMode.NONE,
+        domain="document",
+        metadata={"suppressed_tool_batch_due_to_no_tools": True},
+    )
+    with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
+        ensure_native_write_tool_batch_or_fail(
+            decision=decision,
+            llm_response=response,
+            decoder=TurnDecisionDecoder(),
+            turn_id="turn-suppression-write",
+            decision_metadata={},
+            tool_definitions_present=False,
+        )
 
 
 def test_build_tool_dispatch_dropped_anomaly_builds_envelopes_from_raw_response() -> None:

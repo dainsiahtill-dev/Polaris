@@ -1,0 +1,21 @@
+id: release-kfs-boundary-20261003
+classification: pattern
+status: local_verified_final_release_running
+owners: [roles.adapters, kernelone.quality, kernelone.fs]
+evidence: release KFS guard rejects three actual direct-write source files
+assumptions:
+  - Candidate scratch and rollback writes still cross the existing filesystem boundary.
+pre_mortem:
+  - No baseline exemption, target edit or direct KernelOne-to-infrastructure dependency.
+verification:
+  - Actual KFS architecture guard RED/GREEN.
+  - Candidate rollback and compile/syntax behavior preserved.
+  - Ruff, Mypy, independent root inspection and integrated tests.
+results:
+  original_guard: 1 RED to GREEN; no baseline exception
+  behavior: 5 RED to GREEN, 3 prior PASS
+  independent_review: TestMain mutation masking reproduced by real Go; separate copies RED to GREEN
+  executor_suite: 442 passed in35.92s; one multiprocessing fork warning
+  root_verification: 37 integration/boundary passed plus1 real Go regression passed
+  ruff_mypy: passed
+fresh_verified: false

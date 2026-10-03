@@ -403,7 +403,7 @@ def _wire_request(gate: FinalProviderAttemptGate) -> dict[str, Any]:
         "endpoint": "https://example.test/v1/chat/completions",
         "headers": {},
         "body": _wire_body(gate),
-        "transport": {"kind": "requests.post", "timeout": 1},
+        "transport": {"kind": "aiohttp.ClientSession.post", "timeout": 1},
     }
 
 

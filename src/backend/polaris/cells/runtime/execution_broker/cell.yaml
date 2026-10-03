@@ -36,6 +36,7 @@ public_contracts:
   - GetExecutionProcessStatusQueryV1
   - GetManagedProcessReceiptQueryV1
   - QueryProjectArtifactReceiptV1
+  - QueryProjectArtifactSourceBaselineV1
   - QueryProjectVerificationReceiptV1
   - ResolveProjectArtifactAuthorityQueryV1
   - ResolveProjectVerificationAuthorityQueryV1
@@ -46,6 +47,7 @@ public_contracts:
   - ManagedProcessReceiptAppendResultV1
   - ManagedProcessReceiptRecordV1
   - ProjectArtifactReceiptV1
+  - ProjectArtifactSourceBaselineV1
   - ProjectArtifactExecutionAuthorityV1
   - ProjectVerificationCapabilityConsumptionV1
   - ProjectVerificationExecutionAuthorityV1
@@ -80,6 +82,7 @@ verification:
   - polaris/cells/runtime/execution_broker/tests/test_managed_process_ports.py
   - polaris/cells/runtime/execution_broker/tests/test_service.py
   - polaris/cells/runtime/execution_broker/tests/test_project_verification_receipts.py
+  - polaris/cells/runtime/execution_broker/tests/test_project_artifact_source_baseline.py
   - polaris/cells/runtime/execution_broker/tests/test_project_verification_sandbox.py
   gaps:
   - Legacy sync process callers still need full call-site migration to async-first

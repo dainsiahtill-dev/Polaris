@@ -66,3 +66,13 @@ Selective reprojection is also supported:
 - Serve as Director's optional projection execution backend through public
   contracts only; Director remains the caller and `factory.pipeline` remains the
   capability owner
+
+## Director repair settlement
+
+Stage settle continues an existing same-run CE-owned Director task. Typed
+repair plans describe effects but cannot mint permissions. Commit context
+consumes strict CE handoff and the original capability through Director tasking's
+public projection; absent or conflicting authority rejects before effects.
+Each successful owner effect refreshes project artifact evidence before another
+candidate or terminal close. Verifier failure and TaskBoundary failure remain
+failed, regardless of files or a completed execution session.

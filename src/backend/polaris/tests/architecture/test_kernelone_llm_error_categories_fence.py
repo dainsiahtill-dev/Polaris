@@ -35,7 +35,10 @@ def test_production_code_does_not_import_retired_llm_error_categories() -> None:
 
 def test_kernelone_errors_remains_canonical_error_owner() -> None:
     """The canonical error owner must expose ErrorCategory and classify_error."""
-    source = (KERNELONE_ROOT / "errors.py").read_text(encoding="utf-8")
+    from polaris.kernelone.errors import ErrorCategory, classify_error
 
-    assert "class ErrorCategory" in source
-    assert "def classify_error" in source
+    # errors is now a package. Assert the actual exported owners, not a retired
+    # single-file layout or source-text spelling.
+    assert ErrorCategory.__module__.startswith("polaris.kernelone.errors")
+    assert classify_error.__module__.startswith("polaris.kernelone.errors")
+    assert callable(classify_error)

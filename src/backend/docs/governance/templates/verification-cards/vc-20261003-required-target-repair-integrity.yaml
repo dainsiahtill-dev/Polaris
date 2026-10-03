@@ -1,0 +1,29 @@
+id: vc-20261003-required-target-repair-integrity
+classification: pattern
+owners: [roles.adapters]
+status: focused_reviewed_broader_owner_failures_release_fresh_open
+evidence:
+  run_id: factory_ff98377f48fd
+  physical_empty_edit_receipt: b44c0a0451492e79e1761d84b1e44009e31252d7800ca73b7e2f53277ce482f5
+  final_request_ref: 36d87236d2353f6486b2075e
+  direct_dynamic_replay: zero-byte index had no declared quality errors before fix; current fix returns typed empty target and repair path
+  tdd: 4 integrity RED then 6 GREEN; 2 prompt RED then 8 GREEN; 2 case RED then 10 GREEN
+  focused: 10 passed
+  other_affected: 166 passed terminalexit0
+  owner_suite: 44 passed/6 failed; same failures with memory-only empty-predicate disabled
+  ruff_mypy_diff: passed
+  current_release: pending after source changes
+  bounded_review: CLEAR; independent10passed; full case restoration/settlement not accepted
+assumptions:
+  - Final non-empty materialization gate remains unchanged; earlier repair must agree.
+  - Empty replacements can legitimately delete fragments and are not globally banned.
+  - Offered forced edit-only surface cannot satisfy unconditional read/append instructions.
+pre_mortem:
+  - Do not treat diagnostics disappearance after erasure as progress.
+  - Do not filter present_empty evidence just because is_file returns true.
+  - Do not expand owner scopes or mix sibling candidates.
+  - Do not equate local repair checks with whole fresh project completion.
+verification:
+  - Required target integrity and existing adapter/quality/candidate tests.
+  - Ruff/Mypy/diff and independent review.
+  - Owner-partitioned stage repair closure and final release before next fresh.

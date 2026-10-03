@@ -357,7 +357,7 @@ class FinalProviderAttemptGate:
             status = "completed"
             return result
         except BaseException as exc:
-            status = "cancelled" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "failed"
+            status = "cancelled" if isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)) else "failed"
             error = f"{type(exc).__name__}: {exc}"
             raise
         finally:

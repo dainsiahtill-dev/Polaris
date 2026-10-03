@@ -27,7 +27,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.kernel.stream_event_projection import StreamEventProjector
-from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
+from polaris.cells.roles.kernel.internal.kernel.transaction_factory import (
+    _resolve_directed_effect_composition,
+    create_transaction_kernel,
+)
 from polaris.cells.roles.kernel.internal.kernel.transaction_failure_projection import (
     build_tool_filter_conflict_result,
     build_transaction_exception_metadata,
@@ -87,14 +90,12 @@ class TransactionTurnExecutor:
         )
         directed_effect_runtime = getattr(self.kernel, "directed_effect_runtime", None)
         directed_effect_required = bool(getattr(self.kernel, "directed_effect_required", False))
-        if directed_effect_runtime is None and not directed_effect_required:
-            tk = create_transaction_kernel(self.kernel, role, profile, request)
-        else:
-            tk = create_transaction_kernel(
-                self.kernel,
-                role,
-                profile,
-                request,
+        if directed_effect_runtime is not None or directed_effect_required:
+            # Fail before ContextOS/provider-side preparation, but do not freeze
+            # request facts until tool planning has resolved the final budgets.
+            _resolve_directed_effect_composition(
+                kernel=self.kernel,
+                request=request,
                 directed_effect_runtime=directed_effect_runtime,
                 directed_effect_required=directed_effect_required,
             )
@@ -125,6 +126,20 @@ class TransactionTurnExecutor:
                 tool_surface=tool_surface,
                 context_gateway=context_gateway,
                 context_result=context_result,
+            )
+
+        # Construction revalidates fresh execution authority and snapshots the
+        # now-final tool/budget facts. No live facts are reread after that freeze.
+        if directed_effect_runtime is None and not directed_effect_required:
+            tk = create_transaction_kernel(self.kernel, role, profile, request)
+        else:
+            tk = create_transaction_kernel(
+                self.kernel,
+                role,
+                profile,
+                request,
+                directed_effect_runtime=directed_effect_runtime,
+                directed_effect_required=directed_effect_required,
             )
 
         try:
@@ -190,14 +205,10 @@ class TransactionTurnExecutor:
         )
         directed_effect_runtime = getattr(self.kernel, "directed_effect_runtime", None)
         directed_effect_required = bool(getattr(self.kernel, "directed_effect_required", False))
-        if directed_effect_runtime is None and not directed_effect_required:
-            tk = create_transaction_kernel(self.kernel, role, profile, request)
-        else:
-            tk = create_transaction_kernel(
-                self.kernel,
-                role,
-                profile,
-                request,
+        if directed_effect_runtime is not None or directed_effect_required:
+            _resolve_directed_effect_composition(
+                kernel=self.kernel,
+                request=request,
                 directed_effect_runtime=directed_effect_runtime,
                 directed_effect_required=directed_effect_required,
             )
@@ -231,6 +242,18 @@ class TransactionTurnExecutor:
                 uep_publisher=uep_publisher,
             )
             return
+
+        if directed_effect_runtime is None and not directed_effect_required:
+            tk = create_transaction_kernel(self.kernel, role, profile, request)
+        else:
+            tk = create_transaction_kernel(
+                self.kernel,
+                role,
+                profile,
+                request,
+                directed_effect_runtime=directed_effect_runtime,
+                directed_effect_required=directed_effect_required,
+            )
 
         event_projector = StreamEventProjector(
             kernel=self.kernel,

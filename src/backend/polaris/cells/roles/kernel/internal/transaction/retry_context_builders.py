@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -24,6 +25,7 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_latest_user_message,
 )
+from polaris.kernelone.audit.task_write_guidance import render_task_write_guidance
 
 
 def _extract_latest_assistant_message(context: list[dict]) -> str:
@@ -63,6 +65,46 @@ def _extract_authorized_scope_paths(context: list[dict], target_file_tokens: lis
     raw_context = "\n".join(str(item.get("content") or "") for item in context if isinstance(item, Mapping))
     scope_paths = extract_allowed_scope_paths_from_message(raw_context)
     return filter_scope_paths_for_explicit_targets(scope_paths, target_file_tokens)
+
+
+def _retry_write_guidance_pins(context: list[dict]) -> list[str]:
+    """Keep only safe guidance data, never reconstruct capability authority."""
+
+    pins: list[str] = []
+    fields = {"schema_version", "write_targets", "reference_only_targets", "inventory_is_not_write_authority"}
+    for message in context:
+        if not isinstance(message, Mapping) or message.get("role") != "system":
+            continue
+        for line in str(message.get("content") or "").splitlines():
+            prefix = next(
+                (prefix for prefix in ("task_write_guidance: ", "TASK WRITE GUIDANCE: ") if line.startswith(prefix)),
+                None,
+            )
+            if prefix is None or len(line) > 65536:
+                continue
+            try:
+                value = (
+                    ast.literal_eval(line[len(prefix) :])
+                    if prefix == "task_write_guidance: "
+                    else json.loads(line[len(prefix) :])
+                )
+            except (ValueError, TypeError, SyntaxError, RecursionError):
+                continue  # Invalid pins remain absent; the final request audit rejects them.
+            if (
+                type(value) is not dict
+                or set(value) != fields
+                or value.get("schema_version") != "task.write_guidance.v1"
+                or value.get("inventory_is_not_write_authority") is not True
+                or any(
+                    type(value.get(key)) is not list or any(type(path) is not str for path in value[key])
+                    for key in ("write_targets", "reference_only_targets")
+                )
+            ):
+                continue
+            pin = render_task_write_guidance(value)
+            if pin not in pins:
+                pins.append(pin)
+    return pins
 
 
 def build_contract_retry_context(
@@ -179,7 +221,8 @@ def build_contract_retry_context(
             "do not infer or switch to another Polaris role."
         )
     system_content_parts.extend([retry_mode_guard, *retry_lines])
-    retry_context: list[dict[str, str]] = [
+    system_content_parts.extend(_retry_write_guidance_pins(context))
+    retry_context: list[dict[str, Any]] = [
         {
             "role": "system",
             "content": "\n".join(system_content_parts),
@@ -193,7 +236,28 @@ def build_contract_retry_context(
                 + "\nKERNELONE_AUTHORIZED_SCOPE_PATHS: "
                 + json.dumps({"scope_paths": authorized_scope_paths}, ensure_ascii=False)
             )
-        retry_context.append({"role": "user", "content": user_content})
+        retry_message: dict[str, Any] = {"role": "user", "content": user_content}
+        current_user = next(
+            (
+                item
+                for item in reversed(context)
+                if isinstance(item, Mapping) and str(item.get("role") or "").strip().lower() == "user"
+            ),
+            {},
+        )
+        current_metadata = current_user.get("metadata")
+        preserved_contracts = {
+            key: dict(value)
+            for key in ("tool_contract", "platform_tool_contract")
+            if isinstance(current_metadata, Mapping) and isinstance((value := current_metadata.get(key)), Mapping)
+        }
+        if preserved_contracts:
+            retry_message["metadata"] = preserved_contracts
+        for key in ("tool_contract", "platform_tool_contract"):
+            value = current_user.get(key)
+            if isinstance(value, Mapping):
+                retry_message[key] = dict(value)
+        retry_context.append(retry_message)
     else:
         for item in context:
             if not isinstance(item, Mapping):

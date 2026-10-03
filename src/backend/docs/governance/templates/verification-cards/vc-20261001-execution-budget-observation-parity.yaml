@@ -1,0 +1,24 @@
+id: vc-20261001-execution-budget-observation-parity
+classification: pattern
+owner: director.tasking
+status: local_verified_live_pending
+blueprint: ../../../blueprints/POLARIS_EXECUTION_BUDGET_OBSERVATION_PARITY_20261001.md
+assumptions:
+  - claim: Bench observation metadata changes execution resources despite identical task contract.
+    evidence: CodeGraph resolve_director_execution_strategy and complexity bonus branch.
+  - claim: Observation tags cannot define production task semantics.
+    evidence: AGENTS Bench internal-only boundary; same input profile must have same policy.
+pre_mortem:
+  - Accidentally lower real task/evidence/verifier requirements.
+  - Claim policy parity proves latency root cause or runnable delivery.
+verification:
+  - Metamorphic observer-tag parity RED then GREEN.
+  - Large-task and repair budget/evidence regressions unchanged.
+  - Tasking owner, Ruff and Mypy.
+target_project_manual_edit: forbidden
+results:
+  red: 2_failed_observation_tags_changed_real_policy
+  focused: 40_passed
+  tasking_owner: 413_passed
+  ruff_mypy: pass
+  latency_root_cause: not_proven_by_this_policy_change

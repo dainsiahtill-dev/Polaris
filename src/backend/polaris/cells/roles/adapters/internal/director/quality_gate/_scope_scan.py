@@ -23,6 +23,7 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
+from polaris.kernelone.fs.materialization import materialized_file_paths
 from polaris.kernelone.quality import (
     artifact_quality_issue_raw,
     artifact_quality_issues_for_errors,
@@ -63,6 +64,7 @@ from ..task_scope_paths import (
     _workspace_path_exists_case_insensitive,
 )
 from ._package_ns import package_attr
+from ._prompt_and_targets import _manifest_causal_quality_repair_targets
 
 # Cross-module symbols (defined in sibling submodules). Bare annotations
 # satisfy mypy; package __init__._wire_cross_module_namespace injects
@@ -475,6 +477,17 @@ def _filter_missing_workspace_file_errors_to_task_write_scope(
         if not defer_candidates:
             retained.append(text)
             continue
+        manifest_targets, derived_targets = _manifest_causal_quality_repair_targets(
+            artifact_quality_errors=[text], workspace_full=workspace_full
+        )
+        admitted_manifests, _ = _partition_paths_by_task_write_scope(
+            manifest_targets, task=task, workspace_name=workspace_name
+        )
+        if admitted_manifests and all(target in derived_targets for target in defer_candidates):
+            # Preserve the real diagnostic for the manifest owner; neither
+            # the error nor a TS peer grants writes to the missing JS artifact.
+            retained.append(text)
+            continue
         in_scope, out_of_scope = _partition_paths_by_task_write_scope(
             defer_candidates,
             task=task,
@@ -733,7 +746,7 @@ def _is_node_runtime_source_path(path: str) -> bool:
     return Path(normalized).suffix in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 
 
-def _case_insensitive_file_match(target_path: Path) -> bool:
+def _case_insensitive_file_match(target_path: Path, *, require_materialized: bool = False) -> bool:
     """Return True when a sibling file matches ``target_path``'s name ignoring case.
 
     PM/CE often declare a target with different casing than the file the
@@ -749,7 +762,12 @@ def _case_insensitive_file_match(target_path: Path) -> bool:
     if not name_lower:
         return False
     try:
-        return any(entry.name.lower() == name_lower and entry.is_file() for entry in target_path.parent.iterdir())
+        return any(
+            entry.name.lower() == name_lower
+            and entry.is_file()
+            and (not require_materialized or materialized_file_paths(target_path.parent, [entry.name])[0])
+            for entry in target_path.parent.iterdir()
+        )
     except (FileNotFoundError, NotADirectoryError, PermissionError, OSError):
         return False
 
@@ -794,19 +812,27 @@ def _declared_target_file_quality_findings(
             continue
         if not Path(normalized).suffix:
             continue
-        if not target_path.is_file() and not _case_insensitive_file_match(target_path):
-            raw_error = f"Artifact quality scan failed: declared target file missing {normalized!r}"
+        is_file = target_path.is_file()
+        case_match = not is_file and _case_insensitive_file_match(target_path)
+        missing = not is_file and not case_match
+        empty = (is_file and not materialized_file_paths(workspace_path, [normalized])[0]) or (
+            case_match and not _case_insensitive_file_match(target_path, require_materialized=True)
+        )
+        if missing or empty:
+            state = "empty" if empty else "missing"
+            raw_error = f"Artifact quality scan failed: declared target file {state} {normalized!r}"
             errors.append(raw_error)
             issues.append(
                 {
-                    "code": "declared_target_missing",
-                    "message": f"declared target file missing {normalized!r}",
+                    "code": f"declared_target_{state}",
+                    "message": f"declared target file {state} {normalized!r}",
                     "path": normalized,
                     "severity": "error",
                     "source": "declared_target_contract",
                     "metadata": {
                         "raw": raw_error,
                         "declared_target_path": normalized,
+                        "materialization_state": "present_empty" if empty else "absent",
                     },
                 }
             )

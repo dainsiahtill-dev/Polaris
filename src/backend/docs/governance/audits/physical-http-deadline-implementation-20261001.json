@@ -1,0 +1,64 @@
+{
+  "schema_version": "polaris.engineering_defect_manifest.v1",
+  "record_kind": "external_engineering_audit",
+  "authoritative_platform_state": false,
+  "defect": "logical_timeout_does_not_stop_sync_physical_http",
+  "classification": "structural",
+  "authorization": "user approved direct implementation and acceptance under master plan",
+  "status": "local_verified_live_deadline_and_drain_verified_project_failed",
+  "historical_evidence": {"logical_timeout_seconds": 660, "physical_http_ms": 852020, "trace_id": "http-72eabacba0"},
+  "implementation": [
+    "KernelOne ephemeral monotonic invocation budget and cancellation callbacks",
+    "budget copied into worker context; nested deadline only narrows",
+    "bounded aiohttp nonstream I/O with unchanged sync response surface",
+    "same budget stops retry/backoff after caller timeout or cancellation",
+    "truthful native projection and wire transport type",
+    "strict physical attempt terminal/drain; no cancellation-as-success"
+  ],
+  "verification": {
+    "real_http_initial_red": "2failed1pass",
+    "real_http_and_budget_final": "15pass",
+    "native_gate_core": "185pass_2historical_deprecation_warnings",
+    "expanded_provider_stream_context": "302pass",
+    "cascade": "9of9pass",
+    "ruff": "pass",
+    "mypy": "5production_files_pass",
+    "scope": "local components and regression; not fresh project or full release qualification"
+  },
+  "baseline_repairs": [
+    "obsolete requests.post mocks moved to actual raw-I/O seam; assertions retained",
+    "old removed async helper test import moved to existing shared gate helper; no legacy shim"
+  ],
+  "live_attempt": {
+    "factory_run_id": "factory_9aa169804636",
+    "mode": "same_run_Director_only",
+    "pm_ce_and_siblings_preserved": true,
+    "candidate_fingerprint": "6b2fe9505b8368eb",
+    "context_ref": "c7d9f654585e79be18009158",
+    "call_id": "a4b06935a50f4ef38717090559d4c6d4",
+    "actual_client": "aiohttp",
+    "actual_total_timeout_seconds": 659.7346559839789,
+    "response_headers": "200_after8406ms_body_deferred_not_success",
+    "role_identity_ok": true,
+    "required_ref_coverage": 1.0,
+    "final_request_estimate_tokens": 20109,
+    "result": "failed_model_provider_timeout660_physical_drained_terminal03:32:07Z",
+    "error_context_ref": "887c66eb636cb0d36d3946c0",
+    "physical_attempt_inflight_counts": [0, 0, 0],
+    "late_effects": 0,
+    "new_files": 0,
+    "modified_files": 0,
+    "sibling_tasks_reused_completed": [19, 20],
+    "failed_owner_task": 21,
+    "project_completed_verified": false,
+    "fresh_qualification": false
+  },
+  "target_project_manually_edited": false,
+  "main_ports_touched": false,
+  "remaining": [
+    "output and model latency budget feasibility",
+    "safe reuse of retained non-authoritative failed native candidate under new authority, not stale batch replay",
+    "full P01/P02/P03/P04 and other planned packages",
+    "fresh sequential L1-L12 plus N-batch qualification"
+  ]
+}

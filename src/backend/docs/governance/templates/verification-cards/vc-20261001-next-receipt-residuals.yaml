@@ -1,0 +1,32 @@
+id: vc-20261001-next-receipt-residuals
+classification: pattern
+status: local_verified_independent_review_pass_live_recovery_pending
+owners:
+  - kernelone.audit
+  - roles.adapters
+blueprints:
+  - ../../../blueprints/POLARIS_DEADLINE_PROMPT_ISOLATION_20261001.md
+  - ../../../blueprints/POLARIS_MISSING_TEST_MANIFEST_OWNER_ROUTING_20261001.md
+assumptions:
+  - claim: control-plane hit is a tool-parameter false positive.
+    evidence: False; exact system message contains runtime deadline fields.
+  - claim: missing compiled test path is a declared source owner.
+    evidence: False; CE owner maps package to TASK1 and authored TS test to TASK3.
+pre_mortem:
+  - Delete runtime deadline instead of sanitizing model prompt.
+  - Trust overlapping PM inventory as write authority.
+  - Invent test stub or widen scope to silence verifier.
+verification:
+  - Renderer and unchanged audit exact three-control-key RED/GREEN.
+  - Causal manifest candidate under actual admitted owner scope RED/GREEN.
+  - Strict negative scope/audit cases; no target or runtime manual writes.
+  - Independent review and same-run QA recovery before closure.
+results:
+  control_taxonomy: exact_RED_GREEN_and_181_parent_related_tests_independent_review_passed
+  control_runtime_constraints: unchanged
+  manifest_causal: 18_new_and_188_related_parent49_independent28_passed
+  manifest_kfs_read_port: public_workspace_read_utf8_registered_adapter_no_fallback_root_guard_verified
+  latest_manifest_parent: 54_combined_passed
+  latest_manifest_agent: 193_related_passed
+  independent_kfs_review: 23_passed
+  allfailed_batch_separate: open_recoverable_receipt_vs_terminal_success_design_required

@@ -383,12 +383,17 @@ def test_artifact_recording_requires_current_owner_authority(
         record_project_artifact(forged)
 
 
-def test_receipt_store_is_platform_owned_not_target_workspace(tmp_path: Path) -> None:
-    """Target code must not own or be able to replace authoritative receipts."""
+def test_receipt_store_is_platform_owned_under_workspace_metadata(tmp_path: Path) -> None:
+    """Canonical project runtime stays under metadata, never a bare business root.
+
+    Access protection belongs to platform path policy and verifier isolation;
+    an external runtime path is not a substitute for those controls.
+    """
 
     store_path = authority_module._db_path(str(tmp_path))
 
-    assert not store_path.is_relative_to(tmp_path)
+    assert store_path == tmp_path / ".polaris/runtime/evidence/project_verification_receipts.sqlite3"
+    assert not (tmp_path / "runtime").exists()
 
 
 def test_spawn_identity_is_persisted_before_receipt_commit(

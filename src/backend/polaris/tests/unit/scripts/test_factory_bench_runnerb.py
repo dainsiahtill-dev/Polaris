@@ -2,59 +2,45 @@
 
 from __future__ import annotations
 
-import ast
 import hashlib
-import inspect
 import json
-import os
-import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.cells.control_plane.run_ledger.public import (
-    AppendRunLedgerEventCommandV1,
-    append_run_ledger_event,
-)
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
 )
+from polaris.tests.unit.scripts._factory_bench_runner_audit_helpers import (
+    _guard_runner_external_io,
+    _ok_run_ledger_projection,
+    _successful_audit_record,
+)
 from scripts.factory_bench import run_factory_bench as bench
 from scripts.factory_bench._bench_lib import (
-    artifacts as bench_artifacts,
     chain as bench_chain,
     cli as bench_cli,
     gates as bench_gates,
     session as bench_session,
-    workspace as bench_workspace,
 )
 from scripts.factory_bench.run_factory_bench import (
-    _allocate_fresh_project_workspace,
     _desktop_backend_info_path,
     _extract_feature_keywords,
     _fallback_audit_bundle_from_workspace,
     _is_local_backend_url,
-    _next_immutable_json_path,
-    _project_workspace_for_run,
     _read_desktop_backend_info,
     _resolve_backend_token,
     _resolve_backend_url,
     _resolve_polaris_home,
-    _sanitize_run_id,
-    _write_immutable_json,
     apply_factory_bench_gates,
     build_director_repair_coverage_gap_summary,
     build_requirements_doc,
-    discover_artifacts,
     load_workspace_validation_repair_coverage,
     map_factory_run_to_chain_results,
-    read_chain_results_from_runtime_dirs,
-    resolve_runtime_dirs_for_workspace,
     run_factory_chain,
 )
 
@@ -64,6 +50,7 @@ _LAST_FACTORY_RESUME_CALL: dict[str, Any] = {}
 
 @pytest.fixture(autouse=True)
 def _isolate_instance_registry(monkeypatch: Any, tmp_path: Path) -> None:
+    _guard_runner_external_io(monkeypatch, tmp_path)
     monkeypatch.setenv("KERNELONE_INSTANCE_HOME", str(tmp_path / "instances-home"))
     monkeypatch.setenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", "observed")
     monkeypatch.setattr(bench_cli, "persist_real_run_gate_ledger", lambda *_args, **_kwargs: {"ok": True})
@@ -191,6 +178,8 @@ def test_main_default_launcher_mode_uses_isolated_project_backend(monkeypatch: A
         return {
             "exit_code": 0,
             "duration_s": 0.01,
+            "run_id": "factory-unit-observed",
+            "factory_terminal_status": {"status": "completed", "run_id": "factory-unit-observed"},
             "chain_results": {
                 "contract_goal": "Build one",
                 "qa_ran": True,
@@ -277,6 +266,8 @@ def test_main_audit_path_points_to_conflict_when_same_id_reused(monkeypatch: Any
         return {
             "exit_code": 0,
             "duration_s": 0.01,
+            "run_id": "factory-unit-observed",
+            "factory_terminal_status": {"status": "completed", "run_id": "factory-unit-observed"},
             "chain_results": {
                 "contract_goal": str(project["brief"]),
                 "qa_ran": True,
@@ -774,8 +765,10 @@ def test_director_contract_requires_ts_target_and_feature_keywords() -> None:
     assert "flower" in doc
     assert "moon" in doc
     assert "humidity" in doc
-    assert "tests/" in doc
-    assert "不能只包含 package.json" in doc
+    # Tests remain mandatory; only CE may choose their directory topology.
+    assert "至少一个可执行测试/检查文件" in doc
+    assert "不能只包含配置/脚手架" in doc
+    assert "目录拓扑由 Chief Engineer 决定" in doc
 
 
 # --- _fallback_audit_bundle_from_workspace ---
@@ -863,6 +856,7 @@ def test_run_factory_chain_fallback_on_audit_bundle_timeout(monkeypatch: Any, tm
     """run_factory_chain must use workspace fallback when audit-bundle returns None."""
     workspace = tmp_path / "L2-fallback"
     workspace.mkdir()
+    (workspace / ".git").mkdir()
     _LAST_FACTORY_START_PAYLOAD.clear()
 
     # Seed workspace .polaris artifacts for fallback
@@ -1124,6 +1118,7 @@ def test_main_start_failed_chain_marks_audit_as_non_terminal(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(bench_cli, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
     """When run_factory_chain returns start_failed, the audit record must be
     marked as non_terminal so it cannot be confused with a final verdict."""
     captured_records: list[dict[str, Any]] = []
@@ -1199,7 +1194,11 @@ def test_main_start_failed_chain_marks_audit_as_non_terminal(
     audit = json.loads((tmp_path / "factory_audits.json").read_text(encoding="utf-8"))["records"][0]
     assert audit["chain_attempt_started"] is False
     assert audit["chain_results"] == {}
-    assert audit["qa_invoked"] == {"invoked": False, "reason": "current_attempt_not_started"}
+    assert audit["qa_invoked"] == {"invoked": False, "reason": "current_attempt_unknown"}
+    assert audit["chain_attempt_state"] == "unknown"
+    assert audit["factory_run_id"] == ""
+    assert audit["real_run_gate"]["skipped"] is True
+    assert audit["real_run_gate"]["commands"] == []
 
 
 def test_main_event_wait_timeout_marks_non_terminal_and_skips_real_run_gate(
@@ -1308,6 +1307,7 @@ def test_main_runner_exception_marks_audit_as_non_terminal(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(bench_cli, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
     """When the runner raises an exception, the audit record must be
     marked as non_terminal."""
     monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
@@ -1432,6 +1432,8 @@ def test_main_completed_chain_marks_audit_as_terminal(
         return {
             "exit_code": 0,
             "duration_s": 0.01,
+            "run_id": "factory-unit-observed",
+            "factory_terminal_status": {"status": "completed", "run_id": "factory-unit-observed"},
             "chain_results": {
                 "contract_goal": "Build something",
                 "qa_ran": True,
@@ -1706,6 +1708,8 @@ def test_runner_audit_includes_catalog_hash_and_schema_version(monkeypatch: Any,
         return {
             "exit_code": 0,
             "duration_s": 0.01,
+            "run_id": "factory-unit-observed",
+            "factory_terminal_status": {"status": "completed", "run_id": "factory-unit-observed"},
             "chain_results": {
                 "contract_goal": "Build something",
                 "qa_ran": True,

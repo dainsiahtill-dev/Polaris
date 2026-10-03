@@ -7,15 +7,25 @@ owns no LLM calls and performs no file I/O.
 
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
 from typing import Any, Mapping
 
 from polaris.cells.director.tasking.internal.execution_contract import build_task_execution_contract
-from polaris.cells.director.tasking.internal.execution_envelope import build_execution_envelope
+from polaris.cells.director.tasking.internal.execution_envelope import (
+    build_execution_envelope,
+    collect_admitted_execution_envelopes,
+)
 from polaris.cells.director.tasking.public.contracts import (
     TaskExecutionProfileV1,
     TaskExecutionStrategyV1,
 )
-from polaris.kernelone.llm.budget_policy import OUTPUT_BUDGET_CONTEXT_KEYS
+from polaris.kernelone.llm.budget_policy import (
+    BUDGET_CONTEXT_KEYS_CANONICAL,
+    OUTPUT_BUDGET_CONTEXT_KEYS,
+    STRATEGY_NESTED_BUDGET_KEYS,
+    STRATEGY_NESTED_CONTAINER_KEYS,
+)
 
 _DEFAULT_OUTPUT_BUDGETS: dict[str, int] = {
     "bugfix": 64_000,
@@ -97,20 +107,6 @@ def _string_value(payload: Mapping[str, Any], *keys: str, default: str = "") -> 
     return default
 
 
-def _is_factory_bench(metadata: Mapping[str, Any]) -> bool:
-    return (
-        any(
-            str(metadata.get(key) or "").strip()
-            for key in (
-                "factory_bench_session_id",
-                "factory_bench_project_id",
-                "factory_bench_project_workspace",
-            )
-        )
-        or metadata.get("factory_bench_level") is not None
-    )
-
-
 def _complexity_bonus(profile: TaskExecutionProfileV1, metadata: Mapping[str, Any]) -> int:
     score = 0
     target_count = len(profile.target_files)
@@ -127,8 +123,6 @@ def _complexity_bonus(profile: TaskExecutionProfileV1, metadata: Mapping[str, An
         score += 1
     if _mapping(metadata.get("previous_verification_result")) or _mapping(metadata.get("task_context")):
         score += 1
-    if _is_factory_bench(metadata):
-        score += 2
     return score
 
 
@@ -275,10 +269,6 @@ def resolve_director_execution_strategy(
     if "repair" in profile.phase:
         output_base = max(output_base, 64_000)
         input_base = max(input_base, 96_000)
-    if _is_factory_bench(normalized_metadata):
-        output_base = max(output_base, 128_000)
-        input_base = max(input_base, 160_000)
-
     output_budget = _scale_budget(output_base, bonus, hard_cap=128_000, maximize_at_bonus=3)
     input_budget = _scale_budget(input_base, bonus, hard_cap=512_000)
     model_window = _int_value(model_window_tokens, 0)
@@ -316,6 +306,97 @@ def resolve_director_execution_strategy(
     )
 
 
+def _call_output_budget_ceilings(context: Mapping[str, Any], metadata: Mapping[str, Any]) -> dict[str, int]:
+    """Read existing call facts as ceilings, never as a new allocation source."""
+    ceilings: dict[str, int] = {}
+
+    def collect(payload: Mapping[str, Any], prefix: str, keys: tuple[str, ...]) -> None:
+        for key in keys:
+            value = payload.get(key)
+            if value is None or isinstance(value, bool):
+                continue
+            try:
+                limit = int(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if limit > 0:
+                ceilings[f"{prefix}.{key}"] = limit
+
+    for prefix, payload in (
+        ("context", context),
+        ("context.metadata", _mapping(context.get("metadata"))),
+        ("metadata", metadata),
+    ):
+        collect(payload, prefix, OUTPUT_BUDGET_CONTEXT_KEYS)
+        for key in (
+            *BUDGET_CONTEXT_KEYS_CANONICAL,
+            "execution_envelope",
+            "task_execution_envelope",
+            "director_execution_envelope",
+        ):
+            typed = _mapping(payload.get(key))
+            collect(typed, f"{prefix}.{key}", STRATEGY_NESTED_BUDGET_KEYS)
+            for container_key in (*STRATEGY_NESTED_CONTAINER_KEYS, "model_policy"):
+                collect(
+                    _mapping(typed.get(container_key)),
+                    f"{prefix}.{key}.{container_key}",
+                    STRATEGY_NESTED_BUDGET_KEYS,
+                )
+    return ceilings
+
+
+def _task_strategy_observation_origin(strategy: TaskExecutionStrategyV1) -> dict[str, Any]:
+    origin = strategy.to_dict()
+    seen: set[int] = set()
+    # Flatten historical projections too. This is provenance only: neither the
+    # original task budget nor any nested prior-call budget can enlarge a call.
+    for _ in range(64):
+        prior = _mapping(_mapping(origin.get("signal_evidence")).get("call_output_budget_derivation"))
+        if not prior:
+            return deepcopy(origin)
+        candidate = prior.get("task_strategy")
+        if not isinstance(candidate, Mapping) or id(candidate) in seen:
+            raise ValueError("director_call_budget_provenance_invalid")
+        seen.add(id(candidate))
+        origin = dict(candidate)
+    raise ValueError("director_call_budget_provenance_invalid")
+
+
+def _call_execution_strategy(
+    strategy: TaskExecutionStrategyV1, *, context: Mapping[str, Any], metadata: Mapping[str, Any]
+) -> TaskExecutionStrategyV1:
+    ceilings = _call_output_budget_ceilings(context, metadata)
+    output_tokens = (
+        min(strategy.output_budget_tokens, *ceilings.values()) if ceilings else strategy.output_budget_tokens
+    )
+    if (
+        output_tokens == strategy.output_budget_tokens
+        and "call_output_budget_derivation" not in strategy.signal_evidence
+    ):
+        return strategy
+    # The supplied task allocation is immutable. Only this call's derived
+    # strategy is projected; the original stays observation-only provenance.
+    return replace(
+        strategy,
+        output_budget_tokens=output_tokens,
+        signal_evidence={
+            **{
+                key: deepcopy(value)
+                for key, value in strategy.signal_evidence.items()
+                if key != "call_output_budget_derivation"
+            },
+            "call_output_budget_derivation": {
+                "schema_version": "director.call_output_budget_derivation.v1",
+                "source": "admitted_call_ceilings",
+                "task_strategy": _task_strategy_observation_origin(strategy),
+                "effective_output_budget_tokens": output_tokens,
+                "ceiling_sources": ceilings,
+                "observation_only": True,
+            },
+        },
+    )
+
+
 def apply_execution_strategy_overrides(
     *,
     context: dict[str, Any],
@@ -325,14 +406,8 @@ def apply_execution_strategy_overrides(
 ) -> None:
     """Project strategy defaults without enlarging an admitted call ceiling."""
 
+    strategy = _call_execution_strategy(strategy, context=context, metadata=metadata)
     output_tokens = strategy.output_budget_tokens
-    for key in OUTPUT_BUDGET_CONTEXT_KEYS:
-        raw_limit = context.get(key)
-        if isinstance(raw_limit, bool):
-            continue
-        limit = _int_value(raw_limit)
-        if limit > 0:
-            output_tokens = min(output_tokens, limit)
 
     profile_payload = profile.to_dict()
     strategy_payload = strategy.to_dict()
@@ -343,6 +418,7 @@ def apply_execution_strategy_overrides(
     )
     execution_contract_payload = execution_contract.to_dict()
     merged_evidence = {**context, **metadata}
+    admitted_envelopes = collect_admitted_execution_envelopes(context, _mapping(context.get("metadata")), metadata)
     execution_envelope = build_execution_envelope(
         workspace=_string_value(
             merged_evidence, "workspace", "factory_bench_project_workspace", default="unknown-workspace"
@@ -354,6 +430,7 @@ def apply_execution_strategy_overrides(
         strategy=strategy,
         contract=execution_contract,
         metadata=merged_evidence,
+        admitted_envelopes=admitted_envelopes,
     )
     execution_envelope_payload = execution_envelope.to_dict()
     context["director_execution_profile"] = profile_payload
@@ -389,3 +466,35 @@ def apply_execution_strategy_overrides(
     metadata["max_output_tokens"] = output_tokens
     metadata["task_execution_strategy_source"] = strategy.source
     metadata["cognitive_strategy_override"] = _cognitive_strategy_override(strategy)
+    for payload in (context, metadata):
+        # An existing provider alias must not keep advertising the task default
+        # after the scalar and all typed current-call facts have been narrowed.
+        if "max_tokens" in payload:
+            payload["max_tokens"] = output_tokens
+        if "execution_strategy" in payload:
+            payload["execution_strategy"] = strategy_payload
+        if "execution_envelope" in payload:
+            payload["execution_envelope"] = execution_envelope_payload
+        forced_budget = payload.get("director_forced_write_output_budget")
+        if isinstance(forced_budget, Mapping):
+            payload["director_forced_write_output_budget"] = {**forced_budget, "max_tokens": output_tokens}
+    # Keep any inherited current-call projections coherent too, without
+    # mutating the caller's nested metadata or introducing another fact source.
+    nested_metadata = _mapping(context.get("metadata"))
+    for key in (
+        *OUTPUT_BUDGET_CONTEXT_KEYS,
+        *BUDGET_CONTEXT_KEYS_CANONICAL,
+        "execution_envelope",
+        "task_execution_envelope",
+        "director_execution_envelope",
+        "execution_envelope_hash",
+        "cognitive_strategy_override",
+        "director_forced_write_output_budget",
+    ):
+        if key in nested_metadata:
+            if key == "execution_envelope":
+                nested_metadata[key] = execution_envelope_payload
+            elif key in metadata:
+                nested_metadata[key] = metadata[key]
+    if isinstance(context.get("metadata"), Mapping):
+        context["metadata"] = nested_metadata

@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import ast
-import hashlib
 import inspect
 import json
 import os
-import subprocess
 import sys
-from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -24,6 +20,19 @@ from polaris.cells.events.fact_stream.public import (
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
 )
+from polaris.tests.unit.scripts._factory_bench_runner_audit_helpers import (
+    _LAST_FACTORY_RESUME_CALL,
+    _LAST_FACTORY_START_PAYLOAD,
+    _capture_run_chain_command,
+    _factory_chain_destructive_findings,
+    _guard_runner_external_io,
+    _matching_isolated_launch_identity,
+    _ok_run_ledger_projection,
+    _record,
+    _setup_run_factory_chain_mocks,
+    _successful_audit_record,
+    _write_director_resume_evidence,
+)
 from scripts.factory_bench import run_factory_bench as bench
 from scripts.factory_bench._bench_lib import (
     artifacts as bench_artifacts,
@@ -35,39 +44,40 @@ from scripts.factory_bench._bench_lib import (
 )
 from scripts.factory_bench.run_factory_bench import (
     _allocate_fresh_project_workspace,
-    _desktop_backend_info_path,
-    _extract_feature_keywords,
-    _fallback_audit_bundle_from_workspace,
-    _is_local_backend_url,
     _next_immutable_json_path,
     _project_workspace_for_run,
-    _read_desktop_backend_info,
-    _resolve_backend_token,
-    _resolve_backend_url,
-    _resolve_polaris_home,
     _sanitize_run_id,
     _write_immutable_json,
     apply_factory_bench_gates,
-    build_director_repair_coverage_gap_summary,
-    build_requirements_doc,
     discover_artifacts,
-    load_workspace_validation_repair_coverage,
     map_factory_run_to_chain_results,
     read_chain_results_from_runtime_dirs,
     resolve_runtime_dirs_for_workspace,
     run_factory_chain,
 )
 
-_LAST_FACTORY_START_PAYLOAD: dict[str, Any] = {}
-_LAST_FACTORY_RESUME_CALL: dict[str, Any] = {}
-
 
 @pytest.fixture(autouse=True)
 def _isolate_instance_registry(monkeypatch: Any, tmp_path: Path) -> None:
+    _guard_runner_external_io(monkeypatch, tmp_path)
     monkeypatch.setenv("KERNELONE_INSTANCE_HOME", str(tmp_path / "instances-home"))
     monkeypatch.setenv("FACTORY_BENCH_LAUNCHER_INSTANCE_MODE", "observed")
     monkeypatch.setattr(bench_cli, "persist_real_run_gate_ledger", lambda *_args, **_kwargs: {"ok": True})
     bench.configure_bench_backend("", "", "")
+
+
+def test_unmocked_runner_external_io_is_rejected_before_launch() -> None:
+    import subprocess
+    import urllib.request
+
+    with pytest.raises(AssertionError, match="unmocked runner external IO"):
+        subprocess.Popen([sys.executable, "-c", "raise SystemExit(99)"])
+    with pytest.raises(AssertionError, match="unmocked runner external IO"):
+        urllib.request.urlopen("http://127.0.0.1:49977")
+    with pytest.raises(AssertionError, match="unmocked runner external IO"):
+        from polaris.cells.instances.internal.service import InstanceSupervisor
+
+        InstanceSupervisor()._start_backend()
 
 
 def _bootstrap_test_fact_stream(workspace: Path) -> None:
@@ -79,8 +89,6 @@ def _bootstrap_test_fact_stream(workspace: Path) -> None:
             maintenance_reason="factory_bench_runner_unit_test",
         )
     )
-
-
 
 
 def test_default_launcher_instance_mode_is_isolated(monkeypatch: Any) -> None:
@@ -389,6 +397,49 @@ def test_factory_chain_paths_never_purge_enrolled_runtime_roots() -> None:
 def test_factory_chain_purge_audit_follows_wrappers_and_dynamic_shell_literals() -> None:
     wrapped_delete = """
 import shutil
+def _wipe(path):
+    shutil.rmtree(path)
+def main():
+    _wipe(project_workspace)
+"""
+    destructive_calls, subprocess_deletions, reachable_names, _source = _factory_chain_destructive_findings(
+        wrapped_delete,
+        {"main"},
+    )
+    assert destructive_calls == ["rmtree"]
+    assert subprocess_deletions == []
+    assert reachable_names == {"main", "_wipe"}
+
+    dynamic_shell_delete = """
+import subprocess
+def _wipe(path):
+    subprocess.run(["bash", "-lc", "rm " + "-rf " + path], check=True)
+def main():
+    _wipe(project_workspace)
+"""
+    destructive_calls, subprocess_deletions, reachable_names, _source = _factory_chain_destructive_findings(
+        dynamic_shell_delete,
+        {"main"},
+    )
+    assert destructive_calls == []
+    assert subprocess_deletions == ["bash -lc rm  -rf "]
+    assert reachable_names == {"main", "_wipe"}
+
+
+def _write_test_workspace_catalog(
+    bench_workspace: Path,
+    workspace: Path,
+    *,
+    run_id: str,
+    project_id: str,
+) -> dict[str, Any]:
+    return bench._write_workspace_catalog_meta_exclusive(
+        bench_workspace,
+        workspace,
+        {"run_id": run_id, "project_id": project_id},
+    )
+
+
 def test_isolated_launch_receipts_are_unique_and_auditable(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setattr(bench_session, "compute_source_fingerprint", lambda _root: "source-fingerprint")
     workspace = tmp_path / "factory-bench-same-workdir" / "L1-01"
@@ -421,7 +472,7 @@ def test_isolated_launch_receipts_are_unique_and_auditable(monkeypatch: Any, tmp
     assert first["instance_id"] != second["instance_id"]
     assert first["launch_scope"] != second["launch_scope"]
     assert first["workspace"] == str(workspace.resolve())
-    assert first["runtime_root"] == str((workspace / "runtime").resolve())
+    assert first["runtime_root"] == str((workspace / ".polaris" / "runtime").resolve())
     assert first["expected_backend_root"] == str(bench._BACKEND_ROOT)
     assert first["expected_source_fingerprint"] == "source-fingerprint"
     assert first["requested_project_id"] == "L1-01"
@@ -458,7 +509,7 @@ def test_isolated_launch_forwards_fresh_receipt_to_supervisor(monkeypatch: Any, 
     from polaris.cells.instances.internal.service import InstanceSupervisor
 
     monkeypatch.setattr(bench_session, "compute_source_fingerprint", lambda _root: "source-fingerprint")
-    monkeypatch.setattr(bench, "_wait_backend_health", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(bench_session, "_wait_backend_health", lambda *_args, **_kwargs: True)
     workspace = tmp_path / "factory-bench-same-workdir" / "L1-01"
     workspace.mkdir(parents=True)
     catalog_meta = _write_test_workspace_catalog(workspace.parent, workspace, run_id="run-identity", project_id="L1-01")
@@ -520,7 +571,7 @@ def test_director_resume_stops_only_owned_prior_bench_instance(
     from polaris.cells.instances.internal.service import InstanceSupervisor
 
     monkeypatch.setattr(bench_session, "compute_source_fingerprint", lambda _root: "source-fingerprint")
-    monkeypatch.setattr(bench, "_wait_backend_health", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(bench_session, "_wait_backend_health", lambda *_args, **_kwargs: True)
     workspace = _allocate_fresh_project_workspace(tmp_path, project_id="L1-01", run_id="original-run")
     catalog_meta = _write_test_workspace_catalog(
         tmp_path,
@@ -607,11 +658,12 @@ def test_director_resume_stops_only_owned_prior_bench_instance(
             },
         ],
     )
-    monkeypatch.setattr(
-        InstanceSupervisor,
-        "stop_instance",
-        lambda _self, instance_id: stopped.append(instance_id) or {"instance_id": instance_id, "status": "stopped"},
-    )
+
+    def _stop(_self: InstanceSupervisor, instance_id: str) -> dict[str, str]:
+        stopped.append(instance_id)
+        return {"instance_id": instance_id, "status": "stopped"}
+
+    monkeypatch.setattr(InstanceSupervisor, "stop_instance", _stop)
 
     def _start(_self: InstanceSupervisor, request: dict[str, Any]) -> dict[str, Any]:
         captured.update(request)
@@ -1658,6 +1710,11 @@ def test_main_task_market_driver_uses_http_factory_chain_without_legacy_fallback
     tmp_path: Path,
 ) -> None:
     calls: list[str] = []
+    monkeypatch.setattr(
+        bench_cli,
+        "build_bench_backend_audit_context",
+        lambda *_args, **_kwargs: {"backend_freshness": {"ok": False}, "backend_metadata": {"backend_base_url": ""}},
+    )
 
     monkeypatch.setattr(
         sys,
@@ -1692,7 +1749,7 @@ def test_main_task_market_driver_uses_http_factory_chain_without_legacy_fallback
         calls.append("http")
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(bench, "run_chain", _legacy_chain)
+    monkeypatch.setattr(bench_cli, "run_chain", _legacy_chain)
     monkeypatch.setattr(bench_cli, "run_factory_chain", _http_chain)
 
     result = bench.main()
@@ -1704,6 +1761,11 @@ def test_main_task_market_driver_uses_http_factory_chain_without_legacy_fallback
 def test_main_marks_backend_session_failed_when_run_aborts(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
     completed: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        bench_cli,
+        "build_bench_backend_audit_context",
+        lambda *_args, **_kwargs: {"backend_freshness": {"ok": False}, "backend_metadata": {"backend_base_url": ""}},
+    )
 
     monkeypatch.setattr(
         sys,
@@ -1896,6 +1958,8 @@ def test_main_default_max_failed_zero_does_not_early_stop(monkeypatch: Any, tmp_
         return {
             "exit_code": 0,
             "duration_s": 0.01,
+            "run_id": "factory-unit-observed",
+            "factory_terminal_status": {"status": "completed", "run_id": "factory-unit-observed"},
             "chain_results": {
                 "contract_goal": str(project["brief"]),
                 "qa_ran": True,
@@ -2511,6 +2575,8 @@ def test_main_run_id_shared_across_projects(monkeypatch: Any, tmp_path: Path) ->
         return {
             "exit_code": 0,
             "duration_s": 0.01,
+            "run_id": "factory-unit-observed",
+            "factory_terminal_status": {"status": "completed", "run_id": "factory-unit-observed"},
             "chain_results": {
                 "contract_goal": str(project["brief"]),
                 "qa_ran": True,
@@ -2539,5 +2605,3 @@ def test_main_run_id_shared_across_projects(monkeypatch: Any, tmp_path: Path) ->
             "audit_path must resolve to the actual written audit file"
         )
     assert len(ids) == 1, "All projects should share the same run_id"
-
-

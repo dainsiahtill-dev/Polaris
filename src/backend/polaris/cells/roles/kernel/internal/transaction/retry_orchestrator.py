@@ -87,6 +87,7 @@ from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions impo
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_allowed_tool_names_from_definitions,
     extract_latest_user_message,
+    extract_task_instruction,
 )
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -629,7 +630,7 @@ class RetryOrchestrator:
         initial_failure_reason: str = "",
     ) -> dict:
         latest_user_request = extract_latest_user_message(context)
-        requires_mutation = requires_mutation_intent(latest_user_request)
+        requires_mutation = requires_mutation_intent(extract_task_instruction(context))
         # Phase-1 A2 (2026-06-11, run20 audit): a mutation contract IMPLIES the
         # right to verify the mutation. Keying verification access off message
         # keywords alone ("test", "verify") suppressed every model-initiated

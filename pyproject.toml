@@ -64,6 +64,7 @@ dependencies = [
     "watchdog>=3.0.0",
     "psutil>=5.9.0",
     "platformdirs>=4.0.0",
+    "tomli>=2; python_version < '3.11'",
     # Governance Schemas
     "jsonschema>=4.26.0",
     "referencing>=0.35.0",

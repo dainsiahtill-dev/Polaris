@@ -28,6 +28,8 @@ FINAL_REQUEST_EVIDENCE_CONTEXT_KEYS: tuple[str, ...] = (
     "chief_engineer_blueprint",
     "task_contract",
     "target_files",
+    "project_declared_target_files",
+    "task_write_guidance",
     "scope_paths",
     "module_interface_contract",
     "actual_sibling_exports",

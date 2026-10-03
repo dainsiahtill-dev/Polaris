@@ -1,0 +1,87 @@
+{
+  "schema_version": "polaris.engineering_checkpoint.v1",
+  "authoritative_platform_receipt": false,
+  "status": "FRESH_FAILED_CE_effective_obligation_census_mismatch",
+  "full_goal_completed": false,
+  "catalog_projects": 120,
+  "project": "L1-01",
+  "work_dir": "/tmp/factory-bench-minimax-l1-01-20261003-r07",
+  "workspace": "/tmp/factory-bench-minimax-l1-01-20261003-r07/workspaces/7597b0d1aebd-002eda75ab3a529a/L1-01-7bb25f6bf0f37baf/adc7b1fbdfd4de06c091d322",
+  "runtime_root": "/tmp/factory-bench-minimax-l1-01-20261003-r07/workspaces/7597b0d1aebd-002eda75ab3a529a/L1-01-7bb25f6bf0f37baf/adc7b1fbdfd4de06c091d322/.polaris/runtime",
+  "run_id": "factory_020069bf136f",
+  "instance_id": "factory-bench-minimax-l1-01-20261003-r07-l1-01-run-7597b0d1aebd-a624d351ca69b6b9",
+  "runner_handle": 77156,
+  "runner_exit": 1,
+  "wall_seconds": 176.6,
+  "backend_port": 49981,
+  "frontend_port": 5177,
+  "model_observed": "MiniMax-M3",
+  "configuration": {"instance_mode": "isolated", "bench_session_reporting": "off", "factory_budget_seconds": 5400, "outer_budget_seconds": 6000, "real_run_timeout_seconds": 120, "director_mode": "serial"},
+  "preflight": {
+    "source_freeze_unchanged": true,
+    "main_component_suite": "110 passed, 45.49s, exit0",
+    "main_adapter_surface_suite": "63 passed, 7.93s, exit0",
+    "ruff_mypy": "Ruff4/Mypy3 PASS",
+    "task2b_review": "independent spec PASS, quality Approved",
+    "release_report": ".superpowers/sdd/2026-10-03-owner-bound-settle-repair/release-r06-owner-continuation-candidate.json",
+    "release_stages": "12 exit0;51 suite paths;354 passed/1 skipped/2 warnings",
+    "release_limits": "Skipped informational retirement-baseline reminder test_production_baseline_entries_still_needed; SWIG dependency deprecation warnings. Not a whole-repository or fresh-project pass."
+  },
+  "terminal": {
+    "pm": "PASS",
+    "ce": "FAIL;0/3blueprints;3CEcalls",
+    "director": "NOT_REACHED",
+    "qa": "NOT_REACHED",
+    "source_files": 0,
+    "runnable": false,
+    "error_code": "blueprint_portfolio_behavior_contract_infeasible",
+    "error_details": {"invariant_ids": ["INV-1"], "task_ids": [], "obligation_ids": ["OBL-3"]},
+    "task2b_physical_exercised": false,
+    "note": "This failure cannot establish either success or regression of the owner-continuation patch because CE blocked before Director."
+  },
+  "context_evidence": {
+    "final_refs": ["2f2a33905357fda70dbcf363", "5826c4d33e7933c612ed3796", "0e03f25ee9b174296c8b164e"],
+    "role_model_identity": "chief_engineer/MiniMax-M3 matched",
+    "protocol": "forced non-executable submit_structured_role_output",
+    "audit_findings": [],
+    "token_estimates": [6120, 5784, 10133],
+    "window_tokens": 1000000,
+    "final_patch_request": "Exact base candidate patch context explicitly lists OBL-3 in allowed_completion_obligation_ids",
+    "candidates": ["34ac16d574cbc172b3b9433a8e40d0cd75de9534ab7e0a89668f751ce74784db", "67f04904bbc4bcbf8d5a3e792d185fe03832f6e5383fae155d339e8ec86c1a49"]
+  },
+  "browser": {
+    "launcher": "http://127.0.0.1:5177/launcher",
+    "status": 200,
+    "instance_visible": true,
+    "page_errors": [],
+    "runtime_ws_backend_port": 49981,
+    "workspace_binding_failures": [],
+    "probe": ".superpowers/sdd/2026-10-03-owner-bound-settle-repair/r07-launcher-readonly.cjs",
+    "diagnostic_corrections": "Initial probe wrongly classified Vite HMR socket as runtime; corrected probe filters runtime.v2 endpoint. /identity obsolete404 and wrong X-Polaris-Token401 were probe mistakes; Bearer /v2/runtime/fingerprint returned200. No product changes or service restart for these probe errors."
+  },
+  "root": {
+    "classification": "platform_authority_view_inconsistency",
+    "raw_artifact": {"id": "OBL-3", "path": "tsconfig.test.json", "role": "config", "owner": "TASK-1"},
+    "pm_scope_authorizes_artifact": false,
+    "ce_topology_authorizes_artifact": false,
+    "chain": "repair context/composer and early closure admit raw IDs; final normalization drops unauthorized artifact; shared behavior retains reference; final feasibility rejects correctly",
+    "do_not_claim": "Not OBL-3 renumbering, not unlisted-ID invention, not proof of a weak-model ceiling. Initial CE proposal is unauthorized, but repair was instructed using a different vocabulary from final authority.",
+    "secondary_attribution_gap": "prior_failure_class thinking_only_response appears during semantic contract repair despite retained structured candidate; not this run's primary cause."
+  },
+  "dynamic_replay": {
+    "script": ".superpowers/sdd/2026-10-03-owner-bound-settle-repair/r07-behavior-vocabulary-readonly.py",
+    "guard": "bwrap readonly root/unshare-net plus Python audit hook rejecting writes/network/process",
+    "main_exit": 0,
+    "raw_identity_census": "PASS after participant-reference closure in counterfactual memory fixture",
+    "effective_artifact_filter": "Exact INV-1/OBL-3 unknown-authority error reproduced",
+    "old_cleanup": "entrypoint-only;does not remove OBL-3",
+    "limits": "Pure exact-function replay;not full historical environment, live authority, canonical grant or delivery proof. Target bytes unmodified."
+  },
+  "next_action": "TDD CE-owned effective completion-obligation view reused by repair context/composer/early validator/final normalization. Report denied IDs and require typed correction; preserve PM scope, optional/not-applicable IDs, behavior/depth gates. No blind paid rerun or target edit.",
+  "goal": "ACTIVE;all120freshisolated/unattended qualification and N-batch remain unproven",
+  "cleanup": {
+    "old_r06": "Verified scoped latest Factory failed; stopped via r07 public Instance Supervisor, HTTP200; registry backend_alive/frontend_alive false",
+    "current_r07": "Backend49981/frontend5177 retained for read-only observation; Factory terminal failed, no active Bench or paid retry",
+    "protected_ports": "No49977/5173 or control49978/5174 touched"
+  }
+}

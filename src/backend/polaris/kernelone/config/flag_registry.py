@@ -205,6 +205,7 @@ _LEGACY_SWEEP_FLAG_NAMES: tuple[str, ...] = (
     "KERNELONE_NATS_RECONNECT_WAIT",
     "KERNELONE_NATS_REQUIRED",
     "KERNELONE_NATS_SERVER_BIN",
+    "KERNELONE_NATS_STARTUP_TIMEOUT",
     "KERNELONE_NATS_STREAM_NAME",
     "KERNELONE_NATS_URL",
     "KERNELONE_NATS_USER",
@@ -306,6 +307,14 @@ _LEGACY_SWEEP_FLAG_NAMES: tuple[str, ...] = (
 
 KERNELONE_FLAG_REGISTRY: dict[str, FlagSpec] = {
     **{name: _legacy_sweep_spec(name) for name in _LEGACY_SWEEP_FLAG_NAMES},
+    "KERNELONE_INSTANCE_WORKSPACE": FlagSpec(
+        name="KERNELONE_INSTANCE_WORKSPACE",
+        default=None,
+        owner="instances.runtime_binding",
+        purpose="Pins one backend process to its startup workspace; requests cannot switch it.",
+        registered_at="2026-10-03",
+        expiry=None,
+    ),
     "KERNELONE_DIRECTOR_FORCED_WRITE_OUTPUT_TOKENS": FlagSpec(
         name="KERNELONE_DIRECTOR_FORCED_WRITE_OUTPUT_TOKENS",
         default="7000",
@@ -347,34 +356,35 @@ DYNAMIC_ENV_READ_ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("polaris/cells/chief_engineer/blueprint/internal/step_splitter.py", "_split_enabled"),
     ("polaris/cells/control_plane/verifier_execution/public/service.py", "_bool_env"),
     ("polaris/cells/control_plane/verifier_policy/public/service.py", "_available_from_env"),
-    ("polaris/cells/director/task_consumer/internal/director_consumer.py", "_repair_shrink_guard_ratio"),
+    # director.task_consumer: same shrink-floor flag, relocated after file split.
+    ("polaris/cells/director/task_consumer/internal/director_consumer/_helpers.py", "_repair_shrink_guard_ratio"),
     ("polaris/cells/director/tasking/internal/code_generation_engine.py", "CodeGenerationEngine._env_flag"),
     ("polaris/cells/director/tasking/internal/code_generation_engine.py", "_env_flag"),
     ("polaris/cells/director/tasking/internal/worker_executor.py", "WorkerExecutor._resolve_llm_call_timeout_hint"),
     ("polaris/cells/events/fact_stream/internal/debug_trace.py", "_truthy_env"),
     (
-        "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
-        "OrchestrationStageExecutor._chief_engineer_llm_timeout_seconds",
+        "polaris/cells/factory/pipeline/internal/factory_deadline_calculations.py",
+        "chief_engineer_llm_timeout_seconds",
     ),
     (
-        "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
-        "OrchestrationStageExecutor._director_binding_timeout_quarantine_count",
+        "polaris/cells/factory/pipeline/internal/factory_deadline_calculations.py",
+        "director_binding_timeout_quarantine_count",
     ),
     (
-        "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
-        "OrchestrationStageExecutor._director_dispatch_timeout_seconds",
+        "polaris/cells/factory/pipeline/internal/factory_deadline_calculations.py",
+        "director_dispatch_timeout_seconds",
     ),
     (
-        "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
-        "OrchestrationStageExecutor._director_first_materialization_min_budget_seconds",
+        "polaris/cells/factory/pipeline/internal/factory_deadline_calculations.py",
+        "director_first_materialization_min_budget_seconds",
     ),
     (
-        "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
-        "OrchestrationStageExecutor._quality_gate_reserved_budget_seconds",
+        "polaris/cells/factory/pipeline/internal/factory_deadline_calculations.py",
+        "quality_gate_reserved_budget_seconds",
     ),
     (
-        "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
-        "OrchestrationStageExecutor._workspace_quality_llm_repair_timeout_seconds",
+        "polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_03.py",
+        "_Mixin03._workspace_quality_llm_repair_timeout_seconds",
     ),
     ("polaris/cells/factory/pipeline/internal/factory_stage_helpers.py", "bool_from_context_or_env"),
     ("polaris/cells/instances/internal/service.py", "_env_flag_enabled"),
@@ -463,6 +473,8 @@ DYNAMIC_ENV_READ_ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("polaris/delivery/cli/pm/orchestration/zero_task_fallback.py", "_resolve_outer_pm_task_quality_mode"),
     ("polaris/delivery/http/resident_autotick.py", "is_autotick_enabled"),
     ("polaris/delivery/http/resident_autotick.py", "resolve_interval_seconds"),
+    # instances runtime: one fixed registered binding flag, read via its constant.
+    ("polaris/delivery/http/workspace.py", "process_bound_workspace"),
     ("polaris/delivery/http/routers/_shared.py", "_env_flag_enabled"),
     ("polaris/delivery/http/routers/_shared.py", "internal_bench_surface_enabled"),
     ("polaris/delivery/http/routers/factory.py", "_resolve_director_dispatch_timeout_seconds"),
@@ -497,8 +509,11 @@ DYNAMIC_ENV_READ_ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("polaris/kernelone/process/command_executor.py", "CommandExecutionService._build_env"),
     ("polaris/kernelone/process/ollama_utils.py", "_resolve_ollama_host"),
     ("polaris/kernelone/prompts/loader.py", "current_profile"),
-    ("polaris/kernelone/quality/artifact_quality.py", "_scan_typescript_project_typecheck_evidence"),
-    ("polaris/kernelone/quality/artifact_quality.py", "_ts_symbol_coherence_enabled"),
+    # kernelone.quality: fixed scan flags retained after artifact scanner split.
+    ("polaris/kernelone/quality/artifact_quality/_scan_typescript.py", "_scan_typescript_project_typecheck_evidence"),
+    ("polaris/kernelone/quality/artifact_quality/_scan_typescript.py", "_ts_symbol_coherence_enabled"),
+    ("polaris/kernelone/quality/artifact_quality/_scan_go.py", "_scan_go_project_compile_evidence"),
+    ("polaris/kernelone/quality/artifact_quality/_scan_go.py", "_scan_go_project_test_evidence"),
     ("polaris/kernelone/quality/cross_artifact_interfaces.py", "_ts_symbol_coherence_enabled"),
     ("polaris/kernelone/tool_state/safety.py", "read_int_env"),
 )

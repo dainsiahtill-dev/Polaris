@@ -1,0 +1,19 @@
+id: vc-20261003-dispatch-structured-scope-only
+classification: pattern
+owner: orchestration.pm_dispatch
+status: red_test_pending
+assumptions:
+  - Prose mentions cannot grant write permission or create delivery obligations.
+  - Structured PM target and scope lists remain unchanged during dispatch.
+evidence:
+  run_id: factory_31d7535627e3
+  dynamic_replay: select_pm_task_payloads adds a path explicitly marked not mandatory
+  root: pm_task_rows_from_payload invokes augment_task_delivery_targets
+pre_mortem:
+  - Do not replace PM obligations with raw CE payload paths.
+  - Preserve explicit empty restrictions and actual structured required targets.
+  - Do not make a generated project pass by editing it or weakening QA.
+verification:
+  - Parametrized real row extraction for negated, optional, affirmative and referenced paths.
+  - Existing orchestration command/handoff/Director resume suite.
+  - Ruff, Mypy and fresh isolated project after gates.

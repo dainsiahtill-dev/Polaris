@@ -23,7 +23,9 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     ChiefEngineerSemanticRepairOperationV1,
     ChiefEngineerSemanticRepairPatchV1,
     ChiefEngineerSemanticRepairReceiptV1,
+    EntrypointKindV1,
     EntrypointObligationV1,
+    ObligationApplicabilityV1,
 )
 
 from ._helpers import (
@@ -36,6 +38,7 @@ from ._helpers import (
 from ._portfolio import (
     _task_authorizes_completion_path,
     _task_expandable_scope_paths,
+    project_chief_engineer_effective_obligation_view,
     project_chief_engineer_portfolio_delivery_depth_feasibility,
 )
 
@@ -301,8 +304,9 @@ def _normalize_task_plan_array_field(
     JSON tool transports sometimes preserve every scalar but wrap one logical
     array in repeated singleton/list layers.  Flattening those layers is
     lossless for fields whose schema already requires a flat array.  Unknown
-    scalar leaves remain fail-closed; mappings are accepted only for
-    ``risk_flags``, whose public contract permits structured risk entries.
+    scalar leaves remain fail-closed; mappings are accepted only for fields
+    whose contract permits structured risk or scope advice. Advice stays
+    non-authoritative and its body is preserved, not executed or granted.
     """
 
     source = _unwrap_provider_item_array(name, value)
@@ -554,6 +558,51 @@ def _normalize_shared_artifact_obligation_groups(
     return remap, tuple(minted_ids)
 
 
+def _normalize_inert_artifact_terminal_separators(
+    artifacts: list[dict[str, Any]],
+    entrypoints: list[dict[str, Any]],
+    verification: list[dict[str, Any]],
+) -> bool:
+    """Recover one inert directory notation, never active artifact authority.
+
+    Only ownerless N/A rows can lose exactly one terminal slash. Every other
+    field passes the ordinary DTO constructor unchanged. Validate the complete
+    proposed path set before mutating, so aliases and reused IDs cannot hide
+    behind this syntactic recovery or the later artifact-group normalizer.
+    """
+
+    proposed: dict[int, str] = {}
+    all_ids = [row.get("obligation_id") for row in (*artifacts, *entrypoints, *verification)]
+    entrypoint_paths = {
+        row.get(field)
+        for row in entrypoints
+        for field in ("source_path", "runtime_path")
+        if isinstance(row.get(field), str)
+    }
+    for index, row in enumerate(artifacts):
+        path = row.get("path")
+        if not isinstance(path, str) or not path.endswith("/"):
+            continue
+        if row.get("applicability") != "not_applicable" or row.get("owner_task_id") is not None:
+            continue
+        canonical = path[:-1]
+        # The strict path constructor rejects empty/absolute/dot/parent,
+        # repeated separators, whitespace and backslashes. Do not strip them.
+        _artifact_from_row({**row, "path": canonical})
+        if all_ids.count(row.get("obligation_id")) != 1:
+            raise _UnsafePortfolioStructuralRecoveryError("inert artifact obligation identity is ambiguous")
+        proposed[index] = canonical
+    if not proposed:
+        return False
+    paths = [proposed.get(index, row.get("path")) for index, row in enumerate(artifacts)]
+    for canonical in proposed.values():
+        if paths.count(canonical) != 1 or canonical in entrypoint_paths:
+            raise _UnsafePortfolioStructuralRecoveryError("inert artifact canonical path collides")
+    for index, canonical in proposed.items():
+        artifacts[index]["path"] = canonical
+    return True
+
+
 def _normalize_lifted_task_plan(name: str, value: object) -> dict[str, Any]:
     row = _mapping(name, value)
     if "behavior_invariant_refs" not in row:
@@ -661,7 +710,7 @@ def normalize_chief_engineer_portfolio_tool_arguments(
                 normalized, changed = _normalize_task_plan_array_field(
                     f"task_plans.{task_id}.{field}",
                     task_plan[field],
-                    allow_mapping_leaf=field == "risk_flags",
+                    allow_mapping_leaf=field in {"risk_flags", "scope_for_apply"},
                 )
                 if changed:
                     task_plan[field] = normalized
@@ -841,6 +890,11 @@ def normalize_chief_engineer_portfolio_tool_arguments(
                     "project_completion_contract.obligations.verification",
                     obligations.get("verification", []),
                 )
+                if _normalize_inert_artifact_terminal_separators(artifacts, entrypoints, verification):
+                    obligations["artifacts"] = artifacts
+                    completion["obligations"] = obligations
+                    working["project_completion_contract"] = completion
+                    codes.append("normalize_inert_artifact_terminal_separator")
                 artifact_group_remap, _minted_artifact_ids = _normalize_shared_artifact_obligation_groups(working)
                 if artifact_group_remap:
                     codes.append("split_shared_artifact_obligation_ids")
@@ -1030,20 +1084,22 @@ def normalize_chief_engineer_portfolio_tool_arguments(
 
 
 def _artifact_from_row(row: Mapping[str, Any]) -> ArtifactObligationV1:
+    # The exact typed constructors perform runtime validation of raw values.
+    # Casts describe that boundary without coercing None into valid-looking text.
     return ArtifactObligationV1(
-        obligation_id=row.get("obligation_id"),
-        path=row.get("path"),
-        semantic_role=row.get("semantic_role"),
-        applicability=row.get("applicability"),
+        obligation_id=cast(str, row.get("obligation_id")),
+        path=cast(str, row.get("path")),
+        semantic_role=cast(ArtifactSemanticRoleV1, row.get("semantic_role")),
+        applicability=cast(ObligationApplicabilityV1, row.get("applicability")),
         owner_task_id=row.get("owner_task_id"),
     )
 
 
 def _entrypoint_from_row(row: Mapping[str, Any]) -> EntrypointObligationV1:
     return EntrypointObligationV1(
-        obligation_id=row.get("obligation_id"),
-        kind=row.get("kind"),
-        applicability=row.get("applicability"),
+        obligation_id=cast(str, row.get("obligation_id")),
+        kind=cast(EntrypointKindV1, row.get("kind")),
+        applicability=cast(ObligationApplicabilityV1, row.get("applicability")),
         owner_task_id=row.get("owner_task_id"),
         source_path=row.get("source_path"),
         runtime_path=row.get("runtime_path"),
@@ -1054,16 +1110,16 @@ def _entrypoint_from_row(row: Mapping[str, Any]) -> EntrypointObligationV1:
 def _behavior_from_row(row: Mapping[str, Any]) -> ChiefEngineerBehaviorInvariantV1:
     examples = _rows("verification_examples", row.get("verification_examples"))
     return ChiefEngineerBehaviorInvariantV1(
-        invariant_id=row.get("invariant_id"),
-        statement=row.get("statement"),
-        owner_task_id=row.get("owner_task_id"),
+        invariant_id=cast(str, row.get("invariant_id")),
+        statement=cast(str, row.get("statement")),
+        owner_task_id=cast(str, row.get("owner_task_id")),
         consumer_task_ids=tuple(row.get("consumer_task_ids") or ()),
         covered_obligation_ids=tuple(row.get("covered_obligation_ids") or ()),
         verification_examples=tuple(
             ChiefEngineerBehaviorExampleV1(
-                given=item.get("given"),
-                when=item.get("when"),
-                then=item.get("then"),
+                given=cast(str, item.get("given")),
+                when=cast(str, item.get("when")),
+                then=cast(str, item.get("then")),
             )
             for item in examples
         ),
@@ -1152,11 +1208,27 @@ def _semantic_sections(candidate: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _candidate_effective_obligation_view(
+    candidate: ChiefEngineerSemanticRepairCandidateV1,
+    payload: Mapping[str, Any],
+    *,
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    authority_carrier: object | None,
+) -> dict[str, Any]:
+    view = project_chief_engineer_effective_obligation_view(payload, tasks=tasks, authority_carrier=authority_carrier)
+    if authority_carrier is not None:
+        for name in ("workspace", "project_id", "run_id", "pm_contract_hash"):
+            if getattr(authority_carrier, name) != getattr(candidate, name):
+                raise ValueError(f"effective obligation view {name} does not match candidate")
+    return view
+
+
 def project_chief_engineer_semantic_repair_provider_context(
     candidate: ChiefEngineerSemanticRepairCandidateV1,
     diagnosis: ChiefEngineerSemanticRepairDiagnosisV1,
     *,
     tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    authority_carrier: object | None = None,
 ) -> dict[str, Any]:
     """Project the exact, minimal base state required to author a safe patch.
 
@@ -1173,9 +1245,11 @@ def project_chief_engineer_semantic_repair_provider_context(
     task_ids = tuple(task.task_id for task in tasks)
     if task_ids != candidate.task_ids:
         raise ValueError("semantic repair PM task ids do not match candidate task ids")
+    effective_view = _candidate_effective_obligation_view(
+        candidate, candidate.candidate, tasks=tasks, authority_carrier=authority_carrier
+    )
     current_artifacts = _rows("artifacts", sections["artifacts"])
     current_entrypoints = _rows("entrypoints", sections["entrypoints"])
-    current_verification = _rows("verification", sections["verification"])
     occupied_paths = {
         str(row.get(key) or "").strip()
         for row in (*current_artifacts, *current_entrypoints)
@@ -1306,6 +1380,8 @@ def project_chief_engineer_semantic_repair_provider_context(
         "blocker_code": "" if repair_feasible else "chief_engineer.semantic_repair_authority_infeasible",
         "upsert_identity_policy": {},
         "current": {},
+        "effective_obligation_view": effective_view,
+        "excluded_completion_obligations": effective_view["excluded_completion_obligations"],
     }
     if delivery_depth_feasibility is not None:
         projection["delivery_depth_feasibility"] = delivery_depth_feasibility
@@ -1362,13 +1438,7 @@ def project_chief_engineer_semantic_repair_provider_context(
         current["entrypoints"] = deepcopy(sections["entrypoints"])
         current["verification"] = deepcopy(sections["verification"])
         current["behavior_invariants"] = deepcopy(sections["behavior_invariants"])
-        projection["allowed_completion_obligation_ids"] = sorted(
-            {
-                str(row["obligation_id"])
-                for row in (*current_artifacts, *current_entrypoints, *current_verification)
-                if isinstance(row.get("obligation_id"), str) and str(row["obligation_id"]).strip()
-            }
-        )
+        projection["allowed_completion_obligation_ids"] = effective_view["retained_completion_obligation_ids"]
     if "task_behavior_ref_replace" in allowed:
         current["behavior_invariants"] = deepcopy(sections["behavior_invariants"])
         current["task_behavior_refs"] = deepcopy(sections["task_behavior_refs"])
@@ -1426,6 +1496,7 @@ def compose_chief_engineer_semantic_repair(
     patch: ChiefEngineerSemanticRepairPatchV1,
     *,
     tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    authority_carrier: object | None = None,
 ) -> tuple[ChiefEngineerSemanticRepairCandidateV1, ChiefEngineerSemanticRepairReceiptV1]:
     """Compose one typed patch, preserving unrelated schema-valid sections."""
 
@@ -1716,12 +1787,22 @@ def compose_chief_engineer_semantic_repair(
         field="obligation_id",
     ):
         raise ValueError("semantic repair would create duplicate obligation ids")
-    all_obligation_ids = [str(row["obligation_id"]) for row in all_obligation_rows]
     obligations["artifacts"] = artifact_rows
     obligations["entrypoints"] = entrypoint_rows
     obligations["verification"] = verification_rows
     completion["obligations"] = obligations
     payload["project_completion_contract"] = completion
+
+    # Reproject the patched candidate: fresh lawful upserts may add identities,
+    # but denied raw rows must never authorize behavior references.
+    effective_view = _candidate_effective_obligation_view(
+        candidate, payload, tasks=tasks, authority_carrier=authority_carrier
+    )
+    if effective_view["normalization_errors"]:
+        raise ValueError(
+            "effective completion normalization failed: " + "; ".join(effective_view["normalization_errors"])
+        )
+    all_obligation_ids = effective_view["retained_completion_obligation_ids"]
 
     construction = _mapping("construction_plan", payload["construction_plan"])
     behavior = _mapping(

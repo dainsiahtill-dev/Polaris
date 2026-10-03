@@ -264,7 +264,7 @@ def test_blocking_http_post_preserves_tuple_timeout(monkeypatch) -> None:
         captured["timeout"] = kwargs.get("timeout")
         return _Response()
 
-    monkeypatch.setattr(provider_helpers.requests, "post", _post)
+    monkeypatch.setattr(provider_helpers._http_pooling, "bounded_http_post", _post)
 
     response = provider_helpers._blocking_http_post(
         "http://localhost:8189/v1/chat/completions",

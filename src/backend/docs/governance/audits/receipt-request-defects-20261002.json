@@ -1,0 +1,87 @@
+{
+  "schema_version": "polaris.engineering_defect_record.v1",
+  "status": "local_repairs_verified_same_run_director_retry_failed_next_residual_open",
+  "authoritative_platform_receipt": false,
+  "user_reported_historical_error_count": 17,
+  "historical_error_count_is_root_cause_count": false,
+  "runs": [
+    {"run_id": "factory_8edf12521449", "kind": "historical_r02", "last_observed_status": "failed@quality_gate", "director_checkpoint_reached": true},
+    {"run_id": "factory_7244a26d3ae3", "kind": "fresh_r03", "original_terminal_status": "failed@director_dispatch", "wall_clock_seconds": 327.2, "runnable": false, "pm_succeeded": true, "ce_blueprints": "3/3", "qa_reached": false}
+  ],
+  "defects": [
+    {
+      "id": "R02_SCOPE_PARENT_DEPENDENCY",
+      "category": "Director execution / context assembly",
+      "evidence": ["0926de18062b4703b61f76295a2aab72", "5a8aafd7f948d6bcd31d9154", "2f76fe861af84efd8209151abd4778ec", "f39c9923decb8d59114eaf91"],
+      "symptoms": ["task_write_tool_scope_mismatch", "missing_required_refs=actual_sibling_exports"],
+      "causal_chain": "Task2 scope rejection precedes absent parent artifact receipts required by Task3.",
+      "status": "prior_generic_scope_and_receipt_repairs_regression_green_not_historical_snapshot_rewrite",
+      "remaining_risk": "Old r02 source asset registration gap remains separate; no receipt is invented from disk."
+    },
+    {
+      "id": "CONTEXT_AUTHORITY_REBIND_MASKING",
+      "category": "ContextOS / final request evidence assembly",
+      "root_cause": "Base role-slot cutoff rebinding removed request-specific missing evidence and its quality finding.",
+      "dynamic_proof": "Original r02 event missing actual_sibling_exports / persisted snapshot missing empty. Production binder regression failed before repair.",
+      "fix_file": "polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py",
+      "status": "local_verified",
+      "invariants": ["Base authority slots unchanged", "Observed required/missing refs retained separately", "Mandatory non-slot absences stay context-quality errors", "Absent or malformed quality object cannot bypass rejection", "Already-bound marker cannot bypass residual reconstruction"],
+      "live_dispatch_bypass_claimed": false
+    },
+    {
+      "id": "DIRECTOR_RETRY_GUIDANCE_DROPPED",
+      "category": "Director retry context assembly",
+      "run_id": "factory_7244a26d3ae3",
+      "evidence": ["2236f46591e275373dc67730", "d979fa40e2401f614d30763e", "41271f2b05fa693a7adba339"],
+      "root_cause": "Mutation retry retained identity/last user content but discarded safe task_write_guidance system projection.",
+      "dynamic_before": {"guidance_present": false, "retry_message_count": 2},
+      "dynamic_after": {"guidance_preserved": true, "write_targets": 7, "reference_only_targets": 3},
+      "fix_file": "polaris/cells/roles/kernel/internal/transaction/retry_context_builders.py",
+      "status": "local_verified_live_replay_no_new_guidance_missing_error_other_residual_failed",
+      "scope_widened": false
+    },
+    {
+      "id": "DIRECTOR_PROMPT_SURFACE_MISMATCH",
+      "category": "Final provider request / tool availability",
+      "evidence": "2236f46591e275373dc67730 native tools edit_file only, response requested read_file, role prompt listed read tools.",
+      "status": "open_separate_residual",
+      "risk": "Bounded mutation retry may recover now that guidance survives; initial prompt/tool contract alignment is not yet sealed."
+    },
+    {
+      "id": "DIRECTOR_RESUME_READ_ONLY_FINALIZATION",
+      "category": "Director local repair / mutation contract",
+      "run_id": "factory_7244a26d3ae3",
+      "evidence": ["61612a068b354100b95bfdcaab9d1014", "93d4d4f6c611a0b6a6b02969", "61133ddc124749a6a02422d4e2a54a52", "96e6566c96b2b9deb75183e0"],
+      "observed": "Recovery task8 emitted repo_tree/read_file/read_file on auto surface, then a tools-empty FINALIZATION request. Task ended director_no_materialized_changes; prior Task1 quality still failed and Task2/3 blocked.",
+      "status": "open_dynamic_trace_not_yet_root_cause_closed",
+      "pm_sha256_unchanged": "c9fc5224b9a9ee47c34703b80c6ccceda3ed3b90d2f0c4917ee6d16d8fee050f",
+      "ce_sha256_unchanged": "2c9c6185642bd796cd578facfd809d8877663073d6a5bd7f902da01e55f0dabb",
+      "manual_target_edits": false,
+      "model_ceiling_claimed": false
+    },
+    {
+      "id": "CE_INITIAL_NON_JSON_RESULT",
+      "category": "LLM output / structured protocol",
+      "evidence": "a7206a6f05c24f5aa50f6852de556e05: transport completed, 5018 completion tokens, short non-JSON result, output_validation_failed.",
+      "status": "recovered_same_run_ce_3_of_3",
+      "unknown": "Raw original SSE not retained; cannot prove Provider omitted native calls versus stream decoder loss.",
+      "rerun_ce_required": false
+    }
+  ],
+  "verification": {
+    "tests_passed": 366,
+    "wall_seconds": 14.04,
+    "ruff": "pass",
+    "mypy_source_files": 2,
+    "mypy": "pass",
+    "diff_check": "pass",
+    "full_repository_suite": "not_run",
+    "fresh_completed_verified": false
+  },
+  "next_action": "Close the confirmed read-only resume/finalization residual at its mutation-contract owner before another paid attempt. Preserve same-run PM/CE/valid effects; do not regenerate or invent target code.",
+  "same_run_recovery": {"loaded_source": "4d54ec6e13f89e4b", "new_director_run": "director-a75529d801c0", "terminal": "failed@director_dispatch", "qa_reached": false, "fresh_unattended_qualification": false},
+  "browser_observation": {"launcher": "http://127.0.0.1:5174/launcher", "http_status": 200, "page_errors": [], "screenshot": "/tmp/polaris-launcher-r03-recovery-20261002.png"},
+  "generated_targets_manually_edited": false,
+  "protected_ports": [49977, 5173],
+  "control_launcher": "http://127.0.0.1:5174/launcher"
+}

@@ -268,6 +268,12 @@ def workspace_quality_repair_evidence(repair_results: list[dict[str, Any]]) -> l
 def workspace_quality_summary_requires_task_boundary_triage(summary: dict[str, Any]) -> bool:
     if bool(summary.get("task_boundary_interface_discrepancy_retry_authorized")):
         return False
+    # The adapter requires explicit local retry routing for this stage. Named
+    # owned files are repair inventory, not that authorization; skipping triage
+    # here makes ordinary fallback repeat the same pre-provider rejection.
+    stage = str(summary.get("stage") or "").strip()
+    if stage == "runtime_plan_probe_unplannable":
+        return True
     owned_repair_targets = [
         str(item or "").strip().replace("\\", "/")
         for item in (summary.get("repair_target_files") or [])
@@ -278,9 +284,6 @@ def workspace_quality_summary_requires_task_boundary_triage(summary: dict[str, A
         # line_suggestion but was unplannable. The current task already owns
         # that file; this is Director LLM work, not CE interface triage.
         return False
-    stage = str(summary.get("stage") or "").strip()
-    if stage == "runtime_plan_probe_unplannable":
-        return True
     evidence = summary.get("interface_discrepancy_evidence")
     if (
         isinstance(evidence, dict)
@@ -1620,7 +1623,10 @@ def workspace_quality_residual_owner_handoff_targets(
         for raw_request in owner_task_retry_handoff_requests_from_scope_payload(payload):
             if str(raw_request.get("recommended_route") or "").strip() != "owner_task_retry":
                 continue
-            if not bool(raw_request.get("owner_found")) and str(raw_request.get("status") or "").strip() != "owner_found":
+            if (
+                not bool(raw_request.get("owner_found"))
+                and str(raw_request.get("status") or "").strip() != "owner_found"
+            ):
                 continue
             rel = str(raw_request.get("target_file") or "").strip().replace("\\", "/")
             if not rel or rel not in residual_blob:

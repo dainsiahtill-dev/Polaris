@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 __all__ = [
+    "DirectoryCreateReceipt",
     "FileWriteReceipt",
     "GuardedRegularFileSnapshotError",
     "GuardedRegularFileSnapshotV1",
@@ -25,12 +26,21 @@ __all__ = [
     "guarded_compare_and_create_regular_file",
     "guarded_compare_and_remove_regular_file",
     "guarded_compare_and_replace_regular_file",
+    "guarded_create_directory",
     "read_guarded_regular_file_snapshot",
     "set_default_adapter",
 ]
 
 
 def __getattr__(name: str) -> Any:
+    if name == "DirectoryCreateReceipt":
+        from polaris.kernelone.fs.types import DirectoryCreateReceipt
+
+        return DirectoryCreateReceipt
+    if name == "guarded_create_directory":
+        from polaris.kernelone.fs.guarded_directory import guarded_create_directory
+
+        return guarded_create_directory
     if name in {
         "GuardedRegularFileSnapshotError",
         "GuardedRegularFileSnapshotV1",

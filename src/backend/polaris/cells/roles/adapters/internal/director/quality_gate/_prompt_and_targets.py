@@ -24,6 +24,7 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.quality import (
     artifact_quality_issue_raw,
     artifact_quality_issues_for_errors,
@@ -63,6 +64,7 @@ from ..task_scope_paths import (
     _task_text_blob,
     _workspace_path_exists_case_insensitive,
 )
+from ._boundary_and_verify import _partition_paths_by_task_write_scope
 from ._package_ns import package_attr
 
 # Cross-module symbols (defined in sibling submodules). Bare annotations
@@ -2238,6 +2240,14 @@ def _semantic_quality_repair_target_files(
     an ``edit_blocks`` patch.
     """
 
+    manifest_targets, _ = _manifest_causal_quality_repair_targets(
+        artifact_quality_errors=artifact_quality_errors,
+        workspace_full=workspace_full,
+    )
+    if manifest_targets:
+        # These are read-only causal hints, not scope authority. The repair
+        # loop still intersects candidates with every admitted write envelope.
+        return manifest_targets
     joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
     if not any(hint in joined_errors for hint in _SEMANTIC_QUALITY_SINGLE_TARGET_HINTS):
         return []
@@ -2369,7 +2379,7 @@ def _missing_declared_target_files(task: dict[str, Any], workspace_full: str) ->
 # issue lacks the structured field we can safely parse, the regex path still
 # drives the resolver. Never fabricate values when no typed signal exists.
 
-_DECLARED_TARGET_MISSING_ISSUE_CODES = frozenset({"declared_target_missing"})
+_DECLARED_TARGET_MISSING_ISSUE_CODES = frozenset({"declared_target_missing", "declared_target_empty"})
 _MISSING_WORKSPACE_FILE_ISSUE_CODES = frozenset(
     {
         "declared_target_missing",
@@ -2504,6 +2514,19 @@ def _missing_materialization_quality_repair_target_files(
     declared_missing_now = _missing_declared_target_files(task, workspace_full)
     declared_missing_set = set(declared_missing_now)
     missing = [rel for rel in explicit_missing_declared if rel in declared_missing_set]
+    declared_paths = {
+        _normalize_declared_task_path(candidate) for candidate in _extract_task_target_path_candidates(task)
+    }
+    # Recover diagnosed empty targets, not unrelated empty files discovered
+    # while adjudicating another owner's failure. This keeps causal routing
+    # scoped to the current diagnostics and original declared targets.
+    missing.extend(
+        rel
+        for rel in explicit_missing_declared
+        if rel in declared_paths
+        and _workspace_path_exists_case_insensitive(Path(workspace_full), rel)
+        and not _workspace_path_exists_case_insensitive(Path(workspace_full), rel, require_materialized=True)
+    )
     missing.extend(_missing_unresolved_relative_import_target_files(artifact_quality_errors, workspace_full))
     missing.extend(
         _missing_workspace_file_quality_repair_target_files(
@@ -2520,7 +2543,92 @@ def _missing_materialization_quality_repair_target_files(
         )
     )
     missing.extend(declared_missing_now)
+    manifest_targets, derived_targets = _manifest_causal_quality_repair_targets(
+        artifact_quality_errors=artifact_quality_errors,
+        workspace_full=workspace_full,
+    )
+    admitted_manifests, _ = _partition_paths_by_task_write_scope(manifest_targets, task=task)
+    if admitted_manifests:
+        # A script/compiler contract repair must not masquerade as permission
+        # to materialize a previously undeclared compiled test artifact.
+        _, unowned_derived_targets = _partition_paths_by_task_write_scope(derived_targets, task=task)
+        missing = [target for target in missing if target not in unowned_derived_targets]
     return _dedupe_preserve_order(missing)
+
+
+def _manifest_causal_quality_repair_targets(
+    *,
+    artifact_quality_errors: list[str],
+    workspace_full: str,
+) -> tuple[list[str], list[str]]:
+    """Identify an existing Node test manifest whose TS peer is not emitted.
+
+    This discovery is read-only and deliberately narrow: an actual missing
+    Node test reference, the exact package script, and a source-only compiler
+    contract must agree. Unknown/inherited configurations are not inferred.
+    """
+    if not workspace_full:
+        return [], []
+    workspace = Path(workspace_full).resolve()
+    try:
+        manifest = (workspace / "package.json").resolve()
+        config = (workspace / "tsconfig.json").resolve()
+        manifest.relative_to(workspace)
+        config.relative_to(workspace)
+        fs = KernelFileSystem(str(workspace), get_default_adapter())
+        package = json.loads(fs.workspace_read_text("package.json", encoding="utf-8"))
+        tsconfig = json.loads(fs.workspace_read_text("tsconfig.json", encoding="utf-8"))
+        if not isinstance(package, dict) or not isinstance(tsconfig, dict) or tsconfig.get("extends"):
+            return [], []
+        scripts = package.get("scripts")
+        options = tsconfig.get("compilerOptions")
+        if not isinstance(scripts, dict) or not isinstance(options, dict):
+            return [], []
+        script = scripts.get("test")
+        root_dir = options.get("rootDir")
+        include = tsconfig.get("include")
+        if not isinstance(script, str) or not isinstance(root_dir, str) or not isinstance(include, list):
+            return [], []
+        root_dir = _normalize_declared_task_path(root_dir).rstrip("/")
+        if (
+            not root_dir
+            or root_dir == "."
+            or not include
+            or not all(isinstance(pattern, str) and pattern.startswith(root_dir + "/") for pattern in include)
+        ):
+            return [], []
+        tokens = shlex.split(script)
+        if "node" not in tokens or "--test" not in tokens or "tsc" not in tokens:
+            return [], []
+        if not any(
+            token in {"-p", "--project"} and tokens[index + 1] in {"tsconfig.json", "./tsconfig.json"}
+            for index, token in enumerate(tokens[:-1])
+        ):
+            return [], []
+        script_paths = {_normalize_declared_task_path(token) for token in tokens}
+        derived_targets: list[str] = []
+        for error in artifact_quality_errors:
+            lower = str(error).lower()
+            if "npm test" not in lower and "npm run test" not in lower:
+                continue
+            for target in _missing_workspace_file_quality_repair_target_files(
+                artifact_quality_errors=[error], workspace_full=workspace_full
+            ):
+                if target not in script_paths or Path(target).suffix != ".js" or target.startswith(root_dir + "/"):
+                    continue
+                for suffix in (".ts", ".tsx"):
+                    peer = (workspace / Path(target).with_suffix(suffix)).resolve()
+                    peer.relative_to(workspace)
+                    if peer.is_file():
+                        derived_targets.append(target)
+                        break
+        return (
+            (["package.json", "tsconfig.json"], _dedupe_preserve_order(derived_targets))
+            if derived_targets
+            else ([], [])
+        )
+    except (OSError, RuntimeError, ValueError):
+        return [], []
 
 
 def _missing_workspace_file_quality_repair_target_files(
@@ -3289,14 +3397,16 @@ def _build_materialization_quality_repair_message(
     if any(
         any(signature in str(item).lower() for signature in truncation_signatures) for item in artifact_quality_errors
     ):
-        # Rewrites at the same output limit truncate at the same place forever
-        # (live factory-bench L2-11 r6: index.html rewritten three times, all
-        # truncated). Only appending the remainder converges.
+        # Incompleteness does not prove an output-limit cause. Existing-target
+        # repair may expose only edit_file, so tail completion must be expressible
+        # through that offered tool rather than require read/append tools.
         syntax_block = (
-            "TRUNCATED FILE DIRECTIVE: a file below was CUT OFF by the output "
-            "limit. Do NOT rewrite it. read_file its tail, then call "
-            "append_to_file with ONLY the missing remainder, continuing "
-            "exactly after the current end of the file.\n"
+            "TRUNCATED FILE DIRECTIVE: current source is incomplete; the diagnostic alone does not "
+            "prove an output-limit cause. Use only the tools offered for this repair. With edit_file, "
+            "complete the source using an exact SEARCH/REPLACE: preserve the matching current tail "
+            "and add the missing remainder after it. If write_file is offered and a full replacement "
+            "is necessary, provide the complete corrected UTF-8 body. Preserve unrelated working "
+            "content. Never erase a required target to silence syntax diagnostics.\n"
         )
     elif any("syntax error" in str(item).lower() for item in artifact_quality_errors):
         # The narrow-edit-only directive (added L2-11 r2, where a full rewrite

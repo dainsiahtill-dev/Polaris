@@ -1,0 +1,32 @@
+id: vc-20261001-director-write-guidance
+classification: pattern
+owner: roles.adapters
+status: local_verified_live_pending
+blueprint: ../../../blueprints/POLARIS_DIRECTOR_WRITE_GUIDANCE_20261001.md
+assumptions:
+  - claim: Actionable target coverage conflicts with the admitted write scope.
+    evidence: Exact final physical request 887c66eb636cb0d36d3946c0; four demanded paths, two permitted.
+  - claim: Scope prose and inventory are not capability grants.
+    evidence: execution_envelope.authorization and existing DEO guards.
+  - claim: This conflict caused the timeout.
+    evidence: Not proven; do not claim.
+pre_mortem:
+  - Exposing control-plane helper or granting inventory write rights.
+  - Silently dropping explicit required effects rather than reporting contract conflict.
+  - Passing local tests while final physical prompt still contains conflicting coverage.
+verification:
+  - Adapter action prompt and kernel single-batch hint RED/GREEN.
+  - Empty/malformed/unsafe scope and required-write conflict cases.
+  - ContextOS safe projection and final-request consistency checks.
+  - Same-run and fresh qualification reported separately.
+target_project_manual_edit: forbidden
+results:
+  focused: 31_passed
+  expanded_first: 1015_passed_6_failed
+  affected_failure_groups_recheck: 223_passed
+  cascade: 9_of_9_passed
+  ruff: pass
+  mypy: 8_production_files_passed
+  historical_warnings: 2_swig_deprecation_warnings
+  full_repo_suite: not_run
+  fresh_bench: not_run

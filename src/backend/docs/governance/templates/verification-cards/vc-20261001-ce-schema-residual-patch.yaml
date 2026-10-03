@@ -1,0 +1,50 @@
+id: vc-20261001-ce-schema-residual-patch
+classification: pattern
+owner: factory.pipeline
+status: hermetic_real_runtime_verified_live_recovery_in_progress
+blueprint: ../../../blueprints/POLARIS_CE_SCHEMA_RESIDUAL_PATCH_20261001.md
+assumptions:
+  - claim: Retained native candidate contains useful declared subtrees.
+    evidence: r02 exact decoded native arguments, hash and four offline schema diagnostics.
+  - claim: Mixed required and additional-property errors currently force reconstruction.
+    evidence: _chief_engineer_required_property_repair_paths rejects mixed validators and integer paths.
+  - claim: Provider completion proves CE schema acceptance.
+    evidence: False; r02 non-stream responses completed before transaction validation rejection.
+pre_mortem:
+  - Forged patch path overwrites a valid declared sibling.
+  - Candidate changes after diagnostic planning.
+  - A schema-valid composed draft bypasses PM or semantic validation.
+  - Raw Provider patch evidence is relabeled as a complete Provider portfolio.
+verification:
+  - Existing Factory flow RED then GREEN, same CE phase and lease settlement.
+  - Exact array-member missing properties and additional members.
+  - Hash mismatch, forged operations, invalid added values and immutability denials.
+  - Original full schema plus existing CE semantic and PM authority checks.
+  - Relevant CE handoff, lease and deadline suites plus Ruff and Mypy.
+target_project_manual_edit: forbidden
+results:
+  fresh_r02: failed_before_director_582_seconds
+  physical_ce_calls: 4
+  provider_vs_assembly_origin: unproven_without_raw_stream_bytes
+  first_test: fixture_recovered_by_existing_normalizer_not_the_intended_RED
+  corrected_mixed_error_test: RED_failed_then_GREEN_success
+  debugger: actual_patch_contract_selected_fixture_missing_real_result_fields_corrected
+  new_tests: 14_passed
+  affected_ce_lease_deadline_suite: 137_passed
+  referenced_subschema_guard: RED_then_GREEN
+  ruff: pass
+  mypy: four_files_pass
+  exact_native_candidate_replay: six_exact_edits_planned_no_semantics_fabricated
+  cascade: nine_of_nine_passed
+  latest_new_tests: seventeen_passed
+  latest_ce_lease_deadline_suite: 140_passed
+  review: no_authority_bypass_found_real_runtime_test_gap_being_closed
+  hermetic_real_runtime: parent_three_cases_passed_51_99_seconds
+  accepted_and_rejected: valid_patch_accept_foreign_owner_and_forged_hash_reject
+  provenance: physical_snapshot_schema_raw_argument_hash_and_composed_candidate_distinct
+  lifecycle: starts_match_terminals_drain_settled_lease_claims_released
+  pm: hash_unchanged_one_stage_execution
+  network: private_loopback_only_no_remote_provider_no_shared_nats
+  warnings: three_existing_experimental_stream_deprecations
+  recovery: not_started
+  fresh_acceptance: not_proven

@@ -34,6 +34,13 @@ class NATSConfig(BaseModel):
         default=3.0,
         description="Connection timeout in seconds (KERNELONE_NATS_CONNECT_TIMEOUT)",
     )
+    startup_timeout_sec: float = Field(
+        default=60.0,
+        gt=0.0,
+        le=90.0,
+        allow_inf_nan=False,
+        description="Managed local service startup budget (KERNELONE_NATS_STARTUP_TIMEOUT)",
+    )
     reconnect_wait_sec: float = Field(
         default=1.0,
         description="Reconnect wait interval in seconds (KERNELONE_NATS_RECONNECT_WAIT)",

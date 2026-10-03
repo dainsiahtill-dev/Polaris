@@ -231,9 +231,9 @@ class TestFinalAnswerPath:
             stream=False,
         )
 
+        assert mock_tool_runtime.call_count == 0
         assert result["kind"] == "final_answer"
         assert "Project guidance draft" in result["visible_content"]
-        assert mock_tool_runtime.call_count == 0
         assert any(flag.get("type") == "TEXT_ONLY_TOOL_BATCH_SUPPRESSED" for flag in ledger.anomaly_flags)
 
     @pytest.mark.asyncio

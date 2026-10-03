@@ -411,7 +411,7 @@ def test_select_pm_task_payloads_ignores_stale_or_malformed_blueprint_file(tmp_p
     assert payloads[0]["metadata"] == {}
 
 
-def test_select_pm_task_payloads_adds_explicit_task_file_tokens_to_delivery_scope(tmp_path: Path) -> None:
+def test_select_pm_task_payloads_preserves_structured_scope_despite_prose_file_tokens(tmp_path: Path) -> None:
     plan_path = tmp_path / ".polaris" / "plans" / "latest.plan.json"
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_text(
@@ -436,8 +436,10 @@ def test_select_pm_task_payloads_adds_explicit_task_file_tokens_to_delivery_scop
     payloads = _select_pm_task_payloads(str(tmp_path), ["TASK-1"])
 
     assert len(payloads) == 1
-    assert payloads[0]["target_files"] == ["src/app.py", "requirements.txt", "README.md", "main.py"]
-    assert payloads[0]["scope_paths"] == ["src", "src/app.py", "requirements.txt", "README.md", "main.py"]
+    assert payloads[0]["target_files"] == ["src/app.py"]
+    assert payloads[0]["scope_paths"] == ["src"]
+    assert "requirements.txt" in payloads[0]["steps"][0]
+    assert "README.md" in payloads[0]["acceptance"][0]
 
 
 def test_select_pm_task_payloads_discovers_factory_pm_plan_mirror_and_workspace_blueprint(

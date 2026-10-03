@@ -52,6 +52,7 @@ _FACTORY_AUTHORITY_SUPERSEDED_FINDING_CODES = frozenset(
         "underutilized_with_missing_context",
         "missing_required_final_request_evidence",
         "missing_required_final_request_tools",
+        "missing_required_request_context_evidence",
         "final_request_role_identity_mismatch",
     }
 )
@@ -516,12 +517,17 @@ def _rebind_context_quality_to_factory_authority(
     *,
     bound: dict[str, Any],
     coverage: dict[str, Any],
+    request_context_missing_refs: list[str],
 ) -> None:
-    """Remove stale heuristic findings after the Factory cutoff becomes authoritative."""
+    """Supersede role-slot heuristics, never mandatory request-context residuals."""
 
     quality = bound.get("context_quality")
     if not isinstance(quality, dict):
-        return
+        if not request_context_missing_refs:
+            return
+        # Missing optional telemetry must never discard a mandatory residual.
+        quality = {"findings": [], "missing_coverage": []}
+        bound["context_quality"] = quality
     raw_findings = quality.get("findings")
     if not isinstance(raw_findings, list):
         raise TypeError("final_request_context_quality_findings_invalid")
@@ -530,16 +536,24 @@ def _rebind_context_quality_to_factory_authority(
         for item in raw_findings
         if not (isinstance(item, dict) and str(item.get("code") or "") in _FACTORY_AUTHORITY_SUPERSEDED_FINDING_CODES)
     ]
-    missing_required_refs = list(coverage["missing_required_refs"])
+    missing_required_refs = list(dict.fromkeys((*coverage["missing_required_refs"], *request_context_missing_refs)))
     missing_required_tools = list(coverage["missing_required_tools"])
     request_hash = str(coverage.get("request_hash") or "")
-    if missing_required_refs:
+    if coverage["missing_required_refs"]:
         findings.append(
             {
                 "code": "missing_required_final_request_evidence",
                 "severity": "warning",
-                "missing_required_refs": missing_required_refs,
+                "missing_required_refs": list(coverage["missing_required_refs"]),
                 "request_hash": request_hash,
+            }
+        )
+    if request_context_missing_refs:
+        findings.append(
+            {
+                "code": "missing_required_request_context_evidence",
+                "severity": "error",
+                "missing_required_refs": list(request_context_missing_refs),
             }
         )
     if missing_required_tools:
@@ -561,7 +575,7 @@ def _rebind_context_quality_to_factory_authority(
                 "request_hash": request_hash,
             }
         )
-    evidence_pass = bool(coverage["pass"])
+    evidence_pass = bool(coverage["pass"] and not request_context_missing_refs)
     quality["missing_coverage"] = [] if evidence_pass else list(quality.get("missing_coverage") or [])
     quality["context_needs_review"] = bool(findings)
     quality["findings"] = findings
@@ -606,12 +620,26 @@ def bind_final_request_context_audit_to_frozen(
         if not isinstance(coverage, dict):
             raise TypeError("final_request_evidence_coverage_object_required")
         if coverage.get("included_refs_authority") == "factory_role_evidence_cutoff":
+            # A marker is not proof that optional quality telemetry survived a
+            # caller copy. Rebuild residuals from preserved request observations.
+            observed_required = _coverage_string_list(coverage, "observed_required_refs")
+            observed_included = _coverage_string_list(coverage, "observed_included_refs")
+            cutoff_refs = {source["ref_type"] for source in _factory_authority_coverage_sources(binding)}
+            _rebind_context_quality_to_factory_authority(
+                bound=bound,
+                coverage=coverage,
+                request_context_missing_refs=[
+                    ref for ref in observed_required if ref not in observed_included and ref not in cutoff_refs
+                ],
+            )
             return bound
         observed_included_refs = coverage.get("included_refs")
         if type(observed_included_refs) is not list or any(
             type(ref) is not str or not ref for ref in observed_included_refs
         ):
             raise TypeError("final_request_included_refs_invalid")
+        observed_required_refs = _coverage_string_list(coverage, "required_refs")
+        observed_missing_refs = [ref for ref in observed_required_refs if ref not in observed_included_refs]
         missing_required_tools = coverage.get("missing_required_tools")
         if type(missing_required_tools) is not list:
             raise TypeError("final_request_missing_required_tools_invalid")
@@ -630,6 +658,8 @@ def bind_final_request_context_audit_to_frozen(
         ]
         missing_required_refs = [ref for ref in required_refs if ref not in included_refs]
         coverage_sources = _factory_authority_coverage_sources(binding)
+        cutoff_owned_refs = {source["ref_type"] for source in coverage_sources}
+        request_context_missing_refs = [ref for ref in observed_missing_refs if ref not in cutoff_owned_refs]
         total_required = len(required_refs) + len(required_tools)
         total_missing = len(missing_required_refs) + len(missing_required_tools)
         coverage_ratio = (
@@ -641,6 +671,8 @@ def bind_final_request_context_audit_to_frozen(
             )
         )
         coverage["observed_included_refs"] = list(observed_included_refs)
+        coverage["observed_required_refs"] = observed_required_refs
+        coverage["observed_missing_required_refs"] = observed_missing_refs
         coverage["included_refs_authority"] = "factory_role_evidence_cutoff"
         coverage["required_refs"] = required_refs
         coverage["included_refs"] = included_refs
@@ -656,7 +688,11 @@ def bind_final_request_context_audit_to_frozen(
         coverage["pass"] = bool(
             coverage.get("role_identity_ok") is True and not missing_required_refs and not missing_required_tools
         )
-        _rebind_context_quality_to_factory_authority(bound=bound, coverage=coverage)
+        _rebind_context_quality_to_factory_authority(
+            bound=bound,
+            coverage=coverage,
+            request_context_missing_refs=request_context_missing_refs,
+        )
     return bound
 
 

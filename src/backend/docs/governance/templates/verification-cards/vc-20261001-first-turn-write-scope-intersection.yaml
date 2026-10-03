@@ -1,0 +1,39 @@
+id: vc-20261001-first-turn-write-scope-intersection
+classification: pattern
+owner: roles.kernel
+status: local_verified_independent_review_pass_live_recovery_pending
+blueprint: ../../../blueprints/POLARIS_FIRST_TURN_WRITE_SCOPE_INTERSECTION_20261001.md
+assumptions:
+  - claim: scope_paths are not all writable artifact paths.
+    evidence: exact5a snapshot expectedwrite2 versus enum3; renderer reference-only.
+  - claim: missing-file test establishes write permission.
+    evidence: False; nonexistent reference still unowned.
+pre_mortem:
+  - Single-target quality/construction pin overrides the already filtered first turn.
+  - Rejecting a foreign pin returns an unrestricted tool instead of failing closed.
+  - Only discovery filters while supplied targets bypass pinning.
+  - Empty write scope silently falls back to target inventory.
+  - Required existing files are added to missing targets and rewritten.
+verification:
+  - Final forced-tool merge rejects reference-only single-target pin before provider dispatch.
+  - Repair-loop candidate producer intersects admitted envelope; no cross-owner repair.
+  - Exact two-write-one-reference RED/GREEN.
+  - Pinning of externally supplied candidates still intersects authority.
+  - Empty/malformed envelope fail closed; aliases stay consistent.
+  - Existing scope/audit/native request and materialization regression gates.
+target_project_manual_edit: forbidden
+results:
+  actual_physical_request_for_rejected_call: absent_pre_http_rejection
+  sibling_task_one: six_effect_receipts_successfully_materialized
+  exact_scope_tests: four_RED_then_GREEN
+  narrower_call_audit: RED_then_GREEN_authorized_subset_only
+  existing_required_artifact: preserved_not_forced_into_missing_set
+  owner_suite: 79_passed
+  latest_kernel_owner: 139_passed
+  latest_adapter_scope_parent_recheck: 46_passed
+  independent_scope_review: ten_real_loop_tests_and_original_three_conflict_cases_passed
+  malformed_pin_review: ninety_branch_cases_and_eighteen_final_merge_rejections
+  repair_scope_view: all_present_sources_validated_and_intersected_no_original_auth_overwrite
+  expanded_suite_before_subset_change: 237_passed
+  ruff_mypy: pass
+  dependency_error: legitimate_TASK3_waiting_for_TASK2_receipts

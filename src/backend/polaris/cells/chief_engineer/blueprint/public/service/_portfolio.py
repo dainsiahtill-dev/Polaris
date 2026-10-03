@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import shlex
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
@@ -304,14 +304,11 @@ def _normalized_away_entrypoint_obligation_ids(
     # preserve global identifier uniqueness, but the original id remains valid
     # artifact authority.  Such an id was normalized, not removed, and must not
     # be deleted from shared behavior coverage.
-    normalized_ids = {
-        item.obligation_id
-        for item in (
-            *completion_contract.obligations.artifacts,
-            *completion_contract.obligations.entrypoints,
-            *completion_contract.obligations.verification,
-        )
-    }
+    normalized_ids = (
+        {item.obligation_id for item in completion_contract.obligations.artifacts}
+        | {item.obligation_id for item in completion_contract.obligations.entrypoints}
+        | {item.obligation_id for item in completion_contract.obligations.verification}
+    )
     return frozenset(candidate_ids - normalized_ids)
 
 
@@ -1053,11 +1050,604 @@ def _revalidate_portfolio_authority_carrier(
     return carrier
 
 
+@dataclass(frozen=True)
+class _PortfolioArtifactProjection:
+    artifact_rows: tuple[dict[str, Any], ...]
+    entrypoint_rows: tuple[dict[str, Any], ...]
+    artifact_id_remap: dict[str, str]
+    dropped_unauthorized_artifact_ids: set[str]
+    delegated_path_owners: dict[str, set[str]]
+    owners_for_path: Callable[[str], set[str]]
+    unique_terminal_owner: Callable[[str], str | None]
+    transitively_depends_on: Callable[[str, str], bool]
+    canonical_delegated_python_entrypoint: Callable[[Mapping[str, Any]], tuple[str, str, tuple[str, ...]] | None]
+    canonical_delegated_native_entrypoint: Callable[[Mapping[str, Any]], tuple[str, str, tuple[str, ...]] | None]
+
+
+def _project_portfolio_artifact_rows(
+    *,
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    artifact_rows: tuple[dict[str, Any], ...],
+    entrypoint_rows: tuple[dict[str, Any], ...],
+    command_authorities: tuple[VerificationCommandAuthorityV1, ...] = (),
+    project_missing_pm_targets: bool = True,
+) -> _PortfolioArtifactProjection:
+    """Pure shared PM-scope/topology projection; never issues execution authority."""
+
+    delegated_topology_tasks = {task.task_id: task for task in tasks if task.topology_authority == "chief_engineer"}
+
+    def task_delegates(task_id: str, source_kind: str) -> bool:
+        task = delegated_topology_tasks.get(task_id)
+        return task is not None and source_kind in task.required_source_kinds
+
+    def canonical_delegated_python_entrypoint(
+        row: Mapping[str, Any],
+    ) -> tuple[str, str, tuple[str, ...]] | None:
+        """Resolve a bounded ``python -m`` package entrypoint.
+
+        Providers commonly describe a package CLI with the implementation
+        file in ``source_path`` (for example ``cli.py``) and the executable
+        module shim in ``runtime_path`` (``__main__.py``).  PM topology
+        delegation authorizes CE to choose that shim, but only when path,
+        package, owner, and exact argv all agree deterministically.
+        """
+
+        if row["applicability"] != "required":
+            return None
+        owner_task_id = str(row.get("owner_task_id") or "")
+        if not task_delegates(owner_task_id, "entrypoint"):
+            return None
+        runtime_path = str(row.get("runtime_path") or "")
+        runtime_parts = PurePosixPath(runtime_path).parts
+        if len(runtime_parts) < 3 or runtime_parts[0] != "src" or runtime_parts[-1] != "__main__.py":
+            return None
+        module_parts = runtime_parts[1:-1]
+        if not module_parts or any(not part.isidentifier() for part in module_parts):
+            return None
+        source_path = str(row.get("source_path") or "")
+        source_parts = PurePosixPath(source_path).parts
+        if (
+            len(source_parts) < 3
+            or source_parts[0] != "src"
+            or tuple(source_parts[1:-1]) != module_parts
+            or source_parts[-1] in {"", ".", ".."}
+            or not source_parts[-1].endswith(".py")
+        ):
+            return None
+        expected_argv = ("python", "-m", ".".join(module_parts))
+        try:
+            candidate_argv = tuple(shlex.split(str(row.get("command") or ""), posix=True))
+        except ValueError:
+            return None
+        if candidate_argv != expected_argv:
+            return None
+        return owner_task_id, runtime_path, expected_argv
+
+    def canonical_delegated_native_entrypoint(
+        row: Mapping[str, Any],
+    ) -> tuple[str, str, tuple[str, ...]] | None:
+        """Resolve one bounded native executable chosen under CE topology authority.
+
+        PM may delegate entrypoint topology while committing only a generic
+        native executable placeholder. Accept CE's concrete executable name
+        only when source artifact, owner, suffix, runtime path, and parsed
+        argv executable agree exactly. Extra argv remain literal arguments
+        in the no-shell command authority; they cannot widen the executable
+        path or introduce shell evaluation.
+        """
+
+        if row["applicability"] != "required":
+            return None
+        owner_task_id = str(row.get("owner_task_id") or "")
+        task = delegated_topology_tasks.get(owner_task_id)
+        if task is None or not task_delegates(owner_task_id, "entrypoint"):
+            return None
+        source_path = str(row.get("source_path") or "")
+        if not _is_ce_source_topology_path(
+            source_path,
+            allowed_source_suffixes=task.allowed_source_suffixes,
+        ):
+            return None
+        source_artifact_matches = tuple(
+            artifact
+            for artifact in artifact_rows
+            if artifact["applicability"] == "required"
+            and str(artifact.get("path") or "") == source_path
+            and str(artifact.get("owner_task_id") or "") == owner_task_id
+            and str(artifact.get("semantic_role") or "") in {"source", "entrypoint"}
+        )
+        if len(source_artifact_matches) != 1:
+            return None
+        runtime_path = str(row.get("runtime_path") or "")
+        runtime_parts = PurePosixPath(runtime_path).parts
+        if (
+            len(runtime_parts) < 2
+            or runtime_parts[0] not in {"bin", "build", "dist", "target"}
+            or any(part in {"", ".", ".."} for part in runtime_parts)
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+", runtime_parts[-1])
+        ):
+            return None
+        try:
+            candidate_argv = tuple(shlex.split(str(row.get("command") or ""), posix=True))
+        except ValueError:
+            return None
+        if not candidate_argv:
+            return None
+        command_path = candidate_argv[0].replace("\\", "/")
+        if command_path.startswith("./"):
+            command_path = command_path[2:]
+        if command_path == runtime_parts[-1]:
+            candidate_argv = (runtime_path, *candidate_argv[1:])
+        elif command_path != runtime_path:
+            return None
+        return owner_task_id, source_path, candidate_argv
+
+    # Normalize the common split CLI description before path authority is
+    # projected.  The executable ``__main__.py`` is a real delivery
+    # artifact; without this row the completion contract has an entrypoint
+    # command but no owned artifact and deletes the otherwise valid CE
+    # suggestion.  This projection is bounded by explicit PM topology
+    # delegation plus exact path/package/argv agreement above.
+    normalized_pre_authority_entrypoints: list[dict[str, Any]] = []
+    projected_entrypoint_paths = {
+        str(row.get("path") or "") for row in artifact_rows if row["applicability"] != "not_applicable"
+    }
+    projected_entrypoint_index = 1
+    for row in entrypoint_rows:
+        normalized_row = dict(row)
+        delegated_entrypoint = canonical_delegated_python_entrypoint(row)
+        if delegated_entrypoint is not None:
+            owner_task_id, canonical_path, _expected_argv = delegated_entrypoint
+            normalized_row["source_path"] = canonical_path
+            if canonical_path not in projected_entrypoint_paths:
+                artifact_rows = (
+                    *artifact_rows,
+                    {
+                        "obligation_id": f"artifact-delegated-entrypoint-{projected_entrypoint_index:03d}",
+                        "path": canonical_path,
+                        "semantic_role": "entrypoint",
+                        "applicability": "required",
+                        "owner_task_id": owner_task_id,
+                    },
+                )
+                projected_entrypoint_paths.add(canonical_path)
+                projected_entrypoint_index += 1
+        normalized_pre_authority_entrypoints.append(normalized_row)
+    entrypoint_rows = tuple(normalized_pre_authority_entrypoints)
+
+    artifact_rows = _project_delegated_cpp_header_companions(
+        artifact_rows,
+        delegated_public_header_task_ids=frozenset(
+            task.task_id
+            for task in tasks
+            if task.topology_authority == "chief_engineer" and "public_headers" in task.required_source_kinds
+        ),
+    )
+
+    # CE-created source paths become authority only when the committed PM
+    # task explicitly delegated topology.  The owner comes from the same
+    # strict structured row; safe-source filtering prevents this mapping
+    # from widening to manifests, tests, docs, or arbitrary workspace paths.
+    delegated_path_owners: dict[str, set[str]] = {}
+    for row in artifact_rows:
+        if row["applicability"] == "not_applicable":
+            continue
+        path = str(row.get("path") or "")
+        owner_task_id = str(row.get("owner_task_id") or "")
+        task = delegated_topology_tasks.get(owner_task_id)
+        semantic_role = str(row.get("semantic_role") or "")
+        if task is None or not _ce_topology_authorizes_artifact(
+            topology_authority=task.topology_authority,
+            required_source_kinds=task.required_source_kinds,
+            allowed_source_suffixes=task.allowed_source_suffixes,
+            semantic_role=semantic_role,
+            path=path,
+        ):
+            continue
+        delegated_path_owners.setdefault(path, set()).add(owner_task_id)
+
+    pm_target_owners: dict[str, set[str]] = {}
+    pm_dependencies = {task.task_id: set(task.dependencies) for task in tasks}
+    for task in tasks:
+        for path in task.target_files:
+            pm_target_owners.setdefault(path, set()).add(task.task_id)
+
+    def owners_for_path(path: str) -> set[str]:
+        owners = set(pm_target_owners.get(path, set()))
+        owners.update(task.task_id for task in tasks if _task_authorizes_completion_path(task=task, path=path))
+        owners.update(delegated_path_owners.get(path, set()))
+        return owners
+
+    def transitively_depends_on(task_id: str, possible_ancestor: str) -> bool:
+        pending = list(pm_dependencies.get(task_id, set()))
+        visited: set[str] = set()
+        while pending:
+            dependency = pending.pop()
+            if dependency == possible_ancestor:
+                return True
+            if dependency in visited:
+                continue
+            visited.add(dependency)
+            pending.extend(pm_dependencies.get(dependency, set()))
+        return False
+
+    def unique_terminal_owner(path: str) -> str | None:
+        """Return the sole final writer in a PM-authorized shared-path dependency chain."""
+
+        authorized = owners_for_path(path)
+        terminal = {
+            owner
+            for owner in authorized
+            if not any(other != owner and transitively_depends_on(other, owner) for other in authorized)
+        }
+        return next(iter(terminal)) if len(terminal) == 1 else None
+
+    entrypoint_paths = {path for task in tasks for path in task.entrypoint_targets}
+    ordered_pm_paths = tuple(dict.fromkeys(path for task in tasks for path in task.target_files))
+
+    def project_pm_target_row(path: str, *, index: int) -> dict[str, Any]:
+        authorized = owners_for_path(path)
+        owner_task_id = next(iter(authorized)) if len(authorized) == 1 else unique_terminal_owner(path)
+        if owner_task_id is None:
+            raise ValueError(
+                "PM target artifact has no unique authorized terminal owner; "
+                f"path={path!r}; owners={sorted(authorized)!r}"
+            )
+        return {
+            "obligation_id": f"artifact-pm-{index:03d}",
+            "path": path,
+            "semantic_role": _pm_target_semantic_role(
+                path=path,
+                entrypoint_paths=entrypoint_paths,
+            ),
+            "applicability": "required",
+            "owner_task_id": owner_task_id,
+        }
+
+    if not artifact_rows and project_missing_pm_targets:
+        # Artifact paths and owners are PM authority, not creative CE
+        # content. Some providers repeatedly return an empty artifact list
+        # even after a bounded schema-repair turn. Project every exact PM
+        # target once and retain fail-closed ownership: shared paths are
+        # accepted only when their dependency graph has one terminal writer.
+        artifact_rows = tuple(
+            project_pm_target_row(path, index=index) for index, path in enumerate(ordered_pm_paths, start=1)
+        )
+
+    # Creative CE extras must not expand delivery obligations. Drop paths
+    # outside exact PM target / component-safe scope, then project every
+    # missing exact PM target. Owner lies on authorized paths stay
+    # fail-closed below.
+    dropped_unauthorized_artifact_ids: set[str] = set()
+    kept_artifact_rows: list[dict[str, Any]] = []
+    for row in artifact_rows:
+        if row["applicability"] == "not_applicable":
+            kept_artifact_rows.append(dict(row))
+            continue
+        path = str(row.get("path") or "")
+        if path and owners_for_path(path):
+            kept_artifact_rows.append(dict(row))
+            continue
+        dropped_unauthorized_artifact_ids.add(str(row["obligation_id"]))
+    required_artifact_paths = {
+        str(row["path"]) for row in kept_artifact_rows if row["applicability"] != "not_applicable"
+    }
+    next_projected_index = 1
+    for path in ordered_pm_paths:
+        if not project_missing_pm_targets or path in required_artifact_paths:
+            continue
+        kept_artifact_rows.append(project_pm_target_row(path, index=next_projected_index))
+        next_projected_index += 1
+    artifact_rows = tuple(kept_artifact_rows)
+
+    def normalize_owner_rows(
+        rows: tuple[dict[str, Any], ...],
+        *,
+        path_field: str,
+    ) -> tuple[dict[str, Any], ...]:
+        """Repair only model owner drift that PM authority can resolve uniquely.
+
+        Shared paths remain set-valued in PM authority.  A scalar completion
+        owner is projected only when those owners form a dependency chain with
+        one terminal writer.  Parallel/incomparable owners remain ambiguous and
+        therefore fail closed in the validation below.
+        """
+
+        normalized: list[dict[str, Any]] = []
+        for row in rows:
+            normalized_row = dict(row)
+            if row["applicability"] != "not_applicable":
+                path_value = row.get(path_field)
+                path = str(path_value) if path_value is not None else ""
+                authorized = owners_for_path(path) if path else set()
+                terminal_owner: str | None = None
+                if len(authorized) > 1 and row["owner_task_id"] not in authorized:
+                    terminal_owner = unique_terminal_owner(path) if path else None
+                elif (
+                    len(authorized) == 1
+                    and row["owner_task_id"] not in authorized
+                    and row.get("semantic_role") == "test"
+                ):
+                    candidate_owner = next(iter(authorized))
+                    candidate_test_authorities = tuple(
+                        item
+                        for item in command_authorities
+                        if item.modality == "test" and item.task_id == candidate_owner
+                    )
+                    if len(candidate_test_authorities) == 1:
+                        # Live L3-21: provider assigned the sole PM-owned
+                        # test path to a source task. Test ownership can be
+                        # repaired only when both path authority and the
+                        # executable test command resolve uniquely. Source
+                        # and entrypoint owner drift remains fail-closed.
+                        terminal_owner = candidate_owner
+                if terminal_owner is not None:
+                    normalized_row["owner_task_id"] = terminal_owner
+            normalized.append(normalized_row)
+        return tuple(normalized)
+
+    artifact_rows = normalize_owner_rows(artifact_rows, path_field="path")
+    entrypoint_rows = normalize_owner_rows(entrypoint_rows, path_field="source_path")
+
+    def collapse_duplicate_artifact_paths(
+        rows: tuple[dict[str, Any], ...],
+    ) -> tuple[tuple[dict[str, Any], ...], dict[str, str]]:
+        """Keep one completion artifact obligation per path.
+
+        PM often authorizes a shared manifest on later tasks.  CE then
+        reaffirms that same path under a second obligation_id.  The
+        canonical contract is path-unique.  Collapse to the required
+        PM-terminal (or first required) row and remap covers.  Do not
+        invent paths, owners, or semantic roles.
+        """
+
+        kept_not_applicable: list[dict[str, Any]] = []
+        by_path: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            if row["applicability"] == "not_applicable":
+                kept_not_applicable.append(dict(row))
+                continue
+            path = str(row.get("path") or "")
+            by_path.setdefault(path, []).append(dict(row))
+
+        collapsed: list[dict[str, Any]] = []
+        remapped: dict[str, str] = {}
+        for path, group in by_path.items():
+            if len(group) == 1:
+                collapsed.append(group[0])
+                continue
+            terminal = unique_terminal_owner(path) if path else None
+
+            def sort_key(
+                item: dict[str, Any],
+                *,
+                terminal_owner: str | None = terminal,
+            ) -> tuple[int, int, str]:
+                owner = item.get("owner_task_id")
+                return (
+                    0 if item.get("applicability") == "required" else 1,
+                    0 if terminal_owner is not None and owner == terminal_owner else 1,
+                    str(item.get("obligation_id") or ""),
+                )
+
+            winner = sorted(group, key=sort_key)[0]
+            winner_id = str(winner["obligation_id"])
+            collapsed.append(winner)
+            for item in group:
+                dropped_id = str(item["obligation_id"])
+                if dropped_id != winner_id:
+                    remapped[dropped_id] = winner_id
+        return (*kept_not_applicable, *collapsed), remapped
+
+    artifact_rows, artifact_id_remap = collapse_duplicate_artifact_paths(artifact_rows)
+    return _PortfolioArtifactProjection(
+        artifact_rows=artifact_rows,
+        entrypoint_rows=entrypoint_rows,
+        artifact_id_remap=artifact_id_remap,
+        dropped_unauthorized_artifact_ids=dropped_unauthorized_artifact_ids,
+        delegated_path_owners=delegated_path_owners,
+        owners_for_path=owners_for_path,
+        unique_terminal_owner=unique_terminal_owner,
+        transitively_depends_on=transitively_depends_on,
+        canonical_delegated_python_entrypoint=canonical_delegated_python_entrypoint,
+        canonical_delegated_native_entrypoint=canonical_delegated_native_entrypoint,
+    )
+
+
+def project_chief_engineer_effective_obligation_view(
+    payload: Mapping[str, Any],
+    *,
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    authority_carrier: object | None = None,
+) -> dict[str, Any]:
+    """Observe effective identities without I/O, enrollment, or execution authority.
+
+    Factory callers supply the authenticated carrier already issued from committed
+    PM evidence. Offline callers receive a explicitly incomplete artifact view;
+    their provisional entrypoint/verifier ids are never final authority proof.
+    """
+
+    carrier: _ChiefEngineerPortfolioAuthorityCarrierV1 | None = None
+    if authority_carrier is not None:
+        if type(authority_carrier) is not _ChiefEngineerPortfolioAuthorityCarrierV1:
+            raise ValueError("effective obligation view requires exact Factory-issued authority carrier")
+        if not _verify_chief_engineer_portfolio_authority_carrier(authority_carrier):
+            raise ValueError("effective obligation view authority carrier signature is invalid")
+        if authority_carrier.tasks != tasks:
+            raise ValueError("effective obligation view PM tasks do not match authority carrier")
+        carrier = authority_carrier
+    completion = _portfolio_mapping(payload.get("project_completion_contract"), field_name="completion")
+    obligations = _portfolio_mapping(completion.get("obligations"), field_name="obligations")
+    raw_rows = {
+        name: tuple(
+            _portfolio_mapping(row, field_name=name) for row in _portfolio_array(obligations.get(name), field_name=name)
+        )
+        for name in ("artifacts", "entrypoints", "verification")
+    }
+    artifact_projection = _project_portfolio_artifact_rows(
+        tasks=tasks,
+        artifact_rows=raw_rows["artifacts"],
+        entrypoint_rows=raw_rows["entrypoints"],
+        command_authorities=carrier.verification_command_authority if carrier is not None else (),
+        project_missing_pm_targets=carrier is not None,
+    )
+    effective = {
+        "artifacts": [dict(row) for row in artifact_projection.artifact_rows],
+        "entrypoints": [dict(row) for row in artifact_projection.entrypoint_rows],
+        "verification": [dict(row) for row in raw_rows["verification"]],
+    }
+    errors: list[str] = []
+    normalization_findings: list[dict[str, Any]] = []
+    complete = False
+    if carrier is not None:
+        command = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=carrier.workspace,
+            run_id=carrier.run_id,
+            tasks=tasks,
+            authority_carrier=carrier,
+            llm_blueprint=dict(payload),
+        )
+        try:
+            normalized = _normalize_portfolio_completion_contract(
+                command, completion, carrier=carrier, check_depth=False
+            )
+            artifact_projection = normalized.artifact_projection
+            effective = normalized.obligations.to_dict()
+            complete = True
+        except (ChiefEngineerBlueprintErrorV1, TypeError, ValueError) as exc:
+            errors.append(str(exc))
+            normalization_findings.append(
+                {
+                    "code": "invalid_project_completion_contract",
+                    "repair_operation": (
+                        exc.details.get("repair_operation") if isinstance(exc, ChiefEngineerBlueprintErrorV1) else None
+                    ),
+                    "detail": str(exc),
+                }
+            )
+            # With committed evidence present, raw non-artifact rows must not
+            # masquerade as the failed final command-normalized roster.
+            effective["entrypoints"] = []
+            effective["verification"] = []
+    exclusions: list[dict[str, Any]] = []
+    effective_ids = {str(row["obligation_id"]) for rows in effective.values() for row in rows}
+    aliases = artifact_projection.artifact_id_remap
+    for name, rows in raw_rows.items():
+        for row in rows:
+            obligation_id = str(row.get("obligation_id") or "")
+            if obligation_id in effective_ids:
+                continue
+            reason = (
+                "outside_immutable_pm_scope_and_delegated_topology"
+                if obligation_id in artifact_projection.dropped_unauthorized_artifact_ids
+                else "duplicate_artifact_path_alias"
+                if obligation_id in aliases
+                else "final_command_normalization_excluded"
+            )
+            exclusions.append(
+                {
+                    "obligation_id": obligation_id,
+                    "collection": name,
+                    "path": row.get("path", row.get("source_path")),
+                    "owner_task_id": row.get("owner_task_id"),
+                    "reason": reason,
+                    "replacement_obligation_id": aliases.get(obligation_id),
+                }
+            )
+    candidate_hash = hashlib.sha256(
+        json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    view: dict[str, Any] = {
+        "schema_version": "chief_engineer.effective_obligation_view.v1",
+        "candidate_hash": candidate_hash,
+        "pm_contract_hash": carrier.pm_contract_hash if carrier is not None else None,
+        "final_roster_complete": complete,
+        "missing_authority_evidence": [] if carrier is not None else ["authenticated_portfolio_authority_carrier"],
+        "normalization_errors": errors,
+        "normalization_findings": normalization_findings,
+        "obligations": effective,
+        "retained_completion_obligation_ids": sorted(effective_ids),
+        "excluded_completion_obligations": exclusions,
+        "artifact_id_aliases": dict(aliases),
+        "execution_authority": False,
+    }
+    view["basis_hash"] = stable_hash(
+        {
+            **view,
+            "tasks": [task.to_dict() for task in tasks],
+            "catalog_snapshot_hash": carrier.catalog_snapshot_hash if carrier is not None else None,
+            "verifier_policy_snapshot_hash": carrier.verifier_policy_snapshot_hash if carrier is not None else None,
+        }
+    )
+    return view
+
+
 def _build_portfolio_completion_contract(
     command: BuildChiefEngineerBlueprintPortfolioCommandV1,
     requirements: Mapping[str, Any],
 ) -> ProjectCompletionContractV1:
     carrier = _revalidate_portfolio_authority_carrier(command)
+    normalized = _normalize_portfolio_completion_contract(command, requirements, carrier=carrier)
+    try:
+        return build_project_completion_contract(
+            project_id=carrier.project_id,
+            run_id=command.run_id,
+            project_kind=normalized.project_kind_authority.project_kind,
+            project_kind_authority=normalized.project_kind_authority,
+            pm_contract_hash=carrier.pm_contract_hash,
+            covered_task_ids=tuple(task.task_id for task in command.tasks),
+            obligations=normalized.obligations,
+            completion_predicate_version=_PROJECT_COMPLETION_PREDICATE_VERSION,
+            verifier_policy_hash=carrier.verifier_policy_hash,
+            verifier_policy_snapshot_hash=carrier.verifier_policy_snapshot_hash,
+            verification_command_authority=normalized.command_authorities,
+        )
+    except (TypeError, ValueError) as exc:
+        raise _portfolio_contract_error(
+            f"invalid project completion contract: {exc}",
+            code="invalid_project_completion_contract",
+            details={"error_type": type(exc).__name__},
+        ) from exc
+
+
+@dataclass(frozen=True)
+class _NormalizedPortfolioCompletion:
+    obligations: ProjectCompletionObligationsV1
+    project_kind_authority: ProjectKindAuthorityV1
+    command_authorities: tuple[VerificationCommandAuthorityV1, ...]
+    artifact_projection: _PortfolioArtifactProjection
+
+
+def _normalized_entrypoint_obligation(row: Mapping[str, Any]) -> EntrypointObligationV1:
+    """Keep entrypoint shape repair distinct from subsequent immutable owner/ID checks."""
+
+    try:
+        return EntrypointObligationV1(
+            obligation_id=row["obligation_id"],
+            kind=row["kind"],
+            applicability=row["applicability"],
+            owner_task_id=row["owner_task_id"],
+            source_path=row["source_path"],
+            runtime_path=row["runtime_path"],
+            command=row["command"],
+        )
+    except (TypeError, ValueError) as exc:
+        raise _portfolio_contract_error(
+            f"invalid project completion contract: {exc}",
+            code="invalid_project_completion_contract",
+            details={"repair_operation": "entrypoint_upsert", "normalization_subject": "entrypoint"},
+        ) from exc
+
+
+def _normalize_portfolio_completion_contract(
+    command: BuildChiefEngineerBlueprintPortfolioCommandV1,
+    requirements: Mapping[str, Any],
+    *,
+    carrier: _ChiefEngineerPortfolioAuthorityCarrierV1,
+    check_depth: bool = True,
+) -> _NormalizedPortfolioCompletion:
+    """Pure canonicalization using authenticated immutable facts, without live enrollment."""
+
     try:
         project_kind_authority = derive_project_kind_authority_from_catalog_snapshot(
             project_id=carrier.project_id,
@@ -1116,376 +1706,22 @@ def _build_portfolio_completion_contract(
         command_authorities = list(carrier.verification_command_authority)
         command_authority_by_hash = {item.authority_hash: item for item in command_authorities}
 
-        delegated_topology_tasks = {
-            task.task_id: task for task in command.tasks if task.topology_authority == "chief_engineer"
-        }
-
-        def task_delegates(task_id: str, source_kind: str) -> bool:
-            task = delegated_topology_tasks.get(task_id)
-            return task is not None and source_kind in task.required_source_kinds
-
-        def canonical_delegated_python_entrypoint(
-            row: Mapping[str, Any],
-        ) -> tuple[str, str, tuple[str, ...]] | None:
-            """Resolve a bounded ``python -m`` package entrypoint.
-
-            Providers commonly describe a package CLI with the implementation
-            file in ``source_path`` (for example ``cli.py``) and the executable
-            module shim in ``runtime_path`` (``__main__.py``).  PM topology
-            delegation authorizes CE to choose that shim, but only when path,
-            package, owner, and exact argv all agree deterministically.
-            """
-
-            if row["applicability"] != "required":
-                return None
-            owner_task_id = str(row.get("owner_task_id") or "")
-            if not task_delegates(owner_task_id, "entrypoint"):
-                return None
-            runtime_path = str(row.get("runtime_path") or "")
-            runtime_parts = PurePosixPath(runtime_path).parts
-            if len(runtime_parts) < 3 or runtime_parts[0] != "src" or runtime_parts[-1] != "__main__.py":
-                return None
-            module_parts = runtime_parts[1:-1]
-            if not module_parts or any(not part.isidentifier() for part in module_parts):
-                return None
-            source_path = str(row.get("source_path") or "")
-            source_parts = PurePosixPath(source_path).parts
-            if (
-                len(source_parts) < 3
-                or source_parts[0] != "src"
-                or tuple(source_parts[1:-1]) != module_parts
-                or source_parts[-1] in {"", ".", ".."}
-                or not source_parts[-1].endswith(".py")
-            ):
-                return None
-            expected_argv = ("python", "-m", ".".join(module_parts))
-            try:
-                candidate_argv = tuple(shlex.split(str(row.get("command") or ""), posix=True))
-            except ValueError:
-                return None
-            if candidate_argv != expected_argv:
-                return None
-            return owner_task_id, runtime_path, expected_argv
-
-        def canonical_delegated_native_entrypoint(
-            row: Mapping[str, Any],
-        ) -> tuple[str, str, tuple[str, ...]] | None:
-            """Resolve one bounded native executable chosen under CE topology authority.
-
-            PM may delegate entrypoint topology while committing only a generic
-            native executable placeholder. Accept CE's concrete executable name
-            only when source artifact, owner, suffix, runtime path, and parsed
-            argv executable agree exactly. Extra argv remain literal arguments
-            in the no-shell command authority; they cannot widen the executable
-            path or introduce shell evaluation.
-            """
-
-            if row["applicability"] != "required":
-                return None
-            owner_task_id = str(row.get("owner_task_id") or "")
-            task = delegated_topology_tasks.get(owner_task_id)
-            if task is None or not task_delegates(owner_task_id, "entrypoint"):
-                return None
-            source_path = str(row.get("source_path") or "")
-            if not _is_ce_source_topology_path(
-                source_path,
-                allowed_source_suffixes=task.allowed_source_suffixes,
-            ):
-                return None
-            source_artifact_matches = tuple(
-                artifact
-                for artifact in artifact_rows
-                if artifact["applicability"] == "required"
-                and str(artifact.get("path") or "") == source_path
-                and str(artifact.get("owner_task_id") or "") == owner_task_id
-                and str(artifact.get("semantic_role") or "") in {"source", "entrypoint"}
-            )
-            if len(source_artifact_matches) != 1:
-                return None
-            runtime_path = str(row.get("runtime_path") or "")
-            runtime_parts = PurePosixPath(runtime_path).parts
-            if (
-                len(runtime_parts) < 2
-                or runtime_parts[0] not in {"bin", "build", "dist", "target"}
-                or any(part in {"", ".", ".."} for part in runtime_parts)
-                or not re.fullmatch(r"[A-Za-z0-9_.-]+", runtime_parts[-1])
-            ):
-                return None
-            try:
-                candidate_argv = tuple(shlex.split(str(row.get("command") or ""), posix=True))
-            except ValueError:
-                return None
-            if not candidate_argv:
-                return None
-            command_path = candidate_argv[0].replace("\\", "/")
-            if command_path.startswith("./"):
-                command_path = command_path[2:]
-            if command_path == runtime_parts[-1]:
-                candidate_argv = (runtime_path, *candidate_argv[1:])
-            elif command_path != runtime_path:
-                return None
-            return owner_task_id, source_path, candidate_argv
-
-        # Normalize the common split CLI description before path authority is
-        # projected.  The executable ``__main__.py`` is a real delivery
-        # artifact; without this row the completion contract has an entrypoint
-        # command but no owned artifact and deletes the otherwise valid CE
-        # suggestion.  This projection is bounded by explicit PM topology
-        # delegation plus exact path/package/argv agreement above.
-        normalized_pre_authority_entrypoints: list[dict[str, Any]] = []
-        projected_entrypoint_paths = {
-            str(row.get("path") or "") for row in artifact_rows if row["applicability"] != "not_applicable"
-        }
-        projected_entrypoint_index = 1
-        for row in entrypoint_rows:
-            normalized_row = dict(row)
-            delegated_entrypoint = canonical_delegated_python_entrypoint(row)
-            if delegated_entrypoint is not None:
-                owner_task_id, canonical_path, _expected_argv = delegated_entrypoint
-                normalized_row["source_path"] = canonical_path
-                if canonical_path not in projected_entrypoint_paths:
-                    artifact_rows = (
-                        *artifact_rows,
-                        {
-                            "obligation_id": f"artifact-delegated-entrypoint-{projected_entrypoint_index:03d}",
-                            "path": canonical_path,
-                            "semantic_role": "entrypoint",
-                            "applicability": "required",
-                            "owner_task_id": owner_task_id,
-                        },
-                    )
-                    projected_entrypoint_paths.add(canonical_path)
-                    projected_entrypoint_index += 1
-            normalized_pre_authority_entrypoints.append(normalized_row)
-        entrypoint_rows = tuple(normalized_pre_authority_entrypoints)
-
-        artifact_rows = _project_delegated_cpp_header_companions(
-            artifact_rows,
-            delegated_public_header_task_ids=frozenset(
-                task.task_id
-                for task in command.tasks
-                if task.topology_authority == "chief_engineer" and "public_headers" in task.required_source_kinds
-            ),
+        artifact_projection = _project_portfolio_artifact_rows(
+            tasks=command.tasks,
+            artifact_rows=artifact_rows,
+            entrypoint_rows=entrypoint_rows,
+            command_authorities=tuple(command_authorities),
         )
-
-        # CE-created source paths become authority only when the committed PM
-        # task explicitly delegated topology.  The owner comes from the same
-        # strict structured row; safe-source filtering prevents this mapping
-        # from widening to manifests, tests, docs, or arbitrary workspace paths.
-        delegated_path_owners: dict[str, set[str]] = {}
-        for row in artifact_rows:
-            if row["applicability"] == "not_applicable":
-                continue
-            path = str(row.get("path") or "")
-            owner_task_id = str(row.get("owner_task_id") or "")
-            task = delegated_topology_tasks.get(owner_task_id)
-            semantic_role = str(row.get("semantic_role") or "")
-            if task is None or not _ce_topology_authorizes_artifact(
-                topology_authority=task.topology_authority,
-                required_source_kinds=task.required_source_kinds,
-                allowed_source_suffixes=task.allowed_source_suffixes,
-                semantic_role=semantic_role,
-                path=path,
-            ):
-                continue
-            delegated_path_owners.setdefault(path, set()).add(owner_task_id)
-
-        pm_target_owners: dict[str, set[str]] = {}
-        pm_dependencies = {task.task_id: set(task.dependencies) for task in command.tasks}
-        for task in command.tasks:
-            for path in task.target_files:
-                pm_target_owners.setdefault(path, set()).add(task.task_id)
-
-        def owners_for_path(path: str) -> set[str]:
-            owners = set(pm_target_owners.get(path, set()))
-            owners.update(
-                task.task_id for task in command.tasks if _task_authorizes_completion_path(task=task, path=path)
-            )
-            owners.update(delegated_path_owners.get(path, set()))
-            return owners
-
-        def transitively_depends_on(task_id: str, possible_ancestor: str) -> bool:
-            pending = list(pm_dependencies.get(task_id, set()))
-            visited: set[str] = set()
-            while pending:
-                dependency = pending.pop()
-                if dependency == possible_ancestor:
-                    return True
-                if dependency in visited:
-                    continue
-                visited.add(dependency)
-                pending.extend(pm_dependencies.get(dependency, set()))
-            return False
-
-        def unique_terminal_owner(path: str) -> str | None:
-            """Return the sole final writer in a PM-authorized shared-path dependency chain."""
-
-            authorized = owners_for_path(path)
-            terminal = {
-                owner
-                for owner in authorized
-                if not any(other != owner and transitively_depends_on(other, owner) for other in authorized)
-            }
-            return next(iter(terminal)) if len(terminal) == 1 else None
-
-        entrypoint_paths = {path for task in command.tasks for path in task.entrypoint_targets}
-        ordered_pm_paths = tuple(dict.fromkeys(path for task in command.tasks for path in task.target_files))
-
-        def project_pm_target_row(path: str, *, index: int) -> dict[str, Any]:
-            authorized = owners_for_path(path)
-            owner_task_id = next(iter(authorized)) if len(authorized) == 1 else unique_terminal_owner(path)
-            if owner_task_id is None:
-                raise ValueError(
-                    "PM target artifact has no unique authorized terminal owner; "
-                    f"path={path!r}; owners={sorted(authorized)!r}"
-                )
-            return {
-                "obligation_id": f"artifact-pm-{index:03d}",
-                "path": path,
-                "semantic_role": _pm_target_semantic_role(
-                    path=path,
-                    entrypoint_paths=entrypoint_paths,
-                ),
-                "applicability": "required",
-                "owner_task_id": owner_task_id,
-            }
-
-        if not artifact_rows:
-            # Artifact paths and owners are PM authority, not creative CE
-            # content. Some providers repeatedly return an empty artifact list
-            # even after a bounded schema-repair turn. Project every exact PM
-            # target once and retain fail-closed ownership: shared paths are
-            # accepted only when their dependency graph has one terminal writer.
-            artifact_rows = tuple(
-                project_pm_target_row(path, index=index) for index, path in enumerate(ordered_pm_paths, start=1)
-            )
-
-        # Creative CE extras must not expand delivery obligations. Drop paths
-        # outside exact PM target / component-safe scope, then project every
-        # missing exact PM target. Owner lies on authorized paths stay
-        # fail-closed below.
-        dropped_unauthorized_artifact_ids: set[str] = set()
-        kept_artifact_rows: list[dict[str, Any]] = []
-        for row in artifact_rows:
-            if row["applicability"] == "not_applicable":
-                kept_artifact_rows.append(dict(row))
-                continue
-            path = str(row.get("path") or "")
-            if path and owners_for_path(path):
-                kept_artifact_rows.append(dict(row))
-                continue
-            dropped_unauthorized_artifact_ids.add(str(row["obligation_id"]))
-        required_artifact_paths = {
-            str(row["path"]) for row in kept_artifact_rows if row["applicability"] != "not_applicable"
-        }
-        next_projected_index = 1
-        for path in ordered_pm_paths:
-            if path in required_artifact_paths:
-                continue
-            kept_artifact_rows.append(project_pm_target_row(path, index=next_projected_index))
-            next_projected_index += 1
-        artifact_rows = tuple(kept_artifact_rows)
-
-        def normalize_owner_rows(
-            rows: tuple[dict[str, Any], ...],
-            *,
-            path_field: str,
-        ) -> tuple[dict[str, Any], ...]:
-            """Repair only model owner drift that PM authority can resolve uniquely.
-
-            Shared paths remain set-valued in PM authority.  A scalar completion
-            owner is projected only when those owners form a dependency chain with
-            one terminal writer.  Parallel/incomparable owners remain ambiguous and
-            therefore fail closed in the validation below.
-            """
-
-            normalized: list[dict[str, Any]] = []
-            for row in rows:
-                normalized_row = dict(row)
-                if row["applicability"] != "not_applicable":
-                    path_value = row.get(path_field)
-                    path = str(path_value) if path_value is not None else ""
-                    authorized = owners_for_path(path) if path else set()
-                    terminal_owner: str | None = None
-                    if len(authorized) > 1 and row["owner_task_id"] not in authorized:
-                        terminal_owner = unique_terminal_owner(path) if path else None
-                    elif (
-                        len(authorized) == 1
-                        and row["owner_task_id"] not in authorized
-                        and row.get("semantic_role") == "test"
-                    ):
-                        candidate_owner = next(iter(authorized))
-                        candidate_test_authorities = tuple(
-                            item
-                            for item in command_authorities
-                            if item.modality == "test" and item.task_id == candidate_owner
-                        )
-                        if len(candidate_test_authorities) == 1:
-                            # Live L3-21: provider assigned the sole PM-owned
-                            # test path to a source task. Test ownership can be
-                            # repaired only when both path authority and the
-                            # executable test command resolve uniquely. Source
-                            # and entrypoint owner drift remains fail-closed.
-                            terminal_owner = candidate_owner
-                    if terminal_owner is not None:
-                        normalized_row["owner_task_id"] = terminal_owner
-                normalized.append(normalized_row)
-            return tuple(normalized)
-
-        artifact_rows = normalize_owner_rows(artifact_rows, path_field="path")
-        entrypoint_rows = normalize_owner_rows(entrypoint_rows, path_field="source_path")
-
-        def collapse_duplicate_artifact_paths(
-            rows: tuple[dict[str, Any], ...],
-        ) -> tuple[tuple[dict[str, Any], ...], dict[str, str]]:
-            """Keep one completion artifact obligation per path.
-
-            PM often authorizes a shared manifest on later tasks.  CE then
-            reaffirms that same path under a second obligation_id.  The
-            canonical contract is path-unique.  Collapse to the required
-            PM-terminal (or first required) row and remap covers.  Do not
-            invent paths, owners, or semantic roles.
-            """
-
-            kept_not_applicable: list[dict[str, Any]] = []
-            by_path: dict[str, list[dict[str, Any]]] = {}
-            for row in rows:
-                if row["applicability"] == "not_applicable":
-                    kept_not_applicable.append(dict(row))
-                    continue
-                path = str(row.get("path") or "")
-                by_path.setdefault(path, []).append(dict(row))
-
-            collapsed: list[dict[str, Any]] = []
-            remapped: dict[str, str] = {}
-            for path, group in by_path.items():
-                if len(group) == 1:
-                    collapsed.append(group[0])
-                    continue
-                terminal = unique_terminal_owner(path) if path else None
-
-                def sort_key(
-                    item: dict[str, Any],
-                    *,
-                    terminal_owner: str | None = terminal,
-                ) -> tuple[int, int, str]:
-                    owner = item.get("owner_task_id")
-                    return (
-                        0 if item.get("applicability") == "required" else 1,
-                        0 if terminal_owner is not None and owner == terminal_owner else 1,
-                        str(item.get("obligation_id") or ""),
-                    )
-
-                winner = sorted(group, key=sort_key)[0]
-                winner_id = str(winner["obligation_id"])
-                collapsed.append(winner)
-                for item in group:
-                    dropped_id = str(item["obligation_id"])
-                    if dropped_id != winner_id:
-                        remapped[dropped_id] = winner_id
-            return (*kept_not_applicable, *collapsed), remapped
-
-        artifact_rows, artifact_id_remap = collapse_duplicate_artifact_paths(artifact_rows)
+        artifact_rows = artifact_projection.artifact_rows
+        entrypoint_rows = artifact_projection.entrypoint_rows
+        artifact_id_remap = artifact_projection.artifact_id_remap
+        dropped_unauthorized_artifact_ids = artifact_projection.dropped_unauthorized_artifact_ids
+        delegated_path_owners = artifact_projection.delegated_path_owners
+        owners_for_path = artifact_projection.owners_for_path
+        unique_terminal_owner = artifact_projection.unique_terminal_owner
+        transitively_depends_on = artifact_projection.transitively_depends_on
+        canonical_delegated_python_entrypoint = artifact_projection.canonical_delegated_python_entrypoint
+        canonical_delegated_native_entrypoint = artifact_projection.canonical_delegated_native_entrypoint
         depth_feasibility = project_chief_engineer_portfolio_delivery_depth_feasibility(
             {
                 "project_completion_contract": {
@@ -1494,7 +1730,7 @@ def _build_portfolio_completion_contract(
             },
             tasks=command.tasks,
         )
-        if depth_feasibility["ok"] is not True:
+        if check_depth and depth_feasibility["ok"] is not True:
             deficits = ", ".join(
                 f"{item['metric']}={item['actual']} < {item['required']}" for item in depth_feasibility["deficits"]
             )
@@ -2239,18 +2475,7 @@ def _build_portfolio_completion_contract(
                 )
                 for row in artifact_rows
             ),
-            entrypoints=tuple(
-                EntrypointObligationV1(
-                    obligation_id=row["obligation_id"],
-                    kind=row["kind"],
-                    applicability=row["applicability"],
-                    owner_task_id=row["owner_task_id"],
-                    source_path=row["source_path"],
-                    runtime_path=row["runtime_path"],
-                    command=row["command"],
-                )
-                for row in normalized_entrypoint_rows
-            ),
+            entrypoints=tuple(_normalized_entrypoint_obligation(row) for row in normalized_entrypoint_rows),
             verification=tuple(verification_obligation(row) for row in normalized_verification_rows),
         )
         for artifact in obligations.artifacts:
@@ -2318,18 +2543,11 @@ def _build_portfolio_completion_contract(
                 "completion contract must declare every PM target file as a required artifact; "
                 f"missing={missing_pm_target_paths}"
             )
-        return build_project_completion_contract(
-            project_id=carrier.project_id,
-            run_id=command.run_id,
-            project_kind=project_kind_authority.project_kind,
-            project_kind_authority=project_kind_authority,
-            pm_contract_hash=carrier.pm_contract_hash,
-            covered_task_ids=tuple(task.task_id for task in command.tasks),
+        return _NormalizedPortfolioCompletion(
             obligations=obligations,
-            completion_predicate_version=_PROJECT_COMPLETION_PREDICATE_VERSION,
-            verifier_policy_hash=carrier.verifier_policy_hash,
-            verifier_policy_snapshot_hash=carrier.verifier_policy_snapshot_hash,
-            verification_command_authority=tuple(command_authorities),
+            project_kind_authority=project_kind_authority,
+            command_authorities=tuple(command_authorities),
+            artifact_projection=artifact_projection,
         )
     except (TypeError, ValueError) as exc:
         raise _portfolio_contract_error(

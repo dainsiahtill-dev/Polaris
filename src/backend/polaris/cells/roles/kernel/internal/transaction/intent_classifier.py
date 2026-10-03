@@ -157,6 +157,9 @@ def requires_mutation_intent(message: str) -> bool:
     2. 强突变标记（如"修改"、"create"）直接返回 True。
     3. 弱突变标记（如"完善"）仅在非分析语境下返回 True。
     """
+    explicit = leading_instruction_delivery_contract(message)
+    if explicit is not None:
+        return explicit.requires_mutation
     intent = classify_intent_regex(message)
     return intent in {"STRONG_MUTATION", "DEBUG_AND_FIX", "DEVOPS", "WEAK_MUTATION"}
 
@@ -286,6 +289,19 @@ def resolve_delivery_mode(user_message: str) -> DeliveryContract:
         allow_inline_code=True,
         allow_patch_proposal=False,
     )
+
+
+def leading_instruction_mode_marker(message: str) -> str | None:
+    """Return a recognized current leading marker, not an embedded example."""
+    match = re.match(r"\s*(\[mode:[a-z_]+\])", str(message or ""), flags=re.IGNORECASE)
+    if match is None or _detect_explicit_mode_marker(match.group(1).lower()) is None:
+        return None
+    return match.group(1)
+
+
+def leading_instruction_delivery_contract(message: str) -> DeliveryContract | None:
+    marker = leading_instruction_mode_marker(message)
+    return _detect_explicit_mode_marker(marker.lower()) if marker is not None else None
 
 
 def _detect_explicit_mode_marker(lowered: str) -> DeliveryContract | None:

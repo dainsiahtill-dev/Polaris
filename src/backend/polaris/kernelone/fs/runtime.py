@@ -6,7 +6,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.storage import (
@@ -18,6 +18,9 @@ from polaris.kernelone.storage import (
 from polaris.kernelone.utils import utc_now_str
 
 from .contracts import DurabilityMode, FileWriteReceipt, KernelFileSystemAdapter, validate_durability
+from .guarded_directory import guarded_create_directory
+from .text_ops import open_guarded_text_log_append
+from .types import DirectoryCreateReceipt
 
 _CHANNEL_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -26,6 +29,7 @@ class KernelFileSystem:
     """Kernel-level file system boundary for all file effects."""
 
     def __init__(self, workspace: str, adapter: KernelFileSystemAdapter) -> None:
+        self._physical_workspace = str(Path(workspace).absolute())
         self.workspace = str(Path(workspace).resolve())
         self._adapter = adapter
 
@@ -334,6 +338,38 @@ class KernelFileSystem:
     def workspace_is_dir(self, relative_or_absolute_path: str) -> bool:
         path = self.resolve_workspace_path(relative_or_absolute_path)
         return self._adapter.is_dir(str(path))
+
+    def workspace_mkdir(
+        self,
+        relative_or_absolute_path: str,
+        *,
+        parents: bool = False,
+        exist_ok: bool = False,
+    ) -> DirectoryCreateReceipt:
+        """Create a physical directory through retained, no-follow descriptors."""
+        relative = self._lexical_workspace_relative_path(relative_or_absolute_path)
+        return guarded_create_directory(self._physical_workspace, relative, parents=parents, exist_ok=exist_ok)
+
+    def workspace_open_log_append(self, relative_or_absolute_path: str) -> TextIO:
+        """Transfer ownership of one guarded UTF-8 append handle to the caller."""
+        relative = self._lexical_workspace_relative_path(relative_or_absolute_path)
+        return open_guarded_text_log_append(self._physical_workspace, relative)
+
+    def _lexical_workspace_relative_path(self, path: str) -> str:
+        """Keep the requested path intact for the no-follow descriptor walker.
+
+        Legacy resolution can follow an alias introduced after its symlink check
+        and authorize a different in-root path. Only strip an exact absolute root
+        prefix here; the guarded primitive validates all remaining components.
+        """
+        if not isinstance(path, str) or not path:
+            raise ValueError("workspace path is required")
+        if not os.path.isabs(path):
+            return path
+        prefix = self._physical_workspace.rstrip("/") + "/"
+        if not path.startswith(prefix):
+            raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {path}")
+        return path[len(prefix) :]
 
     def workspace_read_text(
         self,

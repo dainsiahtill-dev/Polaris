@@ -49,6 +49,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
     extract_platform_tool_contract_missing_target_files,
     extract_platform_tool_contract_scope_paths,
     extract_platform_tool_contract_target_files,
+    extract_task_instruction,
     platform_tool_contract_bypasses_read_write_barrier,
     platform_tool_contract_disables_phase_manager,
 )
@@ -591,7 +592,9 @@ class _ToolBatchExecuteMixin:
                     "or verify the fix manually. No verification tool detected — ending session."
                 )
 
-        requires_mutation = enforce_mutation_write_guard and self.requires_mutation_intent(latest_user_request)
+        requires_mutation = enforce_mutation_write_guard and self.requires_mutation_intent(
+            extract_task_instruction(context)
+        )
         known_target_files = extract_target_files_from_message(latest_user_request)
         known_target_files.extend(extract_platform_tool_contract_target_files(context))
         known_target_files = list(dict.fromkeys(str(item) for item in known_target_files if str(item)))
@@ -1167,7 +1170,10 @@ class _ToolBatchExecuteMixin:
             # error_types=unknown because execute_command is not a WRITE_TOOLS
             # name. Observational/command failures must stay as receipts so the
             # model can re-issue read_file / single commands.
-            if any(is_write_tool_name(name) for name in failed_tool_names):
+            if any(is_write_tool_name(name) for name in failed_tool_names) or decision.get("finalize_mode") in {
+                FinalizeMode.LOCAL,
+                FinalizeMode.LLM_ONCE,
+            }:
                 failure_details = _failed_batch_diagnostic_excerpt(receipts_as_dicts)
                 detail_suffix = f"; failure_details={failure_details}" if failure_details else ""
                 raise RuntimeError(
@@ -1424,7 +1430,7 @@ class _ToolBatchExecuteMixin:
             # 如果 delivery mode 为 MATERIALIZE_CHANGES 但本批次没有写工具调用，
             # 则阻止进入 LLM_ONCE（tool_choice=none 会剥夺写工具能力），
             # 返回 BLOCKED 状态让上层决定后续动作。
-            latest_user_request = extract_latest_user_message(context)
+            latest_user_request = extract_task_instruction(context)
             if self._should_block_llm_once_finalization(ledger, invocations, latest_user_request):
                 return self._build_mutation_bypass_result(
                     decision, state_machine, ledger, receipts_as_dicts, stream=stream

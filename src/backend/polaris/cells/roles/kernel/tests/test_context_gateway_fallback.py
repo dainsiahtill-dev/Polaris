@@ -8,8 +8,10 @@ This test file covers:
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -360,6 +362,65 @@ class TestProcessContextOverride:
         assert "director_quality_repair" not in result["content"]
         assert "delivery_mode" not in result["content"]
         assert "keep_me: real context" in result["content"]
+
+    def test_factory_run_deadline_controls_are_filtered_before_real_prompt_audit(self) -> None:
+        """The live three-field renderer leak must not survive into system content."""
+        source = {
+            "factory_run_deadline_epoch_seconds": 1790860127.553722,
+            "factory_run_deadline_source": "same_run_retry_epoch",
+            "factory_run_timeout_seconds": 1800.0,
+            "requirement": "retain data-plane requirement",
+        }
+        before = deepcopy(source)
+        projected = _override_processor().process_context_override(source)
+        assert projected is not None
+        audit = audit_context_os_prompt_messages(
+            messages=[projected, {"role": "user", "content": "Review result"}],
+            context_sources=("state_first_context_os",),
+            current_user_instruction="Review result",
+            expected=True,
+        )
+        assert audit["ok"] is True
+        assert audit["requirements"]["control_plane_isolated"] is True
+        assert audit["control_plane"]["content_hits"] == []
+        assert projected["content"] == "requirement: retain data-plane requirement"
+        assert source == before
+
+    @pytest.mark.parametrize("nested", [False, True])
+    @pytest.mark.parametrize(
+        ("control_key", "control_value"),
+        [
+            ("factory_run_deadline_epoch_seconds", 1790860127.553722),
+            ("factoryRunDeadlineEpochSeconds", 1790860127.553722),
+            ("factory-run-deadline-epoch-seconds", 1790860127.553722),
+            ("factory_run_deadline_source", "same_run_retry_epoch"),
+            ("factoryRunDeadlineSource", "same_run_retry_epoch"),
+            ("factory-run-deadline-source", "same_run_retry_epoch"),
+            ("factory_run_timeout_seconds", 1800.0),
+            ("factoryRunTimeoutSeconds", 1800.0),
+            ("factory-run-timeout-seconds", 1800.0),
+        ],
+    )
+    def test_factory_run_deadline_key_variants_preserve_only_prompt_safe_data(
+        self, nested: bool, control_key: str, control_value: Any
+    ) -> None:
+        payload = {control_key: control_value, "acceptance": "keep useful domain evidence"}
+        source = {"evidence": [payload]} if nested else payload
+        before = deepcopy(source)
+        projected = _override_processor().process_context_override(source)
+        assert projected is not None
+        assert control_key not in projected["content"]
+        assert str(control_value) not in projected["content"]
+        assert "keep useful domain evidence" in projected["content"]
+        assert source == before
+        audit = audit_context_os_prompt_messages(
+            messages=[projected, {"role": "user", "content": "Review result"}],
+            context_sources=("state_first_context_os",),
+            current_user_instruction="Review result",
+            expected=True,
+        )
+        assert audit["ok"] is True
+        assert audit["requirements"]["control_plane_isolated"] is True
 
     def test_control_plane_capability_and_execution_attempt_authority_excluded(self) -> None:
         """JobToken and TaskRuntime authority stay available to runtime consumers
@@ -1125,6 +1186,7 @@ class TestIntegration:
         gateway._projection_engine = MagicMock()
         gateway._projection_engine.project.return_value = [
             {"role": "user", "content": "x" * 5000},
+            {"role": "user", "content": "hello"},
         ]
         gateway._projection_engine.get_adaptive_weights.return_value = {}
         gateway._compression_engine = MagicMock()
@@ -1142,8 +1204,9 @@ class TestIntegration:
 
         gateway._compression_engine.emergency_truncate_with_limit.assert_called_once()
         assert result.compression_applied is True
-        assert result.token_estimate == 20
-        assert result.metadata["final_tokens"] == 20
+        assert result.token_estimate == 25
+        assert result.metadata["final_tokens"] == 25
+        assert result.messages[-1] == {"role": "user", "content": "hello"}
 
 
 class TestBlueprintStepCardRendering:

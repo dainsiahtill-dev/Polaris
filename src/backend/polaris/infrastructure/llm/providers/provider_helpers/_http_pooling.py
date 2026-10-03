@@ -32,6 +32,8 @@ import requests
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
 from polaris.kernelone.llm.engine.contracts import get_physical_provider_dispatch_port
 
+from ._bounded_http import bounded_http_post
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterable
 
@@ -218,7 +220,7 @@ def _do_requests_post(
     timeout_value: HttpTimeout | None = timeout
     if isinstance(timeout, (int, float)) and timeout <= 0:
         timeout_value = None
-    return requests.post(
+    return bounded_http_post(
         url,
         headers=headers,
         json=payload,
@@ -284,7 +286,7 @@ def _blocking_http_post(
             "endpoint": url,
             "headers": headers,
             "body": payload,
-            "transport": {"kind": "requests.post", "timeout": timeout},
+            "transport": {"kind": "aiohttp.ClientSession.post", "timeout": timeout},
         },
         send=lambda frozen: _raw_blocking_http_post(
             str(frozen["endpoint"]),

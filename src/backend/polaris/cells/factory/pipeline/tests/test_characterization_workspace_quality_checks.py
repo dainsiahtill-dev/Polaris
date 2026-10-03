@@ -40,6 +40,48 @@ class TestRunWorkspaceQualityChecks:
     def canonical_task_boundary(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Start workspace-quality tests after the canonical task boundary."""
 
+        class PhaseLogicSession:
+            """This suite mocks commands, not source ownership/OS isolation.
+
+            Actual owner-backed execution lives in the group integration suite.
+            No fixture result here is a project artifact or verifier seal.
+            """
+
+            def __init__(self, executor: Any) -> None:
+                self.executor = executor
+                self.baseline = object()
+
+            @classmethod
+            def from_factory(cls, executor: Any, _run: Any, _context: Any, **_kwargs: Any) -> Any:
+                return cls(executor)
+
+            async def run_command(self, command: list[str], timeout_seconds: float) -> dict[str, Any]:
+                return await asyncio.to_thread(self.executor._run_workspace_quality_command, command, timeout_seconds)
+
+            def before_repair(self) -> None:
+                pass
+
+            def candidate(self, **_kwargs: Any) -> None:
+                pass
+
+            def restored(self) -> None:
+                pass
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(workspace_quality_impl, "NativeValidationSession", PhaseLogicSession)
+
+        def source_authentication_phase_double(*_args: Any, **_kwargs: Any) -> None:
+            # Source authority is outside this phase-only suite, just as the
+            # Session.candidate double above omits ownership and OS isolation.
+            # Native source/preparation negatives run in the integration suite.
+            pass
+
+        monkeypatch.setattr(
+            workspace_quality_impl, "overlay_native_validation_candidate", source_authentication_phase_double
+        )
+
         monkeypatch.setattr(
             OrchestrationStageExecutor,
             "_canonical_factory_projection",
@@ -2260,6 +2302,24 @@ class TestRunWorkspaceQualityChecks:
         )
         monkeypatch.setattr(executor, "_read_json_artifact_payload", lambda _path: blueprint)
 
+        from polaris.cells.chief_engineer.blueprint import public as ce_public
+
+        monkeypatch.setattr(
+            ce_public,
+            "validate_director_handoff_from_payload",
+            lambda _workspace, _payload, *, require_strict: {
+                "allowed": require_strict,
+                "task_completion_projection": {
+                    "task_id": "TASK-3",
+                    "run_id": "factory-test-depth-owner",
+                    "owned_artifacts": [
+                        {"owner_task_id": "TASK-3", "path": path}
+                        for path in ("tests/test_product.py", "tests/test_behavior.py", "README.md")
+                    ],
+                },
+            },
+        )
+
         assert _workspace_quality_test_shortfall_owner_targets(
             executor,
             run_id="factory-test-depth-owner",
@@ -3031,6 +3091,7 @@ class TestRunWorkspaceQualityChecks:
     def test_workspace_quality_rehydrates_frozen_owner_from_same_run_ce_job_token(
         self,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Coarse PM targets must not erase CE topology after terminal drain."""
 
@@ -3046,6 +3107,26 @@ class TestRunWorkspaceQualityChecks:
             status=FactoryRunStatus.RECOVERING,
             created_at="2026-08-20T00:00:00+00:00",
         )
+        from polaris.cells.chief_engineer.blueprint import public as ce_public
+
+        def strict_handoff(_workspace: str, payload: dict[str, Any], *, require_strict: bool) -> dict[str, Any]:
+            # Scope restoration is tested here; the CE public owner validates
+            # complete contracts and seals in its separate owner suite.
+            task_id = str(payload["id"])
+            return {
+                "allowed": require_strict,
+                "task_completion_projection": {
+                    "schema_version": "polaris.task_completion_projection.v1",
+                    "task_id": task_id,
+                    "run_id": run.id,
+                    "owned_artifacts": [
+                        {"obligation_id": f"artifact.{index}", "owner_task_id": task_id, "path": path}
+                        for index, path in enumerate(payload["target_files"])
+                    ],
+                },
+            }
+
+        monkeypatch.setattr(ce_public, "validate_director_handoff_from_payload", strict_handoff)
         executor._write_json_artifact(
             "tasks/plan.json",
             {
@@ -4253,6 +4334,7 @@ class TestRunWorkspaceQualityChecks:
                         "task_id": "TASK-1",
                         "task_row_id": "7",
                         "execution_attempt": identity,
+                        "task_completion_projection": {},  # Phase-only source-authority double.
                     },
                     "task_runtime_repair_attempt": {
                         "task_id": "TASK-1",
@@ -4267,6 +4349,12 @@ class TestRunWorkspaceQualityChecks:
             timeline.append(f"settle:{kwargs['stage_status']}")
             return {"success": True}
 
+        def register_artifacts(_pending: object) -> tuple[dict[str, str], ...]:
+            # This state-machine test mocks the separate broker boundary.
+            # Real owner-sealed receipt semantics are covered in owner tests.
+            timeline.append("artifact:registered")
+            return ({"obligation_id": "artifact.rules", "path": "engine/rules.go"},)
+
         monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["go", "test", "./..."]])
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
@@ -4274,6 +4362,9 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch.setattr(executor, "_run_workspace_quality_command", run_command)
         monkeypatch.setattr(executor, "_apply_workspace_quality_deterministic_repairs", apply_repair)
         monkeypatch.setattr(executor, "_settle_director_stage_materialization_attempt", settle)
+        monkeypatch.setattr(
+            workspace_quality_impl, "_record_workspace_quality_repair_artifact_receipts", register_artifacts
+        )
 
         passed, _artifact = await executor._run_workspace_quality_checks(
             run,
@@ -4281,7 +4372,7 @@ class TestRunWorkspaceQualityChecks:
         )
 
         assert passed is True
-        assert timeline == ["verifier:1", "mutation", "verifier:2", "settle:success"]
+        assert timeline == ["verifier:1", "mutation", "verifier:2", "artifact:registered", "settle:success"]
 
     @pytest.mark.asyncio
     async def test_workspace_quality_llm_fallback_preserves_current_claimed_test_owner(
@@ -5230,10 +5321,23 @@ class TestRunWorkspaceQualityChecks:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("candidate_diagnostic", "expected_candidate_effect"),
+        ("candidate_diagnostic", "expected_candidate_effect", "restored_diagnostic"),
         [
-            ("tests/product.rs:77: product contract regressed", "equal_count_swap"),
-            ("tests/edges.rs:42: edge contract still failed", "stagnant"),
+            (
+                "tests/product.rs:77: product contract regressed",
+                "equal_count_swap",
+                "tests/edges.rs:42: edge contract still failed",
+            ),
+            (
+                "tests/edges.rs:42: edge contract still failed",
+                "stagnant",
+                "tests/edges.rs:42: edge contract still failed",
+            ),
+            (
+                "tests/product.rs:77: product contract regressed",
+                "equal_count_swap",
+                "tests/restored.rs:10: current restored verifier failed",
+            ),
         ],
     )
     async def test_rejected_llm_candidate_restores_pre_round_bytes_and_diagnostics(
@@ -5242,6 +5346,7 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch: pytest.MonkeyPatch,
         candidate_diagnostic: str,
         expected_candidate_effect: str,
+        restored_diagnostic: str,
     ) -> None:
         """A verifier-rejected LLM edit is not the next repair round's baseline.
 
@@ -5265,11 +5370,16 @@ class TestRunWorkspaceQualityChecks:
         failure_before = "tests/edges.rs:42: edge contract still failed"
         llm_contexts: list[dict[str, object]] = []
         llm_errors: list[list[str]] = []
+        verification_calls = 0
 
         def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
             del timeout_seconds
+            nonlocal verification_calls
+            verification_calls += 1
             diagnostic = (
-                candidate_diagnostic if source_path.read_text(encoding="utf-8") == "candidate\n" else failure_before
+                candidate_diagnostic
+                if source_path.read_text(encoding="utf-8") == "candidate\n"
+                else (failure_before if verification_calls == 1 else restored_diagnostic)
             )
             return {
                 "command": command,
@@ -5326,6 +5436,7 @@ class TestRunWorkspaceQualityChecks:
                         "task_id": "TASK-1",
                         "mutation_committed": False,
                         "candidate_guard": guard,
+                        "task_completion_projection": {},  # Phase-only source-authority double.
                     },
                 },
             )
@@ -5369,7 +5480,7 @@ class TestRunWorkspaceQualityChecks:
         retry_quality = llm_contexts[1]["director_quality_repair"]
         assert isinstance(retry_quality, dict)
         assert retry_quality["candidate_rejection_target_files"] == ["src/patience.rs"]
-        assert any(failure_before in str(item) for item in llm_errors[1])
+        assert any(restored_diagnostic in str(item) for item in llm_errors[1])
         assert any(candidate_diagnostic in str(item) for item in retry_quality["candidate_rejection_errors"])
         payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
         first_round = payload["repair"]["rounds"][0]
@@ -5377,6 +5488,7 @@ class TestRunWorkspaceQualityChecks:
         assert first_round["candidate_verifier_effect"] == expected_candidate_effect
         assert first_round["candidate_rejection_target_files_for_next_round"] == ["src/patience.rs"]
         assert first_round["verifier_effect"] == "candidate_rejected_rolled_back"
+        assert any(item["phase"] == "check_after_rollback_1" for item in payload["commands"])
 
     @pytest.mark.asyncio
     async def test_workspace_quality_count_changing_aba_carries_regression_guards(
@@ -7058,10 +7170,12 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["rounds"][0]["repair_summary"]["stage"] == "quality_repair"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("named_owned_targets", [False, True])
     async def test_workspace_quality_replays_interface_probe_after_deterministic_no_commit_cache_hit(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        named_owned_targets: bool,
     ) -> None:
         """A cached deterministic no-commit must not erase Director retry authority."""
 
@@ -7116,6 +7230,7 @@ class TestRunWorkspaceQualityChecks:
                     "tool_results": 0,
                     "source_tools": [],
                     "task_id": "TASK-1",
+                    "repair_target_files": ["engine/engine.go"] if named_owned_targets else [],
                     "task_boundary_owner_evidence": {
                         "schema_version": "factory.workspace_quality_task_owner.v1",
                         "source": "task_runtime_execution_attempt",

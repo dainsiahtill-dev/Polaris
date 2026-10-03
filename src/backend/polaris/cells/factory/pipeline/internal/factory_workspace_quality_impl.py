@@ -45,6 +45,8 @@ from .factory_workspace_quality_evidence import (
     workspace_quality_unclaimed_failing_tu_targets,
     workspace_quality_unclaimed_residual_targets,
 )
+from .native_validation_inputs import overlay_native_validation_candidate
+from .native_validation_session import NativeValidationSession
 
 # Module-local constants (mirrors of the ones in ``factory_stage_executor`` so
 # the impl is self-contained without importing the executor module).
@@ -165,9 +167,7 @@ def _record_workspace_quality_repair_artifact_receipts(
 
     raw_projection = pending.get("task_completion_projection")
     if raw_projection is None:
-        # Migration compatibility for synthetic/legacy task rows. Canonical
-        # PM -> CE -> Director tasks always carry this projection.
-        return ()
+        raise ValueError("workspace quality repair task completion projection is missing")
     if not isinstance(raw_projection, Mapping):
         raise TypeError("workspace quality repair task completion projection must be a mapping")
     projection = dict(raw_projection)
@@ -184,7 +184,7 @@ def _record_workspace_quality_repair_artifact_receipts(
         raise ValueError("workspace quality repair projection lacks exact project/run/contract identity")
     raw_artifacts = projection.get("owned_artifacts")
     if raw_artifacts is None or raw_artifacts == [] or raw_artifacts == ():
-        return ()
+        raise ValueError("workspace quality repair owned artifact obligations are missing")
     if not isinstance(raw_artifacts, (list, tuple)):
         raise TypeError("workspace quality repair owned_artifacts must be a sequence")
 
@@ -796,17 +796,11 @@ async def _settle_pending_workspace_quality_repair_attempt(
         reason = f"workspace_quality_repair_lease_heartbeat_failed:{failures[0].get('code', 'unknown')}"
     candidate_guard_receipt: dict[str, Any] = {}
     candidate_guard = pending.get("candidate_guard")
-    if candidate_guard is not None:
-        if accepted and callable(getattr(candidate_guard, "accept", None)):
-            candidate_guard_receipt = dict(candidate_guard.accept(reason=reason))
-            if str(candidate_guard_receipt.get("status") or "") != "accepted":
-                accepted = False
-                reason = "workspace_quality_repair_candidate_accept_failed"
-        elif not accepted and callable(getattr(candidate_guard, "rollback", None)):
-            candidate_guard_receipt = dict(await candidate_guard.rollback(reason=reason))
-            rollback_status = str(candidate_guard_receipt.get("status") or "")
-            if rollback_status not in {"restored", "closed"}:
-                reason = f"workspace_quality_repair_candidate_rollback_failed:{rollback_status or 'unknown'}"
+    if candidate_guard is not None and not accepted and callable(getattr(candidate_guard, "rollback", None)):
+        candidate_guard_receipt = dict(await candidate_guard.rollback(reason=reason))
+        rollback_status = str(candidate_guard_receipt.get("status") or "")
+        if rollback_status not in {"restored", "closed"}:
+            reason = f"workspace_quality_repair_candidate_rollback_failed:{rollback_status or 'unknown'}"
     artifact_receipts: tuple[dict[str, str], ...] = ()
     artifact_receipt_error = ""
     mutation_committed = pending.get("mutation_committed") is True
@@ -826,6 +820,20 @@ async def _settle_pending_workspace_quality_repair_attempt(
                 f"workspace_quality_repair_artifact_receipt_refresh_failed:{type(exc).__name__}:{exc}"
             )
             reason = artifact_receipt_error
+    # Registration belongs before accepting/closing the rollback guard. A
+    # missing CE projection or owner commit failure must leave the source
+    # recoverable, not settle "completed" with zero artifact evidence.
+    if candidate_guard is not None:
+        if accepted and callable(getattr(candidate_guard, "accept", None)):
+            candidate_guard_receipt = dict(candidate_guard.accept(reason=reason))
+            if str(candidate_guard_receipt.get("status") or "") != "accepted":
+                accepted = False
+                reason = "workspace_quality_repair_candidate_accept_failed"
+        elif not accepted and not candidate_guard_receipt and callable(getattr(candidate_guard, "rollback", None)):
+            candidate_guard_receipt = dict(await candidate_guard.rollback(reason=reason))
+            rollback_status = str(candidate_guard_receipt.get("status") or "")
+            if rollback_status not in {"restored", "closed"}:
+                reason = f"workspace_quality_repair_candidate_rollback_failed:{rollback_status or 'unknown'}"
     settle_result = executor._settle_director_stage_materialization_attempt(
         task_row_id=task_row_id,
         execution_attempt=execution_attempt,
@@ -1308,6 +1316,19 @@ def _workspace_quality_frozen_ce_owner_task(
             "metadata": metadata,
         }
     )
+    from polaris.cells.chief_engineer.blueprint.public import validate_director_handoff_from_payload
+
+    handoff = validate_director_handoff_from_payload(str(executor.workspace), restored, require_strict=True)
+    completion = handoff.get("task_completion_projection")
+    if (
+        handoff.get("allowed") is not True
+        or not isinstance(completion, Mapping)
+        or completion.get("task_id") != task_id
+        or completion.get("run_id") != run_id
+    ):
+        return dict(canonical_task)
+    metadata["task_completion_projection"] = dict(completion)
+    restored["task_completion_projection"] = dict(completion)
     return restored
 
 
@@ -1371,6 +1392,7 @@ def _claim_workspace_quality_repair_attempt(
     run: FactoryRun,
     repair_attempt: int,
     target_files: list[str],
+    original_owner_task_id: str | None = None,
 ) -> tuple[str, int, TaskRuntimeExecutionAttemptIdentityV1, dict[str, Any]]:
     """Claim the Director attempt that owns one post-verifier repair round.
 
@@ -1410,6 +1432,12 @@ def _claim_workspace_quality_repair_attempt(
             continue
 
     def row_owner_score(candidate: Mapping[str, Any]) -> tuple[int, int]:
+        if original_owner_task_id is not None:
+            metadata_raw = candidate.get("metadata")
+            metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+            candidate_owner = str(metadata.get("external_task_id") or candidate.get("external_task_id") or "").strip()
+            if candidate_owner != original_owner_task_id:
+                return (-1, -1)
         return executor._workspace_quality_repair_owner_score(
             candidate,
             run_id=run_id,
@@ -1670,16 +1698,20 @@ def _apply_workspace_quality_repairs(
     task_payload = dict(repair_task) if isinstance(repair_task, Mapping) else {}
     task_metadata = task_payload.get("metadata")
     task_metadata = dict(task_metadata) if isinstance(task_metadata, Mapping) else {}
-    raw_owned_targets = task_payload.get("target_files") or task_metadata.get("target_files") or ()
+    raw_owned_targets = (
+        task_payload.get("target_files") if "target_files" in task_payload else task_metadata.get("target_files")
+    ) or ()
     owned_targets = _dedupe_workspace_repair_paths(
         [raw_owned_targets] if isinstance(raw_owned_targets, str) else list(raw_owned_targets)
     )
+    if task_payload and not owned_targets:
+        raise ValueError("workspace_quality_repair_owner_targets_missing")
     target_files = owned_targets or executor._workspace_quality_repair_target_files()
     if not target_files:
         target_files = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
     if not target_files:
         target_files = executor._workspace_quality_repair_changed_files()
-    if "package.json" not in target_files and (executor.workspace / "package.json").is_file():
+    if not task_payload and "package.json" not in target_files and (executor.workspace / "package.json").is_file():
         target_files = [*target_files, "package.json"]
     metadata: dict[str, Any] = {
         **task_metadata,
@@ -1855,6 +1887,7 @@ async def _apply_workspace_quality_deterministic_repairs(
     results: list[dict[str, Any]] = []
     summary: dict[str, Any] = {}
     receipts: list[dict[str, Any]] = []
+    physical_carrier_invalid = False
     heartbeat_stop = asyncio.Event()
     heartbeat_failures: list[dict[str, Any]] = []
     heartbeat_task = asyncio.create_task(
@@ -1895,6 +1928,7 @@ async def _apply_workspace_quality_deterministic_repairs(
                 diagnostics=artifact_quality_errors,
                 factory_stage="quality_gate",
                 deferred_tool_results=[candidate],
+                repair_task=repair_task,
             )
             candidate_receipts = await commit_materialization_deferred_repairs(
                 workspace=str(execution_attempt.workspace),
@@ -1904,7 +1938,18 @@ async def _apply_workspace_quality_deterministic_repairs(
                 turn_id=(f"workspace-quality-repair-{run_id}-round{repair_attempt}-candidate{candidate_index}"),
                 context=commit_context,
             )
-            receipts.extend(dict(item) for item in candidate_receipts if isinstance(item, Mapping))
+            if not isinstance(candidate_receipts, list | tuple):
+                physical_carrier_invalid = True
+                raise ValueError("physical_receipt_carrier_invalid:collection")
+            for batch in candidate_receipts:
+                if not isinstance(batch, Mapping):
+                    physical_carrier_invalid = True
+                    raise ValueError("physical_receipt_carrier_invalid:batch")
+                raw_rows = batch.get("raw_results", [])
+                if not isinstance(raw_rows, list | tuple) or any(not isinstance(row, Mapping) for row in raw_rows):
+                    physical_carrier_invalid = True
+                    raise ValueError("physical_receipt_carrier_invalid:raw_results")
+                receipts.append(dict(batch))
     except Exception as exc:  # noqa: BLE001 - fail closed at DEO commit boundary.
         summary = {
             **summary,
@@ -1933,12 +1978,18 @@ async def _apply_workspace_quality_deterministic_repairs(
     failed_receipts = [
         item for item in receipts if not executor._director_stage_materialization_receipt_succeeded(item)
     ]
+    physical_results = [
+        {**dict(row), "success": str(row.get("status") or "") == "success"}
+        for batch in receipts
+        for row in (batch.get("raw_results") or [])
+        if isinstance(row, Mapping)
+    ]
     # Lease liveness is part of the write authority.  A physical receipt that
     # lands after heartbeat rejection/expiry cannot complete the task because
     # this Director no longer proves exclusive ownership of the attempt.
     mutation_committed = bool(successful_receipts) and not heartbeat_failures
     pending_attempt: dict[str, Any] | None = None
-    if mutation_committed:
+    if mutation_committed and not physical_carrier_invalid:
         pending_attempt = {
             "task_id": task_id,
             "task_row_id": task_row_id,
@@ -1966,6 +2017,8 @@ async def _apply_workspace_quality_deterministic_repairs(
                     "heartbeat_task": heartbeat_task,
                     "heartbeat_stop": heartbeat_stop,
                     "heartbeat_failures": heartbeat_failures,
+                    "mutation_committed": mutation_committed,
+                    "task_completion_projection": _task_completion_projection_from_repair_task(repair_task),
                 },
                 accepted=False,
                 reason=str(summary.get("error") or "workspace_quality_deterministic_repair_no_commit"),
@@ -1980,9 +2033,10 @@ async def _apply_workspace_quality_deterministic_repairs(
     summary.update(
         {
             "attempted": True,
-            "success": mutation_committed,
+            "success": mutation_committed and not physical_carrier_invalid,
             "repair_mode": "director_deterministic",
-            "tool_results": len(results),
+            "tool_results": len(physical_results),
+            "planned_tool_results": len(results),
             "committed_receipt_count": len(successful_receipts),
             "failed_receipt_count": len(failed_receipts),
             "write_tool_evidence": mutation_committed,
@@ -1992,7 +2046,9 @@ async def _apply_workspace_quality_deterministic_repairs(
     )
     if pending_attempt is not None:
         summary["_pending_task_runtime_repair_attempt"] = pending_attempt
-    return results, summary
+    # The verifier consumes committed physical rows, never deferred proposals.
+    # Preserve original body/receipt/hash bytes; success is only status projection.
+    return physical_results, summary
 
 
 def _workspace_quality_llm_claim_target_files(
@@ -3108,8 +3164,9 @@ async def _apply_workspace_quality_llm_repairs(
             "outcome": "pending_revalidation",
         }
     else:
-        if candidate_guard is not None and callable(getattr(candidate_guard, "rollback", None)):
-            normalized_summary["candidate_guard_rollback"] = await candidate_guard.rollback(
+        rollback_candidate = getattr(candidate_guard, "rollback", None)
+        if callable(rollback_candidate):
+            normalized_summary["candidate_guard_rollback"] = await rollback_candidate(
                 reason="workspace_quality_repair_authority_rejected"
             )
         normalized_summary["task_runtime_repair_attempt"] = (
@@ -3132,6 +3189,84 @@ async def _apply_workspace_quality_llm_repairs(
 
 
 async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
+    sessions: list[NativeValidationSession] = []
+    active_pending: list[Mapping[str, Any]] = []
+    physical_drain_unproven = False
+    try:
+        return await _run_workspace_quality_checks_in_session(executor, run, context, sessions, active_pending)
+    except BaseException as exc:
+        from polaris.kernelone.process import ProcessTreeDrainError
+
+        physical_drain_unproven = isinstance(exc, ProcessTreeDrainError)
+        if physical_drain_unproven:
+            # Lease renewal is independent of physical drain. Abandon neither
+            # an in-flight heartbeat nor the unresolved source/staging owner.
+            for pending in active_pending:
+                heartbeat_task = pending.get("heartbeat_task")
+                heartbeat_stop = pending.get("heartbeat_stop")
+                if not isinstance(heartbeat_task, asyncio.Task) or not isinstance(heartbeat_stop, asyncio.Event):
+                    continue
+                heartbeat_cleanup = asyncio.gather(
+                    _stop_workspace_quality_repair_heartbeat(heartbeat_task, heartbeat_stop),
+                    return_exceptions=True,
+                )
+                while not heartbeat_cleanup.done():
+                    try:
+                        await asyncio.shield(heartbeat_cleanup)
+                    except asyncio.CancelledError:
+                        continue
+                cleanup_error = heartbeat_cleanup.result()[0]
+                if isinstance(cleanup_error, BaseException):
+                    note = f"repair heartbeat stop failed: {type(cleanup_error).__name__}: {cleanup_error}"
+                    add_note = getattr(exc, "add_note", None)
+                    if callable(add_note):
+                        add_note(note)
+                    else:
+                        # Python 3.10 has no exception note API. Keep secondary
+                        # diagnostics without replacing the physical drain error.
+                        exc.__dict__.setdefault("repair_heartbeat_cleanup_errors", []).append(note)
+        raise
+    finally:
+        if not physical_drain_unproven:
+            for pending in active_pending:
+                cleanup = asyncio.create_task(
+                    _settle_pending_workspace_quality_repair_attempt(
+                        executor,
+                        pending,
+                        accepted=False,
+                        reason="workspace_quality_candidate_interrupted",
+                    )
+                )
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        continue
+                cleanup.result()
+            for session in sessions:
+                session.close()
+
+
+async def _run_workspace_quality_checks_in_session(
+    executor,
+    run: FactoryRun,
+    context: dict[str, Any],
+    sessions: list[NativeValidationSession],
+    active_pending: list[Mapping[str, Any]],
+) -> tuple[bool, str]:
+    async def settle_pending_attempt(executor_arg, pending, *, accepted: bool, reason: str):
+        if executor_arg is not executor:
+            raise ValueError("verification settlement owner changed")
+        result = await _settle_pending_workspace_quality_repair_attempt(
+            executor,
+            pending,
+            accepted=accepted,
+            reason=reason,
+        )
+        if pending is not None and result is not None and result.get("settled") is True:
+            active_pending[:] = [item for item in active_pending if item is not pending]
+        return result
+
     commands = executor._workspace_quality_commands(context)
     task_boundary_blocker = executor._workspace_quality_task_boundary_blocker(run, context)
     depth_result = (
@@ -3236,7 +3371,29 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
         if deadline_detail:
             return {}, deadline_detail
         command_timeout = workspace_quality_command_timeout_seconds()
-        result = await asyncio.to_thread(executor._run_workspace_quality_command, command, command_timeout)
+        if phase.startswith("prepare"):
+            # Dependency preparation remains the existing, distinct platform
+            # step. Verification never opens network or promotes its outputs.
+            result = await asyncio.to_thread(executor._run_workspace_quality_command, command, command_timeout)
+        else:
+            try:
+                if not sessions:
+                    sessions.append(NativeValidationSession.from_factory(executor, run, context, commands=commands))
+                result = await sessions[0].run_command(command, command_timeout)
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                from polaris.kernelone.process import ProcessTreeCancelledError, ProcessTreeDrainError
+
+                if isinstance(exc, (ProcessTreeCancelledError, ProcessTreeDrainError)):
+                    raise
+                result = {
+                    "command": command,
+                    "exit_code": None,
+                    "passed": False,
+                    "error": f"verification_input_or_isolation_invalid:{type(exc).__name__}:{exc}",
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                    "verification_contract_blocker": True,
+                }
         result["phase"] = phase
         if command_timeout < configured_timeout_seconds:
             result["deadline_capped_timeout_seconds"] = command_timeout
@@ -3299,6 +3456,12 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     "stderr_tail": "",
                 }
             )
+
+    if any(item.get("verification_contract_blocker") is True for item in results):
+        return write_workspace_validation_failure(
+            "factory_quality_gate_verification_input_not_qualified",
+            next(str(item.get("error")) for item in results if item.get("verification_contract_blocker") is True),
+        )
 
     repair_errors: list[str] = []
     repair_results: list[dict[str, Any]] = []
@@ -3485,6 +3648,8 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 if reactivated_owner_targets:
                     owner_override = reactivated_owner_targets
             before_check_results = [dict(item) for item in (latest_check_results or results)]
+            if sessions:
+                sessions[0].before_repair()
             deadline_detail = workspace_repair_deadline_blocker(f"before_repair_round_{round_index + 1}")
             if deadline_detail:
                 return write_workspace_validation_failure(
@@ -3857,6 +4022,55 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 "_pending_task_runtime_repair_attempt",
                 None,
             )
+            if isinstance(pending_round_attempt, Mapping):
+                active_pending.append(pending_round_attempt)
+            if pending_round_attempt is not None and sessions:
+                try:
+                    candidate_effects = [
+                        item
+                        for item in round_repair_results
+                        if str(item.get("tool_name") or item.get("tool") or "")
+                        in {"write_file", "edit_file", "delete_file"}
+                        or (
+                            isinstance(item.get("effect_receipt"), Mapping)
+                            and item["effect_receipt"].get("normalized_tool_name")
+                            in {"write_file", "edit_file", "delete_file"}
+                        )
+                    ]
+                    candidate_claimed = bool(candidate_effects) or (
+                        pending_round_attempt.get("mutation_committed") is True
+                        or bool(normalized_round_summary.get("write_tool_evidence"))
+                    )
+                    if candidate_claimed:
+                        # Authenticate source now, independently of dependency
+                        # preparation. Do not freeze dependency witnesses until
+                        # preparation finishes; candidate() rechecks source then.
+                        projection = pending_round_attempt.get("task_completion_projection")
+                        if not isinstance(projection, Mapping):
+                            raise ValueError("verification candidate lacks its CE completion projection")
+                        overlay_native_validation_candidate(
+                            sessions[0].baseline,
+                            pending=pending_round_attempt,
+                            task_completion_projection=projection,
+                            round_repair_results=candidate_effects,
+                        )
+                    else:
+                        # An empty owner attempt is not a candidate. Verify that
+                        # baseline bytes still match, then let the existing no-op
+                        # branch settle failed and continue the same Director.
+                        # Positive mutation claims still require strict receipts.
+                        sessions[0].restored()
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    await settle_pending_attempt(
+                        executor,
+                        pending_round_attempt,
+                        accepted=False,
+                        reason=f"verification_candidate_input_invalid:{type(exc).__name__}:{exc}",
+                    )
+                    return write_workspace_validation_failure(
+                        "factory_quality_gate_verification_candidate_not_qualified",
+                        str(exc),
+                    )
             round_source_tools = [
                 str(item) for item in normalized_round_summary.get("source_tools", []) if str(item or "").strip()
             ]
@@ -3902,7 +4116,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     task_boundary_triage_summary = summary_projection
                     round_payload["task_boundary_triage_required"] = True
             if round_requires_task_boundary_triage:
-                settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
+                settled_attempt = await settle_pending_attempt(
                     executor,
                     pending_round_attempt,
                     accepted=False,
@@ -3916,7 +4130,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 isinstance(summary_projection, dict)
                 and str(summary_projection.get("error_code") or "").strip() == "quality_repair_deadline_insufficient"
             ):
-                settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
+                settled_attempt = await settle_pending_attempt(
                     executor,
                     pending_round_attempt,
                     accepted=False,
@@ -4000,7 +4214,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     round_payload["verifier_effect"] = "provider_timeout"
                     if isinstance(projected_summary_raw, dict):
                         projected_summary_raw["verifier_effect"] = "provider_timeout"
-                    settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
+                    settled_attempt = await settle_pending_attempt(
                         executor,
                         pending_round_attempt,
                         accepted=False,
@@ -4016,7 +4230,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                         continue
                     convergence_stop_reason = "quality_repair_provider_timeout_exhausted"
                     break
-                settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
+                settled_attempt = await settle_pending_attempt(
                     executor,
                     pending_round_attempt,
                     accepted=False,
@@ -4114,7 +4328,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
             for command in prepare_commands:
                 result, deadline_detail = await run_workspace_quality_command_with_deadline(command, prepare_phase)
                 if deadline_detail:
-                    await _settle_pending_workspace_quality_repair_attempt(
+                    await settle_pending_attempt(
                         executor,
                         pending_round_attempt,
                         accepted=False,
@@ -4132,6 +4346,20 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 rerun_prepare_results.append(result)
                 if not bool(result.get("passed")):
                     round_prepare_failed = True
+            if pending_round_attempt is not None and sessions and candidate_claimed:
+                try:
+                    sessions[0].candidate(pending=pending_round_attempt, results=candidate_effects)
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    await settle_pending_attempt(
+                        executor,
+                        pending_round_attempt,
+                        accepted=False,
+                        reason=f"verification_candidate_input_invalid:{type(exc).__name__}:{exc}",
+                    )
+                    return write_workspace_validation_failure(
+                        "factory_quality_gate_verification_candidate_not_qualified",
+                        str(exc),
+                    )
             phase = "check_after_repair" if round_index == 0 else f"check_after_repair_{round_index + 1}"
             if round_prepare_failed:
                 for command in run_commands:
@@ -4151,7 +4379,7 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 for command in run_commands:
                     result, deadline_detail = await run_workspace_quality_command_with_deadline(command, phase)
                     if deadline_detail:
-                        await _settle_pending_workspace_quality_repair_attempt(
+                        await settle_pending_attempt(
                             executor,
                             pending_round_attempt,
                             accepted=False,
@@ -4342,12 +4570,26 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 }
                 round_payload["semantic_contract_conflict_candidate"] = dict(semantic_contract_conflict_candidate)
                 semantic_contract_conflict_this_round = True
-            settled_attempt = await _settle_pending_workspace_quality_repair_attempt(
+            settled_attempt = await settle_pending_attempt(
                 executor,
                 pending_round_attempt,
                 accepted=candidate_accepted,
                 reason=f"workspace_quality_repair_{repair_effect}",
             )
+            settlement_rejected_candidate = bool(
+                candidate_accepted
+                and pending_round_attempt is not None
+                and (
+                    not isinstance(settled_attempt, Mapping)
+                    or settled_attempt.get("outcome") != "completed"
+                    or settled_attempt.get("settled") is not True
+                )
+            )
+            if settlement_rejected_candidate:
+                candidate_accepted = False
+                candidate_rejected = True
+                verifier_passed = False
+                round_payload["settlement_rejected_candidate"] = True
             candidate_guard_receipt = (
                 dict(settled_attempt.get("candidate_guard_receipt") or {})
                 if isinstance(settled_attempt, Mapping)
@@ -4364,10 +4606,12 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     round_payload["verifier_authoritative_success"] = False
                     convergence_stop_reason = "quality_repair_candidate_rollback_failed"
                     break
-                # CAS restoration makes the pre-round verifier snapshot
-                # authoritative again. Preserve the rejected candidate's
-                # diagnostics as structured feedback, but never let its bytes
-                # or verifier result become the next repair baseline.
+                if sessions:
+                    sessions[0].restored()
+                # Source CAS restoration does not restore the verifier's
+                # execution environment or prove its old command result.
+                # Preserve candidate diagnostics as historical feedback, then
+                # physically verify the actual restored source state below.
                 candidate_rejection_errors = [str(item)[:6000] for item in after_errors[:4]]
                 round_payload["candidate_rejection_errors_for_next_round"] = list(candidate_rejection_errors)
                 # CAS restoration makes every rejected candidate
@@ -4384,13 +4628,39 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                 round_payload["candidate_rejection_target_files_for_next_round"] = list(
                     candidate_rejection_target_files
                 )
-                latest_check_results = [dict(item) for item in before_check_results]
-                after_errors = list(repair_errors)
-                after_signature = before_signature
+                restored_results: list[dict[str, Any]] = []
+                for command in run_commands:
+                    restored_result, deadline_detail = await run_workspace_quality_command_with_deadline(
+                        command, f"check_after_rollback_{round_index + 1}"
+                    )
+                    if deadline_detail:
+                        return write_workspace_validation_failure(
+                            "factory_quality_gate_workspace_checks_deadline_insufficient",
+                            deadline_detail,
+                            repair_override=current_workspace_repair_summary(
+                                residual_errors=repair_errors,
+                                deadline_detail=deadline_detail,
+                            ),
+                        )
+                    results.append(restored_result)
+                    restored_results.append(restored_result)
+                restored_depth = executor._workspace_quality.delivery_depth_contract_result(context)
+                if restored_depth is not None:
+                    restored_depth["phase"] = f"check_after_rollback_{round_index + 1}"
+                    results.append(restored_depth)
+                    restored_results.append(restored_depth)
+                latest_check_results = restored_results
+                rerun_results = [dict(item) for item in restored_results]
+                after_errors = executor._workspace_quality_repair_errors(
+                    [item for item in restored_results if not bool(item.get("passed"))]
+                )
+                after_signature = executor._workspace_quality_diagnostic_signature(after_errors)
                 after_codes = executor._workspace_quality_diagnostic_error_codes(after_signature)
-                after_plan_probe = round_plan_probe
-                after_plannable_tools = before_plannable_tools
-                current_test_identities = before_test_identities
+                after_plan_probe = executor._workspace_quality_repair_plan_probe_report(after_errors)
+                after_plannable_tools = _workspace_quality_plannable_source_tools(after_plan_probe)
+                current_test_identities = _workspace_quality_failing_test_identities(after_errors)
+                round_payload["restored_state_revalidated"] = True
+                round_payload["restored_verifier_passed"] = all(bool(item.get("passed")) for item in restored_results)
                 repair_effect = "candidate_rejected_rolled_back"
                 verifier_passed = False
             round_payload.update(
@@ -4403,6 +4673,9 @@ async def _run_workspace_quality_checks(executor, run: FactoryRun, context: dict
                     "residual_errors_after": after_errors[:10],
                 }
             )
+            if settlement_rejected_candidate:
+                convergence_stop_reason = "quality_repair_artifact_or_task_settlement_failed"
+                break
             projected_summary_raw = round_payload.get("repair_summary")
             if isinstance(projected_summary_raw, dict):
                 projected_summary = projected_summary_raw

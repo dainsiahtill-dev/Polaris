@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import hashlib
 import json
@@ -958,6 +959,75 @@ class StreamLeaseV1:
 
 
 @dataclass(slots=True)
+class InheritedLockDescriptorsV1:
+    """Parent custody of inherited locks; release closes copies without unlocking.
+
+    Only anchor/key descriptors are passed to a child. Directory descriptors stay
+    local for binding validation. The spawning adapter must retain this ticket
+    until exact child readiness or physical drain has been established.
+    """
+
+    _owner: LockedRegularFileSetV1
+    _pass_fds: tuple[int, ...]
+    _identities: tuple[tuple[int, int, int], ...]
+
+    @property
+    def pass_fds(self) -> tuple[int, ...]:
+        with self._owner._mutex:
+            if self._owner._state != "DETACHED":
+                raise _fail("inherited_lock_closed", "inherited lock ticket is closed")
+            return self._pass_fds
+
+    @property
+    def descriptor_identities(self) -> tuple[tuple[int, int, int], ...]:
+        return self._identities
+
+    def validate_parent_binding(self) -> None:
+        with self._owner._mutex:
+            if self._owner._state != "DETACHED":
+                raise _fail("inherited_lock_closed", "inherited lock ticket is closed")
+            self._owner._validate_authority()
+            assert self._owner._realm_fd is not None
+            for fd, device, inode in self._identities:
+                if _regular(fd, code="stream_lock_invalid", name="inherited lock") != (device, inode):
+                    raise _fail("stream_identity_drift", "inherited lock descriptor changed")
+            for path, fd in zip(
+                sorted(self._owner.logical_paths, key=lambda path: _key(self._owner.storage_identity_token, path)),
+                self._owner._lock_fds,
+                strict=True,
+            ):
+                self._owner._verify_lock_key(
+                    self._owner._realm_fd,
+                    _key(self._owner.storage_identity_token, path),
+                    LockFileIdentityV1(*_identity(fd)),
+                )
+
+    def close(self) -> None:
+        with self._owner._mutex:
+            if self._owner._state == "CLOSED":
+                return
+            if self._owner._state != "DETACHED":
+                raise _fail("inherited_lock_state_invalid", "ticket no longer owns detached descriptors")
+            descriptors = (*self._pass_fds, self._owner._root_fd, self._owner._realm_fd)
+            self._owner._lock_fds.clear()
+            self._owner._anchor_fd = self._owner._root_fd = self._owner._realm_fd = None
+            self._owner._leases.clear()
+            self._owner._state = "CLOSED"
+            errors: list[OSError] = []
+            try:
+                for fd in descriptors:
+                    if fd is not None:
+                        try:
+                            os.close(fd)  # Deliberately no LOCK_UN on inherited open descriptions.
+                        except OSError as exc:
+                            errors.append(exc)
+            finally:
+                self._owner._close_complete.set()
+            if errors:
+                raise _fail("inherited_lock_close_failed", "inherited descriptor cleanup failed", count=len(errors))
+
+
+@dataclass(slots=True)
 class LockedRegularFileSetV1:
     """Provisioned-authority lease set with a single lifecycle mutex."""
 
@@ -1239,11 +1309,34 @@ class LockedRegularFileSetV1:
             except KeyError as exc:
                 raise KeyError(f"logical path was not leased: {logical_path!r}") from exc
 
+    def detach_for_inheritance(self) -> InheritedLockDescriptorsV1:
+        """Transfer unopened lock custody without weakening ordinary close semantics."""
+
+        with self._operation():
+            if any(
+                lease._file_fd is not None
+                or lease._parent_fd is not None
+                or lease._directory_durability.boundary_crossed
+                for lease in self._leases.values()
+            ):
+                raise _fail("inherited_lock_open_stream", "cannot transfer an open stream lease")
+            self._validate_authority()
+            assert self._anchor_fd is not None
+            descriptors = (self._anchor_fd, *self._lock_fds)
+            ticket = InheritedLockDescriptorsV1(self, descriptors, tuple((fd, *_identity(fd)) for fd in descriptors))
+            self._state = "DETACHED"
+            try:
+                ticket.validate_parent_binding()
+            except BaseException:
+                self._state = "ACTIVE"
+                raise
+            return ticket
+
     def close(self) -> None:
         """Detach descriptors once, then close them after all I/O has quiesced."""
 
         with self._mutex:
-            if self._state == "CLOSED":
+            if self._state in {"CLOSED", "DETACHED"}:
                 return
             if self._state == "CLOSING":
                 close_complete = self._close_complete
@@ -1356,8 +1449,14 @@ class LockedRegularFileSetV1:
                     raise _fail("stream_lock_missing", "stream lock key is not enrolled", logical_path=path) from None
                 except OSError as exc:
                     raise _fail("stream_lock_invalid", "stream lock key is unsafe", errno=exc.errno) from exc
-                _regular(fd, code="stream_lock_invalid", name=name)
-                self._acquire_lock(fd, fcntl.LOCK_EX, deadline=deadline)
+                try:
+                    _regular(fd, code="stream_lock_invalid", name=name)
+                    self._acquire_lock(fd, fcntl.LOCK_EX, deadline=deadline)
+                except BaseException:
+                    # Not yet enrolled in _lock_fds: normal close cannot see it.
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+                    raise
                 self._lock_fds.append(fd)
             for path, parts in paths:
                 self._leases[path] = StreamLeaseV1(self, path, parts)
@@ -1945,6 +2044,7 @@ class _OperationLock:
 
 __all__ = [
     "LOCK_AUTHORITY_FORMAT_REVISION",
+    "InheritedLockDescriptorsV1",
     "LockAuthorityBindingV1",
     "LockFileIdentityV1",
     "LockKeyMaintenanceProofV1",

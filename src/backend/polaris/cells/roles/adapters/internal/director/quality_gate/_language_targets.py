@@ -609,9 +609,7 @@ def _workspace_rust_source_repair_target_files(workspace_root: Path) -> list[str
 
 
 _GO_RUN_COMMAND_TARGET_RE = re.compile(r"(?:^|[\s(>])go\s+run\s+(?P<target>(?!-)[^\s'\"\n]+)")
-_GO_COMPILE_PATH_RE = re.compile(
-    r"(?P<path>(?:[A-Za-z]:)?[^\s:()'\"\n]+?\.go):(?P<line>\d+):(?P<column>\d+):"
-)
+_GO_COMPILE_PATH_RE = re.compile(r"(?P<path>(?:[A-Za-z]:)?[^\s:()'\"\n]+?\.go):(?P<line>\d+):(?P<column>\d+)(?=:|\s|$)")
 _GO_MISSING_MEMBER_TYPE_RE = re.compile(
     r"type\s+\*?(?:(?P<package_name>[A-Za-z_][A-Za-z0-9_]*)\.)?"
     r"(?P<type_name>[A-Za-z_][A-Za-z0-9_]*)\s+has\s+no\s+field\s+or\s+method",
@@ -1701,9 +1699,7 @@ def _python_test_failure_cross_language_owner_target_files(
             ],
         ]
     )
-    observes_external_cli = any(
-        _python_test_file_uses_subprocess(workspace_root / rel) for rel in test_targets
-    )
+    observes_external_cli = any(_python_test_file_uses_subprocess(workspace_root / rel) for rel in test_targets)
     qualified_owners = _cpp_runtime_qualified_symbol_owner_target_files(
         text,
         changed_files=changed_files,
@@ -2476,16 +2472,31 @@ def _resolve_javascript_relative_import_target(
     if not raw.startswith(("./", "../")):
         return None
     try:
+        workspace_root = workspace_root.resolve()
         base = (importer_dir / raw).resolve()
         base.relative_to(workspace_root)
     except (OSError, RuntimeError, ValueError):
         return None
     candidates: list[Path] = []
     if base.suffix:
-        candidates.append(base)
+        # An explicit confined file is the import's exact identity. Authored
+        # peers are fallbacks only when that emitted/exact path is absent.
+        if base.is_file():
+            return base
+        # Authored TypeScript commonly imports its emitted JavaScript name.
+        # Resolve actual source peers, not hypothetical Python modules.
+        source_peers = {
+            ".js": (".ts", ".tsx", ".jsx"),
+            ".jsx": (".tsx",),
+            ".mjs": (".mts",),
+            ".cjs": (".cts",),
+        }
+        candidates.extend(base.with_suffix(suffix) for suffix in source_peers.get(base.suffix.lower(), ()))
     else:
-        candidates.extend(base.with_suffix(suffix) for suffix in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"))
-        candidates.extend(base / f"index{suffix}" for suffix in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"))
+        source_suffixes = (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs")
+        candidates.extend(base.with_suffix(suffix) for suffix in source_suffixes)
+        candidates.extend(base / f"index{suffix}" for suffix in source_suffixes)
+    resolved_candidates: set[Path] = set()
     for candidate in candidates:
         try:
             resolved = candidate.resolve()
@@ -2493,8 +2504,10 @@ def _resolve_javascript_relative_import_target(
         except (OSError, RuntimeError, ValueError):
             continue
         if resolved.is_file():
-            return resolved
-    return None
+            resolved_candidates.add(resolved)
+    # Multiple physical sources need explicit resolution evidence. File order
+    # must not choose an arbitrary owner and thereby create write authority.
+    return next(iter(resolved_candidates)) if len(resolved_candidates) == 1 else None
 
 
 __all__ = [

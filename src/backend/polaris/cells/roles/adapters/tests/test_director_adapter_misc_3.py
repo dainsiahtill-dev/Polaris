@@ -2301,10 +2301,9 @@ class TestSyntaxRepairDirective:
 
 
 class TestTruncatedFileDirective:
-    """L2-11 r6: index.html was whole-file-rewritten three times and every
-    copy was output-limit-truncated; only append converges."""
+    """Tail completion must preserve source and use the offered repair tool."""
 
-    def test_truncation_error_gets_append_directive(self) -> None:
+    def test_truncation_error_gets_offered_tool_tail_completion_directive(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,
         )
@@ -2319,8 +2318,11 @@ class TestTruncatedFileDirective:
             missing_target_files=[],
         )
         assert "TRUNCATED FILE DIRECTIVE" in message
-        assert "append_to_file" in message
-        assert "Do NOT rewrite" in message
+        assert "exact SEARCH/REPLACE" in message
+        assert "preserve the matching current tail" in message
+        assert "add the missing remainder after it" in message
+        assert "append_to_file" not in message
+        assert "read_file its tail" not in message
         assert "SYNTAX REPAIR DIRECTIVE" not in message
 
     def test_plain_syntax_error_keeps_narrow_edit_directive(self) -> None:

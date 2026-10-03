@@ -1,0 +1,41 @@
+{
+  "schema_version": "polaris.engineering_defect_record.v1",
+  "status": "local_verified_final_release_passed_fresh_launch_started",
+  "authoritative_platform_receipt": false,
+  "exact_run": "factory_7244a26d3ae3",
+  "cause": "Factory merged proposed repair paths and generic extras into freshly minted permissions, with a synthetic CE fallback and a helper task unrelated to original completion obligations.",
+  "dynamic_before": {"ce_owned": false, "candidate_granted": true, "capability_audit_ok": true, "providers": 0, "effects": 0},
+  "dynamic_after": {"owned_package_accepted_by_actual_deo_receiver": true, "original_token_id_retained": true, "unowned_mjs": "repair_candidate_outside_owner_scope", "providers": 0, "effects": 0},
+  "temporal_correction": {"supersedes": "task-intent-boundary-20261002.json boundary_residual earlier diagnosis", "fact": "Stage settle created tests/verify.test.mjs at2026-10-01T21:51:18.052031Z; later scanner finding file does not contradict an earlier missing-file boundary."},
+  "repairs": [
+    "Use strict original same-run CE handoff/capability/completion projection.",
+    "Capture root and metadata scope denial; proposals never grant paths.",
+    "Claim original owner for stage settle; planner receives original task.",
+    "Keep original lease alive; rejected heartbeat blocks physical commit; cancellation stops keeper.",
+    "Refresh assets after each successful effect before later failure or terminal close.",
+    "Keep real progress counts after a later candidate rejection; record failure remains failed.",
+    "Build-prefix detection rejects absent source/test entrypoints but defers known build outputs."
+  ],
+  "files": ["factory_materialization_impl.py", "factory_stage_executor/_mixin_03.py", "factory_workspace_quality_impl.py", "kernelone/quality/package_scripts.py"],
+  "tests": {"owner_stage": "50 passed in2.67s", "related": "328 passed in88.06s", "mypy": "4 production files passed", "ruff": "passed", "diff_check": "passed"},
+  "review": {"mode": "external_engineering_read_only", "important_findings": ["root-admission omission", "late rejection skips earlier asset registration"], "closure": "RED/GREEN tested; no external report used as runtime authority"},
+  "rulings": ["Original token bytes preserved; narrower conflicting admission fails closed rather than silently expands.", "No branches or automatic commits; preserve unrelated dirty work.", "Local tests and assisted r03 recovery cannot count as fresh autonomous success."],
+  "remaining_proof": ["fresh project completion", "physical command-only execution", "full cancellation/drain and dependency-prep sandbox", "lawful narrow capability projection", "all120 projects and N-batch convergence"],
+  "qualification": {"catalog": "projects_v2.json", "projects": 120, "fresh_current_candidate_verified": false, "full_repository_tests": "not_run"},
+  "release_hardening": {
+    "first_release": "8 failures/346 passed/1 skipped; syntactically broken split test file, stale configuration/owner path and KFS writes exposed",
+    "repairs": "Restore dropped original test helpers/assertions; canonical errors package ownership; register existing instance workspace flag; relocate approved env sites; explicit process-absence return; KFS routing and independent compiler comparison inputs",
+    "initial_all_modules": "9 passed/1 failed: M09 lost disk-event fixture",
+    "m09_rerun": "PASS exit0 after original fixture restoration",
+    "post_kfs_affected": {"M03": "PASS exit0/8.08s", "M10": "PASS exit0/6.37s"},
+    "release_before_final_comparison_fix": "mode all, report ok=true; all12 stages exit0",
+    "release_final": "PASS exit0; report ok=true/all12 stages0; .superpowers/sdd/2026-10-03-owner-bound-settle-repair/release-final.json",
+    "root_kfs_tests": "37 passed plus1 real Go regression passed",
+    "external_kfs_suite": "442 passed, one existing fork warning; not a platform authority",
+    "internal_fence": "Global report has1016 historical/current entries and missing approved baseline file; not claimed green. Scope review shows current changed production paths add no cross-Cell internal imports.",
+    "models_verified": "All five Factory roles MiniMax-M3",
+    "role_binding_hash": "3c3c501f29e4761b21d2105ca6b7c533f391565bb2f055e94175218359716f68"
+  },
+  "fresh_r04": {"project": "L1-01", "work_dir": "/tmp/factory-bench-minimax-l1-01-20261003-r04", "budget_seconds": 5400, "outer_seconds": 6000, "mode": "isolated/off/serial", "operator_catalog_error": "First CLI invocation resolved root-relative catalog under script directory; terminated before project allocation/Provider. Kept original .runner.log, corrected absolute path, no old evidence deletion.", "log": "/tmp/factory-bench-minimax-l1-01-20261003-r04.launch2.runner.log", "completed_verified": false},
+  "next_action": "Observe fresh r04 after corrected absolute catalog invocation; production source frozen. Validate instance identity, all final physical requests, effects, verifier, ledger/QA/settlement. No manual target edits or assisted retry counted as autonomous success."
+}

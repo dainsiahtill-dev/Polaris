@@ -1,0 +1,26 @@
+id: ce-effective-obligation-view-20261003
+classification: structural
+owner_cells: [chief_engineer.blueprint, factory.pipeline]
+status: tdd_implementation_active
+evidence:
+  run_id: factory_020069bf136f
+  final_request_ref: 0e03f25ee9b174296c8b164e
+  actual_allowed_but_final_denied: OBL-3
+  main_readonly_dynamic_replay: exit0_OSreadonly_netoff_noeffects
+assumptions:
+  - Raw candidate references are proposals, not final authority.
+  - Optional/not_applicable retained identities differ from required-depth identities.
+  - Full view requires catalog/project-kind/command facts beyond task paths.
+  - A read-only view cannot create a carrier, grant, persistence or success verdict.
+pre_mortem:
+  - Do not silently delete required behavior links or widen PM root scope.
+  - Do not expose a partial raw roster as final normalized authority.
+  - Do not permit stale candidate views after legitimate upserts.
+  - Final artifact/entrypoint/verifier rules and depth/behavior gates remain strict.
+verification:
+  - Provider context and real early validator initial REDs.
+  - Exact shared final normalization and actual authenticated carrier consumers.
+  - Required/optional/not_applicable/source-delegation/collision/owner negatives.
+  - Pure projection no-I/O and no authority issuance.
+  - Independent review then current release and fresh isolated evidence.
+fresh_project_verified: false

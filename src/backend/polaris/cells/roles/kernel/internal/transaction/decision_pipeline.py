@@ -186,6 +186,7 @@ def ensure_native_write_tool_batch_or_fail(
     decoder: TurnDecisionDecoder,
     turn_id: str,
     decision_metadata: Mapping[str, Any],
+    tool_definitions_present: bool,
     streaming: bool = False,
 ) -> TurnDecision:
     """Recover an executable TOOL_BATCH for native writes, else fail-closed.
@@ -201,9 +202,6 @@ def ensure_native_write_tool_batch_or_fail(
         O(n) over native tool calls for recovery decode; O(1) for the guard.
     """
 
-    if _decision_has_executable_tool_batch(decision):
-        return decision
-
     structured_result_evidence = trusted_structured_output_response_evidence(llm_response)
     if structured_result_evidence is not None:
         return _with_decision_metadata(
@@ -214,6 +212,31 @@ def ensure_native_write_tool_batch_or_fail(
                 "structured_output_transport_consumed_without_dispatch": True,
             },
         )
+
+    if not tool_definitions_present:
+        decision_meta = decision.get("metadata") or {}
+        merged_metadata = {**dict(decision_metadata), **dict(decision_meta)}
+        native_facts = native_tool_call_facts_from_sources(
+            merged_metadata, native_tool_calls_from_response(llm_response)
+        )
+        has_write = _native_facts_include_write_tools(native_facts, metadata=merged_metadata)
+        has_batch = _decision_has_executable_tool_batch(decision)
+        if decision_meta.get("suppressed_tool_batch_due_to_no_tools") is True and not has_write and not has_batch:
+            # Explicit text-only non-write suppression is final policy, not a
+            # decoder failure. Recovery must not reintroduce its rejected calls.
+            return decision
+        has_native = int(native_facts.get("native_tool_calls_count") or 0) > 0 or bool(
+            native_tool_call_names_from_facts(native_facts)
+        )
+        if has_native or has_batch:
+            anomaly = build_tool_dispatch_dropped_anomaly(
+                response=llm_response, metadata=merged_metadata, turn_id=turn_id, streaming=streaming
+            )
+            raise RuntimeError(tool_dispatch_dropped_error_message(anomaly))
+        return decision
+
+    if _decision_has_executable_tool_batch(decision):
+        return decision
 
     recovered = decoder.recover_executable_tool_batch_decision(llm_response, TurnId(turn_id))
     if recovered is not None and _decision_has_executable_tool_batch(recovered):
@@ -403,6 +426,7 @@ async def run_decision_pipeline(
             decoder=decoder,
             turn_id=turn_id,
             decision_metadata=decision_metadata,
+            tool_definitions_present=bool(tool_definitions),
             streaming=False,
         )
     except RuntimeError as exc:

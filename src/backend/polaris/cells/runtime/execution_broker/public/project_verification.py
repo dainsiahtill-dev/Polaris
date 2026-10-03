@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 ProjectVerificationModalityV1 = Literal["environment_prep", "build", "test", "lint", "entrypoint"]
 
@@ -141,6 +141,56 @@ class QueryProjectArtifactReceiptV1:
 
 
 @dataclass(frozen=True, slots=True)
+class QueryProjectArtifactSourceBaselineV1:
+    """Read historical source provenance without current completion authority."""
+
+    workspace: str
+    project_id: str
+    run_id: str
+    completion_contract_hash: str
+    obligation_id: str
+    owner_task_id: str
+    path: str
+
+    def __post_init__(self) -> None:
+        _identity_values(self)
+        object.__setattr__(self, "path", _relative_path("path", self.path))
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectArtifactSourceBaselineV1:
+    """Owner-sealed read-only source fact, not a current artifact receipt."""
+
+    workspace: str
+    project_id: str
+    run_id: str
+    completion_contract_hash: str
+    obligation_id: str
+    owner_task_id: str
+    path: str
+    artifact_hash: str
+    source_receipt_hash: str
+    source_receipt_ref: str
+    source_authority_revision: str
+    writes_allowed: bool = field(init=False, default=False)
+    completion_eligible: bool = field(init=False, default=False)
+    _authority_token: InitVar[object | None] = None
+
+    def __post_init__(self, _authority_token: object | None) -> None:
+        from polaris.cells.runtime.execution_broker.internal.project_verification_authority import (
+            _is_project_artifact_source_baseline_seal,
+        )
+
+        if not _is_project_artifact_source_baseline_seal(_authority_token):
+            raise ValueError("source baseline must originate from its execution broker owner")
+        _identity_values(self)
+        object.__setattr__(self, "path", _relative_path("path", self.path))
+        for name in ("artifact_hash", "source_receipt_hash", "source_authority_revision"):
+            object.__setattr__(self, name, _require_sha256(name, getattr(self, name)))
+        object.__setattr__(self, "source_receipt_ref", _require_exact("source_receipt_ref", self.source_receipt_ref))
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectArtifactReceiptV1:
     """Private-sealed content receipt for one real artifact."""
 
@@ -173,7 +223,9 @@ class ProjectArtifactReceiptV1:
         object.__setattr__(self, "artifact_hash", _require_sha256("artifact_hash", self.artifact_hash))
         object.__setattr__(self, "job_token_id", _require_exact("job_token_id", self.job_token_id, max_length=256))
         object.__setattr__(self, "job_token_set_hash", _require_sha256("job_token_set_hash", self.job_token_set_hash))
-        object.__setattr__(self, "execution_policy_hash", _require_sha256("execution_policy_hash", self.execution_policy_hash))
+        object.__setattr__(
+            self, "execution_policy_hash", _require_sha256("execution_policy_hash", self.execution_policy_hash)
+        )
         object.__setattr__(self, "authority_revision", _require_sha256("authority_revision", self.authority_revision))
         object.__setattr__(self, "receipt_hash", _require_sha256("receipt_hash", self.receipt_hash))
         object.__setattr__(self, "receipt_ref", _require_exact("receipt_ref", self.receipt_ref))
@@ -214,7 +266,9 @@ class ResolveProjectArtifactAuthorityQueryV1:
         object.__setattr__(self, "workspace", _workspace(self.workspace))
         for name in ("project_id", "run_id", "obligation_id"):
             object.__setattr__(self, name, _require_exact(name, getattr(self, name), max_length=256))
-        object.__setattr__(self, "completion_contract_hash", _require_sha256("completion_contract_hash", self.completion_contract_hash))
+        object.__setattr__(
+            self, "completion_contract_hash", _require_sha256("completion_contract_hash", self.completion_contract_hash)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,7 +292,9 @@ class ProjectArtifactExecutionAuthorityV1:
         object.__setattr__(self, "path", _relative_path("path", self.path))
         object.__setattr__(self, "job_token_id", _require_exact("job_token_id", self.job_token_id, max_length=256))
         object.__setattr__(self, "job_token_set_hash", _require_sha256("job_token_set_hash", self.job_token_set_hash))
-        object.__setattr__(self, "execution_policy_hash", _require_sha256("execution_policy_hash", self.execution_policy_hash))
+        object.__setattr__(
+            self, "execution_policy_hash", _require_sha256("execution_policy_hash", self.execution_policy_hash)
+        )
         object.__setattr__(self, "authority_revision", _require_sha256("authority_revision", self.authority_revision))
 
 
@@ -302,10 +358,16 @@ class ProjectVerificationExecutionAuthorityV1:
             _require_sha256("execution_policy_hash", self.execution_policy_hash),
         )
         object.__setattr__(self, "authority_revision", _require_sha256("authority_revision", self.authority_revision))
-        object.__setattr__(self, "policy_profile_id", _require_exact("policy_profile_id", self.policy_profile_id, max_length=256))
-        object.__setattr__(self, "policy_decision_hash", _require_sha256("policy_decision_hash", self.policy_decision_hash))
+        object.__setattr__(
+            self, "policy_profile_id", _require_exact("policy_profile_id", self.policy_profile_id, max_length=256)
+        )
+        object.__setattr__(
+            self, "policy_decision_hash", _require_sha256("policy_decision_hash", self.policy_decision_hash)
+        )
         object.__setattr__(self, "executable_path", _absolute_file_path("executable_path", self.executable_path))
-        object.__setattr__(self, "executable_realpath", _absolute_file_path("executable_realpath", self.executable_realpath))
+        object.__setattr__(
+            self, "executable_realpath", _absolute_file_path("executable_realpath", self.executable_realpath)
+        )
         object.__setattr__(self, "executable_hash", _require_sha256("executable_hash", self.executable_hash))
 
 
@@ -375,9 +437,15 @@ class ProjectVerificationCapabilityConsumptionV1:
         object.__setattr__(self, "authority_revision", _require_sha256("authority_revision", self.authority_revision))
         object.__setattr__(self, "job_token_id", _require_exact("job_token_id", self.job_token_id, max_length=256))
         object.__setattr__(self, "job_token_set_hash", _require_sha256("job_token_set_hash", self.job_token_set_hash))
-        object.__setattr__(self, "execution_policy_hash", _require_sha256("execution_policy_hash", self.execution_policy_hash))
-        object.__setattr__(self, "policy_profile_id", _require_exact("policy_profile_id", self.policy_profile_id, max_length=256))
-        object.__setattr__(self, "policy_decision_hash", _require_sha256("policy_decision_hash", self.policy_decision_hash))
+        object.__setattr__(
+            self, "execution_policy_hash", _require_sha256("execution_policy_hash", self.execution_policy_hash)
+        )
+        object.__setattr__(
+            self, "policy_profile_id", _require_exact("policy_profile_id", self.policy_profile_id, max_length=256)
+        )
+        object.__setattr__(
+            self, "policy_decision_hash", _require_sha256("policy_decision_hash", self.policy_decision_hash)
+        )
 
 
 @runtime_checkable
@@ -454,10 +522,16 @@ class RunProjectVerificationCommandV1:
             tuple(_require_exact(f"argv[{index}]", value) for index, value in enumerate(self.argv)),
         )
         object.__setattr__(self, "authority_revision", _require_sha256("authority_revision", self.authority_revision))
-        object.__setattr__(self, "policy_profile_id", _require_exact("policy_profile_id", self.policy_profile_id, max_length=256))
-        object.__setattr__(self, "policy_decision_hash", _require_sha256("policy_decision_hash", self.policy_decision_hash))
+        object.__setattr__(
+            self, "policy_profile_id", _require_exact("policy_profile_id", self.policy_profile_id, max_length=256)
+        )
+        object.__setattr__(
+            self, "policy_decision_hash", _require_sha256("policy_decision_hash", self.policy_decision_hash)
+        )
         object.__setattr__(self, "executable_path", _absolute_file_path("executable_path", self.executable_path))
-        object.__setattr__(self, "executable_realpath", _absolute_file_path("executable_realpath", self.executable_realpath))
+        object.__setattr__(
+            self, "executable_realpath", _absolute_file_path("executable_realpath", self.executable_realpath)
+        )
         object.__setattr__(self, "executable_hash", _require_sha256("executable_hash", self.executable_hash))
         object.__setattr__(self, "cwd", _relative_path("cwd", self.cwd, allow_dot=True))
         object.__setattr__(
@@ -585,7 +659,11 @@ class ProjectVerificationProcessResultV1:
             raise ValueError("process_pid must be a positive int or None")
         if self.process_pid is not None and not self.process_start_token:
             raise ValueError("process_pid requires process_start_token")
-        object.__setattr__(self, "readiness_probe_kind", _require_exact("readiness_probe_kind", self.readiness_probe_kind, max_length=128))
+        object.__setattr__(
+            self,
+            "readiness_probe_kind",
+            _require_exact("readiness_probe_kind", self.readiness_probe_kind, max_length=128),
+        )
         if type(self.readiness_satisfied) is not bool or type(self.controlled_termination) is not bool:
             raise TypeError("readiness_satisfied and controlled_termination must be bool")
         if self.controlled_termination and not self.readiness_satisfied:
@@ -653,10 +731,16 @@ class ProjectVerificationReceiptV1:
             tuple(_require_exact(f"argv[{index}]", value) for index, value in enumerate(self.argv)),
         )
         object.__setattr__(self, "authority_revision", _require_sha256("authority_revision", self.authority_revision))
-        object.__setattr__(self, "policy_profile_id", _require_exact("policy_profile_id", self.policy_profile_id, max_length=256))
-        object.__setattr__(self, "policy_decision_hash", _require_sha256("policy_decision_hash", self.policy_decision_hash))
+        object.__setattr__(
+            self, "policy_profile_id", _require_exact("policy_profile_id", self.policy_profile_id, max_length=256)
+        )
+        object.__setattr__(
+            self, "policy_decision_hash", _require_sha256("policy_decision_hash", self.policy_decision_hash)
+        )
         object.__setattr__(self, "executable_path", _absolute_file_path("executable_path", self.executable_path))
-        object.__setattr__(self, "executable_realpath", _absolute_file_path("executable_realpath", self.executable_realpath))
+        object.__setattr__(
+            self, "executable_realpath", _absolute_file_path("executable_realpath", self.executable_realpath)
+        )
         object.__setattr__(self, "executable_hash", _require_sha256("executable_hash", self.executable_hash))
         object.__setattr__(self, "capability_id", _require_sha256("capability_id", self.capability_id))
         object.__setattr__(self, "attempt_id", _require_sha256("attempt_id", self.attempt_id))
@@ -708,7 +792,11 @@ class ProjectVerificationReceiptV1:
             raise ValueError("process_pid must be a positive int or None")
         if self.process_pid is not None and not self.process_start_token:
             raise ValueError("process_pid requires process_start_token")
-        object.__setattr__(self, "readiness_probe_kind", _require_exact("readiness_probe_kind", self.readiness_probe_kind, max_length=128))
+        object.__setattr__(
+            self,
+            "readiness_probe_kind",
+            _require_exact("readiness_probe_kind", self.readiness_probe_kind, max_length=128),
+        )
         if type(self.readiness_satisfied) is not bool or type(self.controlled_termination) is not bool:
             raise TypeError("readiness_satisfied and controlled_termination must be bool")
         if self.controlled_termination and not self.readiness_satisfied:
@@ -766,6 +854,22 @@ def query_project_artifact_receipt(query: QueryProjectArtifactReceiptV1) -> Proj
     return _query(query)
 
 
+def query_project_artifact_source_baseline(
+    query: QueryProjectArtifactSourceBaselineV1,
+) -> ProjectArtifactSourceBaselineV1 | None:
+    """Read byte-current historical source provenance; never grant execution."""
+    from polaris.cells.runtime.execution_broker.internal.project_verification_authority import (
+        query_project_artifact_source_baseline as _query,
+    )
+
+    result = _query(query)
+    if result is None:
+        return None
+    if type(result) is not ProjectArtifactSourceBaselineV1:
+        raise TypeError("source baseline owner returned a lookalike")
+    return cast(ProjectArtifactSourceBaselineV1, result)
+
+
 def authorize_project_verification_command(
     query: ResolveProjectVerificationAuthorityQueryV1,
 ) -> RunProjectVerificationCommandV1:
@@ -806,6 +910,7 @@ __all__ = [
     "ConsumeProjectVerificationCapabilityCommandV1",
     "ProjectArtifactExecutionAuthorityV1",
     "ProjectArtifactReceiptV1",
+    "ProjectArtifactSourceBaselineV1",
     "ProjectVerificationArtifactInputV1",
     "ProjectVerificationArtifactSnapshotV1",
     "ProjectVerificationCapabilityConsumptionV1",
@@ -815,6 +920,7 @@ __all__ = [
     "ProjectVerificationProcessResultV1",
     "ProjectVerificationReceiptV1",
     "QueryProjectArtifactReceiptV1",
+    "QueryProjectArtifactSourceBaselineV1",
     "QueryProjectVerificationReceiptV1",
     "RecordProjectArtifactCommandV1",
     "ResolveProjectArtifactAuthorityQueryV1",
@@ -822,6 +928,7 @@ __all__ = [
     "RunProjectVerificationCommandV1",
     "authorize_project_verification_command",
     "query_project_artifact_receipt",
+    "query_project_artifact_source_baseline",
     "query_project_verification_receipt",
     "record_project_artifact",
     "run_project_verification",

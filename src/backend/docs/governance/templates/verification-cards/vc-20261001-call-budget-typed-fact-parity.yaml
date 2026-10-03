@@ -1,0 +1,30 @@
+id: vc-20261001-call-budget-typed-fact-parity
+classification: pattern
+owner: director.tasking
+status: local_verified_independent_review_pass_live_recovery_pending
+blueprint: ../../../blueprints/POLARIS_CALL_BUDGET_TYPED_FACT_PARITY_20261001.md
+assumptions:
+  - claim: scalar and typed call budgets describe the same effective ceiling.
+    evidence: fb78 actual7000 typed128000; actual caller chain six RED.
+  - claim: later distinct TASK2 pass closes earlier TASK1 contradiction.
+    evidence: False; different task and physical request.
+pre_mortem:
+  - Omitted canonical execution_envelope alias.
+  - Scope conflict hidden by metadata merge or profile fallback.
+  - Previous derived-call strategy recursively embedded as origin.
+verification:
+  - Current scalar/contract/envelope/hash/native request parity.
+  - Immutable task origin and repeated narrowing.
+  - Canonical lower ceiling and explicit deny-all preserved.
+  - No budget/deadline enlargement; malformed authority rejects.
+results:
+  first_review: 162_related_tests_passed_two_remaining_boundary_findings
+  latest_parent_combination: 183_passed
+  independent_final_review: 32_tests_and_original_canonical_readonly_probes_passed
+  canonical_no_authorization: refused_no_profile_grant_fallback
+  readonly_stale_markers: ignored_no_forced_write_budget_or_tools
+  origin_reentry: flat_128000_origin_four_narrowings_constant_2658_chars
+  strict_mypy_four_changed_files: pass
+  strict_mypy_integration_residual: five_errors_HEAD_baseline_and_current_equal
+target_project_manual_edit: forbidden
+fresh_bench_completion: not_verified

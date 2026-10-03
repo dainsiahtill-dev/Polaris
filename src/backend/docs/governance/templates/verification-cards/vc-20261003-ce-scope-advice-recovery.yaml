@@ -1,0 +1,34 @@
+id: vc-20261003-ce-scope-advice-recovery
+classification: pattern
+owners: [chief_engineer.blueprint, factory.pipeline]
+status: local_verified_reviewed_release_passed_fresh_r06_running
+assumptions:
+  - Scope mappings are advisory data already permitted by schema and scope parser.
+  - Existing authored lifted task plans must recover transactionally without grants.
+  - Subsequent repair must consume the current normalized candidate and matching hash.
+evidence:
+  run_id: factory_b43737206ceb
+  candidate_hash: eec2bbe05d9050c3b4d7b31c5ad0b4180fff9f188985297f041347c6dfba6754
+  dynamic_failure: scope_for_apply contains an invalid array member
+  one_variable_probe: accepting existing mapping shape recovers TASK-1/TASK-2/TASK-3
+  focused_tests: 7 passed
+  runtime_tests: 3 passed using real Factory/Runtime/Kernel and private HTTP transport
+  extended_tests: 110 passed with 3 experimental-stream deprecation warnings; terminal exit0 verified
+  independent_review: CLEAR; independent 7 tests and typed-constructor rejection probes passed
+  actual_candidate_replay: original bytes unchanged; all 3 authored plans recovered; original offered schema passes
+  ruff: 4 files passed
+  mypy: 2 production files passed
+  full_repository_pytest: not run
+  release: release-r05-ce-reviewed-final.json; ok true; all 12 stages returncode0
+pre_mortem:
+  - Do not interpret advice as permission or implementation effects.
+  - Do not accept mappings in behavior_invariant_refs or conflicting task overlays.
+  - Do not retain a stale carried tree/hash after normalized recovery.
+  - Do not turn optional task plans into mandatory reconstructions.
+  - PM task-contract JSON is visible content, not read_file arguments; fixture must choose CE result tool by name.
+  - Successful first PM output does not close synthetic fallback intent contamination or retry identity mismatch.
+verification:
+  - Focused red/green normalizer and Factory carried-candidate tests.
+  - Existing public semantic and schema repair flow suites.
+  - Exact candidate read-only replay with original bytes unchanged.
+  - Ruff/Mypy/diff, final release, then fresh isolated project.

@@ -38,6 +38,7 @@ from polaris.cells.roles.kernel.public.physical_attempt_control import (
     FactoryPhysicalAttemptControlPort,
 )
 from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_messages
+from polaris.kernelone.audit.task_write_guidance import project_task_write_guidance, render_task_write_guidance
 from polaris.kernelone.context.context_os.decision_log import build_context_result_id
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
 from polaris.kernelone.events.final_request_evidence import (
@@ -428,6 +429,67 @@ def _ensure_actual_sibling_exports_message_bound(
     return normalized
 
 
+def _ensure_task_write_guidance_message_bound(
+    messages: list[dict[str, Any]],
+    context_override: Any,
+    *,
+    role_id: str,
+) -> list[dict[str, Any]]:
+    """Bind supplied, scope-checked guidance at the final assembly boundary.
+
+    This repairs dropped prompt projection only. It never invents an absent
+    guide, changes capability scope, or validates/creates artifact receipts.
+    Invalid input remains visible to the existing final-request audit.
+    """
+    normalized = [dict(message) for message in messages if isinstance(message, dict)]
+    if role_id != "director" or not isinstance(context_override, Mapping):
+        return normalized
+    metadata = context_override.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    candidate = context_override.get("task_write_guidance", metadata.get("task_write_guidance"))
+    fields = {"schema_version", "write_targets", "reference_only_targets", "inventory_is_not_write_authority"}
+    if not isinstance(candidate, Mapping) or set(candidate) != fields:
+        return normalized
+    envelope = next(
+        (
+            value
+            for key in ("director_execution_envelope", "task_execution_envelope", "execution_envelope")
+            if isinstance((value := context_override.get(key, metadata.get(key))), Mapping)
+        ),
+        None,
+    )
+    if envelope is None:
+        return normalized
+    authorization = envelope.get("authorization")
+    if not isinstance(authorization, Mapping):
+        return normalized
+    targets = context_override.get("target_files", metadata.get("target_files", authorization.get("target_files", [])))
+    try:
+        inventory = context_override.get(
+            "project_declared_target_files", metadata.get("project_declared_target_files", [])
+        )
+        expected = project_task_write_guidance(envelope, [*targets, *inventory])
+        canonical = project_task_write_guidance(
+            envelope, [*candidate["write_targets"], *candidate["reference_only_targets"]]
+        )
+    except (TypeError, ValueError, KeyError):
+        return normalized
+    if dict(candidate) != canonical or canonical != expected:
+        return normalized
+    pin = render_task_write_guidance(canonical)
+    if any(
+        pin in str(message.get("content") or "")
+        or ("task_write_guidance: " + str(dict(candidate))) in str(message.get("content") or "")
+        for message in normalized
+    ):
+        return normalized
+    insert_at = 0
+    while insert_at < len(normalized) and str(normalized[insert_at].get("role") or "").strip().lower() == "system":
+        insert_at += 1
+    normalized.insert(insert_at, {"role": "system", "content": pin})
+    return normalized
+
+
 def _ensure_core_role_identity(
     messages: list[dict[str, Any]],
     role: str,
@@ -653,8 +715,6 @@ def _json_response_contract_requested(override: Any) -> bool:
     return mode in {"json", "json_object", "json_schema", "native_json_schema", "text_json_fallback"} or bool(
         override.get("chief_engineer_json_contract_required")
     )
-
-
 
 
 def _bounded_required_tool_retry_max_tokens(value: Any) -> int:
@@ -1108,6 +1168,11 @@ class LLMRequestPreparer:
         messages = _ensure_actual_sibling_exports_message_bound(
             messages,
             override if isinstance(override, dict) else getattr(context, "context_override", None),
+        )
+        messages = _ensure_task_write_guidance_message_bound(
+            messages,
+            override if isinstance(override, dict) else getattr(context, "context_override", None),
+            role_id=canonical_role,
         )
         _reject_preexisting_factory_evidence_protocol(
             messages,

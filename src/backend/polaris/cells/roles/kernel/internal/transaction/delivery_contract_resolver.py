@@ -29,8 +29,9 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
 from polaris.cells.roles.kernel.internal.transaction.delivery_intent_resolver import (
     enforce_explicit_materialize_delivery_marker,
 )
+from polaris.cells.roles.kernel.internal.transaction.intent_classifier import leading_instruction_delivery_contract
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import extract_latest_user_message
+from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import extract_task_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,8 @@ async def resolve_turn_delivery_contract(
     no-write-tools downgrade. Returns the resolved contract; the caller still
     performs ``ledger.set_delivery_contract`` and target-files detection.
     """
-    latest_user_request = extract_latest_user_message(context)
+    latest_user_request = extract_task_instruction(context)
+    explicit_contract = leading_instruction_delivery_contract(latest_user_request)
     if os.getenv("KERNELONE_DELIVERY_MODE_TRACE") == "1":
         context_has_materialize_marker = any(
             isinstance(message, Mapping)
@@ -173,7 +175,11 @@ async def resolve_turn_delivery_contract(
         return _structured_no_write_contract()
 
     delivery_contract = await resolve_delivery_mode_hybrid(latest_user_request)
-    enforced_contract = enforce_explicit_materialize_delivery_marker(latest_user_request, delivery_contract)
+    enforced_contract = (
+        explicit_contract
+        if explicit_contract is not None and not explicit_contract.requires_mutation
+        else enforce_explicit_materialize_delivery_marker(latest_user_request, delivery_contract)
+    )
     if enforced_contract is not delivery_contract:
         logger.warning(
             "delivery-contract-explicit-marker-overrode: turn_id=%s previous_mode=%s latest_msg=%r",
@@ -216,6 +222,7 @@ async def resolve_turn_delivery_contract(
         delivery_contract.mode != DeliveryMode.MATERIALIZE_CHANGES
         and role_id.strip().lower().replace("-", "_") == "director"
         and _tool_surface_is_write_only(tool_definitions)
+        and (explicit_contract is None or explicit_contract.requires_mutation)
     ):
         logger.warning(
             "delivery-contract-write-only-tool-surface-overrode: turn_id=%s previous_mode=%s latest_msg=%r",

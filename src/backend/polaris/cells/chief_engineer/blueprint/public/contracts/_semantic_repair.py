@@ -86,12 +86,44 @@ class ChiefEngineerPortfolioStructuralRecoveryV1:
         object.__setattr__(self, "recovered", recovered)
 
     def to_dict(self) -> dict[str, Any]:
+        path_normalizations: list[dict[str, str]] = []
+        if "normalize_inert_artifact_terminal_separator" in self.repair_codes:
+            source_rows = self.source_payload["project_completion_contract"]["obligations"]["artifacts"]
+            recovered_rows = self.payload["project_completion_contract"]["obligations"]["artifacts"]
+            source_by_id: dict[str, list[dict[str, Any]]] = {}
+            for original in source_rows:
+                source_by_id.setdefault(original["obligation_id"], []).append(original)
+            for row in recovered_rows:
+                originals = source_by_id.get(row["obligation_id"], [])
+                # Group splitting can preserve an ID for a different member;
+                # neither that identity reuse nor any other recovery is a path
+                # normalization. Derive only the exact inert producer change.
+                if len(originals) != 1:
+                    continue
+                original = originals[0]
+                path = original["path"]
+                if (
+                    isinstance(path, str)
+                    and path.endswith("/")
+                    and not path.endswith("//")
+                    and original.get("applicability") == "not_applicable"
+                    and original.get("owner_task_id") is None
+                    and row == {**original, "path": path[:-1]}
+                ):
+                    path_normalizations.append(
+                        {
+                            "obligation_id": row["obligation_id"],
+                            "source_path": original["path"],
+                            "recovered_path": row["path"],
+                        }
+                    )
         return {
             "schema_version": self.schema_version,
             "source_hash": self.source_hash,
             "recovered_hash": self.recovered_hash,
             "recovered": self.recovered,
             "repair_codes": list(self.repair_codes),
+            "artifact_path_normalizations": path_normalizations,
         }
 
 

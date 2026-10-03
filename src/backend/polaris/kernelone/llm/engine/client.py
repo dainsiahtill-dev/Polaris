@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from polaris.kernelone.errors import ErrorCategory
 
 from .contracts import AIRequest, AIResponse, AIStreamEvent, StreamEventType
+from .invocation_budget import invoke_with_budget
 from .resilience import (
     CircuitBreakerConfig,
     CircuitBreakerOpenError,
@@ -385,12 +386,12 @@ class MultiProviderFallbackManager:
         # the callable in a thread without an event loop; the coroutine is never
         # awaited. Use asyncio.iscoroutinefunction to route correctly.
         if inspect.iscoroutinefunction(provider.invoke):
-            response = await asyncio.wait_for(provider.invoke(request), timeout=timeout)
+            response = await invoke_with_budget(provider.invoke(request), timeout)
         else:
             # Protocol says invoke is async, but we handle sync just in case.
-            response = await asyncio.wait_for(
+            response = await invoke_with_budget(
                 asyncio.to_thread(provider.invoke, request),  # type: ignore[arg-type]
-                timeout=timeout,
+                timeout,
             )
         if response.ok:
             yield AIStreamEvent.chunk_event(response.output)

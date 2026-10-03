@@ -1,0 +1,20 @@
+id: request-context-coverage-preservation-20261002
+classification: pattern
+owner_cell: roles.kernel
+status: implementation
+symptom: Stored request snapshot hides a mandatory sibling-context absence seen in the failure event.
+assumptions:
+  - claim: Factory role slots and request-specific context are distinct evidence domains.
+    evidence: final_provider_attempt_qualification.py bind_final_request_context_audit_to_frozen
+  - claim: The original r02 call was rejected before physical dispatch.
+    evidence: director.llm.events.jsonl call 2f76fe861af84efd8209151abd4778ec
+pre_mortem:
+  - Never interpret observed refs as cutoff grants.
+  - Never retain superseded generic absences for cutoff-owned role slots.
+  - Never rewrite historical snapshots or clear history to claim success.
+verification:
+  - pytest polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py -q
+  - pytest polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py -q
+  - ruff check polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py
+  - mypy polaris/cells/roles/kernel/internal/llm_caller/final_provider_attempt_qualification.py
+fresh_bench_verified: false

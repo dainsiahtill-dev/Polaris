@@ -41,6 +41,38 @@ def test_context_os_prompt_audit_rejects_control_plane_content_leak() -> None:
     assert "context_os_snapshot:" in audit["control_plane"]["content_hits"]
 
 
+@pytest.mark.parametrize(
+    ("control_key", "canonical_key"),
+    [
+        ("factory_run_deadline_epoch_seconds", "factory_run_deadline_epoch_seconds"),
+        ("factoryRunDeadlineEpochSeconds", "factory_run_deadline_epoch_seconds"),
+        ("factory-run-deadline-epoch-seconds", "factory_run_deadline_epoch_seconds"),
+        ("factory_run_deadline_source", "factory_run_deadline_source"),
+        ("factoryRunDeadlineSource", "factory_run_deadline_source"),
+        ("factory-run-deadline-source", "factory_run_deadline_source"),
+        ("factory_run_timeout_seconds", "factory_run_timeout_seconds"),
+        ("factoryRunTimeoutSeconds", "factory_run_timeout_seconds"),
+        ("factory-run-timeout-seconds", "factory_run_timeout_seconds"),
+    ],
+)
+def test_context_os_prompt_audit_rejects_unfiltered_factory_deadline_controls(
+    control_key: str, canonical_key: str
+) -> None:
+    """Adding prevention must strengthen raw-leak detection, not exempt the leak."""
+    audit = audit_context_os_prompt_messages(
+        messages=[
+            {"role": "system", "content": f"{control_key}: 1800"},
+            {"role": "user", "content": "Review result"},
+        ],
+        context_sources=("state_first_context_os",),
+        current_user_instruction="Review result",
+        expected=True,
+    )
+    assert audit["ok"] is False
+    assert audit["requirements"]["control_plane_isolated"] is False
+    assert canonical_key in audit["control_plane"]["content_hits"]
+
+
 def test_context_os_prompt_audit_allows_director_quality_repair_protocol_text() -> None:
     """Quality-repair directives intentionally name delivery_mode / markers.
 

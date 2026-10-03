@@ -30,6 +30,7 @@ from polaris.cells.runtime.execution_broker.public.project_verification import (
     ConsumeProjectVerificationCapabilityCommandV1,
     ProjectArtifactExecutionAuthorityV1,
     ProjectArtifactReceiptV1,
+    ProjectArtifactSourceBaselineV1,
     ProjectVerificationArtifactInputV1,
     ProjectVerificationArtifactSnapshotV1,
     ProjectVerificationCapabilityConsumptionV1,
@@ -39,6 +40,7 @@ from polaris.cells.runtime.execution_broker.public.project_verification import (
     ProjectVerificationProcessResultV1,
     ProjectVerificationReceiptV1,
     QueryProjectArtifactReceiptV1,
+    QueryProjectArtifactSourceBaselineV1,
     QueryProjectVerificationReceiptV1,
     RecordProjectArtifactCommandV1,
     ResolveProjectArtifactAuthorityQueryV1,
@@ -46,6 +48,7 @@ from polaris.cells.runtime.execution_broker.public.project_verification import (
     RunProjectVerificationCommandV1,
 )
 from polaris.kernelone.storage import resolve_storage_roots
+from polaris.kernelone.storage.layout import resolve_existing_storage_roots_read_only
 
 _DB_RELATIVE_PATH = "evidence/project_verification_receipts.sqlite3"
 _AUTH_KEY_RELATIVE_PATH = "execution_broker/project_verification_receipt_hmac.key"
@@ -54,6 +57,7 @@ _MAX_TRANSIENT_ATTEMPTS = 3
 _ENTRYPOINT_READINESS_SECONDS = 2.0
 _RECEIPT_REF_PREFIX = "execution-broker://project-verification/"
 _RECEIPT_SEAL = object()
+_SOURCE_BASELINE_SEAL = object()
 _COMMAND_SEAL = object()
 _CAPABILITY_COMMAND_SEAL = object()
 _EXECUTION_AUTHORITY_PORT: ProjectVerificationExecutionAuthorityPortV1 | None = None
@@ -84,6 +88,11 @@ def _is_project_verification_receipt_seal(value: object | None) -> bool:
     """Private constructor check used by public immutable receipt types."""
 
     return value is _RECEIPT_SEAL
+
+
+def _is_project_artifact_source_baseline_seal(value: object | None) -> bool:
+    """Historical source facts cannot be caller-constructed or retagged."""
+    return value is _SOURCE_BASELINE_SEAL
 
 
 def _is_project_verification_command_seal(value: object | None) -> bool:
@@ -232,31 +241,36 @@ def _require_executable_identity(
     return str(selected)
 
 
-def _db_path(workspace: str) -> Path:
-    roots = resolve_storage_roots(workspace)
+def _db_path(workspace: str, *, read_only: bool = False) -> Path:
+    roots = resolve_existing_storage_roots_read_only(workspace) if read_only else resolve_storage_roots(workspace)
+    if roots is None:
+        raise FileNotFoundError("project artifact runtime namespace is not initialized")
     return Path(roots.runtime_root) / _DB_RELATIVE_PATH
 
 
-def _auth_key_path(workspace: str) -> Path:
-    roots = resolve_storage_roots(workspace)
+def _auth_key_path(workspace: str, *, read_only: bool = False) -> Path:
+    roots = resolve_existing_storage_roots_read_only(workspace) if read_only else resolve_storage_roots(workspace)
+    if roots is None:
+        raise FileNotFoundError("project artifact runtime namespace is not initialized")
     return Path(roots.config_root) / _AUTH_KEY_RELATIVE_PATH
 
 
-def _receipt_auth_key(workspace: str) -> bytes:
+def _receipt_auth_key(workspace: str, *, read_only: bool = False) -> bytes:
     """Load the platform-owned receipt MAC key, creating it with owner-only mode."""
 
-    path = _auth_key_path(workspace)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        pass
-    else:
+    path = _auth_key_path(workspace, read_only=read_only)
+    if not read_only:
+        path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            os.write(descriptor, secrets.token_bytes(32).hex().encode("ascii"))
-        finally:
-            os.close(descriptor)
-    raw = path.read_text(encoding="ascii").strip()
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            try:
+                os.write(descriptor, secrets.token_bytes(32).hex().encode("utf-8"))
+            finally:
+                os.close(descriptor)
+    raw = path.read_text(encoding="utf-8").strip()
     try:
         key = bytes.fromhex(raw)
     except ValueError as exc:
@@ -266,8 +280,10 @@ def _receipt_auth_key(workspace: str) -> bytes:
     return key
 
 
-def _connect(workspace: str) -> sqlite3.Connection:
-    path = _db_path(workspace)
+def _connect(workspace: str, *, read_only: bool = False) -> sqlite3.Connection:
+    path = _db_path(workspace, read_only=read_only)
+    if read_only:
+        return sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=30.0, isolation_level=None)
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, timeout=30.0, isolation_level=None)
     connection.execute("PRAGMA busy_timeout = 30000")
@@ -313,8 +329,9 @@ def _read_authenticated_events(
     connection: sqlite3.Connection,
     *,
     workspace: str,
+    read_only: bool = False,
 ) -> tuple[dict[str, Any], ...]:
-    key = _receipt_auth_key(workspace)
+    key = _receipt_auth_key(workspace, read_only=read_only)
     rows = connection.execute(
         "SELECT sequence, effect_key, event_json, previous_auth_hash, auth_hash "
         "FROM project_verification_receipt_events ORDER BY sequence"
@@ -890,6 +907,86 @@ def query_project_artifact_receipt(query: QueryProjectArtifactReceiptV1) -> Proj
         receipt.authority_revision,
     )
     return receipt if observed_identity == expected_identity else None
+
+
+def query_project_artifact_source_baseline(
+    query: QueryProjectArtifactSourceBaselineV1,
+) -> ProjectArtifactSourceBaselineV1 | None:
+    """Read authenticated historical bytes without resealing current authority."""
+    if type(query) is not QueryProjectArtifactSourceBaselineV1:
+        raise TypeError("query must be an exact QueryProjectArtifactSourceBaselineV1")
+    port = _EXECUTION_AUTHORITY_PORT
+    if port is None:
+        raise RuntimeError("project verification execution authority port is not bound")
+    # A cold CE owner may initialize storage even when no contract exists.
+    # Prove a pre-existing provenance store before entering that query path.
+    try:
+        if (
+            not _db_path(query.workspace, read_only=True).is_file()
+            or not _auth_key_path(query.workspace, read_only=True).is_file()
+        ):
+            return None
+    except FileNotFoundError:
+        return None
+    try:
+        authority = port.resolve_project_artifact_authority(
+            ResolveProjectArtifactAuthorityQueryV1(
+                workspace=query.workspace,
+                project_id=query.project_id,
+                run_id=query.run_id,
+                completion_contract_hash=query.completion_contract_hash,
+                obligation_id=query.obligation_id,
+            )
+        )
+        names = (
+            "workspace",
+            "project_id",
+            "run_id",
+            "completion_contract_hash",
+            "obligation_id",
+            "owner_task_id",
+            "path",
+        )
+        identity = tuple(getattr(query, name) for name in names)
+        if (
+            type(authority) is not ProjectArtifactExecutionAuthorityV1
+            or tuple(getattr(authority, name) for name in names) != identity
+        ):
+            return None
+        artifact_hash = _artifact_hash(query.workspace, query.path)
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+    connection = _connect(query.workspace, read_only=True)
+    try:
+        events = _read_authenticated_events(connection, workspace=query.workspace, read_only=True)
+    finally:
+        connection.close()
+    for event in reversed(events):
+        if event.get("kind") != "artifact" or event.get("state") != "completed":
+            continue
+        payload = event.get("receipt_payload")
+        receipt_hash = event.get("receipt_hash")
+        if not isinstance(payload, dict) or not isinstance(receipt_hash, str):
+            raise ValueError("authenticated artifact baseline lacks receipt payload")
+        if tuple(payload.get(name) for name in names) != identity or payload.get("artifact_hash") != artifact_hash:
+            continue
+        receipt = _build_artifact_receipt(payload, receipt_hash)
+        request = {key: value for key, value in payload.items() if key != "owner_module_id"}
+        request["schema_version"] = "runtime.execution_broker.project_artifact_request.v1"
+        request_hash = _hash_payload(request)
+        if event.get("request_hash") != request_hash or event.get("effect_key") != f"artifact:{request_hash}":
+            raise ValueError("authenticated artifact baseline request identity mismatch")
+        if _artifact_hash(query.workspace, query.path) != artifact_hash:
+            return None
+        return ProjectArtifactSourceBaselineV1(
+            **{name: getattr(query, name) for name in names},
+            artifact_hash=artifact_hash,
+            source_receipt_hash=receipt.receipt_hash,
+            source_receipt_ref=receipt.receipt_ref,
+            source_authority_revision=receipt.authority_revision,
+            _authority_token=_SOURCE_BASELINE_SEAL,
+        )
+    return None
 
 
 def _verification_request_body(

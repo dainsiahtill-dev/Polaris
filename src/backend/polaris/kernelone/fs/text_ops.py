@@ -6,13 +6,22 @@ import json
 import logging
 import os
 import re
+import stat
 import tempfile
 import time
+from contextlib import ExitStack
 from typing import Any, TextIO
 
 from polaris.kernelone.constants import BAD_CHAR_THRESHOLD, DEFAULT_LOCK_TIMEOUT_SECONDS
 
 from .fsync_mode import is_fsync_enabled
+from .guarded_regular_file_snapshot import (
+    _require_descriptor_capabilities,
+    _retain_directory,
+    _validated_relative_parts,
+    _validated_root,
+    _verify_directory_witness,
+)
 from .jsonl.locking import acquire_lock_fd, release_lock_fd
 
 logger = logging.getLogger(__name__)
@@ -154,6 +163,52 @@ def open_text_log_append(path: str, *, newline: str | None = "\n") -> TextIO:
     """Open a UTF-8 append-only text log handle after ensuring parent directory exists."""
     ensure_parent_dir(path)
     return open(path, "a", encoding="utf-8", errors="ignore", newline=newline)
+
+
+def open_guarded_text_log_append(root: str, relative_path: str) -> TextIO:
+    """Return an owned UTF-8 append handle to a no-follow, single-link local file.
+
+    Parents must already exist. Existing data is never truncated; all retained
+    directory and leaf identities are checked before transferring handle ownership.
+    """
+    _root_path, root_parts = _validated_root(root)
+    parts = _validated_relative_parts(relative_path)
+    _require_descriptor_capabilities()
+    with ExitStack() as stack:
+        current = _retain_directory(stack, parent=None, entry_name="/", display_name="/")
+        witnesses = [current]
+        display: list[str] = []
+        for part in (*root_parts, *parts[:-1]):
+            display.append(part)
+            current = _retain_directory(stack, parent=current, entry_name=part, display_name="/" + "/".join(display))
+            witnesses.append(current)
+        for witness in witnesses:
+            _verify_directory_witness(witness)
+        descriptor = os.open(
+            parts[-1],
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+            0o600,
+            dir_fd=current.fd,
+        )
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid():
+                raise ValueError("guarded_log_unsafe_leaf")
+            entry = os.stat(parts[-1], dir_fd=current.fd, follow_symlinks=False)
+            if (entry.st_dev, entry.st_ino, entry.st_mode, entry.st_nlink, entry.st_uid) != (
+                info.st_dev,
+                info.st_ino,
+                info.st_mode,
+                info.st_nlink,
+                info.st_uid,
+            ):
+                raise ValueError("guarded_log_identity_drift")
+            for witness in witnesses:
+                _verify_directory_witness(witness)
+            return os.fdopen(descriptor, "a", encoding="utf-8")
+        except BaseException:
+            os.close(descriptor)
+            raise
 
 
 def is_run_artifact(rel_path: str) -> bool:

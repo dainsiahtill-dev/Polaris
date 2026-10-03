@@ -141,6 +141,7 @@ class ConfigLoader:
         "nats.user": ("KERNELONE_NATS_USER", None, None),
         "nats.password": ("KERNELONE_NATS_PASSWORD", None, None),
         "nats.connect_timeout_sec": ("KERNELONE_NATS_CONNECT_TIMEOUT", None, float),
+        "nats.startup_timeout_sec": ("KERNELONE_NATS_STARTUP_TIMEOUT", None, float),
         "nats.reconnect_wait_sec": ("KERNELONE_NATS_RECONNECT_WAIT", None, float),
         "nats.max_reconnect_attempts": ("KERNELONE_NATS_MAX_RECONNECT", None, int),
         "nats.stream_name": ("KERNELONE_NATS_STREAM_NAME", None, None),

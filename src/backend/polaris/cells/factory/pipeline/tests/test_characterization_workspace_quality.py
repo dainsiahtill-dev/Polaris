@@ -2,98 +2,29 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import contextlib
-import hashlib
-import inspect
 import json
-import logging
 import os
-import shutil
 import sys
-import textwrap
-import threading
-import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.cells.chief_engineer.blueprint.public import (
-    BlueprintPersistence,
-    BuildChiefEngineerBlueprintPortfolioCommandV1,
-    ChiefEngineerPortfolioTaskV1,
-    GenerateTaskBlueprintCommandV1,
-    VerificationCommandAuthorityV1,
-    build_chief_engineer_blueprint_portfolio,
-    derive_project_kind_authority_from_catalog_snapshot,
-    generate_task_blueprint,
-    project_chief_engineer_task_blueprint,
-    project_completion_catalog_snapshot_hash,
-    project_completion_verifier_policy_snapshot_hash,
-)
-from polaris.cells.chief_engineer.blueprint.public.contracts import (
-    TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
-)
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1
-from polaris.cells.events.fact_stream.public import (
-    BootstrapFactStreamWorkspaceCommandV1,
-    bootstrap_fact_stream_workspace,
-    fact_stream_bootstrap_streams,
-)
-from polaris.cells.events.fact_stream.public.service import (
-    QueryFactEventsV1,
-    query_fact_events,
-)
 from polaris.cells.factory.pipeline.internal import (
     factory_stage_executor as stage_executor_module,
-    factory_workspace_quality as workspace_quality_module,
 )
-from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
-    FactoryDeadlineBudgetPolicyV1,
-    FactoryDeadlineDispositionV1,
-    build_task_dependency_schedule,
-)
-from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
-    FactoryRoleEvidenceAuthorityPort,
-)
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
-    CommandResult,
     FactoryConfig,
     FactoryRun,
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
-from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
-    evaluate_canonical_factory_authority,
-)
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
-from polaris.cells.roles.adapters.public import (
-    build_director_materialization_quality_repair_message,
-    extract_workspace_quality_summary,
-    resolve_director_semantic_quality_repair_target_files,
-)
-from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
-    FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
-    FactoryRoleEvidenceAuthorityBindingV1,
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (
+    _executor,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
-    ObservableTaskRowsProjectionV1,
-    SettleTaskRuntimeExecutionAttemptCommandV1,
-    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
     TaskRuntimeExecutionAttemptIdentityV1,
-)
-from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.kernelone.storage import resolve_logical_path
-
-
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
-    _executor,
 )
 
 
@@ -1216,7 +1147,9 @@ class TestWorkspaceQualityDeterministicRepairExecution:
             repair_attempt=2,
         )
 
-        assert results == [deferred_result]
+        # This fake batch has no physical raw rows; plans cannot become effects.
+        assert results == []
+        assert summary["planned_tool_results"] == 1
         assert len(commit_calls) == 1
         assert commit_calls[0]["execution_attempt"] == identity
         assert heartbeat_calls
@@ -1232,6 +1165,17 @@ class TestWorkspaceQualityDeterministicRepairExecution:
             "outcome": "pending_revalidation",
         }
         assert summary["_pending_task_runtime_repair_attempt"]["execution_attempt"] == identity
+
+        # The unit owns only claim/settlement ordering; the broker's actual
+        # artifact authority is exercised by the real DEO/group integration.
+        def record_owned_artifact(pending: Any) -> tuple:
+            assert pending["task_id"] == "TASK-3"
+            assert pending["execution_attempt"] == identity
+            return ({"path": "tests/verify.test.js"},)
+
+        monkeypatch.setattr(
+            factory_workspace_quality_impl, "_record_workspace_quality_repair_artifact_receipts", record_owned_artifact
+        )
         settled = await factory_workspace_quality_impl._settle_pending_workspace_quality_repair_attempt(
             executor,
             summary.pop("_pending_task_runtime_repair_attempt"),
@@ -1529,6 +1473,15 @@ class TestWorkspaceQualityDeterministicRepairExecution:
         assert "_candidate_guard" not in summary
         pending = summary["_pending_task_runtime_repair_attempt"]
         assert pending["candidate_guard"] is candidate_guard
+
+        def record_owned_artifact(pending: Any) -> tuple:
+            assert pending["task_id"] == "TASK-6"
+            assert pending["candidate_guard"] is candidate_guard
+            return ({"path": "src/app.js"},)
+
+        monkeypatch.setattr(
+            factory_workspace_quality_impl, "_record_workspace_quality_repair_artifact_receipts", record_owned_artifact
+        )
         await factory_workspace_quality_impl._settle_pending_workspace_quality_repair_attempt(
             executor,
             summary.pop("_pending_task_runtime_repair_attempt"),

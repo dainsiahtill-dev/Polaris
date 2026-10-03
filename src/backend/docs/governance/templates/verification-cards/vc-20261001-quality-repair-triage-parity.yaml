@@ -1,0 +1,29 @@
+id: vc-20261001-quality-repair-triage-parity
+classification: pattern
+owner: factory.pipeline
+status: live_verified_authorized_repairs_compile_error_closed
+blueprint: ../../../blueprints/POLARIS_QUALITY_REPAIR_TRIAGE_PARITY_20261001.md
+assumptions:
+  - claim: owned repair targets authorize the adapter unplannable retry.
+    evidence: False; exact QA rounds2-4 return 0 tools and no new Provider.
+  - claim: Factory predicate skips existing triage on these real summaries.
+    evidence: Dynamic replay returns false for all three unauthed named-target summaries.
+pre_mortem:
+  - File inventory becomes authority; forbidden.
+  - Ordinary diagnostics spuriously force CE restart; forbidden.
+verification:
+  - Controller cached-probe regression with named and unnamed owned targets.
+  - Explicit authorization skips repeat triage; unauthed unplannable requires it.
+  - Existing workspace quality/owner/negative triage suites unchanged.
+target_project_manual_edit: forbidden
+results:
+  red: two_failures_pure_and_actual_controller_named_owned_branch
+  green: 131_workspace_quality_tests
+  independent_review: 24_positive_negative_cases_no_blocking_findings
+  ruff_mypy: pass
+  original_rust_test_ruling: explicit_authorization_required_to_skip_triage_not_target_inventory
+  fresh_bench_completion: not_verified
+  same_run_qa_recovery: factory_8edf12521449_source_892dab779f9a03c5
+  live_compiler_result: build_exit_zero_after_second_real_repair
+  live_entrypoint_result: start_exit_zero
+  remaining_quality_gate: test_manifest_mismatch_and_missing_owner_routing

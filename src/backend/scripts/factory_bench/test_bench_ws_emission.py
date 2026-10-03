@@ -29,7 +29,9 @@ class TestBenchEventEmission(unittest.TestCase):
     def test_emit_writes_to_latest_run_events_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
-            cache_root = td_path / "cache"
+            # Native KFS infers workspace from its canonical metadata root;
+            # an arbitrary cache path silently falls back to the process cwd.
+            cache_root = td_path / "workspace" / ".polaris" / "runtime"
             run_id = "test-run-001"
             (cache_root / "runs" / run_id / "events").mkdir(parents=True)
             (cache_root / "latest_run.json").write_text(
@@ -78,7 +80,7 @@ class TestBenchEventEmission(unittest.TestCase):
     def test_emit_appends_multiple_events_with_namespace(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
-            cache_root = td_path / "cache"
+            cache_root = td_path / ".polaris" / "runtime"
             run_id = "test-run-002"
             (cache_root / "runs" / run_id / "events").mkdir(parents=True)
             (cache_root / "latest_run.json").write_text(
@@ -116,7 +118,7 @@ class TestBenchEventEmission(unittest.TestCase):
     def test_emit_factory_phase_event_projects_role_phase_and_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             td_path = Path(td)
-            cache_root = td_path / "cache"
+            cache_root = td_path / "bench" / ".polaris" / "runtime"
             run_id = "test-run-003"
             (cache_root / "runs" / run_id / "events").mkdir(parents=True)
             (cache_root / "latest_run.json").write_text(

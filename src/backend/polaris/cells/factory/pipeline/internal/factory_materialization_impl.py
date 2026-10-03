@@ -15,6 +15,7 @@ import os
 import subprocess
 import uuid
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -48,9 +49,8 @@ def _deferred_repair_forward_target_paths(
     """Return safe workspace-relative targets proven by typed repair plans.
 
     The deterministic repair runtime may derive concrete CE-owned files that
-    are not present in the generic PM target row.  Those paths are known only
-    after planning, so the Factory must bind them into the candidate-local
-    JobToken before DEO policy capture.  Never trust arbitrary result text:
+    are not present in the generic PM target row. Those paths become routing
+    evidence after planning, not candidate-local JobToken grants. Never trust arbitrary result text:
     consume only typed plan effects (or the deferred request's own allowed
     paths), reject absolute/traversal/runtime paths, and preserve order.
     """
@@ -76,15 +76,15 @@ def _deferred_repair_forward_target_paths(
         for raw_path in candidates:
             token = str(raw_path or "").replace("\\", "/").strip()
             if not token or "\n" in token or "\r" in token:
-                continue
+                raise ValueError("repair_candidate_path_invalid")
             pure = PurePosixPath(token)
             if pure.is_absolute() or ".." in pure.parts:
-                continue
+                raise ValueError("repair_candidate_path_invalid")
             normalized = pure.as_posix()
             while normalized.startswith("./"):
                 normalized = normalized[2:]
             if not normalized or normalized == "." or normalized.startswith(".polaris/"):
-                continue
+                raise ValueError("repair_candidate_path_invalid")
             if normalized in seen:
                 continue
             seen.add(normalized)
@@ -511,7 +511,6 @@ def _claim_director_stage_materialization_settle_attempt(
     return external_task_id, task_row_id, execution_attempt
 
 
-@staticmethod
 def _settle_director_stage_materialization_attempt(
     executor,
     *,
@@ -574,140 +573,175 @@ def _director_stage_materialization_settle_commit_context(
     diagnostics: list[str],
     factory_stage: str = "director_dispatch",
     deferred_tool_results: Sequence[Mapping[str, Any]] = (),
+    repair_task: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build DEO commit context with control-plane JobToken evidence (M06).
-
-    Deferred materialization commit refuses synthetic attempt-only tokens.
-    Mint a stage-scoped JobToken from factory run + CE blueprint surface so
-    capability_audit.ok is true and execution_envelope_hash is bound.
-    """
-
+    """Project the original CE authority; a repair plan cannot grant paths."""
+    from polaris.cells.chief_engineer.blueprint.public import validate_director_handoff_from_payload
     from polaris.cells.control_plane.run_ledger.public import stable_hash
-    from polaris.cells.factory.pipeline.internal.run_ledger import build_job_token_from_record
-
-    normalized_stage = str(factory_stage or "").strip() or "director_dispatch"
-    target_files = executor._director_stage_materialization_settle_target_files(diagnostics=diagnostics)
-    target_files = list(
-        dict.fromkeys(
-            [
-                *target_files,
-                *_deferred_repair_forward_target_paths(deferred_tool_results),
-            ]
-        )
+    from polaris.cells.director.tasking.public import (
+        apply_task_execution_strategy_overrides,
+        resolve_task_execution_profile,
+        resolve_task_execution_strategy,
     )
-    blueprint_artifact, blueprint_text = executor._workspace_quality_repair_blueprint_evidence(run_id=run_id)
-    project_id = str(getattr(run.config, "name", "") or "").strip() or run_id
-    token_record: dict[str, Any] = {
-        "target_files": target_files,
-        "allowed_paths": target_files,
-        "code_files": [path for path in target_files if path not in {"tests/verify.test.ts", "tests/smoke.test.ts"}],
-        "contract_goal": f"{normalized_stage}_workspace_quality_repair:{run_id}",
-        "brief": f"Factory {normalized_stage} workspace quality repair",
+    from polaris.kernelone.quality.scope_authority import path_matches_any_declared_scope_candidate
+
+    del diagnostics  # Diagnostic discovery chooses an owner, never permissions.
+    if not isinstance(repair_task, Mapping):
+        raise ValueError("repair_owner_authority_required")
+    owner = deepcopy(dict(repair_task))
+    task_id = str(owner.get("task_id") or owner.get("external_task_id") or owner.get("id") or "").strip()
+    handoff = validate_director_handoff_from_payload(str(executor.workspace), owner, require_strict=True)
+    projection = handoff.get("task_completion_projection")
+    token = handoff.get("capability_token")
+    if (
+        handoff.get("allowed") is not True
+        or not isinstance(projection, Mapping)
+        or projection.get("run_id") != run_id
+        or projection.get("task_id") != task_id
+        or not isinstance(token, Mapping)
+        or token != handoff.get("job_token")
+        or str(token.get("factory_run_id") or token.get("run_id") or "") != run_id
+    ):
+        raise ValueError("repair_owner_authority_invalid")
+    metadata_raw = owner.get("metadata")
+    metadata = deepcopy(dict(metadata_raw)) if isinstance(metadata_raw, Mapping) else {}
+    target_files = list(owner.get("target_files") or metadata.get("target_files") or [])
+    context: dict[str, Any] = {
+        "workspace": str(executor.workspace),
+        "run_id": run_id,
         "factory_run_id": run_id,
-        "run_id": run_id,
-        "project_id": project_id,
-        "factory_workspace_quality_repair": {
-            "run_id": run_id,
-            "target_files": target_files,
-            "ce_blueprint_artifact": blueprint_artifact,
-        },
+        "task_id": task_id,
+        "target_files": target_files,
+        "delivery_mode": "materialize_changes",
+        "factory_stage": factory_stage,
+        "task_completion_projection": deepcopy(dict(projection)),
+        "capability_token_hash": stable_hash(token),
     }
-    if blueprint_text:
-        token_record["blueprint_id"] = blueprint_artifact or f"factory-blueprint:{run_id}"
-        token_record["blueprints"] = [
-            {
-                "id": token_record["blueprint_id"],
-                "artifact": blueprint_artifact,
-                "evidence_chars": len(blueprint_text),
-            }
-        ]
-        token_record["chief_engineer"] = {
-            "blueprint_id": token_record["blueprint_id"],
-            "artifact": blueprint_artifact,
-        }
-    else:
-        # Still satisfy capability_audit CE source when live blueprint artifact
-        # is unavailable at settle (multi-task timeout residual path).
-        token_record["blueprint_id"] = f"factory-director-mat-settle:{run_id}"
-        token_record["blueprints"] = [{"id": token_record["blueprint_id"], "source": "settle_stage"}]
-        token_record["chief_engineer"] = {
-            "blueprint_id": token_record["blueprint_id"],
-            "source": "director_stage_materialization_settle",
-        }
-
-    job_token = build_job_token_from_record(
-        token_record,
-        run_id=run_id,
-        project_id=project_id,
-        stage=normalized_stage,
-    ).to_dict()
-    envelope_hash = stable_hash(
+    for key in ("job_token", "control_plane_job_token", "capability_token"):
+        context[key] = deepcopy(dict(token))
+        metadata[key] = deepcopy(dict(token))
+    for key in ("director_execution_envelope", "task_execution_envelope", "execution_envelope"):
+        if key in owner:
+            context[key] = deepcopy(owner[key])
+    root_constraints = {
+        key: deepcopy(owner[key])
+        for key in ("allowed_write_paths", "allowed_read_paths", "allowed_commands")
+        if key in owner
+    }
+    if root_constraints:
+        # A separate admitted ceiling prevents nested metadata overriding a
+        # root-level explicit denial. This derives restrictions, never grants.
+        context["metadata"] = {"execution_envelope": {"authorization": root_constraints}}
+    metadata.update({"workspace": str(executor.workspace), "task_id": task_id, "run_id": run_id})
+    profile = resolve_task_execution_profile(
+        subject=str(owner.get("subject") or owner.get("title") or "Director repair"),
+        description=str(owner.get("description") or ""),
+        metadata=metadata,
+        target_files=target_files,
+        scope_paths=owner.get("scope_paths"),
+        workspace=str(executor.workspace),
+    )
+    strategy = resolve_task_execution_strategy(profile, metadata=metadata)
+    apply_task_execution_strategy_overrides(context=context, metadata=metadata, profile=profile, strategy=strategy)
+    context.pop("metadata", None)
+    envelope = context["director_execution_envelope"]
+    authorization = envelope["authorization"]
+    write_paths = list(authorization.get("allowed_write_paths") or [])
+    if not write_paths or write_paths != list(token.get("allowed_write_paths") or []):
+        raise ValueError("repair_owner_scope_binding_conflict")
+    candidates = _deferred_repair_forward_target_paths(deferred_tool_results)
+    if any(not path_matches_any_declared_scope_candidate(path, write_paths) for path in candidates):
+        raise ValueError("repair_candidate_outside_owner_scope")
+    context.update(
         {
-            "schema_version": "factory.director_stage_materialization_settle_envelope.v1",
-            "run_id": run_id,
-            "stage": normalized_stage,
-            "target_files": target_files,
-            "token_id": str(job_token.get("token_id") or ""),
+            "allowed_paths": list(write_paths),
+            "allowed_write_paths": list(write_paths),
+            "allowed_read_paths": list(authorization.get("allowed_read_paths") or []),
+            "execution_envelope": deepcopy(envelope),
+            "execution_envelope_hash": envelope["envelope_hash"],
+            "materialization_quality_settle": factory_stage == "director_dispatch",
+            "workspace_quality_repair": factory_stage == "quality_gate",
         }
     )
-    job_token["execution_envelope_hash"] = envelope_hash
-    token_hash = stable_hash(job_token)
-    # Deferred DEO commit (_capability_token_from_context) requires root
-    # capability_token_hash + envelope.authorization.capability_token_hash
-    # matching stable_hash(token). Missing hash caused committed=0 with
-    # silent skip ("authoritative write capability missing") on L1-01 R184.
-    capability_audit = job_token.get("capability_audit")
-    if not (isinstance(capability_audit, Mapping) and capability_audit.get("ok") is True):
-        logger.warning(
-            "Director stage materialization settle JobToken capability_audit not ok run=%s audit=%s",
-            run_id,
-            capability_audit,
+    return context
+
+
+def _director_stage_deferred_repair_owner_targets(
+    executor: Any,
+    *,
+    run: FactoryRun,
+    run_id: str,
+    repair_task: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    owner_context: Mapping[str, Any],
+) -> dict[str, list[str]]:
+    """Route foreign paths from immutable CE ownership, never from plan grants.
+
+    A mixed plan is not split or rebound. Only its routing paths survive; the
+    original owner must claim a new attempt and plan again from current bytes.
+    """
+    from .factory_workspace_quality_impl import _workspace_quality_frozen_ce_owner_task
+
+    task_id = str(owner_context["task_id"])
+    projection = owner_context["task_completion_projection"]
+    owned_paths = {
+        str(item.get("path") or "")
+        for item in projection.get("owned_artifacts", ())
+        if isinstance(item, Mapping) and item.get("owner_task_id") == task_id
+    }
+    paths = _deferred_repair_forward_target_paths([candidate])
+    foreign_paths = [path for path in paths if path not in owned_paths]
+    if not foreign_paths:
+        return {}
+    matches: dict[str, set[str]] = {path: set() for path in foreign_paths}
+    load_tasks = getattr(executor, "_load_pm_plan_tasks", None)
+    canonical_tasks = load_tasks("tasks/plan.json") if callable(load_tasks) else ()
+    for index, canonical_task in enumerate(canonical_tasks, start=1):
+        owner_id = executor._task_id(canonical_task, index)
+        if not owner_id or owner_id.startswith("factory-"):
+            continue
+        owner = _workspace_quality_frozen_ce_owner_task(
+            executor, run_id=run_id, task_id=owner_id, canonical_task=canonical_task
         )
-
-    write_paths = list(job_token.get("allowed_write_paths") or target_files)
-    read_paths = list(job_token.get("allowed_read_paths") or write_paths)
-    if not write_paths:
-        write_paths = list(target_files)
-    if not read_paths:
-        read_paths = list(write_paths)
-    # Keep token path lists authoritative for DEO capability equality checks.
-    job_token["allowed_write_paths"] = write_paths
-    job_token["allowed_read_paths"] = read_paths
-    # Re-hash after path normalization so root hash matches the final token body.
-    token_hash = stable_hash(job_token)
-    authorization = {
-        "capability_token_ref": str(job_token.get("token_id") or ""),
-        "capability_token_hash": token_hash,
-        "allowed_write_paths": list(write_paths),
-        "allowed_read_paths": list(read_paths),
-    }
-    execution_envelope = {
-        "envelope_hash": envelope_hash,
-        "authorization": authorization,
-        "stage": normalized_stage,
-        "run_id": run_id,
-    }
-    return {
-        "target_files": target_files,
-        "allowed_paths": list(write_paths),
-        "allowed_write_paths": list(write_paths),
-        "allowed_read_paths": list(read_paths),
-        "delivery_mode": "materialize_changes",
-        "factory_stage": normalized_stage,
-        "materialization_quality_settle": normalized_stage == "director_dispatch",
-        "workspace_quality_repair": normalized_stage == "quality_gate",
-        "capability_token_hash": token_hash,
-        "job_token": job_token,
-        "control_plane_job_token": job_token,
-        "capability_token": job_token,
-        "execution_envelope_hash": envelope_hash,
-        "execution_envelope": execution_envelope,
-        "director_execution_envelope": dict(execution_envelope),
-        "task_execution_envelope": dict(execution_envelope),
-    }
+        metadata_raw = owner.get("metadata")
+        metadata = metadata_raw if isinstance(metadata_raw, Mapping) else {}
+        completion = owner.get("task_completion_projection") or metadata.get("task_completion_projection")
+        if (
+            not isinstance(completion, Mapping)
+            or completion.get("task_id") != owner_id
+            or completion.get("run_id") != run_id
+        ):
+            continue
+        matched_paths = {
+            str(item.get("path") or "")
+            for item in completion.get("owned_artifacts", ())
+            if isinstance(item, Mapping) and item.get("owner_task_id") == owner_id
+        } & set(foreign_paths)
+        if matched_paths:
+            # Validate original token/envelope before even deferring a route.
+            # Claim and commit validate again; this lookup confers no authority.
+            executor._director_stage_materialization_settle_commit_context(
+                run=run, run_id=run_id, diagnostics=[], repair_task=owner
+            )
+            for path in matched_paths:
+                matches[path].add(owner_id)
+    routes: dict[str, list[str]] = {}
+    for path, owners in matches.items():
+        if not owners:
+            raise ValueError(f"repair_candidate_outside_owner_scope:repair_candidate_owner_unknown:{path}")
+        if len(owners) != 1:
+            raise ValueError(f"repair_candidate_owner_ambiguous:{path}")
+        owner_id = next(iter(owners))
+        if owner_id == task_id:
+            # Projection/token disagreement is not a reason to widen scope.
+            executor._director_stage_materialization_settle_commit_context(
+                run=run, run_id=run_id, diagnostics=[], repair_task=repair_task, deferred_tool_results=[candidate]
+            )
+            raise ValueError(f"repair_candidate_owner_scope_conflict:{path}")
+        routes.setdefault(owner_id, []).append(path)
+    return routes
 
 
-@staticmethod
 async def _run_director_stage_materialization_quality_settle(
     executor,
     *,
@@ -715,7 +749,7 @@ async def _run_director_stage_materialization_quality_settle(
     stage_status: str,
     error_code: str,
 ) -> dict[str, Any]:
-    """Run materialization quality once at the end of director_dispatch (R165/M06).
+    """Settle materialization through serial original-owner continuations (R165/M06).
 
     Live residual: Director multi-task timeout left package.json + src on disk
     but skipped quality_gate, so smoke/tests and covered tsc repairs never ran.
@@ -749,7 +783,19 @@ async def _run_director_stage_materialization_quality_settle(
     deferred_candidates: list[Mapping[str, Any]] = []
     tool_results: list[dict[str, Any]] = []
     summary: Mapping[str, Any] = {}
+    repair_task: Mapping[str, Any] | None = None
+    artifact_receipts: tuple[dict[str, str], ...] = ()
+    registered_artifacts: dict[tuple[str, str], dict[str, str]] = {}
+    deferred_owner_targets: dict[str, list[str]] = {}
+    owners_requiring_revalidation: dict[str, list[str]] = {}
+    owner_routing_residuals: list[dict[str, Any]] = []
+    seen_owner_frontiers: set[tuple[str, tuple[str, ...]]] = set()
+    owner_revalidation = False
+    attempt_receipt_start = 0
     repair_round_count = 0
+    heartbeat_stop = asyncio.Event()
+    heartbeat_failures: list[dict[str, Any]] = []
+    heartbeat_task: asyncio.Task[None] | None = None
     try:
         from polaris.cells.roles.adapters.public import (
             commit_materialization_deferred_repairs,
@@ -758,79 +804,253 @@ async def _run_director_stage_materialization_quality_settle(
             create_task_runtime_execution_attempt_authority,
         )
 
-        external_task_id, task_row_id, execution_attempt = (
-            executor._claim_director_stage_materialization_settle_attempt(run_id=run_id)
+        from .factory_workspace_quality_impl import (
+            _claim_workspace_quality_repair_attempt,
+            _record_workspace_quality_repair_artifact_receipts,
+            _run_workspace_quality_repair_heartbeat,
+            _stop_workspace_quality_repair_heartbeat,
+            _task_completion_projection_from_repair_task,
+            _workspace_quality_causal_repair_target_files,
+        )
+
+        owner_targets = _workspace_quality_causal_repair_target_files(
+            executor,
+            artifact_quality_errors=diagnostics,
+        ) or executor._workspace_quality_repair_diagnostic_target_files(diagnostics)
+        if not owner_targets:
+            owner_targets = executor._workspace_quality_repair_target_files()
+        external_task_id, task_row_id, execution_attempt, repair_task = (
+            executor._claim_workspace_quality_repair_attempt(
+                run=run,
+                repair_attempt=1,
+                target_files=owner_targets,
+            )
+        )
+        # Validate original CE authority before the planner, not merely at commit.
+        owner_context = executor._director_stage_materialization_settle_commit_context(
+            run=run,
+            run_id=run_id,
+            diagnostics=diagnostics,
+            repair_task=repair_task,
         )
         authority = create_task_runtime_execution_attempt_authority(execution_attempt)
-        current_diagnostics = list(diagnostics)
-        seen_diagnostic_signatures = {tuple(current_diagnostics)}
-        for round_index in range(_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS):
-            repair_round_count += 1
-            round_tool_results, summary = await asyncio.to_thread(
-                executor._apply_workspace_quality_repairs,
-                run_id=run_id,
-                artifact_quality_errors=current_diagnostics,
-                task_id=external_task_id,
-                execution_attempt=execution_attempt,
+        heartbeat_task = asyncio.create_task(
+            _run_workspace_quality_repair_heartbeat(
+                authority,
+                stop=heartbeat_stop,
+                failures=heartbeat_failures,
+                context_summary="director_stage_original_owner_repair",
             )
-            tool_results.extend(round_tool_results)
-            round_candidates = [
-                item
-                for item in round_tool_results
-                if isinstance(item, Mapping)
-                and isinstance(item.get("result"), Mapping)
-                and (
-                    item["result"].get("deferred_request") is not None
-                    or str(item["result"].get("status") or "").strip()
-                    in {"deferred_repair_effects_pending", "deferred_command_effect_pending"}
-                )
-            ]
-            deferred_candidates.extend(round_candidates)
-            if not round_candidates:
-                post_commit_diagnostics = current_diagnostics
-                break
-
-            # Revalidate after each effect. A newly exposed verifier layer
-            # is replanned inside this same TaskRuntime attempt; PM/CE do not
-            # restart for ordinary code/test defects. Repeated diagnostic
-            # signatures and the shared round cap stop no-progress loops.
-            round_committed = False
-            for candidate_index, candidate in enumerate(round_candidates):
-                commit_context = executor._director_stage_materialization_settle_commit_context(
-                    run=run,
+        )
+        current_diagnostics = list(diagnostics)
+        while True:
+            seen_owner_frontiers.add((external_task_id, tuple(current_diagnostics)))
+            seen_diagnostic_signatures = {tuple(current_diagnostics)}
+            for _owner_round in range(_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS):
+                repair_round_count += 1
+                if owner_revalidation:
+                    # A prior residual-close cannot become completed merely
+                    # because another task edited the workspace. Revalidate and
+                    # register this freshly claimed owner's original projection.
+                    post_commit_diagnostics = await asyncio.to_thread(
+                        executor._collect_director_stage_materialization_diagnostics
+                    )
+                    if heartbeat_failures:
+                        raise RuntimeError(f"repair_owner_heartbeat_failed:{heartbeat_failures[0]['code']}")
+                    if not post_commit_diagnostics:
+                        receipts = _record_workspace_quality_repair_artifact_receipts(
+                            {
+                                "task_id": external_task_id,
+                                "execution_attempt": execution_attempt,
+                                "task_completion_projection": _task_completion_projection_from_repair_task(repair_task),
+                            }
+                        )
+                        for receipt in receipts:
+                            registered_artifacts[(external_task_id, receipt["path"])] = receipt
+                        artifact_receipts = tuple(registered_artifacts.values())
+                        owners_requiring_revalidation.pop(external_task_id, None)
+                        break
+                    current_diagnostics = list(post_commit_diagnostics)
+                    owner_revalidation = False
+                round_tool_results, summary = await asyncio.to_thread(
+                    executor._apply_workspace_quality_repairs,
                     run_id=run_id,
-                    diagnostics=current_diagnostics,
-                    deferred_tool_results=[candidate],
-                )
-                candidate_receipts = await commit_materialization_deferred_repairs(
-                    workspace=str(execution_attempt.workspace),
-                    tool_results=[candidate],
+                    artifact_quality_errors=current_diagnostics,
+                    task_id=external_task_id,
                     execution_attempt=execution_attempt,
-                    execution_attempt_authority=authority,
-                    turn_id=(f"director-stage-mat-settle-{run_id}:round{round_index}:candidate{candidate_index}"),
-                    context=commit_context,
+                    repair_task=repair_task,
                 )
-                committed_receipts.extend(candidate_receipts)
-                if not any(
-                    isinstance(item, Mapping) and executor._director_stage_materialization_receipt_succeeded(item)
-                    for item in candidate_receipts
-                ):
-                    continue
-                round_committed = True
-                await asyncio.to_thread(executor._ensure_director_stage_materialization_typescript_toolchain)
-                post_commit_diagnostics = await asyncio.to_thread(
-                    executor._collect_director_stage_materialization_diagnostics
-                )
-                if not post_commit_diagnostics:
+                tool_results.extend(round_tool_results)
+                await asyncio.sleep(0)
+                if heartbeat_failures:
+                    raise RuntimeError(f"repair_owner_heartbeat_failed:{heartbeat_failures[0]['code']}")
+                round_candidates = [
+                    item
+                    for item in round_tool_results
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("result"), Mapping)
+                    and (
+                        item["result"].get("deferred_request") is not None
+                        or str(item["result"].get("status") or "").strip()
+                        in {"deferred_repair_effects_pending", "deferred_command_effect_pending"}
+                    )
+                ]
+                deferred_candidates.extend(round_candidates)
+                if not round_candidates:
+                    post_commit_diagnostics = current_diagnostics
                     break
-            if not post_commit_diagnostics:
+
+                # Foreign candidates contribute routing paths only. Preserve
+                # remaining owned effects; never transfer a plan/plan hash.
+                round_committed = False
+                for candidate_index, candidate in enumerate(round_candidates):
+                    routes = _director_stage_deferred_repair_owner_targets(
+                        executor,
+                        run=run,
+                        run_id=run_id,
+                        repair_task=repair_task,
+                        candidate=candidate,
+                        owner_context=owner_context,
+                    )
+                    if routes:
+                        for owner_id, paths in routes.items():
+                            targets = deferred_owner_targets.setdefault(owner_id, [])
+                            targets.extend(path for path in paths if path not in targets)
+                            routing_residual = {
+                                "requesting_task_id": external_task_id,
+                                "owner_task_id": owner_id,
+                                "target_files": list(paths),
+                                "reason": "repair_candidate_deferred_to_original_owner",
+                            }
+                            if routing_residual not in owner_routing_residuals:
+                                owner_routing_residuals.append(routing_residual)
+                        continue
+                    commit_context = executor._director_stage_materialization_settle_commit_context(
+                        run=run,
+                        run_id=run_id,
+                        diagnostics=current_diagnostics,
+                        deferred_tool_results=[candidate],
+                        repair_task=repair_task,
+                    )
+                    if heartbeat_failures:
+                        raise RuntimeError(f"repair_owner_heartbeat_failed:{heartbeat_failures[0]['code']}")
+                    candidate_receipts = await commit_materialization_deferred_repairs(
+                        workspace=str(execution_attempt.workspace),
+                        tool_results=[candidate],
+                        execution_attempt=execution_attempt,
+                        execution_attempt_authority=authority,
+                        turn_id=(
+                            f"director-stage-mat-settle-{run_id}:round{repair_round_count - 1}:candidate{candidate_index}"
+                        ),
+                        context=commit_context,
+                    )
+                    committed_receipts.extend(candidate_receipts)
+                    if not any(
+                        isinstance(item, Mapping) and executor._director_stage_materialization_receipt_succeeded(item)
+                        for item in candidate_receipts
+                    ):
+                        continue
+                    round_committed = True
+                    receipts = _record_workspace_quality_repair_artifact_receipts(
+                        {
+                            "task_id": external_task_id,
+                            "execution_attempt": execution_attempt,
+                            "task_completion_projection": _task_completion_projection_from_repair_task(repair_task),
+                        }
+                    )
+                    for receipt in receipts:
+                        registered_artifacts[(external_task_id, receipt["path"])] = receipt
+                    artifact_receipts = tuple(registered_artifacts.values())
+                    await asyncio.to_thread(executor._ensure_director_stage_materialization_typescript_toolchain)
+                    post_commit_diagnostics = await asyncio.to_thread(
+                        executor._collect_director_stage_materialization_diagnostics
+                    )
+                    if not post_commit_diagnostics:
+                        break
+                if not post_commit_diagnostics or deferred_owner_targets:
+                    break
+                post_signature = tuple(post_commit_diagnostics)
+                if not round_committed or post_signature in seen_diagnostic_signatures:
+                    break
+                seen_diagnostic_signatures.add(post_signature)
+                current_diagnostics = list(post_commit_diagnostics)
+            if heartbeat_task is not None:
+                await _stop_workspace_quality_repair_heartbeat(heartbeat_task, heartbeat_stop)
+            if heartbeat_failures:
+                raise RuntimeError(f"repair_owner_heartbeat_failed:{heartbeat_failures[0]['code']}")
+            next_owner_id = ""
+            next_owner_targets: list[str] = []
+            if post_commit_diagnostics and deferred_owner_targets:
+                next_owner_id = next(iter(deferred_owner_targets))
+                next_owner_targets = deferred_owner_targets.pop(next_owner_id)
+            elif not post_commit_diagnostics:
+                deferred_owner_targets.clear()
+                owners_requiring_revalidation.pop(external_task_id, None)
+                if owners_requiring_revalidation:
+                    next_owner_id = next(iter(owners_requiring_revalidation))
+                    next_owner_targets = owners_requiring_revalidation[next_owner_id]
+            if not next_owner_id:
                 break
-            post_signature = tuple(post_commit_diagnostics)
-            if not round_committed or post_signature in seen_diagnostic_signatures:
+            if (next_owner_id, tuple(post_commit_diagnostics)) in seen_owner_frontiers:
                 break
-            seen_diagnostic_signatures.add(post_signature)
+            residual = bool(post_commit_diagnostics)
+            owner_commit_failed = any(
+                not executor._director_stage_materialization_receipt_succeeded(item)
+                for item in committed_receipts[attempt_receipt_start:]
+            )
+            settlement = executor._settle_director_stage_materialization_attempt(
+                task_row_id=task_row_id,
+                execution_attempt=execution_attempt,
+                stage_status="failed" if residual or owner_commit_failed else "success",
+                summary="director_stage_original_owner_repair_continuation "
+                + (
+                    "effect_receipt_failed"
+                    if owner_commit_failed
+                    else "verifier_residual"
+                    if residual
+                    else "verifier_clean"
+                ),
+            )
+            if settlement.get("success") is not True:
+                raise RuntimeError(f"repair_owner_attempt_close_failed:{settlement.get('reason') or 'unknown'}")
+            if residual:
+                owners_requiring_revalidation[external_task_id] = [
+                    str(item["path"])
+                    for item in owner_context["task_completion_projection"].get("owned_artifacts", ())
+                    if isinstance(item, Mapping) and item.get("owner_task_id") == external_task_id
+                ]
+            # Clear closed identity before a claim that may reject dependencies.
+            task_row_id = None
+            execution_attempt = None
+            external_task_id, task_row_id, execution_attempt, repair_task = _claim_workspace_quality_repair_attempt(
+                executor,
+                run=run,
+                repair_attempt=repair_round_count + 1,
+                target_files=next_owner_targets,
+                original_owner_task_id=next_owner_id,
+            )
+            if external_task_id != next_owner_id:
+                raise RuntimeError("repair_original_owner_claim_mismatch")
+            attempt_receipt_start = len(committed_receipts)
+            owner_context = executor._director_stage_materialization_settle_commit_context(
+                run=run, run_id=run_id, diagnostics=post_commit_diagnostics, repair_task=repair_task
+            )
             current_diagnostics = list(post_commit_diagnostics)
+            owner_revalidation = not current_diagnostics
+            authority = create_task_runtime_execution_attempt_authority(execution_attempt)
+            heartbeat_stop = asyncio.Event()
+            heartbeat_task = asyncio.create_task(
+                _run_workspace_quality_repair_heartbeat(
+                    authority,
+                    stop=heartbeat_stop,
+                    failures=heartbeat_failures,
+                    context_summary="director_stage_original_owner_repair",
+                )
+            )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        if heartbeat_task is not None:
+            heartbeat_stop.set()
+            await heartbeat_task
         logger.warning(
             "Director stage materialization quality settle failed for run %s: %s",
             run.id,
@@ -847,9 +1067,21 @@ async def _run_director_stage_materialization_quality_settle(
             "ok": False,
             "reason": "settle_exception",
             "detail": f"{type(exc).__name__}: {exc}",
-            "tool_result_count": 0,
+            "tool_result_count": len(tool_results),
+            "committed_receipt_count": sum(
+                executor._director_stage_materialization_receipt_succeeded(item) for item in committed_receipts
+            ),
+            "project_artifact_receipt_count": len(artifact_receipts),
             "diagnostic_count": len(diagnostics),
+            "external_task_id": external_task_id,
+            "owner_routing_residuals": owner_routing_residuals,
         }
+    finally:
+        # Cancellation must stop renewal without inventing a terminal receipt.
+        # Physical drain/DEO recovery remains the execution owner's obligation.
+        if heartbeat_task is not None:
+            heartbeat_stop.set()
+            await asyncio.shield(heartbeat_task)
     summary_dict = dict(summary) if isinstance(summary, Mapping) else {}
     deferred_expected = bool(deferred_candidates)
     successful_receipts = [
@@ -862,12 +1094,13 @@ async def _run_director_stage_materialization_quality_settle(
         for item in committed_receipts
         if not isinstance(item, Mapping) or not executor._director_stage_materialization_receipt_succeeded(item)
     ]
-    # Partial DEO failures remain evidence, but must not erase a verified
-    # successful repair candidate.  The post-commit verifier is the
-    # authority for whether the same Director task still needs local rework.
+    # Preserve earlier successful receipts, but a failed DEO receipt or an
+    # unrevalidated earlier owner cannot be erased by a later clean verifier.
     missing_commit_receipt = deferred_expected and not successful_receipts
     verifier_residual = bool(post_commit_diagnostics)
-    commit_failed = missing_commit_receipt or verifier_residual
+    commit_failed = (
+        missing_commit_receipt or verifier_residual or bool(failed_receipts) or bool(owners_requiring_revalidation)
+    )
     mutated = bool(successful_receipts) or any(
         executor._workspace_quality_repair_result_has_mutation(dict(item))
         for item in tool_results
@@ -889,9 +1122,11 @@ async def _run_director_stage_materialization_quality_settle(
     if commit_failed or settlement_failed:
         failure_reason = (
             "deferred_repair_commit_failed"
-            if missing_commit_receipt
+            if missing_commit_receipt or failed_receipts
             else "materialization_verifier_residual"
             if verifier_residual
+            else "materialization_owner_revalidation_pending"
+            if owners_requiring_revalidation
             else "settle_attempt_close_failed"
         )
         return {
@@ -912,6 +1147,8 @@ async def _run_director_stage_materialization_quality_settle(
             "repair_round_count": repair_round_count,
             "mutated": mutated,
             "external_task_id": external_task_id,
+            "project_artifact_receipt_count": len(artifact_receipts),
+            "owner_routing_residuals": owner_routing_residuals,
         }
     return {
         "ok": True,
@@ -930,4 +1167,6 @@ async def _run_director_stage_materialization_quality_settle(
         "mutated": mutated,
         "external_task_id": external_task_id,
         "summary_keys": sorted(str(key) for key in summary_dict)[:24],
+        "project_artifact_receipt_count": len(artifact_receipts),
+        "owner_routing_residuals": owner_routing_residuals,
     }

@@ -425,7 +425,13 @@ class CompressionEngine:
     _SYSTEM_PLANE_TRIM_CHARS_PER_TOKEN = 2
     _SYSTEM_PLANE_TRIM_PAD_CHARS = 240
 
-    def emergency_truncate(self, messages: list[dict[str, Any]], max_tokens: int) -> list[dict[str, Any]]:
+    def emergency_truncate(
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        *,
+        preserve_final_user: bool = True,
+    ) -> list[dict[str, Any]]:
         """Emergency truncation when budget is violated.
 
         Keeps system messages, truncates history to fit within max_tokens.
@@ -444,7 +450,10 @@ class CompressionEngine:
         history = [m for m in messages if m.get("role") != "system"]
 
         final_user: dict[str, Any] | None = None
-        for index in range(len(history) - 1, -1, -1):
+        # The gateway reserves the current instruction outside this historical
+        # assembly. In that case every user here is evictable history; pinning
+        # one would incorrectly reject a current instruction that fits alone.
+        for index in range(len(history) - 1, -1, -1) if preserve_final_user else ():
             if str(history[index].get("role") or "").strip().lower() == "user":
                 final_user = history.pop(index)
                 break
@@ -515,7 +524,7 @@ class CompressionEngine:
         while total > max_tokens and len(system_msgs) > 1:
             system_msgs.pop()
             total = self._token_estimator.estimate(_assemble())
-        if total > max_tokens and system_msgs and final_user is not None:
+        if total > max_tokens and system_msgs and (final_user is not None or not preserve_final_user):
             system_msgs = []
             total = self._token_estimator.estimate(_assemble())
 
@@ -532,10 +541,14 @@ class CompressionEngine:
         return _assemble()
 
     def emergency_truncate_with_limit(
-        self, messages: list[dict[str, Any]], max_tokens: int
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        *,
+        preserve_final_user: bool = True,
     ) -> tuple[list[dict[str, Any]], int]:
         """Emergency truncation with token count return."""
-        truncated = self.emergency_truncate(messages, max_tokens)
+        truncated = self.emergency_truncate(messages, max_tokens, preserve_final_user=preserve_final_user)
         return truncated, self._token_estimator.estimate(truncated)
 
     @staticmethod

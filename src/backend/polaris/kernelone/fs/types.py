@@ -17,3 +17,13 @@ class FileWriteReceipt:
     absolute_path: str
     bytes_written: int
     atomic: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class DirectoryCreateReceipt:
+    """Physical directory-effect evidence; never project execution authority."""
+
+    relative_path: str
+    created_paths: tuple[str, ...]
+    root_identity: tuple[int, int]
+    target_identity: tuple[int, int]

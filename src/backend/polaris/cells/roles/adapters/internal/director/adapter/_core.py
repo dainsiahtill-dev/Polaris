@@ -25,6 +25,7 @@ from polaris.cells.runtime.execution_broker.public import (
     RecordProjectArtifactCommandV1,
     record_project_artifact,
 )
+from polaris.kernelone.audit.task_write_guidance import render_task_write_guidance
 
 from ...base import BaseRoleAdapter
 from ...director_execution_backend import (
@@ -90,6 +91,7 @@ from ._timeout_budget import (
     _context_timeout_seconds_for_runtime_command,
     _prepare_role_dialogue_context,
     _role_dialogue_watchdog_timeout_seconds,
+    _task_write_guidance_context,
 )
 
 logger = logging.getLogger("polaris.cells.roles.adapters.internal.director.adapter")
@@ -449,6 +451,10 @@ class DirectorAdapter(BaseRoleAdapter):
             workspace=str(self.workspace),
         )
         _project_director_execution_authority_evidence(context_payload, context)
+        write_guidance = _task_write_guidance_context(context_payload)
+        if write_guidance is not None:
+            context_payload["task_write_guidance"] = write_guidance
+            metadata["task_write_guidance"] = write_guidance
         task_id = self._resolve_runtime_identity_field(
             context_payload,
             metadata,
@@ -1565,6 +1571,18 @@ class DirectorAdapter(BaseRoleAdapter):
             or runtime_metadata.get("goal")
             or ""
         ).strip()
+        # Task intent is authored input, not the language/build preservation
+        # guidance appended below. It conveys no write scope or capability.
+        task_instruction = goal or str(subject or description).strip()
+        if task_instruction and isinstance(context, dict):
+            raw_contract = runtime_context.get("tool_contract") or runtime_context.get("platform_tool_contract")
+            if not isinstance(raw_contract, dict):
+                raw_contract = runtime_metadata.get("tool_contract") or runtime_metadata.get("platform_tool_contract")
+            tool_contract = dict(raw_contract) if isinstance(raw_contract, dict) else {}
+            tool_contract["task_instruction"] = task_instruction
+            runtime_context["platform_tool_contract"] = tool_contract
+            if "tool_contract" in runtime_context:
+                runtime_context["tool_contract"] = dict(tool_contract)
 
         def _first_listish(*values: Any, limit: int = 24) -> list[str]:
             for value in values:
@@ -1620,6 +1638,16 @@ class DirectorAdapter(BaseRoleAdapter):
             or runtime_metadata.get("target_files"),
             limit=16,
         )
+        write_guidance = _task_write_guidance_context(
+            {
+                **metadata,
+                **runtime_metadata,
+                **runtime_context,
+                "target_files": target_file_items,
+            }
+        )
+        if write_guidance is not None:
+            target_file_items = list(write_guidance["write_targets"])
         scope_path_items = _first_listish(
             metadata.get("scope_paths")
             or task.get("scope_paths")
@@ -1698,6 +1726,13 @@ class DirectorAdapter(BaseRoleAdapter):
             f"目标: {goal}" if goal else "",
             f"范围: {', '.join(scope_items)}" if scope_items else "",
             f"目标文件: {', '.join(target_file_items)}" if target_file_items else "",
+            render_task_write_guidance(write_guidance) if write_guidance is not None else "",
+            (
+                "当前写入义务仅限 write_targets。reference_only_targets 和保留的 PM/CE 合同路径是参考证据，"
+                "不授予本任务写权；不得重写已由兄弟任务交付的文件。"
+                if write_guidance is not None
+                else ""
+            ),
             (
                 "目标文件覆盖硬门禁: 本任务列出的目标文件必须全部由本轮工具写入或编辑；"
                 "多文件创建任务必须为每个目标文件分别发出 write/edit 工具调用，"

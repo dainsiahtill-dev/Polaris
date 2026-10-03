@@ -34,7 +34,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_infli
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_lifecycle import (
     StrictProviderAttemptLifecycleStore,
 )
-from polaris.cells.roles.kernel.tests import test_final_provider_attempt_gate as final_gate_test
+from polaris.cells.roles.kernel.tests import _final_provider_attempt_gate_helpers as final_gate_test
 from polaris.infrastructure.llm.providers import async_provider_helpers
 from polaris.infrastructure.llm.providers.async_http_client import (
     AsyncCircuitBreaker,

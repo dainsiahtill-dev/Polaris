@@ -25,7 +25,7 @@ FACTORY_PROVIDER_NATIVE_REQUEST_SCHEMA = "llm.factory_provider_native_request.v1
 
 _PROJECTION_PROVIDER_TYPES = frozenset({"anthropic_compat", "openai_compat"})
 _TRANSPORT_BY_MODE: dict[FactoryProviderDispatchMode, str] = {
-    "invoke": "requests.post",
+    "invoke": "aiohttp.ClientSession.post",
     "stream": "aiohttp.ClientSession.post",
 }
 _REQUIRED_SEMANTIC_FIELDS = frozenset(

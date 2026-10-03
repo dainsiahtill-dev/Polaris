@@ -61,8 +61,10 @@ def _install_lifespan_fakes(
         del container, settings
         events.append("assembly")
 
-    async def ensure_local_nats_runtime(url: str) -> None:
+    async def ensure_local_nats_runtime(url: str, *, startup_timeout_seconds: float, allow_autostart: bool) -> None:
         assert url == "nats://127.0.0.1:4222"
+        assert startup_timeout_seconds == 60.0
+        assert allow_autostart is True
         events.append("nats.server.start")
 
     async def shutdown_local_nats_runtime() -> None:

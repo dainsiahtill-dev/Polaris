@@ -309,7 +309,6 @@ def _missing_package_script_entrypoint_issues(
     missing: list[PackageScriptIssue] = []
     index = 0
     while index < len(tokens):
-        interpreter_index = index
         token = os.path.basename(tokens[index]).lower()
         if token not in _SCRIPT_INTERPRETERS:
             index += 1
@@ -354,8 +353,6 @@ def _missing_package_script_entrypoint_issues(
             if _is_local_script_reference(candidate):
                 resolved_candidate = _resolve_script_reference(workspace, candidate)
                 if resolved_candidate is None:
-                    if _script_builds_before_interpreter(tokens, interpreter_index):
-                        break
                     if _is_build_output_reference(candidate) and _script_lifecycle_can_build_output(
                         all_scripts,
                         script_name,

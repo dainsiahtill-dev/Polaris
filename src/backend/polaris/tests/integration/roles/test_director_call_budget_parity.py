@@ -124,6 +124,6 @@ def test_strategy_defaults_cannot_enlarge_explicit_call_limit(limits: dict[str, 
     assert context["llm_max_tokens"] == want
     assert context["max_output_tokens"] == want
     assert metadata["llm_max_tokens"] == want
-    # Call admission narrows sampling, not the immutable task/authorization contract.
-    assert context["task_execution_contract"]["context_budget"]["output_budget_tokens"] == 128_000
+    # Current-call typed facts describe the narrowed ceiling; the task strategy is immutable.
+    assert context["task_execution_contract"]["context_budget"]["output_budget_tokens"] == want
     assert strategy.output_budget_tokens == 128_000

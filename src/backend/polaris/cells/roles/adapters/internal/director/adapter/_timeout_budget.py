@@ -7,13 +7,15 @@ import logging
 import re
 from typing import Any
 
+from polaris.kernelone.audit.task_write_guidance import project_task_write_guidance
 from polaris.kernelone.llm.budget_policy import (
     FORCED_WRITE_CONTEXT_KEYS,
-    FORCED_WRITE_OUTPUT_TOKEN_FLOOR,
     FORCED_WRITE_STAGE_MARKERS,
     OUTPUT_BUDGET_CONTEXT_KEYS,
     TIMEOUT_CEILING_CONTEXT_KEYS,
     TIMEOUT_OVERRIDE_CONTEXT_KEYS,
+    TURN_KIND_FINALIZATION,
+    classify_turn_kind,
     forced_write_output_token_ceiling,
     forced_write_retry_timeout_seconds,
 )
@@ -116,6 +118,17 @@ def _resolve_role_call_timeout(
 
 def _context_has_forced_write_retry(context: dict[str, Any], *, stage_label: str) -> bool:
     normalized_stage = str(stage_label or "").strip().lower()
+    if classify_turn_kind(context, {"stage_label": stage_label}) == TURN_KIND_FINALIZATION:
+        return False
+    # Typed profiles carry a default patch-file contract even for read-only
+    # review. That default is not evidence that this call will materialize code.
+    for key in ("task_execution_profile", "director_execution_profile"):
+        payload = context.get(key)
+        if isinstance(payload, dict) and str(payload.get("task_type") or "").strip().lower() in {
+            "review",
+            "code_review",
+        }:
+            return False
     if any(marker in normalized_stage for marker in _FORCED_WRITE_STAGE_MARKERS):
         return True
     if any(key in context for key in _FORCED_WRITE_CONTEXT_KEYS):
@@ -145,12 +158,36 @@ def _forced_write_effective_output_budget(context: dict[str, Any]) -> tuple[int,
         parsed for value in existing_values.values() if (parsed := _coerce_positive_int(value)) is not None
     ]
     if parsed_existing:
-        return max(FORCED_WRITE_OUTPUT_TOKEN_FLOOR, min(ceiling, *parsed_existing)), existing_values
+        # The configured default has a floor; an already-admitted ceiling does
+        # not. Raising a smaller positive call limit would enlarge authority.
+        return min(ceiling, *parsed_existing), existing_values
     return ceiling, existing_values
+
+
+def _task_write_guidance_context(context: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = context.get("metadata")
+    sources = (context, metadata) if isinstance(metadata, dict) else (context,)
+    for source in sources:
+        for key in ("director_execution_envelope", "task_execution_envelope", "execution_envelope"):
+            if key in source:
+                envelope = source[key]
+                if not isinstance(envelope, dict):
+                    raise ValueError("task_write_guidance_envelope_invalid")
+                targets = context.get("target_files", source.get("target_files", []))
+                inventory = context.get(
+                    "project_declared_target_files", source.get("project_declared_target_files", [])
+                )
+                if not isinstance(targets, (list, tuple)) or not isinstance(inventory, (list, tuple)):
+                    raise ValueError("task_write_guidance_paths_invalid")
+                return project_task_write_guidance(envelope, [*targets, *inventory])
+    return None
 
 
 def _current_task_write_boundary_context(context: dict[str, Any]) -> dict[str, Any] | None:
     target_files = _string_list_payload(context.get("target_files"), limit=64)
+    guidance = _task_write_guidance_context(context)
+    if guidance is not None:
+        target_files = list(guidance["write_targets"])
     if not target_files:
         return None
     target_set = set(target_files)
@@ -322,6 +359,9 @@ def _prepare_role_dialogue_context(
     write_boundary = _current_task_write_boundary_context(context_payload)
     if write_boundary:
         context_payload["current_task_write_boundary"] = write_boundary
+    guidance = _task_write_guidance_context(context_payload)
+    if guidance is not None:
+        context_payload["task_write_guidance"] = guidance
     if _context_has_forced_write_retry(context_payload, stage_label=stage_label):
         output_tokens, previous_budget_values = _forced_write_effective_output_budget(context_payload)
         context_payload["llm_max_tokens"] = output_tokens

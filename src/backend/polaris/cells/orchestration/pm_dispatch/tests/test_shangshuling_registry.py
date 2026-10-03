@@ -6,6 +6,7 @@ Tests LocalShangshulingPort by mocking the registry persistence layer
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from polaris.cells.orchestration.pm_dispatch.internal.shangshuling_registry import (
@@ -103,35 +104,41 @@ class TestNormalizeTask:
 # ---------------------------------------------------------------------------
 
 
+def _local_registry_file(workspace: Path) -> Path:
+    registry_file = workspace / ".polaris" / "runtime" / "state" / "dispatch" / "shangshuling.registry.json"
+    registry_file.parent.mkdir(parents=True, exist_ok=True)
+    return registry_file
+
+
 class TestLoadSaveRegistry:
-    def test_empty_file_returns_empty_registry(self, tmp_path) -> None:
-        reg_path = tmp_path / "registry.json"
+    def test_empty_file_returns_empty_registry(self, tmp_path: Path) -> None:
+        reg_path = _local_registry_file(tmp_path)
         reg_path.write_text("", encoding="utf-8")
-        result = _load_registry(str(reg_path))
+        result = _load_registry(str(tmp_path))
         assert result["tasks"] == []
 
-    def test_corrupted_json_returns_empty(self, tmp_path) -> None:
-        reg_path = tmp_path / "registry.json"
+    def test_corrupted_json_returns_empty(self, tmp_path: Path) -> None:
+        reg_path = _local_registry_file(tmp_path)
         reg_path.write_text("not valid json{{{", encoding="utf-8")
-        result = _load_registry(str(reg_path))
+        result = _load_registry(str(tmp_path))
         assert result["tasks"] == []
 
-    def test_non_dict_returns_empty(self, tmp_path) -> None:
-        reg_path = tmp_path / "registry.json"
+    def test_non_dict_returns_empty(self, tmp_path: Path) -> None:
+        reg_path = _local_registry_file(tmp_path)
         reg_path.write_text('["a", "b"]', encoding="utf-8")
-        result = _load_registry(str(reg_path))
+        result = _load_registry(str(tmp_path))
         assert result["tasks"] == []
 
-    def test_missing_tasks_field_defaults_to_empty(self, tmp_path) -> None:
-        reg_path = tmp_path / "registry.json"
+    def test_missing_tasks_field_defaults_to_empty(self, tmp_path: Path) -> None:
+        reg_path = _local_registry_file(tmp_path)
         reg_path.write_text('{"version": 1}', encoding="utf-8")
-        result = _load_registry(str(reg_path))
+        result = _load_registry(str(tmp_path))
         assert result["tasks"] == []
 
-    def test_non_list_tasks_defaults_to_empty(self, tmp_path) -> None:
-        reg_path = tmp_path / "registry.json"
+    def test_non_list_tasks_defaults_to_empty(self, tmp_path: Path) -> None:
+        reg_path = _local_registry_file(tmp_path)
         reg_path.write_text('{"tasks": "bad"}', encoding="utf-8")
-        result = _load_registry(str(reg_path))
+        result = _load_registry(str(tmp_path))
         assert result["tasks"] == []
 
 
@@ -311,11 +318,11 @@ class TestLocalShangshulingPortRecordCompletion:
 
 class TestLocalShangshulingPortArchiveHistory:
     @patch("polaris.cells.orchestration.pm_dispatch.internal.shangshuling_registry.append_jsonl")
-    def test_archives_record_to_jsonl(self, mock_append: MagicMock) -> None:
+    def test_archives_record_to_jsonl(self, mock_append: MagicMock, tmp_path: Path) -> None:
         port = LocalShangshulingPort()
         port.archive_task_history(
-            workspace_full="/fake",
-            cache_root_full="/cache",
+            workspace_full=str(tmp_path),
+            cache_root_full=str(tmp_path / "cache"),
             run_id="run-1",
             iteration=1,
             normalized={"tasks": []},
@@ -324,6 +331,10 @@ class TestLocalShangshulingPortArchiveHistory:
         )
         mock_append.assert_called_once()
         call_args = mock_append.call_args[0]
+        assert call_args[0] == str(
+            tmp_path / ".polaris" / "runtime" / "state" / "dispatch" / "shangshuling.history.jsonl"
+        )
+        assert call_args[1]["workspace"] == str(tmp_path)
         assert call_args[1]["run_id"] == "run-1"
         assert call_args[1]["iteration"] == 1
 

@@ -23,6 +23,8 @@ import sys
 import tempfile
 from dataclasses import dataclass
 
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
 # Extension groups → the checker command (the file path is appended).
 _SYNTAX_CHECKERS: dict[tuple[str, ...], list[str]] = {
     (".js", ".mjs", ".cjs"): ["node", "--check"],
@@ -193,8 +195,8 @@ def check_content_syntax(
     try:
         with tempfile.TemporaryDirectory(prefix="polaris-syntax-candidate-") as temp_dir:
             candidate = os.path.join(temp_dir, f"candidate{suffix}")
-            with open(candidate, "w", encoding="utf-8", newline="") as handle:
-                handle.write(str(content))
+            filesystem = KernelFileSystem(temp_dir, get_default_adapter())
+            filesystem.workspace_write_bytes(candidate, str(content).encode("utf-8"))
             result = check_file_syntax(candidate, timeout_seconds=timeout_seconds)
     except (OSError, UnicodeError) as exc:
         return SyntaxCheckResult(

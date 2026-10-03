@@ -234,8 +234,12 @@ async def requires_mutation_intent_hybrid(message: str) -> bool:
     )
     from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
         _is_negated_mutation,
+        leading_instruction_delivery_contract,
     )
 
+    explicit = leading_instruction_delivery_contract(message)
+    if explicit is not None:
+        return explicit.requires_mutation
     if _is_negated_mutation(message):
         return False
 
@@ -256,8 +260,12 @@ def requires_mutation_intent(message: str) -> bool:
     """判定用户请求是否要求代码/文件突变（需要写工具）。"""
     from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
         _is_negated_mutation,
+        leading_instruction_delivery_contract,
     )
 
+    explicit = leading_instruction_delivery_contract(message)
+    if explicit is not None:
+        return explicit.requires_mutation
     if _is_negated_mutation(message):
         return False
     intent = classify_user_intent(message)
@@ -270,6 +278,11 @@ async def resolve_delivery_mode_hybrid(user_message: str) -> DeliveryContract:
     先尝试 CognitiveGateway（统一级联入口），若不可用则回退到
     本地 regex 规则引擎。保证永远有返回值。
     """
+    from .intent_classifier import leading_instruction_delivery_contract
+
+    explicit = leading_instruction_delivery_contract(user_message)
+    if explicit is not None:
+        return explicit
     try:
         from polaris.cells.roles.kernel.internal.transaction.cognitive_gateway import (
             CognitiveGateway,

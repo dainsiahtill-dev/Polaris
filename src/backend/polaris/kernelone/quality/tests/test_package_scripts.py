@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from polaris.kernelone.quality import artifact_quality_issues_from_errors, check_package_scripts
+import pytest
+from polaris.kernelone.quality import (
+    artifact_quality_issues_from_errors,
+    check_package_scripts,
+    scan_workspace_artifact_quality_evidence,
+)
 
 
 def test_check_package_scripts_rejects_placeholder_script(tmp_path: Path) -> None:
@@ -195,6 +201,34 @@ def test_check_package_scripts_accepts_build_script_before_dist_entrypoint(tmp_p
     result = check_package_scripts(str(tmp_path))
 
     assert result.ok is True
+
+
+@pytest.mark.parametrize("entrypoint", ["tests/product.test.mjs", "src/main.js"])
+def test_build_prefix_does_not_hide_missing_source_or_test_entrypoint(tmp_path: Path, entrypoint: str) -> None:
+    command = f"tsc -p tsconfig.json && node --test --import tsx {entrypoint}"
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": command}}), encoding="utf-8")
+
+    result = check_package_scripts(str(tmp_path))
+
+    assert result.ok is False
+    assert [(issue.code, issue.entrypoint, issue.command) for issue in result.issues] == [
+        ("npm_script_missing_local_entrypoint", entrypoint, command)
+    ]
+
+
+def test_artifact_evidence_preserves_missing_test_after_build_prefix(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"tsc && node --test --import tsx tests/product.test.mjs"}}\n',
+        encoding="utf-8",
+    )
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["package.json"])
+
+    assert any(
+        issue.code == "npm_script_missing_local_entrypoint"
+        and issue.to_dict()["metadata"].get("entrypoint") == "tests/product.test.mjs"
+        for issue in evidence.issues
+    )
 
 
 def test_check_package_scripts_accepts_start_build_output_from_separate_build_script(

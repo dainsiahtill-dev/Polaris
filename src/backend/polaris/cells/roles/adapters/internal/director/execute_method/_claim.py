@@ -557,7 +557,7 @@ def _project_completion_targets_into_task(
     token = _job_token_from_director_context(context)
     allowed_paths = {
         str(path or "").strip().replace("\\", "/")
-        for key in ("allowed_write_paths", "allowed_paths", "target_files")
+        for key in (("allowed_write_paths",) if "allowed_write_paths" in token else ("allowed_paths", "target_files"))
         for path in (token.get(key) or ())
         if str(path or "").strip()
     }
@@ -585,10 +585,20 @@ def _project_completion_targets_into_task(
         for path in (source or ())
         if str(path or "").strip()
     ]
-    effective_paths = list(dict.fromkeys((*existing_paths, *owned_paths)))
+    # Inventory can contain sibling targets or already-satisfied project
+    # obligations. It cannot enlarge this task's admitted write requirements.
+    effective_paths = list(dict.fromkeys((*(path for path in existing_paths if path in allowed_paths), *owned_paths)))
     projected_task["target_files"] = effective_paths
     metadata["target_files"] = list(effective_paths)
-    metadata["project_declared_target_files"] = list(effective_paths)
+    metadata["project_declared_target_files"] = list(
+        dict.fromkeys(
+            [
+                *(metadata.get("project_declared_target_files") or ()),
+                *existing_paths,
+                *owned_paths,
+            ]
+        )
+    )
     metadata["director_target_authority"] = "chief_engineer.task_completion_projection+job_token"
     projected_task["metadata"] = metadata
     return projected_task

@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs.materialization import materialized_file_paths
 from polaris.kernelone.quality.scope_authority import (
     glob_declared_scope_path_matches,
     normalize_declared_scope_path,
@@ -110,7 +111,8 @@ def _extract_project_declared_target_path_candidates(source: dict[str, Any] | No
 
     if not isinstance(source, dict):
         return []
-    metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+    metadata_raw = source.get("metadata")
+    metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
     candidates: list[str] = []
     for record in (source, metadata):
         for key in (
@@ -137,23 +139,28 @@ def _path_matches_declared_candidate(path: str, candidate: str) -> bool:
     return path_matches_declared_scope_candidate(path, candidate)
 
 
-def _workspace_path_exists_case_insensitive(root: Path, rel_path: str) -> bool:
-    """Check workspace-relative existence, tolerating path-case drift."""
+def _workspace_path_exists_case_insensitive(
+    root: Path, rel_path: str, *, require_materialized: bool = False
+) -> bool:
+    """Observe existence or materialization without changing the declared path.
+
+    Default behavior retains directory/existence matching. Byte evidence is
+    opt-in and reuses KernelOne's confined materialization predicate.
+    """
     candidate = root / rel_path
     if candidate.exists():
-        return True
+        return bool(materialized_file_paths(root, [rel_path])[0]) if require_materialized else True
     current = root
     for part in rel_path.split("/"):
         if not current.is_dir():
             return False
-        matched = next(
-            (entry for entry in current.iterdir() if entry.name.casefold() == part.casefold()),
-            None,
-        )
-        if matched is None:
+        matches = [entry for entry in current.iterdir() if entry.name.casefold() == part.casefold()]
+        if not matches or (require_materialized and len(matches) != 1):
             return False
-        current = matched
-    return True
+        current = matches[0]
+    if not require_materialized:
+        return True
+    return bool(materialized_file_paths(root, [str(current)])[0])
 
 
 def _task_text_blob(task: dict[str, Any]) -> str:

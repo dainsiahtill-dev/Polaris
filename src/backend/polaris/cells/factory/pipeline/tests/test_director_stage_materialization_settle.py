@@ -29,6 +29,27 @@ from polaris.cells.factory.pipeline.internal.factory_stage_executor import (
 # SimpleNamespace used as fake attempt identity in settle tests.
 
 
+@pytest.fixture
+def canonical_settle_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Scheduler fixtures provide the original CE owner, not synthetic grants.
+
+    These tests isolate scheduling/receipt-shape behavior. The separate owner
+    authority suite exercises context validation and asset/close ordering.
+    """
+    from polaris.cells.factory.pipeline.internal import factory_workspace_quality_impl as quality
+    from polaris.cells.factory.pipeline.tests.test_settle_repair_owner_authority import _validated_owner
+
+    owner, _token = _validated_owner(
+        tmp_path,
+        monkeypatch,
+        run_id="factory_test_m06_settle",
+        paths=["package.json", "src/main.ts", "tests/verify.test.ts"],
+    )
+    monkeypatch.setattr(quality, "_workspace_quality_causal_repair_target_files", lambda *_a, **_k: ["package.json"])
+    monkeypatch.setattr(quality, "_record_workspace_quality_repair_artifact_receipts", lambda _pending: ())
+    return owner
+
+
 def _run(workspace: Path) -> FactoryRun:
     return FactoryRun(
         id="factory_test_m06_settle",
@@ -364,6 +385,7 @@ def test_recover_director_stage_authority_orphan_blocked_uses_sibling_director_r
 @pytest.mark.asyncio
 async def test_run_director_stage_materialization_quality_settle_invokes_schedule(
     tmp_path: Path,
+    canonical_settle_owner: dict[str, Any],
 ) -> None:
     """Failed multi-task stage with package.json must claim attempt + schedule + DEO commit."""
 
@@ -389,6 +411,7 @@ async def test_run_director_stage_materialization_quality_settle_invokes_schedul
         artifact_quality_errors: list[str],
         task_id: str | None = None,
         execution_attempt: Any = None,
+        repair_task: Any = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         captured["run_id"] = run_id
         captured["errors"] = list(artifact_quality_errors)
@@ -418,12 +441,8 @@ async def test_run_director_stage_materialization_quality_settle_invokes_schedul
     with (
         patch.object(
             executor,
-            "_claim_director_stage_materialization_settle_attempt",
-            return_value=(
-                "factory-director-mat-settle:factory_test_m06_settle",
-                1,
-                fake_attempt,
-            ),
+            "_claim_workspace_quality_repair_attempt",
+            return_value=("TASK-1", 1, fake_attempt, canonical_settle_owner),
         ),
         patch.object(executor, "_apply_workspace_quality_repairs", side_effect=_fake_apply),
         patch.object(executor, "_collect_director_stage_materialization_diagnostics", return_value=[]),
@@ -461,13 +480,15 @@ async def test_run_director_stage_materialization_quality_settle_invokes_schedul
     assert isinstance(job_token, dict)
     assert str(job_token.get("token_id") or "").strip()
     assert job_token.get("capability_audit", {}).get("ok") is True
-    assert len(str(job_token.get("execution_envelope_hash") or "")) == 64
+    assert len(str(commit_ctx.get("execution_envelope_hash") or "")) == 64
+    assert commit_ctx["execution_envelope"]["authorization"]["capability_token_ref"] == job_token["token_id"]
     assert "tests/verify.test.ts" in (commit_ctx.get("allowed_paths") or [])
 
 
 @pytest.mark.asyncio
 async def test_materialization_settle_keeps_event_loop_live_during_sync_scan(
     tmp_path: Path,
+    canonical_settle_owner: dict[str, Any],
 ) -> None:
     """Regression: a blocking verifier scan must not freeze ASGI/runtime.v2.
 
@@ -504,8 +525,8 @@ async def test_materialization_settle_keeps_event_loop_live_during_sync_scan(
         with (
             patch.object(
                 executor,
-                "_claim_director_stage_materialization_settle_attempt",
-                return_value=("settle-live", 1, fake_attempt),
+                "_claim_workspace_quality_repair_attempt",
+                return_value=("TASK-1", 1, fake_attempt, canonical_settle_owner),
             ),
             patch.object(
                 executor,
@@ -542,6 +563,7 @@ async def test_materialization_settle_keeps_event_loop_live_during_sync_scan(
 @pytest.mark.asyncio
 async def test_materialization_settle_accepts_canonical_batch_receipt_and_revalidates(
     tmp_path: Path,
+    canonical_settle_owner: dict[str, Any],
 ) -> None:
     """Regression: DEO BatchReceipt success is not a top-level ``success`` flag.
 
@@ -588,8 +610,8 @@ async def test_materialization_settle_accepts_canonical_batch_receipt_and_revali
     with (
         patch.object(
             executor,
-            "_claim_director_stage_materialization_settle_attempt",
-            return_value=("settle-x", 1, fake_attempt),
+            "_claim_workspace_quality_repair_attempt",
+            return_value=("TASK-1", 1, fake_attempt, canonical_settle_owner),
         ),
         patch.object(
             executor,
@@ -638,6 +660,7 @@ async def test_materialization_settle_accepts_canonical_batch_receipt_and_revali
 @pytest.mark.asyncio
 async def test_materialization_settle_stops_after_first_verified_repair_candidate(
     tmp_path: Path,
+    canonical_settle_owner: dict[str, Any],
 ) -> None:
     """Do not execute later repair candidates after the verifier is green.
 
@@ -675,8 +698,8 @@ async def test_materialization_settle_stops_after_first_verified_repair_candidat
     with (
         patch.object(
             executor,
-            "_claim_director_stage_materialization_settle_attempt",
-            return_value=("settle-x", 1, fake_attempt),
+            "_claim_workspace_quality_repair_attempt",
+            return_value=("TASK-1", 1, fake_attempt, canonical_settle_owner),
         ),
         patch.object(
             executor,
@@ -719,6 +742,7 @@ async def test_materialization_settle_stops_after_first_verified_repair_candidat
 @pytest.mark.asyncio
 async def test_materialization_settle_replans_new_verifier_residuals_in_same_task(
     tmp_path: Path,
+    canonical_settle_owner: dict[str, Any],
 ) -> None:
     """A successful repair can expose another diagnostic; replan without PM/CE restart."""
 
@@ -734,6 +758,7 @@ async def test_materialization_settle_replans_new_verifier_residuals_in_same_tas
         artifact_quality_errors: list[str],
         task_id: str | None = None,
         execution_attempt: Any = None,
+        repair_task: Any = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         del run_id, task_id, execution_attempt
         apply_errors.append(list(artifact_quality_errors))
@@ -764,8 +789,8 @@ async def test_materialization_settle_replans_new_verifier_residuals_in_same_tas
     with (
         patch.object(
             executor,
-            "_claim_director_stage_materialization_settle_attempt",
-            return_value=("settle-x", 1, fake_attempt),
+            "_claim_workspace_quality_repair_attempt",
+            return_value=("TASK-1", 1, fake_attempt, canonical_settle_owner),
         ),
         patch.object(executor, "_apply_workspace_quality_repairs", side_effect=_fake_apply) as apply,
         patch.object(
@@ -806,6 +831,7 @@ async def test_materialization_settle_replans_new_verifier_residuals_in_same_tas
 @pytest.mark.asyncio
 async def test_materialization_settle_fails_when_verifier_residual_has_no_candidate(
     tmp_path: Path,
+    canonical_settle_owner: dict[str, Any],
 ) -> None:
     """Residual verifier evidence cannot be reported as a successful settle."""
 
@@ -817,8 +843,8 @@ async def test_materialization_settle_fails_when_verifier_residual_has_no_candid
     with (
         patch.object(
             executor,
-            "_claim_director_stage_materialization_settle_attempt",
-            return_value=("settle-x", 1, fake_attempt),
+            "_claim_workspace_quality_repair_attempt",
+            return_value=("TASK-1", 1, fake_attempt, canonical_settle_owner),
         ),
         patch.object(
             executor,
@@ -855,6 +881,7 @@ async def test_materialization_settle_fails_when_verifier_residual_has_no_candid
 @pytest.mark.asyncio
 async def test_materialization_settle_reports_deferred_commit_failure(
     tmp_path: Path,
+    canonical_settle_owner: dict[str, Any],
 ) -> None:
     """A deferred batch with no terminal receipts must fail, not report ok=True."""
 
@@ -876,8 +903,8 @@ async def test_materialization_settle_reports_deferred_commit_failure(
     with (
         patch.object(
             executor,
-            "_claim_director_stage_materialization_settle_attempt",
-            return_value=("settle-x", 1, fake_attempt),
+            "_claim_workspace_quality_repair_attempt",
+            return_value=("TASK-1", 1, fake_attempt, canonical_settle_owner),
         ),
         patch.object(
             executor,
@@ -1010,6 +1037,7 @@ def test_claim_director_stage_materialization_settle_attempt_mints_unique_extern
 @pytest.mark.asyncio
 async def test_run_director_stage_materialization_quality_settle_forwards_tsc_diagnostics(
     tmp_path: Path,
+    canonical_settle_owner: dict[str, Any],
 ) -> None:
     (tmp_path / "package.json").write_text('{"name":"x"}\n', encoding="utf-8")
     executor = OrchestrationStageExecutor(tmp_path)
@@ -1026,6 +1054,7 @@ async def test_run_director_stage_materialization_quality_settle_forwards_tsc_di
         artifact_quality_errors: list[str],
         task_id: str | None = None,
         execution_attempt: Any = None,
+        repair_task: Any = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         del run_id, task_id, execution_attempt
         captured["errors"] = list(artifact_quality_errors)
@@ -1038,8 +1067,8 @@ async def test_run_director_stage_materialization_quality_settle_forwards_tsc_di
     with (
         patch.object(
             executor,
-            "_claim_director_stage_materialization_settle_attempt",
-            return_value=("x", 1, fake_attempt),
+            "_claim_workspace_quality_repair_attempt",
+            return_value=("TASK-1", 1, fake_attempt, canonical_settle_owner),
         ),
         patch.object(executor, "_apply_workspace_quality_repairs", side_effect=_fake_apply),
         patch.object(
@@ -1109,7 +1138,7 @@ def test_partition_allows_smoke_test_when_main_ts_repairs_conflict() -> None:
     assert "deterministic_typescript_json_as_source_repair" in all_paths
 
 
-def test_director_stage_materialization_settle_commit_context_builds_job_token(
+def test_director_stage_materialization_cannot_build_token_without_ce_owner(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "package.json").write_text(
@@ -1120,21 +1149,12 @@ def test_director_stage_materialization_settle_commit_context_builds_job_token(
     executor = OrchestrationStageExecutor(tmp_path)
     run = _run(tmp_path)
 
-    context = executor._director_stage_materialization_settle_commit_context(
-        run=run,
-        run_id=run.id,
-        diagnostics=[],
-    )
-    job_token = context["job_token"]
-    assert job_token["capability_audit"]["ok"] is True
-    assert len(job_token["execution_envelope_hash"]) == 64
-    assert job_token["execution_envelope_hash"] == context["execution_envelope"]["envelope_hash"]
-    assert context["execution_envelope"]["authorization"]["capability_token_ref"] == job_token["token_id"]
-    assert "package.json" in context["allowed_paths"]
-    assert "tests/verify.test.ts" in context["allowed_paths"]
-    # R185/M03: deferred DEO commit must accept the settle context (not skip silently).
-    assert str(context.get("capability_token_hash") or "").strip()
-    assert context["execution_envelope"]["authorization"]["capability_token_hash"] == context["capability_token_hash"]
+    with pytest.raises(ValueError, match="repair_owner_authority_required"):
+        executor._director_stage_materialization_settle_commit_context(
+            run=run,
+            run_id=run.id,
+            diagnostics=[],
+        )
 
 
 def test_materialization_settle_scope_includes_plannable_derived_targets(tmp_path: Path) -> None:
@@ -1164,10 +1184,10 @@ def test_materialization_settle_scope_includes_plannable_derived_targets(tmp_pat
     assert "forbidden.txt" not in targets
 
 
-def test_materialization_settle_context_binds_candidate_local_typed_repair_targets(
+def test_typed_repair_plan_cannot_create_owner_authority(
     tmp_path: Path,
 ) -> None:
-    """r40: a typed C++ repair plan must extend only its own DEO JobToken scope."""
+    """Typed planner paths remain proposals, not CE write authority."""
 
     (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\n", encoding="utf-8")
     executor = OrchestrationStageExecutor(tmp_path)
@@ -1191,19 +1211,15 @@ def test_materialization_settle_context_binds_candidate_local_typed_repair_targe
         },
     }
 
-    context = executor._director_stage_materialization_settle_commit_context(
-        run=run,
-        run_id=run.id,
-        diagnostics=[],
-        deferred_tool_results=[candidate],
-    )
-
-    assert "include/cipher/diary.hpp" in context["allowed_write_paths"]
-    assert "src/diary.cpp" in context["allowed_write_paths"]
-    assert "../outside.cpp" not in context["allowed_write_paths"]
-    assert ".polaris/runtime/ledger.json" not in context["allowed_write_paths"]
-    assert "polaris/runtime/ledger.json" not in context["allowed_write_paths"]
-    assert context["job_token"]["allowed_write_paths"] == context["allowed_write_paths"]
+    with pytest.raises(ValueError, match="repair_owner_authority_required"):
+        executor._director_stage_materialization_settle_commit_context(
+            run=run,
+            run_id=run.id,
+            diagnostics=[],
+            deferred_tool_results=[candidate],
+        )
+    assert not (tmp_path / "include/cipher/diary.hpp").exists()
+    assert not (tmp_path / "src/diary.cpp").exists()
 
 
 def test_collect_director_stage_materialization_diagnostics_parses_tsc_stderr(

@@ -63,7 +63,9 @@ from ..task_scope_paths import (
     _task_text_blob,
     _workspace_path_exists_case_insensitive,
 )
+from ._boundary_and_verify import _repair_task_with_admitted_write_scope, _task_admitted_write_envelope
 from ._package_ns import package_attr
+from ._prompt_and_targets import _manifest_causal_quality_repair_targets, _resolve_quality_error_module_target
 
 # Cross-module symbols (defined in sibling submodules). Bare annotations
 # satisfy mypy; package __init__._wire_cross_module_namespace injects
@@ -447,6 +449,7 @@ async def _run_materialization_quality_repair_retry(
             workspace=workspace_full,
         )
         context = promoted_context
+    task = _repair_task_with_admitted_write_scope(task, context)
     cache_root_full = _quality_repair_cache_root(task, context)
     repair_quality_errors = _tool_receipt_safe_quality_errors(artifact_quality_errors)
     deferred_scope_context: dict[str, Any] = {}
@@ -455,12 +458,29 @@ async def _run_materialization_quality_repair_retry(
         task=task,
         context=deferred_scope_context,
     )
+    missing_scope_input_errors = list(repair_quality_errors)
+    owned_importer_errors: set[str] = set()
+    owned_importer_target_files: list[str] = []
+    if _task_admitted_write_envelope(task) is not None:
+        for error in missing_scope_input_errors:
+            match = _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE.search(error) or _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.search(
+                error
+            )
+            importer_targets = (
+                _partition_paths_by_task_write_scope([match.group("path")], task=task)[0] if match else []
+            )
+            if importer_targets:
+                # Defer creation of an external exporter, not correction of its owned importer.
+                owned_importer_errors.add(error)
+                owned_importer_target_files.extend(importer_targets)
     repair_quality_errors = _filter_missing_workspace_file_errors_to_task_write_scope(
         repair_quality_errors,
         task=task,
         workspace_full=workspace_full,
         context=deferred_scope_context,
     )
+    retained_errors = set(repair_quality_errors) | owned_importer_errors
+    repair_quality_errors = [error for error in missing_scope_input_errors if error in retained_errors]
     deferred_scope_records = deferred_scope_context.get("director_task_boundary_deferred_quality_errors")
     deferred_scope_targets: list[str] = []
     deferred_scope_reasons: list[str] = []
@@ -591,6 +611,11 @@ async def _run_materialization_quality_repair_retry(
                 repair_quality_errors,
                 workspace_root,
             )
+    rust_behavior_producer_targets = _rust_test_behavior_repair_target_files(
+        artifact_quality_errors=repair_quality_errors,
+        changed_files=changed_files,
+        workspace_full=workspace_full,
+    )
     explicit_quality_target_files = _dedupe_preserve_order(
         [
             *_explicit_artifact_quality_repair_target_files(
@@ -602,11 +627,7 @@ async def _run_materialization_quality_repair_retry(
                 artifact_quality_errors=repair_quality_errors,
                 workspace_full=workspace_full,
             ),
-            *_rust_test_behavior_repair_target_files(
-                artifact_quality_errors=repair_quality_errors,
-                changed_files=changed_files,
-                workspace_full=workspace_full,
-            ),
+            *rust_behavior_producer_targets,
         ]
     )
     explicit_missing_quality_targets = _dedupe_preserve_order(
@@ -646,6 +667,7 @@ async def _run_materialization_quality_repair_retry(
         explicit_quality_target_files=explicit_quality_target_files,
         should_merge_missing_targets=should_merge_missing_targets,
     )
+    repair_target_candidates = _dedupe_preserve_order([*owned_importer_target_files, *repair_target_candidates])
     rotate_repair_targets = bool(
         len(repair_target_candidates) > 1
         and (semantic_quality_target_files or explicit_quality_target_files)
@@ -687,6 +709,94 @@ async def _run_materialization_quality_repair_retry(
             ][:4]
         causal_reanalysis_required = bool(factory_quality.get("causal_reanalysis_required"))
     factory_forced_targets_refreshed = False
+    from polaris.cells.roles.adapters.internal.director.quality_gate._language_targets import (
+        _cpp_undeclared_type_declaration_target_files,
+    )
+
+    # An existing declaration home is causal producer evidence, not a grant
+    # from the context's target inventory. Reuse the same declaration resolver
+    # that the later owner-bound gate uses, before unrelated retry widening.
+    cpp_declaration_homes: list[str] = []
+    if workspace_full:
+        workspace_root = Path(workspace_full)
+        if workspace_root.is_dir():
+            for item in repair_quality_errors:
+                cpp_declaration_homes.extend(_cpp_undeclared_type_declaration_target_files(item, workspace_root))
+    cpp_declaration_homes = _dedupe_preserve_order(cpp_declaration_homes)
+    direct_compiler_sites = [
+        match.group("path")
+        for error in repair_quality_errors
+        for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(error)
+        if re.match(r":\d+:\d+(?=:|\s|$)", error[match.end() :])
+    ]
+    independent_runtime_targets: list[str] = []
+    if explicit_missing_quality_targets:
+        for error in repair_quality_errors:
+            error_missing_targets = [
+                *_parse_missing_declared_target_files([error]),
+                *_missing_unresolved_relative_import_target_files([error], workspace_full),
+                *_missing_workspace_file_quality_repair_target_files(
+                    artifact_quality_errors=[error], workspace_full=workspace_full
+                ),
+                *_missing_python_module_alias_repair_target_files(
+                    artifact_quality_errors=[error], workspace_full=workspace_full
+                ),
+            ]
+            if error_missing_targets:
+                continue
+            for resolver in (
+                _python_runtime_smoke_repair_target_files,
+                _javascript_runtime_smoke_repair_target_files,
+                _go_runtime_smoke_repair_target_files,
+            ):
+                independent_runtime_targets.extend(
+                    resolver(artifact_quality_errors=[error], changed_files=[], workspace_full=workspace_full)
+                )
+    causal_in_scope_candidates, _ = _partition_paths_by_task_write_scope(
+        _dedupe_preserve_order(
+            [
+                *(in_scope_repair_target_files if not explicit_missing_quality_targets else []),
+                *owned_importer_target_files,
+                *direct_compiler_sites,
+                *semantic_quality_target_files,
+                *explicit_missing_quality_targets,
+                *cpp_declaration_homes,
+                *rust_behavior_producer_targets,
+                *independent_runtime_targets,
+            ]
+        ),
+        task=task,
+    )
+    if out_of_scope_repair_target_files and not causal_in_scope_candidates:
+        # A retry may widen an already-owned cause to same-owner producers.
+        # It cannot replace a foreign cause with this task's unrelated file
+        # inventory or the test that merely observed that cause. A Factory
+        # hint alone proves neither a producer nor a rebind: the actual owned
+        # declaration/semantic evidence above must qualify its causal route.
+        task_scope_filter_evidence = _task_boundary_scope_filter_evidence(
+            task,
+            target_files=out_of_scope_repair_target_files,
+            reason="quality_repair_targets_outside_current_task_target_files",
+            workspace=workspace_full,
+            cache_root=cache_root_full,
+        )
+        return [], {
+            "stage": "task_boundary_repair_targets_deferred",
+            "attempted": True,
+            "attempt": repair_attempt,
+            "success": False,
+            "success_reason": "repair_targets_outside_current_task_target_files",
+            "tool_results": 0,
+            "write_tool_evidence": False,
+            "missing_target_files": missing_target_files[:12],
+            "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+            "semantic_quality_target_files": semantic_quality_target_files[:12],
+            "explicit_quality_target_files": explicit_quality_target_files[:12],
+            "repair_target_files": [],
+            "rotated_repair_targets": rotate_repair_targets,
+            "task_boundary_scope_filter": task_scope_filter_evidence,
+            "llm_fallback_blocked": True,
+        }
     if factory_forced_targets or repair_attempt >= 2:
         # Repeat attempt for a residual the narrow diagnostic batch failed to
         # resolve: widen authorization to the claimed task's own materialized
@@ -730,13 +840,28 @@ async def _run_materialization_quality_repair_retry(
                     task=task,
                 )
                 precise_cpp_header_sites = [
-                    path
-                    for path in in_scope_cpp_sites
-                    if Path(path).suffix.lower() in {".h", ".hh", ".hpp", ".hxx"}
+                    path for path in in_scope_cpp_sites if Path(path).suffix.lower() in {".h", ".hh", ".hpp", ".hxx"}
                 ]
             forced_target_set = set(factory_forced_targets)
             current_candidate_set = set(current_in_scope_candidates)
-            if precise_cpp_header_sites and forced_target_set.isdisjoint(precise_cpp_header_sites):
+            manifest_targets, _ = _manifest_causal_quality_repair_targets(
+                artifact_quality_errors=repair_quality_errors,
+                workspace_full=workspace_full,
+            )
+            admitted_manifests, _ = _partition_paths_by_task_write_scope(manifest_targets, task=task)
+            if (
+                _task_admitted_write_envelope(task) is not None
+                and len(manifest_targets) > 1
+                and set(admitted_manifests) == set(manifest_targets)
+                and forced_target_set.issubset(set(manifest_targets))
+                and set(manifest_targets).issubset(current_candidate_set)
+            ):
+                # A claim hint selects the owner, not a single-file repair
+                # contract. Preserve the proven compiler/script pair only
+                # when every member is already admitted to this exact task.
+                widened_candidates = admitted_manifests
+                factory_forced_targets_refreshed = forced_target_set != set(admitted_manifests)
+            elif precise_cpp_header_sites and forced_target_set.isdisjoint(precise_cpp_header_sites):
                 # Live L3-24 r34: Factory retained src/diary.cpp from an
                 # earlier residual while the current GCC diagnostic pointed
                 # precisely at an owned header. ``### FAILING_TUS`` kept the
@@ -840,7 +965,7 @@ async def _run_materialization_quality_repair_retry(
         ]
         if out_of_scope_exporter_owner_targets:
             in_scope_exporters, _ = _partition_paths_by_task_write_scope(
-                _unresolved_import_exporter_paths(repair_quality_errors),
+                _unresolved_import_exporter_paths(repair_quality_errors, workspace_full=workspace_full),
                 task=task,
             )
             task_boundary_discrepancy_evidence = _semantic_exporter_scope_discrepancy_evidence(
@@ -874,23 +999,13 @@ async def _run_materialization_quality_repair_retry(
             repair_quality_errors = _filter_unresolved_import_errors_to_task_write_scope(
                 repair_quality_errors,
                 task=task,
+                workspace_full=workspace_full,
             )
         repair_target_files = in_scope_repair_target_files
-    from polaris.cells.roles.adapters.internal.director.quality_gate._language_targets import (
-        _cpp_undeclared_type_declaration_target_files,
-    )
-
     # Declaration homes are derived from the diagnostic text, not from the
     # current authorized batch. Live L1-06: factory_forced repair_target_files
     # listed only generator.cpp (the g++ use site), so moon.hpp never entered
     # out_of_scope and source-core kept inventing Moon.status / Moon.error.
-    cpp_declaration_homes: list[str] = []
-    if workspace_full:
-        workspace_root = Path(workspace_full)
-        if workspace_root.is_dir():
-            for item in repair_quality_errors:
-                cpp_declaration_homes.extend(_cpp_undeclared_type_declaration_target_files(item, workspace_root))
-    cpp_declaration_homes = _dedupe_preserve_order(cpp_declaration_homes)
     in_scope_set = set(in_scope_repair_target_files)
     anchor_files = set(_compiler_diagnostic_anchor_files(repair_quality_errors))
     primary_anchor_files = _primary_compiler_diagnostic_anchor_files(repair_quality_errors)
@@ -902,9 +1017,7 @@ async def _run_materialization_quality_repair_retry(
         if path.startswith("tests/") or "/tests/" in path or Path(path).name.endswith("_test.rs")
     ]
     in_scope_explicit_source_targets = [
-        path
-        for path in explicit_quality_target_files
-        if path in in_scope_set and path not in set(test_primary_anchors)
+        path for path in explicit_quality_target_files if path in in_scope_set and path not in set(test_primary_anchors)
     ]
     if (
         test_primary_anchors
@@ -951,9 +1064,7 @@ async def _run_materialization_quality_repair_retry(
         in_scope_repair_target_files,
     )
     should_bind_declaration_home = bool(
-        unbound_homes
-        and (owns_diagnostic_anchor or not in_scope_repair_target_files)
-        and not owner_local_cpp_files
+        unbound_homes and (owns_diagnostic_anchor or not in_scope_repair_target_files) and not owner_local_cpp_files
     )
     if should_bind_declaration_home:
         task_local_homes, externally_owned_homes = _partition_paths_by_task_write_scope(
@@ -968,9 +1079,9 @@ async def _run_materialization_quality_repair_retry(
             # latter was handed from TASK-1 back to TASK-1 for three no-op
             # rounds.  Admit same-task declaration homes to this repair batch;
             # retain fail-closed deferral only for genuinely external owners.
-            in_scope_repair_target_files = _dedupe_preserve_order(
-                [*task_local_homes, *in_scope_repair_target_files]
-            )[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT]
+            in_scope_repair_target_files = _dedupe_preserve_order([*task_local_homes, *in_scope_repair_target_files])[
+                :_QUALITY_REPAIR_TARGET_BATCH_LIMIT
+            ]
             repair_target_files = list(in_scope_repair_target_files)
             in_scope_set = set(in_scope_repair_target_files)
         unbound_homes = list(externally_owned_homes)
@@ -1008,6 +1119,19 @@ async def _run_materialization_quality_repair_retry(
             "task_boundary_scope_filter": task_scope_filter_evidence,
             "llm_fallback_blocked": True,
         }
+    if _task_admitted_write_envelope(task) is not None:
+        # Legacy language-specific candidate admission is guidance, not a new capability.
+        repair_target_files, deferred_targets = _partition_paths_by_task_write_scope(repair_target_files, task=task)
+        if deferred_targets:
+            task_scope_filter_evidence = _task_boundary_scope_filter_evidence(
+                task,
+                target_files=_dedupe_preserve_order(
+                    [*list(task_scope_filter_evidence.get("out_of_scope_repair_target_files", [])), *deferred_targets]
+                ),
+                reason="quality_repair_targets_outside_current_task_target_files",
+                workspace=workspace_full,
+                cache_root=cache_root_full,
+            )
     if task_scope_filter_evidence and not repair_target_files:
         return [], {
             "stage": "task_boundary_repair_targets_deferred",
@@ -1140,6 +1264,7 @@ async def _run_materialization_quality_repair_retry(
             context=context,
             evidence=task_boundary_discrepancy_evidence,
         ):
+            summary["task_boundary_director_continuation_allowed"] = True
             summary["task_boundary_interface_discrepancy_retry_authorized"] = True
             summary["interface_discrepancy_evidence"] = task_boundary_discrepancy_evidence
         else:
@@ -1160,6 +1285,7 @@ async def _run_materialization_quality_repair_retry(
                     "rotated_repair_targets": rotate_repair_targets,
                     "interface_discrepancy_evidence": task_boundary_discrepancy_evidence,
                     "llm_fallback_blocked": True,
+                    "task_boundary_director_continuation_allowed": False,
                 }
             )
             return deterministic_quality_tool_results, summary
@@ -1723,11 +1849,22 @@ def _quality_repair_deadline_decision(context: dict[str, Any], requested_timeout
 
 
 def _materialization_plan_probe_requires_task_boundary_triage(summary: dict[str, Any]) -> bool:
-    if bool(summary.get("task_boundary_director_continuation_allowed")):
-        return False
     plan_probe = summary.get("plan_probe_preaudit")
     if not isinstance(plan_probe, dict):
         return False
+    if bool(summary.get("task_boundary_director_continuation_allowed")):
+        # Ordinary import-path/symbol adaptation retains its existing local
+        # continuation. A runtime-classified missing-export contract gap must
+        # still pass the explicit interface retry authorization below.
+        missing_export_discrepancy = any(
+            "missing_export" in str(source_tool or "")
+            for source_tool in plan_probe.get("covered_unplannable_source_tools") or []
+        )
+        if not (
+            summary.get("task_boundary_continuation_reason") == "current_task_unresolved_import"
+            and missing_export_discrepancy
+        ):
+            return False
     if str(plan_probe.get("status") or "") != "coverage_matched_but_unplannable":
         return False
     if bool(plan_probe.get("plannable_source_tools")):
@@ -1781,6 +1918,7 @@ def _annotate_current_task_missing_target_continuation(
         task=task,
         artifact_quality_errors=artifact_quality_errors,
         artifact_quality_issues=artifact_quality_issues,
+        workspace_full=workspace,
     )
 
 
@@ -1795,6 +1933,8 @@ def _python_module_specifier_to_paths(module: str) -> list[str]:
 
 def _unresolved_import_exporter_paths(
     artifact_quality_errors: list[str],
+    *,
+    workspace_full: str = "",
 ) -> list[str]:
     """Return only ``from``-module paths for unresolved-import diagnostics."""
 
@@ -1802,6 +1942,19 @@ def _unresolved_import_exporter_paths(
     for error in artifact_quality_errors:
         match = _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.search(str(error or ""))
         if not match:
+            continue
+        if Path(match.group("path")).suffix.lower() in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"}:
+            # This shared resolver's non-relative branch is Python-only.
+            # Unsupported bare JS packages must remain unresolved, even if
+            # an unrelated same-named Python file exists in the workspace.
+            if workspace_full and match.group("module").startswith(("./", "../")):
+                target = _resolve_quality_error_module_target(
+                    importer_rel=match.group("path"),
+                    module_ref=match.group("module"),
+                    workspace_root=Path(workspace_full),
+                )
+                if target:
+                    paths.append(target)
             continue
         for raw in _python_module_specifier_to_paths(match.group("module")):
             normalized = _normalize_declared_task_path(raw)
@@ -1815,6 +1968,7 @@ def _filter_unresolved_import_errors_to_task_write_scope(
     *,
     task: dict[str, Any],
     workspace_name: str = "",
+    workspace_full: str = "",
 ) -> list[str]:
     """Keep unresolved-import errors that touch the current write-scope.
 
@@ -1836,7 +1990,7 @@ def _filter_unresolved_import_errors_to_task_write_scope(
             continue
         related_paths = [
             _normalize_declared_task_path(match.group("path")),
-            *_python_module_specifier_to_paths(match.group("module")),
+            *_unresolved_import_exporter_paths([text], workspace_full=workspace_full),
         ]
         in_scope, _out = _partition_paths_by_task_write_scope(
             [path for path in related_paths if path],
@@ -1851,6 +2005,8 @@ def _filter_unresolved_import_errors_to_task_write_scope(
 def _unresolved_import_importer_paths(
     artifact_quality_errors: list[str],
     artifact_quality_issues: tuple[dict[str, Any], ...] = (),
+    *,
+    workspace_full: str = "",
 ) -> list[str]:
     """Return importer and exporter-module paths from unresolved-import diagnostics.
 
@@ -1866,7 +2022,10 @@ def _unresolved_import_importer_paths(
         match = _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.search(str(error or ""))
         if not match:
             continue
-        for raw in (match.group("path"), *_python_module_specifier_to_paths(match.group("module"))):
+        for raw in (
+            match.group("path"),
+            *_unresolved_import_exporter_paths([error], workspace_full=workspace_full),
+        ):
             normalized = _normalize_declared_task_path(raw)
             if normalized:
                 paths.append(normalized)
@@ -1888,7 +2047,11 @@ def _unresolved_import_importer_paths(
                 continue
             text = str(raw or "").strip()
             candidates = [text]
-            if "." in text and "/" not in text and not text.endswith((".py", ".pyi")):
+            if (
+                "." in text
+                and "/" not in text
+                and not text.endswith((".py", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"))
+            ):
                 candidates = _python_module_specifier_to_paths(text)
             for candidate in candidates:
                 normalized = _normalize_declared_task_path(candidate)
@@ -1903,6 +2066,7 @@ def _annotate_current_task_unresolved_import_continuation(
     task: dict[str, Any],
     artifact_quality_errors: list[str],
     artifact_quality_issues: tuple[dict[str, Any], ...] = (),
+    workspace_full: str = "",
 ) -> dict[str, Any]:
     """Keep same-Director repair when the importer is in the current write scope.
 
@@ -1915,7 +2079,9 @@ def _annotate_current_task_unresolved_import_continuation(
 
     if not _materialization_plan_probe_requires_task_boundary_triage(summary):
         return summary
-    importer_paths = _unresolved_import_importer_paths(artifact_quality_errors, artifact_quality_issues)
+    importer_paths = _unresolved_import_importer_paths(
+        artifact_quality_errors, artifact_quality_issues, workspace_full=workspace_full
+    )
     in_scope_importers, out_of_scope_importers = _partition_paths_by_task_write_scope(importer_paths, task=task)
     if not in_scope_importers:
         return summary

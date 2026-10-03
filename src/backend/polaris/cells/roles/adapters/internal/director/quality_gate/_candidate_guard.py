@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
 
 def _hash_text(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -29,22 +31,21 @@ def _safe_target(workspace: Path, relative_path: str) -> tuple[str, Path]:
     return normalized, target
 
 
-def _read_optional_text(path: Path) -> str | None:
+def _read_optional_text(filesystem: KernelFileSystem, path: Path) -> str | None:
     try:
-        return path.read_text(encoding="utf-8")
+        return filesystem.workspace_read_text(str(path), encoding="utf-8")
     except FileNotFoundError:
         return None
 
 
-def _restore_optional_text(path: Path, content: str | None) -> None:
+def _restore_optional_text(filesystem: KernelFileSystem, path: Path, content: str | None) -> None:
     if content is None:
-        if path.exists():
-            if not path.is_file():
+        if filesystem.workspace_exists(str(path)):
+            if not filesystem.workspace_is_file(str(path)):
                 raise OSError(f"rollback target is not a file: {path}")
-            path.unlink()
+            filesystem.workspace_remove(str(path), missing_ok=False)
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    filesystem.workspace_write_text(str(path), content, encoding="utf-8")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,9 +64,11 @@ class DirectorQualityRepairCandidateGuard:
         *,
         candidate_id: str,
         snapshots: tuple[_CandidateFileSnapshot, ...],
+        filesystem: KernelFileSystem,
     ) -> None:
         self._candidate_id = str(candidate_id or "").strip()
         self._snapshots = snapshots
+        self._filesystem = filesystem
         self._after_sha256: dict[str, str | None] | None = None
         self._closed = False
 
@@ -78,6 +81,7 @@ class DirectorQualityRepairCandidateGuard:
         target_files: list[str] | tuple[str, ...],
     ) -> DirectorQualityRepairCandidateGuard:
         root = Path(workspace).resolve()
+        filesystem = KernelFileSystem(str(root), get_default_adapter())
         seen: set[str] = set()
         snapshots: list[_CandidateFileSnapshot] = []
         for raw_path in target_files:
@@ -85,9 +89,10 @@ class DirectorQualityRepairCandidateGuard:
             if relative_path in seen:
                 continue
             seen.add(relative_path)
-            if target.exists() and not target.is_file():
+            target = filesystem.resolve_workspace_path(relative_path)
+            if filesystem.workspace_exists(str(target)) and not filesystem.workspace_is_file(str(target)):
                 raise ValueError(f"candidate snapshot target is not a file: {relative_path}")
-            content = await asyncio.to_thread(_read_optional_text, target)
+            content = await asyncio.to_thread(_read_optional_text, filesystem, target)
             snapshots.append(
                 _CandidateFileSnapshot(
                     relative_path=relative_path,
@@ -98,14 +103,14 @@ class DirectorQualityRepairCandidateGuard:
             )
         if not snapshots:
             raise ValueError("candidate snapshot requires at least one authorized target")
-        return cls(candidate_id=candidate_id, snapshots=tuple(snapshots))
+        return cls(candidate_id=candidate_id, snapshots=tuple(snapshots), filesystem=filesystem)
 
     async def seal_effect(self) -> dict[str, Any]:
         if self._closed:
             return self._receipt(status="closed", reason="candidate_guard_already_closed")
         after: dict[str, str | None] = {}
         for snapshot in self._snapshots:
-            content = await asyncio.to_thread(_read_optional_text, snapshot.path)
+            content = await asyncio.to_thread(_read_optional_text, self._filesystem, snapshot.path)
             after[snapshot.relative_path] = _hash_text(content) if content is not None else None
         self._after_sha256 = after
         return self._receipt(status="sealed", reason="candidate_effect_hashes_captured")
@@ -130,7 +135,7 @@ class DirectorQualityRepairCandidateGuard:
         ]
         drifted: list[str] = []
         for snapshot in affected:
-            content = await asyncio.to_thread(_read_optional_text, snapshot.path)
+            content = await asyncio.to_thread(_read_optional_text, self._filesystem, snapshot.path)
             current_hash = _hash_text(content) if content is not None else None
             if current_hash != self._after_sha256.get(snapshot.relative_path):
                 drifted.append(snapshot.relative_path)
@@ -148,10 +153,11 @@ class DirectorQualityRepairCandidateGuard:
             try:
                 await asyncio.to_thread(
                     _restore_optional_text,
+                    self._filesystem,
                     snapshot.path,
                     snapshot.before_content,
                 )
-                restored_content = await asyncio.to_thread(_read_optional_text, snapshot.path)
+                restored_content = await asyncio.to_thread(_read_optional_text, self._filesystem, snapshot.path)
                 restored_hash = _hash_text(restored_content) if restored_content is not None else None
                 if restored_hash != snapshot.before_sha256:
                     failed.append(snapshot.relative_path)
@@ -182,9 +188,7 @@ class DirectorQualityRepairCandidateGuard:
             "status": status,
             "reason": str(reason or "").strip(),
             "target_files": [snapshot.relative_path for snapshot in self._snapshots],
-            "before_sha256": {
-                snapshot.relative_path: snapshot.before_sha256 for snapshot in self._snapshots
-            },
+            "before_sha256": {snapshot.relative_path: snapshot.before_sha256 for snapshot in self._snapshots},
             "after_sha256": dict(self._after_sha256 or {}),
             "affected_files": [
                 snapshot.relative_path

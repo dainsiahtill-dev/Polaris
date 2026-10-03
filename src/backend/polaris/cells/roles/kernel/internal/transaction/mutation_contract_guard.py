@@ -32,7 +32,7 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryMode,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import extract_latest_user_message
+from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import extract_task_instruction
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import TurnDecisionKind
 
@@ -58,7 +58,7 @@ async def apply_mutation_contract_guard(
     Returns the blocking retry result when the guard fires in strict/force-block
     mode, otherwise ``None`` to signal passthrough to the normal dispatch.
     """
-    latest_user_request = extract_latest_user_message(context)
+    latest_user_request = extract_task_instruction(context)
     # 统一 mutation 判断：delivery contract + intent hybrid 任一判定需要 mutation 即触发 guard
     requires_mutation_by_contract = ledger.delivery_contract.requires_mutation
     requires_mutation_by_intent = await requires_mutation_intent_hybrid(latest_user_request)

@@ -1,0 +1,59 @@
+id: owner-bound-settle-repair-20261003
+classification: structural
+owner_cells: [factory.pipeline, chief_engineer.blueprint, roles.adapters, runtime.execution_broker]
+status: local_verified_release_gates_running_fresh_pending
+evidence:
+  run_id: factory_7244a26d3ae3
+  dynamic_replay: CE-owned=false; candidate minted-write=true; capability-audit=true
+assumptions:
+  - Repair plan is not permission.
+  - A helper lease is not the original project's completion authority.
+pre_mortem:
+  - Validate same-run handoff and projection before deriving context.
+  - Preserve explicit denial and original capability bytes.
+  - Register effect bytes before successful terminal close.
+verification:
+  - Actual producer negatives for missing/foreign authority and paths.
+  - Original owner planning/commit/asset/settlement integration.
+  - Ruff, Mypy, affected suites and independent review.
+fresh_bench_verified: false
+automatic_owner_continuation:
+  status: local_component_verified_review_approved_fresh_pending
+  evidence_run: factory_ff98377f48fd
+  proven_boundary: TASK1_claim108_owned_effect_then_foreign_candidate_rejection
+  replay: readonly_bwrap_current_terminal_bytes_retained16_diagnostics
+  assumptions:
+    - Known foreign paths require canonical CE owner routing, never candidate grants.
+    - A new owner must receive a new claim and a fresh plan from current bytes.
+    - Preserved physical receipts do not prove required verifier success.
+  pre_mortem:
+    - Do not move an old candidate or hash under a new owner token.
+    - Do not suppress later owned candidates or erase earlier receipts.
+    - Do not bypass blocked dependencies to make the repair loop look successful.
+  verification:
+    - owned_foreign_owned continuation and real fresh-owner replanning
+    - unknown and ambiguous ownership rejection
+    - registration, boundary, heartbeat and cancellation remain strict
+    - independent review and current release before fresh isolated qualification
+  results:
+    main_component_suite: 110 passed in45.49s, exit0
+    adapter_empty_tool_surface_suite: 63 passed in7.93s, exit0
+    ruff_mypy: main Ruff4 and Mypy3 passed
+    independent_review: spec PASS, quality Approved, no Critical or Important finding
+    canonical_caller: rechecks TaskRuntime, TaskBoundary, verifier and ledger evidence
+    current_release: 12stages_exit0_354passed_1skipped_2warnings
+    fresh_project: r07_FAILED_at_CE_before_Director_176.6s
+local_results:
+  owner_stage_tests: 50 passed in2.67s
+  related_tests: 328 passed in88.06s
+  mypy: 4 production files passed
+  ruff_diff: passed
+  real_owner_read_only_replay: original token retained; native DEO capability admission accepts owned path; unowned mjs rejects
+independent_review:
+  important_fixed:
+    - Root admission omission; 2 RED to GREEN producer-boundary controls, not observed Bench exploit.
+    - Late candidate rejection skips prior artifact refresh; 2 RED to GREEN, real progress counts retained.
+  deferred_proof:
+    - Fresh qualified project completion.
+    - Physical command-only effects and full cancellation/drain matrix.
+    - Narrow admitted scope remains explicit binding conflict, not broadened authority.

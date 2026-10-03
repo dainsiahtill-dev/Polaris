@@ -1,11 +1,36 @@
 from __future__ import annotations
 
+import pytest
 from polaris.cells.director.tasking.internal.execution_contract import build_task_execution_contract
 from polaris.cells.director.tasking.internal.execution_envelope import build_execution_envelope
 from polaris.cells.director.tasking.public.contracts import (
     TaskExecutionProfileV1,
     TaskExecutionStrategyV1,
 )
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"job_token": {"token_id": "deny", "allowed_write_paths": []}},
+        {"allowed_write_paths": [], "job_token": {"token_id": "narrow", "allowed_write_paths": ["src/main.py"]}},
+    ],
+)
+def test_execution_envelope_does_not_replace_explicit_write_denial_with_inventory(metadata: dict) -> None:
+    profile = TaskExecutionProfileV1(task_type="implement", target_files=("src/main.py",), scope_paths=("src",))
+    strategy = TaskExecutionStrategyV1(target_files=profile.target_files, scope_paths=profile.scope_paths)
+    envelope = build_execution_envelope(
+        workspace="/workspace",
+        task_id="TASK-1",
+        run_id="run-1",
+        trace_id="trace-1",
+        profile=profile,
+        strategy=strategy,
+        contract=build_task_execution_contract(profile, strategy),
+        metadata=metadata,
+    )
+
+    assert envelope.to_dict()["authorization"]["allowed_write_paths"] == []
 
 
 def test_build_execution_envelope_binds_contracts_and_capability() -> None:

@@ -1,0 +1,36 @@
+{
+  "schema_version": "polaris.engineering_defect_record.v1",
+  "authoritative_platform_receipt": false,
+  "defect_id": "FINAL_TOOL_DIRECTIVE_NOT_BOUND_TO_REQUIREMENTS",
+  "status": "producer_guidance_locally_fixed_audit_blindspot_open",
+  "run_id": "factory_ff98377f48fd",
+  "context_snapshot_ref": "36d87236d2353f6486b2075e",
+  "evidence": {
+    "source": "provider_request.final_physical_request.body",
+    "native_tools": ["edit_file"],
+    "tool_choice": {"type": "tool", "name": "edit_file"},
+    "instruction": "TRUNCATED FILE DIRECTIVE required read_file and append_to_file while neither was offered",
+    "original_audit": {
+      "context_needs_review": false,
+      "findings": [],
+      "missing_required_tools": [],
+      "coverage_pass": true
+    },
+    "dynamic_probe": {
+      "current_producer": "roles.kernel.llm_caller.context_audit._tools._required_tool_names",
+      "messages_only_requirement": [],
+      "structured_required_tools_control": ["read_file", "append_to_file"],
+      "provider_calls": 0,
+      "physical_effects": 0
+    }
+  },
+  "root": "Required-tool discovery only consumes structured request context keys; the platform-generated natural-language directive was not bound to them. Evidence coverage alone does not establish instruction/tool consistency.",
+  "local_fix_already_verified": "Director incomplete-file producer now guides offered edit/tail replacement and conditional full-write rather than unoffered read/append. Existing required-target repair integrity tests cover this producer correction.",
+  "remaining": "Bind platform-authored repair actions to final tool surface and add an automatic contradiction finding; do not scan arbitrary quoted user/source text into permissions or require every alternative tool simultaneously.",
+  "next_action": "After stage owner continuation, TDD a general audit rule grounded in platform-authored instruction metadata and exact final provider request. Preserve role/tool authorization and avoid false positives for conditional alternatives.",
+  "limits": [
+    "No raw native response proof assigning the empty replacement to model versus normalization.",
+    "No fresh project completion was produced by this read-only audit.",
+    "Engineering report is not ContextOS, ReceiptStore, Run Ledger or Factory authority."
+  ]
+}

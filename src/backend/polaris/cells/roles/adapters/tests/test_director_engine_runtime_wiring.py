@@ -6,9 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
-from polaris.cells.roles.adapters.internal.director import adapter as adapter_module
-from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
+from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _core as adapter_core
 from polaris.cells.roles.adapters.internal.director.adapter_sequential import (
     execute_hybrid,
     execute_sequential,
@@ -55,7 +53,7 @@ async def test_adapter_sequential_supplies_bounded_canonical_runtime_caller(
         await call_role_llm_with_timeout("engine prompt", context=context)
         return {"success": True}
 
-    monkeypatch.setattr(adapter_module, "execute_sequential", fake_execute_sequential)
+    monkeypatch.setattr(adapter_core, "execute_sequential", fake_execute_sequential)
     fake_adapter = SimpleNamespace(
         workspace="/tmp/workspace",
         role_id="director",
@@ -156,9 +154,7 @@ async def test_sequential_message_and_llm_calls_share_exact_context(
     assert result["success"] is True
     assert observed["initial_message"] == "trusted parent artifact body"
     assert observed["provider_message"] == "follow-up"
-    assert observed["provider_context"]["actual_sibling_exports"] == {
-        "schema_version": "trusted-v2"
-    }
+    assert observed["provider_context"]["actual_sibling_exports"] == {"schema_version": "trusted-v2"}
     assert observed["builder_context"] is context
 
 
@@ -235,7 +231,5 @@ async def test_hybrid_uses_canonical_caller_and_full_director_message(
     assert observed["task"] == "trusted full Director message"
     assert observed["engine_task"] == "trusted full Director message"
     assert observed["provider_message"] == "hybrid follow-up"
-    assert observed["provider_context"]["actual_sibling_exports"] == {
-        "schema_version": "trusted-v2"
-    }
+    assert observed["provider_context"]["actual_sibling_exports"] == {"schema_version": "trusted-v2"}
     assert observed["builder_context"] is context

@@ -107,7 +107,7 @@ class TestContextOverflowGuard:
                 return_value=(messages, 150),  # Still exceeds 100 limit
             ):
                 request = TurnEngineContextRequest(
-                    message="test",
+                    message=large_content,
                     history=(),
                     task_id=None,
                     strategy_receipt=None,
@@ -158,9 +158,17 @@ class TestContextOverflowGuard:
                 context_os_snapshot=None,
             )
 
-            # Mock token estimation and compression at their owning collaborators.
+            # Mock historical overflow, but use the real individual current-turn
+            # estimate so the fixture does not fabricate an unfit instruction.
+            real_estimate = gateway._token_estimator.estimate
             with (
-                patch.object(gateway._token_estimator, "estimate", side_effect=[2000, 2000, 2000]),
+                patch.object(
+                    gateway._token_estimator,
+                    "estimate",
+                    side_effect=lambda items: (
+                        real_estimate(items) if items == [{"role": "user", "content": "test"}] else 2000
+                    ),
+                ),
                 patch.object(
                     gateway._compression_engine,
                     "apply_compression",
@@ -170,6 +178,7 @@ class TestContextOverflowGuard:
                 # Should NOT raise, compression should work
                 result = await gateway.build_context(request)
                 assert result.token_estimate <= 500
+                assert result.messages[-1] == {"role": "user", "content": "test"}
 
         finally:
             ModelCatalog._resolve_context_window = _resolve_ctx
@@ -218,9 +227,17 @@ class TestContextOverflowGuard:
                 context_os_snapshot=None,
             )
 
-            # Mock owner collaborators to simulate overflow and recovery.
+            # Simulate overflow in historical context, not in the short current
+            # instruction which must remain intact across emergency recovery.
+            real_estimate = gateway._token_estimator.estimate
             with (
-                patch.object(gateway._token_estimator, "estimate", return_value=1000),
+                patch.object(
+                    gateway._token_estimator,
+                    "estimate",
+                    side_effect=lambda items: (
+                        real_estimate(items) if items == [{"role": "user", "content": "test"}] else 1000
+                    ),
+                ),
                 patch.object(
                     gateway._compression_engine,
                     "apply_compression",
@@ -238,6 +255,7 @@ class TestContextOverflowGuard:
                 # Verify result is returned (emergency fallback worked)
                 assert result is not None
                 assert len(result.messages) >= 1
+                assert result.messages[-1] == {"role": "user", "content": "test"}
 
         finally:
             ModelCatalog._resolve_context_window = _resolve_ctx

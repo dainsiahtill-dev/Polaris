@@ -42,8 +42,10 @@ directly.
    Missing receipt and present failed receipt remain distinct.
 8. The broker reports physical effects only. It never emits a final project
    completion verdict; generic `audit.evidence` is a mirror, not authority.
-9. Receipt provenance lives under platform-owned KernelOne storage, never the
-   target workspace. Events are append-only and HMAC chained; query validates
+9. Receipt provenance lives under platform-owned KernelOne metadata storage
+   (`<workspace>/.polaris/runtime` by default), never the bare business root.
+   Path policy and verifier isolation hide it from target code; external storage
+   requires explicit opt-in. Events are append-only and HMAC chained; query validates
    the full effect kind, request identity, receipt body, and content hash.
 10. A physical verifier attempt requires an atomically consumed one-use
     capability. The capability, launch metadata, and receipt bind the attempt
@@ -76,4 +78,9 @@ directly.
 15. Long-lived entrypoints use a fenced process-liveness readiness probe. A
     ready PID/start-token pair is terminated by its owning broker and the probe,
     identity, and controlled-termination facts are sealed into the receipt;
-    ordinary timeout alone is never entrypoint success.
+   ordinary timeout alone is never entrypoint success.
+16. `QueryProjectArtifactSourceBaselineV1` reads authenticated historical source
+    provenance matching current CE identity and bytes. Its separate private-sealed
+    result cannot authorize writes, verification or project completion. Epoch
+    changes still invalidate current receipts; baseline reads never reseal one
+    and never initialize absent runtime/database/key state.

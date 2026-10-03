@@ -349,7 +349,7 @@ async def test_cache_hit_early_return(monkeypatch: pytest.MonkeyPatch) -> None:
             raise AssertionError("put must not run on a cache hit path")
 
     monkeypatch.setattr(
-        "polaris.cells.roles.kernel.internal.llm_caller.invoker.get_global_llm_cache",
+        "polaris.cells.roles.kernel.internal.llm_caller.invoker._call.get_global_llm_cache",
         lambda: _CacheHit(),
     )
     executor = _ScriptedExecutor([])  # must not be invoked
@@ -392,7 +392,7 @@ async def test_cache_put_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
             put_calls.append(dict(kwargs))
 
     monkeypatch.setattr(
-        "polaris.cells.roles.kernel.internal.llm_caller.invoker.get_global_llm_cache",
+        "polaris.cells.roles.kernel.internal.llm_caller.invoker._call.get_global_llm_cache",
         lambda: _CacheMiss(),
     )
     executor = _ScriptedExecutor([AIResponse(ok=True, output="fresh-output", raw={"model": "m", "provider": "p"})])
@@ -506,7 +506,15 @@ async def test_call_end_tool_count_uses_run_ledger_envelope_projection(monkeypat
     rec = _EventRecorder()
     rec.install(monkeypatch)
     profile = _profile(provider_id="openai", model="gpt-test")
-    prepared = _prepared(profile)
+    prepared = _prepared(
+        profile,
+        native_tool_mode="native_tools",
+        native_tool_schemas=[
+            {"type": "function", "function": {"name": name, "parameters": {"type": "object", "properties": {}}}}
+            for name in ("read_file", "repo_rg")
+        ],
+    )
+    prepared.ai_request.options["tools"] = list(prepared.native_tool_schemas)
     _patch_prepare(monkeypatch, prepared)
     executor = _ScriptedExecutor(
         [
@@ -1065,7 +1073,7 @@ async def test_structured_native_response_format_success(monkeypatch: pytest.Mon
     executor = _ScriptedExecutor([AIResponse(ok=True, output='{"a": 1}', raw={"model": "m"})])
     # Force the instructor branch off so the native path is the success path.
     monkeypatch.setattr(
-        "polaris.cells.roles.kernel.internal.llm_caller.invoker.INSTRUCTOR_AVAILABLE",
+        "polaris.cells.roles.kernel.internal.llm_caller.invoker._structured.INSTRUCTOR_AVAILABLE",
         False,
     )
     invoker = LLMInvoker(workspace="ws", enable_cache=False, executor=executor)
@@ -1110,7 +1118,7 @@ async def test_structured_call_start_persists_context_snapshot_before_emit(
     monkeypatch.setattr(AIExecutor, "_store_context_messages", _fake_store)
     _patch_prepare(monkeypatch, prepared)
     monkeypatch.setattr(
-        "polaris.cells.roles.kernel.internal.llm_caller.invoker.INSTRUCTOR_AVAILABLE",
+        "polaris.cells.roles.kernel.internal.llm_caller.invoker._structured.INSTRUCTOR_AVAILABLE",
         False,
     )
     executor = _ScriptedExecutor([AIResponse(ok=True, output='{"a": 1}', raw={"model": "m"})])
@@ -1149,7 +1157,7 @@ async def test_structured_native_rf_unsupported_falls_through_to_fallback(monkey
     )
     _patch_prepare(monkeypatch, prepared)
     monkeypatch.setattr(
-        "polaris.cells.roles.kernel.internal.llm_caller.invoker.INSTRUCTOR_AVAILABLE",
+        "polaris.cells.roles.kernel.internal.llm_caller.invoker._structured.INSTRUCTOR_AVAILABLE",
         False,
     )
     # First (native rf) returns unsupported -> swallowed; second (fallback) succeeds.
@@ -1183,7 +1191,7 @@ async def test_structured_fallback_not_ok_returns_error(monkeypatch: pytest.Monk
     prepared = _prepared(profile, response_model=_Model)
     _patch_prepare(monkeypatch, prepared)
     monkeypatch.setattr(
-        "polaris.cells.roles.kernel.internal.llm_caller.invoker.INSTRUCTOR_AVAILABLE",
+        "polaris.cells.roles.kernel.internal.llm_caller.invoker._structured.INSTRUCTOR_AVAILABLE",
         False,
     )
     executor = _ScriptedExecutor([AIResponse(ok=False, error="server exploded", raw={})])
@@ -1211,7 +1219,7 @@ async def test_structured_fallback_parse_failure(monkeypatch: pytest.MonkeyPatch
     prepared = _prepared(profile, response_model=_Model)
     _patch_prepare(monkeypatch, prepared)
     monkeypatch.setattr(
-        "polaris.cells.roles.kernel.internal.llm_caller.invoker.INSTRUCTOR_AVAILABLE",
+        "polaris.cells.roles.kernel.internal.llm_caller.invoker._structured.INSTRUCTOR_AVAILABLE",
         False,
     )
 
@@ -1245,7 +1253,7 @@ async def test_structured_cancelled_reraises(monkeypatch: pytest.MonkeyPatch) ->
     prepared = _prepared(profile, response_model=_Model)
     _patch_prepare(monkeypatch, prepared)
     monkeypatch.setattr(
-        "polaris.cells.roles.kernel.internal.llm_caller.invoker.INSTRUCTOR_AVAILABLE",
+        "polaris.cells.roles.kernel.internal.llm_caller.invoker._structured.INSTRUCTOR_AVAILABLE",
         False,
     )
 
@@ -1278,7 +1286,7 @@ async def test_structured_runtime_error_arm_returns_response(monkeypatch: pytest
     prepared = _prepared(profile, response_model=_Model)
     _patch_prepare(monkeypatch, prepared)
     monkeypatch.setattr(
-        "polaris.cells.roles.kernel.internal.llm_caller.invoker.INSTRUCTOR_AVAILABLE",
+        "polaris.cells.roles.kernel.internal.llm_caller.invoker._structured.INSTRUCTOR_AVAILABLE",
         False,
     )
 

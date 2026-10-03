@@ -17,7 +17,7 @@ from .task_scope_paths import (
 )
 
 _DECLARED_TARGET_FILE_MISSING_ERROR_RE = re.compile(
-    r"declared target file(?:\s+missing)?\s+['\"](?P<path>[^'\"]+)['\"](?:\s+is\s+missing)?",
+    r"declared target file(?:\s+(?P<state>missing|empty))?\s+['\"](?P<path>[^'\"]+)['\"](?:\s+is\s+missing)?",
     re.IGNORECASE,
 )
 _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE = re.compile(
@@ -64,8 +64,14 @@ def _filter_satisfied_declared_target_missing_errors(
             filtered.append(error)
             continue
         normalized = _normalize_declared_task_path(match.group("path"))
-        if normalized and _workspace_path_exists_case_insensitive(root, normalized):
-            continue
+        if normalized:
+            if str(match.group("state") or "").lower() == "empty":
+                # A present but empty required target does not satisfy its
+                # diagnostic until actual delivery bytes are restored.
+                if _workspace_path_exists_case_insensitive(root, normalized, require_materialized=True):
+                    continue
+            elif _workspace_path_exists_case_insensitive(root, normalized):
+                continue
         filtered.append(error)
     return filtered
 

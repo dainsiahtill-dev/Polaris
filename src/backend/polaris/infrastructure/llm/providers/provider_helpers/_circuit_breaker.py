@@ -302,6 +302,20 @@ def invoke_with_retry(
     overflow_heal_attempts = 0
     rate_limit_attempt = 0
     while True:
+        from polaris.kernelone.llm.engine.invocation_budget import get_provider_invocation_budget
+
+        invocation_budget = get_provider_invocation_budget()
+        if invocation_budget is not None:
+            try:
+                invocation_budget.remaining()
+            except TimeoutError as error:
+                return InvokeResult(
+                    ok=False,
+                    output="",
+                    latency_ms=int((_clock.time() - start) * 1000),
+                    usage=Usage.estimate(prompt, ""),
+                    error=str(error),
+                )
         try:
             breaker.before_call()
         except CircuitOpenError as exc:
@@ -328,7 +342,7 @@ def invoke_with_retry(
                             "headers": headers,
                             "body": payload,
                             "transport": {
-                                "kind": "requests.post",
+                                "kind": "aiohttp.ClientSession.post",
                                 "timeout": timeout,
                             },
                         },
@@ -444,7 +458,10 @@ def invoke_with_retry(
                             max_delay_seconds=backoff_max_seconds,
                         )
                     )
-                    _clock.sleep(delay)
+                    if invocation_budget is None:
+                        _clock.sleep(delay)
+                    else:
+                        invocation_budget.wait_for_stop(delay)
                     continue
                 if isinstance(status_code, int) and 400 <= status_code < 500:
                     breaker.on_failure()
@@ -530,7 +547,10 @@ def invoke_with_retry(
 
             # Use injected clock for deterministic testability.
             # In production (RealClock), this delegates to time.sleep().
-            _clock.sleep(delay)
+            if invocation_budget is None:
+                _clock.sleep(delay)
+            else:
+                invocation_budget.wait_for_stop(delay)
         except (KeyboardInterrupt, SystemExit):
             raise
 

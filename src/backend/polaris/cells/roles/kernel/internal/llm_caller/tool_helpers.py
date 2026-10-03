@@ -26,6 +26,7 @@ from polaris.cells.roles.kernel.internal.tool_call_envelope import (
     native_tool_call_provider_from_metadata,
     native_tool_calls_from_response,
 )
+from polaris.kernelone.audit.task_write_guidance import project_task_write_guidance
 from polaris.kernelone.llm.budget_policy import (
     BUDGET_STRATEGY_PAYLOAD_KEYS,
     FORCED_WRITE_OUTPUT_TOKEN_FLOOR,
@@ -509,6 +510,27 @@ def _single_relative_target_variants(target: Any) -> tuple[str, ...]:
     return tuple(dict.fromkeys(variants))
 
 
+def _authorized_single_target_variants(context_override: dict[str, Any], target: Any) -> tuple[str, ...]:
+    """A precise decode target must not override admitted write authority."""
+
+    token = str(target or "").strip()
+    authority_present = any(
+        key in context_override
+        for key in ("director_execution_envelope", "task_execution_envelope", "execution_envelope")
+    )
+    if token and authority_present:
+        token = token.replace("\\", "/")
+        allowed = _first_turn_authorized_target_candidates(context_override, [token])
+        # Returning no pin would expose the broad write tool instead. Reject
+        # the contradictory request before provider I/O, without granting scope.
+        if not allowed:
+            raise ValueError("director_write_target_outside_authorized_scope")
+        if not _single_relative_target_variants(token):
+            raise ValueError("director_write_target_invalid")
+    variants = _single_relative_target_variants(token)
+    return variants
+
+
 def extract_declared_step_target_files(context_override: Any) -> tuple[str, ...]:
     """Return the construction step's declared target file as enum-ready variants.
 
@@ -524,7 +546,7 @@ def extract_declared_step_target_files(context_override: Any) -> tuple[str, ...]
     step = context_override.get("construction_step")
     if not isinstance(step, dict):
         return ()
-    return _single_relative_target_variants(step.get("target_file"))
+    return _authorized_single_target_variants(context_override, step.get("target_file"))
 
 
 def extract_director_quality_repair_target_files(context_override: Any) -> tuple[str, ...]:
@@ -537,12 +559,12 @@ def extract_director_quality_repair_target_files(context_override: Any) -> tuple
         return ()
     single_target = repair.get("write_only_single_target")
     if isinstance(single_target, dict):
-        variants = _single_relative_target_variants(single_target.get("target_file"))
+        variants = _authorized_single_target_variants(context_override, single_target.get("target_file"))
         if variants:
             return variants
     repair_targets = repair.get("repair_target_files")
     if isinstance(repair_targets, list) and len(repair_targets) == 1:
-        return _single_relative_target_variants(repair_targets[0])
+        return _authorized_single_target_variants(context_override, repair_targets[0])
     return ()
 
 
@@ -762,6 +784,28 @@ def _multi_target_first_turn_write_enabled() -> bool:
     }
 
 
+def _first_turn_authorized_target_candidates(context_override: dict[str, Any], candidates: list[str]) -> list[str]:
+    """Narrow hints to admitted writes without adding required existing artifacts."""
+
+    for key in ("director_execution_envelope", "task_execution_envelope", "execution_envelope"):
+        if key not in context_override:
+            continue
+        envelope = context_override[key]
+        if not isinstance(envelope, Mapping):
+            raise ValueError("task_write_guidance_envelope_invalid")
+        normalized: list[str] = []
+        for candidate in candidates:
+            path = candidate.strip().replace("\\", "/")
+            while path.startswith("./"):
+                path = path[2:]
+            normalized.append(path)
+        guidance = project_task_write_guidance(envelope, normalized)
+        references = set(guidance["reference_only_targets"])
+        return list(dict.fromkeys(path for path in normalized if path not in references))
+    # Legacy hints remain non-authoritative; runtime guards still grant/deny.
+    return candidates
+
+
 def _first_turn_declared_target_candidates(context_override: dict[str, Any]) -> list[str]:
     declared: list[str] = []
     for key in ("target_files", "scope_paths"):
@@ -790,7 +834,7 @@ def _first_turn_declared_target_candidates(context_override: dict[str, Any]) -> 
             value = task_obj.get("target_files")
             if isinstance(value, (list, tuple)):
                 declared.extend(str(item) for item in value)
-    return list(dict.fromkeys(declared))
+    return _first_turn_authorized_target_candidates(context_override, list(dict.fromkeys(declared)))
 
 
 def resolve_missing_materialization_write_targets(context_override: Any, workspace: str) -> list[str]:
@@ -910,6 +954,7 @@ def ensure_director_first_call_materialization_scope(
         for item in (from_scratch_targets or ([from_scratch_target] if from_scratch_target else []))
         if str(item or "").strip()
     ]
+    targets = _first_turn_authorized_target_candidates(context_override, targets)
     if not targets:
         return tool_definitions
     existing_forced_definitions = context_override.get("_transaction_kernel_forced_tool_definitions")
@@ -1467,10 +1512,7 @@ def attach_complete_native_tool_argument_audits(
         content = decoded_arguments.get("content")
         content_text = content if isinstance(content, str) else ""
         target_path = str(
-            decoded_arguments.get("file")
-            or decoded_arguments.get("path")
-            or decoded_arguments.get("file_path")
-            or ""
+            decoded_arguments.get("file") or decoded_arguments.get("path") or decoded_arguments.get("file_path") or ""
         ).strip()
         call["provider_argument_audit"] = {
             "provider": normalized_provider,

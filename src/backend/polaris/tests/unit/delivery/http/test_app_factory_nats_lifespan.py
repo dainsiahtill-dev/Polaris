@@ -73,7 +73,9 @@ async def test_lifespan_skips_managed_nats_when_nats_disabled(
     _patch_lifespan_dependencies(monkeypatch)
     calls: list[str] = []
 
-    async def fake_ensure_local_nats_runtime(url: str) -> None:
+    async def fake_ensure_local_nats_runtime(
+        url: str, *, startup_timeout_seconds: float, allow_autostart: bool
+    ) -> None:
         calls.append(url)
 
     monkeypatch.setattr(
@@ -99,7 +101,9 @@ async def test_lifespan_enables_log_pipeline_jetstream_publish_by_default(
     _patch_lifespan_dependencies(monkeypatch)
     monkeypatch.delenv("KERNELONE_JETSTREAM_PUBLISH", raising=False)
 
-    async def fake_ensure_local_nats_runtime(_url: str) -> None:
+    async def fake_ensure_local_nats_runtime(
+        _url: str, *, startup_timeout_seconds: float, allow_autostart: bool
+    ) -> None:
         return None
 
     monkeypatch.setattr(
@@ -122,7 +126,9 @@ async def test_lifespan_continues_when_nats_optional_bootstrap_fails(
 ) -> None:
     _patch_lifespan_dependencies(monkeypatch)
 
-    async def fake_ensure_local_nats_runtime(_url: str) -> None:
+    async def fake_ensure_local_nats_runtime(
+        _url: str, *, startup_timeout_seconds: float, allow_autostart: bool
+    ) -> None:
         raise OSError("nats socket is unavailable")
 
     monkeypatch.setattr(
@@ -145,7 +151,9 @@ async def test_lifespan_fails_closed_when_required_nats_bootstrap_fails(
 ) -> None:
     _patch_lifespan_dependencies(monkeypatch)
 
-    async def fake_ensure_local_nats_runtime(_url: str) -> None:
+    async def fake_ensure_local_nats_runtime(
+        _url: str, *, startup_timeout_seconds: float, allow_autostart: bool
+    ) -> None:
         raise RuntimeError("nats-server executable not found for managed local runtime")
 
     monkeypatch.setattr(
@@ -160,3 +168,35 @@ async def test_lifespan_fails_closed_when_required_nats_bootstrap_fails(
     with pytest.raises(RuntimeError, match="nats-server executable not found"):
         async with lifespan(_make_app(settings)):
             pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("credentials", [{"user": "configured-user"}, {"password": "configured-password"}])
+async def test_config_only_credentials_deny_plaintext_autostart(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, credentials: dict[str, str]
+) -> None:
+    import socket
+
+    from polaris.infrastructure.messaging.nats import server_runtime
+
+    _patch_lifespan_dependencies(monkeypatch)
+    monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "private-home"))
+    monkeypatch.delenv("KERNELONE_NATS_USER", raising=False)
+    monkeypatch.delenv("KERNELONE_NATS_PASSWORD", raising=False)
+    native = server_runtime.ensure_local_nats_runtime
+
+    async def ensure_with_security_intent(
+        url: str, *, startup_timeout_seconds: float, allow_autostart: bool = True
+    ) -> None:
+        assert allow_autostart is False, "config credentials were not conveyed as autostart denial"
+        await native(url, startup_timeout_seconds=startup_timeout_seconds, allow_autostart=allow_autostart)
+
+    monkeypatch.setattr(server_runtime, "ensure_local_nats_runtime", ensure_with_security_intent)
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    settings = Settings(workspace=str(tmp_path), nats=NATSConfig(url=f"nats://127.0.0.1:{port}", **credentials))
+    with pytest.raises(RuntimeError, match="credentialed endpoint cannot autostart"):
+        async with lifespan(_make_app(settings)):
+            pass
+    assert not (tmp_path / "private-home").exists()

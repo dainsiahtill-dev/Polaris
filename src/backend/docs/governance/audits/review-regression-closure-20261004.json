@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "source": "engineering_review_coordination_not_runtime_authority",
+  "plan": "docs/superpowers/plans/2026-10-04-review-regression-closure.md",
+  "goal_projects": 120,
+  "goal_status": "ACTIVE",
+  "review_reported_tests": {"passed": 866, "failed": 1, "broader_sweep": "300_second_limit_exceeded_not_green"},
+  "defects": [
+    {"id": "R1", "priority": "P1", "owner": "A", "symptom": "resolved cargo invokes rustup test", "state": "LOCAL_native_fixed_review_approved"},
+    {"id": "R2", "priority": "P1", "owner": "A", "symptom": "sandbox lacks workspace Python import path", "state": "LOCAL_native_fixed_review_approved"},
+    {"id": "R3", "priority": "P1", "owner": "A", "symptom": "Rustup toolchain home/mount absent", "state": "LOCAL_native_fixed_installed_alias_review_approved"},
+    {"id": "R4", "priority": "P1", "owner": "B", "symptom": "candidate dependency frozen before repair preparation", "state": "LOCAL_order_and_new_root_fixed_review_approved"},
+    {"id": "R5", "priority": "P2", "owner": "B", "symptom": "heartbeat survives unproved physical drain", "state": "LOCAL_native_and_note_API_model_fixed_review_approved"},
+    {"id": "R6", "priority": "P2", "owner": "C", "symptom": "pending readiness hides owned early exit", "state": "LOCAL_native_fixed_review_approved_main_retested"},
+    {"id": "R7", "priority": "P1", "owner": "D", "symptom": "departed procfs entry ESRCH becomes global unproved drain", "state": "LOCAL_native_fixed_review_approved_main_retested", "scope": "KernelOne_process_tree_and_tests_only"},
+    {"id": "FINALFIX-I1", "priority": "P1", "owner": "original_Task5_fixer", "symptom": "new_guarded_fs_facade_canonicalizes_changed_lexical_path_before_descriptor_checks", "state": "LOCAL_native_fixed_review_approved_root_retake_running", "evidence": ".superpowers/sdd/2026-10-04-review-regression-closure/followup-review.md", "scope": "new_KernelOne_guarded_fs_facades_and_tests_only"}
+  ],
+  "paid_bench_started": false,
+  "target_engineering_edits": false,
+  "main_verification": {"quality_native_private_passed": 434, "quality_native_private_duration_seconds": 177.57, "legacy_cargo_host_sandbox_passed": 2, "legacy_cargo_duration_seconds": 1.03, "process_architecture_passed": 42, "process_architecture_duration_seconds": 38.71, "NATS_affected_passed": 79, "source_files_rechecked": 6890, "qualification": "local_not_fresh_delivery"},
+  "final_release_candidate": {"session_id": 92873, "exit_code": 1, "passed": 353, "failed": 1, "skipped": 1, "duration_seconds": 279.83, "failure": "KFS_direct_write_shared_service_runtime_observed1_baseline0", "gate_relaxed": false},
+  "post_wave_release": {"session_id": 58312, "exit_code": 0, "passed": 354, "skipped": 1, "warnings": 2, "duration_seconds": 303.64, "source_freeze": ".superpowers/sdd/2026-10-04-review-regression-closure/source-freeze-post-wave.json", "validity": "historical_after_pending_lexical_correction"},
+  "post_wave_combined": {"session_id": 19076, "exit_code": 1, "passed": 564, "failed": 1, "deselected": 2, "duration_seconds": 285.98, "failure": "real_tomli_missing_from_root_test_fixture", "gate_relaxed": false},
+  "TOML_fixture_retake": {"session_id": 26964, "exit_code": 0, "passed": 2, "deselected": 5, "duration_seconds": 12.27, "dependency": "real_tomli_2.4.1_readonly_temporary_mount", "native_Python310_qualified": false},
+  "lock_consistency": {"state": "PASS_generated_minimal_delta_independently_reviewed_offline_checked", "packages": 116, "non_root_records_unchanged": 115, "added_root_rows": 2, "uv_generation_seconds": 27.32, "uv_check_seconds": 1.33, "uv_check_exit_code": 0, "sha256": "29743ab8a8e6e827d7e4ab9b5d3ffc17df425fe68a8ee570fc7fd75233f8918d"},
+  "lock_install_qualification": "full_install_and_native_Python310_not_run",
+  "final_approved_retake": {"source_freeze": ".superpowers/sdd/2026-10-04-review-regression-closure/source-freeze-final-approved.json", "files": 6898, "native_session": 85739, "release_session": 82582, "state": "RUNNING_not_yet_green"},
+  "final_integration_findings": ["Rustup_logical_alias_installed_identity", "late_created_admitted_dependency_root", "preexisting_TOML_Python310_import_floor", "prior_shared_NATS_KFS_directory_effect"],
+  "next_action": "Await same final native/release handles, retain failures if any, verify 6898 source hashes and static gates, then decide one fresh full-budget isolated qualification. No current fresh success claim."
+}

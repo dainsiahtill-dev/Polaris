@@ -1,0 +1,25 @@
+id: vc-20261001-coupled-manifest-repair-scope
+classification: pattern
+owner: roles.adapters
+status: local_verified_independent_review_pass_live_pending
+blueprint: ../../../blueprints/POLARIS_COUPLED_MANIFEST_REPAIR_SCOPE_20261001.md
+assumptions:
+  - claim: first-round generic selector truncates the pair.
+    evidence: False; read-only replay returns both; forced overlap branch retains singleton.
+  - claim: package and config are both current task writable.
+    evidence: exact CE obligations and hash-bound artifact receipts owned TASK1.
+pre_mortem:
+  - Forced localization is mistaken for a new capability or global inventory expansion.
+  - Test creates undeclared compiled JS instead of correcting owned manifests.
+verification:
+  - Real repair-loop forced-overlap RED/GREEN and exact tool contract pair.
+  - All present admitted scopes intersect; foreign and empty fail closed.
+  - Unknown compile contract and single authorized manifest preserve behavior.
+  - Existing budgets/regression guards remain strict.
+results:
+  red: six_actual_repair_loop_forced_overlap_cases
+  new: fourteen_passed
+  related_agent: 211_passed
+  parent: 47_combined_passed
+  independent: fourteen_cases_and_real_kernel_forced_merge_pair_retained
+  native_wire_claim: not_proven_component_only

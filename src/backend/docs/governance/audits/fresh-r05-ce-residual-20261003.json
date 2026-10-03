@@ -1,0 +1,51 @@
+{
+  "schema_version": "polaris.engineering_defect_record.v1",
+  "status": "LOCAL_FIX_REVIEWED_RELEASE_PASSED_r06_ce_passed_project_failed_director",
+  "authoritative_platform_receipt": false,
+  "project": "L1-01",
+  "run_id": "factory_b43737206ceb",
+  "work_dir": "/tmp/factory-bench-minimax-l1-01-20261003-r05",
+  "symptom": "Fresh run terminates at CE; 0/3 blueprint acceptance after4 native calls,255.9s; Director/QA not reached.",
+  "physical_error": "chief_engineer.semantic_patch_invalid:ValueError:task behavior replacement has no candidate task plan: TASK-2",
+  "terminal_error": "chief_engineer.advisory_projection_fallback_infeasible",
+  "root_cause_classification": "Platform CE contract/normalization mismatch: offered scope_for_apply array permits structured mapping advice, but the normalizer rejected mappings and transactionally rolled back recovery of already-authored TASK-2/TASK-3. Additional repair carrier consistency defect: normalized structured_output could coexist with a stale carried candidate/hash. Native decoded dictionary equals retained source candidate; provider-side conversion versus model authoring remains unproven.",
+  "final_request_refs": ["4186bc21b732bc4a9fbd982b", "827c7efef60e2e967e83db91", "92460dc8f90690a22dc0fac2", "68dfe533cd50057c8f1f7df1"],
+  "candidate_ref": "runtime/state/blueprints/semantic-repair/L1-01/factory_b43737206ceb/eec2bbe05d9050c3b4d7b31c5ad0b4180fff9f188985297f041347c6dfba6754.json",
+  "candidate_structure_observed": {"construction_plan_keys": ["$text", "TASK-2", "TASK-3", "item", "project_interface_contract", "shared_behavior_contract", "task_plans"], "task_plans_keys": ["TASK-1"]},
+  "evidence": ["factory_audits.json now persisted normally", "signals/chief_engineer_review.signals.json", "events/chief_engineer.llm.events.jsonl", "factory/factory_b43737206ceb/run.json", "retained candidate and native snapshots"],
+  "verified": {"pm_completed": true, "backend_fresh": true, "model": "MiniMax-M3", "role_identity_matches": true, "native_tool": "submit_structured_role_output", "request_context_findings": [], "target_engineering_edits": 0, "manual_recovery": false},
+  "fix_files": [
+    "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+    "polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py"
+  ],
+  "local_verification": {
+    "focused_regressions": "7 passed; mapping preservation, current carrier/hash, conflicts/typed invalid fields, empty optional overlays, foreign task rejection",
+    "physical_http_runtime_regression": "3 passed; actual Factory/Runtime/Kernel/private HTTP, valid patch accepted, forged hash/foreign owner rejected; no PM replay",
+    "extended_regressions": "110 passed, 3 experimental-stream deprecation warnings; terminal exit0 confirmed",
+    "independent_review": "CLEAR; independent focused7 passed, malformed typed constructors still rejected, no edits or Provider calls",
+    "ruff": "4 focused source/test files passed",
+    "mypy": "2 production source files passed",
+    "diff_check": "passed",
+    "release": {"report": ".superpowers/sdd/2026-10-03-owner-bound-settle-repair/release-r05-ce-reviewed-final.json", "ok": true, "stages": 12, "all_returncodes": 0, "suite_paths": 51, "source_hash_stability_checked": true},
+    "readonly_actual_candidate_replay": {
+      "recovered": true,
+      "recovered_hash": "f936621d4c8ae4e704f1f4202a9b384f8d50e8c85b531f2ee284c8ded61c07d4",
+      "task_ids": ["TASK-1", "TASK-2", "TASK-3"],
+      "original_offered_schema_errors": [],
+      "original_candidate_bytes_unchanged": true,
+      "full_semantic_and_live_provider_qualification": false
+    }
+  },
+  "test_protocol_defect": {
+    "file": "polaris/cells/factory/pipeline/tests/test_ce_schema_residual_runtime.py",
+    "before": "Fixture blindly used first offered tool and sent PM tasks as read_file arguments; real read_file rejected missing file. PM fell back to unrelated contracts, making environment verifier reference a missing manifest obligation.",
+    "red_evidence": "accept case failed 18.15s with invalid_project_completion_contract and read_file missing required file",
+    "fix": "PM visible task JSON, CE explicitly named submit_structured_role_output; original production gates/assertions retained and literal PM ids/target assertions added"
+  },
+  "separate_open_residuals": [
+    "PM synthetic fallback derives keywords from planning wrapper, not original requirement; pure replay matched the wrong architect/goal/scope/steps tasks. Not fixed or exercised by successful PM fixture.",
+    "PM failure retry observed factory_role_evidence_controlled_child_run_mismatch; valid first PM response avoids, does not close that branch."
+  ],
+  "next_action": "Observe new fresh isolated r06 L1-01 with standard budgets; verify actual final physical requests, effects, verifier, QA/outcome/settlement. Preserve failed r05 in denominator; no reuse/rebinding of its physical semantic patch, no target edits, no model or gate relaxation.",
+  "risks": ["Prior Director/QA fixes not exercised by r05", "Offline structural recovery is not full semantic/live Provider/Factory success", "All-repository pytest suite not run", "No COMPLETED_VERIFIED", "Do not accept empty advisory fallback or lower QA"]
+}

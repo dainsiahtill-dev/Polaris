@@ -1,0 +1,42 @@
+id: task-intent-boundary-20261002
+classification: pattern
+owner_cells: [roles.adapters, roles.kernel]
+status: intent_live_confirmed_final_pin_local_reviewed_live_pending
+symptom: A platform preserve clause makes a code-delivery task readonly and allows premature finalization.
+evidence:
+  run_id: factory_7244a26d3ae3
+  physical_context_ref: 93d4d4f6c611a0b6a6b02969
+  production_callback: TurnTransactionController._requires_mutation_intent
+  replay: assembled mutation=false; pure task_instruction mutation=true
+assumptions:
+  - Existing platform_tool_contract.task_instruction is a guidance boundary, not a write grant.
+  - Original PM/CE and generated source remain unchanged by engineering edits.
+pre_mortem:
+  - Current instruction must not be inherited from stale task or tool metadata.
+  - True readonly and explicit mode precedence must survive.
+  - File/command authorization must remain separate and strict.
+verification:
+  - Real task-message replay against production resolver and executor callbacks.
+  - Task instruction and readonly/mutation guard component regressions.
+  - Director sender scope-preservation tests.
+  - Ruff, Mypy, related suites, independent review.
+  - Same-run Director-only recovery before fresh qualification.
+fresh_bench_verified: false
+local_results:
+  pytest: 511 passed in 15.03s
+  mypy: 10 production files passed
+  ruff: passed
+  diff_check: passed
+independent_findings_closed_locally:
+  - Explicit current readonly mode must survive inline markers, secondary classification and write-only surfaces.
+  - Retry must normalize latest-user role rather than lift an older task instruction.
+final_pin_results:
+  regression_tests: 6 passed
+  related_tests: 303 passed in 9.57s
+  mypy: 2 production files passed
+  independent_review: CLEAR
+  guards:
+    - Full four-field equality; missing or substituted reference targets rejected.
+    - Admitted project inventory preserved through request facts; no added write authority.
+    - Input immutability, idempotence and final-user ordering retained.
+  live_verified: false

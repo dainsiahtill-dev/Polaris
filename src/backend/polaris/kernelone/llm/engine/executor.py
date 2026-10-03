@@ -51,6 +51,7 @@ from .contracts import (
     Usage,
     bind_physical_provider_dispatch_port,
 )
+from .invocation_budget import invoke_with_budget
 from .model_catalog import ModelCatalog
 from .normalizer import ResponseNormalizer
 from .prompt_budget import TokenBudgetManager, compress_chat_messages_to_budget
@@ -331,7 +332,7 @@ async def _invoke_with_timeout(coro, timeout: float | None = None) -> Any:
     """
     if timeout is None:
         timeout = get_invoke_timeout()
-    return await asyncio.wait_for(coro, timeout=timeout)
+    return await invoke_with_budget(coro, timeout)
 
 
 class AIExecutor:
