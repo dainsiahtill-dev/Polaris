@@ -51,6 +51,8 @@ def build_sequence_template(
     min_tool_calls: int,
     requires_write: bool,
     requires_verify: bool,
+    *,
+    available_tools: list[str] | None = None,
 ) -> str:
     """根据契约特征构建正例序列模板文本。
 
@@ -60,6 +62,10 @@ def build_sequence_template(
     - repeat-read: 多次读取同一文件
     - search-replace: 搜索 → 读取确认 → 替换
     """
+    if available_tools is not None:
+        return _build_bound_sequence_template(
+            required_tools, ordered_tool_groups, min_tool_calls, requires_write, requires_verify, available_tools
+        )
     lines: list[str] = ["\nPOSITIVE TOOL SEQUENCE TEMPLATES:"]
     templates_added = 0
 
@@ -139,16 +145,86 @@ def build_sequence_template(
     return "\n".join(lines)
 
 
+def _build_bound_sequence_template(
+    required_tools: list[str],
+    ordered_tool_groups: list[list[str]],
+    min_tool_calls: int,
+    requires_write: bool,
+    requires_verify: bool,
+    available_tools: list[str],
+) -> str:
+    """Generate examples from callable tools, never the broader role catalog."""
+    reads = [name for name in available_tools if name in _READ_TOOLS]
+    searches = [name for name in available_tools if name in _SEARCH_DISCOVERY_TOOLS]
+    edits = [name for name in available_tools if name in ACTIVE_WRITE_TOOLS and name != "append_to_file"]
+    lines = ["\nPOSITIVE TOOL SEQUENCE TEMPLATES:"]
+    if min_tool_calls > 1 and not requires_write and any(name in reads for name in required_tools):
+        reader = next(name for name in required_tools if name in reads)
+        lines.append(
+            f"TEMPLATE [Repeat-Read]: You MUST call {reader} exactly {min_tool_calls} times as requested. "
+            "Report results only after all required reads complete."
+        )
+    elif not requires_write and ordered_tool_groups and searches and reads:
+        lines.append(
+            f"TEMPLATE [Search-Then-Read]: Locate targets using {'/'.join(searches)}, "
+            f"then read identified files with {'/'.join(reads)}. Complete every required group."
+        )
+    elif requires_write or requires_verify:
+        instructions = []
+        if "write_file" in edits:
+            instructions.append(
+                "For create-file or full replacement tasks, call write_file immediately with the complete file body."
+            )
+        if edits:
+            instructions.append(
+                "For existing targeted changes, use " + "/".join(edits) + " with exact supplied content."
+            )
+        if reads:
+            instructions.append("Inspect exact existing content only when needed using " + "/".join(reads) + ".")
+        if "append_to_file" in available_tools:
+            instructions.append("Use append_to_file only for explicit append-at-end tasks.")
+        if requires_verify:
+            instructions.append("Verify only through callable verification tools; never invent an execution result.")
+        lines.append("TEMPLATE [General-Mutation]: " + " ".join(instructions))
+    lines.append(
+        "COMPLETION CHECK: Satisfy every explicit required tool group with real evidence; "
+        "do not claim unavailable or unexecuted actions."
+    )
+    return "\n".join(lines)
+
+
 def build_recovery_protocol(
     required_tools: list[str],
     required_any_groups: list[list[str]],
     available_write_tools: list[str],
+    *,
+    available_tools: list[str] | None = None,
+    single_batch: bool = False,
 ) -> str:
     """构建失败恢复协议文本。
 
     为常见失败场景提供标准恢复流程。
     """
     lines: list[str] = ["\nTOOL FAILURE RECOVERY PROTOCOL:"]
+    if single_batch:
+        return "\n".join(
+            [
+                *lines,
+                "3. ANY TOOL FAILURE: This single-batch request has no further recovery turn. "
+                "Preserve explicit failure evidence for the governed continuation; never claim completion.",
+                "4. PARTIAL COMPLETION: Unexecuted or failed required actions remain incomplete, not success.",
+            ]
+        )
+    callable_tools = set(
+        available_tools
+        if available_tools is not None
+        else [*available_write_tools, *required_tools, *(name for group in required_any_groups for name in group)]
+    )
+    readers = [
+        name
+        for name in ("read_file", "repo_read_slice", "repo_read_head", "repo_read_tail", "repo_read_around")
+        if name in callable_tools
+    ]
 
     # Edit 工具失败恢复
     has_edit = any(t in ACTIVE_WRITE_TOOLS for t in required_tools) or any(
@@ -167,34 +243,37 @@ def build_recovery_protocol(
             "create_file",
             "append_to_file",
         ):
-            if t in available_write_tools:
+            if t in available_write_tools and t in callable_tools:
                 fallback_order.append(t)
-        fallback_str = " -> ".join(fallback_order) if fallback_order else "append_to_file"
-
-        lines.append(
-            f"1. EDIT FAILURE (no match / search not found): "
-            f"→ Immediately call read_file() on the target file. "
-            f"→ Copy the EXACT text character-by-character from the file output. "
-            f"→ Retry with edit_blocks/edit_file using the verified text, or write_file for whole-file replacement. "
-            f"→ If the edit still fails, downgrade to: {fallback_str}. "
-            f"→ append_to_file is only valid for explicit append-at-end tasks, not replace/delete cleanup. "
-            f"→ NEVER retry edit_blocks with the same incorrect search string."
+        recovery = "1. EDIT FAILURE (no match / search not found): "
+        if readers:
+            recovery += f"Inspect the target with {readers[0]} and copy the EXACT text from its output. "
+        else:
+            recovery += "No read tool is callable; use only exact content already supplied, never guess. "
+        if fallback_order:
+            recovery += "Use only safe applicable alternatives: " + " -> ".join(fallback_order) + ". "
+        if "append_to_file" in fallback_order:
+            recovery += "append_to_file is only valid for explicit append-at-end tasks, not replace/delete cleanup. "
+        recovery += (
+            "NEVER retry with the same incorrect search string; if safe recovery is unavailable, report failure."
         )
+        lines.append(recovery)
 
     # 搜索后未继续的恢复
     has_search = any(t in _SEARCH_DISCOVERY_TOOLS for t in required_tools)
-    if has_search:
+    if has_search and readers:
         lines.append(
-            "2. SEARCH-THEN-STALL (glob/repo_rg returned results but you stopped): "
+            "2. SEARCH-THEN-STALL (discovery returned results but you stopped): "
             "→ You have located files but have NOT completed the task. "
-            "→ Continue with the next step: read_file the identified files. "
+            f"→ Continue with the next step: {readers[0]} the identified files. "
             "→ Stopping after search alone is a FAILURE."
         )
 
     # 通用恢复规则
     lines.append(
         "3. ANY TOOL FAILURE: Do NOT return plain-text completion after a tool failure. "
-        "You MUST attempt recovery using read_file verification or alternative tools."
+        "Recover only through safe callable tools when a further turn is permitted; "
+        "otherwise preserve failure evidence and never claim completion."
     )
 
     lines.append(

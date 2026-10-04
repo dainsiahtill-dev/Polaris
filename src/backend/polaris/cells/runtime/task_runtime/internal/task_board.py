@@ -34,7 +34,8 @@ import re
 import threading
 import time
 import uuid
-from contextlib import contextmanager, suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -52,6 +53,7 @@ from polaris.domain.entities.task import (
     TaskStatus as PolarisTaskStatus,
 )
 from polaris.kernelone.fs import KernelFileSystem
+from polaris.kernelone.fs.locked_regular_file import InheritedLockDescriptorsV1, LockedRegularFileSetV1
 from polaris.kernelone.fs.registry import get_default_adapter
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -60,6 +62,22 @@ logger = logging.getLogger(__name__)
 _TASKBOARD_TERMINAL_EVENTS_STREAM = "taskboard.terminal.events"
 _TERMINAL_EVENT_CAS_MAX_ATTEMPTS = 64
 _FACTORY_RUN_BINDING_CAS_MAX_ATTEMPTS = 8
+
+
+@dataclass(frozen=True)
+class _TaskBoardMutationGuard:
+    """Non-transferable custody of an existing KernelOne namespace lock."""
+
+    root: str
+    pid: int
+    thread_id: int
+    ticket: InheritedLockDescriptorsV1
+
+    def validate(self, root: str) -> None:
+        if self.root != root or self.pid != os.getpid() or self.thread_id != threading.get_ident():
+            raise RuntimeError("taskboard_mutation_guard_owner_mismatch")
+        self.ticket.validate_parent_binding()
+
 
 # ---------------------------------------------------------------------------
 # Enums (canonical source: domain/entities/task.py)
@@ -661,11 +679,49 @@ class TaskBoard:
         normalized_task_id = _normalize_task_id(task_id)
         return self.tasks_dir / f".task_{normalized_task_id}.json.lock"
 
+    @contextmanager
+    def _mutation_guard(self) -> Iterator[_TaskBoardMutationGuard]:
+        """Serialize durable namespace mutations with descriptor-bound K1 locks.
+
+        Callers acquire session ownership and this board's transaction first.
+        Nested writes receive the held ticket explicitly, never reacquire its
+        flock. Closing inherited copies cannot unlock the parent's description.
+        """
+        if os.name != "posix":
+            raise RuntimeError("taskboard_guarded_recovery_platform_unsupported")
+        root = os.path.abspath(self.tasks_dir)
+        token = hashlib.sha256(root.encode("utf-8")).hexdigest()
+        authority_root = str(self.tasks_dir.parent / ".taskboard-lock-authority")
+        if not getattr(self, "_mutation_lock_enrolled", False):
+            LockedRegularFileSetV1.provision_authority(
+                platform_lock_root=authority_root, storage_identity_token=token, runtime_root=root
+            )
+            LockedRegularFileSetV1.enroll_stream_lock_keys(
+                platform_lock_root=authority_root,
+                storage_identity_token=token,
+                runtime_root=root,
+                logical_paths=("runtime/taskboard/namespace",),
+            )
+            self._mutation_lock_enrolled = True
+        locks = LockedRegularFileSetV1.acquire(
+            runtime_root=root,
+            storage_identity_token=token,
+            logical_paths=("runtime/taskboard/namespace",),
+            platform_lock_root=authority_root,
+        )
+        ticket = locks.detach_for_inheritance()
+        guard = _TaskBoardMutationGuard(root, os.getpid(), threading.get_ident(), ticket)
+        try:
+            yield guard
+        finally:
+            ticket.close()
+
     def _save_task(
         self,
         task: Task,
         *,
         expected_before_hash: str | None = None,
+        _mutation_guard: _TaskBoardMutationGuard | None = None,
     ) -> TaskBoardRowWriteReceipt:
         """Commit one task row through the sole durable row-write boundary.
 
@@ -687,7 +743,16 @@ class TaskBoard:
             O(n) time and memory for one serialized row of size ``n``.
         """
 
-        with self.transaction():
+        with (
+            self.transaction(),
+            (
+                self._mutation_guard()
+                if os.name == "posix" and _mutation_guard is None
+                else nullcontext(_mutation_guard)
+            ) as held_guard,
+        ):
+            if held_guard is not None:
+                held_guard.validate(os.path.abspath(self.tasks_dir))
             task_path = self.tasks_dir / f"task_{task.id}.json"
             tmp_path = self.tasks_dir / f".task_{task.id}.{uuid.uuid4().hex}.tmp"
             tmp_logical = self._logical_path(tmp_path)
@@ -1326,6 +1391,9 @@ class TaskBoard:
         reason: str = "",
         metadata: dict[str, Any] | None = None,
         allow_terminal_reopen: bool = False,
+        expected_before_hash: str | None = None,
+        _mutation_guard: _TaskBoardMutationGuard | None = None,
+        _defer_ready_notification: bool = False,
     ) -> Task | None:
         """Reopen a terminal task for another implementation round."""
         import copy
@@ -1333,7 +1401,16 @@ class TaskBoard:
         should_notify_ready = False
         result_task: Task | None = None
         with self.transaction():
-            task = self._cache.get(task_id)
+            if expected_before_hash is not None:
+                task: Task | None
+                snapshot = self._load_task_snapshot_from_disk(task_id)
+                if snapshot is None:
+                    raise TaskBoardRowWriteConflictError("guarded reopen entity disappeared")
+                task, current_hash = snapshot
+                if current_hash != expected_before_hash:
+                    raise TaskBoardRowWriteConflictError("guarded reopen durable row changed")
+            else:
+                task = self._cache.get(task_id)
             if not task:
                 return None
 
@@ -1359,12 +1436,13 @@ class TaskBoard:
             if isinstance(metadata, dict) and metadata:
                 task.metadata.update(metadata)
 
-            self._save_task(task)
+            self._save_task(task, expected_before_hash=expected_before_hash, _mutation_guard=_mutation_guard)
+            self._cache[task_id] = task
 
             should_notify_ready = self._is_ready_task(task)
             result_task = copy.deepcopy(task)
 
-        if should_notify_ready:
+        if should_notify_ready and not _defer_ready_notification:
             self._notify_ready_tasks()
 
         return result_task

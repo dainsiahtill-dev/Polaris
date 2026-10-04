@@ -356,6 +356,10 @@ def test_summarize_failed_gate_evidence_context_slot_projects_structured_payload
         "exit_code": 1,
         "diagnostic_count": 1,
         "quality_error_count": 1,
+        "quality_metrics": {},
+        "quality_minimums": {},
+        "missing_target_file_count": 0,
+        "repair_target_file_count": 0,
         "failed_required_modalities": ["command"],
         "failed_checks": ["tool_lifecycle"],
     }
@@ -479,7 +483,7 @@ def test_task_boundary_failure_evidence_from_verdict_projects_public_row() -> No
         }
     )
 
-    metadata = {
+    metadata: dict[str, Any] = {
         "failure_evidence_summary": {
             "source": "previous_projection",
             "owner": "run_ledger_public_helper",

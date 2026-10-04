@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import stat
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
@@ -153,6 +154,23 @@ def _task_completion_projection_from_repair_task(task: Mapping[str, Any]) -> dic
     return dict(raw_projection) if isinstance(raw_projection, Mapping) else None
 
 
+class _WorkspaceQualityArtifactClosureIncompleteError(RuntimeError):
+    """Actual partial registrations do not qualify an incomplete owned closure."""
+
+    def __init__(
+        self,
+        *,
+        registered_receipts: tuple[dict[str, str], ...],
+        missing_obligations: tuple[dict[str, str], ...],
+    ) -> None:
+        self.registered_receipts = registered_receipts
+        self.missing_obligations = missing_obligations
+        super().__init__(
+            "workspace_quality_repair_required_artifacts_missing:"
+            + ",".join(item["path"] for item in missing_obligations)
+        )
+
+
 def _record_workspace_quality_repair_artifact_receipts(
     pending: Mapping[str, Any],
 ) -> tuple[dict[str, str], ...]:
@@ -189,6 +207,7 @@ def _record_workspace_quality_repair_artifact_receipts(
         raise TypeError("workspace quality repair owned_artifacts must be a sequence")
 
     recorded: list[dict[str, str]] = []
+    missing: list[dict[str, str]] = []
     seen: dict[str, tuple[str, str]] = {}
     for index, raw_artifact in enumerate(raw_artifacts):
         if not isinstance(raw_artifact, Mapping):
@@ -205,17 +224,40 @@ def _record_workspace_quality_repair_artifact_receipts(
                 raise ValueError(f"artifact obligation {obligation_id!r} has conflicting duplicate identity")
             continue
         seen[obligation_id] = identity
-        receipt = record_project_artifact(
-            RecordProjectArtifactCommandV1(
-                workspace=workspace,
-                project_id=project_id,
-                run_id=run_id,
-                completion_contract_hash=contract_hash,
-                obligation_id=obligation_id,
-                owner_task_id=owner_task_id,
-                path=path,
+        try:
+            receipt = record_project_artifact(
+                RecordProjectArtifactCommandV1(
+                    workspace=workspace,
+                    project_id=project_id,
+                    run_id=run_id,
+                    completion_contract_hash=contract_hash,
+                    obligation_id=obligation_id,
+                    owner_task_id=owner_task_id,
+                    path=path,
+                )
             )
-        )
+        except FileNotFoundError as exc:
+            # Defer only a confirmed absent component of this exact owned
+            # artifact. Missing authority storage, aliases, permissions and
+            # other failures must not be relabeled as incomplete materialization.
+            if not isinstance(exc.filename, str):
+                raise
+            root = Path(workspace).resolve(strict=True)
+            candidate = root
+            absent: Path | None = None
+            for part in Path(path).parts:
+                candidate = candidate / part
+                try:
+                    metadata = candidate.lstat()
+                except FileNotFoundError:
+                    absent = candidate
+                    break
+                if stat.S_ISLNK(metadata.st_mode):
+                    raise
+            if absent is None or Path(exc.filename) != absent or not absent.is_relative_to(root):
+                raise
+            missing.append({"obligation_id": obligation_id, "owner_task_id": owner_task_id, "path": path})
+            continue
         if type(receipt) is not ProjectArtifactReceiptV1:
             raise TypeError("workspace quality repair artifact owner returned a lookalike receipt")
         if (
@@ -244,6 +286,10 @@ def _record_workspace_quality_repair_artifact_receipts(
                 "receipt_hash": receipt.receipt_hash,
                 "receipt_ref": receipt.receipt_ref,
             }
+        )
+    if missing:
+        raise _WorkspaceQualityArtifactClosureIncompleteError(
+            registered_receipts=tuple(recorded), missing_obligations=tuple(missing)
         )
     return tuple(recorded)
 
@@ -1449,6 +1495,18 @@ def _claim_workspace_quality_repair_attempt(
         for candidate in task_runtime.list_task_rows(include_terminal=True)
         if row_owner_score(candidate)[0] > 0
     ]
+    canonical_owners: dict[str, dict[str, Any]] = {}
+    for candidate in owner_rows:
+        candidate_metadata = candidate.get("metadata")
+        candidate_metadata = candidate_metadata if isinstance(candidate_metadata, Mapping) else {}
+        logical_id = str(candidate_metadata.get("external_task_id") or candidate.get("external_task_id") or "").strip()
+        if logical_id in canonical_owners:
+            continue
+        canonical = task_runtime.resolve_factory_task_row(external_task_id=logical_id, factory_run_id=run_id)
+        if canonical is None:
+            raise RuntimeError("workspace_quality_repair_canonical_owner_missing")
+        canonical_owners[logical_id] = canonical
+    owner_rows = list(canonical_owners.values())
     owner_row = max(owner_rows, key=row_owner_score) if owner_rows else None
     if owner_row is None:
         # A terminal Factory drain deliberately removes live TaskRuntime rows
@@ -3371,10 +3429,40 @@ async def _run_workspace_quality_checks_in_session(
         if deadline_detail:
             return {}, deadline_detail
         command_timeout = workspace_quality_command_timeout_seconds()
+        result: dict[str, Any]
         if phase.startswith("prepare"):
             # Dependency preparation remains the existing, distinct platform
             # step. Verification never opens network or promotes its outputs.
-            result = await asyncio.to_thread(executor._run_workspace_quality_command, command, command_timeout)
+            from .factory_node_dependencies import NODE_PREPARATION_COMMAND, authenticated_preparation_contract
+
+            if tuple(command) == NODE_PREPARATION_COMMAND:
+                import inspect
+
+                try:
+                    contract = authenticated_preparation_contract(executor, run)
+                    callback = executor._run_workspace_quality_command
+                    signature = inspect.signature(callback)
+                    parameter = signature.parameters.get("preparation_contract")
+                    if parameter is None or parameter.kind not in {
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        inspect.Parameter.KEYWORD_ONLY,
+                    }:
+                        raise TypeError("preparation callback does not explicitly accept preparation_contract")
+                    signature.bind(command, command_timeout, preparation_contract=contract)
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    result = {
+                        "command": command,
+                        "exit_code": None,
+                        "passed": False,
+                        "error": f"preparation_authority_or_execution_invalid:{type(exc).__name__}:{exc}",
+                        "stdout_tail": "",
+                        "stderr_tail": "",
+                        "verification_contract_blocker": True,
+                    }
+                else:
+                    result = await asyncio.to_thread(callback, command, command_timeout, preparation_contract=contract)
+            else:
+                result = await asyncio.to_thread(executor._run_workspace_quality_command, command, command_timeout)
         else:
             try:
                 if not sessions:
@@ -4325,6 +4413,7 @@ async def _run_workspace_quality_checks_in_session(
             rerun_results = []
             round_prepare_failed = False
             prepare_phase = "prepare_after_repair" if round_index == 0 else f"prepare_after_repair_{round_index + 1}"
+            prepare_commands = executor._workspace_quality_prepare_commands(commands, context)
             for command in prepare_commands:
                 result, deadline_detail = await run_workspace_quality_command_with_deadline(command, prepare_phase)
                 if deadline_detail:

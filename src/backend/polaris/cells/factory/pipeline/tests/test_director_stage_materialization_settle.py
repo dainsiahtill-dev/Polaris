@@ -607,6 +607,21 @@ async def test_materialization_settle_accepts_canonical_batch_receipt_and_revali
         "effect_receipts": [{"after_hash": "a" * 64}],
     }
 
+    expected_run = run
+    preparation_outcome = {"command": ["npm", "install"], "passed": True, "exit_code": 0}
+    scans = 0
+
+    def collect_diagnostics(*, run: FactoryRun, preparation_results: list[dict[str, Any]]) -> list[str]:
+        # This stage-unit double models the collector's preparation ownership;
+        # real managed npm/DEO failure paths are exercised in dependency tests.
+        nonlocal scans
+        assert run is expected_run
+        scans += 1
+        if scans == 1:
+            return ["error TS2688: Cannot find type definition file for 'node'"]
+        preparation_results.append(executor._ensure_director_stage_materialization_typescript_toolchain())
+        return []
+
     with (
         patch.object(
             executor,
@@ -621,11 +636,13 @@ async def test_materialization_settle_accepts_canonical_batch_receipt_and_revali
         patch.object(
             executor,
             "_collect_director_stage_materialization_diagnostics",
-            side_effect=[["error TS2688: Cannot find type definition file for 'node'"], []],
+            autospec=collect_diagnostics,
+            side_effect=collect_diagnostics,
         ) as diagnostics,
         patch.object(
             executor,
             "_ensure_director_stage_materialization_typescript_toolchain",
+            return_value=preparation_outcome,
         ) as ensure_toolchain,
         patch.object(
             executor,
@@ -655,6 +672,7 @@ async def test_materialization_settle_accepts_canonical_batch_receipt_and_revali
     assert diagnostics.call_count == 2
     ensure_toolchain.assert_called_once_with()
     assert settle_attempt.call_args.kwargs["stage_status"] == "success"
+    assert settle["dependency_preparation_results"] == [preparation_outcome]
 
 
 @pytest.mark.asyncio

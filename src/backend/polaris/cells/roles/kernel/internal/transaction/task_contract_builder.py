@@ -440,9 +440,70 @@ def extract_allowed_tool_names_from_definitions(tool_definitions: list[dict]) ->
     return allowed
 
 
+def resolve_callable_tool_names(tool_definitions: list[dict], tool_choice_override: Any = None) -> list[str]:
+    """Bind guidance to this request's unchanged definitions and choice."""
+    names = list(
+        dict.fromkeys(extract_tool_name_from_definition(item) for item in tool_definitions if isinstance(item, Mapping))
+    )
+    names = [name for name in names if name]
+    choice = tool_choice_override
+    if choice is None or choice in ("auto", "required", "any"):
+        return names
+    if choice == "none":
+        return []
+    if isinstance(choice, Mapping):
+        kind = choice.get("type")
+        if kind in {"auto", "any", "required"}:
+            return names
+        if kind == "none":
+            return []
+        function = choice.get("function")
+        selected = function.get("name") if isinstance(function, Mapping) else choice.get("name")
+        if kind in {"function", "tool"} and isinstance(selected, str) and selected in names:
+            return [selected]
+        raise ValueError("tool_choice_required_tool_unavailable")
+    raise ValueError("tool_choice_unsupported")
+
+
+def validate_required_tool_surface(context: list[dict], callable_tools: list[str]) -> None:
+    """Explicit requirements survive guidance pruning; absent capabilities block."""
+    contract = extract_platform_tool_contract(context)
+    required = _normalize_tool_list(contract.get("required_tools"))
+    latest = extract_latest_user_message(context)
+    match = re.search(r"required\s+tools\s*\(at\s+least\s+once\)\s*:\s*([^\n\r]+)", latest, re.IGNORECASE)
+    if match:
+        required.extend(_normalize_tool_list(match.group(1)))
+
+    def callable_requirement(name: str) -> bool:
+        # Keep the existing contract equivalence policy, not a new whitelist.
+        # The contract text retains an explicit equivalent-tool diagnostic.
+        return name in callable_tools or any(
+            equivalent in callable_tools for equivalent in REQUIRED_TOOL_EQUIVALENTS.get(name, ())
+        )
+
+    missing = [name for name in required if not callable_requirement(name)]
+    groups = _normalize_tool_groups(
+        contract.get("required_tool_groups")
+        or contract.get("required_any_groups")
+        or contract.get("ordered_tool_groups")
+    )
+    group_match = re.search(r"required\s+tool\s+groups\s*:\s*([^\n\r]+)", latest, re.IGNORECASE)
+    if group_match:
+        groups.extend(_normalize_tool_list(group) for group in re.findall(r"\[([^\]]+)\]", group_match.group(1)))
+    missing_groups = [group for group in groups if not any(callable_requirement(name) for name in group)]
+    if missing or missing_groups:
+        raise ValueError(
+            "task_contract_required_tool_unavailable:"
+            + json.dumps({"tools": missing, "groups": missing_groups}, sort_keys=True)
+        )
+
+
 def build_single_batch_task_contract_hint(
     context: list[dict],
     tool_definitions: list[dict],
+    *,
+    tool_choice_override: Any = None,
+    single_batch: bool | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """构建单次批次的任务契约提示文本。
 
@@ -459,6 +520,10 @@ def build_single_batch_task_contract_hint(
     if any(marker in latest_user for marker in _SUPER_READONLY_STAGE_MARKERS):
         return "", {}
     platform_tool_contract = extract_platform_tool_contract(context)
+    available_tools = resolve_callable_tool_names(tool_definitions, tool_choice_override)
+    validate_required_tool_surface(context, available_tools)
+    if single_batch is None:
+        single_batch = platform_tool_contract_is_single_batch(context)
     mixed_read_write_batch_allowed = platform_tool_contract_bypasses_read_write_barrier(context)
     single_quality_repair_target = _extract_single_target_quality_repair_path(latest_user)
 
@@ -505,17 +570,6 @@ def build_single_batch_task_contract_hint(
         _requires_verify = False
 
     # --- 构建可用工具映射（必须在 required_tools 解析之前）---
-    available_tools: list[str] = []
-    for item in tool_definitions:
-        if not isinstance(item, Mapping):
-            continue
-        function_payload = item.get("function")
-        if isinstance(function_payload, Mapping):
-            name = str(function_payload.get("name") or "").strip()
-        else:
-            name = str(item.get("name") or "").strip()
-        if name:
-            available_tools.append(name)
     if not available_tools:
         return "", {}
 
@@ -715,10 +769,16 @@ def build_single_batch_task_contract_hint(
     if _requires_write:
         if selected_write:
             if single_quality_repair_target:
+                edit_preference = (
+                    "prefer edit_file when an exact local replacement is enough. "
+                    if "edit_file" in selected_write
+                    else "use a callable tool appropriate for the exact change. "
+                )
                 lines.append(
                     "Single-target quality repair is active. Emit exactly one write/edit tool call for "
-                    f"`{single_quality_repair_target}`; prefer edit_file when an exact local replacement is enough. "
-                    "Do not read, list, explore, verify, or touch sibling files."
+                    f"`{single_quality_repair_target}`; "
+                    + edit_preference
+                    + "Do not read, list, explore, verify, or touch sibling files."
                 )
             else:
                 lines.append(
@@ -812,6 +872,7 @@ def build_single_batch_task_contract_hint(
             min_tool_calls=min_calls_required,
             requires_write=_requires_write,
             requires_verify=_requires_verify and bool(selected_verify),
+            available_tools=available_tools,
         )
     )
     if sequence_template:
@@ -819,7 +880,7 @@ def build_single_batch_task_contract_hint(
 
     if single_quality_repair_target:
         recovery_protocol = ""
-    elif verification_deferred_to_governed_phase:
+    elif verification_deferred_to_governed_phase and not single_batch:
         recovery_protocol = (
             "\nTOOL FAILURE RECOVERY PROTOCOL:\n"
             "1. Retry only with tools exposed in the current physical schema and only when argument correction is safe.\n"
@@ -831,6 +892,8 @@ def build_single_batch_task_contract_hint(
             required_tools=required_tools_from_contract,
             required_any_groups=required_any_groups_from_contract,
             available_write_tools=selected_write,
+            available_tools=available_tools,
+            single_batch=single_batch,
         )
     if recovery_protocol:
         lines.append(recovery_protocol)
@@ -849,5 +912,6 @@ def build_single_batch_task_contract_hint(
     metadata: dict[str, Any] = {
         "expected_read_count": expected_read_count,
         "verification_deferred_to_governed_phase": verification_deferred_to_governed_phase,
+        "tool_guidance_bound": True,
     }
     return contract_text, metadata

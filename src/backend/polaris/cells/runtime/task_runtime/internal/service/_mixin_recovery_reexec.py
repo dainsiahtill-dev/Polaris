@@ -1375,6 +1375,91 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         )
         return task, row, execution_event, reverse_dependency_events
 
+    def resolve_factory_task_row(
+        self,
+        *,
+        external_task_id: str,
+        factory_run_id: str,
+    ) -> dict[str, Any] | None:
+        """Read the unique physical owner of a Factory logical task.
+
+        Historical siblings are not ordered by status or by later heartbeat
+        sequence. Ambiguous live owners require an authoritative reconciliation,
+        not a guessed winner. This reader never repairs or creates a row.
+        """
+        external_id = external_task_id.strip()
+        run_id = factory_run_id.strip()
+        if not external_id or not run_id:
+            raise ValueError("factory_task_binding_identity_required")
+        matches: list[dict[str, Any]] = []
+        for row in self.list_observable_task_rows():
+            metadata = row.get("metadata")
+            if not isinstance(metadata, dict) or not self._metadata_matches_external_task_id(metadata, external_id):
+                continue
+            if str(metadata.get("factory_run_id") or "").strip() != run_id:
+                continue
+            fact_run_id = self._execution_fact_factory_run_id(row)
+            if fact_run_id and fact_run_id != run_id:
+                raise RuntimeError("factory_task_binding_fact_conflict")
+            state = str(row.get("execution_state") or row.get("status") or "").strip().lower()
+            if state != "removed":
+                matches.append(dict(row))
+        if len(matches) > 1:
+            raise RuntimeError("factory_task_binding_ambiguous")
+        return matches[0] if matches else None
+
+    def prepare_factory_task_recovery(
+        self,
+        *,
+        external_task_id: str,
+        factory_run_id: str,
+        project_contract_hash: str,
+        projection_hash: str,
+    ) -> dict[str, Any]:
+        """Reopen one failed same-run owner for an explicitly admitted retry.
+
+        Factory validates its retry intent and strict CE handoff before calling.
+        These expected identities are compared to the existing committed owner;
+        they do not mint capabilities or replace the subsequent claim/DEO fence.
+        Ordinary ``ensure_task_row`` remains creation-only.
+        """
+        for digest in (project_contract_hash, projection_hash):
+            if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+                raise ValueError("factory_task_recovery_contract_identity_required")
+        row = self.resolve_factory_task_row(external_task_id=external_task_id, factory_run_id=factory_run_id)
+        if row is None:
+            raise RuntimeError("factory_task_recovery_owner_missing")
+        row_id = self.normalize_task_id(row.get("id"))
+        if row_id is None or self._board.get(row_id) is None:
+            raise RuntimeError("factory_task_recovery_entity_missing")
+        if self._execution_fact_factory_run_id(row) != factory_run_id:
+            raise RuntimeError("factory_task_recovery_binding_uncommitted")
+        metadata = row.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        projection = metadata.get("task_completion_projection")
+        expected_projection = (external_task_id, factory_run_id, project_contract_hash, projection_hash)
+        if (
+            not isinstance(projection, Mapping)
+            or tuple(projection.get(key) for key in ("task_id", "run_id", "project_contract_hash", "projection_hash"))
+            != expected_projection
+        ):
+            raise RuntimeError("factory_task_recovery_contract_mismatch")
+        if str(row.get("execution_state") or row.get("status") or "").lower() != "failed":
+            raise RuntimeError("factory_task_recovery_owner_not_failed")
+        session = self._read_session(row_id)
+        if session is None or session.status != "failed":
+            raise RuntimeError("factory_task_recovery_session_not_failed")
+        expected_recovery = (session.session_id, int(session.attempt), *expected_projection)
+        _task, reopened, event, downstream, blocker = self._reopen_with_execution_event(
+            row_id,
+            reason="factory_same_logical_task_recovery",
+            expected_factory_recovery=expected_recovery,
+        )
+        if blocker is not None or reopened is None:
+            raise RuntimeError("factory_task_recovery_reopen_refused")
+        events = ((event,) if event is not None else ()) + tuple(downstream)
+        return project_task_row_execution_event(reopened, event, execution_events=events)
+
     def ensure_task_row(
         self,
         *,

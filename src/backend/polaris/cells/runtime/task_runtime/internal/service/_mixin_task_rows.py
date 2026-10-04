@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
+from contextlib import nullcontext
 from contextvars import ContextVar, Token
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, TypedDict
 
 from polaris.cells.events.fact_stream.public.contracts import (
     FactStreamError,
@@ -52,6 +53,13 @@ if TYPE_CHECKING:
     from polaris.cells.runtime.task_runtime.public.contracts import (
         ObservableTaskRowsProjectionV1,
     )
+
+
+class _SameTaskReworkQueryIdentity(TypedDict):
+    workspace: str
+    factory_run_id: str
+    external_task_id: str
+    action_id: str
 
 
 _EXECUTION_FACT_ROWS_PROJECTION_CACHE: ContextVar[dict[tuple[str, int], tuple[dict[str, Any], ...]] | None] = (
@@ -792,6 +800,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
         *,
         reason: str = "",
         metadata: dict[str, Any] | None = None,
+        expected_factory_recovery: tuple[str, int, str, str, str, str] | None = None,
     ) -> tuple[
         Task | None,
         dict[str, Any] | None,
@@ -805,12 +814,55 @@ class _TaskRowsMixin(_ServiceMixinBase):
         with (
             self._get_session_lock(normalized),
             self._board._file_lock(self._session_file_lock_path(normalized)),
+            self._board.transaction() if expected_factory_recovery is not None else nullcontext(),
+            self._board._mutation_guard() if expected_factory_recovery is not None else nullcontext() as mutation_guard,
         ):
             session = self._read_session_locked(normalized)
+            if expected_factory_recovery is not None:
+                session_id, attempt, external_id, factory_run_id, contract_hash, projection_hash = (
+                    expected_factory_recovery
+                )
+                snapshot = self._board._load_task_snapshot_from_disk(normalized)
+                current, before_hash = snapshot if snapshot is not None else (None, "")
+                current_metadata = current.metadata if current is not None else {}
+                projection = current_metadata.get("task_completion_projection")
+                owners: list[int] = []
+                for path in self._board.tasks_dir.glob("task_*.json"):
+                    if path.name.endswith(".session.json"):
+                        continue
+                    row_token = path.stem.removeprefix("task_")
+                    if not row_token.isdigit():
+                        raise RuntimeError("factory_task_recovery_namespace_invalid")
+                    candidate_snapshot = self._board._load_task_snapshot_from_disk(int(row_token))
+                    if candidate_snapshot is None:
+                        raise RuntimeError("factory_task_recovery_namespace_unreadable")
+                    candidate = candidate_snapshot[0]
+                    if candidate.metadata.get(
+                        "factory_run_id"
+                    ) == factory_run_id and self._metadata_matches_external_task_id(candidate.metadata, external_id):
+                        owners.append(candidate.id)
+                if (
+                    current is None
+                    or owners != [normalized]
+                    or current.status != TaskStatus.FAILED
+                    or session is None
+                    or session.status != "failed"
+                    or session.session_id != session_id
+                    or session.attempt != attempt
+                    or current_metadata.get("factory_run_id") != factory_run_id
+                    or not self._metadata_matches_external_task_id(current_metadata, external_id)
+                    or not isinstance(projection, Mapping)
+                    or tuple(
+                        projection.get(key) for key in ("task_id", "run_id", "project_contract_hash", "projection_hash")
+                    )
+                    != (external_id, factory_run_id, contract_hash, projection_hash)
+                ):
+                    raise RuntimeError("factory_task_recovery_compare_and_set_failed")
             if session is not None:
                 pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
                 if (
                     not pre_barrier.allowed
+                    and expected_factory_recovery is None
                     and pre_barrier.code == "settlement_parent_close_required"
                     and is_terminal_session_status(session.status)
                 ):
@@ -819,7 +871,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
                     # was outcome-closed. Reuse the exact terminal outcome and
                     # settlement protocol. An unresolved operation still makes
                     # this fail closed and leaves the session/row unchanged.
-                    outcome = (
+                    outcome: Literal["completed", "failed", "suspended"] = (
                         "completed"
                         if session.status == "completed"
                         else "suspended"
@@ -827,10 +879,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
                         else "failed"
                     )
                     summary = sanitize_summary(
-                        session.last_error
-                        or session.last_result_summary
-                        or reason
-                        or "terminal_parent_close_recovery"
+                        session.last_error or session.last_result_summary or reason or "terminal_parent_close_recovery"
                     )
                     recovery, recovered_session = self._settle_execution_attempt_without_lease_check_locked(
                         SettleTaskRuntimeExecutionAttemptCommandV1(
@@ -850,18 +899,31 @@ class _TaskRowsMixin(_ServiceMixinBase):
                         pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
                 if not pre_barrier.allowed:
                     return None, None, None, [], pre_barrier
+            if expected_factory_recovery is not None:
+                task = self._board.reopen(
+                    normalized,
+                    reason=reason,
+                    metadata=metadata,
+                    allow_terminal_reopen=True,
+                    expected_before_hash=before_hash,
+                    _mutation_guard=mutation_guard,
+                    _defer_ready_notification=True,
+                )
+                if task is None:
+                    raise RuntimeError("factory_task_recovery_compare_and_set_failed")
             if session is not None:
                 session.mark_suspended(reason=reason or "task_reopened", resumable=True)
                 self._write_session_locked(
                     session,
                     allow_terminal_downgrade=True,
                 )
-        task = self._board.reopen(
-            normalized,
-            reason=reason,
-            metadata=metadata,
-            allow_terminal_reopen=True,
-        )
+        if expected_factory_recovery is None:
+            task = self._board.reopen(
+                normalized,
+                reason=reason,
+                metadata=metadata,
+                allow_terminal_reopen=True,
+            )
         if task is None:
             return None, None, None, [], None
         row = self._augment_task_row(task.to_dict())
@@ -875,6 +937,8 @@ class _TaskRowsMixin(_ServiceMixinBase):
             reopened_task_id=normalized,
             dependent_ids=self._row_blocks_ids(row),
         )
+        if expected_factory_recovery is not None:
+            self._board.notify_ready_tasks()
         return task, row, execution_event, downstream_events, None
 
     def list_all(
@@ -1307,7 +1371,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
     ) -> SameTaskLocalReworkAuthorizationQueryResultV1:
         """Recover one exact committed rework authorization from append-only facts."""
 
-        base = {
+        base: _SameTaskReworkQueryIdentity = {
             "workspace": str(self.workspace),
             "factory_run_id": query.factory_run_id,
             "external_task_id": query.external_task_id,

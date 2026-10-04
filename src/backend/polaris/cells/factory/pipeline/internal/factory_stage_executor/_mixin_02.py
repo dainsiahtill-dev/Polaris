@@ -31,6 +31,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     ChiefEngineerSemanticRepairDiagnosisV1,
     ChiefEngineerSemanticRepairOperationV1,
     GenerateTaskBlueprintCommandV1,
+    ProjectCompletionContractV1,
     bind_chief_engineer_semantic_repair_provider_patch,
     build_chief_engineer_blueprint_portfolio,
     build_chief_engineer_semantic_repair_patch_schema,
@@ -3059,8 +3060,16 @@ class _Mixin02:
     def _trim_command_output(text: str, limit: int = _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS) -> str:
         return helpers.trim_command_output(text, limit)
 
-    def _run_workspace_quality_command(self, command: list[str], timeout_seconds: float) -> dict[str, Any]:
-        return self._workspace_quality.run_command(command, timeout_seconds)
+    def _run_workspace_quality_command(
+        self,
+        command: list[str],
+        timeout_seconds: float,
+        *,
+        preparation_contract: ProjectCompletionContractV1 | None = None,
+    ) -> dict[str, Any]:
+        if preparation_contract is None:
+            return self._workspace_quality.run_command(command, timeout_seconds)
+        return self._workspace_quality.run_command(command, timeout_seconds, preparation_contract=preparation_contract)
 
     @staticmethod
     def _resolve_workspace_quality_command(command: list[str]) -> list[str]:
@@ -3527,43 +3536,38 @@ class _Mixin02:
             self, run=run, incomplete_task_ids=incomplete_task_ids
         )
 
-    def _collect_director_stage_materialization_diagnostics(self) -> list[str]:
-        return materialization_impl._collect_director_stage_materialization_diagnostics(self)
+    def _collect_director_stage_materialization_diagnostics(
+        self,
+        *,
+        run: FactoryRun | None = None,
+        preparation_results: list[dict[str, Any]] | None = None,
+    ) -> list[str]:
+        return materialization_impl._collect_director_stage_materialization_diagnostics(
+            self,
+            run=run,
+            preparation_results=preparation_results,
+        )
 
-    def _ensure_director_stage_materialization_typescript_toolchain(self) -> None:
-        """Best-effort npm install so settle can collect tsc diagnostics (R167)."""
+    def _ensure_director_stage_materialization_typescript_toolchain(
+        self,
+        *,
+        run: FactoryRun | None = None,
+    ) -> dict[str, Any]:
+        """Prepare current declared dependencies through the managed command owner."""
+        from ..factory_node_dependencies import NODE_PREPARATION_COMMAND, authenticated_preparation_contract
 
-        package_json = self.workspace / "package.json"
-        if not package_json.is_file():
-            return
         try:
-            payload = json.loads(package_json.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
-            return
-        if not isinstance(payload, Mapping):
-            return
-        deps: dict[str, Any] = {}
-        for key in ("dependencies", "devDependencies"):
-            raw = payload.get(key)
-            if isinstance(raw, Mapping):
-                deps.update(raw)
-        has_typescript = any(str(name).lower() == "typescript" for name in deps)
-        if not has_typescript:
-            return
-        try:
-            pkg().subprocess.run(
-                ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"],
-                cwd=str(self.workspace),
-                capture_output=True,
-                text=True,
-                timeout=180,
-                check=False,
-            )
-        except (OSError, TimeoutError, ValueError) as exc:
-            logger.warning(
-                "Director stage materialization settle npm install skipped: %s",
-                exc,
-            )
+            contract = authenticated_preparation_contract(self, run) if run is not None else None
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "command": list(NODE_PREPARATION_COMMAND),
+                "passed": False,
+                "exit_code": None,
+                "error": f"dependency_preparation_authority_unproved:{exc}",
+                "stdout_tail": "",
+                "stderr_tail": "",
+            }
+        return self._workspace_quality.run_command(list(NODE_PREPARATION_COMMAND), 180, preparation_contract=contract)
 
     def _claim_director_stage_materialization_settle_attempt(
         self,

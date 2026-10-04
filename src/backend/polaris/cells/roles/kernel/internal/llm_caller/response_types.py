@@ -111,7 +111,7 @@ class PreparedLLMRequest:
         structured_output_transport: Caller-owned non-executable result protocol
     """
 
-    messages: list[dict[str, str]]
+    messages: list[dict[str, Any]]
     input_text: str
     context_result: Any
     context_summary: str

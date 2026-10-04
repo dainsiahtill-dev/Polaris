@@ -8,8 +8,7 @@ from typing import Any
 
 import pytest
 from polaris.cells.factory.cognitive_runtime.public import RecordRuntimeReceiptCommandV1
-from polaris.cells.roles.kernel.internal.llm_caller import invoker as invoker_module
-from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker, _call as invoker_module
 
 
 def test_get_executor_injects_contextos_final_request_sink(tmp_path: Path) -> None:
@@ -22,7 +21,7 @@ def test_get_executor_injects_contextos_final_request_sink(tmp_path: Path) -> No
 
 
 def test_final_request_sink_records_cognitive_runtime_receipt(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     commands: list[RecordRuntimeReceiptCommandV1] = []
@@ -65,7 +64,7 @@ def test_final_request_sink_records_cognitive_runtime_receipt(
 
 
 def test_final_request_sink_runtime_shape_error_does_not_raise(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
@@ -85,7 +84,7 @@ def test_final_request_sink_runtime_shape_error_does_not_raise(
 
 
 def test_final_request_sink_required_mode_raises_on_runtime_shape_error(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(

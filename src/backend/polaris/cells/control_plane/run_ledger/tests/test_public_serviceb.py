@@ -2,24 +2,18 @@ from __future__ import annotations
 
 import fcntl
 import json
-import math
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Barrier
 from types import SimpleNamespace
 from typing import Any
 
-import polaris.cells.control_plane.run_ledger.public.ledger as run_ledger_module
 import pytest
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
-    AppendToolCallLifecycleEventCommandV1,
     ReadRunLedgerProjectionBarrierQueryV1,
     ReadRunLedgerProjectionQueryV1,
     ReadRunProvenanceBundleQueryV1,
     RunLedger,
     append_run_ledger_event,
-    append_tool_call_lifecycle_event,
     build_run_ledger_projection,
     build_tool_call_lifecycle_receipt,
     read_run_ledger_projection,
@@ -28,7 +22,14 @@ from polaris.cells.control_plane.run_ledger.public import (
     service as run_ledger_service,
     summarize_run_ledger_projection,
 )
-from polaris.cells.control_plane.run_ledger.public.projection import _directed_effect_receipt_payload_hash
+from polaris.cells.control_plane.run_ledger.tests.test_public_servicea import (
+    _append_successful_tool_lifecycle_event,
+    _append_task_runtime_execution_fact,
+    _authoritative_directed_effect_receipt,
+    _authoritative_directed_effect_receipt_commit,
+    _successful_tool_lifecycle_event,
+    _write_ledger_event,
+)
 from polaris.cells.events.fact_stream.public import (
     AppendFactEventCommandV1,
     QueryFactEventsV1,
@@ -37,13 +38,10 @@ from polaris.cells.events.fact_stream.public import (
 )
 from polaris.cells.events.fact_stream.public.contracts import (
     BootstrapFactStreamWorkspaceCommandV1,
-    FactStreamError,
 )
 from polaris.cells.events.fact_stream.public.workspace_bootstrap import (
     bootstrap_fact_stream_workspace,
 )
-from polaris.kernelone.events.sourcing.models import EventEnvelope
-from polaris.kernelone.storage import resolve_logical_path
 
 
 @pytest.fixture(autouse=True)
@@ -1181,7 +1179,9 @@ def test_read_run_ledger_projection_barrier_reports_unsatisfied_snapshot(tmp_pat
     assert barrier_result.projection["available"] is True
 
 
-def test_append_run_ledger_event_publishes_control_plane_projection_event(tmp_path: Path, monkeypatch) -> None:
+def test_append_run_ledger_event_publishes_control_plane_projection_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class FakePublisher:
         def __init__(self) -> None:
             self.calls: list[tuple[str, dict[str, object]]] = []
@@ -1234,7 +1234,9 @@ def test_append_run_ledger_event_publishes_control_plane_projection_event(tmp_pa
     assert projection["projects"][0]["project_id"] == "P1"
 
 
-def test_projection_transport_does_not_embed_full_durable_ledger_event(tmp_path: Path, monkeypatch) -> None:
+def test_projection_transport_does_not_embed_full_durable_ledger_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class FakePublisher:
         def __init__(self) -> None:
             self.payload: dict[str, object] = {}
@@ -1282,7 +1284,7 @@ def test_projection_transport_does_not_embed_full_durable_ledger_event(tmp_path:
     assert len(encoded) < 64_000
 
 
-def test_projection_transport_drops_unbounded_runtime_history(tmp_path: Path, monkeypatch) -> None:
+def test_projection_transport_drops_unbounded_runtime_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class FakePublisher:
         def __init__(self) -> None:
             self.payload: dict[str, object] = {}

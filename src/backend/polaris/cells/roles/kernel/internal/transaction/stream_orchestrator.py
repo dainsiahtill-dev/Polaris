@@ -14,12 +14,13 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_facts_from_sources,
@@ -659,6 +660,19 @@ async def drain_speculative_tasks(
 # ---------------------------------------------------------------------------
 
 
+class _DecisionMessageBuilder(Protocol):
+    """Canonical private callback; optional request facts are never discarded."""
+
+    def __call__(
+        self,
+        context: list[dict],
+        tool_definitions: list[dict],
+        ledger: TurnLedger | None = None,
+        *,
+        tool_choice_override: Any | None = None,
+    ) -> list[dict]: ...
+
+
 class StreamOrchestrator:
     """流式决策与 Turn 执行编排器 — 集中管理流式专用逻辑。"""
 
@@ -669,7 +683,7 @@ class StreamOrchestrator:
         llm_provider_stream: Callable | None,
         decoder: Any,
         emit_event: Callable[[TurnEvent], None],
-        build_decision_messages: Callable[[list[dict], list[dict]], list[dict]],
+        build_decision_messages: _DecisionMessageBuilder | Callable[[list[dict], list[dict]], list[dict]],
         build_stream_shadow_engine: Callable[..., StreamShadowEngine | None],
         call_llm_for_decision: Callable[..., Any],
         handoff_handler: HandoffHandler,
@@ -726,7 +740,23 @@ class StreamOrchestrator:
         """流式调用LLM获取决策，yield 事件并返回最终 RawLLMResponse（通过内部 materialize 事件）。"""
         from polaris.cells.roles.kernel.internal.turn_engine.stream_handler import StreamEventHandler
 
-        decision_messages = self.build_decision_messages(context, tool_definitions)
+        if tool_choice_override is not None:
+            builder = self.build_decision_messages
+            try:
+                inspect.signature(builder).bind(
+                    context, tool_definitions, ledger, tool_choice_override=tool_choice_override
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError("decision_message_builder_tool_choice_contract_required") from exc
+            # Validate shape before calling. Never catch/retry a callback's own
+            # TypeError: its body may already have performed observable work.
+            # The cast narrows the legacy/canonical union only AFTER validating
+            # this exact callback object; it is not runtime compatibility logic.
+            decision_messages = cast(_DecisionMessageBuilder, builder)(
+                context, tool_definitions, ledger, tool_choice_override=tool_choice_override
+            )
+        else:
+            decision_messages = self.build_decision_messages(context, tool_definitions)
         normalized_model_override = str(model_override or "").strip() or None
         request_payload = {
             "messages": decision_messages,

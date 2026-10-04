@@ -31,6 +31,8 @@ from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     build_single_batch_task_contract_hint,
     platform_tool_contract_is_single_batch,
+    resolve_callable_tool_names,
+    validate_required_tool_surface,
 )
 from polaris.kernelone.context.prompt_safety import format_tool_failure_summary, parse_tool_failure_summary
 
@@ -70,12 +72,15 @@ def _sanitize_materialize_positive_task_contract_line(
     line: str,
     *,
     verification_deferred_to_governed_phase: bool = False,
+    tool_guidance_bound: bool = False,
 ) -> str | None:
     """Keep positive tool templates while stripping negative benchmark wording."""
     stripped = line.strip()
     lowered = stripped.lower()
     if not stripped:
         return stripped
+    if tool_guidance_bound and stripped.startswith(("TEMPLATE [", "1. ", "2. ", "3. ", "4. ")):
+        return line
     if stripped.startswith("TEMPLATE [General-Mutation]:"):
         return (
             "TEMPLATE [General-Mutation]: "
@@ -107,6 +112,8 @@ def _sanitize_materialize_positive_task_contract_line(
                 "current physical schema have been emitted. Verification remains mandatory in a later governed "
                 "continuation or quality phase."
             )
+        if tool_guidance_bound:
+            return line
         return (
             "COMPLETION CHECK: Finish only after the required write/edit and verification tools "
             "for this turn have been emitted."
@@ -244,20 +251,43 @@ def _physical_tool_names(tool_definitions: list[dict[str, Any]]) -> list[str]:
     return names
 
 
+def _bind_repo_identity_discovery(messages: list[dict[str, Any]], callable_tools: list[str]) -> None:
+    """Replace only the named platform signal's generic discovery instruction."""
+    old = "- 路径不存在时,用 repo_rg 搜索符号或 repo_tree 浏览;不要按其它项目的惯例假设文件存在。"
+    discovery = [name for name in ("repo_rg", "repo_tree", "glob", "file_exists") if name in callable_tools]
+    guidance = (
+        "- 路径不存在时,只使用当前可调用的定位工具 " + "/".join(discovery) + ";不要猜测文件存在。"
+        if discovery
+        else "- 当前请求没有可调用的路径定位工具。仅使用已提供的仓库事实;缺少必要信息时保留阻塞或失败,不要猜测文件存在。"
+    )
+    for message in messages:
+        if message.get("role") == "system" and message.get("name") == "repo_identity":
+            content = message.get("content")
+            if isinstance(content, str):
+                message["content"] = "\n".join(guidance if line == old else line for line in content.split("\n"))
+
+
 def build_decision_messages(
     context: list[dict[str, Any]],
     tool_definitions: list[dict[str, Any]],
     ledger: TurnLedger | None = None,
+    *,
+    tool_choice_override: Any = None,
 ) -> list[dict[str, Any]]:
     """Build decision-stage messages with single-batch execution constraints."""
     messages: list[dict[str, Any]] = _compact_tool_failure_messages(
         [dict(message) for message in context if message.get("metadata", {}).get("plane") != "control"]
     )
+    callable_tools = resolve_callable_tool_names(tool_definitions, tool_choice_override)
+    _bind_repo_identity_discovery(messages, callable_tools)
     if not tool_definitions:
+        validate_required_tool_surface(context, callable_tools)
         return messages
 
     physical_tool_names = _physical_tool_names(tool_definitions)
     if require_exact_structured_output_tool_surface(tool_definitions):
+        if callable_tools != [STRUCTURED_OUTPUT_TOOL_NAME]:
+            raise ValueError("structured_output_tool_choice_unavailable")
         # The reserved structured-result tool is a Provider response protocol:
         # it has no side effect and never enters Tool Lifecycle or workspace
         # mutation. Do not contaminate this turn with the generic Director
@@ -293,6 +323,17 @@ def build_decision_messages(
                     "plane": "control",
                     "kind": "physical_tool_schema_truth",
                 },
+            }
+        )
+        return messages
+
+    validate_required_tool_surface(context, callable_tools)
+    if not callable_tools:
+        messages.append(
+            {
+                "role": "system",
+                "content": "Tool calls are disabled by this request's tool choice. Do not claim tool execution or completion.",
+                "metadata": {"plane": "control", "kind": "tool_choice_constraint"},
             }
         )
         return messages
@@ -365,7 +406,7 @@ def build_decision_messages(
                 "ALL required tool calls MUST be emitted in this single turn. "
                 "Do NOT defer any tool call (especially write/edit tools) to a subsequent turn — "
                 "there is no subsequent turn in this execution path.\\n"
-                "For create-file, scaffold, or full-replacement tasks, emit write_file/edit_file in this batch "
+                "For create-file, scaffold, or full-replacement tasks, emit callable write/edit tools in this batch "
                 "instead of starting with read-only exploration. "
                 "Targeted reads are allowed only when exact existing content is required, and must be paired "
                 "with the required write/edit call in the same batch. "
@@ -377,13 +418,13 @@ def build_decision_messages(
         single_batch_guard = (
             "SYSTEM CONSTRAINT (Execution): This turn supports multi-turn workflow. "
             "For code modification tasks, follow the 'inspect-then-modify' pattern across turns:\\n"
-            "1. First turn: You may call read_file to inspect existing code. "
-            "2. Subsequent turns: You MUST call write/edit tools (edit_file, write_file, etc.) to materialize changes.\\n"
+            "1. First turn: Inspect existing code only through callable read tools when needed. "
+            "2. Subsequent turns: Use callable write/edit tools for required materialization.\\n"
             "3. NEVER output large code blocks in text — always use tools to write files.\\n"
             "4. DO NOT ask the user for confirmation, approval, or plan review. "
             "The user has already authorized execution. Proceed immediately with tool calls.\\n"
             "系统约束 (执行层): 当前回合支持多回合工作流. 代码修改任务遵循'先勘察后修改': "
-            "第一轮允许调用 read_file 了解现状, 后续回合必须调用写工具落盘修改. "
+            "仅在当前有可调用读取工具时勘察现状, 后续回合用可调用写工具落盘修改. "
             "严禁在对话中直接输出大段代码替代工具调用. "
             "严禁请求用户确认或等待批准——用户已授权执行，请立即调用工具实施修改。"
         )
@@ -399,6 +440,9 @@ def build_decision_messages(
                     "supersedes broader role-capability lists. Tools not listed here are unavailable "
                     "in this Provider request. Never claim or promise a tool action that this schema "
                     "does not expose."
+                    + " Callable tools under the current tool choice: "
+                    + ", ".join(callable_tools)
+                    + "."
                 ),
                 "metadata": {"plane": "control", "kind": "physical_tool_schema_truth"},
             }
@@ -438,7 +482,12 @@ def build_decision_messages(
             "[/SUPER_MODE_DIRECTOR_CONTINUE]",
         )
     )
-    task_contract_hint, _task_contract_metadata = build_single_batch_task_contract_hint(context, tool_definitions)
+    task_contract_hint, _task_contract_metadata = build_single_batch_task_contract_hint(
+        context,
+        tool_definitions,
+        tool_choice_override=tool_choice_override,
+        single_batch=_is_platform_contract_single_batch or _is_materialize_single_batch,
+    )
     if task_contract_hint and not _is_super_readonly_stage:
         if is_materialize and not _is_super_mode:
             # MATERIALIZE 模式（非 SUPER）: 只保留正例模板和恢复协议，过滤掉 NEGATIVE/HARD GATE 规则
@@ -451,6 +500,7 @@ def build_decision_messages(
                     verification_deferred_to_governed_phase=bool(
                         _task_contract_metadata.get("verification_deferred_to_governed_phase")
                     ),
+                    tool_guidance_bound=bool(_task_contract_metadata.get("tool_guidance_bound")),
                 )
                 if positive_line is not None:
                     positive_lines.append(positive_line)
@@ -477,16 +527,16 @@ def build_decision_messages(
     if _is_implementing_turn:
         enforcing_constraint = (
             "HARD GATE (Implementing Phase): You are now in the MODIFY phase. "
-            "You MUST call at least one write tool (edit_file, write_file, create_file, etc.) in this turn. "
+            "You MUST call at least one callable write tool in this turn. "
             "Text-only responses, plan outlines, or 'I will now...' are INVALID and will be rejected. "
             "DO NOT ask for confirmation. DO NOT output code blocks in text. Use tools immediately.\n"
             "CRITICAL: Broad exploration tools (glob, repo_rg, repo_tree) are FORBIDDEN in this phase. "
             "You have already gathered enough context. Proceed directly to write.\n"
-            "ALLOWED: You may call read_file or repo_read_head on SPECIFIC target files "
-            "if you need to verify exact content before editing. But prioritize write tools.\n"
+            "ALLOWED: Only callable targeted read tools may inspect SPECIFIC target files "
+            "when exact content is needed. If none is callable, do not invent an inspection.\n"
             "强制约束（修改阶段）：本回合必须调用至少一个写工具。"
             "严禁调用 broad 探索工具（glob/repo_rg/repo_tree）——直接写入。"
-            "允许：如需确认目标文件内容，可调用 read_file/repo_read_head 读取特定文件，但优先写工具。"
+            "允许：仅在当前提供定向读取工具时读取特定文件，不得虚构读取结果。"
         )
         messages.append(
             {

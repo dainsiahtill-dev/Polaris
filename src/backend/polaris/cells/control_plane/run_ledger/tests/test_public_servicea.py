@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import json
 import math
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -14,17 +15,13 @@ import pytest
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     AppendToolCallLifecycleEventCommandV1,
-    ReadRunLedgerProjectionBarrierQueryV1,
     ReadRunLedgerProjectionQueryV1,
-    ReadRunProvenanceBundleQueryV1,
     RunLedger,
     append_run_ledger_event,
     append_tool_call_lifecycle_event,
     build_run_ledger_projection,
     build_tool_call_lifecycle_receipt,
     read_run_ledger_projection,
-    read_run_ledger_projection_barrier,
-    read_run_provenance_bundle,
     service as run_ledger_service,
     summarize_run_ledger_projection,
 )
@@ -38,6 +35,7 @@ from polaris.cells.events.fact_stream.public import (
 from polaris.cells.events.fact_stream.public.contracts import (
     BootstrapFactStreamWorkspaceCommandV1,
     FactStreamError,
+    FactStreamQueryResultV1,
 )
 from polaris.cells.events.fact_stream.public.workspace_bootstrap import (
     bootstrap_fact_stream_workspace,
@@ -70,30 +68,191 @@ def _control_plane_facts(workspace: Path, *, run_id: str) -> list[dict[str, Any]
     )
 
 
-def _successful_tool_lifecycle_event(*, task_id: str = "TASK-1") -> dict[str, Any]:
-    """Return one complete lifecycle fact for projection-only tests."""
+def _append_task_runtime_execution_fact(
+    workspace: Path,
+    *,
+    run_id: str,
+    factory_run_id: str,
+    project_id: str,
+    task_id: str,
+    event_type: str = "created",
+    role_id: str = "",
+    target_files: tuple[str, ...] = (),
+) -> None:
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(workspace),
+            stream="task_runtime.execution",
+            event_type=event_type,
+            source="run_ledger_scope_test",
+            run_id=run_id,
+            task_id=task_id,
+            payload={
+                "event_type": event_type,
+                "run_id": run_id,
+                "task_id": task_id,
+                "factory_run_id": factory_run_id,
+                "factory_bench_project_id": project_id,
+                "task_row_snapshot": {
+                    "id": task_id,
+                    "metadata": {
+                        "external_task_id": task_id,
+                        "target_files": list(target_files),
+                        "task_contract": {"target_files": list(target_files)},
+                        "runtime_execution": {"role_id": role_id},
+                    },
+                },
+            },
+        )
+    )
 
-    return {
-        "event_type": "tool_call_lifecycle",
-        "run_id": "run-1",
-        "task_id": task_id,
-        "turn_id": "turn-1",
-        "role": "director",
-        "tool_call_lifecycle_receipt": {
-            "schema_version": "tool_call_lifecycle_receipt.v1",
-            "run_id": "run-1",
-            "task_id": task_id,
-            "turn_id": "turn-1",
-            "role": "director",
-            "ok": True,
-            "dispatch_status": "dispatched",
-            "native_tool_calls_count": 1,
-            "decoded_tool_calls_count": 1,
-            "dispatched_tool_calls_count": 1,
-            "receipts": [{"ok": True}],
-            "dropped_tool_calls": [],
+
+def _write_ledger_event(
+    workspace: Path,
+    *,
+    run_id: str = "run-1",
+    include_lifecycle: bool = True,
+) -> None:
+    ledger_path = workspace / "runtime" / "factory" / "ledger" / f"{run_id}.ndjson"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    event = {
+        "event_type": "gate_evaluated",
+        "event_id": "evt-1",
+        "content_id": "cid-1",
+        "append_id": "append-1",
+        "stage": "qa_verifier",
+        "gate": {"name": "qa_verifier", "ok": True, "summary": "gate passed"},
+        "job_token": {
+            "token_id": "token-1",
+            "run_id": run_id,
+            "project_id": "P1",
+            "capability_audit": {"ok": True, "issues": []},
+            "gate_policy": {
+                "enabled_evidence_modalities": ["browser"],
+                "required_evidence_modalities": [],
+            },
+        },
+        "physical_evidence": {
+            "modalities": {
+                "browser": {
+                    "present": True,
+                    "ok": True,
+                    "detail": "browser verifier passed",
+                }
+            }
         },
     }
+    events: list[dict[str, Any]] = [event]
+    if include_lifecycle:
+        events.append(_successful_tool_lifecycle_event(run_id=run_id))
+    ledger_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in events) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _authoritative_directed_effect_receipt(*, run_id: str) -> dict[str, object]:
+    payload = {
+        "arguments_hash": "1" * 64,
+        "authoritative": True,
+        "batch_id": f"batch-{run_id}",
+        "claim_grant_hash": "2" * 64,
+        "context_id": f"context-{run_id}",
+        "durable": True,
+        "effect_call_id": None,
+        "effect_operation_id": None,
+        "normalized_tool_name": "write_file",
+        "operation_id": f"operation-{run_id}",
+        "parent_close_eligible": True,
+        "physical_result_hash": "3" * 64,
+        "plan_hash": None,
+        "policy_evidence_hash": "4" * 64,
+        "repair_binding_hash": None,
+        "repair_contingency_kind": None,
+        "repair_request_hash": None,
+        "receipt_binding_hash": "5" * 64,
+        "receipt_outcome": "succeeded",
+        "schema_version": "roles.adapters.director_physical_effect_receipt.v2",
+        "target_state_hash": "6" * 64,
+        "tool_call_id": f"call-{run_id}",
+    }
+    receipt_hash = _directed_effect_receipt_payload_hash(payload)
+    assert receipt_hash is not None
+    return {
+        **payload,
+        "receipt_hash": receipt_hash,
+        "receipt_id": f"director-physical-effect-{receipt_hash[:24]}",
+    }
+
+
+def _authoritative_directed_effect_receipt_commit(*, run_id: str) -> dict[str, object]:
+    receipt = _authoritative_directed_effect_receipt(run_id=run_id)
+    return {
+        "code": "receipt_committed",
+        "state": "RECEIPT_COMMITTED",
+        "operation_id": receipt["operation_id"],
+        "event_id": f"event-{run_id}",
+        "receipt_ref": receipt["receipt_id"],
+        "receipt_hash": receipt["receipt_hash"],
+        "receipt_binding_hash": receipt["receipt_binding_hash"],
+        "receipt_outcome": receipt["receipt_outcome"],
+        "version": 3,
+    }
+
+
+def _successful_tool_lifecycle_event(
+    *,
+    run_id: str = "run-1",
+    task_id: str = "TASK-1",
+    project_id: str = "P1",
+) -> dict[str, object]:
+    lifecycle = build_tool_call_lifecycle_receipt(
+        run_id=run_id,
+        task_id=task_id,
+        turn_id="turn-1",
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[
+            {
+                "batch_id": f"batch-{run_id}",
+                "results": [
+                    {
+                        "call_id": f"call-{run_id}",
+                        "tool_name": "write_file",
+                        "status": "success",
+                        "effect_receipt": _authoritative_directed_effect_receipt(run_id=run_id),
+                        "effect_receipt_commit": _authoritative_directed_effect_receipt_commit(run_id=run_id),
+                    }
+                ],
+                "success_count": 1,
+                "failure_count": 0,
+            }
+        ],
+    ).to_dict()
+    return {
+        "event_type": "tool_call_lifecycle",
+        "run_id": run_id,
+        "task_id": task_id,
+        "project_id": project_id,
+        "tool_call_lifecycle_receipt": lifecycle,
+    }
+
+
+def _append_successful_tool_lifecycle_event(
+    workspace: Path,
+    *,
+    run_id: str,
+) -> str:
+    result = append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(workspace),
+            run_id=run_id,
+            event=_successful_tool_lifecycle_event(run_id=run_id),
+        )
+    )
+    return str(result.receipt["event"]["append_id"])
 
 
 def _append_control_plane_fact(
@@ -230,10 +389,11 @@ def test_task_runtime_fact_join_reuses_projection_until_stream_head_advances(
         )
 
     append_execution_fact("claimed", "in_progress")
-    original_query = run_ledger_service.query_fact_events
+    assert vars(run_ledger_service)["query_fact_events"] is query_fact_events
+    original_query: Callable[[QueryFactEventsV1], FactStreamQueryResultV1] = query_fact_events
     task_runtime_queries = 0
 
-    def query_spy(query: QueryFactEventsV1):
+    def query_spy(query: QueryFactEventsV1) -> FactStreamQueryResultV1:
         nonlocal task_runtime_queries
         if query.stream == "task_runtime.execution":
             task_runtime_queries += 1
@@ -452,7 +612,7 @@ def test_append_run_ledger_event_preserves_fact_projection_publish_order(
 
     original_append_serialized_row = RunLedger._append_serialized_row_locked
 
-    def observe_projection_write(self: RunLedger, handle: Any, serialized_row: str) -> None:
+    def observe_projection_write(self: RunLedger, handle: Any, serialized_row: bytes) -> None:
         operations.append("projection")
         original_append_serialized_row(self, handle, serialized_row)
 
@@ -653,12 +813,12 @@ def test_prepare_idempotent_event_rejects_string_subclass_identity_inputs(tmp_pa
 )
 def test_run_ledger_append_once_rejects_noncanonical_recorded_at(
     tmp_path: Path,
-    recorded_at: object,
+    recorded_at: Any,
 ) -> None:
     with pytest.raises(ValueError, match="invalid_recorded_at"):
         RunLedger(tmp_path, run_id="run-invalid-time").append_event_once(
             {"event_type": "gate_evaluated"},
-            recorded_at=recorded_at,  # type: ignore[arg-type]
+            recorded_at=recorded_at,
         )
 
 
@@ -1158,7 +1318,8 @@ def test_public_append_full_row_before_error_replays_fact_and_fsyncs_existing_ro
     assert len(facts_after_crash) == 1
     assert bytes_after_crash.endswith(b"\n")
 
-    original_append_fact = run_ledger_service.append_fact_event
+    assert vars(run_ledger_service)["append_fact_event"] is append_fact_event
+    original_append_fact = append_fact_event
     original_fsync = RunLedger._fsync_projection_locked
     fact_replay_calls = 0
     projection_fsync_calls = 0
@@ -1615,7 +1776,8 @@ def test_public_append_partial_tail_rejects_duplicate_seq_from_unrelated_fact(
     ledger.path.write_bytes(row_a.encode() + row_b.encode()[:90])
     facts_before = fact_path.read_bytes()
     projection_before = ledger.path.read_bytes()
-    original_query = run_ledger_service.query_fact_events
+    assert vars(run_ledger_service)["query_fact_events"] is query_fact_events
+    original_query = query_fact_events
 
     def query_with_duplicate_unrelated_seq(query: QueryFactEventsV1) -> Any:
         page = original_query(query)
@@ -1797,7 +1959,7 @@ def test_run_ledger_append_once_rejects_duplicate_append_id_without_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_hash = run_ledger_module._canonical_stable_hash
+    original_hash: Callable[[Any], str] = run_ledger_module._canonical_stable_hash
 
     def force_append_identity_collision(value: Any) -> str:
         if isinstance(value, dict) and set(value) == {"run_id", "event_id", "content_id"}:
@@ -2000,7 +2162,7 @@ def test_append_run_ledger_event_retries_after_projection_failure_without_duplic
     original_append_serialized_row = RunLedger._append_serialized_row_locked
     append_attempts = 0
 
-    def fail_projection_once(self: RunLedger, handle: Any, serialized_row: str) -> None:
+    def fail_projection_once(self: RunLedger, handle: Any, serialized_row: bytes) -> None:
         nonlocal append_attempts
         append_attempts += 1
         if append_attempts == 1:
@@ -2574,7 +2736,7 @@ def test_latest_failed_gate_revision_supersedes_historical_success() -> None:
 
 
 def test_repaired_gate_revision_cannot_shrink_required_evidence_contract() -> None:
-    failed = {
+    failed: dict[str, Any] = {
         "event_type": "gate_evaluated",
         "stage": "workspace_validation",
         "gate_obligation_id": "factory-1:workspace-validation",
@@ -2678,9 +2840,7 @@ def test_explicit_successor_resolves_all_gate_revision_branch_heads() -> None:
         "gate_revision": 1,
         "content_id": "a" * 64,
         "gate": {"name": "workspace_validation", "ok": False, "summary": "first root"},
-        "physical_evidence": {
-            "modalities": {"command": {"present": True, "ok": False, "detail": "first root"}}
-        },
+        "physical_evidence": {"modalities": {"command": {"present": True, "ok": False, "detail": "first root"}}},
     }
     first_head = {
         **first_root,
@@ -2700,9 +2860,7 @@ def test_explicit_successor_resolves_all_gate_revision_branch_heads() -> None:
         "supersedes_content_id": "c" * 64,
         "content_id": "d" * 64,
         "gate": {"name": "workspace_validation", "ok": True, "summary": "restarted head"},
-        "physical_evidence": {
-            "modalities": {"command": {"present": True, "ok": True, "detail": "passed"}}
-        },
+        "physical_evidence": {"modalities": {"command": {"present": True, "ok": True, "detail": "passed"}}},
     }
     resolver = {
         **restarted_head,

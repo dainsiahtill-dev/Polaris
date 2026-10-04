@@ -4,28 +4,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 
+import pytest
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
-from polaris.cells.roles.kernel.internal.llm_caller import context_audit as context_audit_module
-from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
-    FinalRequestEvidenceCoverageError,
+from polaris.cells.roles.kernel.internal.llm_caller.context_audit._builders import (
     build_final_provider_request_snapshot,
     build_final_request_context_audit_for_request,
+)
+from polaris.cells.roles.kernel.internal.llm_caller.context_audit._evidence import (
+    FinalRequestEvidenceCoverageError,
     enforce_final_request_evidence_coverage,
     final_request_evidence_coverage_violation,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
-from polaris.cells.roles.kernel.internal.structured_output_transport import (
-    STRUCTURED_OUTPUT_TOOL_NAME,
-    resolve_structured_output_transport,
-)
-from polaris.cells.roles.kernel.public.structured_output_contracts import (
-    STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY,
-    RoleStructuredOutputContractV1,
-)
 from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
-from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 
 def _actual_sibling_exports_v2(
@@ -75,7 +70,7 @@ def _actual_sibling_exports_v2(
     return payload
 
 
-def _actual_sibling_exports_message(payload: dict[str, object], *, include_body: bool = True) -> str:
+def _actual_sibling_exports_message(payload: dict[str, Any], *, include_body: bool = True) -> str:
     module = payload["modules"][0]
     assert isinstance(module, dict)
     lines = [
@@ -95,7 +90,7 @@ def _audit_required_actual_sibling_payload(
     payload: dict[str, object],
     *,
     message: str,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     ai_request = AIRequest(
         task_type=TaskType.DIALOGUE,
         role="director",
@@ -157,8 +152,6 @@ def _audit_required_actual_sibling_payload(
         prepared=prepared,
         profile=SimpleNamespace(role_id="director", max_context_tokens=128_000),
     )
-
-
 
 
 def test_final_request_context_audit_includes_sampling_profile() -> None:
@@ -1206,8 +1199,12 @@ def test_first_pass_tests_accept_actual_parent_artifacts_without_failed_gate() -
     assert audit["coverage"]["has_actual_sibling_exports"] is True
 
 
-def test_final_request_evidence_role_defaults_use_canonical_ref_helper(monkeypatch) -> None:
-    original_ref_helper = context_audit_module.final_request_evidence_ref_for_requirement
+def test_final_request_evidence_role_defaults_use_canonical_ref_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import _evidence as evidence_lookup
+    from polaris.kernelone.events.final_request_evidence import final_request_evidence_ref_for_requirement
+
+    original_ref_helper: Callable[[object], str] = final_request_evidence_ref_for_requirement
+    assert id(vars(evidence_lookup)["final_request_evidence_ref_for_requirement"]) == id(original_ref_helper)
     observed_requirements: list[str] = []
 
     def recording_ref_helper(value: object) -> str:
@@ -1215,7 +1212,7 @@ def test_final_request_evidence_role_defaults_use_canonical_ref_helper(monkeypat
         return original_ref_helper(value)
 
     monkeypatch.setattr(
-        context_audit_module,
+        evidence_lookup,
         "final_request_evidence_ref_for_requirement",
         recording_ref_helper,
     )
@@ -1916,6 +1913,9 @@ def test_final_request_context_audit_tracks_receipt_store_refs() -> None:
         "chief_engineer_blueprint",
     ]
     assert "receipt_store_refs" in evidence_coverage["included_refs"]
+    assert isinstance(prepared.messages[1]["receipt_refs"], list)
+    assert prepared.messages[1]["receipt_refs"] == ["chief_engineer_blueprint"]
+    assert "ce_blueprint" not in evidence_coverage["included_refs"]
 
 
 def test_final_request_context_audit_ignores_receipt_refs_in_message_text() -> None:
@@ -2601,5 +2601,3 @@ def test_final_request_evidence_coverage_tracks_delivery_plan_and_depth_contract
     assert evidence_coverage["missing_required_refs"] == []
     assert evidence_coverage["pass"] is True
     enforce_final_request_evidence_coverage(ai_request=ai_request, audit=audit)
-
-

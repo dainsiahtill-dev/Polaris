@@ -21,6 +21,7 @@ Behavior preservation notes:
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -40,6 +41,13 @@ from polaris.kernelone.process import (
 )
 
 from . import factory_stage_helpers as helpers
+from .factory_node_dependencies import (
+    NODE_PREPARATION_COMMAND,
+    ProjectCompletionContractV1,
+    node_dependency_readiness,
+    preparation_protects_lock,
+    preparation_source_hashes,
+)
 from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
 from .factory_workspace_quality_evidence import (
     compact_compiler_error_blocks,
@@ -213,9 +221,9 @@ class WorkspaceQualityRunner:
             return []
         if not any(command and str(command[0]).strip().lower() == "npm" for command in commands):
             return []
-        if (self.workspace / "node_modules").is_dir():
-            return []
         if not self.workspace_package_has_external_dependencies():
+            return []
+        if node_dependency_readiness(self.workspace).ready:
             return []
         return [["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]]
 
@@ -721,8 +729,46 @@ print(f"Java javac passed for {len(files)} source file(s)")
             commands.append([sys.executable, "src/main.py"])
         return commands
 
-    def run_command(self, command: list[str], timeout_seconds: float) -> dict[str, Any]:
+    def run_command(
+        self,
+        command: list[str],
+        timeout_seconds: float,
+        *,
+        preparation_contract: ProjectCompletionContractV1 | None = None,
+    ) -> dict[str, Any]:
         started_at = datetime.now(timezone.utc).isoformat()
+        source_hashes: dict[str, str] | None = None
+        protect_lock = True
+        if tuple(command) == NODE_PREPARATION_COMMAND:
+            try:
+                protect_lock = preparation_protects_lock(self.workspace, preparation_contract)
+                source_hashes = preparation_source_hashes(self.workspace, protect_lock=protect_lock)
+                readiness = node_dependency_readiness(self.workspace)
+                if any(
+                    marker in readiness.reason
+                    for marker in (
+                        "symlink",
+                        "invalid_dependency_declarations",
+                        "lock_package_path_invalid",
+                        "metadata_not_object",
+                        "lock_package_metadata_unproved",
+                    )
+                ):
+                    raise ValueError(readiness.reason)
+                if protect_lock and (
+                    readiness.reason in {"manifest_lock_drift", "lock_metadata_unproved"}
+                    or not (self.workspace / "package-lock.json").is_file()
+                ):
+                    raise ValueError("dependency_preparation_authored_or_unknown_lock_requires_owner_repair")
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                return {
+                    "command": command,
+                    "exit_code": None,
+                    "passed": False,
+                    "error": f"dependency_preparation_blocked:{exc}",
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                }
         resolved_command = helpers.resolve_workspace_quality_command(command)
         if not resolved_command:
             executable = command[0] if command else ""
@@ -788,7 +834,7 @@ print(f"Java javac passed for {len(files)} source file(s)")
                     "stderr_tail": "",
                     "sandboxed": False,
                 }
-        return self._run_resolved_command(
+        result = self._run_resolved_command(
             command=command,
             resolved_command=resolved_command,
             timeout_seconds=timeout_seconds,
@@ -796,6 +842,34 @@ print(f"Java javac passed for {len(files)} source file(s)")
             sandbox_backend="",
             cargo_test=False,
         )
+        if source_hashes is not None:
+            try:
+                current = preparation_source_hashes(self.workspace, protect_lock=protect_lock)
+                readiness = node_dependency_readiness(self.workspace)
+                if current != source_hashes:
+                    result.update(passed=False, error="dependency_preparation_source_changed")
+                elif not readiness.ready:
+                    result.update(passed=False, error=f"dependency_preparation_unready:{readiness.reason}")
+                result["dependency_preparation"] = {
+                    "readiness": readiness.reason,
+                    "source_unchanged": current == source_hashes,
+                    "protected_lock": protect_lock,
+                    "source_before_hash": hashlib.sha256(
+                        json.dumps(source_hashes, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+                            "utf-8"
+                        )
+                    ).hexdigest(),
+                    "source_after_hash": hashlib.sha256(
+                        json.dumps(current, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                    ).hexdigest(),
+                    "source_before_paths": sorted(source_hashes),
+                    "source_after_paths": sorted(current),
+                    "source_before_count": len(source_hashes),
+                    "source_after_count": len(current),
+                }
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                result.update(passed=False, error=f"dependency_preparation_postcheck_failed:{exc}")
+        return result
 
     def run_isolated_command(
         self,

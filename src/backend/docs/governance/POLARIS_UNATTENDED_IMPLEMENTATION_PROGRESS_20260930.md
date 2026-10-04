@@ -6,6 +6,48 @@
 
 ## 当前结论
 
+2026-10-04 凌晨阶段更新：r10真实失败（214.828s），PM/CE已交接、Director
+10次native调用中9次真实写入、1次CLI语法门拒绝，尚未达到QA/完整可运行。
+失败不是“没有写代码”：平台追加的autofill诊断被严格BatchReceipt拒绝，
+以及canonical/raw镜像被计数两遍；另一次真实package修复因缺失CLI先触发
+登记异常，未刷新后续package账本哈希。全部通过原数据/真实效果/读取预条件
+动态复现，未改目标。当前三项通用修正局部测试与独立复审通过；计数合并
+曾掩盖True/1冲突，已类型敏感修正并复审，原失败与负面探针全部保留。
+
+第四项仍在实施：让最终提示的恢复工具与实际提交的工具及tool_choice一致，
+不扩大授权，也不删除真正的必需工具要求。重构丢失六个测试helper已按Git
+旧AST恢复，408项组件测试通过；既有测试类型检查残差还在单独记录/收口。
+新源码冻结和主验后仅恢复同一r10的Director，复用有效PM/CE/回执，不从头跑。
+观测页已Playwright实测：[当前Launcher](http://127.0.0.1:5178/launcher)，
+后台49982、canonical .polaris/runtime、scoped runtime.v2、无页面错误。
+这仍不是完整项目成功或全120验收。最新缺陷入口为SDD fresh-r10-defects.json。
+
+2026-10-03 22:52 UTC（台北10-04 06:52）：本轮review修复局部验收完成。
+主验631联合+2实际Cargo分区通过，14文件静态/24路径审查/6898冻结复验通过；
+完整发布12阶段全0、354 PASS/1信息性SKIP/2既有警告，285.68s。原时序用例
+在完整上下文10.915ms、timerlag0.236ms，真实取消和日志span已留证；没有
+放宽100ms断言，也不臆测历史277ms的唯一原因。旧失败全部保留。
+
+已启动fresh isolated L1-01 r10，完整5400/6000/120预算、session-reporting off；
+工作目录 `/tmp/factory-bench-minimax-l1-01-20261004-r10`。仅启动，尚未完成。
+不改生成目标；接下来审计实际注册、最终请求、工具效果、验证、QA和结算。
+全120与N-batch仍ACTIVE，不能拿上述局部绿替代项目交付。
+
+2026-10-03 22:44 UTC（台北10-04 06:44）最新主验：631项联合测试完整通过（266.07s），两项旧
+Cargo真实主机沙箱分区也已完整通过；静态14文件Ruff/format/Mypy、24路径
+独立审查及6898文件冻结复验通过。消息总线原断言单独动态复现约11ms，但
+历史277ms失败仍保留，不臆测唯一原因；原上下文完整release正串行运行，
+已接入只观测该原用例的工程时序插件，不改变100ms断言、其他用例或产品。
+结束后必须读取真实发布终态和trace，再启动fresh isolated。尚未发新Provider。
+
+2026-10-03 22:23 UTC（台北10-04 06:23）状态复核（下文通过数为历史）：六项原 review 修复和
+后续路径修正已局部复审通过，依赖锁最小生成同步与离线一致性通过；6898
+冻结哈希复验无变化。但最新完整发布复测353 PASS/1 FAIL/1信息性SKIP：
+message_bus async handler 时限用例实测0.277s，未满足既有<0.1s；正独立动态
+调试，不能未经证据归为环境噪声。联合631 selected测试日志无终态，当前
+无对应测试进程/可附着句柄，按未验证记录，不宣称全绿。下一步关闭该时序
+残差、取得联合终态和最终静态验收，再做fresh isolated项目；全量目标未达。
+
 2026-10-04 收口新进展：六项原 review 回归及 procfs 排空竞态已实施并通过
 独立局部审查。串行集成修复补齐 Rustup stable 别名、新建 node_modules 的
 组冻结时机、Python3.10 TOML 兼容声明和 shared NATS 的 KFS 日志/目录入口。
@@ -1166,3 +1208,33 @@ metadata或inventory覆盖。Case恢复第11个测试RED->GREEN，原大小写�
 freeze。CLI 外部专家物理 SYN_SENT 约610s、0工具/0改动，已按 session 精确终止，
 改用原生专家；不是凭进程存活声称进度。r09 CE失败证据保留，暂无新付费 Bench。
 局部门禁或专家报告均不等于 COMPLETED_VERIFIED；120个 fresh无人值守目标仍未完成。
+
+### 2026-10-04 原始六项回归及 r10 四项根因闭环验收（01:57Z）
+
+执行线：`docs/superpowers/plans/2026-10-04-review-regression-closure.md`；精确
+记录：`.superpowers/sdd/2026-10-04-review-regression-closure/progress.md` 和
+`audits/review-regression-closure-20261004.json`，均为工程记录，不是平台事实源。
+
+- 原审查六项：Cargo 调用名、Python workspace import、Rustup 环境/挂载、
+  dependency preparation 后再 freeze、unproved drain 时仍停心跳、NATS 早退与
+  readiness probe 竞争，均已实现并独立审查。额外真实 procfs/日志/KFS/安装
+  toolchain 别名问题也有本地原生回归，不以 mock argv 代替物理隔离证明。
+- fresh r10 实际仍 FAILED：PM/CE 完成，Director 10 native calls，9 个真实落盘
+  effect，1 个 CLI syntax guard 拒绝，QA 未到达。不能称无写入、模型不行或项目成功。
+- 由 r10 物理证据闭环的新通用问题：严格 BatchReceipt 不接受自产诊断字段、
+  canonical/raw 镜像重复计数、最终仅 write 工具却要求缺席 read/recovery 工具、
+  missing owned artifact 提前中断真实已提交后续修复 receipt 刷新。四项已独立审查；
+  真 missing CLI/类型冲突/权限失败仍 fail-closed，未补造产物或下调门禁。
+- 主验收：组合 1466 PASS；未修改的 process-owner 文件独立进程 11 PASS；
+  真实 Cargo sandbox 2 PASS。Ruff/format/普通 Mypy/diff 在 20 个改动文件上通过。
+  新夹具严格类型的定义者导入末项还在独立复核，不混为生产运行失败。
+- 最新完整 KernelOne release：12 阶段全 0；354 PASS、1 个已有说明性跳过，
+  pytest 282.42s、owned runner 329.182s。原始 100ms 断言未改，实际 10.8ms。
+  上一次 3 个 setup EROFS 原因已动态证明是测试 scratch root 在主验 harness 的
+  只读挂载内；只对两处测试临时目录添加私有 tmpfs，源码、原测试和 guard 未改。
+- 下一动作：最终夹具类型复核、加法 source freeze，外部 Instance Supervisor
+  升级同一 r10，再走 `retry_phase / implementation`，保留有效 PM/CE 和产物。
+  没有重建目标、清旧 receipt、手动释放 lease、工程师修改目标源码或重跑 PM。
+
+当前口径仍是“本地平台修复通过；真实同-run 恢复/QA/settlement 和全120 fresh
+无人值守完成尚未验收”。Launcher 当前绑定端口 5178，需升级后再验证可达性。

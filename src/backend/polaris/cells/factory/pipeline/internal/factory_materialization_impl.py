@@ -9,6 +9,7 @@ methods. Behavior is preserved verbatim.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ import subprocess
 import uuid
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from functools import partial
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -31,6 +33,7 @@ from polaris.cells.runtime.task_runtime.public.service import (
 )
 
 from . import factory_stage_helpers as helpers
+from .factory_node_dependencies import node_dependency_readiness
 from .factory_run_models import (
     _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS,
     _WORKSPACE_VALIDATION_TIMEOUT_SECONDS,
@@ -309,7 +312,12 @@ def _seal_director_stage_missing_tool_lifecycles(
     }
 
 
-def _collect_director_stage_materialization_diagnostics(executor) -> list[str]:
+def _collect_director_stage_materialization_diagnostics(
+    executor,
+    *,
+    run: FactoryRun | None = None,
+    preparation_results: list[dict[str, Any]] | None = None,
+) -> list[str]:
     """Collect physical settle-time diagnostics from source and real verifiers.
 
     Compiler-only revalidation is not convergence.  A Director candidate may
@@ -382,8 +390,25 @@ def _collect_director_stage_materialization_diagnostics(executor) -> list[str]:
     tsc_bin = node_modules / ".bin" / "tsc"
     tsconfig = executor.workspace / "tsconfig.json"
     if tsconfig.is_file():
-        if not tsc_bin.is_file():
-            executor._ensure_director_stage_materialization_typescript_toolchain()
+        if not node_dependency_readiness(executor.workspace).ready:
+            preparation = (
+                executor._ensure_director_stage_materialization_typescript_toolchain(run=run)
+                if run is not None
+                else executor._ensure_director_stage_materialization_typescript_toolchain()
+            )
+            if preparation_results is not None and isinstance(preparation, Mapping):
+                preparation_results.append(dict(preparation))
+            if not isinstance(preparation, Mapping) or preparation.get("passed") is not True:
+                diagnostics.append(
+                    "artifact_quality_error: dependency_preparation_failed: "
+                    + json.dumps(
+                        dict(preparation)
+                        if isinstance(preparation, Mapping)
+                        else {"error": "physical_outcome_unproved"},
+                        ensure_ascii=False,
+                        default=str,
+                    )[:_WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS]
+                )
             tsc_bin = node_modules / ".bin" / "tsc"
         if tsc_bin.is_file():
             try:
@@ -773,7 +798,15 @@ async def _run_director_stage_materialization_quality_settle(
     # Keep them off the ASGI event loop so /health, runtime WebSocket, NATS
     # keepalives, and the runner's status reads remain live while Director
     # settles the owning task.
-    diagnostics = await asyncio.to_thread(executor._collect_director_stage_materialization_diagnostics)
+    dependency_preparation_results: list[dict[str, Any]] = []
+    collect_diagnostics = executor._collect_director_stage_materialization_diagnostics
+    # Prebind legacy injected collectors without retrying an executed callback.
+    # Legacy calls have no new authority; their preparation keeps unknown locks protected.
+    collector_signature = inspect.signature(collect_diagnostics)
+    if {"run", "preparation_results"}.issubset(collector_signature.parameters):
+        collector_signature.bind(run=run, preparation_results=dependency_preparation_results)
+        collect_diagnostics = partial(collect_diagnostics, run=run, preparation_results=dependency_preparation_results)
+    diagnostics = await asyncio.to_thread(collect_diagnostics)
     run_id = str(run.id or "").strip() or "director-stage-settle"
     external_task_id = ""
     task_row_id: int | None = None
@@ -852,9 +885,7 @@ async def _run_director_stage_materialization_quality_settle(
                     # A prior residual-close cannot become completed merely
                     # because another task edited the workspace. Revalidate and
                     # register this freshly claimed owner's original projection.
-                    post_commit_diagnostics = await asyncio.to_thread(
-                        executor._collect_director_stage_materialization_diagnostics
-                    )
+                    post_commit_diagnostics = await asyncio.to_thread(collect_diagnostics)
                     if heartbeat_failures:
                         raise RuntimeError(f"repair_owner_heartbeat_failed:{heartbeat_failures[0]['code']}")
                     if not post_commit_diagnostics:
@@ -961,10 +992,7 @@ async def _run_director_stage_materialization_quality_settle(
                     for receipt in receipts:
                         registered_artifacts[(external_task_id, receipt["path"])] = receipt
                     artifact_receipts = tuple(registered_artifacts.values())
-                    await asyncio.to_thread(executor._ensure_director_stage_materialization_typescript_toolchain)
-                    post_commit_diagnostics = await asyncio.to_thread(
-                        executor._collect_director_stage_materialization_diagnostics
-                    )
+                    post_commit_diagnostics = await asyncio.to_thread(collect_diagnostics)
                     if not post_commit_diagnostics:
                         break
                 if not post_commit_diagnostics or deferred_owner_targets:
@@ -1048,6 +1076,15 @@ async def _run_director_stage_materialization_quality_settle(
                 )
             )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        from .factory_workspace_quality_impl import _WorkspaceQualityArtifactClosureIncompleteError
+
+        missing_required_artifacts: tuple[dict[str, str], ...] = ()
+        partial_closure = isinstance(exc, _WorkspaceQualityArtifactClosureIncompleteError)
+        if isinstance(exc, _WorkspaceQualityArtifactClosureIncompleteError):
+            for receipt in exc.registered_receipts:
+                registered_artifacts[(external_task_id, receipt["path"])] = receipt
+            artifact_receipts = tuple(registered_artifacts.values())
+            missing_required_artifacts = exc.missing_obligations
         if heartbeat_task is not None:
             heartbeat_stop.set()
             await heartbeat_task
@@ -1061,17 +1098,20 @@ async def _run_director_stage_materialization_quality_settle(
                 task_row_id=task_row_id,
                 execution_attempt=execution_attempt,
                 stage_status="failed",
-                summary=f"settle_exception:{type(exc).__name__}",
+                summary=str(exc) if partial_closure else f"settle_exception:{type(exc).__name__}",
             )
         return {
             "ok": False,
-            "reason": "settle_exception",
+            "reason": "artifact_closure_incomplete" if partial_closure else "settle_exception",
+            "dependency_preparation_results": dependency_preparation_results,
             "detail": f"{type(exc).__name__}: {exc}",
             "tool_result_count": len(tool_results),
             "committed_receipt_count": sum(
                 executor._director_stage_materialization_receipt_succeeded(item) for item in committed_receipts
             ),
             "project_artifact_receipt_count": len(artifact_receipts),
+            "project_artifact_receipts": [dict(receipt) for receipt in artifact_receipts],
+            "missing_required_artifacts": [dict(item) for item in missing_required_artifacts],
             "diagnostic_count": len(diagnostics),
             "external_task_id": external_task_id,
             "owner_routing_residuals": owner_routing_residuals,
@@ -1132,6 +1172,7 @@ async def _run_director_stage_materialization_quality_settle(
         return {
             "ok": False,
             "reason": failure_reason,
+            "dependency_preparation_results": dependency_preparation_results,
             "detail": (
                 "materialization settle did not reach a verifier-clean terminal state "
                 f"(expected={deferred_expected}, receipts={len(committed_receipts)}, "
@@ -1153,6 +1194,7 @@ async def _run_director_stage_materialization_quality_settle(
     return {
         "ok": True,
         "reason": "director_stage_settle",
+        "dependency_preparation_results": dependency_preparation_results,
         "detail": (
             "materialization quality schedule + deferred DEO commit at end of director_dispatch "
             f"(diagnostics={len(diagnostics)}, tools={len(tool_results)}, "

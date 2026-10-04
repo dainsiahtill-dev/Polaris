@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, Mapping
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from polaris.cells.roles.kernel.internal.interaction_contract import TurnIntent, infer_turn_intent
@@ -12,33 +12,11 @@ from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import (
     tool_contract_requires_no_tools,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.finalization_caller import FinalizationCaller
-from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
-    resolve_mutation_target_guard_violation,
-)
-from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
-    DeliveryContract,
-    DeliveryMode,
-)
-from polaris.cells.roles.kernel.internal.transaction.intent_classifier import requires_mutation_intent
+from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
-from polaris.cells.roles.kernel.internal.transaction.retry_context_builders import (
-    build_retry_write_after_bootstrap_context,
-)
-from polaris.cells.roles.kernel.internal.transaction.retry_escalation_policy import resolve_retry_model_override
 from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions import (
     bootstrap_receipt_contains_whole_file_replacement_marker,
-    build_forced_write_only_retry_tool_definitions,
-    build_retry_tool_definitions_for_mutation,
     select_bootstrap_followup_write_tool_name,
-)
-from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
-    build_single_batch_task_contract_hint,
-    extract_allowed_tool_names_from_definitions,
-)
-from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
-    fill_content_only_write_file_from_remaining_targets,
-    fill_single_target_line_range_edit_blocks,
-    rewrite_existing_file_paths_in_invocations,
 )
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnStateMachine
@@ -205,8 +183,6 @@ async def test_transaction_kernel_execute_forwards_tool_choice_override_to_provi
     assert llm.await_args.args[0]["tool_choice"] == forced_choice
 
 
-
-
 def test_build_decision_messages_adds_equivalent_hint_for_missing_required_tool() -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),
@@ -342,6 +318,22 @@ def test_build_finalization_context_keeps_latest_user_request() -> None:
     assert "不要贴出完整文件内容" in content
 
 
+class _StubFinalizationInvoker:
+    def __init__(self) -> None:
+        self.captured_context: TurnEngineContextRequest | None = None
+
+    async def call(self, **kwargs: Any) -> SimpleNamespace:
+        self.captured_context = kwargs.get("context")
+        return SimpleNamespace(
+            content="ok",
+            error=None,
+            tool_calls=[],
+            model="stub-model",
+            metadata={},
+            thinking=None,
+        )
+
+
 async def test_finalization_caller_execution_prompt_overrides_analysis_template() -> None:
     invoker = _StubFinalizationInvoker()
     caller = FinalizationCaller(invoker)  # type: ignore[arg-type]
@@ -398,7 +390,9 @@ def test_tool_batch_write_detection_supports_tool_invocation_models() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_turn_stream_yields_completion_after_mutation_contract_retry(monkeypatch) -> None:
+async def test_execute_turn_stream_yields_completion_after_mutation_contract_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Regression: stream must yield CompletionEvent after mutation-contract retry succeeds.
 
     When the LLM emits a read-only tool batch for a mutation request, the controller
@@ -420,16 +414,16 @@ async def test_execute_turn_stream_yields_completion_after_mutation_contract_ret
     ]
 
     async def _fake_call_llm_for_decision_stream(
-        ctx,
-        tool_definitions,
-        llm_ledger,
-        shadow_engine=None,
+        ctx: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
+        llm_ledger: TurnLedger,
+        shadow_engine: StreamShadowEngine | None = None,
         *,
-        tool_choice_override=None,
-        model_override=None,
-        temperature_override=None,
-        max_tokens_floor=None,
-    ):
+        tool_choice_override: str | dict[str, Any] | None = None,
+        model_override: str | None = None,
+        temperature_override: float | None = None,
+        max_tokens_floor: int | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         yield {
             "type": "_internal_materialize",
             "response": RawLLMResponse(
@@ -444,7 +438,7 @@ async def test_execute_turn_stream_yields_completion_after_mutation_contract_ret
             ),
         }
 
-    def _fake_decode(_response, _turn_id):
+    def _fake_decode(_response: RawLLMResponse, _turn_id: str) -> TurnDecision:
         return _canonical_decision(
             turn_id="turn_stream_retry",
             kind=TurnDecisionKind.TOOL_BATCH,
@@ -452,8 +446,16 @@ async def test_execute_turn_stream_yields_completion_after_mutation_contract_ret
         )
 
     async def _fake_retry(
-        *, turn_id, context, tool_definitions, state_machine, ledger, stream, shadow_engine, **_kwargs
-    ):
+        *,
+        turn_id: str,
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
+        state_machine: TurnStateMachine,
+        ledger: TurnLedger,
+        stream: bool,
+        shadow_engine: StreamShadowEngine | None,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
         result = _successful_write_batch_result(
             "高优先级任务清单.md",
             visible_content="已写入 高优先级任务清单.md",
@@ -498,7 +500,9 @@ async def test_execute_turn_stream_yields_completion_after_mutation_contract_ret
 
 
 @pytest.mark.asyncio
-async def test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_executor(monkeypatch) -> None:
+async def test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),
         tool_runtime=AsyncMock(return_value={}),
@@ -512,22 +516,22 @@ async def test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_ex
     captured: dict[str, Any] = {}
 
     async def _fake_call_llm_for_decision_stream(
-        ctx,
-        tool_definitions,
-        llm_ledger,
-        shadow_engine=None,
+        ctx: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
+        llm_ledger: TurnLedger,
+        shadow_engine: StreamShadowEngine | None = None,
         *,
-        tool_choice_override=None,
-        model_override=None,
-        temperature_override=None,
-        max_tokens_floor=None,
-    ):
+        tool_choice_override: str | dict[str, Any] | None = None,
+        model_override: str | None = None,
+        temperature_override: float | None = None,
+        max_tokens_floor: int | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         yield {
             "type": "_internal_materialize",
             "response": RawLLMResponse(content="", native_tool_calls=[]),
         }
 
-    def _fake_decode(_response, _turn_id):
+    def _fake_decode(_response: RawLLMResponse, _turn_id: str) -> TurnDecision:
         return _canonical_decision(
             turn_id="turn_stream_allowed_tools",
             kind=TurnDecisionKind.TOOL_BATCH,
@@ -540,16 +544,16 @@ async def test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_ex
         )
 
     async def _fake_execute_tool_batch(
-        decision,
-        state_machine,
-        ledger,
-        context,
+        decision: TurnDecision,
+        state_machine: TurnStateMachine,
+        ledger: TurnLedger,
+        context: list[dict[str, Any]],
         *,
-        stream=False,
-        shadow_engine=None,
-        allowed_tool_names=None,
-        **_kwargs,
-    ):
+        stream: bool = False,
+        shadow_engine: StreamShadowEngine | None = None,
+        allowed_tool_names: set[str] | None = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
         captured["decision"] = decision
         captured["stream"] = stream
         captured["allowed_tool_names"] = allowed_tool_names
@@ -605,7 +609,9 @@ async def test_execute_turn_stream_passes_narrowed_tool_names_to_direct_batch_ex
 
 
 @pytest.mark.asyncio
-async def test_execute_turn_stream_fails_closed_when_native_tool_call_decodes_without_batch(monkeypatch) -> None:
+async def test_execute_turn_stream_fails_closed_when_native_tool_call_decodes_without_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),
         tool_runtime=AsyncMock(return_value={}),
@@ -618,16 +624,16 @@ async def test_execute_turn_stream_fails_closed_when_native_tool_call_decodes_wi
     tool_definitions = [{"type": "function", "function": {"name": "repo_read_slice"}}]
 
     async def _fake_call_llm_for_decision_stream(
-        ctx,
-        tool_definitions,
-        llm_ledger,
-        shadow_engine=None,
+        ctx: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
+        llm_ledger: TurnLedger,
+        shadow_engine: StreamShadowEngine | None = None,
         *,
-        tool_choice_override=None,
-        model_override=None,
-        temperature_override=None,
-        max_tokens_floor=None,
-    ):
+        tool_choice_override: str | dict[str, Any] | None = None,
+        model_override: str | None = None,
+        temperature_override: float | None = None,
+        max_tokens_floor: int | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         del ctx, tool_definitions, llm_ledger, shadow_engine
         del tool_choice_override, model_override, temperature_override, max_tokens_floor
         yield {
@@ -646,7 +652,7 @@ async def test_execute_turn_stream_fails_closed_when_native_tool_call_decodes_wi
             ),
         }
 
-    def _fake_decode(_response, _turn_id):
+    def _fake_decode(_response: RawLLMResponse, _turn_id: str) -> dict[str, Any]:
         return {
             "kind": TurnDecisionKind.FINAL_ANSWER,
             "turn_id": "turn_stream_dropped_tool",
@@ -686,7 +692,9 @@ async def test_execute_turn_stream_fails_closed_when_native_tool_call_decodes_wi
 
 
 @pytest.mark.asyncio
-async def test_execute_stream_yields_completion_after_mutation_contract_retry_real_path(monkeypatch) -> None:
+async def test_execute_stream_yields_completion_after_mutation_contract_retry_real_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """End-to-end: TransactionKernel.execute_stream must yield CompletionEvent after retry.
 
     This test does NOT mock _retry_tool_batch_after_contract_violation;
@@ -698,16 +706,16 @@ async def test_execute_stream_yields_completion_after_mutation_contract_retry_re
     call_ordinal = 0
 
     async def _fake_call_llm_for_decision_stream(
-        ctx,
-        tool_definitions,
-        ledger,
-        shadow_engine=None,
+        ctx: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
+        ledger: TurnLedger,
+        shadow_engine: StreamShadowEngine | None = None,
         *,
-        tool_choice_override=None,
-        model_override=None,
-        temperature_override=None,
-        max_tokens_floor=None,
-    ):
+        tool_choice_override: str | dict[str, Any] | None = None,
+        model_override: str | None = None,
+        temperature_override: float | None = None,
+        max_tokens_floor: int | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Yield _internal_materialize events directly, bypassing StreamEventHandler."""
         nonlocal call_ordinal
         call_ordinal += 1
@@ -775,7 +783,9 @@ async def test_execute_stream_yields_completion_after_mutation_contract_retry_re
 
 
 @pytest.mark.asyncio
-async def test_execute_stream_mutation_retry_from_ask_user_yields_completion_no_error_event(monkeypatch) -> None:
+async def test_execute_stream_mutation_retry_from_ask_user_yields_completion_no_error_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Bug 3 regression: initial ASK_USER + mutation retry must not leak ErrorEvent.
 
     When the LLM's initial decision is ASK_USER (no tools) but the user request
@@ -791,16 +801,16 @@ async def test_execute_stream_mutation_retry_from_ask_user_yields_completion_no_
     call_ordinal = 0
 
     async def _fake_call_llm_for_decision_stream(
-        ctx,
-        tool_definitions,
-        ledger,
-        shadow_engine=None,
+        ctx: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
+        ledger: TurnLedger,
+        shadow_engine: StreamShadowEngine | None = None,
         *,
-        tool_choice_override=None,
-        model_override=None,
-        temperature_override=None,
-        max_tokens_floor=None,
-    ):
+        tool_choice_override: str | dict[str, Any] | None = None,
+        model_override: str | None = None,
+        temperature_override: float | None = None,
+        max_tokens_floor: int | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """First call: ASK_USER (no tools). Retry call: write_file."""
         nonlocal call_ordinal
         call_ordinal += 1
@@ -924,7 +934,7 @@ class TestWriteArgumentShapeFailureGuard:
     """Phase-1 A8a: malformed-write batches must escalate through the retry ladder."""
 
     @staticmethod
-    def _receipt(items: list[tuple[str, str, dict]]) -> dict:
+    def _receipt(items: list[tuple[str, str, dict[str, Any]]]) -> dict[str, Any]:
         return {
             "results": [
                 {"call_id": f"c{i}", "tool_name": tool, "status": status, "result": result}
@@ -1186,9 +1196,9 @@ class TestVoidBatchDoesNotConsumeBudget:
         from pathlib import Path
 
         backend_root = Path(__file__).resolve().parents[5]
-        source = (backend_root / "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py").read_text(
-            encoding="utf-8"
-        )
+        source = (
+            backend_root / "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_executor_execute.py"
+        ).read_text(encoding="utf-8")
         block = re.search(
             r"if _shape_guard_receipt and batch_write_results_all_failed_on_argument_shape\(_shape_guard_receipt\):"
             r"(?P<body>.*?)raise RuntimeError",

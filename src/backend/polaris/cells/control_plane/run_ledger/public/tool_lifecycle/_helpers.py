@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -201,12 +202,85 @@ def _dropped_tool_calls_from_native_envelopes(value: Any) -> list[dict[str, Any]
 
 
 def _result_items(receipts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reconcile compatible canonical/raw mirrors within each receipt.
+
+    Pair occurrences, not unique call IDs: duplicate physical rows and separate
+    batches must retain their multiplicity. Raw rows may add diagnostic or
+    physical evidence, but conflicting shared fields must remain visible to
+    existing failure and effect/commit validators rather than being overwritten.
+    """
+
+    def same_wire_value(left: Any, right: Any) -> bool:
+        """Compare exact JSON value types without invoking foreign equality."""
+        pending: list[tuple[Any, Any, bool]] = [(left, right, False)]
+        active: set[tuple[int, int]] = set()
+        while pending:
+            first, second, leaving = pending.pop()
+            pair = (id(first), id(second))
+            if leaving:
+                active.remove(pair)
+                continue
+            value_type = type(first)
+            if value_type is not type(second):
+                return False
+            if value_type in (dict, list):
+                if pair in active:
+                    return False
+                active.add(pair)
+                pending.append((first, second, True))
+                if value_type is dict:
+                    if any(type(key) is not str for key in first) or any(type(key) is not str for key in second):
+                        return False
+                    if first.keys() != second.keys():
+                        return False
+                    pending.extend((first[key], second[key], False) for key in first)
+                else:
+                    if len(first) != len(second):
+                        return False
+                    pending.extend((a, b, False) for a, b in zip(first, second, strict=True))
+            elif value_type is float:
+                if not math.isfinite(first) or not math.isfinite(second) or first.hex() != second.hex():
+                    return False
+            elif value_type in (str, bool, int, type(None)):
+                if first != second:
+                    return False
+            else:
+                return False
+        return True
+
     rows: list[dict[str, Any]] = []
     for receipt in receipts:
-        for key in ("results", "raw_results"):
-            values = receipt.get(key)
-            if isinstance(values, list):
-                rows.extend(dict(item) for item in values if isinstance(item, dict))
+        values = receipt.get("results")
+        canonical = [dict(item) for item in values if isinstance(item, dict)] if isinstance(values, list) else []
+        unmatched: dict[str, list[int]] = {}
+        for index, item in enumerate(canonical):
+            call_id = item.get("call_id")
+            if isinstance(call_id, str) and call_id.strip():
+                unmatched.setdefault(call_id, []).append(index)
+
+        values = receipt.get("raw_results")
+        extra: list[dict[str, Any]] = []
+        for item in values if isinstance(values, list) else []:
+            if not isinstance(item, dict):
+                continue
+            call_id = item.get("call_id")
+            candidates = unmatched.get(call_id, []) if isinstance(call_id, str) else []
+            for index in candidates:
+                original = canonical[index]
+                if not all(
+                    isinstance(original.get(key), str) and original[key] and original[key] == item.get(key)
+                    for key in ("tool_name", "status")
+                ):
+                    continue
+                if any(not same_wire_value(original[key], item[key]) for key in original.keys() & item.keys()):
+                    continue
+                canonical[index] = {**item, **original}
+                candidates.remove(index)
+                break
+            else:
+                extra.append(dict(item))
+        rows.extend(canonical)
+        rows.extend(extra)
     return rows
 
 

@@ -13,7 +13,15 @@ from enum import Enum
 from typing import Any, Literal, NewType
 
 from polaris.kernelone.tool_execution.contracts import CapturedToolSpecSnapshotV1
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    ValidationInfo,
+    model_serializer,
+    model_validator,
+)
 
 # ============ 基础类型 ============
 ToolCallId = NewType("ToolCallId", str)
@@ -484,6 +492,20 @@ class TurnDecision(_FrozenMappingModel):
 
 
 # ============ 执行结果 ============
+class WriteFileTargetAutofillDiagnosticV1(_FrozenMappingModel):
+    """Normalization observation only; never a write grant or success verdict."""
+
+    assigned_path: str = Field(strict=True, min_length=1)
+    basis: Literal["sole_remaining_contract_target"]
+
+
+class WriteFileDuplicateContentRejectionDiagnosticV1(_FrozenMappingModel):
+    """No-effect rejection observation; never an authoritative effect receipt."""
+
+    duplicate_of: str = Field(strict=True, min_length=1)
+    reason: Literal["duplicate_content_write_file_without_file_argument"]
+
+
 class ToolExecutionResult(_FrozenMappingModel):
     """单个工具执行结果。
 
@@ -505,6 +527,17 @@ class ToolExecutionResult(_FrozenMappingModel):
     effect_receipt_commit: dict[str, Any] | None = None
     directed_effect_mutation_status: str | None = None
     directed_effect_claim_status: Literal["not_claimed", "claimed", "unknown"] | None = None
+    write_file_target_autofilled: WriteFileTargetAutofillDiagnosticV1 | None = None
+    write_file_duplicate_content_rejection: WriteFileDuplicateContentRejectionDiagnosticV1 | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize_diagnostics(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Keep unannotated legacy rows byte-shape compatible at hash boundaries."""
+        payload: dict[str, Any] = handler(self)
+        for name in ("write_file_target_autofilled", "write_file_duplicate_content_rejection"):
+            if getattr(self, name) is None:
+                payload.pop(name, None)
+        return payload
 
 
 class BatchReceipt(_FrozenMappingModel):

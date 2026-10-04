@@ -7368,6 +7368,17 @@ class TestRunWorkspaceQualityChecks:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from polaris.cells.chief_engineer.blueprint.public import (
+            BuildChiefEngineerBlueprintPortfolioCommandV1,
+            ChiefEngineerPortfolioTaskV1,
+            ProjectCompletionContractV1,
+            build_chief_engineer_blueprint_portfolio,
+        )
+        from polaris.cells.chief_engineer.blueprint.public.tests.test_public_contractsa import (
+            _library_completion_requirements,
+            _portfolio_command_authority,
+        )
+
         executor = _executor(tmp_path)
         run = FactoryRun(
             id="factory-quality-prepare-after-repair",
@@ -7375,12 +7386,54 @@ class TestRunWorkspaceQualityChecks:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
+        # This remains a phase-logic unit test: preparation is not executed.
+        # Its authenticated input is nevertheless a real public CE contract.
+        tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-PREP",
+                objective="Exercise dependency preparation phases",
+                target_files=("package.json", "src/index.ts", "tests/test_index.ts"),
+            ),
+        )
+        portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id=run.id,
+                tasks=tasks,
+                **_portfolio_command_authority(tasks=tasks, project_kind="library", workspace=tmp_path, run_id=run.id),
+                llm_blueprint={
+                    "construction_plan": {"project_interface_contract": {}},
+                    "project_completion_contract": _library_completion_requirements(
+                        "package.json",
+                        "src/index.ts",
+                        owner_task_ids=("TASK-PREP", "TASK-PREP"),
+                        test_path="tests/test_index.ts",
+                        test_owner_task_id="TASK-PREP",
+                    ),
+                    "risk_flags": [],
+                },
+            )
+        )
+        expected_preparation_contract = portfolio.project_completion_contract
+        assert expected_preparation_contract is not None
+        run.metadata["stage_results"] = {
+            "chief_engineer_review": {"status": "success", "artifacts": [portfolio.portfolio_path]}
+        }
         state = {"repaired": False, "prepared_after_repair": False}
         phases_seen: list[str] = []
 
-        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+        def fake_run_workspace_quality_command(
+            command: list[str],
+            timeout_seconds: float,
+            *,
+            preparation_contract: ProjectCompletionContractV1 | None = None,
+        ) -> dict[str, object]:
             del timeout_seconds
             is_prepare = command == ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]
+            if is_prepare:
+                assert preparation_contract is not None
+                assert preparation_contract.run_id == run.id
+                assert preparation_contract.contract_hash == expected_preparation_contract.contract_hash
             if is_prepare and state["repaired"]:
                 state["prepared_after_repair"] = True
             if is_prepare:

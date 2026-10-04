@@ -1216,7 +1216,11 @@ class TurnTransactionController:
         I3-r22 (F10): ``max_tokens_floor`` reserves a reasoning-sized output
         budget for retry/re-ask calls so a large prompt cannot starve generation.
         """
-        decision_messages = self._build_decision_messages(context, tool_definitions, ledger)
+        decision_messages = (
+            self._build_decision_messages(context, tool_definitions, ledger, tool_choice_override=tool_choice_override)
+            if tool_choice_override is not None
+            else self._build_decision_messages(context, tool_definitions, ledger)
+        )
 
         # Phase 3.1: Adaptive model routing
         task_complexity = self._estimate_task_complexity(context)
@@ -1338,6 +1342,8 @@ class TurnTransactionController:
         context: list[dict],
         tool_definitions: list[dict],
         ledger: TurnLedger | None = None,
+        *,
+        tool_choice_override: Any | None = None,
     ) -> list[dict]:
         """Build decision-stage messages with single-batch execution constraints.
 
@@ -1345,6 +1351,10 @@ class TurnTransactionController:
         remains on the controller because it is injected as a callback into
         ``StreamOrchestrator`` and is monkeypatched by tests.
         """
+        if tool_choice_override is not None:
+            return _build_decision_messages_impl(
+                context, tool_definitions, ledger, tool_choice_override=tool_choice_override
+            )
         return _build_decision_messages_impl(context, tool_definitions, ledger)
 
     # ---------------------------------------------------------------------------

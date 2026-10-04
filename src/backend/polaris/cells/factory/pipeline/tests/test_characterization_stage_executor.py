@@ -1454,8 +1454,10 @@ def test_workspace_validation_artifact_writes_run_ledger_command_evidence(tmp_pa
     gate = projection["gates"][0]
     assert gate["capability_ok"] is True
     assert gate["capability_issues"] == []
-    ledger_path = tmp_path / "runtime" / "control_plane" / "ledger" / f"{run.id}.ndjson"
-    ledger_event = json.loads(ledger_path.read_text(encoding="utf-8").splitlines()[-1])
+    facts = query_fact_events(QueryFactEventsV1(workspace=str(tmp_path), stream="execution.control_plane", limit=100))
+    ledger_events = [fact["payload"]["event"] for fact in facts.events if fact["payload"].get("run_id") == run.id]
+    assert len(ledger_events) == 1
+    ledger_event = ledger_events[0]
     repair_result = ledger_event["physical_evidence"]["repair_result"]
     assert repair_result["full_evidence_ref"] == "runtime/qa/workspace-validation.json"
     assert repair_result["full_evidence_bytes"] > 2_000_000
