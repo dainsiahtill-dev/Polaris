@@ -13,6 +13,7 @@ from ..javascript_syntax import repair_javascript_export_contract_placeholders
 from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
 from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
+from .common.path_ops import _normalize_repair_path
 
 """TypeScript syntax repair module: imports_exports."""
 
@@ -1527,6 +1528,19 @@ def _parse_unresolved_relative_import_errors(diagnostics: Sequence[RepairDiagnos
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for diagnostic in diagnostics:
+        specifier_value = diagnostic.metadata.get("specifier")
+        if diagnostic.code == "unresolved_relative_import" and "specifier" in diagnostic.metadata:
+            if isinstance(specifier_value, str):
+                file = _normalize_repair_path(str(diagnostic.path or ""))
+                specifier = specifier_value.strip()
+                if file and (specifier in {".", ".."} or specifier.startswith(("./", "../"))):
+                    key = (file, specifier)
+                    if key not in seen:
+                        seen.add(key)
+                        parsed.append({"file": file, "specifier": specifier})
+            # Canonical fields, valid or invalid, cannot be overridden by raw
+            # provenance with a stale owner path or contradictory specifier.
+            continue
         for match in _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE.finditer(str(diagnostic.raw or diagnostic.message or "")):
             item = {
                 "file": _normalize_repair_path(str(match.group("path") or "")),

@@ -10,7 +10,7 @@ from typing import Any
 from .contracts import RepairDiagnostic
 
 _TS_ERROR_RE = re.compile(
-    r"(?P<path>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<column>\d+)\):\s*error\s+(?P<code>TS\d+):\s*(?P<message>[^\n]+)",
+    r"(?P<path>[^:\n]+\.(?:tsx?|json))\((?P<line>\d+),(?P<column>\d+)\):\s*error\s+(?P<code>TS\d+):\s*(?P<message>[^\n]+)",
     re.IGNORECASE,
 )
 _TS_ROOTDIR_FILE_ERROR_RE = re.compile(

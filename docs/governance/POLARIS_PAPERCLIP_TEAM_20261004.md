@@ -45,6 +45,8 @@
 - 主工作区 `/home/dains/Documents/polaris`，`project_primary` + `shared_workspace` + `serialize`，禁 issue override，不创建分支/工作树，不自动启停服务。
 - 组织层级与职责文字不是 OS 文件权限；每工单精确列 owned files、禁止文件、动态复现和验收。初始共享主仓串行，不能声称已实现三写者的细粒度互斥。
 - 公司编制 26 不等于 26 个自动运行循环。先一个只读 pilot 验证真实模型/effort/cwd/sandbox，其他员工保持未启动。
+- 主仓 `.codex/config.toml` 提供无凭据的 CodeGraph MCP 配置；岗位指令提供现有 Superpowers 与 caveman 的绝对 SKILL.md 路径。隔离 CODEX_HOME 不得被误解为技能本身不存在；项目未受信任或工具不可用时明确报告。
+- 不向员工 `extraArgs` 注入自由 `-c` 配置覆盖：本机 Paperclip managed AI 会以 `ai_connection_incompatible` 拒绝，这是鉴权防线，不能绕过。
 
 ## 工作与验收
 

@@ -62,6 +62,12 @@ class RepairDiagnostic:
         message = str(self.message or "").strip()
         path = str(self.path).strip().replace("\\", "/") if self.path is not None else None
         raw = str(self.raw or message)
+        metadata = _dict_copy(self.metadata)
+        specifier_value = metadata.get("specifier")
+        specifier = specifier_value.strip() if isinstance(specifier_value, str) else ""
+        # Generic import messages omit the target. Include that semantic fact,
+        # never telemetry/raw evidence, and keep the old hash input when absent.
+        discriminator = ("specifier", specifier) if specifier else ()
         diagnostic_id = str(self.diagnostic_id or "").strip() or stable_id(
             "diag",
             source,
@@ -70,6 +76,7 @@ class RepairDiagnostic:
             self.line or "",
             self.column or "",
             message,
+            *discriminator,
         )
         object.__setattr__(self, "source", source)
         object.__setattr__(self, "code", code)
@@ -77,7 +84,7 @@ class RepairDiagnostic:
         object.__setattr__(self, "path", path or None)
         object.__setattr__(self, "diagnostic_id", diagnostic_id)
         object.__setattr__(self, "raw", raw)
-        object.__setattr__(self, "metadata", _dict_copy(self.metadata))
+        object.__setattr__(self, "metadata", metadata)
 
     def to_dict(self) -> dict[str, Any]:
         return {

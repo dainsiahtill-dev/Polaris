@@ -1,0 +1,31 @@
+id: vc-20261006-materialization-planner-routing
+classification: pattern
+status: implementation-authorized
+owner: director.runtime
+scope:
+  - polaris/cells/director/runtime/internal/repair_kernel/registry/_rules_typescript.py
+  - polaris/cells/director/runtime/public/service/_execution.py
+  - polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax/imports_exports.py
+  - polaris/cells/director/runtime/tests/test_materialization_unique_export_routing.py
+assumptions:
+  - claim: Registered unique-export planner can plan a structurally unique import correction.
+    evidence: fresh-r11-repair-route-audit alternate_registered_plan; repeat on generic authored files before edits.
+  - claim: Coverage currently requires raw unique-export wording absent from real unresolved import.
+    evidence: registry rule typescript.unique_export_import raw_terms; public coverage reproduction required.
+  - claim: Fallback emptiness may hide another usable candidate.
+    evidence: public service query_director_repair_materialization_plan_probe; change only if reproduced after correct coverage.
+pre_mortem:
+  - Broad diagnostic routing could select an unrelated repair; require actual matching and unique source evidence.
+  - Blind step fallback could claim success for uncovered diagnostics; preserve truthful statuses and no effects.
+  - Planner patch could target another owner; shadow is not a write grant and owner handoff remains separate.
+verification:
+  - Structured metadata-only diagnosis must yield the same source-proven importer patch as raw input, not coverage only.
+  - Canonical typed owner path must not be replaced by stale raw breadcrumbs; malformed relative specifiers remain unplannable.
+  - Real public coverage plus explicit shadow Plan versus materialization plan-probe RED/GREEN.
+  - Ambiguous and absent exports yield no usable patch; unrelated diagnostics and unknown tools fail closed.
+  - Existing91 diagnostic baseline plus broad contract tests; no suppressed assertions.
+  - Root diff/scope/hash and independent read-only review before paid fresh Bench.
+product_authority:
+  paperclip_is_fact_source: false
+  generated_target_edits_allowed: false
+  new_public_facade_allowed: false

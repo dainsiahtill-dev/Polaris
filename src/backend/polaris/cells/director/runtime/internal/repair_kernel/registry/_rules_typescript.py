@@ -1145,6 +1145,23 @@ def typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             metadata=_executable_runtime_metadata(scope="uninitialized_property_line_text_replace"),
         ),
         RepairRuleDefinition(
+            rule_id="typescript.unique_export_import.typed_relative_import",
+            source_tool=TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
+            language="typescript",
+            phase="export_resolution",
+            archetype=RepairArchetype.WRONG_IMPORT_PATH,
+            priority=2,
+            diagnostic_codes=("unresolved_relative_import",),
+            path_suffixes=(".ts", ".tsx"),
+            risk_level="medium",
+            description=(
+                "Routes typed unresolved TypeScript imports to the existing unique-export planner; "
+                "a source-proven changed patch is still required before execution."
+            ),
+            runtime_plan_available=True,
+            metadata=_executable_runtime_metadata(scope="unique_export_import_text_replace"),
+        ),
+        RepairRuleDefinition(
             rule_id="typescript.unique_export_import",
             source_tool=TYPESCRIPT_UNIQUE_EXPORT_IMPORT_SOURCE_TOOL,
             language="typescript",
