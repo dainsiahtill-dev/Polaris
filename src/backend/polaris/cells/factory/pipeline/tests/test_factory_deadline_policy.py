@@ -179,6 +179,29 @@ def test_ce_portfolio_admission_reserves_entire_director_critical_path() -> None
     }
 
 
+def test_ce_60000_deadline_clipping_blocks_without_spending_downstream_reserves() -> None:
+    from dataclasses import replace
+
+    policy = replace(_policy(), chief_engineer_generation_floor_seconds=750)
+    decision = resolve_chief_engineer_portfolio_admission(
+        remaining_seconds=1060,
+        requested_timeout_seconds=750,
+        dependency_schedule=build_task_dependency_schedule(_serial_tasks()),
+        policy=policy,
+    )
+    assert decision.reserved_downstream_seconds == 460
+    assert decision.available_for_stage_seconds == 600
+    assert decision.disposition is FactoryDeadlineDispositionV1.BLOCK
+    assert decision.timeout_seconds == 0
+    assert decision.reservation_breakdown == {
+        "director_first_wave": 155,
+        "director_followup_waves": 180,
+        "qa_finalization": 120,
+        "safety": 5,
+    }
+    assert "chief_engineer_deadline_below_generation_floor" in decision.budget_plan.blockers
+
+
 def test_ce_portfolio_admission_projects_when_full_chain_cannot_fit() -> None:
     decision = resolve_chief_engineer_portfolio_admission(
         remaining_seconds=460.0,

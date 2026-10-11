@@ -1,0 +1,59 @@
+id: vc-20261008-static-specialist-snapshot-closure
+issue: POL-49
+mode: implementation
+classification: pattern
+owner: Director tools engineer
+reviewer: Root
+budget_seconds: 2400
+production_scope:
+  - src/backend/polaris/kernelone/quality/artifact_quality/_scan_python.py
+  - src/backend/polaris/kernelone/quality/artifact_quality/_scan_javascript.py
+  - src/backend/polaris/kernelone/quality/artifact_quality/_scan.py
+  - src/backend/polaris/kernelone/quality/interface_ledger.py
+reader_scope: WorkspaceReadSnapshot and direct controlled opener only
+test: src/backend/polaris/kernelone/quality/tests/test_static_scan_specialist_snapshot_closure.py
+assumptions:
+  - Metadata preflight cannot confine independent specialist opens.
+  - Reuse sole reader; final root no-follow alone does not bind absolute ancestors.
+  - Bind original root and ancestor device/inode/mode at actual open.
+  - Invalid package evidence must not be projected as empty complete scripts.
+  - Owned descriptors must close even on propagated interrupts.
+  - Original inventory preserves witnessed module resolution after removal.
+  - Unknown sibling exports cannot establish catalog absence.
+  - Readable blockers survive unrelated read failures and drift.
+  - Known path normalization must precede bounded syntax clipping.
+pre_mortem:
+  - Transitive helper may silently reopen sources.
+  - Missing and unknown may be collapsed into false absence diagnostics.
+  - Legacy behavior or explicit scanned paths may change.
+  - A hardlinked leaf can mask directory replacement if only file identity is checked.
+  - Same-size immediate source rewrite may have unchanged metadata.
+red_evidence:
+  helper_probe: three external open attempts intercepted before open; exit 1
+  long_calibration: TS1109 missing from first-200 summary; 1 passed and 1 failed
+  reviewer_exact: four empty-complete package cases; one actual ancestor peer content read
+  continuation_frontier: 15 failed and 15 passed; original 57 deselected
+  stable_refusal_projection: two new cases failed before source-identity deduplication
+  witnessed_nested_deletion: 8 passed and 1 failed before disappeared-directory unknown repair
+  baseline: original 57 passed; long and short calibration both 2 passed
+  retained_failed_assertions:
+    - Same-size rewrite has identical inode/size/timestamps on managed filesystem.
+    - Newly added no-reader assertion wrongly expected valid scripts to be discarded.
+verification:
+  - Exact original probes and effects; preserve old confirmation failure.
+  - New specialist frontier including readable known blocker pairs.
+  - Existing 195 components and 288 six-file consumers.
+  - Both original calibrations under long and short private roots.
+  - Ruff check and format; scoped mypy; normalized strict debt comparison.
+  - Exact reviewer probe; directory replacement/link/delete before preflight and actual open.
+  - Identical-inode hardlink control; cache and independent reread; descriptor cleanup.
+continuation_run: b0e755fd-ae42-417e-a40d-765c41dc5a56
+prior_run:
+  id: a027753a-eb4a-4c92-973b-58b1aabaccf4
+  actual_timeout_seconds: 600
+  status: timed_out
+  release_verification_owner: Root
+checkpoint_frontier: 92 passed; original 57 retained and 35 continuation cases added
+confirmation_dependency: exact extension harness archived as negative_probe.py in original RAW
+confirmation_residual: legacy _load injection is unused; original 4 PASS and 1 FAIL retained
+authority: external engineering evidence only; independent Root acceptance required

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from polaris.kernelone.quality.artifact_quality import (
+    ArtifactQualityDeferredCheck,
     ArtifactQualityEvidence,
     ArtifactQualityIssue,
     artifact_quality_issue_key,
@@ -75,6 +76,7 @@ from polaris.kernelone.quality.syntax_gate import (
 
 __all__ = [
     "DEBT_MARKERS",
+    "ArtifactQualityDeferredCheck",
     "ArtifactQualityEvidence",
     "ArtifactQualityIssue",
     "CandidateCompileCheckResult",

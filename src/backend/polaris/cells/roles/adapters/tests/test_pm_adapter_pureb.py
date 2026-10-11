@@ -276,6 +276,12 @@ class _DedupCancelExecutionEventFailureTaskRuntime(_RowWriteOnlyTaskRuntime):
         self.missing_row = missing_row
         self.failed_event = failed_event
 
+    def fail_task_row_from_role_adapter(
+        self, task_id: Any, *, reason: str, metadata: dict[str, Any] | None = None, **_kwargs: Any
+    ) -> dict[str, Any] | None:
+        row = self.update_task_row(task_id, status="failed", metadata={**(metadata or {}), "failure_reason": reason})
+        return row
+
     def cancel_task_row_for_deduplication(
         self,
         task_id: Any,
@@ -308,8 +314,6 @@ class _DedupCancelExecutionEventFailureTaskRuntime(_RowWriteOnlyTaskRuntime):
 # ---------------------------------------------------------------------------
 # Message building
 # ---------------------------------------------------------------------------
-
-
 
 
 class TestApplyProjectionContractHint:
@@ -822,11 +826,27 @@ class TestCreateBoardTasksRows:
                                 "title": "Create model",
                                 "description": "Create the domain model",
                                 "goal": "model",
-                                "scope": "src/model.py",
-                                "scope_paths": ["src/model.py"],
-                                "target_files": ["src/model.py"],
-                                "steps": ["write model"],
-                                "acceptance": ["model exists"],
+                                "scope": "src/model.py, tests/test_model.py",
+                                "scope_paths": ["src/model.py", "tests/test_model.py"],
+                                "target_files": ["src/model.py", "tests/test_model.py"],
+                                "steps": [
+                                    "Read the record contract",
+                                    "Implement model validation",
+                                    "Test valid and invalid records",
+                                ],
+                                "acceptance": [
+                                    "Valid records preserve fields",
+                                    "Malformed records raise ValueError",
+                                    "Unit tests pass",
+                                ],
+                                "verification_commands": [
+                                    {
+                                        "modality": "environment_prep",
+                                        "argv": ["python3", "-m", "pip", "check"],
+                                        "cwd": ".",
+                                    },
+                                    {"modality": "test", "argv": ["python3", "-m", "unittest", "discover"], "cwd": "."},
+                                ],
                                 "depends_on": [],
                             }
                         ]

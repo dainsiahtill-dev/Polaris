@@ -868,6 +868,61 @@ async def _get_factory_run_audit_bundle_core(
         run=run,
         workspace=effective_workspace,
     )
+    from polaris.cells.roles.kernel.public.provider_attempt_lifecycle_replay import (
+        QUERY_FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_SCHEMA,
+        QueryFactoryProviderAttemptLifecycleReplayV1,
+        query_factory_provider_route_qualification,
+    )
+
+    # Obligation comes from the loaded Factory state/events, never client phase
+    # claims or the existence of provider attempts. Unknown state fails closed.
+    stage_roles = {
+        "pm_planning": "pm",
+        "chief_engineer_review": "chief_engineer",
+        "director_dispatch": "director",
+        "quality_gate": "qa",
+    }
+    role_order = ("pm", "chief_engineer", "director", "qa")
+    stage_results = run.metadata.get("stage_results")
+    reached = {*run.stages_completed, *run.stages_failed}
+    reached.update(stage_results if isinstance(stage_results, dict) else ())
+    reached.add(str(run.metadata.get("current_stage") or ""))
+    reached.update(
+        str(event.get("stage") or "")
+        for event in events
+        if event.get("type") in {"stage_started", "stage_completed", "stage_failed"}
+    )
+    reached_roles = [stage_roles[stage] for stage in reached if stage in stage_roles]
+    completed = str(getattr(run.status, "value", run.status)) == "completed"
+    highest = max((role_order.index(role) for role in reached_roles), default=3)
+    required_roles = role_order if completed else role_order[: highest + 1]
+    routes = query_factory_provider_route_qualification(
+        QueryFactoryProviderAttemptLifecycleReplayV1(
+            schema_version=QUERY_FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_SCHEMA,
+            workspace=effective_workspace,
+            factory_run_id=run.id,
+        ),
+        project_id=str(_factory_run_identity(run=run, workspace=effective_workspace).get("canonical_project_id") or ""),
+        required_roles=required_roles,
+    )
+    routes["stage_obligations"] = {
+        "source": "factory.server_run_state",
+        "required_roles": list(required_roles),
+        "reached_stages": sorted(reached),
+        "completed": completed,
+    }
+    stage_results = run.metadata.get("stage_results")
+    pm_result = stage_results.get("pm_planning") if isinstance(stage_results, dict) else None
+    pm_metadata = pm_result.get("metadata") if isinstance(pm_result, dict) else None
+    if (
+        not isinstance(pm_metadata, dict)
+        or pm_metadata.get("real_planning_qualified") is not True
+        or pm_metadata.get("contract_origin") != "provider_planning"
+    ):
+        routes["ok"] = False
+        routes["errors"].append("pm_provider_planning_evidence_missing")
+    routes["project_id"] = _factory_run_identity(run=run, workspace=effective_workspace).get("canonical_project_id")
+    bundle["role_route_qualification"] = routes
     # Compose the audit Cell at the HTTP delivery boundary rather than making
     # factory.pipeline depend back on audit.diagnosis (which already consumes
     # Factory/Run-Ledger/TaskRuntime projections).  A terminal audit bundle is
@@ -876,7 +931,13 @@ async def _get_factory_run_audit_bundle_core(
     # from the event tail.  Diagnosis failure remains explicit evidence and
     # never hides the underlying Factory bundle.
     identity = _factory_run_identity(run=run, workspace=effective_workspace)
-    project_id = str(identity.get("canonical_project_id") or identity.get("requested_project_id") or "")
+    project_id = str(identity.get("canonical_project_id") or "")
+    if run_ledger_projection is None:
+        bundle["exact_run_causal_audit_error"] = {
+            "error_code": "scoped_run_ledger_unavailable",
+            "error_message": "Canonical scoped ledger unavailable; causal audit cannot use a fallback projection",
+        }
+        return FactoryRunAuditBundleResponse(**bundle)
     causal = await query_exact_run_causal_audit(
         QueryExactRunCausalAuditV1(
             workspace=effective_workspace,

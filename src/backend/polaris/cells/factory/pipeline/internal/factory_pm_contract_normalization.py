@@ -14,10 +14,37 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
+from copy import deepcopy
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
+from polaris.cells.orchestration.pm_planning.public.contracts import parse_pm_product_planning_input
+
 from .factory_stage_helpers import task_string, task_string_list
+
+
+def build_pm_product_planning_input(
+    catalog: Mapping[str, Any], *, planning_directive: str, title: str = ""
+) -> dict[str, Any] | None:
+    """Project existing catalog semantics; controls and examples are excluded."""
+    payload = {
+        "schema_version": "pm.product_planning_input.v1",
+        "source": "factory.catalog_contract",
+        "directive_sha256": sha256(planning_directive.encode("utf-8")).hexdigest(),
+        "project_id": catalog.get("project_id"),
+        "title": title or catalog.get("title") or catalog.get("project_id"),
+        "domain": catalog.get("domain", ""),
+        "project_type": catalog.get("project_type"),
+        "primary_language": catalog.get("primary_language"),
+        "creative_hook": catalog.get("creative_hook"),
+        "feature_keywords": catalog.get("feature_keywords", []),
+        "test_focus": catalog.get("test_focus", ""),
+    }
+    item = parse_pm_product_planning_input(payload, directive=planning_directive)
+    return item.to_dict() if item is not None else None
+
 
 # Language-to-extension mapping for PM plan language consistency validation.
 # Used to detect when the PM model plans files in the wrong language
@@ -292,6 +319,7 @@ def inject_project_declared_target_contract(
     context: dict[str, Any],
     *,
     project_declared_target_files: list[str],
+    generated_outputs: list[dict[str, Any]] | None = None,
 ) -> None:
     """Inject declared target files into a task context in place."""
 
@@ -300,22 +328,17 @@ def inject_project_declared_target_contract(
 
     source_targets = filter_source_target_files(project_declared_target_files)
     entrypoint_targets = filter_entrypoint_like_targets(project_declared_target_files)
-    context["project_declared_target_files"] = merge_string_list(
-        project_declared_target_files,
-        context.get("project_declared_target_files"),
-    )
+    context["project_declared_target_files"] = list(project_declared_target_files)
     if source_targets:
-        context["project_declared_source_targets"] = merge_string_list(
-            source_targets,
-            context.get("project_declared_source_targets"),
-        )
+        context["project_declared_source_targets"] = list(source_targets)
+    else:
+        context.pop("project_declared_source_targets", None)
     if entrypoint_targets:
-        context["project_declared_entrypoint_targets"] = merge_string_list(
-            entrypoint_targets,
-            context.get("project_declared_entrypoint_targets"),
-        )
+        context["project_declared_entrypoint_targets"] = list(entrypoint_targets)
+    else:
+        context.pop("project_declared_entrypoint_targets", None)
 
-    manifest_policy = {
+    manifest_policy: dict[str, Any] = {
         "schema_version": "polaris.manifest_entrypoint_contract.v1",
         "source": "factory.pm_plan_declared_targets",
         "allowed_local_entrypoints": list(project_declared_target_files),
@@ -324,39 +347,28 @@ def inject_project_declared_target_contract(
             "or project_declared_target_files; do not invent unowned local entrypoint files."
         ),
     }
-    existing_policy_raw = context.get("manifest_entrypoint_contract")
-    existing_policy = dict(cast(dict[str, Any], existing_policy_raw)) if isinstance(existing_policy_raw, dict) else {}
-    existing_allowed = existing_policy.get("allowed_local_entrypoints")
+    # Only the server-validated inventory supplies reference allowance. Model
+    # metadata cannot override classification or promote observations to writes.
     manifest_policy["allowed_local_entrypoints"] = merge_string_list(
         project_declared_target_files,
-        existing_allowed,
+        [row["path"] for row in (generated_outputs or [])],
     )
-    context["manifest_entrypoint_contract"] = {**manifest_policy, **existing_policy}
+    if generated_outputs:
+        manifest_policy["generated_outputs"] = deepcopy(generated_outputs)
+    context["manifest_entrypoint_contract"] = manifest_policy
 
     metadata_raw = context.get("metadata")
     metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
-    metadata["project_declared_target_files"] = merge_string_list(
-        project_declared_target_files,
-        metadata.get("project_declared_target_files"),
-    )
+    metadata["project_declared_target_files"] = list(project_declared_target_files)
     if source_targets:
-        metadata["project_declared_source_targets"] = merge_string_list(
-            source_targets,
-            metadata.get("project_declared_source_targets"),
-        )
+        metadata["project_declared_source_targets"] = list(source_targets)
+    else:
+        metadata.pop("project_declared_source_targets", None)
     if entrypoint_targets:
-        metadata["project_declared_entrypoint_targets"] = merge_string_list(
-            entrypoint_targets,
-            metadata.get("project_declared_entrypoint_targets"),
-        )
-    metadata_policy_raw = metadata.get("manifest_entrypoint_contract")
-    metadata_policy = dict(cast(dict[str, Any], metadata_policy_raw)) if isinstance(metadata_policy_raw, dict) else {}
-    metadata_allowed = metadata_policy.get("allowed_local_entrypoints")
-    metadata["manifest_entrypoint_contract"] = {
-        **manifest_policy,
-        **metadata_policy,
-        "allowed_local_entrypoints": merge_string_list(project_declared_target_files, metadata_allowed),
-    }
+        metadata["project_declared_entrypoint_targets"] = list(entrypoint_targets)
+    else:
+        metadata.pop("project_declared_entrypoint_targets", None)
+    metadata["manifest_entrypoint_contract"] = deepcopy(manifest_policy)
     context["metadata"] = metadata
 
 

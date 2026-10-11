@@ -370,9 +370,9 @@ class _FactoryRunServiceStageMixin:
         # Factory owner cannot authorize completed_verified until complete_run
         # has durably appended the terminal ``completed`` event.  Querying here
         # races that event and falsely reports factory_chain_owner_query_failed.
-        completion_facts_changed = (
-            result.stage == "director_dispatch" and result.status != "success"
-        ) or (result.stage == "quality_gate" and result.status != "success")
+        completion_facts_changed = (result.stage == "director_dispatch" and result.status != "success") or (
+            result.stage == "quality_gate" and result.status != "success"
+        )
         if completion_facts_changed:
             try:
                 completion_result = await self._notify_project_completion_supervisor(run_id, result)
@@ -531,6 +531,17 @@ class _FactoryRunServiceStageMixin:
                 "recoverable": True,
                 "timestamp": completed_at,
             }
+            failure = target_run.metadata["failure"]
+            typed_code = result_metadata.get("error_code")
+            if isinstance(typed_code, str) and typed_code.strip():
+                failure["code"] = typed_code
+                for key in ("failure_class", "root_cause_hint"):
+                    value = result_metadata.get(key)
+                    if isinstance(value, str) and value.strip():
+                        failure[key] = value
+                signals = result_metadata.get("signals")
+                if isinstance(signals, list) and all(isinstance(signal, dict) for signal in signals):
+                    failure["signals"] = [dict(signal) for signal in signals]
         target_run.updated_at = completed_at
 
     async def _build_stage_artifact_bindings(

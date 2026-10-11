@@ -7,6 +7,7 @@ availability probe that previously lived at the top of the monolithic
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -532,6 +533,23 @@ def _context_snapshot_degraded_payload(exc: BaseException) -> dict[str, str]:
 def _snapshot_messages_for_request(*, request: Any, prepared: PreparedLLMRequest) -> list[Any]:
     ctx = getattr(request, "context", None)
     raw_messages = ctx.get("chat_messages") if isinstance(ctx, dict) else None
+    if prepared.factory_semantic_request is not None or prepared.factory_dispatch_port is not None:
+        # Names identify owned projection sources, while the active provider
+        # input normally contains role/content only. Preserve provenance only
+        # after checking this exact call's live freeze and actual message body.
+        _physical_dispatch_port_for_request(prepared, request)
+        frozen = prepared.factory_semantic_request
+        if frozen is None:
+            raise RuntimeError("factory_role_semantic_request_required_for_snapshot")
+        messages = json.loads(frozen.canonical_final_payload_json)["messages"]
+        if not messages or prepared.messages != messages:
+            raise RuntimeError("factory_snapshot_owned_messages_mismatch")
+        active_projection = [{"role": item["role"], "content": item["content"]} for item in messages]
+        # A semantic retry can already carry the complete owned dictionaries.
+        # Extra caller fields/names must match that whole source exactly.
+        if raw_messages != active_projection and raw_messages != messages:
+            raise RuntimeError("factory_snapshot_active_messages_mismatch")
+        return messages
     if isinstance(raw_messages, list) and raw_messages:
         messages = [dict(item) for item in raw_messages if isinstance(item, dict)]
         if messages:
@@ -558,10 +576,13 @@ async def _store_active_request_context_snapshot(
 
     request = active_request
     ctx = _clear_context_snapshot_context(request)
-    messages = _snapshot_messages_for_request(request=request, prepared=prepared)
-    if not messages:
-        return None
     try:
+        messages = _snapshot_messages_for_request(request=request, prepared=prepared)
+        if not messages:
+            return None
+        frozen = prepared.factory_semantic_request
+        if frozen is not None and (run_id, call_id) != (frozen.identity.run_id, frozen.identity.call_id):
+            raise RuntimeError("factory_snapshot_attempt_identity_mismatch")
         provider_request_snapshot = build_final_provider_request_snapshot(
             ai_request=request,
             prepared=prepared,

@@ -19,24 +19,10 @@ from polaris.kernelone.llm.toolkit.tool_normalization import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-_WRAPPER_PATTERN = re.compile(
-    r"\[(?P<bracket_tag>tool_calls?|TOOL_CALLS?)\](?P<bracket_payload>.*?)\[/\1\]"
-    r"|<(?P<angle_tag>tool_calls?)>(?P<angle_payload>.*?)</\3>",
-    re.IGNORECASE | re.DOTALL,
-)
-
-# XML-style tool call pattern: <tool_name><args>...</args></tool_name>
-# Supports nested elements like: <file><path>...</path></file>
-_XML_TOOL_CALL_PATTERN = re.compile(
-    r"<(?P<tool_name>[a-z_][a-z0-9_]*)\s*>"
-    r"(?P<args_content>.*?)"
-    r"</(?P=tool_name)\s*>",
-    re.IGNORECASE | re.DOTALL,
-)
+    from collections.abc import Iterable, Iterator
 
 _CODE_BLOCK_PATTERN = re.compile(r"(?P<fence>```|''').*?(?P=fence)", re.DOTALL)
+_ENVELOPE_OPEN_PATTERN = re.compile(r"\[(?P<bracket>tool_calls?)\]|<(?P<angle>[a-z_][a-z0-9_]*)\s*>", re.IGNORECASE)
 _TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _META_KEYS = {
     "id",
@@ -52,6 +38,88 @@ _META_KEYS = {
     "tool_calls",
     "calls",
 }
+
+
+def json_data_string_spans(text: str) -> list[tuple[int, int]]:
+    """Locate JSON string tokens without requiring a complete/valid document.
+
+    This is lexical protection, never JSON repair or plan admission. An open
+    string protects the remaining prefix. Escapes consume the next character,
+    so escaped quotes and backslashes cannot expose literal protocol tags.
+    """
+    spans: list[tuple[int, int]] = []
+    stack: list[str] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char in "{[":
+            following_index = index + 1
+            while following_index < len(text) and text[following_index].isspace():
+                following_index += 1
+            following = text[following_index : following_index + 1]
+            if stack or (following and following in '"{[}]0123456789-tfn'):
+                stack.append("}" if char == "{" else "]")
+        elif stack and char == '"':
+            start = index
+            index += 1
+            while index < len(text):
+                if text[index] == "\\":
+                    index += 2
+                elif text[index] == '"':
+                    index += 1
+                    break
+                else:
+                    index += 1
+            spans.append((start, min(index, len(text))))
+            continue
+        elif stack and char in "}]":
+            if char == stack[-1]:
+                stack.pop()
+            else:
+                stack.clear()
+        index += 1
+    return spans
+
+
+def strip_transport_whitespace(text: str) -> str:
+    """Trim outer whitespace without erasing an open JSON string's suffix.
+
+    Lexical preservation does not validate, repair, or admit JSON. Closed
+    strings end at their quote, so whitespace after them remains transport.
+    """
+    source = text.lstrip()
+    end = len(source.rstrip())
+    if end == len(source):
+        return source
+    for start, stop in json_data_string_spans(source):
+        if start <= end < stop:
+            end = stop
+            break
+    return source[:end]
+
+
+def iter_protocol_envelopes(
+    text: str,
+    protected_spans: list[tuple[int, int]],
+    *,
+    opening_pattern: re.Pattern[str] = _ENVELOPE_OPEN_PATTERN,
+) -> Iterator[tuple[re.Match[str], re.Match[str]]]:
+    """Match outer envelopes; literal JSON closing tags never end a call."""
+    cursor = 0
+    for opening in opening_pattern.finditer(text):
+        if opening.start() < cursor or CanonicalToolCallParser._is_match_protected(
+            text, opening.start(), protected_spans
+        ):
+            continue
+        bracket_tag = opening.groupdict().get("bracket")
+        tag = bracket_tag or opening.group("angle")
+        closing_pattern = rf"\[/\s*{re.escape(tag)}\s*\]" if bracket_tag else rf"</{re.escape(tag)}\s*>"
+        for closing in re.compile(closing_pattern, re.IGNORECASE).finditer(text, opening.end()):
+            if CanonicalToolCallParser._is_match_protected(text, closing.start(), protected_spans):
+                continue
+            cursor = closing.end()
+            yield opening, closing
+            break
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,10 +172,12 @@ class CanonicalToolCallParser:
         calls: list[CanonicalToolCall] = []
         accepted_ranges: list[tuple[int, int]] = []
 
-        for match in _WRAPPER_PATTERN.finditer(source):
-            if cls._is_match_protected(source, match.start(), protected_spans):
+        envelopes = list(iter_protocol_envelopes(source, protected_spans))
+        for opening, closing in envelopes:
+            tag = opening.group("bracket") or opening.group("angle")
+            if tag.lower() not in {"tool_call", "tool_calls"}:
                 continue
-            payload = str(match.group("bracket_payload") or match.group("angle_payload") or "").strip()
+            payload = source[opening.end() : closing.start()].strip()
             decoded_calls = cls._decode_payload(payload)
             accepted_here = False
             for decoded in decoded_calls:
@@ -131,34 +201,34 @@ class CanonicalToolCallParser:
                     CanonicalToolCall(
                         tool=tool_name,
                         args=args,
-                        raw=str(match.group(0) or ""),
+                        raw=source[opening.start() : closing.end()],
                         tool_raw=raw_token.strip(),
                     )
                 )
                 accepted_here = True
             if accepted_here:
-                accepted_ranges.append((match.start(), match.end()))
+                accepted_ranges.append((opening.start(), closing.end()))
 
         # Parse XML-style tool calls: <tool_name><args>...</args></tool_name>
-        for match in _XML_TOOL_CALL_PATTERN.finditer(source):
-            if cls._is_match_protected(source, match.start(), protected_spans):
+        for opening, closing in envelopes:
+            if opening.group("bracket") or (opening.group("angle") or "").lower() in {"tool_call", "tool_calls"}:
                 continue
             # §6.6: capture the raw XML tag before normalize_tool_name folds it
             # into canonical form. The XML tag is the model-emitted token.
-            raw_token = str(match.group("tool_name") or "").strip()
+            raw_token = str(opening.group("angle") or "").strip()
             tool_name = normalize_tool_name(raw_token)
             if not tool_name or not _TOOL_NAME_PATTERN.fullmatch(tool_name):
                 continue
             if allowed and tool_name not in allowed:
                 continue
 
-            args_content = str(match.group("args_content") or "").strip()
+            args_content = source[opening.end() : closing.start()].strip()
             raw_args = cls._parse_xml_args(args_content, tool_name)
             args = normalize_tool_arguments(tool_name, raw_args)
 
             # Expand array arguments into multiple tool calls
             # e.g., read_file with file=['a.py', 'b.py'] -> 2 separate calls
-            expanded_calls = cls._expand_array_args(tool_name, args, str(match.group(0) or ""))
+            expanded_calls = cls._expand_array_args(tool_name, args, source[opening.start() : closing.end()])
 
             for expanded_args, expanded_raw in expanded_calls:
                 signature = (
@@ -176,9 +246,9 @@ class CanonicalToolCallParser:
                         tool_raw=raw_token,
                     )
                 )
-            accepted_ranges.append((match.start(), match.end()))
+            accepted_ranges.append((opening.start(), closing.end()))
 
-        return calls, cls._strip_ranges(source, accepted_ranges).strip()
+        return calls, strip_transport_whitespace(cls._strip_ranges(source, accepted_ranges))
 
     @classmethod
     def _decode_payload(cls, payload: str) -> list[dict[str, Any]]:
@@ -274,11 +344,18 @@ class CanonicalToolCallParser:
 
         # Remove <args> wrapper if present
         content = args_content.strip()
+        decoded = cls._decode_json_value(content)
+        if isinstance(decoded, dict):
+            return decoded
         if content.startswith("<args>") and ("</args>" in content or "</ARGS>" in content.upper()):
             # Find the closing </args> tag
-            end_match = re.search(r"</args\s*>", content, re.IGNORECASE)
-            if end_match:
-                content = content[6 : end_match.start()].strip()
+            for opening, closing in iter_protocol_envelopes(content, json_data_string_spans(content)):
+                if opening.start() == 0 and opening.group("angle").lower() == "args":
+                    content = content[opening.end() : closing.start()].strip()
+                    break
+            decoded = cls._decode_json_value(content)
+            if isinstance(decoded, dict):
+                return decoded
 
         # Pattern to match XML-style key-value or nested elements
         # Handles: <key>value</key> or <key><nested>value</nested></key>
@@ -396,7 +473,9 @@ class CanonicalToolCallParser:
 
     @staticmethod
     def _build_protected_spans(text: str) -> list[tuple[int, int]]:
-        return [(match.start(), match.end()) for match in _CODE_BLOCK_PATTERN.finditer(text)]
+        return [(match.start(), match.end()) for match in _CODE_BLOCK_PATTERN.finditer(text)] + json_data_string_spans(
+            text
+        )
 
     @classmethod
     def _is_match_protected(

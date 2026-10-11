@@ -218,6 +218,7 @@ class RoleContextGateway:
     def _compute_enforcement_budget(self) -> int:
         """ADR-0090 I4.1: clamp the role budget to the resolved model window."""
         policy_budget = int(self.policy.max_context_tokens)
+        self._resolved_model_window_tokens: int | None = None
         try:
             resolved_window = int(self._context_os.resolved_context_window)
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
@@ -227,6 +228,7 @@ class RoleContextGateway:
                 exc,
             )
             return policy_budget
+        self._resolved_model_window_tokens = resolved_window
         if resolved_window <= 0:
             return policy_budget
         clamped = min(policy_budget, int(resolved_window * self._MODEL_WINDOW_SAFETY_RATIO))
@@ -309,13 +311,24 @@ class RoleContextGateway:
                 [{"role": "system", "content": system_prompt}]
             )
         if reserved_system_prompt_tokens >= self._enforcement_budget_tokens:
-            raise BudgetExceededError(
+            error = BudgetExceededError(
                 "role system prompt exceeds context enforcement budget",
                 limit=self._enforcement_budget_tokens,
                 requested=reserved_system_prompt_tokens,
                 current=0,
                 suggestion="shorten the role system prompt or use a model binding with a larger context window",
             )
+            self._telemetry.emit_budget_exceeded_observation(
+                request,
+                error=error,
+                preparation_stage="system_prompt",
+                enforcement_budget_tokens=self._enforcement_budget_tokens,
+                system_prompt_tokens=reserved_system_prompt_tokens,
+                system_prompt=system_prompt,
+                role_policy_limit_tokens=int(self.policy.max_context_tokens),
+                model_window_tokens=self._resolved_model_window_tokens,
+            )
+            raise error
         enforcement_budget_tokens = max(1, self._enforcement_budget_tokens - reserved_system_prompt_tokens)
         effective_context_budget_tokens = max(
             1,
@@ -391,13 +404,27 @@ class RoleContextGateway:
                 current_instruction = messages.pop()
             current_instruction_tokens = self._token_estimator.estimate([current_instruction])
             if current_instruction_tokens > enforcement_budget_tokens:
-                raise BudgetExceededError(
+                error = BudgetExceededError(
                     "current user instruction exceeds context enforcement budget",
                     limit=enforcement_budget_tokens,
                     requested=current_instruction_tokens,
                     current=enforcement_budget_tokens,
                     suggestion="reduce the current payload or use a larger context window; partial instructions are refused",
                 )
+                self._telemetry.emit_budget_exceeded_observation(
+                    request,
+                    error=error,
+                    preparation_stage="current_instruction",
+                    enforcement_budget_tokens=self._enforcement_budget_tokens,
+                    system_prompt_tokens=reserved_system_prompt_tokens,
+                    system_prompt=system_prompt,
+                    role_policy_limit_tokens=int(self.policy.max_context_tokens),
+                    model_window_tokens=self._resolved_model_window_tokens,
+                    remaining_current_tokens=enforcement_budget_tokens,
+                    current_instruction_tokens=current_instruction_tokens,
+                    sanitized_current=sanitized_current,
+                )
+                raise error
         compression_budget_tokens = enforcement_budget_tokens - current_instruction_tokens
 
         # ── Fallback: Include tool messages from history when not in state-first mode ──
@@ -526,13 +553,27 @@ class RoleContextGateway:
                 )
             except Exception:  # noqa: BLE001 — diagnostics must never mask the real error
                 logger.warning("BudgetExceededError DIAGNOSTIC failed to build the message breakdown")
-            raise BudgetExceededError(
+            error = BudgetExceededError(
                 "assembled role context exceeds context enforcement budget",
                 limit=self._enforcement_budget_tokens,
                 requested=token_estimate,
                 current=self._enforcement_budget_tokens,
                 suggestion="reduce projected context, compress history, or use a larger context window",
             )
+            self._telemetry.emit_budget_exceeded_observation(
+                request,
+                error=error,
+                preparation_stage="assembled_context",
+                enforcement_budget_tokens=self._enforcement_budget_tokens,
+                system_prompt_tokens=reserved_system_prompt_tokens,
+                system_prompt=system_prompt,
+                role_policy_limit_tokens=int(self.policy.max_context_tokens),
+                model_window_tokens=self._resolved_model_window_tokens,
+                remaining_current_tokens=enforcement_budget_tokens,
+                current_instruction_tokens=current_instruction_tokens,
+                sanitized_current=sanitized_current,
+            )
+            raise error
 
         emit_debug_event(
             category="context",

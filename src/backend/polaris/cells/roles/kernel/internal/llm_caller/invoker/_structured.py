@@ -71,6 +71,7 @@ class _InvokerStructuredMixin:
         def _emit_required_tool_retry_request_audit(self, *args: Any, **kwargs: Any) -> Any: ...
         def _extract_context_snapshot_ref(self, request: Any) -> str | None: ...
         def _get_executor(self) -> Any: ...
+        def _profile_for_selected_route(self, role_id: str, profile: RoleProfile) -> RoleProfile: ...
 
     # ========================================================================
     # Structured call (migrated from call_structured.py)
@@ -579,6 +580,7 @@ class _InvokerStructuredMixin:
         prepared: PreparedLLMRequest | None = None
 
         try:
+            profile = self._profile_for_selected_route(role_id, profile)
             request_preparer = LLMRequestPreparer(
                 workspace=self.workspace,
                 formatter=self._formatter,

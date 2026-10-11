@@ -63,13 +63,9 @@ async def client(mock_settings: Settings, mock_app_state: AppState) -> AsyncIter
     """Create an async test client with mocked lifespan."""
     from polaris.delivery.http.app_factory import create_app
 
-    app = create_app(settings=mock_settings)
-
     class _AllowAllAuth:
         def check(self, _auth_header: str) -> bool:
             return True
-
-    app.state.auth = _AllowAllAuth()
 
     with (
         patch(
@@ -102,6 +98,10 @@ async def client(mock_settings: Settings, mock_app_state: AppState) -> AsyncIter
             },
         ),
     ):
+        # Construct under the mocked sync/environment context. Constructing
+        # first leaked the fixture's runtime/cache settings into later suites.
+        app = create_app(settings=mock_settings)
+        app.state.auth = _AllowAllAuth()
         mock_container.return_value = MagicMock()
         async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as ac:
             yield ac
@@ -1053,11 +1053,45 @@ async def test_get_factory_run_audit_bundle_success(client: AsyncClient, tmp_pat
     run = _make_factory_run(run_id="factory_abc", status="completed", stages_completed=["quality_gate"])
     run.metadata["summary_md"] = "# Summary"
     run.metadata["summary_json"] = {"ok": True}
+    run.metadata["factory_start_request"] = {"metadata": {"canonical_project_id": "P1"}}
+    from polaris.cells.control_plane.run_ledger.public import AppendRunLedgerEventCommandV1, append_run_ledger_event
+    from polaris.cells.events.fact_stream.public import AppendFactEventCommandV1, append_fact_event
+
+    _bootstrap_test_fact_stream(tmp_path)
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(tmp_path),
+            stream="task_runtime.execution",
+            event_type="created",
+            source="runtime.task_runtime",
+            run_id="child",
+            task_id="TASK-1",
+            payload={
+                "run_id": "child",
+                "task_id": "TASK-1",
+                "factory_run_id": "factory_abc",
+                "factory_bench_project_id": "P1",
+            },
+            strict_integrity=True,
+        )
+    )
+    for scoped_run in ("factory_abc", "child"):
+        append_run_ledger_event(
+            AppendRunLedgerEventCommandV1(
+                workspace=str(tmp_path),
+                run_id=scoped_run,
+                event={
+                    "event_type": "gate_evaluated",
+                    "gate": {"ok": True},
+                    "job_token": {"run_id": scoped_run, "project_id": "P1"},
+                },
+            )
+        )
 
     run_dir = tmp_path / "factory_abc"
     artifacts_dir = run_dir / "artifacts"
     artifacts_dir.mkdir(parents=True)
-    (artifacts_dir / "report.json").write_text('{"passed": true}')
+    (artifacts_dir / "report.json").write_text('{"passed": true}', encoding="utf-8")
 
     causal_result = SimpleNamespace(
         status="control_plane_fail",
@@ -1087,7 +1121,7 @@ async def test_get_factory_run_audit_bundle_success(client: AsyncClient, tmp_pat
         mock_svc.get_run_events = AsyncMock(return_value=[])
         mock_svc.store.get_run_dir.return_value = run_dir
 
-        response = await client.get("/v2/factory/runs/factory_abc/audit-bundle")
+        response = await client.get("/v2/factory/runs/factory_abc/audit-bundle", params={"workspace": str(tmp_path)})
         assert response.status_code == 200
         data = response.json()
         assert data["run_id"] == "factory_abc"

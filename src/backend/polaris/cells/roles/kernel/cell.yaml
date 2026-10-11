@@ -10,6 +10,8 @@ purpose: 'Provide the shared role execution kernel for prompt construction, outp
 
   '
 current_modules:
+- polaris.cells.roles.kernel.public.generation_outcome
+- polaris.cells.roles.kernel.public.llm_caller_contracts
 - polaris.cells.roles.kernel.public.service
 - polaris.cells.roles.kernel.public.structured_output_contracts
 - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
@@ -41,6 +43,8 @@ owned_paths:
 - polaris/cells/roles/kernel/**
 public_contracts:
   modules:
+  - polaris.cells.roles.kernel.public.generation_outcome
+  - polaris.cells.roles.kernel.public.llm_caller_contracts
   - polaris.cells.roles.kernel.public.contracts
   - polaris.cells.roles.kernel.public.structured_output_contracts
   - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
@@ -62,6 +66,7 @@ public_contracts:
   - RoleKernelParsedOutputEventV1
   - RoleKernelQualityCheckedEventV1
   results:
+  - RoleGenerationOutcomeV1
   - RoleKernelResultV1
   - FactoryRoleEvidenceCutoffAckV1
   - FactoryRoleEvidenceCutoffSourceHeadV1
@@ -100,6 +105,7 @@ effects_allowed:
 - process.spawn:roles/*
 verification:
   tests:
+  - polaris/cells/roles/kernel/tests/test_pm_generation_contracts.py
   - tests/test_prompt_builder_retry.py
   - tests/test_output_parser_patch_file.py
   - tests/test_quality_checker_director_tool_calls.py

@@ -10,13 +10,19 @@ purpose: 'Produce PM task contracts from project goals and docs, enforce plannin
   '
 current_modules:
 - polaris.cells.orchestration.pm_planning.public.contracts
+- polaris.cells.orchestration.pm_planning.public.artifact_contracts
 tags: []
 owned_paths:
+- polaris/cells/orchestration/pm_planning/public/contracts.py
+- polaris/cells/orchestration/pm_planning/tests/test_planning_inputs.py
 - polaris/cells/orchestration/pm_planning/internal/**
+- polaris/cells/orchestration/pm_planning/public/artifact_contracts.py
+- polaris/cells/orchestration/pm_planning/tests/test_artifact_contracts.py
 - polaris/delivery/http/v2/pm.py
 public_contracts:
   modules:
   - polaris.cells.orchestration.pm_planning.public.contracts
+  - polaris.cells.orchestration.pm_planning.public.artifact_contracts
   commands:
   - GeneratePmTaskContractCommandV1
   queries:
@@ -24,6 +30,7 @@ public_contracts:
   events:
   - PmTaskContractGeneratedEventV1
   results:
+  - PmProductPlanningInputV1
   - PmTaskContractResultV1
   errors:
   - PmPlanningErrorV1
@@ -52,8 +59,10 @@ effects_allowed:
 - llm.invoke:pm/*
 verification:
   tests:
+  - polaris/cells/orchestration/pm_planning/tests/test_planning_inputs.py
   - tests/test_pm_task_quality_gate.py
   - tests/test_pm_orchestration_api.py
+  - polaris/cells/orchestration/pm_planning/tests/test_artifact_contracts.py
   gaps:
   - Initial business-cell declaration; implementation convergence is in progress.
   smoke_commands: []

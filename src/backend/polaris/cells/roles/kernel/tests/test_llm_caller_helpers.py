@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleProfile
@@ -416,6 +416,58 @@ async def test_store_active_request_context_snapshot_uses_fallback_request(tmp_p
     assert "UTF-8 JSON 数组" in json.dumps(snapshot["messages"], ensure_ascii=False)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prebuilt", [False, True])
+async def test_factory_snapshot_roundtrips_owned_names_with_real_store(tmp_path, prebuilt: bool) -> None:
+    from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_qualification import (
+        _read_context_snapshot,
+    )
+    from polaris.cells.roles.kernel.tests import test_role_turn_request_fact_projection as request_fact_test
+    from polaris.cells.roles.kernel.tests.test_context_gateway_integration import _prepare_ce_boundary
+
+    authority = request_fact_test._b32_authority(request_fact_test._B32CutoffPort())
+    profile, prepared, _ = await _prepare_ce_boundary(tmp_path, prebuilt=prebuilt, authority=authority)
+    frozen = prepared.factory_semantic_request
+    assert frozen is not None
+    active_before = json.loads(json.dumps(prepared.ai_request.context["chat_messages"]))
+    assert all(set(item) == {"role", "content"} for item in active_before)
+    context_ref = await _store_active_request_context_snapshot(
+        workspace=str(tmp_path),
+        active_request=prepared.ai_request,
+        prepared=prepared,
+        profile=profile,
+        run_id=frozen.identity.run_id,
+        call_id=frozen.identity.call_id,
+    )
+    assert context_ref and len(context_ref) == 24
+    snapshot = _read_context_snapshot(workspace=str(tmp_path), context_snapshot_ref=context_ref)
+    assert snapshot["messages"] == json.loads(frozen.canonical_final_payload_json)["messages"]
+    assert any(item.get("name") == "context_override" for item in snapshot["messages"])
+    assert prepared.ai_request.context["chat_messages"] == active_before
+
+
+@pytest.mark.parametrize("active", [None, [], [{"role": "user", "content": "Current fallback."}]])
+def test_nonfactory_snapshot_selection_keeps_active_precedence_and_fallback(active) -> None:
+    from polaris.cells.roles.kernel.internal.llm_caller.invoker._helpers import _snapshot_messages_for_request
+
+    prepared = PreparedLLMRequest(
+        messages=[{"role": "user", "content": "Prepared source."}],
+        input_text="",
+        context_result=None,
+        context_summary="",
+        request_options={},
+        ai_request=None,
+    )
+    request = SimpleNamespace(context={"chat_messages": active}, input="Input fallback.")
+    assert _snapshot_messages_for_request(request=request, prepared=prepared) == (
+        active or [{"role": "user", "content": "Prepared source."}]
+    )
+    prepared.messages = []
+    assert _snapshot_messages_for_request(request=request, prepared=prepared) == (
+        active or [{"role": "user", "content": "Input fallback."}]
+    )
+
+
 def _turn_context_result(content: str, token_estimate: int = 12) -> TurnEngineContextResult:
     return TurnEngineContextResult(
         messages=({"role": "user", "content": content},),
@@ -604,6 +656,42 @@ class TestResolvePlatformRetryMax:
 
 class TestResolveMaxTokens:
     """resolve_max_tokens allows trusted context to override output budget."""
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            (None, None),
+            ("bad", None),
+            (0, None),
+            (-1, None),
+            (False, None),
+            (True, 1),
+            (2.9, 2),
+            ("64000", 64_000),
+            (128_001, 128_000),
+        ],
+    )
+    def test_compatibility_coercion_and_context_helpers(self, raw: Any, expected: int | None) -> None:
+        from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
+            _coerce_context_max_tokens_override,
+            _resolve_context_max_tokens_override,
+            resolve_context_output_budget_tokens,
+        )
+
+        context = {"llm_max_tokens": raw}
+        assert _coerce_context_max_tokens_override(raw) == expected
+        assert _resolve_context_max_tokens_override(context) == expected
+        assert resolve_context_output_budget_tokens(context) == expected
+
+    @pytest.mark.parametrize("requested", [True, False])
+    def test_requested_bool_keeps_existing_floor(self, requested: bool) -> None:
+        assert resolve_max_tokens(requested) == 1
+
+    def test_existing_overflow_is_not_silently_swallowed(self) -> None:
+        with pytest.raises(OverflowError):
+            resolve_max_tokens(float("inf"))
+        with pytest.raises(OverflowError):
+            resolve_max_tokens(60_000, {"max_tokens": float("inf")})
 
     def test_context_max_tokens_override_wins_over_requested(self) -> None:
         assert resolve_max_tokens(4000, {"llm_max_tokens": 16000}) == 16000

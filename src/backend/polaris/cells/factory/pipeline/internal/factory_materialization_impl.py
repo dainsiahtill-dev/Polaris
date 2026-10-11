@@ -9,16 +9,14 @@ methods. Behavior is preserved verbatim.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
-import os
 import subprocess
+import sys
 import uuid
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from functools import partial
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
@@ -31,6 +29,7 @@ from polaris.cells.runtime.task_runtime.public.service import (
     TaskRuntimeService,
     bind_runtime_task_to_factory_run,
 )
+from polaris.kernelone.process import ProcessTreeCancelledError, ProcessTreeDrainError
 
 from . import factory_stage_helpers as helpers
 from .factory_node_dependencies import node_dependency_readiness
@@ -39,11 +38,153 @@ from .factory_run_models import (
     _WORKSPACE_VALIDATION_TIMEOUT_SECONDS,
     FactoryRun,
 )
+from .native_validation_session import NativeValidationSession
 from .run_ledger import load_run_ledger_projection
 
 logger = logging.getLogger(__name__)
 
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
+_MATERIALIZATION_TYPESCRIPT_PARSER = """
+const fs = require('fs');
+const ts = require('./node_modules/typescript/lib/typescript.js');
+let failed = false;
+for (const path of process.argv.slice(1)) {
+  const source = ts.createSourceFile(path, fs.readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true);
+  for (const diagnostic of source.parseDiagnostics) {
+    failed = true;
+    console.error(path + ': error TS' + diagnostic.code + ': ' +
+      ts.flattenDiagnosticMessageText(diagnostic.messageText, '\\n'));
+  }
+}
+process.exitCode = failed ? 1 : 0;
+"""
+
+
+def _close_materialization_sessions(
+    sessions: Sequence[NativeValidationSession], *, primary_error: BaseException | None
+) -> None:
+    """Keep the original lifecycle error while recording cleanup failures."""
+    failures: list[Exception] = []
+    for session in sessions:
+        try:
+            session.close()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            failures.append(exc)
+            logger.warning(
+                "validation_cleanup_failed %s",
+                json.dumps(
+                    {
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "primary_error_type": type(primary_error).__name__ if primary_error is not None else None,
+                        "drain_proven": False,
+                        "authoritative_receipt": False,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+    if failures and primary_error is None:
+        raise failures[0]
+
+
+class MaterializationDiagnostics(list[str]):
+    """Diagnostics plus coverage/admission observations, never receipt authority."""
+
+    def __init__(
+        self,
+        diagnostics: Sequence[str] = (),
+        *,
+        static_evidence: Mapping[str, Any],
+        verifier_results: Sequence[Mapping[str, Any]] = (),
+        blockers: Sequence[str] = (),
+        preparation_results: Sequence[Mapping[str, Any]] = (),
+    ) -> None:
+        super().__init__(dict.fromkeys(diagnostics))
+        self.static_evidence = dict(static_evidence)
+        self.verifier_results = [dict(result) for result in verifier_results]
+        self.blockers = list(blockers)
+        self.preparation_results = [dict(result) for result in preparation_results]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "diagnostics": list(self),
+            "static_evidence": self.static_evidence,
+            "verifier_results": self.verifier_results,
+            "blockers": self.blockers,
+            "dependency_preparation_results": self.preparation_results,
+            "missing_required_verifiers": [
+                row["command"] for row in self.verifier_results if row.get("failure_kind") in {"startup", "admission"}
+            ],
+            "failed_required_verifiers": [
+                row["command"]
+                for row in self.verifier_results
+                if row.get("failure_kind") in {"nonzero", "verifier_failure", "timeout"}
+            ],
+        }
+
+
+def _materialization_verifier_diagnostics(result: Mapping[str, Any]) -> list[str]:
+    """Project a controlled result without scanning or executing anything."""
+    if result.get("passed") is True and result.get("exit_code") == 0 and not result.get("error"):
+        return []
+    output = "\n".join(str(result.get(key) or "") for key in ("diagnostic_excerpt", "stdout_tail", "stderr_tail"))
+    coded = [line.strip() for line in output.splitlines() if "error TS" in line or ": error " in line.lower()]
+    command = " ".join(result.get("command") or ())
+    detail = " ".join(line.strip() for line in output.splitlines() if not line.lstrip().startswith(">"))
+    failure = (
+        f"artifact_quality_error: {command} failed (exit={result.get('exit_code')}): "
+        f"{result.get('error') or detail[-_WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS:] or 'no diagnostic output'}"
+    )
+    return list(dict.fromkeys([*coded, failure]))
+
+
+async def _await_materialization_preparation(
+    executor: Any, run: FactoryRun, *, preparation_results: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Wait for the existing preparation owner even when this caller cancels.
+
+    Preparation has a separate receipt and physical process-tree owner. Its
+    synchronous API has no cancellation control; never detach that owner.
+    """
+    owner = asyncio.create_task(
+        asyncio.to_thread(executor._ensure_director_stage_materialization_typescript_toolchain, run=run)
+    )
+    try:
+        return await asyncio.shield(owner)
+    except asyncio.CancelledError as cancelled:
+        # asyncio.wait observes completion without rethrowing the thread's
+        # exception. Keep one barrier across repeated caller cancellations.
+        completion = asyncio.create_task(asyncio.wait({owner}))
+        while not completion.done():
+            try:
+                await asyncio.shield(completion)
+            except asyncio.CancelledError:
+                continue
+        error = asyncio.CancelledError("preparation owner cancelled") if owner.cancelled() else owner.exception()
+        result = owner.result() if error is None else None
+        if error is None and not isinstance(result, dict):
+            error = TypeError("materialization_preparation_result_not_mapping")
+        if error is not None:
+            failure = {
+                "passed": False,
+                "error_type": type(error).__name__,
+                "error": str(error),
+                "factory_run_id": run.id,
+                "phase": "dependency_preparation",
+                "caller_cancelled": True,
+                "owner_returned": True,
+                "drain_proven": False,
+                "authoritative_receipt": False,
+            }
+            if preparation_results is not None:
+                preparation_results.append(failure)
+            logger.warning(
+                "materialization_preparation_failed_after_cancel %s", json.dumps(failure, ensure_ascii=False)
+            )
+        else:
+            if preparation_results is not None and isinstance(result, dict):
+                preparation_results.append(result)
+        raise cancelled
 
 
 def _deferred_repair_forward_target_paths(
@@ -312,157 +453,241 @@ def _seal_director_stage_missing_tool_lifecycles(
     }
 
 
-def _collect_director_stage_materialization_diagnostics(
-    executor,
+async def _collect_director_stage_materialization_diagnostics(
+    executor: Any,
     *,
     run: FactoryRun | None = None,
+    context: Mapping[str, Any] | None = None,
     preparation_results: list[dict[str, Any]] | None = None,
-) -> list[str]:
-    """Collect physical settle-time diagnostics from source and real verifiers.
+    sessions: list[NativeValidationSession] | None = None,
+) -> MaterializationDiagnostics:
+    """Scan without effects and execute required intents only in a source Group.
 
-    Compiler-only revalidation is not convergence.  A Director candidate may
-    make ``tsc`` green while leaving the declared package test or static HTML
-    entrypoint physically broken.  Collect all three surfaces up front so the
-    existing repair schedule can admit the corresponding deterministic
-    candidates in one same-task settle attempt.
-
-    R167/M10: when package.json declares typescript but ``node_modules/.bin/tsc``
-    is absent (quality_gate never ran after director fail), best-effort
-    ``npm install`` so settle can feed real TS diagnostics into the schedule.
-
-    R184/M06: also surface missing package.json test entrypoints so the
-    materialization schedule can plan smoke tests even when tsc is clean
-    (L1-01 residual: real_run green, test_files=0).
+    Preparation completes before the Session freezes source/dependency inputs.
+    Unknown/incomplete coverage and admission failures never authorize repair.
+    An owned Session survives candidate revalidation; a standalone call closes
+    its Group after the physical execution owner has returned or drained.
     """
+    from polaris.kernelone.quality import scan_workspace_artifact_quality_evidence
+    from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
 
+    owned_sessions = sessions is None
+    active = sessions if sessions is not None else []
+    preparations = preparation_results if preparation_results is not None else []
+    results: list[dict[str, Any]] = []
+    commands: list[list[str]] = []
+    blockers: list[str] = []
     diagnostics: list[str] = []
+    static: dict[str, Any] = {
+        "scan_mode": "pure_static",
+        "scan_complete": False,
+        "checks_complete": False,
+        "deferred_checks": [],
+    }
     try:
-        from polaris.kernelone.quality import scan_workspace_artifact_quality
+        # Bind manifest identity before scanning. Consume its cached UTF-8
+        # payload only; a later path reopen could follow a replacement link.
+        reader = WorkspaceReadSnapshot(executor.workspace)
+        package = executor.workspace / "package.json"
+        manifest = reader.read(package)
+        evidence = scan_workspace_artifact_quality_evidence(str(executor.workspace), scan_mode="pure_static")
+        static = evidence.to_dict()
+        static["materialization_manifest_snapshot"] = {
+            "path": manifest.path,
+            "status": manifest.status,
+            "detail": manifest.detail,
+            "content_sha256": manifest.content_sha256,
+        }
+        if manifest.status not in {"readable", "missing"}:
+            blockers.append("materialization_manifest_snapshot_unknown:" + manifest.detail)
+        if manifest.status == "missing":
+            # Absence has no content witness; reject appearance during the scan
+            # without reading the new content or treating it as the baseline.
+            _, current = reader.confined_path(package)
+            if current is not None:
+                blockers.append("materialization_manifest_snapshot_drift:appeared")
+        blockers.extend(reader.drift_reasons())
+        diagnostics.extend(evidence.errors)
+        if evidence.scan_mode != "pure_static" or evidence.scan_complete is not True:
+            blockers.append("materialization_static_coverage_incomplete:" + str(evidence.incomplete_reasons))
+        covered: list[str] = []
+        for check in evidence.deferred_checks:
+            project = check.project_relative_path or "."
+            pure = PurePosixPath(project)
+            if pure.is_absolute() or ".." in pure.parts:
+                blockers.append("materialization_verifier_project_invalid:" + project)
+                continue
+            if check.check_id == "typescript_project_typecheck":
+                config = (pure / "tsconfig.json").as_posix()
+                config_read = reader.read(executor.workspace / config)
+                if config_read.status == "unknown":
+                    blockers.append("materialization_config_snapshot_unknown:" + config_read.detail)
+                    continue
+                if config_read.status != "readable":
+                    blockers.append("materialization_typescript_config_missing:" + config)
+                    continue
+                commands.append(["node", "node_modules/typescript/bin/tsc", "-p", config, "--noEmit"])
+            elif check.check_id == "typescript_parser":
+                # Project include/exclude does not prove single-file parsing.
+                commands.append(["node", "-e", _MATERIALIZATION_TYPESCRIPT_PARSER, "--", *check.relative_paths])
+            elif check.check_id == "javascript_parser":
+                commands.extend(["node", "--check", path] for path in check.relative_paths)
+            elif check.check_id in {"go_project_compile", "go_project_test"}:
+                command = ["go", "-C", project, "test"]
+                if check.check_id == "go_project_compile":
+                    command.extend(["-run", "^$"])
+                commands.append([*command, "./..."])
+            else:
+                blockers.append("materialization_deferred_check_unsupported:" + check.check_id)
+                continue
+            covered.append(check.check_id)
+        if manifest.status == "readable":
+            payload = json.loads(manifest.text)
+            if not isinstance(payload, Mapping):
+                raise ValueError("materialization_package_not_object")
+            scripts = payload.get("scripts")
+            test_script = str(scripts.get("test") or "").strip() if isinstance(scripts, Mapping) else ""
+            if test_script:
+                commands.append(["npm", "test"])
+                has_tests = any(
+                    PurePosixPath(path).suffix.lower() in {".ts", ".tsx", ".js", ".mjs", ".cjs"}
+                    and ("test" in PurePosixPath(path).name.lower() or ".spec." in PurePosixPath(path).name)
+                    for path in evidence.scanned_relative_paths
+                )
+                if not has_tests:
+                    diagnostics.append(
+                        "artifact_quality_error: missing test source files required by package.json "
+                        + f"scripts.test ({test_script[:160]}); expected tests/verify.test.ts or equivalent"
+                    )
+        commands = [list(command) for command in dict.fromkeys(tuple(command) for command in commands)]
+        if blockers:
+            return MaterializationDiagnostics(
+                diagnostics, static_evidence=static, blockers=blockers, preparation_results=preparations
+            )
+        if run is None:
+            raise ValueError("materialization verification requires a committed Chief Engineer Factory run")
+        bound_context = dict(context or {})
+        for key in ("factory_run_id", "run_id"):
+            if key in bound_context and bound_context[key] != run.id:
+                raise ValueError("materialization_context_run_mismatch:" + key)
+        if "workspace" in bound_context and Path(bound_context["workspace"]).resolve() != executor.workspace.resolve():
+            raise ValueError("materialization_context_workspace_mismatch")
+        # Authentication must precede any preparation effect. This is a query
+        # of the existing committed CE contract, not a new grant or receipt.
+        from .factory_node_dependencies import authenticated_preparation_contract
 
-        diagnostics.extend(scan_workspace_artifact_quality(str(executor.workspace)))
-    except (OSError, RuntimeError, TypeError, ValueError) as exc:
-        logger.warning(
-            "Director stage materialization artifact scan skipped for %s: %s",
-            executor.workspace,
-            exc,
+        contract = authenticated_preparation_contract(executor, run)
+        project_id = executor._canonical_project_id(bound_context)
+        if not project_id or contract.project_id != project_id:
+            raise ValueError("materialization_context_project_mismatch")
+        needs_node = any(
+            command[0] == "npm"
+            or "node_modules/typescript/bin/tsc" in command
+            or _MATERIALIZATION_TYPESCRIPT_PARSER in command
+            for command in commands
         )
-    package_json = executor.workspace / "package.json"
-    if not package_json.is_file():
-        # Go/Rust/Python workspaces have no package.json. Live L1-10 returned
-        # diagnostics=0 / tools=0 here while `go test -count=0` still showed
-        # undefined selectors, so selector repair never entered settle.
-        return diagnostics
-    # Missing on-disk tests referenced by package.json scripts.test is a
-    # first-class settle diagnostic (not a compiler error).
-    try:
-        payload = json.loads(package_json.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
-        payload = None
-    test_script = ""
-    if isinstance(payload, Mapping):
-        scripts = payload.get("scripts")
-        if isinstance(scripts, Mapping):
-            test_script = str(scripts.get("test") or "").strip()
-        has_test_files = False
-        tests_root = executor.workspace / "tests"
-        if tests_root.is_dir():
-            has_test_files = any(
-                path.is_file()
-                and path.suffix.lower() in {".ts", ".tsx", ".js", ".mjs", ".cjs"}
-                and "test" in path.name.lower()
-                for path in tests_root.rglob("*")
-                if "node_modules" not in path.parts
-            )
-        if not has_test_files:
-            has_test_files = any(
-                path.is_file()
-                and path.suffix.lower() in {".ts", ".tsx", ".js", ".mjs", ".cjs"}
-                and path.name.endswith((".test.ts", ".test.tsx", ".test.js", ".spec.ts", ".spec.js"))
-                for path in executor.workspace.rglob("*")
-                if "node_modules" not in path.parts and path.parts[:1] != (".git",)
-            )
-        if test_script and not has_test_files:
-            diagnostics.append(
-                "artifact_quality_error: missing test source files required by package.json "
-                f"scripts.test ({test_script[:160]}); expected tests/verify.test.ts or equivalent"
-            )
-    node_modules = executor.workspace / "node_modules"
-    tsc_bin = node_modules / ".bin" / "tsc"
-    tsconfig = executor.workspace / "tsconfig.json"
-    if tsconfig.is_file():
-        if not node_dependency_readiness(executor.workspace).ready:
-            preparation = (
-                executor._ensure_director_stage_materialization_typescript_toolchain(run=run)
-                if run is not None
-                else executor._ensure_director_stage_materialization_typescript_toolchain()
-            )
-            if preparation_results is not None and isinstance(preparation, Mapping):
-                preparation_results.append(dict(preparation))
-            if not isinstance(preparation, Mapping) or preparation.get("passed") is not True:
-                diagnostics.append(
-                    "artifact_quality_error: dependency_preparation_failed: "
-                    + json.dumps(
-                        dict(preparation)
-                        if isinstance(preparation, Mapping)
-                        else {"error": "physical_outcome_unproved"},
-                        ensure_ascii=False,
-                        default=str,
-                    )[:_WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS]
+        if needs_node and not node_dependency_readiness(executor.workspace).ready:
+            if active:
+                raise ValueError("materialization_candidate_dependencies_changed_requires_preparation")
+            preparation = await _await_materialization_preparation(executor, run, preparation_results=preparations)
+            preparations.append(dict(preparation))
+            if preparation.get("passed") is not True:
+                blockers.append("dependency_preparation_failed:" + str(preparation.get("error") or preparation))
+                return MaterializationDiagnostics(
+                    diagnostics, static_evidence=static, blockers=blockers, preparation_results=preparations
                 )
-            tsc_bin = node_modules / ".bin" / "tsc"
-        if tsc_bin.is_file():
+        if not active:
+            active.append(NativeValidationSession.from_factory(executor, run, bound_context, commands=commands))
+        for command in commands:
             try:
-                completed = subprocess.run(
-                    [str(tsc_bin), "-p", "tsconfig.json", "--noEmit"],
-                    cwd=str(executor.workspace),
-                    capture_output=True,
-                    text=True,
-                    timeout=90,
-                    check=False,
+                timeout = 90 if "node_modules/typescript/bin/tsc" in command else _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
+                result = dict(await active[0].run_command(command, timeout))
+                result["configured_timeout_seconds"] = timeout
+            except (ProcessTreeCancelledError, ProcessTreeDrainError):
+                raise
+            except subprocess.TimeoutExpired as exc:
+                result = {
+                    "command": command,
+                    "exit_code": None,
+                    "passed": False,
+                    "error": str(exc),
+                    "failure_kind": "timeout",
+                    "stdout_tail": str(exc.stdout or ""),
+                    "stderr_tail": str(exc.stderr or ""),
+                }
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                result = {
+                    "command": command,
+                    "exit_code": None,
+                    "passed": False,
+                    "error": f"{type(exc).__name__}:{exc}",
+                    "failure_kind": "startup",
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                }
+            if result.get("command") != command:
+                result["passed"] = False
+                result["error"] = "materialization_verifier_command_identity_mismatch"
+                result["observed_command"] = result.get("command")
+                result["command"] = command
+                result["failure_kind"] = "admission"
+            if result.get("passed") is not True or result.get("exit_code") != 0 or result.get("error"):
+                error = str(result.get("error") or "")
+                result.setdefault(
+                    "failure_kind",
+                    "nonzero"
+                    if result.get("exit_code") not in {None, 0}
+                    else "verifier_failure"
+                    if result.get("exit_code") == 0
+                    else "timeout"
+                    if error.startswith("timeout after")
+                    else "startup",
                 )
-            except (OSError, TimeoutError, ValueError):
-                completed = None
-            if completed is not None:
-                combined = f"{completed.stdout or ''}\n{completed.stderr or ''}"
-                diagnostics.extend(
-                    line.strip() for line in combined.splitlines() if "error TS" in line or ": error " in line.lower()
-                )
-
-    if test_script:
-        try:
-            test_result = subprocess.run(
-                ["npm", "test"],
-                cwd=str(executor.workspace),
-                capture_output=True,
-                text=True,
-                timeout=_WORKSPACE_VALIDATION_TIMEOUT_SECONDS,
-                check=False,
-                env={**os.environ, "CI": "1"},
+                diagnostics.extend(_materialization_verifier_diagnostics(result))
+                if result["failure_kind"] not in {"nonzero", "verifier_failure"}:
+                    blockers.append("materialization_verifier_" + result["failure_kind"] + ":" + error)
+            results.append(result)
+            if blockers:
+                break
+        static["controlled_check_ids"] = covered
+        static["controlled_checks_complete"] = not blockers and len(results) == len(commands)
+        return MaterializationDiagnostics(
+            diagnostics,
+            static_evidence=static,
+            verifier_results=results,
+            blockers=blockers,
+            preparation_results=preparations,
+        )
+    except (ProcessTreeCancelledError, ProcessTreeDrainError):
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        blockers.append(f"materialization_verification_admission_failed:{type(exc).__name__}:{exc}")
+        if not results:
+            # Admission produced no verifier execution. Preserve every planned
+            # command as missing evidence, never as a failed executed receipt.
+            results.extend(
+                {
+                    "command": command,
+                    "exit_code": None,
+                    "passed": False,
+                    "error": f"{type(exc).__name__}:{exc}",
+                    "failure_kind": "admission",
+                    "phase": "admission",
+                    "stdout_tail": "",
+                    "stderr_tail": "",
+                }
+                for command in commands
             )
-        except subprocess.TimeoutExpired:
-            diagnostics.append(
-                f"artifact_quality_error: npm test timed out after {_WORKSPACE_VALIDATION_TIMEOUT_SECONDS}s"
-            )
-        except (OSError, TimeoutError, ValueError) as exc:
-            diagnostics.append(f"artifact_quality_error: npm test could not execute: {type(exc).__name__}: {exc}")
-        else:
-            if int(test_result.returncode or 0) != 0:
-                combined = f"{test_result.stdout or ''}\n{test_result.stderr or ''}".strip()
-                # Coverage normalisation treats each line as a separate
-                # diagnostic. Keep the command identity (``npm test``) and
-                # terminal error (for example ``Could not find ...``) in
-                # one record so an existing executable rule can match the
-                # complete verifier fact instead of seeing unrelated lines.
-                signal_lines = [
-                    line.strip() for line in combined.splitlines() if line.strip() and not line.lstrip().startswith(">")
-                ]
-                compact = " ".join(signal_lines[-40:]) or " ".join(combined.split())
-                bounded = compact[-_WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS:]
-                diagnostics.append(
-                    f"artifact_quality_error: npm test failed (exit={test_result.returncode}): {bounded}"
-                )
-
-    return list(dict.fromkeys(item.strip() for item in diagnostics if str(item or "").strip()))[:200]
+        return MaterializationDiagnostics(
+            diagnostics,
+            static_evidence=static,
+            verifier_results=results,
+            blockers=blockers,
+            preparation_results=preparations,
+        )
+    finally:
+        if owned_sessions:
+            _close_materialization_sessions(active, primary_error=sys.exception())
 
 
 def _claim_director_stage_materialization_settle_attempt(
@@ -768,11 +993,56 @@ def _director_stage_deferred_repair_owner_targets(
 
 
 async def _run_director_stage_materialization_quality_settle(
-    executor,
+    executor: Any,
     *,
     run: FactoryRun,
     stage_status: str,
     error_code: str,
+    context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Keep each validation Group owned until controlled execution terminates."""
+    sessions: list[NativeValidationSession] = []
+    observations: list[dict[str, Any]] = []
+    try:
+        result = await _run_materialization_settle_with_session(
+            executor,
+            run=run,
+            stage_status=stage_status,
+            error_code=error_code,
+            context=dict(context or {}),
+            sessions=sessions,
+            observations=observations,
+        )
+    except _MaterializationVerificationBlockedError as exc:
+        result = {
+            "ok": False,
+            "reason": "materialization_verification_blocked",
+            "detail": str(exc),
+            "tool_result_count": 0,
+            "diagnostic_count": len(exc.observation),
+            "dependency_preparation_results": exc.observation.preparation_results,
+        }
+    finally:
+        _close_materialization_sessions(sessions, primary_error=sys.exception())
+    result["validation_observations"] = observations
+    return result
+
+
+class _MaterializationVerificationBlockedError(RuntimeError):
+    def __init__(self, observation: MaterializationDiagnostics) -> None:
+        self.observation = observation
+        super().__init__("; ".join(observation.blockers))
+
+
+async def _run_materialization_settle_with_session(
+    executor: Any,
+    *,
+    run: FactoryRun,
+    stage_status: str,
+    error_code: str,
+    context: Mapping[str, Any],
+    sessions: list[NativeValidationSession],
+    observations: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Settle materialization through serial original-owner continuations (R165/M06).
 
@@ -793,20 +1063,49 @@ async def _run_director_stage_materialization_quality_settle(
             "tool_result_count": 0,
             "diagnostic_count": 0,
         }
-    # Compiler/verifier scans and deterministic repair planning are
-    # synchronous and may take minutes on a freshly materialized project.
-    # Keep them off the ASGI event loop so /health, runtime WebSocket, NATS
-    # keepalives, and the runner's status reads remain live while Director
-    # settles the owning task.
     dependency_preparation_results: list[dict[str, Any]] = []
-    collect_diagnostics = executor._collect_director_stage_materialization_diagnostics
-    # Prebind legacy injected collectors without retrying an executed callback.
-    # Legacy calls have no new authority; their preparation keeps unknown locks protected.
-    collector_signature = inspect.signature(collect_diagnostics)
-    if {"run", "preparation_results"}.issubset(collector_signature.parameters):
-        collector_signature.bind(run=run, preparation_results=dependency_preparation_results)
-        collect_diagnostics = partial(collect_diagnostics, run=run, preparation_results=dependency_preparation_results)
-    diagnostics = await asyncio.to_thread(collect_diagnostics)
+
+    async def collect_diagnostics() -> MaterializationDiagnostics:
+        try:
+            observation = await executor._collect_director_stage_materialization_diagnostics(
+                run=run,
+                context=context,
+                preparation_results=dependency_preparation_results,
+                sessions=sessions,
+            )
+        except (asyncio.CancelledError, ProcessTreeCancelledError, ProcessTreeDrainError) as exc:
+            lifecycle = {
+                "kind": "validation_lifecycle",
+                "run_id": str(run.id),
+                "workspace": str(executor.workspace),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "session_count": len(sessions),
+                "drain_proven": False,
+                "authoritative_receipt": False,
+            }
+            observations.append(lifecycle)
+            logger.warning("validation_lifecycle %s", json.dumps(lifecycle, ensure_ascii=False))
+            raise
+        if not isinstance(observation, MaterializationDiagnostics):
+            observation = MaterializationDiagnostics(
+                [],
+                static_evidence={"scan_mode": "unknown", "scan_complete": False},
+                blockers=["materialization_collector_coverage_required"],
+            )
+        static = observation.static_evidence
+        if (
+            static.get("scan_mode") != "pure_static"
+            or static.get("scan_complete") is not True
+            or (static.get("deferred_checks") and static.get("controlled_checks_complete") is not True)
+        ):
+            observation.blockers.append("materialization_collector_coverage_incomplete")
+        observations.append(observation.to_dict())
+        if observation.blockers:
+            raise _MaterializationVerificationBlockedError(observation)
+        return observation
+
+    diagnostics = await collect_diagnostics()
     run_id = str(run.id or "").strip() or "director-stage-settle"
     external_task_id = ""
     task_row_id: int | None = None
@@ -852,6 +1151,8 @@ async def _run_director_stage_materialization_quality_settle(
         ) or executor._workspace_quality_repair_diagnostic_target_files(diagnostics)
         if not owner_targets:
             owner_targets = executor._workspace_quality_repair_target_files()
+        for session in sessions:
+            session.before_repair()
         external_task_id, task_row_id, execution_attempt, repair_task = (
             executor._claim_workspace_quality_repair_attempt(
                 run=run,
@@ -885,7 +1186,7 @@ async def _run_director_stage_materialization_quality_settle(
                     # A prior residual-close cannot become completed merely
                     # because another task edited the workspace. Revalidate and
                     # register this freshly claimed owner's original projection.
-                    post_commit_diagnostics = await asyncio.to_thread(collect_diagnostics)
+                    post_commit_diagnostics = await collect_diagnostics()
                     if heartbeat_failures:
                         raise RuntimeError(f"repair_owner_heartbeat_failed:{heartbeat_failures[0]['code']}")
                     if not post_commit_diagnostics:
@@ -965,6 +1266,8 @@ async def _run_director_stage_materialization_quality_settle(
                     )
                     if heartbeat_failures:
                         raise RuntimeError(f"repair_owner_heartbeat_failed:{heartbeat_failures[0]['code']}")
+                    for session in sessions:
+                        session.before_repair()
                     candidate_receipts = await commit_materialization_deferred_repairs(
                         workspace=str(execution_attempt.workspace),
                         tool_results=[candidate],
@@ -980,8 +1283,29 @@ async def _run_director_stage_materialization_quality_settle(
                         isinstance(item, Mapping) and executor._director_stage_materialization_receipt_succeeded(item)
                         for item in candidate_receipts
                     ):
+                        for session in sessions:
+                            session.restored()
+                        # A failed commit can still leave source drift. Revalidate
+                        # the restored baseline before any further candidate.
+                        post_commit_diagnostics = await collect_diagnostics()
                         continue
                     round_committed = True
+                    for session in sessions:
+                        effect_rows = [
+                            dict(row)
+                            for receipt in candidate_receipts
+                            for row in receipt.get("results", ())
+                            if isinstance(row, Mapping) and row.get("effect_receipt") is not None
+                        ]
+                        session.candidate(
+                            pending={
+                                "task_id": external_task_id,
+                                "task_row_id": task_row_id,
+                                "execution_attempt": execution_attempt,
+                                "task_completion_projection": owner_context["task_completion_projection"],
+                            },
+                            results=effect_rows,
+                        )
                     receipts = _record_workspace_quality_repair_artifact_receipts(
                         {
                             "task_id": external_task_id,
@@ -992,7 +1316,7 @@ async def _run_director_stage_materialization_quality_settle(
                     for receipt in receipts:
                         registered_artifacts[(external_task_id, receipt["path"])] = receipt
                     artifact_receipts = tuple(registered_artifacts.values())
-                    post_commit_diagnostics = await asyncio.to_thread(collect_diagnostics)
+                    post_commit_diagnostics = await collect_diagnostics()
                     if not post_commit_diagnostics:
                         break
                 if not post_commit_diagnostics or deferred_owner_targets:
@@ -1050,6 +1374,8 @@ async def _run_director_stage_materialization_quality_settle(
             # Clear closed identity before a claim that may reject dependencies.
             task_row_id = None
             execution_attempt = None
+            for session in sessions:
+                session.before_repair()
             external_task_id, task_row_id, execution_attempt, repair_task = _claim_workspace_quality_repair_attempt(
                 executor,
                 run=run,
@@ -1075,6 +1401,10 @@ async def _run_director_stage_materialization_quality_settle(
                     context_summary="director_stage_original_owner_repair",
                 )
             )
+    except (ProcessTreeCancelledError, ProcessTreeDrainError):
+        # Physical lifecycle failure belongs to the execution owner, including
+        # after a commit. Never convert it to an ordinary settle result.
+        raise
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         from .factory_workspace_quality_impl import _WorkspaceQualityArtifactClosureIncompleteError
 
@@ -1102,7 +1432,13 @@ async def _run_director_stage_materialization_quality_settle(
             )
         return {
             "ok": False,
-            "reason": "artifact_closure_incomplete" if partial_closure else "settle_exception",
+            "reason": (
+                "artifact_closure_incomplete"
+                if partial_closure
+                else "materialization_verification_blocked"
+                if isinstance(exc, _MaterializationVerificationBlockedError)
+                else "settle_exception"
+            ),
             "dependency_preparation_results": dependency_preparation_results,
             "detail": f"{type(exc).__name__}: {exc}",
             "tool_result_count": len(tool_results),

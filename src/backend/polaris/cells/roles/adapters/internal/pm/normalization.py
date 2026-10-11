@@ -1,14 +1,19 @@
 """PM 合同归一化 mixin：标题/路径/scope/projection 字段归一与结构化校验。
 
-本 mixin 由 :class:`PMAdapter` 组合；方法体与原 ``pm_adapter.py`` 100% 一致（无损迁移）。
+本 mixin 由 :class:`PMAdapter` 组合；严格验证结构化命令并保留非权威诊断。
 """
 
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from polaris.cells.orchestration.pm_planning.public.artifact_contracts import (
+    validate_pm_artifact_contracts,
+    validate_pm_verification_commands,
+)
 from polaris.cells.orchestration.pm_planning.public.service import (
     autofix_pm_contract_for_quality,
     evaluate_pm_task_quality,
@@ -31,10 +36,8 @@ from .pm_text_utils import (
     _PM_SCOPE_PATH_ROOTS,
     _PM_SCOPE_PATH_SUFFIXES,
     _STOPWORDS,
-    _pm_append_unique_path,
     _pm_extract_inline_list_field,
     _pm_extract_requirement_subject,
-    _pm_infer_test_target_file_for_contract,
     _pm_is_generic_product_test_path,
     _pm_is_placeholder_task_title,
     _pm_root_workspace_target_files_from_context,
@@ -43,60 +46,22 @@ from .pm_text_utils import (
     _pm_title_fragment,
 )
 
-_PM_VERIFICATION_MODALITIES = frozenset({"environment_prep", "build", "test", "lint", "entrypoint"})
+_PM_VERIFICATION_MODALITY_ORDER = ("environment_prep", "build", "test", "lint", "entrypoint")
+_PM_VERIFICATION_MODALITIES = frozenset(_PM_VERIFICATION_MODALITY_ORDER)
 _PM_SHELL_LAUNCHERS = frozenset({"sh", "bash", "zsh", "cmd", "cmd.exe", "powershell", "pwsh"})
 
 
 def _normalize_pm_verification_commands(value: Any) -> list[dict[str, Any]]:
-    """Keep only exact argv-based verifier authority rows.
+    """Keep exact argv authority only when every declared row is valid."""
+    rows, _diagnostics = _validate_pm_verification_commands(value)
+    return rows
 
-    PM contract normalization never turns prose or a shell command string into
-    execution authority.  Malformed rows are dropped; the downstream
-    completion-contract preflight then fails closed when no valid authority is
-    available.
-    """
 
-    if type(value) is not list:
-        return []
-    normalized: list[dict[str, Any]] = []
-    for raw_row in value:
-        if type(raw_row) is not dict or set(raw_row) != {"modality", "argv", "cwd"}:
-            continue
-        modality = raw_row.get("modality")
-        argv_value = raw_row.get("argv")
-        cwd_value = raw_row.get("cwd")
-        if type(modality) is not str or modality not in _PM_VERIFICATION_MODALITIES:
-            continue
-        if type(argv_value) is not list or not argv_value or len(argv_value) > 128:
-            continue
-        argv: list[str] = []
-        invalid_argv = False
-        for item in argv_value:
-            if type(item) is not str or not item or item != item.strip() or "\x00" in item:
-                invalid_argv = True
-                break
-            argv.append(item)
-        if invalid_argv:
-            continue
-        executable = PurePosixPath(argv[0].replace("\\", "/")).name.lower()
-        if executable in _PM_SHELL_LAUNCHERS and any(item in {"-c", "-lc", "/c"} for item in argv[1:]):
-            continue
-        if type(cwd_value) is not str or not cwd_value or cwd_value != cwd_value.strip():
-            continue
-        if cwd_value != ".":
-            windows_path = PureWindowsPath(cwd_value)
-            posix_path = PurePosixPath(cwd_value)
-            if (
-                "\\" in cwd_value
-                or windows_path.drive
-                or windows_path.root
-                or posix_path.is_absolute()
-                or any(part in {"", ".", ".."} for part in cwd_value.split("/"))
-                or posix_path.as_posix() != cwd_value
-            ):
-                continue
-        normalized.append({"modality": modality, "argv": argv, "cwd": cwd_value})
-    return normalized
+def _validate_pm_verification_commands(
+    value: Any, *, path: str = "$.verification_commands"
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Compatibility caller of the shared pure command schema validator."""
+    return validate_pm_verification_commands(value, path=path)
 
 
 def _directive_requires_typescript_package_contract(directive: str) -> bool:
@@ -115,6 +80,63 @@ def _pm_contract_target_files(contracts: list[dict[str, Any]]) -> list[str]:
     return targets
 
 
+def _pm_declared_relative_files(contract: dict[str, Any]) -> set[str]:
+    """Read exact structured targets without normalizing unsafe declarations."""
+    values = contract.get("target_files")
+    files: set[str] = set()
+    for value in values if isinstance(values, list) else []:
+        if not isinstance(value, str) or not value or value != value.strip() or "\x00" in value or "\\" in value:
+            continue
+        path = PurePosixPath(value)
+        windows_path = PureWindowsPath(value)
+        if (
+            path.is_absolute()
+            or windows_path.drive
+            or windows_path.root
+            or any(part in {"", ".", ".."} for part in value.split("/"))
+            or path.as_posix() != value
+        ):
+            continue
+        files.add(value)
+    return files
+
+
+def _pm_task_declares_html_entrypoint(contract: dict[str, Any]) -> bool:
+    """Recognize a conventional root or a declared HTML/script entrypoint task.
+
+    Equivalent layouts need a same-directory script target and a valid explicit
+    entrypoint verifier in that task. Prose, directory scopes and basenames alone
+    do not supply entrypoint semantics; CE still owns the executable topology.
+    """
+    files = _pm_declared_relative_files(contract)
+    if "index.html" in files:
+        return True
+    rows, diagnostics = _validate_pm_verification_commands(contract.get("verification_commands", []))
+    if diagnostics or not any(row["modality"] == "entrypoint" for row in rows):
+        return False
+    script_parents = {
+        PurePosixPath(path).parent
+        for path in files
+        if PurePosixPath(path).suffix.lower() in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+    }
+    return any(
+        PurePosixPath(path).suffix.lower() in {".html", ".htm"} and PurePosixPath(path).parent in script_parents
+        for path in files
+    )
+
+
+def _pm_contract_declares_html_entrypoint(contracts: list[dict[str, Any]]) -> bool:
+    for contract in contracts:
+        metadata = contract.get("metadata")
+        # Normalization records rejection before path cleanup/inference. A model
+        # flag never grants coverage: the structured declaration is checked too.
+        if isinstance(metadata, dict) and metadata.get("pm_html_entrypoint_declared") is False:
+            continue
+        if _pm_task_declares_html_entrypoint(contract):
+            return True
+    return False
+
+
 def _pm_typescript_factory_contract_missing(contracts: list[dict[str, Any]], directive: str) -> list[str]:
     if not _directive_requires_typescript_package_contract(directive):
         return []
@@ -124,9 +146,11 @@ def _pm_typescript_factory_contract_missing(contracts: list[dict[str, Any]], dir
     missing: list[str] = []
     if len(contracts) < 2:
         missing.append("task_count>=2")
-    for required in ("package.json", "tsconfig.json", "index.html", "README.md"):
+    for required in ("package.json", "tsconfig.json", "README.md"):
         if required.lower() not in lower_targets:
             missing.append(required)
+    if not _pm_contract_declares_html_entrypoint(contracts):
+        missing.append("index.html")
     ce_owns_topology = any(
         str((item.get("metadata") or {}).get("topology_authority") or "").strip() == "chief_engineer"
         for item in contracts
@@ -150,6 +174,8 @@ def _pm_verification_command_contract_issues(
     becomes command authority.
     """
 
+    if _pm_verification_command_diagnostics(contracts):
+        return ["verification_commands_invalid"]
     if not str(directive or "").strip():
         return []
     modalities: set[str] = set()
@@ -194,6 +220,23 @@ def _pm_verification_command_contract_issues(
     if conventional_entrypoint and "entrypoint" not in modalities:
         issues.append("verification_entrypoint_missing")
     return issues
+
+
+def _pm_verification_command_diagnostics(contracts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Preserve original errors and also validate callers supplying raw rows."""
+    diagnostics: list[dict[str, Any]] = []
+    for index, contract in enumerate(contracts):
+        metadata = contract.get("metadata")
+        if isinstance(metadata, dict):
+            stored = metadata.get("pm_verification_command_diagnostics")
+            if isinstance(stored, list):
+                diagnostics.extend(dict(item) for item in stored if isinstance(item, dict))
+        if "verification_commands" in contract:
+            _, row_errors = _validate_pm_verification_commands(
+                contract["verification_commands"], path=f"$.tasks[{index}].verification_commands"
+            )
+            diagnostics.extend(row_errors)
+    return diagnostics
 
 
 def _pm_contract_mapping(value: Any) -> dict[str, Any]:
@@ -335,27 +378,7 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         if drop_generic_product_test_for_documentation:
             target_files = [path for path in target_files if not _pm_is_generic_product_test_path(path)]
             scope_items = [path for path in scope_items if not _pm_is_generic_product_test_path(path)]
-        raw_metadata_value = raw.get("metadata")
-        raw_metadata_for_test_inference: dict[str, Any] = (
-            raw_metadata_value if isinstance(raw_metadata_value, dict) else {}
-        )
-        inferred_test_target = ""
-        if (
-            not raw_metadata_for_test_inference.get("qa_rework_reason")
-            and not drop_generic_product_test_for_documentation
-        ):
-            inferred_test_target = _pm_infer_test_target_file_for_contract(
-                title=title,
-                goal=goal,
-                description=description,
-                steps=steps,
-                acceptance=acceptance,
-                phase=phase,
-                target_files=target_files,
-                directive=directive,
-            )
-        if inferred_test_target:
-            _pm_append_unique_path(target_files, inferred_test_target)
+        # Native model contracts never acquire inferred test ownership.
 
         if target_items:
             merged_scope_items = [
@@ -399,6 +422,15 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
 
         _raw_meta = raw.get("metadata")
         metadata: dict[str, Any] = dict(_raw_meta) if isinstance(_raw_meta, dict) else {}
+        # The reserved mirror is a final graph projection, never raw model
+        # metadata authority or evidence that an unvalidated build can run.
+        metadata.pop("generated_outputs", None)
+        # Model-authored metadata never supplies validator evidence.
+        metadata["pm_html_entrypoint_declared"] = _pm_task_declares_html_entrypoint(raw)
+        verifier_rows, verifier_diagnostics = _validate_pm_verification_commands(
+            raw.get("verification_commands", []), path=f"$.tasks[{index - 1}].verification_commands"
+        )
+        metadata["pm_verification_command_diagnostics"] = verifier_diagnostics
         execution_backend = str(raw.get("execution_backend") or metadata.get("execution_backend") or "").strip().lower()
         if execution_backend == "projection_generate" and index != 1:
             execution_backend = "code_edit"
@@ -458,7 +490,7 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             "steps": steps,
             "acceptance": acceptance,
             "acceptance_criteria": acceptance,
-            "verification_commands": _normalize_pm_verification_commands(raw.get("verification_commands")),
+            "verification_commands": verifier_rows,
             "phase": phase,
             "depends_on": depends_on,
             "assigned_to": assigned_to,
@@ -466,6 +498,8 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             "backlog_ref": str(raw.get("backlog_ref") or task_id).strip() or task_id,
             "metadata": metadata,
         }
+        if "generated_outputs" in raw:
+            normalized["generated_outputs"] = deepcopy(raw["generated_outputs"])
         if delivery_plan_document:
             normalized["delivery_plan_document"] = delivery_plan_document
         if delivery_depth_contract:
@@ -656,9 +690,10 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
                     continue
                 projection[target_key] = value
 
-        scenario_id = str(projection.get("scenario_id") or "").strip()
-        if not scenario_id:
+        scenario_value = projection.get("scenario_id")
+        if not isinstance(scenario_value, str) or not scenario_value.strip():
             return {}
+        scenario_id = scenario_value.strip()
 
         projection["scenario_id"] = scenario_id
         projection["project_slug"] = self._normalize_projection_project_slug(
@@ -680,10 +715,10 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         *,
         projection_hint: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        if (
-            not projection_hint
-            or str(projection_hint.get("execution_backend") or "").strip().lower() != "projection_generate"
-        ):
+        projection_hint = self._extract_projection_contract_hint(
+            input_data=projection_hint or {}, context={}, directive=""
+        )
+        if not projection_hint:
             return contracts
 
         _raw_proj = projection_hint.get("projection") if isinstance(projection_hint, dict) else None
@@ -738,7 +773,24 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         directive: str = "",
         context: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        # Capture original declarations before quality autofix can split or
+        # remove tasks. Feedback describes input rows, not derived copies.
+        verifier_diagnostics = _pm_verification_command_diagnostics(contracts)
+        language_payload = _pm_quality_contract_context_payload(context)
+        primary_language = str(language_payload.get("language") or "").strip().lower()
+        if not primary_language:
+            depth = language_payload.get("delivery_depth_contract", {})
+            if isinstance(depth, dict):
+                primary_language = str(depth.get("language") or "").strip().lower()
+        if not primary_language and _directive_requires_typescript_package_contract(directive):
+            primary_language = "typescript"
+        artifact_diagnostics = list(
+            validate_pm_artifact_contracts(contracts, primary_language=primary_language).diagnostics
+        )
+        declared_html_entrypoint = _pm_contract_declares_html_entrypoint(contracts)
         payload = _pm_quality_contract_context_payload(context)
+        if primary_language:
+            payload.setdefault("language", primary_language)
         payload["tasks"] = [dict(item) for item in contracts if isinstance(item, dict)]
         if directive:
             payload["directive"] = directive
@@ -746,19 +798,79 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             payload,
             workspace_full=str(Path(self.workspace).resolve()),
         )
+        # Quality hints may enrich checklists, but they cannot manufacture
+        # artifact ownership or promote read-only dependencies into writes.
+        authored = {str(item.get("id")): item for item in contracts}
+        fission = payload.get("_quality_gate_task_fission", {})
+        for item in payload.get("tasks", []):
+            original = authored.get(str(item.get("id")))
+            if original is None:
+                continue
+            for field in ("target_files", "context_files", "generated_outputs"):
+                if field == "generated_outputs" and fission:
+                    # The staged graph validator proved these input ID bindings,
+                    # including consumers that retained their original task ID.
+                    continue
+                if field in original:
+                    item[field] = deepcopy(original[field])
+                else:
+                    item.pop(field, None)
         quality = evaluate_pm_task_quality(payload, docs_stage={})
+        if fission:
+            quality["task_fission"] = deepcopy(fission)
         _raw_tasks = payload.get("tasks") if isinstance(payload, dict) else None
         tasks: list[dict[str, Any]] = _raw_tasks if isinstance(_raw_tasks, list) else []
         normalized = [_pm_reconcile_task_target_scope(item) for item in tasks if isinstance(item, dict)]
+        derived_diagnostics = validate_pm_artifact_contracts(normalized, primary_language=primary_language).diagnostics
+        for item in normalized:
+            raw_metadata = item.get("metadata")
+            metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+            metadata.pop("generated_outputs", None)
+            if not artifact_diagnostics and not derived_diagnostics and "generated_outputs" in item:
+                metadata["generated_outputs"] = deepcopy(item["generated_outputs"])
+            item["metadata"] = metadata
+        for diagnostic in derived_diagnostics:
+            if fission:
+                for original_id, derived_ids in fission["original_to_derived"].items():
+                    if diagnostic.get("task_id") in derived_ids:
+                        diagnostic = {
+                            **diagnostic,
+                            "provenance": {
+                                "original_task_id": original_id,
+                                "derived_task_id": diagnostic["task_id"],
+                                "stage": "quality_autofix",
+                            },
+                        }
+                        break
+            if diagnostic not in artifact_diagnostics:
+                artifact_diagnostics.append(diagnostic)
         verification_command_issues = _pm_verification_command_contract_issues(normalized, directive)
+        if verifier_diagnostics:
+            verification_command_issues = ["verification_commands_invalid"]
+        contract_diagnostics = [*verifier_diagnostics]
+        for diagnostic in artifact_diagnostics:
+            if diagnostic not in contract_diagnostics:
+                contract_diagnostics.append(diagnostic)
+        artifact_issues = list(dict.fromkeys(
+            d["code"] for d in artifact_diagnostics
+            if d["code"].startswith(("artifact_", "generated_output_", "pm_plan_language_mismatch"))
+        ))
         missing_typescript_contract = _pm_typescript_factory_contract_missing(normalized, directive)
-        if missing_typescript_contract or verification_command_issues:
+        if (
+            _directive_requires_typescript_package_contract(directive)
+            and not declared_html_entrypoint
+            and "index.html" not in missing_typescript_contract
+        ):
+            # Quality autofix cannot manufacture entrypoint coverage from prose.
+            missing_typescript_contract.append("index.html")
+        if missing_typescript_contract or verification_command_issues or artifact_issues:
             quality = dict(quality)
             raw_critical = quality.get("critical_issues")
             critical = list(raw_critical) if isinstance(raw_critical, list) else []
             if missing_typescript_contract:
                 critical.append("factory_typescript_contract_missing:" + ",".join(missing_typescript_contract[:10]))
             critical.extend(verification_command_issues)
+            critical.extend(artifact_issues)
             raw_warnings = quality.get("warnings")
             warnings = list(raw_warnings) if isinstance(raw_warnings, list) else []
             if missing_typescript_contract:
@@ -767,9 +879,12 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
                 )
             if verification_command_issues:
                 warnings.append("PM contract requires exact structured verifier argv/cwd authority before CE dispatch")
+            if artifact_issues:
+                warnings.append("PM artifact/action contract requires model-authored correction before task creation")
             quality["ok"] = False
             quality["score"] = min(int(quality.get("score") or 0), 40)
             quality["critical_issues"] = critical
+            quality["contract_diagnostics"] = contract_diagnostics
             quality["warnings"] = warnings
             summary = str(quality.get("summary") or "").strip()
             suffix_parts: list[str] = []
@@ -777,6 +892,8 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
                 suffix_parts.append("factory_typescript_contract_missing=" + ",".join(missing_typescript_contract[:10]))
             if verification_command_issues:
                 suffix_parts.append("verification_command_contract=" + ",".join(verification_command_issues))
+            if artifact_issues:
+                suffix_parts.append("artifact_contract=" + ",".join(artifact_issues))
             suffix = "; ".join(suffix_parts)
             quality["summary"] = f"{summary}; {suffix}" if summary else suffix
         return normalized, quality

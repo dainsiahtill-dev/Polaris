@@ -477,6 +477,24 @@ def kernelone_home() -> str:
     return os.path.abspath(os.path.expanduser("~/.polaris"))
 
 
+def read_only_platform_lock_roots() -> tuple[str, ...]:
+    """Discover existing platform authorities without provisioning or env edits.
+
+    An isolated engineering home may differ from the home that enrolled a
+    historical workspace. The ordinary system home is a read-only discovery
+    candidate; every consumer must still validate the authority's runtime
+    identity, binding, inode and enrolled stream keys.
+    """
+    try:
+        import pwd
+
+        account_home = pwd.getpwuid(os.getuid()).pw_dir
+    except (ImportError, KeyError, OSError):
+        account_home = os.path.expanduser("~")
+    homes = (kernelone_home(), os.path.abspath(os.path.join(account_home, ".polaris")))
+    return tuple(dict.fromkeys(os.path.join(home, "lock_authorities", "v1") for home in homes))
+
+
 # NOTE: The backward-compat alias `polaris_home = kernelone_home` has been removed.
 # For Polaris-specific home paths, use polaris_home() from
 # polaris.cells.storage.layout.internal.layout_business instead.
@@ -581,7 +599,10 @@ def _is_runtime_base_writable(base: str) -> bool:
         return False
 
 
-def _runtime_base_and_mode(workspace_abs: str, ramdisk_root: str | None) -> tuple[str, str]:
+def _runtime_base_and_mode(workspace_abs: str, ramdisk_root: str | None, *, read_only: bool = False) -> tuple[str, str]:
+    def usable(base: str) -> bool:
+        return read_only or _is_runtime_base_writable(base)
+
     metadata_dir_name = get_workspace_metadata_dir_name()
     project_runtime_root = canonical_workspace_runtime_root(
         workspace_abs,
@@ -591,9 +612,9 @@ def _runtime_base_and_mode(workspace_abs: str, ramdisk_root: str | None) -> tupl
     explicit_runtime_root = resolve_env_str("runtime_root")
     if explicit_runtime_root:
         base = os.path.abspath(os.path.expanduser(os.path.expandvars(explicit_runtime_root)))
-        if base == project_runtime_root and _is_runtime_base_writable(base):
+        if base == project_runtime_root and usable(base):
             return base, "project_local_explicit"
-        if base == legacy_project_runtime_root and _is_runtime_base_writable(project_runtime_root):
+        if base == legacy_project_runtime_root and usable(project_runtime_root):
             # ``<workspace>/runtime`` was a short-lived legacy launch claim,
             # never an external-storage opt-in.  Normalize at the lowest
             # write-capable resolver as well as at Launcher/CLI boundaries so
@@ -605,17 +626,14 @@ def _runtime_base_and_mode(workspace_abs: str, ramdisk_root: str | None) -> tupl
                 "KERNELONE_RUNTIME_ROOT inside workspace must equal the canonical "
                 f"project runtime root: {project_runtime_root}"
             )
-        if _is_runtime_base_writable(base):
+        if usable(base):
             return base, "explicit_runtime_root"
 
     if state_to_ramdisk_enabled():
+        # Normalization/default discovery are read-only; only usability probing
+        # differs between consumers. Both capabilities must bind the same root.
         ramdisk = resolve_ramdisk_root(ramdisk_root)
-        if (
-            ramdisk
-            and os.path.exists(ramdisk)
-            and not _is_within_path(workspace_abs, ramdisk)
-            and _is_runtime_base_writable(ramdisk)
-        ):
+        if ramdisk and os.path.exists(ramdisk) and not _is_within_path(workspace_abs, ramdisk) and usable(ramdisk):
             return ramdisk, "ramdisk"
 
     explicit_cache_root = resolve_env_str("runtime_cache_root")
@@ -623,10 +641,10 @@ def _runtime_base_and_mode(workspace_abs: str, ramdisk_root: str | None) -> tupl
         base = os.path.abspath(os.path.expanduser(os.path.expandvars(explicit_cache_root)))
         if _is_within_path(workspace_abs, base):
             raise RuntimeError("KERNELONE_RUNTIME_CACHE_ROOT must be outside the workspace")
-        if _is_runtime_base_writable(base):
+        if usable(base):
             return base, "explicit_runtime_cache"
 
-    if _is_runtime_base_writable(project_runtime_root):
+    if usable(project_runtime_root):
         return project_runtime_root, "project_local"
 
     raise RuntimeError(
@@ -892,10 +910,25 @@ def resolve_storage_roots(workspace: str, ramdisk_root: str | None = None) -> St
     return _resolve_storage_roots_impl(workspace, ramdisk_root)
 
 
+def resolve_storage_roots_read_only(workspace: str, ramdisk_root: str | None = None) -> StorageRoots:
+    """Resolve the configured canonical namespace without probes or initialization.
+
+    Absence is preserved for the reader; legacy discovery candidates never
+    replace the active namespace. Existing explicit external opt-in is honored.
+    """
+    normalized = os.path.abspath(os.path.expanduser(workspace))
+    cached = _peek_cached_storage_roots(normalized, ramdisk_root)
+    if cached is not None:
+        return cached
+    base, mode = _runtime_base_and_mode(normalized, ramdisk_root, read_only=True)
+    return _build_generic_storage_roots(workspace_abs=normalized, runtime_base=base, runtime_mode=mode)
+
+
 def resolve_workspace_runtime_identity(
     workspace: str,
     *,
     ramdisk_root: str | None = None,
+    read_only: bool = False,
 ) -> WorkspaceRuntimeIdentity:
     """Resolve the explicit workspace/runtime identity for durable runtime data.
 
@@ -904,7 +937,8 @@ def resolve_workspace_runtime_identity(
     global cache directory.
     """
 
-    roots = resolve_storage_roots(workspace, ramdisk_root=ramdisk_root)
+    resolver = resolve_storage_roots_read_only if read_only else resolve_storage_roots
+    roots = resolver(workspace, ramdisk_root=ramdisk_root)
     workspace_abs = os.path.realpath(roots.workspace_abs)
     runtime_root = os.path.realpath(roots.runtime_project_root)
     token_source = "\x00".join((workspace_abs, roots.workspace_key, runtime_root)).encode("utf-8")
@@ -982,6 +1016,7 @@ def resolve_runtime_path(
     rel_path: str,
     *,
     ramdisk_root: str | None = None,
+    read_only: bool = False,
 ) -> str:
     normalized = normalize_logical_rel_path(rel_path)
     if normalized == "runtime":
@@ -990,7 +1025,8 @@ def resolve_runtime_path(
         suffix = normalized[len("runtime/") :]
     else:
         raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {rel_path}")
-    roots = resolve_storage_roots(workspace, ramdisk_root=ramdisk_root)
+    resolver = resolve_storage_roots_read_only if read_only else resolve_storage_roots
+    roots = resolver(workspace, ramdisk_root=ramdisk_root)
     return _join_under(roots.runtime_project_root, suffix)
 
 
@@ -1119,12 +1155,14 @@ __all__ = [
     "kernelone_home",
     "normalize_logical_rel_path",
     "normalize_ramdisk_root",
+    "read_only_platform_lock_roots",
     "register_business_roots_resolver",
     "resolve_global_path",
     "resolve_logical_path",
     "resolve_ramdisk_root",
     "resolve_runtime_path",
     "resolve_storage_roots",
+    "resolve_storage_roots_read_only",
     "resolve_workspace_persistent_path",
     "state_to_ramdisk_enabled",
     "workspace_key",

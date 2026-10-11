@@ -10,6 +10,37 @@ from polaris.cells.roles.adapters.internal.runtime_dialogue import invoke_role_r
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
 
+@pytest.mark.parametrize("transformed", [False, True])
+async def test_pol79_runtime_bridge_preserves_own_call_provenance(tmp_path, monkeypatch, transformed):
+    from polaris.cells.roles.kernel.public.generation_outcome import bind_role_generation_outcome
+    from polaris.cells.roles.kernel.tests.test_pm_generation_contracts import outcome
+
+    payload = outcome()
+
+    class Runtime:
+        async def execute_role_session(self, command):
+            return RoleExecutionResultV1(
+                ok=True,
+                status="ok",
+                role="pm",
+                workspace=str(tmp_path),
+                run_id="pm-child",
+                output="changed" if transformed else "same",
+                metadata={"generation_outcome": payload},
+            )
+
+    monkeypatch.setattr(runtime_dialogue, "_create_role_runtime_service", lambda: Runtime())
+    result = await invoke_role_runtime_first(
+        workspace=str(tmp_path), role="pm", message="plan", context={"run_id": "pm-child"}
+    )
+    assert result["metadata"]["generation_outcome"] == payload
+    bound, reason = bind_role_generation_outcome(
+        result["metadata"], response_text=result["response"], expected_run_id="pm-child"
+    )
+    assert reason == ("generation_outcome_response_binding_unavailable" if transformed else None)
+    assert (bound is not None) is (not transformed)
+
+
 class TestRuntimeDialogueHelper:
     @pytest.mark.asyncio
     async def test_uses_role_runtime_context_os_path_first(

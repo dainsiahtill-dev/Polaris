@@ -1,14 +1,12 @@
-"""PM 合同解析 mixin：从 LLM 文本/JSON/分节/列表中抽取任务合同。
-
-本 mixin 由 :class:`PMAdapter` 组合；方法体与原 ``pm_adapter.py`` 100% 一致（无损迁移）。
-"""
+"""PM 完整 JSON 合同解析。旧文本 helpers 不进入 PM stage 的授权链。"""
 
 from __future__ import annotations
 
-import ast
 import json
 import re
 from typing import Any
+
+from polaris.cells.orchestration.pm_planning.public.artifact_contracts import validate_generated_outputs
 
 from ._protocol import _PMAdapterMixinBase
 from .pm_text_utils import (
@@ -25,8 +23,146 @@ from .pm_text_utils import (
 )
 
 
+class _PMContractError(ValueError):
+    """Internal, non-authoritative syntax/shape feedback for the quality loop."""
+
+    def __init__(self, diagnostic: dict[str, Any]) -> None:
+        super().__init__(str(diagnostic["message"]))
+        self.diagnostic = diagnostic
+
+
+def _schema_error(path: str, message: str) -> _PMContractError:
+    return _PMContractError({"code": "pm_contract_schema_invalid", "path": path, "message": message})
+
+
+def _decode_complete_pm_payload(response: str) -> Any:
+    """Decode exactly one complete JSON value; never salvage nested fragments."""
+    text = str(response or "").strip()
+    if not text:
+        raise _schema_error("$", "PM response is empty")
+    if _pm_is_prompt_echo_response(text):
+        raise _schema_error("$", "PM response echoes the prompt instead of a task contract")
+    fence = re.fullmatch(r"```(?:json|yaml|yml|markdown|md)?\s*\n?(.*?)\n?```", text, flags=re.IGNORECASE | re.DOTALL)
+    candidate = fence.group(1).strip() if fence else text
+
+    def unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise _schema_error("$", f"Duplicate JSON field {key!r} makes the contract ambiguous")
+            result[key] = value
+        return result
+
+    try:
+        # Complete syntax is checked before duplicate/schema diagnostics so a
+        # broken tail always reports the actual decoder position first.
+        json.loads(candidate)
+        return json.loads(candidate, object_pairs_hook=unique_fields)
+    except json.JSONDecodeError as exc:
+        raise _PMContractError(
+            {
+                "code": "pm_contract_json_invalid",
+                "path": "$",
+                "message": str(exc),
+                "position": exc.pos,
+                "line": exc.lineno,
+                "column": exc.colno,
+            }
+        ) from exc
+
+
+def _complete_pm_tasks(payload: Any, path: str = "$", *, source_paths: list[str] | None = None) -> list[dict[str, Any]]:
+    """Recognize only declared task containers and validate every task row."""
+    candidate_keys = (
+        "tasks",
+        "task_list",
+        "tasklist",
+        "work_items",
+        "workitems",
+        "items",
+        "todo",
+        "todos",
+        "deliverables",
+        "backlog",
+        "plan",
+    )
+    if isinstance(payload, dict):
+        containers = [key for key in candidate_keys if key in payload]
+        wrappers = [key for key in ("data", "result", "output") if key in payload]
+        mapped = [key for key in payload if re.fullmatch(r"(?:task[-_ ]*\d+|t[-_ ]*\d+)", str(key), re.IGNORECASE)]
+        if len(containers) + len(wrappers) + bool(mapped) != 1:
+            raise _schema_error(path, "Expected one unambiguous known task envelope")
+        if containers:
+            key = containers[0]
+            if not isinstance(payload[key], list):
+                raise _schema_error(f"{path}.{key}", "Declared task container must be an array")
+            return _complete_pm_tasks(payload[key], f"{path}.{key}", source_paths=source_paths)
+        if wrappers:
+            key = wrappers[0]
+            if not isinstance(payload[key], dict):
+                raise _schema_error(f"{path}.{key}", "Known wrapper must contain a task envelope object")
+            return _complete_pm_tasks(payload[key], f"{path}.{key}", source_paths=source_paths)
+        rows = [payload[key] for key in mapped]
+        paths = [f"{path}.{key}" for key in mapped]
+    elif isinstance(payload, list):
+        rows = payload
+        paths = [f"{path}[{index}]" for index in range(len(rows))]
+    else:
+        raise _schema_error(path, "Task container must be an array or known envelope object")
+    if not rows:
+        raise _schema_error(path, "Task array must not be empty")
+    tasks: list[dict[str, Any]] = []
+    for row, row_path in zip(rows, paths, strict=True):
+        if not isinstance(row, dict):
+            raise _schema_error(row_path, "Task must be an object")
+        if any(key in row for key in ("modality", "argv", "cwd")):
+            raise _schema_error(row_path, "Verifier row fields belong inside verification_commands, not a task")
+        title = row.get("title")
+        if not isinstance(title, str) or not title.strip():
+            raise _schema_error(
+                f"{row_path}.title", "Task title must be a non-empty string; verifier rows are not tasks"
+            )
+        for key in ("id", "goal", "description", "phase", "assigned_to"):
+            if key in row and not isinstance(row[key], str):
+                raise _schema_error(f"{row_path}.{key}", "Task field must be a string")
+        for key in (
+            "steps",
+            "acceptance",
+            "acceptance_criteria",
+            "scope_paths",
+            "target_files",
+            "context_files",
+            "depends_on",
+            "dependencies",
+            "execution_checklist",
+        ):
+            if key in row:
+                values = row[key]
+                if not isinstance(values, (str, list)) or (
+                    isinstance(values, list) and any(not isinstance(value, str) for value in values)
+                ):
+                    raise _schema_error(f"{row_path}.{key}", "Task field must be a string or array of strings")
+        if "scope" in row:
+            scope = row["scope"]
+            if not isinstance(scope, (str, list)) or (
+                isinstance(scope, list) and any(not isinstance(value, str) for value in scope)
+            ):
+                raise _schema_error(f"{row_path}.scope", "Task scope must be a string or array of strings")
+        for key in ("metadata", "projection", "delivery_plan_document", "delivery_depth_contract", "behavior_contract"):
+            if key in row and not isinstance(row[key], dict):
+                raise _schema_error(f"{row_path}.{key}", "Task field must be an object")
+        if "generated_outputs" in row:
+            _, errors = validate_generated_outputs(row["generated_outputs"], path=f"{row_path}.generated_outputs")
+            if errors:
+                raise _PMContractError(errors[0])
+        tasks.append(row)
+        if source_paths is not None:
+            source_paths.append(row_path)
+    return tasks
+
+
 class PMContractParsingMixin(_PMAdapterMixinBase):
-    """PM 合同解析 mixin：从 LLM 文本/JSON/分节/列表中抽取任务合同。"""
+    """Validate complete JSON syntax and task shape before normalization."""
 
     def _extract_task_contracts(
         self,
@@ -34,144 +170,65 @@ class PMContractParsingMixin(_PMAdapterMixinBase):
         *,
         directive: str,
         projection_hint: dict[str, Any] | None = None,
+        diagnostics: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
-        if _pm_is_prompt_echo_response(str(response or "")):
+        try:
+            payload = _decode_complete_pm_payload(response)
+            source_paths: list[str] = []
+            raw_tasks = _complete_pm_tasks(payload, source_paths=source_paths)
+        except _PMContractError as exc:
+            if diagnostics is not None:
+                diagnostics.append(exc.diagnostic)
             return []
-        payload = self._extract_json_payload(response)
-        raw_tasks: list[Any] = self._extract_tasks_from_payload(payload)
 
         if raw_tasks:
             contracts: list[dict[str, Any]] = []
             non_delivery_constraint_skips = 0
-            for item in raw_tasks:
-                if not isinstance(item, dict):
-                    continue
-                if _pm_raw_task_is_dependency_chain(item):
-                    continue
-                if _pm_raw_task_is_meta_diagnostic(item):
+            excluded_diagnostics: list[dict[str, Any]] = []
+            for item, source_path in zip(raw_tasks, source_paths, strict=True):
+                contract = self._normalize_task_contract(item, len(contracts) + 1, directive)
+                contract["metadata"]["pm_artifact_source_path"] = source_path
+                canonical_path = f"$.tasks[{len(contracts)}]"
+                verifier_diagnostics = contract["metadata"]["pm_verification_command_diagnostics"]
+                for diagnostic in verifier_diagnostics:
+                    diagnostic["path"] = source_path + diagnostic["path"][len(canonical_path) :]
+                if _pm_raw_task_is_dependency_chain(item) or _pm_raw_task_is_meta_diagnostic(item):
+                    excluded_diagnostics.extend(verifier_diagnostics)
                     continue
                 if _pm_raw_task_is_non_delivery_constraint(item):
                     non_delivery_constraint_skips += 1
+                    excluded_diagnostics.extend(verifier_diagnostics)
                     continue
-                contracts.append(self._normalize_task_contract(item, len(contracts) + 1, directive))
+                contracts.append(contract)
             if non_delivery_constraint_skips >= 2 and len(contracts) < 2:
+                if diagnostics is not None:
+                    diagnostics.extend(excluded_diagnostics)
                 return []
+            if excluded_diagnostics:
+                if contracts:
+                    contracts[0]["metadata"]["pm_verification_command_diagnostics"].extend(excluded_diagnostics)
+                elif diagnostics is not None:
+                    diagnostics.extend(excluded_diagnostics)
             return self._apply_projection_contract_hint(
                 [item for item in contracts if item],
                 projection_hint=projection_hint,
             )
 
-        section_contracts = self._extract_tasks_from_sections(response, directive=directive)
-        if section_contracts:
-            return self._apply_projection_contract_hint(
-                section_contracts,
-                projection_hint=projection_hint,
-            )
-
-        return self._apply_projection_contract_hint(
-            self._extract_tasks_from_bullets(response, directive=directive),
-            projection_hint=projection_hint,
-        )
+        return []
 
     @classmethod
     def _extract_tasks_from_payload(cls, payload: Any) -> list[Any]:
-        if payload is None:
+        try:
+            return _complete_pm_tasks(payload)
+        except _PMContractError:
             return []
-
-        if isinstance(payload, list):
-            return [item for item in payload if isinstance(item, dict)]
-
-        queue: list[Any] = [payload]
-        visited: set[int] = set()
-        candidate_keys = (
-            "tasks",
-            "task_list",
-            "tasklist",
-            "work_items",
-            "workitems",
-            "items",
-            "todo",
-            "todos",
-            "deliverables",
-            "backlog",
-            "plan",
-        )
-
-        while queue:
-            node = queue.pop(0)
-            marker = id(node)
-            if marker in visited:
-                continue
-            visited.add(marker)
-
-            if isinstance(node, list):
-                dict_items = [item for item in node if isinstance(item, dict)]
-                if dict_items:
-                    return dict_items
-                for item in node:
-                    if isinstance(item, (dict, list)):
-                        queue.append(item)
-                continue
-
-            if not isinstance(node, dict):
-                continue
-
-            for key in candidate_keys:
-                items = node.get(key)
-                if isinstance(items, list):
-                    dict_items = [item for item in items if isinstance(item, dict)]
-                    if dict_items:
-                        return dict_items
-
-            mapped_tasks = [
-                value
-                for key, value in node.items()
-                if isinstance(value, dict)
-                and re.match(r"^(?:task[-_ ]*\d+|t[-_ ]*\d+)$", str(key or "").strip(), re.IGNORECASE)
-            ]
-            if mapped_tasks:
-                return mapped_tasks
-
-            for value in node.values():
-                if isinstance(value, (dict, list)):
-                    queue.append(value)
-
-        return []
 
     @staticmethod
     def _extract_json_payload(response: str) -> Any:
-        text = str(response or "").strip()
-        if not text:
+        try:
+            return _decode_complete_pm_payload(response)
+        except _PMContractError:
             return None
-        if _pm_is_prompt_echo_response(text):
-            return None
-        candidates = [text]
-        fenced_blocks = re.findall(
-            r"```(?:json|yaml|yml|markdown|md)?\s*(.*?)```",
-            text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        candidates.extend(item.strip() for item in fenced_blocks if item.strip())
-        for candidate in candidates:
-            try:
-                return json.loads(candidate)
-            except (RuntimeError, ValueError):
-                decoder = json.JSONDecoder()
-                for index, char in enumerate(candidate):
-                    if char not in "{[":
-                        continue
-                    try:
-                        parsed, _end = decoder.raw_decode(candidate[index:])
-                    except (RuntimeError, ValueError):
-                        continue
-                    return parsed
-                try:
-                    parsed = ast.literal_eval(candidate)
-                except (RuntimeError, SyntaxError, ValueError):
-                    parsed = None
-                if isinstance(parsed, (dict, list)):
-                    return parsed
-        return None
 
     def _extract_tasks_from_sections(self, response: str, *, directive: str) -> list[dict[str, Any]]:
         sections: list[dict[str, Any]] = []

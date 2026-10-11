@@ -7,6 +7,7 @@ Owns provider request construction and fallback request shaping for
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from collections.abc import Mapping
@@ -887,7 +888,7 @@ class LLMRequestPreparer:
         if not isinstance(raw_messages, list):
             return None
 
-        normalized_user_turns: list[tuple[str, str, str]] = []
+        normalized_user_turns: list[tuple[str, str, str, str]] = []
         for item in raw_messages:
             if not isinstance(item, dict):
                 continue
@@ -899,18 +900,18 @@ class LLMRequestPreparer:
             if role.lower() == "system" and is_empty_run_card_message(name=name, content=content):
                 continue
             normalized_content = _normalize_user_message_for_dedupe(content) if role == "user" else ""
-            normalized_user_turns.append((role, content, normalized_content))
+            normalized_user_turns.append((role, content, normalized_content, name))
 
         current_user_token = _normalize_user_message_for_dedupe(getattr(context, "message", ""))
         last_current_user_index = -1
         if current_user_token:
-            for index, (role, _content, normalized_content) in enumerate(normalized_user_turns):
+            for index, (role, _content, normalized_content, _name) in enumerate(normalized_user_turns):
                 if role == "user" and normalized_content == current_user_token:
                     last_current_user_index = index
 
         messages: list[dict[str, Any]] = []
         last_user_token: str | None = None
-        for index, (role, content, normalized_content) in enumerate(normalized_user_turns):
+        for index, (role, content, normalized_content, name) in enumerate(normalized_user_turns):
             if (
                 role == "user"
                 and current_user_token
@@ -926,7 +927,12 @@ class LLMRequestPreparer:
                     content = current_user_token
             else:
                 last_user_token = None
-            messages.append({"role": role, "content": content})
+            message = {"role": role, "content": content}
+            # Preserve gateway provenance in the prepared source projection.
+            # AIRequest.chat_messages and provider serialization still strip names.
+            if name:
+                message["name"] = name
+            messages.append(message)
         return messages
 
     async def _prepare_llm_request(
@@ -1400,6 +1406,9 @@ class LLMRequestPreparer:
                 binding=resolved_factory_binding,
                 frozen=frozen_factory_request,
                 workspace=self.workspace,
+                selected_role_binding_json=str(getattr(profile, "selected_role_binding_json", "") or ""),
+                role_route_obligations_json=str(getattr(profile, "role_route_obligations_json", "") or ""),
+                route_fallback_authorization_json=str(getattr(profile, "route_fallback_authorization_json", "") or ""),
             )
         return PreparedLLMRequest(
             messages=messages,
@@ -1569,11 +1578,31 @@ class LLMRequestPreparer:
             max_tokens=request_options.get("max_tokens"),
             stream=False,
         )
+        retry_authorization = ""
+        selected_json = str(getattr(profile, "selected_role_binding_json", "") or "")
+        if selected_json:
+            selected = json.loads(selected_json)
+            route_binding = {key: selected[key] for key in ("provider_id", "model", "binding_id")}
+            retry_authorization = json.dumps(
+                {
+                    "source": "roles.kernel.semantic_retry",
+                    "from_request_freeze_id": old_identity.request_freeze_id,
+                    "from_binding": route_binding,
+                    "to_binding": route_binding,
+                    "trigger_error_category": "semantic_request_changed",
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         dispatch_port = FactorySemanticDispatchPropagationPort(
             authority=authority,
             binding=binding,
             frozen=frozen_retry,
             workspace=self.workspace,
+            selected_role_binding_json=str(getattr(profile, "selected_role_binding_json", "") or ""),
+            role_route_obligations_json=str(getattr(profile, "role_route_obligations_json", "") or ""),
+            route_fallback_authorization_json=retry_authorization,
         )
         return replace(
             prepared,

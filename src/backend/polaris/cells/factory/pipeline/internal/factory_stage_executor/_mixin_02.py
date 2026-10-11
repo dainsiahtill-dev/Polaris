@@ -53,6 +53,7 @@ from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleEvidenceAuthorityBindingV1,
 )
+from polaris.cells.roles.kernel.public.llm_caller_contracts import resolve_role_output_budget
 from polaris.cells.roles.kernel.public.service import QualityChecker
 from polaris.cells.roles.kernel.public.structured_output_contracts import (
     RoleStructuredOutputContractV1,
@@ -69,6 +70,8 @@ from polaris.kernelone.constants import (
     MAX_LLM_PROVIDER_TIMEOUT_SECONDS,  # noqa: F401 — re-exported for characterization-test surface
 )
 from polaris.kernelone.llm.budget_policy import (
+    BUDGET_CONTEXT_KEYS_CANONICAL,
+    OUTPUT_BUDGET_CONTEXT_KEYS,
     chief_engineer_portfolio_output_tokens,
 )
 
@@ -78,7 +81,11 @@ from .. import (
     factory_stage_helpers as helpers,
     factory_workspace_quality_impl as workspace_quality_impl,
 )
-from ..ce_schema_residual_patch import CESchemaResidualPatchPlan, plan_ce_schema_residual_patch
+from ..ce_schema_residual_patch import (
+    CESchemaResidualPatchPlan,
+    ce_schema_reconstruction_requires_task_coverage,
+    plan_ce_schema_residual_patch,
+)
 from ..factory_deadline_calculations import (  # noqa: F401 — re-exported for characterization-test surface
     _CHIEF_ENGINEER_EXECUTION_ATTEMPT_SETTLEMENT_GRACE_SECONDS,
     _CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS,
@@ -106,7 +113,6 @@ from ..run_ledger import load_run_ledger_projection
 from ._helpers import (
     _CHIEF_ENGINEER_PORTFOLIO_REASONING_BUDGET_TOKENS,
     _CHIEF_ENGINEER_SCHEMA_REPAIR_ERROR_MAX_CHARS,
-    _CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS,
     _CHIEF_ENGINEER_SCHEMA_REPAIR_REASONING_BUDGET_TOKENS,
     _ChiefEngineerExecutionAttemptLeaseKeeper,
     _ChiefEngineerExecutionAttemptLeaseScope,
@@ -737,22 +743,15 @@ class _Mixin02:
         task_count: int,
         repair_round: int,
         semantic_patch: bool,
+        context: Mapping[str, Any] | None = None,
     ) -> int:
-        """Return the smallest safe budget for one CE repair request.
-
-        Typed patches and the first bounded schema repair stay at the 8K
-        ceiling.  A later structural repair has to reconstruct the same full
-        multi-task portfolio as the primary request, so it must reuse the
-        task-scaled portfolio budget instead of deterministically truncating.
-        """
+        """Reuse the resolved portfolio allowance for every correction mode."""
 
         if task_count < 1:
             raise ValueError("chief_engineer_repair_task_count_must_be_positive")
         if repair_round < 1:
             raise ValueError("chief_engineer_repair_round_must_be_positive")
-        if semantic_patch or repair_round == 1:
-            return _CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS
-        return chief_engineer_portfolio_output_tokens(task_count)
+        return resolve_role_output_budget(context=context, requested=chief_engineer_portfolio_output_tokens(task_count))
 
     async def _run_chief_engineer_schema_repair(
         self,
@@ -783,6 +782,7 @@ class _Mixin02:
             task_count=len(portfolio_task_ids),
             repair_round=repair_round,
             semantic_patch=semantic_patch,
+            context=portfolio_context,
         )
         if semantic_patch:
             repair_suffix = "SEMANTIC-PATCH" if repair_round == 1 else f"SEMANTIC-PATCH-REPAIR-{repair_round}"
@@ -799,6 +799,9 @@ class _Mixin02:
         schema_repair_paths: tuple[tuple[str, ...], ...] = ()
         schema_repair_patch_schema: dict[str, Any] | None = None
         schema_residual_plan: CESchemaResidualPatchPlan | None = None
+        reconstruction_task_coverage_required = bool(
+            dict(prior_result.metadata or {}).get("chief_engineer_schema_reconstruction_task_coverage_required")
+        )
         if not semantic_patch:
             schema_repair_base_candidate = self._chief_engineer_schema_repair_base_candidate(
                 prior_result,
@@ -806,6 +809,10 @@ class _Mixin02:
             )
             if schema_repair_base_candidate is not None:
                 full_schema = self._chief_engineer_structured_output_contract(portfolio_task_ids).json_schema
+                reconstruction_task_coverage_required = (
+                    reconstruction_task_coverage_required
+                    or ce_schema_reconstruction_requires_task_coverage(schema_repair_base_candidate, full_schema)
+                )
                 schema_repair_paths = self._chief_engineer_required_property_repair_paths(
                     candidate=schema_repair_base_candidate,
                     schema=full_schema,
@@ -863,6 +870,12 @@ class _Mixin02:
                                 separators=(",", ":"),
                             )
                         )
+        if schema_repair_base_candidate is not None and schema_repair_patch_schema is None and not semantic_patch:
+            repair_objective = self._chief_engineer_schema_repair_objective(
+                prior_result=prior_result,
+                portfolio_task_ids=portfolio_task_ids,
+                retained_candidate=schema_repair_base_candidate,
+            )
         provider_patch_context: dict[str, Any] | None = None
         if semantic_candidate is not None and semantic_diagnosis is not None:
             provider_patch_context = project_chief_engineer_semantic_repair_provider_context(
@@ -1200,16 +1213,38 @@ class _Mixin02:
                     portfolio_task_ids=portfolio_task_ids,
                 )
             if not semantic_patch:
-                # Required-property repair first merges a strict partial payload
-                # into the frozen full portfolio.  That composed portfolio must
-                # pass through the same content-preserving structural recovery
-                # as every other full CE result.  Exact L3-24 r42 otherwise
-                # froze one-task owner-only invariants, then asked a semantic
-                # patch to invent an impossible sibling consumer.
+                # Recover transport structure before enforcing task semantics;
+                # recovery must not turn an explicit coverage rejection into OK.
                 result = self._recover_chief_engineer_portfolio_structural_result(
                     result=result,
                     portfolio_task_ids=portfolio_task_ids,
                 )
+                if result.ok and reconstruction_task_coverage_required:
+                    raw_payload = dict(result.metadata or {}).get("structured_output")
+                    if isinstance(raw_payload, Mapping):
+                        payload = raw_payload
+                    else:
+                        try:
+                            payload = json.loads(result.output)
+                        except (json.JSONDecodeError, TypeError):
+                            payload = {}
+                    construction = payload.get("construction_plan") if isinstance(payload, Mapping) else None
+                    task_plans = construction.get("task_plans") if isinstance(construction, Mapping) else None
+                    missing_task_ids = [
+                        task_id
+                        for task_id in portfolio_task_ids
+                        if not isinstance(task_plans, Mapping) or not task_plans.get(task_id)
+                    ]
+                    if missing_task_ids:
+                        result = self._chief_engineer_post_validation_repair_result(
+                            prior_result=result,
+                            output_errors=[
+                                "chief_engineer_schema_reconstruction_task_coverage_missing:"
+                                + ",".join(missing_task_ids)
+                            ],
+                        )
+                if reconstruction_task_coverage_required:
+                    result.metadata["chief_engineer_schema_reconstruction_task_coverage_required"] = True
             should_settle, heartbeat_failure = repair_scope.begin_settlement()
             if not should_settle or repair_scope.execution_attempt is None:
                 reason = heartbeat_failure.error_message if heartbeat_failure is not None else "settlement_not_started"
@@ -1409,6 +1444,24 @@ class _Mixin02:
                     "authority": "factory_committed_pm_and_verifier_policy",
                     "llm_may_override": False,
                 }
+                # Planning provenance only; committed/live Factory authority
+                # remains mandatory for execution and completion.
+                portfolio_context["ce_required_command_authority"] = [
+                    {
+                        "task_id": item.task_id,
+                        "modality": item.modality,
+                        "argv": list(item.argv),
+                        "cwd": item.cwd,
+                        "authority_hash": item.authority_hash,
+                    }
+                    for item in portfolio_authority.verification_command_authority
+                ]
+                portfolio_context["final_request_evidence_required"] = True
+                # Reuse the existing PM evidence payload carried into AIRequest;
+                # do not widen its context-field allowlist or add Cell edges.
+                portfolio_context["pm_task_contract"]["ce_required_command_authority"] = deepcopy(
+                    portfolio_context["ce_required_command_authority"]
+                )
             except _ChiefEngineerPortfolioAuthorityError as exc:
                 stage_signals.append(
                     {
@@ -1431,11 +1484,26 @@ class _Mixin02:
         ce_result: RoleExecutionResultV1 | None = None
         if portfolio_tasks and portfolio is None:
             dependency_schedule = build_task_dependency_schedule(pm_tasks)
-            requested_timeout_seconds = self._chief_engineer_llm_timeout_seconds(context)
+            budget_context: dict[str, Any] = {}
+            metadata = context.get("metadata")
+            trusted_metadata = metadata if isinstance(metadata, Mapping) else {}
+            for key in (*OUTPUT_BUDGET_CONTEXT_KEYS, *BUDGET_CONTEXT_KEYS_CANONICAL):
+                if key in context:
+                    budget_context[key] = deepcopy(context[key])
+                elif key in trusted_metadata:
+                    budget_context[key] = deepcopy(trusted_metadata[key])
+            portfolio_output_tokens = resolve_role_output_budget(
+                context=budget_context, requested=chief_engineer_portfolio_output_tokens(len(portfolio_tasks))
+            )
+            portfolio_context["llm_max_tokens"] = portfolio_output_tokens
+            requested_timeout_seconds = self._chief_engineer_llm_timeout_seconds(
+                {**context, "llm_max_tokens": portfolio_output_tokens}
+            )
             deadline_decision = self._chief_engineer_deadline_projection_decision(
                 context,
                 requested_timeout_seconds=requested_timeout_seconds,
                 dependency_schedule=dependency_schedule,
+                output_tokens=portfolio_output_tokens,
             )
             deadline_payload = deadline_decision.to_dict()
             if deadline_decision.disposition is FactoryDeadlineDispositionV1.BLOCK:
@@ -1467,7 +1535,7 @@ class _Mixin02:
                         "response_format_mode": "json",
                         "chief_engineer_json_contract_required": True,
                         "chief_engineer_portfolio_required": True,
-                        "llm_max_tokens": chief_engineer_portfolio_output_tokens(len(portfolio_tasks)),
+                        "llm_max_tokens": portfolio_output_tokens,
                         "reasoning_budget_tokens": _CHIEF_ENGINEER_PORTFOLIO_REASONING_BUDGET_TOKENS,
                         "chief_engineer_llm_timeout_seconds": ce_timeout_seconds,
                         "llm_call_timeout_seconds": ce_timeout_seconds,
@@ -1594,7 +1662,7 @@ class _Mixin02:
                                 context,
                                 requested_timeout_seconds=requested_timeout_seconds,
                                 dependency_schedule=dependency_schedule,
-                                output_tokens=_CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS,
+                                output_tokens=portfolio_output_tokens,
                             )
                             if deadline_decision.disposition is FactoryDeadlineDispositionV1.BLOCK:
                                 stage_signals.append(
@@ -1691,7 +1759,7 @@ class _Mixin02:
                                     context,
                                     requested_timeout_seconds=requested_timeout_seconds,
                                     dependency_schedule=dependency_schedule,
-                                    output_tokens=_CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS,
+                                    output_tokens=portfolio_output_tokens,
                                 )
                                 if semantic_deadline_decision.disposition is FactoryDeadlineDispositionV1.BLOCK:
                                     stage_signals.append(
@@ -1884,6 +1952,7 @@ class _Mixin02:
                                 task_count=len(portfolio_tasks),
                                 repair_round=2,
                                 semantic_patch=semantic_repair_candidate is not None,
+                                context=portfolio_context,
                             )
                             final_semantic_deadline = self._chief_engineer_deadline_projection_decision(
                                 context,
@@ -2000,7 +2069,7 @@ class _Mixin02:
                                     context,
                                     requested_timeout_seconds=requested_timeout_seconds,
                                     dependency_schedule=dependency_schedule,
-                                    output_tokens=_CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS,
+                                    output_tokens=portfolio_output_tokens,
                                 )
                                 if final_semantic_deadline.disposition is FactoryDeadlineDispositionV1.BLOCK:
                                     stage_signals.append(
@@ -2095,6 +2164,7 @@ class _Mixin02:
                     and not missing_final_request_evidence
                     and portfolio_authority is not None
                     and semantic_repair_candidate is None
+                    and not ce_result_metadata.get("chief_engineer_schema_reconstruction_task_coverage_required")
                 )
                 if advisory_projection_allowed:
                     assert portfolio_authority is not None
@@ -3536,16 +3606,20 @@ class _Mixin02:
             self, run=run, incomplete_task_ids=incomplete_task_ids
         )
 
-    def _collect_director_stage_materialization_diagnostics(
+    async def _collect_director_stage_materialization_diagnostics(
         self,
         *,
         run: FactoryRun | None = None,
         preparation_results: list[dict[str, Any]] | None = None,
-    ) -> list[str]:
-        return materialization_impl._collect_director_stage_materialization_diagnostics(
+        context: Mapping[str, Any] | None = None,
+        sessions: list[Any] | None = None,
+    ) -> materialization_impl.MaterializationDiagnostics:
+        return await materialization_impl._collect_director_stage_materialization_diagnostics(
             self,
             run=run,
             preparation_results=preparation_results,
+            context=context,
+            sessions=sessions,
         )
 
     def _ensure_director_stage_materialization_typescript_toolchain(

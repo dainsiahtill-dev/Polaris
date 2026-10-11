@@ -6,8 +6,10 @@ import json
 import logging
 import os
 import re
+from copy import deepcopy
 from typing import Any
 
+from polaris.cells.orchestration.pm_planning.public.artifact_contracts import validate_generated_outputs
 from polaris.kernelone.events.final_request_evidence import (
     looks_like_ce_blueprint_payload,
     looks_like_pm_contract_payload,
@@ -28,6 +30,7 @@ _TASK_CONTRACT_LIST_KEYS = (
     "target_files",
     "scope_paths",
     "context_files",
+    "generated_outputs",
     "project_declared_target_files",
     "project_declared_source_targets",
     "project_declared_entrypoint_targets",
@@ -134,6 +137,7 @@ _ROLE_RUNTIME_METADATA_CONTEXT_EVIDENCE_KEYS = (
     "scope_paths",
     "context_files",
     "required_evidence",
+    "generated_outputs",
 )
 
 
@@ -211,6 +215,11 @@ def _first_contract_value(sources: list[dict[str, Any]], key: str) -> Any:
         if not isinstance(source, dict):
             continue
         value = source.get(key)
+        if key == "generated_outputs" and value is not None:
+            rows, errors = validate_generated_outputs(value)
+            if errors:
+                raise ValueError(f"Invalid generated output contract: {errors}")
+            return rows
         if isinstance(value, str):
             normalized = value.strip()
             if normalized:
@@ -232,6 +241,10 @@ def _first_contract_value(sources: list[dict[str, Any]], key: str) -> Any:
 
 def _promoted_task_contract_payload(sources: list[dict[str, Any]]) -> dict[str, Any]:
     payload: dict[str, Any] = {}
+    for source in sources:
+        if "generated_outputs" in source:
+            payload["generated_outputs"] = deepcopy(source["generated_outputs"])
+            break
     for key in (*_TASK_CONTRACT_LIST_KEYS, *_TASK_CONTRACT_MAPPING_KEYS, *_TASK_CONTRACT_SCALAR_KEYS):
         value = _first_contract_value(sources, key)
         if value is not None:
@@ -268,7 +281,20 @@ def _contract_list(value: Any) -> list[str]:
     return []
 
 
-def _merge_contract_lists(*values: Any) -> list[str]:
+def _merge_contract_lists(*values: Any) -> list[Any]:
+    # Generated declarations are structured read/build obligations. Preserve
+    # their records through the existing list promotion, never stringify them.
+    present = [value for value in values if value]
+    if any(isinstance(value, list) and any(isinstance(item, dict) for item in value) for value in present):
+        records: list[dict[str, Any]] = []
+        for value in present:
+            rows, errors = validate_generated_outputs(value)
+            if errors:
+                raise ValueError(f"Invalid generated output contract: {errors}")
+            for row in rows:
+                if row not in records:
+                    records.append(deepcopy(row))
+        return records
     merged: list[str] = []
     seen: set[str] = set()
     for value in values:

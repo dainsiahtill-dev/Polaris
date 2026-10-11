@@ -57,16 +57,17 @@ class TestQualityGateDeadlineHandling:
         assert decision.reserved_downstream_seconds == 400.0
         assert decision.timeout_seconds == 0
 
-    def test_chief_engineer_deadline_projection_not_used_without_factory_deadline(self) -> None:
+    def test_chief_engineer_generation_floor_applies_without_factory_deadline(self) -> None:
         decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
             {},
             requested_timeout_seconds=123,
             dependency_schedule=build_task_dependency_schedule([{"id": "TASK-1"}]),
         )
 
-        assert decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert decision.disposition is FactoryDeadlineDispositionV1.BLOCK
         assert decision.remaining_seconds is None
-        assert decision.timeout_seconds == 123
+        assert decision.timeout_seconds == 0
+        assert decision.budget_plan.blockers == ("chief_engineer_deadline_below_generation_floor",)
 
     def test_chief_engineer_deadline_projection_blocks_when_available_budget_below_generation_floor(self) -> None:
         # 180s horizon with a reduced downstream reserve (125s) leaves ~50-55s for CE.
@@ -88,7 +89,7 @@ class TestQualityGateDeadlineHandling:
         assert decision.reserved_downstream_seconds == 125.0
         assert decision.timeout_seconds == 0
 
-    def test_chief_engineer_schema_repair_uses_smaller_output_token_floor(self) -> None:
+    def test_chief_engineer_explicit_lower_output_budget_uses_its_generation_floor(self) -> None:
         # The bounded output-schema repair requests only 8192 tokens (floor ~102s),
         # far below the full-portfolio floor (~205s). A budget that is below the
         # portfolio floor but above the repair floor must still admit the repair.
@@ -116,7 +117,7 @@ class TestQualityGateDeadlineHandling:
         )
 
         # ~272-275s available: above the portfolio floor -> both EXECUTE; repair floor is smaller.
-        assert portfolio_decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
+        assert portfolio_decision.disposition is FactoryDeadlineDispositionV1.BLOCK
         assert repair_decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
 
     def test_chief_engineer_schema_repair_floor_admits_where_portfolio_floor_blocks(self) -> None:

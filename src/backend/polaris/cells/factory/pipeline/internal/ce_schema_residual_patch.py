@@ -43,6 +43,24 @@ def _has_schema_reference(value: Any) -> bool:
     return False
 
 
+def ce_schema_reconstruction_requires_task_coverage(candidate: Mapping[str, Any], schema: Mapping[str, Any]) -> bool:
+    """Discover ambiguous semantic-container removals without changing the draft."""
+    for error in Draft202012Validator(dict(schema)).iter_errors(dict(candidate)):
+        if error.validator != "additionalProperties" or error.validator_value is not False:
+            continue
+        if not isinstance(error.instance, Mapping) or not isinstance(error.schema, Mapping):
+            continue
+        properties = error.schema.get("properties", {})
+        if not isinstance(properties, Mapping) or error.schema.get("patternProperties"):
+            continue
+        if any(
+            name not in properties and isinstance(value, (Mapping, list, tuple)) and value
+            for name, value in error.instance.items()
+        ):
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class CESchemaResidualPatchPlan:
     """Frozen serialized draft and exact edit schema; owns no durable state."""
@@ -74,6 +92,20 @@ class CESchemaResidualPatchPlan:
                 }
                 for item in operations
             ],
+            "edit_template": {
+                "base_candidate_hash": self.base_candidate_hash,
+                "edits": [
+                    {"operation": item["properties"]["operation"]["const"], "path": item["properties"]["path"]["const"]}
+                    for item in operations
+                ],
+            },
+            "edit_value_schemas": [item["properties"].get("value") for item in operations],
+            "edit_path_component_types": [
+                ["integer" if type(part) is int else "string" for part in item["properties"]["path"]["const"]]
+                for item in operations
+            ],
+            "template_is_model_input_only": True,
+            "add_values_must_be_supplied_by_model": True,
         }
 
     def compose(self, patch: Mapping[str, Any]) -> dict[str, Any]:
@@ -143,6 +175,14 @@ def plan_ce_schema_residual_patch(
                 return None
             path = [*parent_path, name]
             if len(path) > _MAX_PATH_DEPTH:
+                return None
+            if (
+                operation == "remove"
+                and isinstance(error.instance[name], (Mapping, list, tuple))
+                and error.instance[name]
+            ):
+                # A forbidden container may hold displaced tasks/obligations.
+                # Schema validity cannot prove that deleting it preserves intent.
                 return None
             value_schema = properties.get(name)
             if operation == "add" and (not isinstance(value_schema, Mapping) or _has_schema_reference(value_schema)):

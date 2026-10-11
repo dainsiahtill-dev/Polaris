@@ -34,8 +34,7 @@ def test_mixed_ce_schema_errors_use_bound_patch_and_preserve_valid_roots(
     valid = deepcopy(_single_task_chief_engineer_result().metadata["structured_output"])
     base = deepcopy(valid)
     task_plans = base["construction_plan"].pop("task_plans")
-    base["task_plans"] = deepcopy(task_plans)
-    base["item"] = {"draft_note": "Unapproved appendix; CE must explicitly discard it."}
+    base["item"] = "Unapproved scalar appendix; CE must explicitly discard it."
     first = _invalid_structured_transport_chief_engineer_result()
     first.output = ""
     first.error_message = "structured_output_payload_schema_mismatch:$:Additional properties are not allowed"
@@ -48,7 +47,6 @@ def test_mixed_ce_schema_errors_use_bound_patch_and_preserve_valid_roots(
         "edits": [
             {"operation": "add", "path": ["construction_plan", "task_plans"], "value": task_plans},
             {"operation": "remove", "path": ["item"]},
-            {"operation": "remove", "path": ["task_plans"]},
         ],
     }
     patched_metadata = deepcopy(_single_task_chief_engineer_result().metadata)
@@ -126,3 +124,52 @@ def test_composed_draft_does_not_replace_physical_patch_evidence(tmp_path: Path)
     assert receipt["full_schema_validated"] is True
     assert receipt["semantic_authority_validated"] is False
     assert receipt["patch_hash"] != receipt["composed_candidate_hash"]
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_displaced_nested_task_reconstructs_with_complete_task_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, empty: bool
+) -> None:
+    executor = _executor(tmp_path)
+    _write_minimal_chief_engineer_plan(executor)
+    base = deepcopy(_single_task_chief_engineer_result().metadata["structured_output"])
+    displaced = deepcopy(base["construction_plan"]["task_plans"])
+    base["construction_plan"]["task_plans"] = {"item": displaced}
+    original = deepcopy(base)
+    failed = _invalid_structured_transport_chief_engineer_result()
+    failed.output = ""
+    failed.metadata["tool_call"] = {"tool": "submit_structured_role_output", "arguments": base}
+    commands: list[Any] = []
+
+    class Runtime:
+        async def execute_role_task(self, command: Any) -> Any:
+            commands.append(command)
+            if len(commands) == 1:
+                return failed
+            result = _single_task_chief_engineer_result()
+            if empty:
+                result.metadata["structured_output"]["construction_plan"]["task_plans"] = {}
+                result.output = json.dumps(result.metadata["structured_output"])
+            return result
+
+    monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", Runtime)
+    run = FactoryRun(
+        id="displaced-task",
+        config=FactoryConfig(name="reconstruction"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-10-09T00:00:00+00:00",
+    )
+    result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+    assert commands[1].structured_output_contract.schema_name == "chief_engineer_blueprint_portfolio"
+    assert commands[1].context["chief_engineer_schema_repair_mode"] == "reconstruction"
+    assert (
+        commands[1].context["chief_engineer_schema_repair_base_candidate_hash"]
+        == hashlib.sha256(
+            json.dumps(original, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    )
+    assert json.dumps(original, ensure_ascii=False, sort_keys=True, separators=(",", ":")) in commands[1].objective
+    assert base == original
+    assert result.status == ("failed" if empty else "success"), result.output
+    if empty:
+        assert "chief_engineer_schema_reconstruction_task_coverage_missing" in str(result.output)

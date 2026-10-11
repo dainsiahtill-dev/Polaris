@@ -1,0 +1,31 @@
+id: vc-20261006-verifier-command-provenance
+classification: pattern
+status: implementation-authorized
+owner: director.runtime
+scope:
+  - polaris/cells/director/runtime/internal/repair_kernel/diagnostics.py
+  - polaris/cells/director/runtime/tests/test_verifier_command_provenance.py
+assumptions:
+  - claim: Balanced envelope stripping loses the npm command needed by existing repair routes.
+    evidence: POL-11 failure-trace and current CodeGraph diagnostics.py lines163,335,438,462.
+  - claim: Restoring the whole command script to per-line parsing would regress earlier multiline harness normalization.
+    evidence: Existing balanced helper documents79fake rows from3failures; require a real negative regression.
+  - claim: Coverage/planning improvements do not establish an authorized effect or project completion.
+    evidence: Existing generic public shadow boundary and policy-gated Run contracts.
+pre_mortem:
+  - Duplicate wrapper or script rows inflate diagnostic counts and false convergence.
+  - Invented command context routes unrelated diagnostics or falsely authorizes repair.
+  - Package-only plan remains incomplete although coverage becomes matched.
+  - Broad formatting or changed old assertions hide unrelated regressions.
+verification:
+  - Real public normalization and coverage RED/GREEN for four measured npm command-context failures.
+  - Balanced nested quoted multiline Python command yields actual failure islands, not script lines.
+  - Missing malformed and unrelated command contexts are not fabricated.
+  - TAP unittest Go Rust compiler normalization multiplicity and source paths remain intact.
+  - Exact current focused/broad selections and all residual failure signatures recorded.
+  - Scope hash diff plus independent review before any fresh Bench qualification.
+product_authority:
+  paperclip_is_fact_source: false
+  generated_target_edits_allowed: false
+  new_public_facade_allowed: false
+  command_provenance_grants_execution: false

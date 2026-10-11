@@ -29,6 +29,7 @@ from .context_os.policies import (
 from .context_os.rehydration import rehydrate_persisted_context_os_payload
 from .control_plane_noise import is_control_plane_noise, is_signal_role
 from .runtime_feature_flags import resolve_context_os_enabled
+from .text_normalization import normalize_quoted_text
 
 _DEFAULT_HISTORY_WINDOW_MESSAGES = 8
 _MAX_HISTORY_WINDOW_MESSAGES = 24
@@ -89,11 +90,6 @@ _CODE_PATH_RE = re.compile(
     r"([A-Za-z]:\\|[/\\]|`[^`]+\.(py|md|ya?ml|json|toml|ts|tsx|js|jsx|sql|sh|ps1)`|\b[\w.-]+\.(py|md|ya?ml|json|toml|ts|tsx|js|jsx|sql|sh|ps1)\b)",
     re.IGNORECASE,
 )
-_PROTOCOL_TAG_RE = re.compile(
-    r"</?(assistant|system|thinking|antthinking|tool_result|tool_call|analysis|final|user)(?:\s[^>]*)?>",
-    re.IGNORECASE,
-)
-_GENERIC_TAG_RE = re.compile(r"</?[a-z][a-z0-9_-]{1,31}(?:\s[^>]*)?>", re.IGNORECASE)
 _LONG_REPEAT_RE = re.compile(r"(.)\1{79,}")
 
 
@@ -113,11 +109,14 @@ def _message_sequence(message: Mapping[str, Any], fallback: int) -> int:
 
 
 def _normalize_text(value: Any) -> str:
-    raw = str(value or "")
-    sanitized = _PROTOCOL_TAG_RE.sub(" ", raw)
-    sanitized = _GENERIC_TAG_RE.sub(" ", sanitized)
-    text = " ".join(sanitized.replace("\r", " ").replace("\n", " ").split())
-    return text.strip()
+    """Clean prose and external tags without rewriting quoted data.
+
+    Consume escaped characters inside double quotes before recognizing tags.
+    A tag outside quotes is consumed whole, including any quoted attributes.
+    This is lexical preservation, not JSON validation or plan admission:
+    incomplete strings remain incomplete and no valid prefix is reconstructed.
+    """
+    return normalize_quoted_text(str(value or ""), strip_external_tags=True)
 
 
 def _trim_text(text: str, *, max_chars: int) -> str:

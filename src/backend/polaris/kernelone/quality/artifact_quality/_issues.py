@@ -36,6 +36,7 @@ from polaris.kernelone.quality.artifact_quality._helpers import (
     _package_root_name,
 )
 from polaris.kernelone.quality.artifact_quality._models import (
+    ArtifactQualityDeferredCheck,
     ArtifactQualityEvidence,
     ArtifactQualityIssue,
 )
@@ -821,6 +822,10 @@ def _artifact_quality_evidence(
     cross_artifact_issues: Iterable[CrossArtifactConsistencyIssue] = (),
     cross_artifact_repair_plans: Iterable[CrossArtifactRepairPlan] = (),
     contract_amendment_request: ContractAmendmentRequest | None = None,
+    scan_mode: str = "legacy",
+    deferred_checks: Iterable[ArtifactQualityDeferredCheck] = (),
+    scan_complete: bool = True,
+    incomplete_reasons: Iterable[str] = (),
 ) -> ArtifactQualityEvidence:
     deduped_errors = tuple(dict.fromkeys(str(error).strip() for error in errors if str(error or "").strip()))
     direct_issues = sys.modules[__package__]._artifact_quality_issues_from_errors(issues)
@@ -841,6 +846,10 @@ def _artifact_quality_evidence(
         if not issue.code.startswith("contract_")
     )
     return ArtifactQualityEvidence(
+        scan_mode=scan_mode,
+        deferred_checks=tuple(dict.fromkeys(deferred_checks)),
+        scan_complete=scan_complete,
+        incomplete_reasons=tuple(dict.fromkeys(incomplete_reasons)),
         errors=deduped_errors,
         issues=(*direct_issues, *string_projected_issues, *projected_cross_artifact_issues),
         scanned_relative_paths=tuple(scanned_relative_paths),

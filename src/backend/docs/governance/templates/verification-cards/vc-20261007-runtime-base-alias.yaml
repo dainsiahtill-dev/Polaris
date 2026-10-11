@@ -1,0 +1,35 @@
+id: vc-20261007-runtime-base-alias
+issue: POL-38
+mode: implementation
+classification: pattern
+owner: repair-kernel-language-engineer
+acceptance_owner: Root
+reviewer_followup: POL-37
+blueprint: docs/blueprints/POLARIS_RUNTIME_BASE_ALIAS_CLOSURE_20261007.md
+allowed_product_files:
+  - src/backend/polaris/cells/director/runtime/internal/repair_kernel/typescript_runtime.py
+new_test: src/backend/polaris/cells/director/runtime/tests/test_runtime_base_alias_frontier.py
+assumptions:
+  - claim: Public Plan and Run preserve raw map keys until migrated runtime entrypoint.
+    evidence: public service and runtime binding dispatch source; private dynamic trace
+  - claim: Both entrypoints lose owner evidence through last-wins normalization.
+    evidence: POL-19 retained conflicting-owner REDs and current source
+reuse:
+  - existing permissive comparison path and declared manifest canonicalization
+  - generic public commands and coverage-backed plan probes
+  - existing composer policy executor receipt and revalidation
+pre_mortem:
+  - Run must not normalize before Plan.
+  - Same-content aliases remain compatible; arbitrary case stays distinct.
+  - No expansion of path acceptance or cross-file ownership.
+  - Keep original diagnostics and zero effects on refusal.
+verification:
+  - Original two RED selectors and new public effect-spy RED then GREEN
+  - NodeNext Node16 root nested multiple configs and declared path controls
+  - Before after original hashes and stale-content rejection
+  - Existing exact-selector frontiers contracts 1-7 and path planner regressions
+  - Scoped Ruff Mypy format and diff verification with baseline debt reported
+status: investigation
+remaining_validation:
+  - Root independent review then POL-37 joint QA
+  - Fresh isolated full project delivery outside this component assignment

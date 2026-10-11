@@ -745,7 +745,9 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     ),
                     "scope": ["package.json", *verification_targets],
                     "target_files": ["package.json", *verification_targets],
-                    "context_files": source_targets,
+                    # package.json is deliberately updated by this task, so
+                    # the producer must not also declare it read-only.
+                    "context_files": [],
                     "steps": [
                         "实现 tests/product.test.js，使用 Node 标准库 assert 或内置 test runner 验证核心规则",
                         "实现 tests/test_product.py，使用 Python unittest 检查 package.json 脚本、CE 声明的 JS 源码覆盖和 node 入口",

@@ -628,8 +628,9 @@ def test_public_repair_migrated_typescript_source_tool_uses_runtime_binding_with
     assert planning_payload["ok"] is False
     assert planning_payload["planned"] is False
     assert planning_payload["source_tool"] == source_tool
-    assert planning_payload["error_code"] is None
-    assert planning_payload["error_message"] is None
+    # A registered binding without a safe plan reports an explicit no-effect refusal.
+    assert planning_payload["error_code"] == "repair_not_planned"
+    assert planning_payload["error_message"]
     assert planning_payload["composition_summary"]["ok"] is False
 
     writes: list[tuple[str, str]] = []

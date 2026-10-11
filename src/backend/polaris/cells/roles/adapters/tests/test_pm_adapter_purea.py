@@ -24,6 +24,42 @@ from polaris.cells.roles.adapters.internal.pm.synthesis import (
 )
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
 
+
+def test_typed_retry_keeps_complete_requirement_and_every_authorized_old_value(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.pm.revision import make_revision_base
+    from polaris.cells.roles.adapters.tests.test_pm_factory_controlled_identity import _contracts
+
+    directive = "完整原需求" * 3000
+    tasks = json.loads(_contracts(valid=True))
+    description = "完整诊断字段" * 3000
+    tasks["tasks"][0]["description"] = description
+    quality = {"contract_diagnostics": [{"path": "$.tasks[0].description", "code": "weak_description"}]}
+    previous = json.dumps(tasks, ensure_ascii=False)
+    base = make_revision_base(
+        previous,
+        workspace=str(tmp_path),
+        run_id="r",
+        task_id="t",
+        directive=directive,
+        quality=quality,
+    )
+    assert base is not None
+    message = _make_adapter(tmp_path)._build_pm_retry_message(
+        directive=directive,
+        quality=quality,
+        previous_output=previous,
+        validated_candidate=True,
+        revision_base=base,
+    )
+    assert directive in message
+    assert description in message
+    view, _ = json.JSONDecoder().raw_decode(message.split("Revision base/view/manifest (server-owned):\n", 1)[1])
+    assert view["tasks"][0]["description"] == description
+    assert view["edit_manifest"]["tasks"]["TASK-1"]["set"]["description"] == "nonempty_string"
+    assert "assigned_to" not in view["edit_manifest"]["tasks"]["TASK-1"]["set"]
+    assert base.tasks == tasks["tasks"]
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -331,17 +367,17 @@ class TestBuildPmMessage:
 
     def test_projection_hint_injection(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
-        hint = {"projection": {"scenario_id": "s1", "project_slug": "lab"}}
+        hint = {"execution_backend": "projection_generate", "projection": {"scenario_id": "s1", "project_slug": "lab"}}
         msg = adapter._build_pm_message([], "Task", projection_hint=hint)
         assert "projection_generate" in msg
         assert "s1" in msg
 
-    def test_compacts_oversized_directive_for_prompt_budget(self, tmp_path: Any) -> None:
+    def test_preserves_oversized_directive_for_canonical_budget_gate(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         directive = "A" * 12_000 + "middle" + "Z" * 12_000
         msg = adapter._build_pm_message([], directive)
-        assert len(msg) < 21_000
-        assert "omitted" in msg
+        assert directive in msg
+        assert "omitted" not in msg
         assert "AAAA" in msg
         assert "ZZZZ" in msg
 
@@ -356,8 +392,90 @@ class TestBuildPmMessage:
         assert '"cwd": "."' in msg
         assert "shell command string" in msg
 
+    def test_pol71_code_edit_example_does_not_require_projection(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        for hint in [
+            None,
+            {},
+            {"projection": {"scenario_id": "s1"}},
+            {"execution_backend": "projection_generate"},
+            {"execution_backend": "projection_generate", "projection": {"scenario_id": 7}},
+            {"execution_backend": "projection_generate", "projection": {"scenario_id": "   "}},
+        ]:
+            msg = adapter._build_pm_message([], "Implement model", projection_hint=hint)
+            payload, _ = json.JSONDecoder().raw_decode(msg[msg.index("\n{\n") + 1 :])
+            task = payload["tasks"][0]
+            assert task["execution_backend"] == "code_edit"
+            assert "projection" not in task
+            assert "projection_generate" not in msg
+            assert "scenario_id" not in msg
+            assert "verification_commands" in task
+
+    def test_pol71_valid_projection_contract_uses_existing_fields(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        hint = {"execution_backend": "projection_generate", "projection": {"scenario_id": "s1", "project_slug": "lab"}}
+        msg = adapter._build_pm_message([], "Generate project", projection_hint=hint)
+        payload, _ = json.JSONDecoder().raw_decode(msg[msg.index("\n{\n") + 1 :])
+        assert payload["tasks"][0]["execution_backend"] == "projection_generate"
+        assert payload["tasks"][0]["projection"]["scenario_id"] == "s1"
+        normalized = adapter._extract_task_contracts(
+            json.dumps(payload), directive="Generate project", projection_hint=hint
+        )
+        assert normalized[0]["metadata"]["execution_backend"] == "projection_generate"
+        assert normalized[0]["metadata"]["projection"]["scenario_id"] == "s1"
+
 
 class TestBuildPmRetryMessage:
+    def test_pol71_complete_candidate_and_all_diagnostics_are_preserved(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        previous = json.dumps({"tasks": [{"id": f"TASK-{i}", "risk_notes": "raw" * 1000} for i in range(1, 6)]})
+        quality = {
+            "score": 30,
+            "critical_issues": [f"missing-{i}" for i in range(12)],
+            "warnings": [f"warning-{i}" for i in range(12)],
+            "contract_diagnostics": [
+                {"path": f"$.tasks[{i}].verification_commands", "code": f"invalid-{i}", "message": "retain"}
+                for i in range(12)
+            ],
+        }
+        message = adapter._build_pm_retry_message(
+            directive="Implement model", quality=quality, previous_output=previous, validated_candidate=True
+        )
+        assert previous in message
+        for i in range(12):
+            assert f"missing-{i}" in message
+            assert f"warning-{i}" in message
+            assert f"invalid-{i}: retain" in message
+        unrelated = adapter._build_pm_retry_message(
+            directive="Another run", quality={"score": 0}, previous_output="malformed"
+        )
+        assert previous not in unrelated
+        assert "Complete validated candidate" not in unrelated
+
+    def test_pol79_invalid_output_keeps_diagnostic_without_candidate_prefix(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        previous = '{"tasks":[{"title":"broken"' + "x" * 3000
+        quality = {"score": 0, "critical_issues": ["pm_contract_json_invalid"]}
+        msg = adapter._build_pm_retry_message(directive="Implement model", quality=quality, previous_output=previous)
+        assert "Previous output excerpt:" not in msg
+        assert previous[:1400] not in msg
+        assert "response_sha256" in msg and "response_chars" in msg
+        assert previous not in msg
+        assert "Complete validated candidate" not in msg
+
+    def test_pol71_retry_uses_same_core_contract_and_projection_branch(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        quality = {"score": 40, "critical_issues": ["verification_commands_missing"]}
+        for hint in [None, {"execution_backend": "projection_generate", "projection": {"scenario_id": "s1"}}]:
+            initial = adapter._build_pm_message([], "Implement model", projection_hint=hint)
+            retry = adapter._build_pm_retry_message(
+                directive="Implement model", quality=quality, previous_output="invalid", projection_hint=hint
+            )
+            initial_payload, _ = json.JSONDecoder().raw_decode(initial[initial.index("\n{\n") + 1 :])
+            retry_payload, _ = json.JSONDecoder().raw_decode(retry[retry.index("\n{\n") + 1 :])
+            assert set(initial_payload["tasks"][0]) == set(retry_payload["tasks"][0])
+            assert ("projection" in retry_payload["tasks"][0]) is bool(hint)
+
     def test_includes_quality_issues(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         quality = {"score": 50, "critical_issues": ["missing_goal"], "warnings": ["weak_scope"]}
@@ -367,7 +485,7 @@ class TestBuildPmRetryMessage:
         assert "至少 3 个任务" in msg
         assert "上一版 PM 合同未通过质量门禁" not in msg
         assert "禁止输出 [TOOL_CALL]" not in msg
-        assert "Previous output excerpt:" in msg
+        assert "Prior generation diagnostic" in msg
 
     def test_retry_preserves_structured_verification_command_requirement(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -1712,13 +1830,13 @@ ts_syntax
         msg = adapter._build_pm_retry_message(directive="Fix it", quality=quality, previous_output="old")
         assert "无关键问题信息" in msg
 
-    def test_compacts_oversized_retry_directive(self, tmp_path: Any) -> None:
+    def test_preserves_oversized_retry_directive(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         quality = {"score": 50, "critical_issues": [], "warnings": []}
         directive = "A" * 8_000 + "Z" * 8_000
         msg = adapter._build_pm_retry_message(directive=directive, quality=quality, previous_output="old")
-        assert len(msg) < 8_000
-        assert "omitted" in msg
+        assert directive in msg
+        assert "omitted" not in msg
 
 
 class TestDeterministicContractsFlag:
@@ -1827,10 +1945,12 @@ class TestExtractJsonPayload:
         result = adapter._extract_json_payload('```json\n{"tasks": []}\n```')
         assert result == {"tasks": []}
 
-    def test_embedded_json(self, tmp_path: Any) -> None:
+    def test_embedded_json_without_complete_envelope_is_rejected(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         result = adapter._extract_json_payload('Some text\n{"tasks": []}\nMore text')
-        assert result == {"tasks": []}
+        # Surrounding prose is not an authoritative PM envelope. In particular,
+        # fragment extraction must never hide a damaged prefix or suffix.
+        assert result is None
 
     def test_python_literal(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -2446,8 +2566,11 @@ class TestNormalizeTaskContract:
 
         result = adapter._normalize_task_contract(raw, 3, directive)
 
-        assert result["target_files"] == ["README.md", "tests/test_calculator.py"]
-        assert "tests/test_calculator.py" in result["scope_paths"]
+        assert result["target_files"] == ["README.md"]
+        assert "tests/test_calculator.py" not in result["scope_paths"]
+        _, quality = adapter._evaluate_contract_quality([result], directive=directive)
+        assert quality["ok"] is False
+        assert "verification_commands_missing" in quality["critical_issues"]
 
     def test_synthetic_root_cli_contracts_use_file_level_targets(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -2487,7 +2610,7 @@ class TestNormalizeTaskContract:
         directive = (
             "Build a multiplayer online creative card game with a TypeScript Three.js 3D client and a Node.js backend."
         )
-        contracts = [
+        contracts: list[dict[str, Any]] = [
             {
                 "id": "PM-CARD3D-TESTS",
                 "title": "Add multiplayer card integration tests",
@@ -2517,14 +2640,43 @@ class TestNormalizeTaskContract:
         target_files = cast(list[str], task["target_files"])
         scope_paths = cast(list[str], task["scope_paths"])
 
-        assert "scripts/build.mjs" in target_files
-        assert "scripts/test.mjs" in target_files
+        assert target_files == ["tests/integration/multiplayer-flow.test.ts"]
+        assert scope_paths == ["tests"]
+        assert "scripts/build.mjs" not in target_files
+        assert "scripts/test.mjs" not in target_files
         assert scope_paths[0] == "tests"
         assert all(
             any(target == scope.strip("/") or target.startswith(f"{scope.strip('/')}/") for scope in scope_paths)
             for target in target_files
         )
         assert set(scope_paths[1:]).issubset(set(target_files))
+
+        # Explicit authored scripts preserve the same capability containment.
+        contracts[0]["target_files"] = [
+            "scripts/build.mjs",
+            "scripts/test.mjs",
+        ]
+        contracts[0]["scope_paths"] = ["scripts/build.mjs", "scripts/test.mjs"]
+        contracts[0]["scope"] = "scripts/build.mjs, scripts/test.mjs"
+        contracts[0]["id"] = "PM-SCRIPTS"
+        contracts[0]["title"] = "Implement build and test validation scripts"
+        contracts[0]["goal"] = "Implement executable build and test validation with error reporting."
+        contracts[0]["description"] = "Write explicit script targets and preserve exact owned paths."
+        contracts[0]["verification_commands"] = [
+            {"modality": "environment_prep", "argv": ["npm", "install"], "cwd": "."},
+            {"modality": "build", "argv": ["npm", "run", "build"], "cwd": "."},
+            {"modality": "test", "argv": ["npm", "test"], "cwd": "."},
+        ]
+        normalized, quality = adapter._evaluate_contract_quality(
+            contracts, directive="Implement JavaScript build and test validation scripts."
+        )
+        assert quality["ok"], quality
+        assert normalized[0]["target_files"] == contracts[0]["target_files"]
+        assert normalized[0]["scope_paths"] == contracts[0]["scope_paths"]
+        assert all(
+            any(target == scope or target.startswith(f"{scope}/") for scope in normalized[0]["scope_paths"])
+            for target in normalized[0]["target_files"]
+        )
 
     def test_fallback_goal_does_not_echo_prompt_directive(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

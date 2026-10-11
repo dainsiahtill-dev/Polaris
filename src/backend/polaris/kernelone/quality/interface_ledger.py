@@ -24,18 +24,25 @@ claim-time punch list remain the backstop.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
+import stat
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.quality.file_ownership_ledger import normalize_file_ownership_target
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
+
+if TYPE_CHECKING:
+    from polaris.kernelone.quality.cross_artifact_interfaces import SymbolIndexSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +134,307 @@ def _ledger_path(workspace: str, cache_root: str) -> str:
     return resolve_artifact_path(workspace, cache_root, _LEDGER_REL_PATH)
 
 
+@dataclass(frozen=True)
+class WorkspaceTextReadSnapshot:
+    """One actual UTF-8 read, with confinement and drift evidence."""
+
+    path: str
+    status: str
+    detail: str = ""
+    text: str = ""
+    content_sha256: str = ""
+
+
+class _ConfinedReadPath(Path):
+    """Preserve the Path text-read protocol while binding its actual open."""
+
+    _opener: Callable[[str, int], int]
+
+    def open(
+        self,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> Any:
+        if mode not in {"r", "rt"}:
+            raise ValueError("confined snapshot paths are read-only")
+        return open(
+            str(self),
+            mode=mode,
+            buffering=buffering,
+            encoding=encoding,
+            errors=errors,
+            newline=newline,
+            opener=self._opener,
+        )
+
+
+class WorkspaceReadSnapshot:
+    """Per-query read-only payloads; never persisted or shared between scans.
+
+    Links are rejected, including lexical ancestors before normalizing '..'.
+    Actual opens are descriptor-relative and no-follow at every component.
+    Cached payloads, rather than later best-effort reads, drive consumers.
+    """
+
+    def __init__(self, workspace: str | Path) -> None:
+        self.root = Path(workspace).resolve()
+        self._reads: dict[str, WorkspaceTextReadSnapshot] = {}
+        self._identities: dict[str, tuple[int, ...]] = {}
+        self._root_chain: dict[Path, tuple[int, ...]] = {}
+        self._directories: dict[Path, tuple[int, ...]] = {}
+        self._binding_error = ""
+        try:
+            directory = self._open_workspace_root(capture=True)
+            os.close(directory)
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._binding_error = f"{type(exc).__name__}:{exc}"
+
+    @staticmethod
+    def _directory_identity(value: os.stat_result) -> tuple[int, ...]:
+        # Entries may be created during a query; directory mtime/size are not
+        # identity. Device/inode/mode bind the original namespace instead.
+        return (value.st_dev, value.st_ino, value.st_mode)
+
+    def _open_workspace_root(self, *, capture: bool = False) -> int:
+        """Return one owned descriptor, checking every absolute ancestor."""
+        if not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd:
+            raise OSError("confined_read_unavailable")
+        if self._binding_error:
+            raise OSError(f"workspace_identity_drift:{self._binding_error}")
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        current = Path(self.root.anchor)
+        directory = os.open(current, flags)
+        try:
+            for component in (None, *self.root.parts[1:]):
+                if component is not None:
+                    child: int | None = None
+                    try:
+                        child = os.open(component, flags, dir_fd=directory)
+                        # Swap owners together; the inner finally closes the
+                        # pending child on failure or the parent on transfer.
+                        directory, child = child, directory
+                    finally:
+                        if child is not None:
+                            os.close(child)
+                    current /= component
+                identity = self._directory_identity(os.fstat(directory))
+                if capture:
+                    self._root_chain[current] = identity
+                elif self._root_chain.get(current) != identity:
+                    raise OSError(f"workspace_identity_drift:{current}")
+            return directory
+        except BaseException:
+            os.close(directory)
+            raise
+
+    def _check_workspace_binding(self) -> None:
+        """Metadata check never substitutes for descriptor checks at open."""
+        if self._binding_error:
+            raise OSError(f"workspace_identity_drift:{self._binding_error}")
+        for directory, identity in self._root_chain.items():
+            try:
+                current = directory.lstat()
+            except OSError as exc:
+                raise OSError(f"workspace_identity_drift:{directory}:{exc}") from exc
+            if self._directory_identity(current) != identity:
+                raise OSError(f"workspace_identity_drift:{directory}")
+
+    def confined_path(self, path: Path) -> tuple[Path, os.stat_result | None]:
+        self._check_workspace_binding()
+        requested = path if path.is_absolute() else self.root / path
+        try:
+            parts = requested.relative_to(self.root).parts
+        except ValueError as exc:
+            raise ValueError(f"outside_workspace:{requested}") from exc
+        current = self.root
+        missing = False
+        witness: os.stat_result | None = None
+        for part in parts:
+            if part == "..":
+                current = current.parent
+                if not current.is_relative_to(self.root):
+                    raise ValueError(f"outside_workspace:{requested}")
+                continue
+            current /= part
+            if missing:
+                continue
+            try:
+                witness = current.lstat()
+            except FileNotFoundError as exc:
+                if current in self._directories:
+                    raise OSError(f"directory_identity_drift:{current}:disappeared") from exc
+                missing, witness = True, None
+                continue
+            if stat.S_ISLNK(witness.st_mode):
+                raise ValueError(f"symlink_unvisited:{current}")
+            if stat.S_ISDIR(witness.st_mode):
+                identity = self._directory_identity(witness)
+                if self._directories.setdefault(current, identity) != identity:
+                    raise OSError(f"directory_identity_drift:{current}")
+        return current, witness
+
+    @staticmethod
+    def _identity(value: os.stat_result) -> tuple[int, ...]:
+        return (value.st_dev, value.st_ino, value.st_mode, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
+    def read(self, path: Path) -> WorkspaceTextReadSnapshot:
+        key = str(path)
+        if key in self._reads:
+            return self._reads[key]
+        witness: os.stat_result | None = None
+        read_fd: int | None = None
+        try:
+            full, witness = self.confined_path(path)
+            if witness is not None and not stat.S_ISREG(witness.st_mode):
+                raise OSError(f"not_regular_file:{full}")
+            if not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd:
+                raise OSError("confined_read_unavailable")
+
+            def opener(_name: str, flags: int) -> int:
+                nonlocal read_fd
+                directory = self._open_workspace_root()
+                try:
+                    components = full.relative_to(self.root).parts
+                    current_directory = self.root
+                    for component in components[:-1]:
+                        child: int | None = None
+                        try:
+                            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                            current_directory /= component
+                            if self._directories.get(current_directory) != self._directory_identity(os.fstat(child)):
+                                raise OSError(f"directory_identity_drift:{current_directory}")
+                            directory, child = child, directory
+                        finally:
+                            if child is not None:
+                                os.close(child)
+                    result_fd = os.open(components[-1], flags | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+                    try:
+                        opened = os.fstat(result_fd)
+                        _, current = self.confined_path(full)
+                        if (
+                            witness is None
+                            or current is None
+                            or not stat.S_ISREG(opened.st_mode)
+                            or self._identity(opened) != self._identity(witness)
+                            or self._identity(opened) != self._identity(current)
+                        ):
+                            raise OSError(f"read_identity_drift:{full}")
+                        read_fd = os.dup(result_fd)
+                    except BaseException:
+                        os.close(result_fd)
+                        raise
+                    return result_fd
+                finally:
+                    os.close(directory)
+
+            read_path = _ConfinedReadPath(full)
+            read_path._opener = opener
+            content = read_path.read_text(encoding="utf-8", errors="strict")
+            if read_fd is None:
+                raise OSError(f"read_witness_unavailable:{full}")
+            after = os.fstat(read_fd)
+            _, current = self.confined_path(full)
+            if (
+                current is None
+                or witness is None
+                or self._identity(witness) != self._identity(after)
+                or self._identity(after) != self._identity(current)
+            ):
+                raise OSError(f"read_identity_drift:{full}")
+            result = WorkspaceTextReadSnapshot(
+                str(full), "readable", text=content, content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest()
+            )
+            self._identities[key] = self._identity(after)
+        except FileNotFoundError as exc:
+            result = WorkspaceTextReadSnapshot(
+                key, "missing" if witness is None else "unknown", "" if witness is None else f"read_disappeared:{exc}"
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            result = WorkspaceTextReadSnapshot(key, "unknown", f"{type(exc).__name__}:{exc}")
+        finally:
+            if read_fd is not None:
+                os.close(read_fd)
+        self._reads[key] = result
+        return result
+
+    def drift_reasons(self) -> tuple[str, ...]:
+        """Check cached read witnesses without reopening any source content."""
+        reasons: list[str] = []
+        for key, identity in self._identities.items():
+            try:
+                _, current = self.confined_path(Path(key))
+                if current is None or self._identity(current) != identity:
+                    reasons.append(f"source_snapshot_drift:{key}")
+            except (OSError, RuntimeError, ValueError) as exc:
+                reasons.append(f"source_snapshot_drift:{key}:{type(exc).__name__}:{exc}")
+        return tuple(reasons)
+
+
+@dataclass(frozen=True)
+class DeclaredInterfaceLedgerSnapshot:
+    path: str
+    status: str
+    detail: str
+    payload: dict[str, Any]
+    content_sha256: str = ""
+
+
+def _ledger_payload_failure(data: Any) -> str:
+    if not isinstance(data, dict) or not isinstance(data.get("files"), dict):
+        return "malformed_ledger_structure"
+    if data.get("schema_version", _SCHEMA_VERSION) != _SCHEMA_VERSION:
+        return "unsupported_ledger_schema"
+    for target, entry in data["files"].items():
+        if not isinstance(entry, dict):
+            return f"malformed_ledger_entry:{target}"
+        for field in ("identifiers", "public_symbols", "signatures"):
+            if field in entry and (
+                not isinstance(entry[field], list) or any(not isinstance(item, str) for item in entry[field])
+            ):
+                return f"malformed_ledger_field:{target}:{field}"
+    return ""
+
+
+def read_declared_interface_ledger_snapshot(
+    workspace: str, cache_root: str, *, reader: WorkspaceReadSnapshot | None = None
+) -> DeclaredInterfaceLedgerSnapshot:
+    """Return validated payload and status from one confined actual read."""
+    if not cache_root:
+        raise ValueError("read-only interface ledger status requires an explicit root")
+    if reader is not None and reader.root != Path(workspace).resolve():
+        raise ValueError("read-only snapshot reader workspace binding mismatch")
+    reader = reader or WorkspaceReadSnapshot(workspace)
+    # With a nonempty root this preserves the legacy logical path mapping,
+    # without invoking storage initialization or consulting external caches.
+    path = Path(_ledger_path(workspace, cache_root))
+    read = reader.read(path)
+    empty: dict[str, Any] = {"schema_version": _SCHEMA_VERSION, "files": {}}
+    if read.status != "readable":
+        return DeclaredInterfaceLedgerSnapshot(read.path, read.status, read.detail, empty)
+    try:
+        data = json.loads(read.text)
+        failure = _ledger_payload_failure(data)
+    except (ValueError, RuntimeError) as exc:
+        failure = f"{type(exc).__name__}:{exc}"
+        data = empty
+    return DeclaredInterfaceLedgerSnapshot(
+        read.path, "unknown" if failure else "readable", failure, empty if failure else data, read.content_sha256
+    )
+
+
+def read_declared_interface_ledger_status(
+    workspace: str, cache_root: str, *, snapshot: DeclaredInterfaceLedgerSnapshot | None = None
+) -> tuple[str, str]:
+    """Project the same actual read witness; absence is optional, failure is not."""
+    if not cache_root:
+        raise ValueError("read-only interface ledger status requires an explicit root")
+    snapshot = snapshot or read_declared_interface_ledger_snapshot(workspace, cache_root)
+    return snapshot.status, snapshot.detail
+
+
 def _load(workspace: str, cache_root: str) -> dict[str, Any]:
     path = _ledger_path(workspace, cache_root)
     try:
@@ -208,12 +516,14 @@ def read_declared_interfaces(
     workspace: str,
     cache_root: str,
     target_files: list[str],
+    *,
+    snapshot: DeclaredInterfaceLedgerSnapshot | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Return ledger entries for the given target files (only those present)."""
     wanted = {_normalize_target(tf) for tf in target_files if _normalize_target(tf)}
     if not wanted:
         return {}
-    ledger = _load(workspace, cache_root)
+    ledger = snapshot.payload if snapshot is not None else _load(workspace, cache_root)
     files: dict[str, Any] = ledger["files"]
     declared: dict[str, dict[str, Any]] = {}
     for target in wanted:
@@ -237,6 +547,7 @@ def read_all_declared_interfaces(
     cache_root: str,
     *,
     exclude_target: str = "",
+    snapshot: DeclaredInterfaceLedgerSnapshot | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Return every ledger entry that declares identifiers/signatures.
 
@@ -247,7 +558,7 @@ def read_all_declared_interfaces(
     current step owns, leaving only what it must consume.
     """
     excluded = _normalize_target(exclude_target)
-    ledger = _load(workspace, cache_root)
+    ledger = snapshot.payload if snapshot is not None else _load(workspace, cache_root)
     files: dict[str, Any] = ledger["files"]
     declared: dict[str, dict[str, Any]] = {}
     for raw_target, entry in files.items():
@@ -269,6 +580,9 @@ def validate_declared_interface_issues_against_snapshot(
     workspace: str,
     cache_root: str,
     target_files: list[str] | None = None,
+    *,
+    ledger_snapshot: DeclaredInterfaceLedgerSnapshot | None = None,
+    source_snapshot: SymbolIndexSnapshot | None = None,
 ) -> tuple[DeclaredInterfaceValidationIssue, ...]:
     """Return typed issues for CE-declared interfaces missing from source snapshots.
 
@@ -281,18 +595,22 @@ def validate_declared_interface_issues_against_snapshot(
     from polaris.kernelone.quality.cross_artifact_interfaces import build_symbol_index_snapshot
 
     declared = (
-        read_declared_interfaces(workspace, cache_root, target_files)
+        read_declared_interfaces(workspace, cache_root, target_files, snapshot=ledger_snapshot)
         if target_files is not None
-        else read_all_declared_interfaces(workspace, cache_root)
+        else read_all_declared_interfaces(workspace, cache_root, snapshot=ledger_snapshot)
     )
     if not declared:
         return ()
 
-    snapshot = build_symbol_index_snapshot(workspace)
+    snapshot = source_snapshot or build_symbol_index_snapshot(workspace)
+    if snapshot.workspace != Path(workspace).resolve().as_posix():
+        raise ValueError("source snapshot workspace binding mismatch")
     issues: list[DeclaredInterfaceValidationIssue] = []
     for target, entry in sorted(declared.items()):
         normalized_target = _normalize_target(target)
         if normalized_target not in snapshot.files:
+            continue
+        if source_snapshot is not None and normalized_target in snapshot.unknown_export_paths:
             continue
         symbols = snapshot.namespace_exports.get(normalized_target, ())
         actual_names = {symbol.name for symbol in symbols}
@@ -366,7 +684,12 @@ def render_assume_contract(declared: dict[str, dict[str, Any]]) -> str:
 
 
 __all__ = [
+    "DeclaredInterfaceLedgerSnapshot",
+    "WorkspaceReadSnapshot",
+    "WorkspaceTextReadSnapshot",
     "read_all_declared_interfaces",
+    "read_declared_interface_ledger_snapshot",
+    "read_declared_interface_ledger_status",
     "read_declared_interfaces",
     "record_declared_interfaces",
     "render_assume_contract",

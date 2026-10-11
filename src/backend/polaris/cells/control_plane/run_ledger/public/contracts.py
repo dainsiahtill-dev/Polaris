@@ -16,6 +16,7 @@ class ReadRunLedgerProjectionQueryV1:
     project_id: str = ""
     max_runs: int = 50
     include_migration_ledgers: bool = False
+    canonical_only: bool = False
 
     def __post_init__(self) -> None:
         workspace = str(self.workspace or "").strip()
@@ -28,6 +29,10 @@ class ReadRunLedgerProjectionQueryV1:
             raise ValueError("project_id requires factory_run_id to prevent cross-run projection leakage")
         max_runs = max(1, min(500, int(self.max_runs or 50)))
         include_migration_ledgers = bool(self.include_migration_ledgers)
+        if type(self.canonical_only) is not bool:
+            raise ValueError("canonical_only must be a bool")
+        if self.canonical_only and include_migration_ledgers:
+            raise ValueError("canonical_only forbids migration ledgers")
         object.__setattr__(self, "workspace", workspace)
         object.__setattr__(self, "run_id", run_id)
         object.__setattr__(self, "factory_run_id", factory_run_id)

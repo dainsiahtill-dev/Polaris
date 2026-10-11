@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import logging
+import os
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, AsyncContextManager, NoReturn, TypeVar, cast, final
@@ -129,6 +130,10 @@ class FactorySemanticDispatchPropagationPort:
         "_qualification_proof",
         "_qualified_audit",
         "_qualified_context_snapshot_ref",
+        "_role_route_obligations",
+        "_route_declaration_projection",
+        "_route_fallback_authorization",
+        "_selected_role_binding",
         "_workspace",
     )
 
@@ -139,6 +144,9 @@ class FactorySemanticDispatchPropagationPort:
         binding: FactoryRoleEvidenceBindingV1,
         frozen: FactoryRoleFrozenSemanticRequestV1,
         workspace: str,
+        selected_role_binding_json: str = "",
+        role_route_obligations_json: str = "",
+        route_fallback_authorization_json: str = "",
     ) -> None:
         pairing_projection = _live_pairing_projection(authority, binding, frozen)
         normalized_workspace = str(workspace or "").strip()
@@ -153,6 +161,38 @@ class FactorySemanticDispatchPropagationPort:
         self._qualified_audit: dict[str, Any] | None = None
         self._qualified_context_snapshot_ref = ""
         self._physical_route_authority: dict[str, Any] | None = None
+        self._selected_role_binding = json.loads(selected_role_binding_json) if selected_role_binding_json else None
+        from polaris.cells.roles.kernel.public.provider_attempt_lifecycle_replay import (
+            _validate_route_obligations,
+            get_factory_provider_route_obligations_json,
+        )
+
+        declaration = get_factory_provider_route_obligations_json() or role_route_obligations_json
+        self._role_route_obligations = json.loads(declaration) if declaration else None
+        self._route_fallback_authorization = (
+            json.loads(route_fallback_authorization_json) if route_fallback_authorization_json else None
+        )
+        if self._role_route_obligations is not None:
+            scoped = self._role_route_obligations
+            for key, value in {
+                "schema_version": "llm.factory_role_route_obligations.v1",
+                "workspace": os.path.realpath(workspace),
+                "factory_run_id": authority.factory_run_id,
+                "role": authority.role,
+            }.items():
+                if key in scoped and scoped[key] != value:
+                    raise ValueError("route_obligation_scope_mismatch")
+                scoped[key] = value
+            _validate_route_obligations(scoped)
+        self._route_declaration_projection = self._project_route_declaration()
+
+    def _project_route_declaration(self) -> str:
+        return json.dumps(
+            [self._selected_role_binding, self._role_route_obligations, self._route_fallback_authorization],
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
 
     @property
     def frozen_semantic_request(self) -> FactoryRoleFrozenSemanticRequestV1:
@@ -165,6 +205,8 @@ class FactorySemanticDispatchPropagationPort:
             raise RuntimeError("factory_dispatch_frozen_request_identity_mismatch")
         if _live_pairing_projection(self._authority, self._binding, self._frozen) != self._pairing_projection:
             raise RuntimeError("factory_dispatch_live_pairing_drift")
+        if self._project_route_declaration() != self._route_declaration_projection:
+            raise RuntimeError("factory_dispatch_route_declaration_drift")
 
     def __repr__(self) -> str:
         state = "qualified" if self._qualified_audit is not None else "unqualified"
@@ -279,6 +321,7 @@ class FactorySemanticDispatchPropagationPort:
     ) -> None:
         """Bind the trusted Engine-resolved route before provider code runs."""
 
+        self.validate_frozen_identity(self._frozen)
         payload = json.loads(self._frozen.canonical_final_payload_json)
         normalized_mode = str(mode or "").strip().lower()
         if normalized_mode not in {"invoke", "stream"}:
@@ -300,6 +343,23 @@ class FactorySemanticDispatchPropagationPort:
             "provider_id": str(provider_id or "").strip(),
             "model": str(model or "").strip(),
         }
+        if self._selected_role_binding is not None:
+            selected = self._selected_role_binding
+            if (
+                not isinstance(selected, dict)
+                or set(selected) != {"schema_version", "role", "provider_id", "model", "binding_id"}
+                or selected.get("schema_version") != "llm.selected_role_binding.v1"
+                or selected.get("role") != self._authority.role
+                or selected.get("provider_id") != authority["provider_id"]
+                or selected.get("model") != authority["model"]
+                or not selected.get("binding_id")
+            ):
+                raise FinalProviderAttemptQualificationError("physical_selected_role_binding_drift")
+            authority["selected_role_binding"] = dict(selected)
+        if self._role_route_obligations is not None:
+            authority["role_route_obligations"] = copy.deepcopy(self._role_route_obligations)
+        if self._route_fallback_authorization is not None:
+            authority["route_fallback_authorization"] = copy.deepcopy(self._route_fallback_authorization)
         expected = {
             "provider_id": str(payload.get("provider_id") or ""),
             "model": str(payload.get("model") or ""),

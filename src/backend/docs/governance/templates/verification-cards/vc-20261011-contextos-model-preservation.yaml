@@ -1,0 +1,46 @@
+id: vc-20261011-contextos-model-preservation
+issue: POL-95
+mode: implementation
+classification: pattern
+owner: e42def29-b6a1-4fd2-9bf4-701fc0a3d747
+cell: kernelone.core
+blueprint: docs/blueprints/POLARIS_CONTEXTOS_MODEL_PRESERVATION_20261011.md
+assumptions:
+  - id: A1
+    claim: Global Pydantic trim corrupts incomplete quoted data tails.
+    evidence: ATTEMPT2_STATE_ENTRY_DEFECT.json and constructor RED
+  - id: A2
+    claim: Snapshot restoration duplicates an incomplete WorkingState field list.
+    evidence: models_v2.py WorkingStateV2.from_mapping versus ContextOSSnapshotV2.from_mapping
+  - id: A3
+    claim: Before metadata validator mutates caller mapping unnecessarily.
+    evidence: model_validate deep-copy RED and existing field validator
+  - id: A4
+    claim: Model prose policy strips edges without folding internal whitespace.
+    evidence: Baseline constructor controls and default normalizer controls
+  - id: A7
+    claim: Serialized nested content_ref is lost by snapshot model validation.
+    evidence: archive-content-ref-defect-v1.json and red-v2.xml
+pre_mortem:
+  - Global whitespace bypass weakens identity/provenance validation.
+  - Folding prose changes existing model semantics.
+  - Preserved malformed text is mistaken for plan admission.
+  - Native ReceiptStore or target runtime is accessed accidentally.
+verification:
+  test: src/backend/polaris/kernelone/context/tests/test_contextos_model_state_preservation.py
+  commands:
+    - rtk proxy .venv/bin/python3.13 -B .superpowers/sdd/2026-10-11-contextos-model-preservation/implementation/run_check.py green review
+    - rtk proxy .venv/bin/python3.13 -B .superpowers/sdd/2026-10-11-contextos-model-preservation/implementation/run_check.py regression review
+    - rtk proxy .venv/bin/python3.13 -B .superpowers/sdd/2026-10-11-contextos-model-preservation/implementation/run_check.py ruff review
+    - rtk proxy .venv/bin/python3.13 -B .superpowers/sdd/2026-10-11-contextos-model-preservation/implementation/run_check.py format review
+    - rtk proxy .venv/bin/python3.13 -B .superpowers/sdd/2026-10-11-contextos-model-preservation/implementation/run_check.py mypy review
+    - rtk proxy git diff --check
+  expected: Focused controls pass; existing failure signatures explicitly compared.
+acceptance:
+  - Data bytes preserved inside complete/incomplete quotes without JSON approval.
+  - Every declared WorkingState field survives actual serialization/restoration.
+  - Metadata and caller mappings remain unchanged.
+  - Three continuity input forms and private large archive exercise real code.
+  - Protected source and immutable input hashes preserved.
+  - Root review and independent QA remain required.
+global_release_gates: not_executed_in_bounded_source_task

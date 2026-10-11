@@ -13,9 +13,11 @@ from .contracts import (
     RepairDiagnostic,
     RepairExecutionResult,
     RepairPlan,
+    sha256_text,
 )
 from .diagnostics import normalize_artifact_quality_errors
 from .executor import EditFileFn, TransactionalRepairExecutor, WriteFileFn
+from .path_files import normalize_repair_path_permissive
 from .policy_gate import PolicyDecision, RepairPolicyContext, RepairPolicyGate
 from .typescript_syntax import (
     TYPESCRIPT_CANVAS_SCALE_RETURN_TYPE_SOURCE_TOOL,
@@ -570,12 +572,21 @@ def plan_typescript_runtime_repair_for_source_tool(
     """Plan a migrated TypeScript/HTML repair through the runtime syntax builders."""
 
     normalized_source_tool = str(source_tool or "").strip()
-    normalized_base = _normalize_base_files(base_files)
     diagnostics = _diagnostics_for_typescript_runtime(
         artifact_quality_errors=artifact_quality_errors,
         repair_diagnostics=repair_diagnostics,
     )
     notes = tuple(advisor_notes or ())
+    conflicts = _conflicting_base_file_alias_diagnostics(base_files)
+    if conflicts:
+        return TypeScriptRuntimePlanning(
+            source_tool=normalized_source_tool,
+            diagnostics=(*diagnostics, *conflicts),
+            plan=None,
+            composition=None,
+            advisor_notes=notes,
+        )
+    normalized_base = _normalize_base_files(base_files)
     plan = build_typescript_runtime_plan_for_source_tool(
         source_tool=normalized_source_tool,
         base_files=normalized_base,
@@ -1185,21 +1196,25 @@ def run_typescript_runtime_repair_for_source_tool(
 ) -> TypeScriptRuntimeRun:
     """Run a migrated TypeScript/HTML repair through Plan->Compose->Policy->Execute."""
 
-    normalized_base = _normalize_base_files(base_files)
     planning = plan_typescript_runtime_repair_for_source_tool(
         source_tool=source_tool,
-        base_files=normalized_base,
+        base_files=base_files,
         artifact_quality_errors=artifact_quality_errors,
         repair_diagnostics=repair_diagnostics,
         advisor_notes=advisor_notes,
         mode=mode,
     )
     if planning.plan is None:
+        conflicts = tuple(item for item in planning.diagnostics if item.code == "conflicting_base_file_alias")
         return TypeScriptRuntimeRun(
             planning=planning,
             ok=False,
-            error_code="repair_not_planned",
-            error_message=f"No matching TypeScript runtime repair plan for {planning.source_tool}.",
+            error_code="conflicting_base_file_alias" if conflicts else "repair_not_planned",
+            error_message=(
+                "\n".join(item.message for item in conflicts)
+                if conflicts
+                else f"No matching TypeScript runtime repair plan for {planning.source_tool}."
+            ),
         )
     if planning.composition is None:
         return TypeScriptRuntimeRun(
@@ -1209,6 +1224,7 @@ def run_typescript_runtime_repair_for_source_tool(
             error_message="TypeScript runtime repair composition was not produced.",
         )
 
+    normalized_base = _normalize_base_files(base_files)
     policy = RepairPolicyGate()
     policy_context = RepairPolicyContext(
         allowed_paths=tuple(
@@ -1243,6 +1259,38 @@ def run_typescript_runtime_repair_for_source_tool(
         error_code=None if execution_result.ok else "repair_execution_failed",
         error_message=None if execution_result.ok else execution_result.error,
     )
+
+
+def _conflicting_base_file_alias_diagnostics(base_files: Mapping[str, str]) -> tuple[RepairDiagnostic, ...]:
+    """Preserve differing owners before migrated planners collapse path aliases.
+
+    Reuse declared permissive equivalence for comparison only; path acceptance
+    and specialized planner normalization remain unchanged.
+    """
+
+    owners: dict[str, list[tuple[str, str]]] = {}
+    for raw_path, content in dict(base_files or {}).items():
+        path = normalize_repair_path_permissive(str(raw_path or ""))
+        if path:
+            owners.setdefault(path, []).append((str(raw_path), str(content or "")))
+    conflicts: list[RepairDiagnostic] = []
+    for path, aliases in owners.items():
+        if len({content for _, content in aliases}) < 2:
+            continue
+        evidence = tuple((raw_path, sha256_text(content)) for raw_path, content in sorted(aliases))
+        message = f"Conflicting base-file aliases for {path!r}: " + "; ".join(
+            f"{raw_path} (sha256={content_hash})" for raw_path, content_hash in evidence
+        )
+        conflicts.append(
+            RepairDiagnostic(
+                source="director.runtime.base_files",
+                code="conflicting_base_file_alias",
+                path=path,
+                message=message,
+                metadata={"normalized_path": path, "alias_content_hashes": evidence},
+            )
+        )
+    return tuple(conflicts)
 
 
 def _normalize_base_files(base_files: Mapping[str, str]) -> dict[str, str]:

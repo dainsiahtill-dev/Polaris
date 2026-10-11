@@ -1493,7 +1493,10 @@ def test_artifact_quality_issues_from_errors_projects_undeclared_runtime_import(
 def test_scan_detects_typescript_project_typecheck_failure(tmp_path: Path, monkeypatch) -> None:
     from types import SimpleNamespace
 
-    from polaris.kernelone.quality import artifact_quality as aq
+    from polaris.kernelone.quality import (
+        artifact_quality as aq,
+        syntax_gate,
+    )
 
     (tmp_path / "tsconfig.json").write_text(
         '{"compilerOptions":{"strict":true},"include":["src/**/*.ts"]}\n',
@@ -1503,9 +1506,39 @@ def test_scan_detects_typescript_project_typecheck_failure(tmp_path: Path, monke
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("export const flowers: Map<string, string> = [];\n", encoding="utf-8")
 
-    def fake_run(*args, **kwargs):
-        assert args[0] == ["tsc", "--noEmit", "--pretty", "false"]
-        assert kwargs["cwd"] == str(tmp_path)
+    node = aq.shutil.which("node")
+    compiler_api = syntax_gate._typescript_compiler_api_path("tsc")
+    assert node is not None
+    assert compiler_api is not None
+    parser_command = [node, "-e", syntax_gate._TS_PARSE_DIAGNOSTICS_SCRIPT, compiler_api, str(target)]
+    real_run = aq.subprocess.run
+    calls: list[str] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        if command == parser_command:
+            assert kwargs == {
+                "cwd": str(target.parent),
+                "capture_output": True,
+                "text": True,
+                "timeout": 20,
+                "check": False,
+            }
+            assert target.read_text(encoding="utf-8") == "export const flowers: Map<string, string> = [];\n"
+            calls.append("parser")
+            result = real_run(command, **kwargs)
+            assert result.returncode == 0
+            assert result.stdout == ""
+            assert result.stderr == ""
+            return result
+        assert command == ["tsc", "--noEmit", "--pretty", "false"]
+        assert kwargs == {
+            "cwd": str(tmp_path),
+            "capture_output": True,
+            "text": True,
+            "timeout": 30,
+            "check": False,
+        }
+        calls.append("project")
         return SimpleNamespace(
             returncode=2,
             stdout="src/config.ts(1,45): error TS2740: Type 'undefined[]' is missing Map methods.\n",
@@ -1518,6 +1551,23 @@ def test_scan_detects_typescript_project_typecheck_failure(tmp_path: Path, monke
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/config.ts"])
 
     assert any("TypeScript project typecheck failed" in error and "src/config.ts" in error for error in errors)
+    assert calls == ["parser", "project"]
+    assert any("TS2740" in error and "missing Map methods" in error for error in errors)
+    assert not any("syntax error" in error for error in errors)
+
+    calls.clear()
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["src/config.ts"])
+
+    assert calls == ["parser", "project"]
+    assert list(evidence.errors) == errors
+    assert evidence.scan_mode == "legacy"
+    assert evidence.scanned_relative_paths == ("src/config.ts",)
+    project_issues = [issue for issue in evidence.issues if issue.code == "typescript_project_typecheck_failed"]
+    assert len(project_issues) == 1
+    assert project_issues[0].source == "typescript_project_typecheck"
+    assert project_issues[0].metadata["command"] == "tsc --noEmit --pretty false"
+    assert project_issues[0].metadata["exit_code"] == 2
+    assert "src/config.ts(1,45): error TS2740" in project_issues[0].metadata["detail"]
 
 
 def test_scan_skips_global_tsc_when_package_declares_uninstalled_typescript(tmp_path: Path, monkeypatch) -> None:
@@ -1852,7 +1902,31 @@ def test_scan_detects_patch_residue_marker(tmp_path: Path) -> None:
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/assets/card-assets.ts"])
 
     assert errors
-    assert "patch residue marker" in errors[0]
+    assert any("patch residue marker" in error and "src/assets/card-assets.ts" in error for error in errors)
+    assert ">>>> REPLACE src/assets/card-assets.ts" in target.read_text(encoding="utf-8")
+
+    evidence = scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["src/assets/card-assets.ts"])
+
+    assert list(evidence.errors) == errors
+    assert evidence.scan_mode == "legacy"
+    assert evidence.scanned_relative_paths == ("src/assets/card-assets.ts",)
+    marker_issues = [issue for issue in evidence.issues if issue.code == "patch_residue_marker"]
+    assert len(marker_issues) == 1
+    marker = marker_issues[0]
+    assert marker.path == "src/assets/card-assets.ts"
+    assert marker.source == "file_artifact_scanner"
+    assert "patch residue marker" in marker.message
+    assert marker.metadata["raw"] in errors
+    assert marker.metadata["marker_kind"] == "patch_residue"
+    assert marker.metadata["marker_value"] in target.read_text(encoding="utf-8")
+    assert marker.metadata["marker_value"].startswith(">>>> REPLACE")
+    syntax_issues = [issue for issue in evidence.issues if issue.code == "syntax_error"]
+    assert len(syntax_issues) == 1
+    assert syntax_issues[0].path == "src/assets/card-assets.ts"
+    assert syntax_issues[0].source == "source_syntax_checker"
+    assert "TS1109: Expression expected." in syntax_issues[0].metadata["syntax_error"]
+    assert syntax_issues[0].metadata["raw"] in errors
+    assert any("syntax error" in error and "TS1109: Expression expected." in error for error in errors)
 
 
 def test_scan_detects_repeated_numeric_helper_filler(tmp_path: Path) -> None:

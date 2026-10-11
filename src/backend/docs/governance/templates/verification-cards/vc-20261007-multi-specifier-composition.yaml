@@ -1,0 +1,57 @@
+id: vc-20261007-multi-specifier-composition
+classification: pattern
+owner: director.runtime
+issue: POL-27
+mode: implementation
+blueprint: docs/blueprints/POLARIS_MULTISPEC_REPAIR_CLOSURE_20261007.md
+assumption_register:
+  - assumption: sequential proof may use intermediate source but emitted mutations must bind original source
+    evidence: ACTIVE builder appends operations hashed against updated while Composer uses immutable base_files
+    falsification: raw and typed interleaved a/b/a/b composition must succeed with one original-base operation
+  - assumption: net text replacement preserves proof and safety without changing Composer
+    evidence: existing text_replace repair helper emits original-hash spans
+    falsification: exact full content, reversed order, Unicode and stale-base refusal must agree
+  - assumption: case and unused share this builder and require independent regression
+    evidence: ACTIVE three wrapper call paths
+    falsification: multi-specifier case and unused output must compose against original bytes
+pre_mortem:
+  - grouping intermediate operations retains stale hashes or overlapping spans
+  - complete planning is confused with complete diagnostic resolution
+  - source formatting changes non-code or unrelated imports
+  - old identity frontier intentionally expects this defect and cannot be silently weakened
+scope:
+  - src/backend/polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax/imports_exports.py
+  - src/backend/polaris/cells/director/runtime/tests/test_multi_specifier_composition_frontier.py
+  - src/backend/docs/governance/templates/verification-cards/vc-20261007-multi-specifier-composition.yaml
+forbidden: AST producer, old tests, public identity, Composer, policy, receipts, registry, DTO, targets, API writes
+verification_commands:
+  - rtk proxy python3 .superpowers/sdd/2026-10-06-paperclip-repair-frontier/multi-specifier-composition/check.py red-v1 rtk proxy .venv/bin/python3.13 -m pytest -q -o addopts= -p no:cacheprovider src/backend/polaris/cells/director/runtime/tests/test_multi_specifier_composition_frontier.py --basetemp "$PAPERCLIP_RUN_SCRATCH_DIR/red-v1"
+  - rtk proxy python3 .superpowers/sdd/2026-10-06-paperclip-repair-frontier/multi-specifier-composition/check.py green-v1 rtk proxy .venv/bin/python3.13 -m pytest -q -o addopts= -p no:cacheprovider src/backend/polaris/cells/director/runtime/tests/test_multi_specifier_composition_frontier.py --basetemp "$PAPERCLIP_RUN_SCRATCH_DIR/green-v1"
+verification_plan:
+  - public raw/typed/mixed exact composition and immutable input hashes
+  - reversed order, duplicate evidence, same-specifier multiple statements, two importers
+  - unsafe or absent binding, unknown identity, partial diagnostic proposal remains explicit
+  - exact platform output private TS5.9.3 compiler with isolated cwd/types/typeRoots and strict inputs
+  - real stale hash and overlapping operation refusal
+  - complete requested selectors collection/run and shared caller regression
+  - scoped Ruff/mypy/diff check, baseline lint/format debt comparison
+authority: external component evidence only; Root and independent reviewer acceptance required
+validation_evidence:
+  directory: .superpowers/sdd/2026-10-06-paperclip-repair-frontier/multi-specifier-composition/
+  original_builder_final_frontier: red-final.txt
+  current_final_frontier: green-final.txt
+  actual_public_before_after: red-public-v1.txt, green-public-v1.txt
+  exact_private_compiler: compiler-v1.txt
+  requested_collection: selected-collect-final.txt
+  requested_run: selected-run-v1.txt
+  shared_callers: shared-callers-final.txt
+  scope: task-source.diff, integrity-final.json
+  defects: defects.json
+acceptance:
+  new_frontier: 22 passed
+  original_frontier: 13 failed, 9 passed
+  selected: 847 collected; 829 passed, 18 failed
+  blocker: frozen identity frontier requires old composition failure; Root must authorize its test owner
+  source_quality_debt: Ruff 116 before, 111 after, no new findings; source format debt preserved
+  independent_review: pending Root assignment and acceptance
+unrun: Provider, Bench, service, effect execution, receipt settlement, repository-wide and release gates

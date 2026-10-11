@@ -129,6 +129,38 @@ def basic_context():
     return [{"role": "user", "content": "Read main.py and tell me its contents"}]
 
 
+@pytest.mark.parametrize(
+    "last", [None, {}, {"context_os_audit": {"source": "finalization"}}, {"generation_outcome": {"bad": True}}]
+)
+def test_pol79_latest_call_missing_outcome_never_inherits(controller, last):
+    from polaris.cells.roles.kernel.tests.test_pm_generation_contracts import outcome
+
+    ledger = TurnLedger(turn_id="last-call-control")
+    ledger.record_llm_call(
+        phase="decision", model="local", tokens_in=1, tokens_out=1, metadata={"generation_outcome": outcome()}
+    )
+    ledger.record_llm_call(phase="finalization", model="local", tokens_in=1, tokens_out=1, metadata=last)
+    result = controller._build_turn_result(
+        "last-call-control", "final_answer", "same", {"kind": "final_answer"}, None, None, ledger
+    )
+    assert "generation_outcome" not in result.get("llm_response_metadata", {})
+
+
+def test_pol79_two_calls_select_actual_last_atomic_outcome(controller):
+    from polaris.cells.roles.kernel.tests.test_pm_generation_contracts import outcome
+
+    ledger = TurnLedger(turn_id="two-call-control")
+    a, b = outcome(), outcome(call="b" * 32, reason="end_turn", budget=2048)
+    for payload in [a, b]:
+        ledger.record_llm_call(
+            phase="decision", model="local", tokens_in=1, tokens_out=1, metadata={"generation_outcome": payload}
+        )
+    result = controller._build_turn_result(
+        "two-call-control", "final_answer", "same", {"kind": "final_answer"}, None, None, ledger
+    )
+    assert result["llm_response_metadata"]["generation_outcome"] == b
+
+
 @pytest.fixture
 def basic_tool_definitions():
     """Basic tool definitions"""

@@ -21,6 +21,9 @@ from types import MethodType, SimpleNamespace
 from typing import Any
 
 import pytest
+
+
+
 from polaris.cells.chief_engineer.blueprint.public import (
     BlueprintPersistence,
     BuildChiefEngineerBlueprintPortfolioCommandV1,
@@ -888,3 +891,45 @@ class TestMirrorHelpers:
         assert "workspace/blueprints/latest.review.json" in artifacts
         assert "workspace/roles/chief_engineer/run-9/blueprints/bp1.json" in artifacts
         assert "workspace/blueprints/bp1.json" in artifacts
+
+
+def test_pol77_generated_inventory_survives_real_factory_ce_projection_without_write_grant(tmp_path: Path) -> None:
+    from polaris.cells.orchestration.pm_planning.tests.test_artifact_contracts import _plan
+
+    tasks = _plan()
+    catalog = tmp_path / ".polaris/catalog_contract.json"
+    catalog.parent.mkdir(parents=True, exist_ok=True)
+    catalog.write_text(json.dumps({"primary_language": "typescript"}), encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
+    assert executor._validate_pm_plan_language_consistency() == ""
+    enriched = executor._enrich_pm_plan_contract_artifact()
+    assert enriched["generated_target_count"] == 1
+    loaded = executor._load_pm_plan_tasks()
+    assert "dist/main.js" not in loaded[0]["project_declared_target_files"]
+    assert "dist/main.js" not in loaded[0]["project_declared_source_targets"]
+    policy = loaded[0]["manifest_entrypoint_contract"]
+    assert "dist/main.js" in policy["allowed_local_entrypoints"]
+    assert policy["generated_outputs"][0]["task_id"] == "build"
+    portfolio = executor._chief_engineer_portfolio_tasks(loaded)
+    assert portfolio[0].to_dict()["generated_outputs"] == tasks[0]["generated_outputs"]
+    assert portfolio[1].to_dict()["context_files"] == ["dist/main.js"]
+    assert portfolio[0].target_files == ("src/main.ts",)
+    assert "dist/main.js" not in portfolio[0].scope_paths
+    assert "dist/main.js" in executor._missing_declared_delivery_targets(loaded)
+
+
+def test_pol77_derived_inventory_cannot_inherit_model_write_or_source_claims() -> None:
+    from polaris.cells.factory.pipeline.internal.factory_pm_contract_normalization import (
+        inject_project_declared_target_contract,
+    )
+
+    context: dict[str, Any] = {"target_files": ["src/main.ts"], "scope_paths": ["src/main.ts"],
+               "project_declared_target_files": ["dist/main.js"],
+               "metadata": {"project_declared_source_targets": ["dist/main.js"],
+                            "project_declared_target_files": ["dist/main.js"]}}
+    inject_project_declared_target_contract(context, project_declared_target_files=["src/main.ts"])
+    assert context["project_declared_target_files"] == ["src/main.ts"]
+    assert context["metadata"]["project_declared_target_files"] == ["src/main.ts"]
+    assert context["metadata"]["project_declared_source_targets"] == ["src/main.ts"]
+    assert context["target_files"] == context["scope_paths"] == ["src/main.ts"]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from .contracts import RepairDiagnostic
@@ -160,21 +161,23 @@ _VERIFIER_LOCATION_RE = re.compile(
 )
 
 
-def _workspace_validation_output_payload(text: str) -> str:
-    """Remove a balanced command envelope while retaining verifier output.
+def _workspace_validation_output_payload(text: str) -> tuple[str, str]:
+    """Separate bounded command provenance from the actual verifier output.
 
     Workspace validation records may embed a multi-line ``python -c`` program
     inside ``command failed (<command>): <output>``.  A regex that stops at the
     first ``)`` cannot delimit such a command, so every source line was later
     projected as an independent repair diagnostic (L3-24 r43: 79 rows from
-    three real failures).  Parse only the balanced outer command parentheses;
-    command provenance remains authoritative in the verifier receipt.
+    three real failures). Parse only the balanced outer command parentheses.
+    Command context requires non-empty output. Single-line command data is
+    bounded to 1024 characters; embedded programs never enter diagnostic parsing.
+    Execution authority remains exclusively in the verifier receipt/tool policy.
     """
 
     raw = str(text or "")
     prefix = re.search(r"workspace validation command failed\s*\(", raw, re.IGNORECASE)
     if prefix is None:
-        return raw
+        return raw, ""
     depth = 1
     quote = ""
     escaped = False
@@ -199,9 +202,15 @@ def _workspace_validation_output_payload(text: str) -> str:
                 if suffix.startswith(":"):
                     payload = suffix[1:].lstrip()
                     if payload:
-                        return payload
-                return raw
-    return raw
+                        command = raw[prefix.end() : index].strip()
+                        if len(command) > 1024 or "\n" in command or "\r" in command:
+                            command = ""
+                        return payload, command
+                    # A verifier can fail without output. Its embedded program
+                    # still is not stdout/stderr and must not become compiler rows.
+                    return raw[: prefix.end() - 1].rstrip(), ""
+                return raw, ""
+    return raw, ""
 _TAP_FIELD_RE = re.compile(r"(?m)^\s*(?P<key>actual|expected|operator):\s*(?P<value>.+?)\s*$", re.IGNORECASE)
 
 
@@ -241,7 +250,7 @@ def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiag
         escaped_transcript = "\\n" in text and bool(
             re.search(r"\\n(?:stdout|stderr):\\n", text, re.IGNORECASE)
         )
-        if "\n" in text or escaped_transcript:
+        if "\n" in text or escaped_transcript or _WORKSPACE_VALIDATION_RE.search(text):
             flush_ts_buffer()
             diagnostics.extend(_normalize_text_error_blob(text))
             continue
@@ -333,9 +342,50 @@ def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiag
 
 
 def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
-    """Normalize one text blob that may contain multi-line tsc diagnostics."""
+    """Keep command data beside causal diagnostics without parsing command code."""
 
-    blob = _workspace_validation_output_payload(str(text or ""))
+    blob, command = _workspace_validation_output_payload(str(text or ""))
+    # Existing Node registry/planners consume invocation/error conjunctions in
+    # raw evidence. Only an actual npm invocation supplies that context; quoted
+    # strings inside another program must not impersonate an npm invocation.
+    npm_command = command if re.match(r"^npm\s+(?:run\s+)?(?:test|start|serve)(?:\s|$)", command) else ""
+    diagnostics = _normalize_verifier_output_payload(blob, npm_command)
+    if not command:
+        return diagnostics
+    if npm_command:
+        # Wrapper display prose is not a causal identity. Two missing targets
+        # or port collisions must not deduplicate into the same generic failure.
+        headline = next(
+            (
+                line.strip()
+                for line in blob.splitlines()
+                if re.search(r"could not find|module_not_found|eaddrinuse", line, re.IGNORECASE)
+            ),
+            "",
+        )
+        if headline:
+            diagnostics = [
+                replace(diagnostic, message=f"Workspace validation command failed: {headline}", diagnostic_id="")
+                if diagnostic.code == "workspace_validation_failed"
+                else diagnostic
+                for diagnostic in diagnostics
+            ]
+    return [
+        replace(
+            diagnostic,
+            metadata={
+                **dict(diagnostic.metadata),
+                **({"command": command} if "command" in diagnostic.metadata else {}),
+                "verifier_command": command,
+            },
+        )
+        for diagnostic in diagnostics
+    ]
+
+
+def _normalize_verifier_output_payload(blob: str, npm_command: str) -> list[RepairDiagnostic]:
+    """Parse only stdout/stderr; add bounded context to dependent Node islands."""
+
     if not blob.strip():
         return []
     # Verifier frameworks can quote a nested compiler transcript, preserving
@@ -346,8 +396,15 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
     # two characters ``\\n`` and must remain byte-faithful.
     if "\\n" in blob and re.search(r"\\n(?:stdout|stderr):\\n", blob, re.IGNORECASE):
         blob = blob.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
+    contextual_blob = f"workspace validation command failed ({npm_command}):\n{blob}" if npm_command else blob
     expanded = _normalize_typescript_errors(blob)
     if expanded:
+        expanded = [
+            replace(diagnostic, raw=contextual_blob)
+            if npm_command and diagnostic.code == "javascript_module_error"
+            else diagnostic
+            for diagnostic in expanded
+        ]
         residuals: list[RepairDiagnostic] = []
         expanded_codes = {item.code for item in expanded}
         for line in blob.splitlines():
@@ -436,14 +493,26 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
     if cpp_compiler_failures:
         return cpp_compiler_failures
     lowered = blob.lower()
-    if ("npm run test" in lowered or "npm test" in lowered) and (
-        "module_not_found" in lowered or "cannot find module" in lowered or "could not find" in lowered
-    ):
+    if (
+        re.match(r"^npm\s+(?:run\s+)?test(?:\s|$)", npm_command) or "npm run test" in lowered or "npm test" in lowered
+    ) and ("module_not_found" in lowered or "cannot find module" in lowered or "could not find" in lowered):
         # A Node verifier failure is one causal diagnostic. Splitting its stack
         # trace into independent rows discards the conjunction between the npm
         # test command and MODULE_NOT_FOUND, so coverage becomes unplannable and
         # the Director needlessly escalates instead of editing the exact task.
-        return [_normalize_one_error(blob.strip())]
+        diagnostic = _normalize_one_error(blob.strip())
+        if npm_command:
+            if diagnostic.code == "artifact_quality_error":
+                diagnostic = RepairDiagnostic(
+                    source="verifier",
+                    code="workspace_validation_failed",
+                    message="Workspace validation command failed.",
+                    raw=blob,
+                    metadata={"command": npm_command},
+                )
+            # Invocation arguments are provenance data, never compiler input.
+            diagnostic = replace(diagnostic, raw=contextual_blob)
+        return [diagnostic]
     if ".js" in lowered and "requires" in lowered and " at new " in lowered:
         # A JavaScript constructor-contract error and its ``at new`` frame are
         # one causal island. Splitting them makes both coverage and the runtime
@@ -460,6 +529,16 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
     # Normalize the causal blob before per-line fallback so the leading
     # wrapper cannot mask the nested error as a generic validation failure.
     combined = _normalize_one_error(blob.strip())
+    if npm_command and combined.code == "javascript_module_error":
+        combined = replace(combined, raw=contextual_blob)
+    if npm_command and combined.code == "artifact_quality_error" and "eaddrinuse" in blob.lower():
+        combined = RepairDiagnostic(
+            source="verifier",
+            code="workspace_validation_failed",
+            message="Workspace validation command failed.",
+            raw=contextual_blob,
+            metadata={"command": npm_command},
+        )
     if combined.code == "workspace_validation_failed" and "eaddrinuse" in lowered:
         # Keep the command wrapper and its nested port collision as one causal
         # diagnostic. The npm-script repair rule deliberately matches both the

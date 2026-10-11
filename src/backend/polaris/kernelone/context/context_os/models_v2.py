@@ -17,14 +17,24 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from functools import partial
+from typing import TYPE_CHECKING, Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from polaris.kernelone.context.text_normalization import normalize_quoted_text
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+# Keep data opaque while retaining model-specific edge-only prose trimming.
+_DataText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=False),
+    AfterValidator(partial(normalize_quoted_text, collapse_whitespace=False)),
+]
 
 
 class DialogAct(str, Enum):
@@ -77,7 +87,7 @@ class TranscriptEventV2(BaseModel):
     role: str = Field(default="")
     kind: str = Field(default="")
     route: str = Field(default="")
-    content: str = Field(default="")
+    content: _DataText = Field(default="")
     source_turns: tuple[str, ...] = Field(default_factory=tuple)
     artifact_id: str | None = None
     created_at: str = Field(default="")
@@ -102,15 +112,6 @@ class TranscriptEventV2(BaseModel):
         if not isinstance(v, (list, tuple)):
             return ()
         return tuple(v)
-
-    @model_validator(mode="before")
-    @classmethod
-    def handle_dict_metadata(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "metadata" in data:
-            metadata = data["metadata"]
-            if isinstance(metadata, dict):
-                data["metadata"] = tuple(sorted(metadata.items()))
-        return data
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -151,7 +152,7 @@ class ArtifactRecordV2(BaseModel):
     char_count: int = Field(default=0, ge=0)
     peek: str = Field(default="")
     keys: tuple[str, ...] = Field(default_factory=tuple)
-    content: str = Field(default="")
+    content: _DataText = Field(default="")
     source_event_ids: tuple[str, ...] = Field(default_factory=tuple)
     restore_tool: str = Field(default="read_artifact")
     metadata: tuple[tuple[str, Any], ...] = Field(default_factory=tuple)
@@ -347,7 +348,7 @@ class StateEntryV2(BaseModel):
 
     entry_id: str = Field(..., min_length=1)
     path: str = Field(default="")
-    value: str = Field(default="")
+    value: _DataText = Field(default="")
     source_turns: tuple[str, ...] = Field(default_factory=tuple)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     updated_at: str = Field(default="")
@@ -504,7 +505,7 @@ class DecisionEntryV2(BaseModel):
     )
 
     decision_id: str = Field(..., min_length=1)
-    summary: str = Field(default="")
+    summary: _DataText = Field(default="")
     source_turns: tuple[str, ...] = Field(default_factory=tuple)
     updated_at: str = Field(default="")
     kind: str = Field(default="decision")
@@ -656,6 +657,17 @@ class ContextOSSnapshotV2(BaseModel):
         receipt_export: dict[str, str] = dict(payload.get("_receipt_store_export") or {})
 
         def _restore_receipt(event_data: dict[str, Any]) -> dict[str, Any]:
+            content_ref = event_data.get("content_ref")
+            if isinstance(content_ref, dict):
+                event_data = dict(event_data)
+                for key, field_name in (
+                    ("hash", "content_ref_hash"),
+                    ("size", "content_ref_size"),
+                    ("mime", "content_ref_mime"),
+                    ("encoding", "content_ref_encoding"),
+                ):
+                    if key in content_ref:
+                        event_data.setdefault(field_name, content_ref[key])
             content = event_data.get("content", "")
             if isinstance(content, str) and content.startswith("<receipt_ref:") and content.endswith(">"):
                 ref_id = content[len("<receipt_ref:") : -1]
@@ -688,57 +700,8 @@ class ContextOSSnapshotV2(BaseModel):
                 )
                 transcript_log.append(evt)
 
-        # Parse working_state
-        ws_payload = payload.get("working_state")
-        if ws_payload is None:
-            working_state = WorkingStateV2()
-        else:
-            working_state = WorkingStateV2(
-                user_profile=UserProfileStateV2(
-                    preferences=tuple(
-                        s
-                        for s in (
-                            StateEntryV2.from_mapping(v)
-                            for v in ws_payload.get("user_profile", {}).get("preferences", [])
-                        )
-                        if s is not None
-                    ),
-                    style=tuple(
-                        s
-                        for s in (
-                            StateEntryV2.from_mapping(v) for v in ws_payload.get("user_profile", {}).get("style", [])
-                        )
-                        if s is not None
-                    ),
-                    persistent_facts=tuple(
-                        s
-                        for s in (
-                            StateEntryV2.from_mapping(v)
-                            for v in ws_payload.get("user_profile", {}).get("persistent_facts", [])
-                        )
-                        if s is not None
-                    ),
-                ),
-                task_state=TaskStateViewV2(
-                    current_goal=StateEntryV2.from_mapping(ws_payload.get("task_state", {}).get("current_goal"))
-                    if ws_payload.get("task_state", {}).get("current_goal")
-                    else None,
-                    open_loops=tuple(
-                        s
-                        for s in (
-                            StateEntryV2.from_mapping(v) for v in ws_payload.get("task_state", {}).get("open_loops", [])
-                        )
-                        if s is not None
-                    ),
-                    blocked_on=tuple(
-                        s
-                        for s in (
-                            StateEntryV2.from_mapping(v) for v in ws_payload.get("task_state", {}).get("blocked_on", [])
-                        )
-                        if s is not None
-                    ),
-                ),
-            )
+        # Use the complete canonical working-state restoration contract.
+        working_state = WorkingStateV2.from_mapping(payload.get("working_state"))
 
         # Parse budget_plan
         bp_payload = payload.get("budget_plan")

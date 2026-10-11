@@ -14,7 +14,7 @@ This module owns:
   duplicated in ``roles.adapters`` director adapter and ``roles.kernel``
   llm_caller tool_helpers with diverging edge semantics — see
   :func:`forced_write_output_token_ceiling`);
-- the shared budget/timeout context-key tuples both reader stacks scan;
+- the shared budget/timeout context-key tuples and canonical pure output scan;
 - :func:`classify_turn_kind` — the single turn-kind classifier built from the
   EXISTING detection signals (stage labels, retry context markers, forced tool
   surface) previously string-matched independently per call path;
@@ -27,9 +27,9 @@ Reader key-set divergence (documented, deliberately NOT merged)
 Two scanner families read output budgets out of a turn context and their key
 sets differ. Phase 1 pins the difference instead of silently unioning it:
 
-- ``BUDGET_CONTEXT_KEYS_CANONICAL`` (canonical scan: ``llm_caller/helpers``
-  ``_resolve_context_max_tokens_override`` and its ``transaction_factory``
-  delegate) walks payload keys ``task_execution_contract`` and
+- ``BUDGET_CONTEXT_KEYS_CANONICAL`` (canonical scan:
+  :func:`resolve_context_output_budget_tokens`, consumed by ``llm_caller/helpers``
+  and its ``transaction_factory`` delegate) walks payload keys ``task_execution_contract`` and
   ``director_execution_contract`` **which are absent from**
   ``BUDGET_STRATEGY_PAYLOAD_KEYS``.
 - ``BUDGET_STRATEGY_PAYLOAD_KEYS`` (strategy-payload scan:
@@ -61,17 +61,18 @@ from typing import Any, Final
 #: Hard per-request output-token clamp. Every ``min(x, 128_000)`` hand-copy in
 #: llm_caller helpers/tool_helpers and the director adapter converges here.
 HARD_OUTPUT_TOKEN_CLAMP: Final[int] = 128_000
+DEFAULT_ROLE_OUTPUT_TOKENS: Final[int] = 4000
+DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS: Final[int] = 60_000
+PM_PLANNING_LOGICAL_REQUEST_COUNT: Final[int] = 2
+PM_PLANNING_SETTLEMENT_GRACE_SECONDS: Final[int] = 30
 
 #: Shared output budget for Chief Engineer calls that must return a complete
 #: structured blueprint. The provider may require extended thinking, so the
 #: ordinary 4k role default is not a viable ceiling for this turn class.
-DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS: Final[int] = HARD_OUTPUT_TOKEN_CLAMP
+DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS: Final[int] = DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS
 
-# Factory's project-level CE turn needs materially more room than an ordinary
-# 4k role response, but granting the 128k hard ceiling to every tiny portfolio
-# makes the physical generation deadline unrelated to project size.  Keep a
-# 16k reasoning/output floor and scale by declared PM task count; sufficiently
-# large portfolios still reach the shared hard ceiling.
+# Compatibility exports for callers of the retired task-scaled policy.
+# Effective portfolio output now follows the shared planning-role allowance.
 CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKEN_FLOOR: Final[int] = 16_384
 CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKENS_PER_TASK: Final[int] = 4_096
 
@@ -224,6 +225,41 @@ TIMEOUT_CEILING_CONTEXT_KEYS: Final[tuple[str, ...]] = (
     "timeout_ceiling_seconds",
 )
 
+
+def resolve_pm_planning_time_budget(output_tokens: int, context: Mapping[str, Any]) -> tuple[int, int]:
+    """Admit the existing two PM calls and finalization, without extending overrides."""
+    import math
+
+    from polaris.kernelone.constants import MAX_LLM_PROVIDER_TIMEOUT_SECONDS
+
+    def seconds(keys: tuple[str, ...]) -> int | None:
+        for key in keys:
+            raw = context.get(key)
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f"pm_planning_budget_invalid_timeout:{key}") from None
+            if isinstance(raw, bool) or not math.isfinite(value) or value < 1:
+                raise ValueError(f"pm_planning_budget_invalid_timeout:{key}")
+            return math.floor(value)
+        return None
+
+    floor = max(60, math.ceil(chief_engineer_generation_floor_seconds_for_output_tokens(output_tokens)))
+    call_timeout = seconds(("llm_call_timeout_seconds", "request_timeout_seconds")) or floor
+    ceiling = seconds(TIMEOUT_CEILING_CONTEXT_KEYS)
+    call_timeout = min(call_timeout, MAX_LLM_PROVIDER_TIMEOUT_SECONDS, ceiling or MAX_LLM_PROVIDER_TIMEOUT_SECONDS)
+    if call_timeout < floor:
+        raise ValueError(f"pm_planning_budget_below_generation_floor:allocated={call_timeout},required={floor}")
+    # One initial request, the existing one correction, and bounded settlement.
+    minimum_stage = PM_PLANNING_LOGICAL_REQUEST_COUNT * call_timeout + PM_PLANNING_SETTLEMENT_GRACE_SECONDS
+    stage_timeout = seconds(("timeout", "timeout_seconds")) or minimum_stage
+    if stage_timeout < minimum_stage:
+        raise ValueError(f"pm_planning_budget_below_stage_floor:allocated={stage_timeout},required={minimum_stage}")
+    return stage_timeout, call_timeout
+
+
 # ---------------------------------------------------------------------------
 # Turn-kind classification signals (existing detectors, consolidated)
 # ---------------------------------------------------------------------------
@@ -279,6 +315,60 @@ def clamp_output_tokens(value: int, *, floor: int = 1) -> int:
     return max(floor, min(int(value), HARD_OUTPUT_TOKEN_CLAMP))
 
 
+def _coerce_context_max_tokens_override(raw: Any) -> int | None:
+    """Parse trusted output overrides with the existing int coercion semantics."""
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return clamp_output_tokens(value)
+
+
+def resolve_context_output_budget_tokens(context_override: Any) -> int | None:
+    """Scan canonical trusted context aliases once, preserving their priority.
+
+    Each budget key checks the payload before its context_budget container.
+    Strategy-only budget_policy/llm_sampling containers remain excluded.
+    """
+    if not isinstance(context_override, dict):
+        return None
+    for key in OUTPUT_BUDGET_CONTEXT_KEYS:
+        max_tokens = _coerce_context_max_tokens_override(context_override.get(key))
+        if max_tokens is not None:
+            return max_tokens
+    for payload_key in BUDGET_CONTEXT_KEYS_CANONICAL:
+        raw_payload = context_override.get(payload_key)
+        payload = dict(raw_payload) if isinstance(raw_payload, dict) else {}
+        nested_containers = [
+            dict(payload[key]) if isinstance(payload.get(key), dict) else {} for key in CANONICAL_NESTED_CONTAINER_KEYS
+        ]
+        for nested_key in STRATEGY_NESTED_BUDGET_KEYS:
+            max_tokens = _coerce_context_max_tokens_override(payload.get(nested_key))
+            for container in nested_containers:
+                if max_tokens is not None:
+                    break
+                max_tokens = _coerce_context_max_tokens_override(container.get(nested_key))
+            if max_tokens is not None:
+                return max_tokens
+    return None
+
+
+def resolve_output_budget_tokens(requested: Any, context_override: Any | None = None) -> int:
+    """Resolve trusted context overrides, then requested allowance and hard clamp."""
+    context_max_tokens = resolve_context_output_budget_tokens(context_override)
+    if context_max_tokens is not None:
+        return context_max_tokens
+    try:
+        value = int(requested)
+    except (TypeError, ValueError):
+        value = DEFAULT_ROLE_OUTPUT_TOKENS
+    return clamp_output_tokens(value)
+
+
 def chief_engineer_structured_output_tokens(
     environ: Mapping[str, str] | None = None,
 ) -> int:
@@ -303,20 +393,11 @@ def chief_engineer_portfolio_output_tokens(
     task_count: int,
     environ: Mapping[str, str] | None = None,
 ) -> int:
-    """Resolve a task-scaled output budget for one Factory CE portfolio.
+    """Use the same planning allowance for every admitted portfolio size."""
 
-    The shared structured-output policy remains the authoritative deployment
-    cap.  This projection only chooses the amount actually requested for a
-    portfolio of ``task_count`` PM contracts, preventing small projects from
-    inheriting the full 128k physical generation budget.
-    """
-
-    normalized_task_count = max(1, int(task_count))
-    scaled_budget = max(
-        CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKEN_FLOOR,
-        normalized_task_count * CHIEF_ENGINEER_PORTFOLIO_OUTPUT_TOKENS_PER_TASK,
-    )
-    return min(chief_engineer_structured_output_tokens(environ), clamp_output_tokens(scaled_budget))
+    if task_count < 1:
+        raise ValueError("chief_engineer_portfolio_task_count_must_be_positive")
+    return chief_engineer_structured_output_tokens(environ)
 
 
 def chief_engineer_generation_floor_seconds_for_output_tokens(output_tokens: int) -> float:
@@ -567,6 +648,7 @@ __all__ = [
     "CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKEN_ENV",
     "DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS",
     "DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS",
+    "DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS",
     "DIRECTOR_DISPATCH_TIMEOUT_ENV_KEYS",
     "DIRECTOR_QUALITY_REPAIR_TIMEOUT_SECONDS",
     "FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS",
@@ -604,6 +686,8 @@ __all__ = [
     "classify_turn_kind",
     "forced_write_output_token_ceiling",
     "forced_write_retry_timeout_seconds",
+    "resolve_context_output_budget_tokens",
     "resolve_director_dispatch_timeout_seconds",
     "resolve_execution_budget",
+    "resolve_output_budget_tokens",
 ]

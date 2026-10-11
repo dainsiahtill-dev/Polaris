@@ -26,6 +26,7 @@ _DEFAULT_DIRECTOR_MAX_PARALLELISM = 3
 class FactoryDeadlineStageV1(str, Enum):
     """Factory stages governed by deadline admission."""
 
+    PM_PLANNING = "pm_planning"
     CHIEF_ENGINEER_PORTFOLIO = "chief_engineer_portfolio"
     DIRECTOR_DISPATCH = "director_dispatch"
 
@@ -741,6 +742,70 @@ def _qa_and_safety_units(
     )
 
 
+def resolve_pm_planning_admission(
+    *,
+    remaining_seconds: float | None,
+    requested_timeout_seconds: int,
+    minimum_stage_seconds: int,
+    chief_engineer_timeout_seconds: int,
+    policy: FactoryDeadlineBudgetPolicyV1,
+) -> FactoryDeadlineAdmissionV1:
+    """Reserve bounded PM planning plus the still-unknown downstream first wave."""
+    stage = FactoryDeadlineStageV1.PM_PLANNING
+    horizon, requested, blockers = _normalize_admission_inputs(
+        remaining_seconds=remaining_seconds, requested_timeout_seconds=requested_timeout_seconds
+    )
+    # PM has not produced tasks yet. No speculative task gains execution authority.
+    schedule = build_task_dependency_schedule([])
+    if blockers:
+        return _invalid_admission(
+            stage=stage,
+            reason="invalid_pm_planning_budget",
+            blockers=blockers,
+            requested_timeout_seconds=requested,
+            remaining_seconds=horizon,
+            minimum_start_budget_seconds=minimum_stage_seconds,
+            dependency_schedule=schedule,
+        )
+    downstream = (
+        BudgetUnitV1(name="chief_engineer_project_call", seconds=chief_engineer_timeout_seconds),
+        BudgetUnitV1(
+            name="director_first_wave",
+            seconds=policy.director_first_task_min_seconds + policy.director_settlement_barrier_seconds,
+        ),
+        *_qa_and_safety_units(policy),
+    )
+    reserved = sum(unit.seconds for unit in downstream)
+    available = None if horizon is None else horizon - reserved
+    allocated = requested if available is None else min(requested, max(0, available))
+    permitted = allocated >= minimum_stage_seconds
+    plan = RunBudgetPlanV1(
+        stage=stage,
+        horizon_seconds=horizon,
+        units=(BudgetUnitV1(name="pm_initial_and_correction", seconds=allocated), *downstream),
+        valid=permitted,
+        blockers=() if permitted else ("pm_deadline_below_stage_generation_floor",),
+    )
+    permitted = permitted and plan.conserved
+    return FactoryDeadlineAdmissionV1(
+        stage=stage,
+        disposition=FactoryDeadlineDispositionV1.EXECUTE if permitted else FactoryDeadlineDispositionV1.BLOCK,
+        reason="" if permitted else "insufficient_factory_deadline_for_pm_planning_budget",
+        requested_timeout_seconds=requested,
+        timeout_seconds=allocated if permitted else 0,
+        execution_timeout_seconds=allocated if permitted else 0,
+        settlement_timeout_seconds=0,
+        remaining_seconds=horizon,
+        available_for_stage_seconds=available,
+        minimum_start_budget_seconds=minimum_stage_seconds,
+        reserved_downstream_seconds=reserved,
+        critical_path_task_count=0,
+        budget_plan=plan,
+        dependency_schedule=schedule,
+        reservation_breakdown={unit.name: unit.seconds for unit in downstream},
+    )
+
+
 def resolve_chief_engineer_portfolio_admission(
     *,
     remaining_seconds: float | None,
@@ -830,7 +895,7 @@ def resolve_chief_engineer_portfolio_admission(
         disposition = FactoryDeadlineDispositionV1.BLOCK
         reason = "insufficient_factory_deadline_for_chief_engineer_portfolio"
         timeout_seconds = 0
-    elif available_for_stage is not None and available_for_stage < policy.chief_engineer_generation_floor_seconds:
+    elif allocated_timeout < policy.chief_engineer_generation_floor_seconds:
         # Fail-closed: the deadline-clipped budget is below the modeled physical
         # floor for streaming the full CE portfolio output. EXECUTE here would be
         # a doomed provider_stream_timeout; surface the blocker instead.

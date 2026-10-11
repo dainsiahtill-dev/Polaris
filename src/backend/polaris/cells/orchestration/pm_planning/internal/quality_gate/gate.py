@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+from copy import deepcopy
 from typing import Any
 
 from polaris.cells.orchestration.pm_planning.internal.dependency_validator import (
@@ -71,6 +72,7 @@ from polaris.cells.orchestration.pm_planning.internal.quality_gate.primitives im
     _title_is_too_short,
     _unknown_dependency_refs,
 )
+from polaris.cells.orchestration.pm_planning.public.artifact_contracts import validate_pm_artifact_contracts
 
 _PM_CONTRACT_GOVERNANCE_EXACT_MARKERS = (
     "补全文件级路径",
@@ -402,7 +404,9 @@ def _director_task_is_too_broad(task: dict[str, Any]) -> bool:
     )
 
 
-def _director_task_split_groups(task: dict[str, Any]) -> list[tuple[str, list[str]]]:
+def _director_task_split_groups(
+    task: dict[str, Any], *, preserve_authored_paths: bool = False
+) -> list[tuple[str, list[str]]]:
     grouped: dict[str, list[str]] = {
         "foundation": [],
         "source_models": [],
@@ -413,7 +417,12 @@ def _director_task_split_groups(task: dict[str, Any]) -> list[tuple[str, list[st
         "tests": [],
         "docs": [],
     }
-    for path in _task_write_file_targets(task):
+    paths = (
+        _normalize_path_list(task.get("target_files") or [])
+        if preserve_authored_paths
+        else _task_write_file_targets(task)
+    )
+    for path in paths:
         bucket = _director_task_boundary_bucket(path)
         grouped.setdefault(bucket, []).append(path)
     ordered: list[tuple[str, list[str]]] = []
@@ -526,12 +535,16 @@ def _split_director_task_boundary_contracts_in_place(
     tasks: list[dict[str, Any]],
     *,
     verify_command: str,
+    primary_language: str = "",
+    provenance: dict[str, Any] | None = None,
 ) -> tuple[int, int]:
     used_ids = {str(task.get("id") or "").strip() for task in tasks if str(task.get("id") or "").strip()}
     replacement_by_task_id: dict[str, str] = {}
     split_task_count = 0
     added_task_count = 0
     rewritten: list[dict[str, Any]] = []
+    derived_by_original: dict[str, list[dict[str, Any]]] = {}
+    has_generated_graph = any(task.get("generated_outputs") for task in tasks)
 
     labels = {
         "foundation": "project manifest and build contract",
@@ -561,9 +574,10 @@ def _split_director_task_boundary_contracts_in_place(
             task_copy = dict(task)
             _set_task_dependencies(task_copy, deps)
             rewritten.append(task_copy)
+            derived_by_original[task_id] = [task_copy]
             continue
 
-        groups = _director_task_split_groups(task)
+        groups = _director_task_split_groups(task, preserve_authored_paths=has_generated_graph)
         if len(groups) <= 1:
             # Single-bucket over-count: the task exceeds the file budget but all
             # targets share one boundary bucket, so bucket-grouping yields <=1
@@ -583,6 +597,7 @@ def _split_director_task_boundary_contracts_in_place(
                 task_copy = dict(task)
                 _set_task_dependencies(task_copy, deps)
                 rewritten.append(task_copy)
+                derived_by_original[task_id] = [task_copy]
                 continue
 
         split_task_count += 1
@@ -594,13 +609,17 @@ def _split_director_task_boundary_contracts_in_place(
         for bucket, _files in groups:
             group_counts[bucket] = group_counts.get(bucket, 0) + 1
         group_seen: dict[str, int] = {}
+        derived_by_original[task_id] = []
         for bucket, files in groups:
             group_seen[bucket] = group_seen.get(bucket, 0) + 1
             label = labels.get(bucket, bucket)
             if group_counts.get(bucket, 0) > 1:
                 label = f"{label} part {group_seen[bucket]}"
             split_id = _unique_split_task_id(task_id, bucket, used_ids)
-            split_task = dict(task)
+            split_task = deepcopy(task)
+            # Declarations are assigned once after the entire graph exists.
+            # A whole-task copy is not producer or input identity evidence.
+            split_task.pop("generated_outputs", None)
             split_task["id"] = split_id
             split_task["title"] = f"{title} - {label}"
             split_task["goal"] = f"{goal} Scope this task to {label} only."
@@ -644,6 +663,7 @@ def _split_director_task_boundary_contracts_in_place(
                 split_deps.append(prev_id)
             _set_task_dependencies(split_task, split_deps)
             rewritten.append(split_task)
+            derived_by_original[task_id].append(split_task)
             prev_id = split_id
 
         replacement_by_task_id[task_id] = prev_id
@@ -655,8 +675,116 @@ def _split_director_task_boundary_contracts_in_place(
         if remapped != deps:
             _set_task_dependencies(task, remapped)
 
+    if (
+        split_task_count
+        and has_generated_graph
+        and not _bind_split_generated_outputs(tasks, rewritten, derived_by_original, primary_language=primary_language)
+    ):
+        # Leave the original graph intact. Its broad-boundary quality finding
+        # requires model-authored decomposition; no output may be discarded.
+        return 0, 0
     tasks[:] = rewritten
+    if split_task_count and provenance is not None:
+        provenance.update(
+            {
+                "stage": "quality_autofix",
+                "original_to_derived": {
+                    identity: [child["id"] for child in children] for identity, children in derived_by_original.items()
+                },
+                "generated_outputs": [
+                    {"original_task_id": identity, "derived_task_id": child["id"], **deepcopy(row)}
+                    for identity, children in derived_by_original.items()
+                    for child in children
+                    for row in child.get("generated_outputs", [])
+                ],
+            }
+        )
     return split_task_count, added_task_count
+
+
+def _bind_split_generated_outputs(
+    originals: list[dict[str, Any]],
+    candidate: list[dict[str, Any]],
+    derived_by_original: dict[str, list[dict[str, Any]]],
+    *,
+    primary_language: str,
+) -> bool:
+    """Conserve declarations through exact target partitions and validated DAGs.
+
+    A producer must own an authored self input, retain the exact typed build,
+    and see all other inputs as self/ancestors. Filenames, prose and list order
+    do not choose an owner. External-input-only or ambiguous ownership requires
+    an honest model decomposition instead of arbitrary placement.
+    """
+    if validate_pm_artifact_contracts(originals, primary_language=primary_language).diagnostics:
+        return False
+    for original in originals:
+        identity = str(original.get("id") or "")
+        children = derived_by_original.get(identity, [])
+        if len(children) > 1:
+            authored = original.get("target_files", [])
+            partition = [path for child in children for path in child.get("target_files", [])]
+            if (
+                len(authored) != len(set(authored))
+                or set(partition) != set(authored)
+                or len(partition) != len(set(partition))
+            ):
+                return False
+    # Remove all copied records, including unsplit consumers whose inputs may
+    # refer to an original task that was split later in the list.
+    for task in candidate:
+        task.pop("generated_outputs", None)
+    for original in originals:
+        identity = str(original.get("id") or "")
+        children = derived_by_original.get(identity, [])
+        for authored_row in original.get("generated_outputs", []):
+            row = deepcopy(authored_row)
+            self_input_owners: set[str] = set()
+            for authored_input, item in zip(authored_row["inputs"], row["inputs"], strict=True):
+                input_children = derived_by_original.get(authored_input["task_id"], [])
+                owners = [child for child in input_children if item["path"] in child.get("target_files", [])]
+                if len(owners) != 1:
+                    return False
+                item["task_id"] = owners[0]["id"]
+                if authored_input["task_id"] == identity:
+                    self_input_owners.add(item["task_id"])
+            eligible = (
+                children if len(children) == 1 else [child for child in children if child["id"] in self_input_owners]
+            )
+            valid_owners = []
+            for child in eligible:
+                trial = deepcopy(candidate)
+                owner = next(task for task in trial if task["id"] == child["id"])
+                owner.setdefault("generated_outputs", []).append(deepcopy(row))
+                if not validate_pm_artifact_contracts(trial, primary_language=primary_language).diagnostics:
+                    valid_owners.append(child)
+            if len(valid_owners) != 1:
+                return False
+            valid_owners[0].setdefault("generated_outputs", []).append(row)
+        if "generated_outputs" in original and not original["generated_outputs"]:
+            for child in children:
+                child["generated_outputs"] = []
+    if validate_pm_artifact_contracts(candidate, primary_language=primary_language).diagnostics:
+        return False
+    # Only an exact existing mirror of the original declaration can follow the
+    # validated graph. Opaque model metadata is not another output authority.
+    # Copy metadata even for unsplit consumers, keeping failed staging atomic.
+    for original in originals:
+        metadata = original.get("metadata")
+        if (
+            not isinstance(metadata, dict)
+            or "generated_outputs" not in original
+            or "generated_outputs" not in metadata
+            or metadata["generated_outputs"] != original["generated_outputs"]
+        ):
+            continue
+        for child in derived_by_original.get(str(original.get("id") or ""), []):
+            child_metadata = dict(child.get("metadata") or {})
+            child_metadata.pop("generated_outputs", None)
+            if "generated_outputs" in child:
+                child_metadata["generated_outputs"] = deepcopy(child["generated_outputs"])
+            child["metadata"] = child_metadata
+    return True
 
 
 def evaluate_pm_task_quality(
@@ -1061,10 +1189,15 @@ def autofix_pm_contract_for_quality(
         verify_command=verify_command,
     )
     if not (is_card3d_contract or is_game_contract):
+        fission_provenance: dict[str, Any] = {}
         split_task_count, added_task_count = _split_director_task_boundary_contracts_in_place(
             normalized_tasks,
             verify_command=verify_command,
+            primary_language=primary_language,
+            provenance=fission_provenance,
         )
+        if fission_provenance:
+            normalized["_quality_gate_task_fission"] = fission_provenance
         stats["oversized_director_tasks_split"] += split_task_count
         stats["task_boundary_tasks_added"] += added_task_count
         stats["task_count"] = len(normalized_tasks)

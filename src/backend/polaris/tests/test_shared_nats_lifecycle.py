@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from polaris.infrastructure.messaging.nats import server_runtime
+from polaris.infrastructure.messaging.nats.pidfd import pidfd_open, pidfd_send_signal
 
 
 def free_port() -> int:
@@ -58,7 +59,7 @@ def ready(worker: subprocess.Popen[str]) -> dict:
 
 def stop_exact(pidfd: int) -> None:
     with contextlib.suppress(ProcessLookupError):
-        signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+        pidfd_send_signal(pidfd, signal.SIGTERM)
     os.close(pidfd)
 
 
@@ -77,7 +78,7 @@ async def test_backend_shutdown_does_not_destroy_shared_service(tmp_path: Path) 
     pidfd = None
     try:
         state = ready(owner)
-        pidfd = os.pidfd_open(state["process_pid"])
+        pidfd = pidfd_open(state["process_pid"])
         borrower = start_worker(tmp_path / "home", port)
         ready(borrower)
         close_worker(owner)
@@ -90,7 +91,7 @@ async def test_backend_shutdown_does_not_destroy_shared_service(tmp_path: Path) 
             close_worker(borrower)
         if pidfd is not None:
             with contextlib.suppress(ProcessLookupError):
-                signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+                pidfd_send_signal(pidfd, signal.SIGTERM)
             os.close(pidfd)
 
 
@@ -102,7 +103,7 @@ async def test_instance_supervisor_stop_preserves_shared_writer(tmp_path: Path) 
     backend_port = free_port()
     worker = start_worker(tmp_path / "home", port, "polaris.delivery.cli.backend", str(tmp_path), str(backend_port))
     state = ready(worker)
-    descriptor = os.pidfd_open(state["process_pid"])
+    descriptor = pidfd_open(state["process_pid"])
     try:
         # Full native stop_instance path, private registry and owned process fixture.
         registry = InstanceRegistry(tmp_path / "registry", publish_events=False)
@@ -140,7 +141,7 @@ def test_simultaneous_backends_share_one_native_writer(tmp_path: Path) -> None:
         states = [ready(worker) for worker in workers]
         for state in states:
             if state["process_pid"] not in descriptors:
-                descriptors[state["process_pid"]] = os.pidfd_open(state["process_pid"])
+                descriptors[state["process_pid"]] = pidfd_open(state["process_pid"])
         assert len({state["process_pid"] for state in states}) == 1
         assert len({state["service_generation"] for state in states}) == 1
     finally:
@@ -159,8 +160,8 @@ async def test_writer_crash_restarts_same_store_new_generation(tmp_path: Path, m
     url = f"nats://127.0.0.1:{port}"
     await server_runtime.ensure_local_nats_runtime(url, startup_timeout_seconds=3)
     old = dict(server_runtime._shared_attachment or {})
-    descriptor = os.pidfd_open(old["pid"])
-    signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+    descriptor = pidfd_open(old["pid"])
+    pidfd_send_signal(descriptor, signal.SIGKILL)
     os.close(descriptor)
     await asyncio.sleep(0.05)
     await server_runtime.ensure_local_nats_runtime(url, startup_timeout_seconds=3)
@@ -467,7 +468,7 @@ shared.subprocess.Popen=stalled
     )
     borrower = None
     state = ready(owner)
-    descriptor = os.pidfd_open(state["pid"])
+    descriptor = pidfd_open(state["pid"])
     try:
         owner.kill()
         owner.wait(timeout=3)
@@ -530,10 +531,13 @@ async def test_cancel_during_real_spawn_waits_for_exact_drain(tmp_path: Path, mo
 async def test_unsupported_managed_capability_fails_before_filesystem_effect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from polaris.infrastructure.messaging.nats import shared_service_identity
+    from types import SimpleNamespace
+
+    from polaris.infrastructure.messaging.nats import pidfd as native_pidfd
 
     monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "home"))
-    monkeypatch.delattr(shared_service_identity.os, "pidfd_open")
+    monkeypatch.setattr(native_pidfd, "_stdlib_pidfd_open", None)
+    monkeypatch.setattr(native_pidfd, "_libc", SimpleNamespace)
     with pytest.raises(RuntimeError, match="capability_unavailable"):
         await server_runtime.ensure_local_nats_runtime(f"nats://127.0.0.1:{free_port()}", startup_timeout_seconds=1)
     assert not (tmp_path / "home").exists()
@@ -738,7 +742,9 @@ async def test_unrelated_external_endpoint_remains_observe_only_with_home_author
                 def denied_pidfd(*args, **kwargs):
                     raise OSError(errno.ENOSYS, "private unavailable pidfd")
 
-                admission.setattr(os, "pidfd_open", denied_pidfd)
+                from polaris.infrastructure.messaging.nats import pidfd as native_pidfd
+
+                admission.setattr(native_pidfd, "_stdlib_pidfd_open", denied_pidfd)
             await server_runtime.ensure_local_nats_runtime(
                 f"nats://127.0.0.1:{external_port}", startup_timeout_seconds=2
             )
@@ -834,26 +840,28 @@ async def test_unusable_pidfd_syscall_refuses_start_before_effects(
     home = tmp_path / "home"
     monkeypatch.setenv("KERNELONE_HOME", str(home))
     await server_runtime.shutdown_local_nats_runtime()
-    actual_open, actual_signal = os.pidfd_open, signal.pidfd_send_signal
+    actual_open, actual_signal = pidfd_open, pidfd_send_signal
     opened = []
 
     def denied_open(pid, flags=0):
         if failed_syscall.startswith("open_"):
             raise OSError(errno.ENOSYS if failed_syscall == "open_enosys" else errno.EPERM, "fixture denied pidfd")
-        descriptor = actual_open(pid, flags)
+        assert flags == 0
+        descriptor = actual_open(pid)
         opened.append(descriptor)
         return descriptor
 
     def denied_signal(descriptor, sig, *args):
         if sig == 0:
             raise PermissionError(errno.EPERM, "fixture denied signal probe")
-        return actual_signal(descriptor, sig, *args)
+        assert args == ()
+        return actual_signal(descriptor, sig)
 
     try:
         with monkeypatch.context() as injection:
-            injection.setattr(native_identity.os, "pidfd_open", denied_open)
+            injection.setattr(native_identity, "pidfd_open", denied_open)
             if failed_syscall == "signal_eperm":
-                injection.setattr(native_identity.signal, "pidfd_send_signal", denied_signal)
+                injection.setattr(native_identity, "pidfd_send_signal", denied_signal)
             with pytest.raises(RuntimeError, match="capability_unavailable"):
                 await server_runtime.ensure_local_nats_runtime(
                     f"nats://127.0.0.1:{free_port()}", startup_timeout_seconds=2

@@ -1,0 +1,45 @@
+id: vc-20261007-static-scan-coverage
+issue: POL-45
+mode: implementation
+classification: pattern
+owner: external-director-tools-engineer
+reviewer: Root
+assumptions:
+  - id: empty-eval
+    claim: invocation existence must not depend on source truthiness
+    evidence: _scan_package.py iterator and any caller; QA empty_node_eval
+  - id: ledger-unknown
+    claim: optional absent ledger differs from unreadable or invalid ledger
+    evidence: interface_ledger.py _load and _scan.py helper catches; two QA cases
+  - id: symlink-unknown
+    claim: unvisited directory links cannot establish complete coverage
+    evidence: _scan.py os.walk and scope resolve; QA symlink_directory_coverage
+pre_mortem:
+  - changing legacy best-effort behavior or initializing storage
+  - dropping required intents on helper exception
+  - reading external linked directories or broadening explicit scope
+verification:
+  tests:
+    - polaris/kernelone/quality/tests/test_static_scan_coverage_frontier.py
+    - polaris/kernelone/quality/tests/test_artifact_quality_static_scan.py
+  gates: [original-19-case-probe, exact-288-selector, effect-trap, fixture-hash, ruff, format, mypy-delta]
+  expected: no scan effects; unknown explicit; parser intents retained; legacy assertions unchanged
+  red: 15 passed, 4 failed in original 19-case probe
+  observed:
+    original_probe: 19 passed
+    frontier: 46 passed
+    author: 32 passed
+    exact_regression_selector: 288 passed
+    exact_calibration_selectors: 2 passed
+    pure_static_effects: 0
+    fixture_hashes: unchanged
+    ruff: pass
+    format: pass
+    scoped_mypy: pass
+    strict_mypy: 4 pre-existing no-any-return errors; zero new errors
+  report: .superpowers/sdd/2026-10-06-paperclip-repair-frontier/static-scan-coverage-closure-v1/REPORT.json
+boundaries:
+  - only three production files plus authorized new test, blueprint, card and report
+  - no target, runtime, models, exports, Factory, Director, sandbox or issuer changes
+  - no Provider, Bench, services, install, git mutations or Paperclip write API
+  - independent acceptance and fresh project completion remain Root-owned

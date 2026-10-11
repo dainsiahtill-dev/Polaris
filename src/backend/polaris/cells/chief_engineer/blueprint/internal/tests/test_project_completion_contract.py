@@ -23,9 +23,200 @@ from polaris.cells.chief_engineer.blueprint.public import (
     VerificationObligationV1,
     build_project_completion_contract,
 )
+from polaris.cells.factory.verification_guard.tests.test_project_completion_diagnostics import (
+    _reset_owner_port as _reset_owner_port,
+)
 
 _HASH_A = "a" * 64
 _HASH_B = "b" * 64
+
+
+@pytest.mark.parametrize(
+    "variant", ["two_commands", "duplicate_identity", "same_argv_different_cwd", "preserved_ids", "future_id_collision"]
+)
+def test_portfolio_binds_each_distinct_committed_test_command(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, variant: str
+) -> None:
+    from polaris.cells.chief_engineer.blueprint.public import (
+        BuildChiefEngineerBlueprintPortfolioCommandV1,
+        ChiefEngineerPortfolioTaskV1,
+        build_chief_engineer_blueprint_portfolio,
+    )
+    from polaris.cells.chief_engineer.blueprint.public.tests.test_public_contractsa import (
+        _library_completion_requirements,
+        _portfolio_command_authority,
+    )
+
+    tasks = (
+        ChiefEngineerPortfolioTaskV1(
+            task_id="TASK-3",
+            objective="Implement and verify library",
+            target_files=("src/main.ts", "tests/verify.ts"),
+            primary_language="typescript",
+            allowed_source_suffixes=(".ts",),
+        ),
+    )
+    authorities: tuple[VerificationCommandAuthorityV1, ...] = (
+        VerificationCommandAuthorityV1(task_id="TASK-3", modality="build", argv=("npm", "run", "build")),
+        VerificationCommandAuthorityV1(task_id="TASK-3", modality="test", argv=("npx", "tsc", "--noEmit")),
+        VerificationCommandAuthorityV1(
+            task_id="TASK-3", modality="test", argv=("node", "--test", "dist/tests/verify.test.js")
+        ),
+    )
+    if variant == "same_argv_different_cwd":
+        authorities = (*authorities[:2], replace(authorities[1], cwd="tests"))
+    if variant == "duplicate_identity":
+        authorities = (*authorities, authorities[1])
+    requirements = _library_completion_requirements(
+        "src/main.ts", owner_task_ids=("TASK-3",), test_path="tests/verify.ts", test_owner_task_id="TASK-3"
+    )
+    requirements["obligations"]["verification"][0]["command_authority_hash"] = authorities[0].authority_hash
+    requirements["obligations"]["verification"][1]["command_authority_hash"] = authorities[1].authority_hash
+    if variant == "preserved_ids":
+        second_seed = deepcopy(requirements["obligations"]["verification"][1])
+        second_seed["obligation_id"] = "verify-second-test"
+        second_seed["command_authority_hash"] = authorities[2].authority_hash
+        requirements["obligations"]["verification"].append(second_seed)
+    if variant == "future_id_collision":
+        later_authority = sorted(authorities[1:], key=lambda row: row.authority_hash)[1]
+        seed = requirements["obligations"]["verification"][1]
+        seed["obligation_id"] = "verification-authority-test-001"
+        seed["command_authority_hash"] = later_authority.authority_hash
+    completion = build_chief_engineer_blueprint_portfolio(
+        BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(tmp_path),
+            run_id="multi-tests",
+            tasks=tasks,
+            **_portfolio_command_authority(
+                tasks=tasks,
+                workspace=tmp_path,
+                run_id="multi-tests",
+                project_kind="library",
+                command_authority_override=authorities,
+            ),
+            llm_blueprint={
+                "construction_plan": {"task_plans": {"TASK-3": {"implementation": ["Implement library"]}}},
+                "risk_flags": [],
+                "project_completion_contract": requirements,
+            },
+        )
+    ).project_completion_contract
+    assert completion is not None
+    tests = [row for row in completion.obligations.verification if row.modality == "test"]
+    assert len(tests) == 2
+    assert {row.command for row in tests} == {row.command for row in authorities[1:]}
+    assert {row.command_authority_hash for row in tests} == {row.authority_hash for row in authorities[1:]}
+    if variant != "future_id_collision":
+        assert "verify-test" in {row.obligation_id for row in tests}
+    else:
+        preserved = next(row for row in tests if row.command_authority_hash == later_authority.authority_hash)
+        assert preserved.obligation_id == "verification-authority-test-001"
+    assert all(row.applicability == "required" and row.owner_task_id == "TASK-3" for row in tests)
+    assert all("artifact-test" in row.covers_obligation_ids for row in tests)
+    if variant == "preserved_ids":
+        assert {row.obligation_id for row in tests} == {"verify-test", "verify-second-test"}
+    _assert_independent_required_test_receipts(tmp_path, monkeypatch, completion, tests)
+
+
+def _assert_independent_required_test_receipts(
+    workspace: Any, monkeypatch: pytest.MonkeyPatch, completion: Any, tests: Any
+) -> None:
+    """Exercise the existing public owner-observation qualification boundary.
+
+    Evidence here is explicitly a local fixture; it is not a platform receipt.
+    """
+    from polaris.cells.factory.verification_guard.public import (
+        ProjectCompletionEvidenceV1,
+        ProjectCompletionOwnerObservationV1,
+        QueryProjectCompletionDiagnosticsV1,
+        query_project_completion_diagnostics,
+    )
+    from polaris.cells.factory.verification_guard.public.bootstrap import (
+        bind_project_completion_owner_observation_port,
+        build_project_completion_contract_observation,
+    )
+    from polaris.cells.factory.verification_guard.public.contracts import (
+        ProjectArtifactObligationObservationV1,
+        ProjectCompletionObligationsObservationV1,
+        ProjectEntrypointObligationObservationV1,
+        ProjectKindAuthorityObservationV1,
+        ProjectVerificationCommandAuthorityObservationV1,
+        ProjectVerificationObligationObservationV1,
+    )
+
+    value = completion.to_dict()
+    value["project_kind_authority"] = ProjectKindAuthorityObservationV1(**value["project_kind_authority"])
+    obligations = value["obligations"]
+    value["obligations"] = ProjectCompletionObligationsObservationV1(
+        artifacts=tuple(ProjectArtifactObligationObservationV1(**row) for row in obligations["artifacts"]),
+        entrypoints=tuple(ProjectEntrypointObligationObservationV1(**row) for row in obligations["entrypoints"]),
+        verification=tuple(ProjectVerificationObligationObservationV1(**row) for row in obligations["verification"]),
+    )
+    value["verification_command_authority"] = tuple(
+        ProjectVerificationCommandAuthorityObservationV1(**{**row, "argv": tuple(row["argv"])})
+        for row in value["verification_command_authority"]
+    )
+    value["covered_task_ids"] = tuple(value["covered_task_ids"])
+    value.pop("schema_version")
+    observed_contract = build_project_completion_contract_observation(**value)
+    query = QueryProjectCompletionDiagnosticsV1(
+        workspace=str(workspace),
+        project_id=completion.project_id,
+        run_id=completion.run_id,
+        completion_contract_hash=completion.contract_hash,
+    )
+    evidence = tuple(
+        ProjectCompletionEvidenceV1(
+            workspace=str(workspace),
+            project_id=completion.project_id,
+            run_id=completion.run_id,
+            completion_contract_hash=completion.contract_hash,
+            obligation_id=row.obligation_id,
+            owner_task_id=row.owner_task_id,
+            owner_module_id="control_plane.run_ledger" if group == "verification" else "runtime.task_runtime",
+            status="passed",
+            owner_evidence_refs=(f"fixture://{row.obligation_id}",),
+            verifier_receipt_ref=f"fixture-receipt://{row.obligation_id}" if group == "verification" else None,
+            verifier_exit_code=0 if group == "verification" else None,
+        )
+        for group in ("artifacts", "entrypoints", "verification")
+        for row in getattr(observed_contract.obligations, group)
+        if row.applicability == "required"
+    )
+
+    class Port:
+        observation: Any = None
+
+        def observe_project_completion(self, **identity: Any) -> Any:
+            assert identity["completion_contract_hash"] == completion.contract_hash
+            return self.observation
+
+    port = Port()
+    bind_project_completion_owner_observation_port(port)
+    second_id = tests[1].obligation_id
+    first_id = tests[0].obligation_id
+    for state in ("passed", "missing", "failed"):
+        rows = tuple(row for row in evidence if not (state == "missing" and row.obligation_id == second_id))
+        if state == "failed":
+            rows = tuple(
+                replace(row, status="failed", verifier_exit_code=1) if row.obligation_id == second_id else row
+                for row in rows
+            )
+        port.observation = ProjectCompletionOwnerObservationV1(
+            workspace=str(workspace),
+            project_id=completion.project_id,
+            run_id=completion.run_id,
+            completion_contract_hash=completion.contract_hash,
+            contract=observed_contract,
+            evidence=rows,
+            repair_coverage=(),
+        )
+        result = query_project_completion_diagnostics(query)
+        assert first_id in result.passed_obligation_ids
+        assert (second_id in result.passed_obligation_ids) == (state == "passed")
+        assert (second_id in result.missing_obligation_ids) == (state == "missing")
+        assert (second_id in result.failed_obligation_ids) == (state == "failed")
+        assert bool(result.diagnostics) == (state != "passed")
 
 
 def _project_kind_authority(project_kind: str = "application") -> ProjectKindAuthorityV1:

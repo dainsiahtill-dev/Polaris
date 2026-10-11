@@ -113,6 +113,11 @@ def main() -> int:
         ),
     )
     ap.add_argument(
+        "--launcher-supervisor-url",
+        default="",
+        help="Explicit loopback native Supervisor origin for isolated instances; credential: POLARIS_LAUNCHER_SUPERVISOR_TOKEN",
+    )
+    ap.add_argument(
         "--bench-session-reporting",
         choices=tuple(sorted(_BENCH_SESSION_REPORTING_MODES)),
         default=_default_bench_session_reporting_mode(),
@@ -133,6 +138,16 @@ def main() -> int:
         help="limit number of projects to process; 0 disables limit",
     )
     args = ap.parse_args()
+    launcher_supervisor_url = str(args.launcher_supervisor_url or "").strip()
+    if launcher_supervisor_url:
+        try:
+            launcher_supervisor_url = _validate_launcher_supervisor_url(launcher_supervisor_url)
+            _launcher_supervisor_token()
+            if args.launcher_instance_mode != "isolated":
+                raise ValueError("native Supervisor requires isolated launcher mode")
+        except ValueError as exc:
+            print(f"[factory-bench] invalid native Supervisor configuration: {exc}", flush=True)
+            return 2
     if args.use_legacy_chain:
         print(
             "[factory-bench] --use-legacy-chain is retired; use the HTTP Factory "
@@ -226,7 +241,6 @@ def main() -> int:
     records: list[dict[str, Any]] = []
     run_errors: list[str] = []
     failed = 0
-    expected_llm_bindings = resolve_expected_llm_bindings()
     # This run id is part of every isolated launch identity. It must be chosen
     # before any registry interaction, not only when audit files are written.
     run_id = _sanitize_run_id(os.environ.get("FACTORY_BENCH_RUN_ID"))
@@ -333,6 +347,8 @@ def main() -> int:
         project_backend_token = backend_token
         project_backend_audit_context = backend_audit_context
         launcher_instance_meta: dict[str, Any] = {"mode": launcher_instance_mode}
+        if launcher_supervisor_url:
+            launcher_instance_meta.update({"supervisor_url": launcher_supervisor_url, "supervisor_auth": "configured"})
         # Backend lifespan may fail before enrolling its FactStream. Initialize
         # the existing maintenance boundary now so negative launch evidence can
         # be persisted without auto-enrollment or fabricated runtime receipts.
@@ -376,6 +392,7 @@ def main() -> int:
                 project_workspace=project_workspace,
                 backend_token=backend_token,
                 launch_receipt=launch_receipt,
+                **({"launcher_supervisor_url": launcher_supervisor_url} if launcher_supervisor_url else {}),
             )
             if isolated_instance and bool(isolated_instance.get("ok", True)):
                 project_backend_url = str(isolated_instance.get("backend_url") or backend_url).rstrip("/")
@@ -823,13 +840,17 @@ def main() -> int:
         )
         required_llm_roles = required_llm_roles_for_factory_record(chain=chain, record=record)
         record["required_llm_roles"] = list(required_llm_roles)
-        llm_events = collect_llm_events(workspace, runtime_dirs, audit_bundle)
+        route_projection = audit_bundle.get("role_route_qualification") if isinstance(audit_bundle, dict) else None
+        llm_events = list(route_projection.get("events") or []) if isinstance(route_projection, dict) else []
         record["final_request_refs"] = project_final_request_refs(llm_events)
         record["llm_route_audit"] = build_llm_route_audit(
             llm_events,
-            expected_bindings=expected_llm_bindings,
             required_roles=required_llm_roles,
             require_all_director_routes=False,
+            server_qualification=route_projection,
+            workspace=str(workspace),
+            factory_run_id=str(record["factory_run_id"] or ""),
+            project_id=pid,
         )
         record["workspace_validation_repair_coverage"] = load_workspace_validation_repair_coverage(
             workspace,

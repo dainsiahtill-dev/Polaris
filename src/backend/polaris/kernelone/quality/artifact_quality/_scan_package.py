@@ -40,6 +40,7 @@ from polaris.kernelone.quality.artifact_quality._issues import (
     _artifact_quality_issue_metadata,
 )
 from polaris.kernelone.quality.artifact_quality._models import (
+    ArtifactQualityDeferredCheck,
     ArtifactQualityIssue,
     _FileArtifactQualityEvidence,
     _NodeEvalSyntaxIssue,
@@ -174,6 +175,9 @@ def _package_manifest_evidence_from_errors(
     errors: list[str],
     relative_path: str,
     direct_issues: list[ArtifactQualityIssue] | None = None,
+    *,
+    deferred_checks: Iterable[ArtifactQualityDeferredCheck] = (),
+    incomplete_reasons: Iterable[str] = (),
 ) -> _FileArtifactQualityEvidence:
     issues = list(direct_issues or [])
     direct_issue_messages = {str((issue.metadata or {}).get("raw") or issue.message).strip() for issue in issues}
@@ -182,7 +186,12 @@ def _package_manifest_evidence_from_errors(
         for error in errors
         if str(error or "").strip() not in direct_issue_messages
     )
-    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
+    return _FileArtifactQualityEvidence(
+        errors=tuple(errors),
+        issues=tuple(issues),
+        deferred_checks=tuple(deferred_checks),
+        incomplete_reasons=tuple(incomplete_reasons),
+    )
 
 
 _CARGO_BIN_SECTION_RE = re.compile(
@@ -387,7 +396,9 @@ def _scan_cargo_manifest_missing_binary_evidence(
     return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
-def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: str) -> _FileArtifactQualityEvidence:
+def _scan_package_manifest_evidence(
+    root_full: Path, text: str, relative_path: str, *, pure_static: bool = False
+) -> _FileArtifactQualityEvidence:
     """Return package-manifest findings as legacy strings and direct typed issues."""
 
     try:
@@ -398,8 +409,32 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
         return _FileArtifactQualityEvidence()
     errors: list[str] = []
     issues: list[ArtifactQualityIssue] = []
+    deferred_checks: list[ArtifactQualityDeferredCheck] = []
+    incomplete_reasons: list[str] = []
     scripts = payload.get("scripts")
     if isinstance(scripts, dict):
+        if pure_static:
+            # Discover intents before any diagnostic short-circuit. Shell parsing
+            # stays static; malformed/ambiguous snippets cannot be inferred safely.
+            for script_name, script_value in scripts.items():
+                try:
+                    sources, invocation_unknown = _static_shell_node_sources(
+                        str(script_value or ""), declared_scripts=frozenset(str(name) for name in scripts)
+                    )
+                except ValueError:
+                    incomplete_reasons.append(f"script_invocation_unknown:{relative_path}:{script_name}:shell_syntax")
+                    continue
+                incomplete_reasons.extend(
+                    f"script_invocation_unknown:{relative_path}:{script_name}:{reason}" for reason in invocation_unknown
+                )
+                if _NPM_SCRIPT_SHELL_SUBSTITUTION_RE.search(str(script_value or "")):
+                    incomplete_reasons.append(
+                        f"script_invocation_unknown:{relative_path}:{script_name}:shell_substitution"
+                    )
+                if sources:
+                    deferred_checks.append(
+                        ArtifactQualityDeferredCheck("node_eval_parser", (relative_path,), script_name=str(script_name))
+                    )
         package_script_gate_issues = _package_script_gate_issues_for_code(
             root_full,
             "npm_script_cycle",
@@ -556,7 +591,9 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                     },
                 )
                 break
-            node_eval_issue = _scan_npm_script_node_eval_syntax(tokens, str(script_name), relative_path)
+            node_eval_issue = (
+                None if pure_static else _scan_npm_script_node_eval_syntax(tokens, str(script_name), relative_path)
+            )
             if node_eval_issue is not None:
                 _append_package_manifest_issue(
                     errors,
@@ -640,7 +677,15 @@ def _scan_package_manifest_evidence(root_full: Path, text: str, relative_path: s
                         "dependency_section": section_name,
                     },
                 )
-                return sys.modules[__package__]._package_manifest_evidence_from_errors(errors, relative_path, issues)
+                if not pure_static:
+                    return sys.modules[__package__]._package_manifest_evidence_from_errors(
+                        errors, relative_path, issues
+                    )
+                break
+    if pure_static:
+        return _package_manifest_evidence_from_errors(
+            errors, relative_path, issues, deferred_checks=deferred_checks, incomplete_reasons=incomplete_reasons
+        )
     return sys.modules[__package__]._package_manifest_evidence_from_errors(errors, relative_path, issues)
 
 
@@ -665,7 +710,7 @@ def _scan_npm_script_node_eval_syntax(
     return None
 
 
-def _iter_node_eval_sources(tokens: list[str]) -> Iterable[str]:
+def _iter_node_eval_sources(tokens: list[str], *, incomplete_reasons: list[str] | None = None) -> Iterable[str]:
     """Yield JavaScript source snippets passed to ``node --eval`` / ``-e``.
 
     Scans one ``node`` invocation at a time, skipping safe Node options such as
@@ -682,37 +727,279 @@ def _iter_node_eval_sources(tokens: list[str]) -> Iterable[str]:
             index += 1
             continue
         index += 1
+        if incomplete_reasons is not None and _static_node_test_invocation(tokens[index:], incomplete_reasons):
+            # Test source remains covered by file parsers and the controlled
+            # verifier. Never reinterpret test paths as inline eval snippets.
+            continue
         while index < length:
             token = str(tokens[index] or "").strip()
             if token in _NPM_SCRIPT_SEPARATORS:
                 break
             lowered = token.lower()
-            if lowered in {"-e", "--eval"}:
+            eval_flags = {"-e", "--eval"} if incomplete_reasons is None else {"-e", "--eval", "-p", "--print", "-pe"}
+            if token == "--":
+                if incomplete_reasons is not None and index + 1 < length:
+                    script = str(tokens[index + 1] or "").strip()
+                    if Path(script).suffix.lower() in {".md", ".markdown"}:
+                        incomplete_reasons.append(f"node_executable_document:{script}")
+                break
+            if token == "-" and incomplete_reasons is not None:
+                yield ""
+                break
+            if lowered in eval_flags:
                 index += 1
                 if index < length:
                     source = str(tokens[index] or "")
-                    if source.strip():
-                        yield source
-                    index += 1
-                continue
-            if lowered.startswith("-e=") or lowered.startswith("--eval="):
-                source = token.split("=", 1)[1]
-                if source.strip():
                     yield source
+                    index += 1
+                elif incomplete_reasons is not None:
+                    incomplete_reasons.append(f"missing_eval_argument:{token}")
+                continue
+            equal_flags = ("-e=", "--eval=") if incomplete_reasons is None else ("-e=", "--eval=", "--print=")
+            if lowered.startswith(equal_flags):
+                source = token.split("=", 1)[1]
+                yield source
+                if incomplete_reasons is not None and (
+                    lowered.startswith("-e=") or (not source and lowered.startswith("--eval="))
+                ):
+                    incomplete_reasons.append(f"invalid_eval_argument:{token}")
                 index += 1
                 continue
-            if lowered in _NPM_NODE_OPTION_VALUE_FLAGS:
+            if token in _NPM_NODE_OPTION_VALUE_FLAGS:
+                if incomplete_reasons is not None and index + 1 >= length:
+                    incomplete_reasons.append(f"missing_node_option_argument:{token}")
+                if incomplete_reasons is not None and token in {"--require", "-r"} and index + 1 < length:
+                    loader = str(tokens[index + 1] or "").strip()
+                    if Path(loader).suffix.lower() in {".md", ".markdown"}:
+                        incomplete_reasons.append(f"node_executable_document:{loader}")
                 index += 2
                 continue
-            if lowered.startswith(("--loader=", "--require=", "--import=")):
+            if lowered == "--import":
+                if incomplete_reasons is not None and index + 1 >= length:
+                    incomplete_reasons.append(f"missing_node_option_argument:{token}")
+                if incomplete_reasons is not None and index + 1 < length:
+                    loader = str(tokens[index + 1] or "").strip()
+                    if Path(loader).suffix.lower() in {".md", ".markdown"}:
+                        incomplete_reasons.append(f"node_executable_document:{loader}")
+                index += 2
+                continue
+            if token.startswith((*(flag + "=" for flag in _NPM_NODE_OPTION_VALUE_FLAGS), "--import=")):
+                if incomplete_reasons is not None and token.startswith(("--require=", "--import=", "-r=")):
+                    loader = token.split("=", 1)[1]
+                    if Path(loader).suffix.lower() in {".md", ".markdown"}:
+                        incomplete_reasons.append(f"node_executable_document:{loader}")
                 index += 1
                 continue
             if lowered.startswith("-"):
                 # Safe boolean option such as --no-warnings or --enable-source-maps.
+                if incomplete_reasons is not None and lowered not in {
+                    "--no-warnings",
+                    "--enable-source-maps",
+                    "--trace-warnings",
+                    "--trace-deprecation",
+                    "--no-deprecation",
+                    "--throw-deprecation",
+                    "--use-strict",
+                    "--experimental-modules",
+                    "--experimental-strip-types",
+                    "--experimental-transform-types",
+                }:
+                    incomplete_reasons.append(f"node_option_unknown:{token}")
+                    break
                 index += 1
                 continue
             # Positional script path / command: stop scanning this node invocation.
+            if incomplete_reasons is not None and Path(token).suffix.lower() in {".md", ".markdown"}:
+                incomplete_reasons.append(f"node_executable_document:{token}")
             break
+
+
+def _static_node_test_invocation(tokens: list[str], unknown: list[str]) -> bool:
+    """Cover a finite Node test CLI grammar, without granting execution."""
+    if "--test" not in tokens:
+        return False
+    boolean_flags = {"--test", "--no-warnings", "--enable-source-maps"}
+    value_flags = {"--import", "--require", "-r"}
+    index = 0
+    saw_test = False
+    while index < len(tokens):
+        token = tokens[index]
+        if token in boolean_flags:
+            saw_test = saw_test or token == "--test"
+        elif token in value_flags:
+            if index + 1 >= len(tokens) or not tokens[index + 1] or tokens[index + 1].startswith("-"):
+                unknown.append(f"invalid_node_test_option_argument:{token}")
+                return True
+            index += 1
+            if tokens[index] not in {"tsx", "tsx/esm", "tsx/cjs"}:
+                unknown.append(f"node_test_loader_unknown:{tokens[index]}")
+        elif token.startswith(tuple(flag + "=" for flag in value_flags if flag.startswith("--"))):
+            value = token.split("=", 1)[1]
+            if value not in {"tsx", "tsx/esm", "tsx/cjs"}:
+                unknown.append(f"invalid_node_test_option_argument:{token}")
+        elif token.startswith("-"):
+            unknown.append(f"node_test_option_unknown:{token}")
+        else:
+            # A positional script before --test makes the latter a script arg.
+            if not saw_test:
+                return False
+            for path in tokens[index:]:
+                if path.startswith("-") or Path(path).suffix.lower() not in _TS_JS_SOURCE_EXTS:
+                    unknown.append(f"node_test_source_unknown:{path}")
+            break
+        index += 1
+    return True
+
+
+def _static_shell_node_sources(
+    script: str, *, declared_scripts: frozenset[str] = frozenset()
+) -> tuple[tuple[str, ...], list[str]]:
+    """Bounded lexical discovery, not a shell evaluator or full shell parser.
+
+    Preserve quoted words and operator boundaries, then inspect only executable
+    positions. Unsupported syntax and expansion carry explicit uncertainty.
+    """
+    lexical = re.compile(
+        r"""(?P<operator>[;&|()\n]+)|(?P<word>(?:[^\s;&|()'"\\]+|\\[\s\S]|'[^']*'|"(?:\\[\s\S]|[^"\\])*")+)"""
+    )
+    words: list[tuple[str, bool]] = []
+    unknown: list[str] = []
+    cursor = 0
+    for match in lexical.finditer(script):
+        if match.start() < cursor:
+            continue
+        if script[cursor : match.start()].strip():
+            raise ValueError("unsupported shell lexical syntax")
+        raw = match.group()
+        operator = match.group("operator") is not None
+        if operator:
+            words.append((raw, True))
+        else:
+            if raw.startswith("#"):
+                newline = script.find("\n", match.start())
+                cursor = newline if newline >= 0 else len(script)
+                continue
+            tokenized = shlex.split(raw, posix=True)
+            if len(tokenized) != 1:
+                raise ValueError("unknown shell word")
+            words.append((tokenized[0], False))
+            # Single-quoted code is literal. Double-quoted expansion is dynamic.
+            if _shell_word_has_expansion(raw):
+                unknown.append("shell_expansion")
+            unquoted = re.sub(r"""("(?:\\.|[^"\\])*"|'[^']*')""", "", raw)
+            if re.search(r"[<> {}]", unquoted):
+                unknown.append("unsupported_shell_form")
+            if re.search(r"(?<!\\)[*?\[]", unquoted):
+                unknown.append("shell_glob_expansion")
+        cursor = match.end()
+    if script[cursor:].strip():
+        raise ValueError("unsupported shell lexical syntax")
+    sources: list[str] = []
+    has_node_test = any(value == "--test" and not operator for value, operator in words)
+    index = 0
+    command_position = True
+    while index < len(words):
+        word, operator = words[index]
+        if operator:
+            if has_node_test and command_position:
+                unknown.append("node_test_shell_clause_missing")
+            if has_node_test and word != "&&":
+                unknown.append(f"node_test_shell_operator_unknown:{word}")
+            if word not in {";", "&&", "||", "|", "(", ")", "\n"}:
+                unknown.append(f"shell_operator_unknown:{word}")
+            command_position = True
+            index += 1
+            continue
+        if not command_position:
+            index += 1
+            continue
+        if re.match(r"^[A-Za-z_][A-Za-z_0-9]*=", word) or word in {"exec", "env"}:
+            if has_node_test:
+                unknown.append(f"node_test_shell_prefix_unknown:{word}")
+            index += 1
+            continue
+        command_position = False
+        end = index + 1
+        while end < len(words) and not words[end][1]:
+            end += 1
+        args = [value for value, _ in words[index + 1 : end]]
+        executable = os.path.basename(word).lower()
+        if (
+            has_node_test
+            and executable in {"npm", "npm.cmd"}
+            and (len(args) != 2 or args[0] != "run" or args[1] not in declared_scripts)
+        ):
+            unknown.append("node_test_npm_clause_unknown")
+        if (
+            has_node_test
+            and executable == "tsc"
+            and (
+                args != ["--noEmit"]
+                and not (len(args) == 2 and args[0] in {"-p", "--project"} and Path(args[1]).suffix.lower() == ".json")
+            )
+        ):
+            unknown.append("node_test_tsc_clause_unknown")
+        if has_node_test and os.path.basename(word).lower() not in {"node", "node.exe", "npm", "npm.cmd", "tsc"}:
+            unknown.append(f"node_test_shell_command_unknown:{word}")
+        if Path(word).suffix.lower() in {".md", ".markdown"}:
+            unknown.append(f"shell_executable_document:{word}")
+        if word.startswith("-"):
+            unknown.append(f"shell_executable_unknown:{word}")
+        if word in {
+            "if",
+            "then",
+            "else",
+            "elif",
+            "fi",
+            "for",
+            "while",
+            "until",
+            "do",
+            "done",
+            "case",
+            "esac",
+            "function",
+            "sh",
+            "bash",
+            "zsh",
+            "eval",
+            "source",
+            ".",
+            "command",
+            "npx",
+        }:
+            unknown.append(f"shell_command_unknown:{word}")
+        if os.path.basename(word).lower() not in {"node", "node.exe"}:
+            index += 1
+            continue
+        tokens = [value for value, _ in words[index:end]]
+        sources.extend(_iter_node_eval_sources(tokens, incomplete_reasons=unknown))
+        index = end
+    if has_node_test and command_position:
+        unknown.append("node_test_shell_clause_missing")
+    return tuple(sources), unknown
+
+
+def _shell_word_has_expansion(raw: str) -> bool:
+    quote = ""
+    escaped = False
+    for char in raw:
+        if escaped:
+            escaped = False
+            continue
+        if quote == "'":
+            if char == "'":
+                quote = ""
+            continue
+        if char == "\\":
+            escaped = True
+        elif char in {"$", "`"}:
+            return True
+        elif char == quote:
+            quote = ""
+        elif not quote and char in {"'", '"'}:
+            quote = char
+    return False
 
 
 def _check_javascript_snippet_syntax(source: str) -> str:

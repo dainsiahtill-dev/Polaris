@@ -824,3 +824,20 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
 # ---------------------------------------------------------------------------
 
 
+def test_pol77_director_keeps_generated_expectations_outside_write_boundary(tmp_path):
+    row = {"path": "dist/main.js", "inputs": [{"task_id": "TASK-1", "path": "src/main.ts"}],
+           "build": {"argv": ["npm", "run", "build"], "cwd": "."}}
+    adapter = DirectorAdapter(workspace=str(tmp_path))
+    context = {}
+    adapter._promote_task_contract_to_runtime_context(
+        task={"target_files": ["src/main.ts"], "scope_paths": ["src"],
+              "context_files": ["package.json"], "generated_outputs": [row]},
+        context=context, workspace=str(tmp_path),
+    )
+    assert context["target_files"] == ["src/main.ts"]
+    assert context["scope_paths"] == ["src"]
+    assert context["context_files"] == ["package.json"]
+    assert context["generated_outputs"] == [row]
+    assert context["generated_outputs"][0] is not row
+    metadata = adapter._build_role_runtime_metadata({"generated_outputs": [row]}, max_retries=1)
+    assert metadata["generated_outputs"] == [row]

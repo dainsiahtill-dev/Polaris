@@ -101,6 +101,144 @@ from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # 
 )
 
 
+@pytest.mark.parametrize("present", [False, True])
+@pytest.mark.parametrize("recover", [False, True])
+async def test_live_terminal_success_requires_declared_outputs_after_settlement(
+    tmp_path: Path, present: bool, recover: bool
+) -> None:
+    """Converged and recovery branches must retain the terminal artifact guard.
+
+    Upstream canonical completion is characterized; file presence does not
+    manufacture build evidence or authorize completion on its own.
+    """
+    task = {
+        "id": "TASK-1",
+        "phase": "implementation",
+        "assigned_to": "Director",
+        "execution_backend": "code_edit",
+        "target_files": ["src/main.ts"],
+        "scope_paths": ["src/main.ts"],
+        "depends_on": [],
+        "verification_commands": [{"modality": "build", "argv": ["npm", "run", "build"], "cwd": "."}],
+        "generated_outputs": [
+            {
+                "path": "dist/main.js",
+                "inputs": [{"task_id": "TASK-1", "path": "src/main.ts"}],
+                "build": {"argv": ["npm", "run", "build"], "cwd": "."},
+            }
+        ],
+    }
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/main.ts").write_text("export const value = 1;\n", encoding="utf-8")
+    if present:
+        (tmp_path / "dist").mkdir()
+        (tmp_path / "dist/main.js").write_text("export const value = 1;\n", encoding="utf-8")
+
+    class ConvergedExecutor(OrchestrationStageExecutor):
+        def __init__(self) -> None:
+            self.workspace = tmp_path
+            self.outputs: dict[str, Any] = {}
+
+        def _ensure_pm_plan_contract_available(self):
+            return ""
+
+        def _enrich_pm_plan_contract_artifact(self, *args):
+            return {}
+
+        def _load_pm_plan_tasks(self, *args):
+            return [task]
+
+        def _read_catalog_contract(self):
+            return {"primary_language": "typescript"}
+
+        def _build_orchestration_service(self, *args):
+            return object()
+
+        def _materialize_pm_plan_taskboard(self, *args, **kwargs):
+            return {"created_count": 0, "binding_failures": []}
+
+        def _create_pre_director_snapshot(self, **kwargs):
+            return {"file_count": 1}
+
+        def _read_taskboard_stats(self):
+            return {"total": 1, "pending": 0, "ready": 0, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 0}
+
+        def _query_observable_task_rows(self, **kwargs):
+            return [], None
+
+        def _chief_engineer_handoff_signals_for_director(self, *args, **kwargs):
+            return []
+
+        def _resolve_director_binding_fanout(self, *args, **kwargs):
+            return [{"provider_id": "offline", "model": "unused"}]
+
+        def _capture_workspace_delivery_state(self):
+            return {}
+
+        def _canonical_factory_projection(self, *args):
+            return _with_task_runtime_authority(
+                {
+                    "source": "run_ledger",
+                    "task_boundary": {
+                        "latest_by_task": {"TASK-1": {"task_id": "TASK-1", "status": "completed_verified", "ok": True}}
+                    },
+                },
+                task_ids=("TASK-1",),
+            )
+
+        def _director_provider_health_failure_signal(self):
+            return None
+
+        def _validate_director_binding_coverage(self, **kwargs):
+            return True, []
+
+        def _write_stage_signal_artifact(self, **kwargs):
+            self.outputs["signals"] = list(kwargs["signals"])
+            return "diagnostic-signals.json"
+
+        def _write_json_artifact(self, path, payload):
+            self.outputs[path] = dict(payload)
+
+        def _mirror_director_artifacts(self, *args):
+            return None
+
+        def _artifact_exists(self, *args, **kwargs):
+            return False
+
+        async def _run_director_stage_materialization_quality_settle(self, **kwargs):
+            return {"ok": True, "detail": "characterized settlement"} if recover else {}
+
+        def _seal_director_stage_missing_tool_lifecycles(self, **kwargs):
+            return {}
+
+        def _recover_director_stage_authority_after_delivery_settle(self, **kwargs):
+            return evaluate_canonical_factory_authority(self._canonical_factory_projection())
+
+        async def _execute_director_binding_fanout(self, **kwargs):
+            raise AssertionError("Converged branch must not invoke Provider")
+
+    executor = ConvergedExecutor()
+    run = FactoryRun(
+        id="factory-output-guard",
+        config=FactoryConfig(name="offline"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-10-09T00:00:00Z",
+    )
+    result = await executor._execute_director_dispatch(
+        run, _factory_stage_context({"director_max_rounds": 1, "execution_mode": "serial", "max_workers": 1})
+    )
+    assert result.status == ("success" if present else "failed")
+    payload = executor.outputs["dispatch/log.json"]
+    assert payload["status"] in ({"success", "completed"} if present else {"failed"})
+    if recover:
+        assert payload["canonical_authority"]["recovered_after_delivery_settle"] is True
+    if not present:
+        assert result.metadata["error_code"] == "director.declared_delivery_targets_missing"
+        assert result.metadata["missing_declared_delivery_targets"] == ["dist/main.js"]
+        assert payload["missing_declared_delivery_targets"] == ["dist/main.js"]
+        assert any(s["code"] == "director.declared_delivery_targets_missing" for s in executor.outputs["signals"])
+
+
 class _PartialFailureProgressExecutor(OrchestrationStageExecutor):
     def __init__(self, workspace: Path) -> None:
         super().__init__(workspace)

@@ -41,6 +41,7 @@ public_contracts:
   errors:
   - ChiefEngineerBlueprintErrorV1
 depends_on:
+- orchestration.pm_planning
 - context.catalog
 - context.engine
 - control_plane.run_ledger

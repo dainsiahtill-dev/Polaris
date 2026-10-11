@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from polaris.cells.factory.pipeline.internal.factory_materialization_impl import MaterializationDiagnostics
 from polaris.cells.factory.pipeline.internal.factory_run_models import (
     FactoryConfig,
     FactoryRun,
@@ -27,6 +28,63 @@ from polaris.cells.factory.pipeline.internal.factory_stage_executor import (
 )
 
 # SimpleNamespace used as fake attempt identity in settle tests.
+
+
+def _unit_diagnostics(values: list[str]) -> MaterializationDiagnostics:
+    """Explicit collector-interface double; no physical Group qualification."""
+    return MaterializationDiagnostics(values, static_evidence={"scan_mode": "pure_static", "scan_complete": True})
+
+
+def _unit_observations(values: list[list[str]]) -> list[MaterializationDiagnostics]:
+    return [_unit_diagnostics(value) for value in values]
+
+
+def _controlled_collector_unit(
+    executor: Any,
+    result: dict[str, Any],
+    *,
+    static: Any = None,
+) -> tuple[MaterializationDiagnostics, list[list[str]]]:
+    """Result/interface double only; never a trusted Group or physical verdict."""
+    commands: list[list[str]] = []
+
+    async def command(command: list[str], _timeout: float) -> dict[str, Any]:
+        commands.append(command)
+        return {**result, "command": command}
+
+    session = SimpleNamespace(run_command=command, close=lambda: None)
+    from contextlib import ExitStack
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "polaris.cells.factory.pipeline.internal.factory_node_dependencies.authenticated_preparation_contract",
+                return_value=SimpleNamespace(project_id="unit-project"),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "polaris.cells.factory.pipeline.internal.factory_materialization_impl.NativeValidationSession.from_factory",
+                return_value=session,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "polaris.cells.factory.pipeline.internal.factory_materialization_impl.node_dependency_readiness",
+                return_value=SimpleNamespace(ready=True),
+            )
+        )
+        if static is not None:
+            stack.enter_context(
+                patch("polaris.kernelone.quality.scan_workspace_artifact_quality_evidence", return_value=static)
+            )
+        observation = asyncio.run(
+            executor._collect_director_stage_materialization_diagnostics(
+                run=_run(executor.workspace),
+                context={"project_id": "unit-project"},
+            )
+        )
+    return observation, commands
 
 
 @pytest.fixture
@@ -98,7 +156,16 @@ def test_collect_director_stage_diagnostics_includes_go_compile_without_package_
         encoding="utf-8",
     )
     executor = OrchestrationStageExecutor(tmp_path)
-    diagnostics = executor._collect_director_stage_materialization_diagnostics()
+    diagnostics, commands = _controlled_collector_unit(
+        executor,
+        {
+            "exit_code": 1,
+            "passed": False,
+            "stdout_tail": "",
+            "stderr_tail": "undefined: engine.PaletteForMood",
+        },
+    )
+    assert commands == [["go", "-C", ".", "test", "-run", "^$", "./..."], ["go", "-C", ".", "test", "./..."]]
     assert any("undefined: engine.PaletteForMood" in item for item in diagnostics)
 
 
@@ -445,7 +512,9 @@ async def test_run_director_stage_materialization_quality_settle_invokes_schedul
             return_value=("TASK-1", 1, fake_attempt, canonical_settle_owner),
         ),
         patch.object(executor, "_apply_workspace_quality_repairs", side_effect=_fake_apply),
-        patch.object(executor, "_collect_director_stage_materialization_diagnostics", return_value=[]),
+        patch.object(
+            executor, "_collect_director_stage_materialization_diagnostics", return_value=_unit_diagnostics([])
+        ),
         patch.object(
             executor,
             "_settle_director_stage_materialization_attempt",
@@ -505,10 +574,11 @@ async def test_materialization_settle_keeps_event_loop_live_during_sync_scan(
     release_scan = threading.Event()
     ticker_observed_live_loop = False
 
-    def _blocking_scan() -> list[str]:
+    async def _blocking_scan(**_kwargs: Any) -> MaterializationDiagnostics:
         scan_started.set()
-        release_scan.wait(timeout=1.0)
-        return []
+        while not release_scan.is_set():
+            await asyncio.sleep(0)
+        return _unit_diagnostics([])
 
     def _empty_repairs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         return [], {}
@@ -611,16 +681,22 @@ async def test_materialization_settle_accepts_canonical_batch_receipt_and_revali
     preparation_outcome = {"command": ["npm", "install"], "passed": True, "exit_code": 0}
     scans = 0
 
-    def collect_diagnostics(*, run: FactoryRun, preparation_results: list[dict[str, Any]]) -> list[str]:
+    async def collect_diagnostics(
+        *,
+        run: FactoryRun,
+        preparation_results: list[dict[str, Any]],
+        context: Any,
+        sessions: Any,
+    ) -> MaterializationDiagnostics:
         # This stage-unit double models the collector's preparation ownership;
         # real managed npm/DEO failure paths are exercised in dependency tests.
         nonlocal scans
         assert run is expected_run
         scans += 1
         if scans == 1:
-            return ["error TS2688: Cannot find type definition file for 'node'"]
+            return _unit_diagnostics(["error TS2688: Cannot find type definition file for 'node'"])
         preparation_results.append(executor._ensure_director_stage_materialization_typescript_toolchain())
-        return []
+        return _unit_diagnostics([])
 
     with (
         patch.object(
@@ -727,7 +803,7 @@ async def test_materialization_settle_stops_after_first_verified_repair_candidat
         patch.object(
             executor,
             "_collect_director_stage_materialization_diagnostics",
-            side_effect=[["error TS2688"], []],
+            side_effect=_unit_observations([["error TS2688"], []]),
         ),
         patch.object(executor, "_ensure_director_stage_materialization_typescript_toolchain"),
         patch.object(
@@ -814,7 +890,7 @@ async def test_materialization_settle_replans_new_verifier_residuals_in_same_tas
         patch.object(
             executor,
             "_collect_director_stage_materialization_diagnostics",
-            side_effect=[["error-a"], ["error-b"], []],
+            side_effect=_unit_observations([["error-a"], ["error-b"], []]),
         ),
         patch.object(executor, "_ensure_director_stage_materialization_typescript_toolchain"),
         patch.object(
@@ -867,7 +943,7 @@ async def test_materialization_settle_fails_when_verifier_residual_has_no_candid
         patch.object(
             executor,
             "_collect_director_stage_materialization_diagnostics",
-            return_value=["artifact_quality_error: npm test failed"],
+            return_value=_unit_diagnostics(["artifact_quality_error: npm test failed"]),
         ),
         patch.object(
             executor,
@@ -929,7 +1005,9 @@ async def test_materialization_settle_reports_deferred_commit_failure(
             "_apply_workspace_quality_repairs",
             return_value=(deferred_results, {"ok": True}),
         ),
-        patch.object(executor, "_collect_director_stage_materialization_diagnostics", return_value=[]),
+        patch.object(
+            executor, "_collect_director_stage_materialization_diagnostics", return_value=_unit_diagnostics([])
+        ),
         patch.object(
             executor,
             "_settle_director_stage_materialization_attempt",
@@ -1092,7 +1170,7 @@ async def test_run_director_stage_materialization_quality_settle_forwards_tsc_di
         patch.object(
             executor,
             "_collect_director_stage_materialization_diagnostics",
-            return_value=diags,
+            return_value=_unit_diagnostics(diags),
         ),
         patch.object(
             executor,
@@ -1252,19 +1330,18 @@ def test_collect_director_stage_materialization_diagnostics_parses_tsc_stderr(
     tsc_path.chmod(0o755)
     executor = OrchestrationStageExecutor(tmp_path)
 
-    fake = SimpleNamespace(
-        stdout="src/a.ts(1,1): error TS6133: 'x' is declared but its value is never read.\n",
-        stderr="",
-        returncode=1,
+    diags, commands = _controlled_collector_unit(
+        executor,
+        {
+            "stdout_tail": "src/a.ts(1,1): error TS6133: 'x' is declared but its value is never read.\n",
+            "stderr_tail": "",
+            "exit_code": 1,
+            "passed": False,
+        },
     )
-    with patch(
-        "polaris.cells.factory.pipeline.internal.factory_stage_executor.subprocess.run",
-        return_value=fake,
-    ):
-        diags = executor._collect_director_stage_materialization_diagnostics()
-
-    assert len(diags) == 1
-    assert "TS6133" in diags[0]
+    assert commands == [["node", "node_modules/typescript/bin/tsc", "-p", "tsconfig.json", "--noEmit"]]
+    assert len([item for item in diags if item.startswith("src/a.ts")]) == 1
+    assert any("TS6133" in item for item in diags)
 
 
 def test_collect_materialization_diagnostics_includes_html_entrypoint_quality(
@@ -1280,7 +1357,9 @@ def test_collect_materialization_diagnostics_includes_html_entrypoint_quality(
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "web.ts").write_text("export const ready = true;\n", encoding="utf-8")
 
-    diagnostics = OrchestrationStageExecutor(tmp_path)._collect_director_stage_materialization_diagnostics()
+    diagnostics = asyncio.run(
+        OrchestrationStageExecutor(tmp_path)._collect_director_stage_materialization_diagnostics()
+    )
 
     assert any("HTML module script references TypeScript source" in item for item in diagnostics)
     assert any("./src/web.ts" in item for item in diagnostics)
@@ -1305,19 +1384,19 @@ def test_collect_materialization_diagnostics_runs_declared_npm_test(
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "verify.test.ts").write_text("export {};\n", encoding="utf-8")
     executor = OrchestrationStageExecutor(tmp_path)
-    failed_test = SimpleNamespace(
-        stdout="",
-        stderr="Could not find 'dist/tests/verify.test.js'\n",
-        returncode=1,
+    from polaris.kernelone.quality.artifact_quality import ArtifactQualityEvidence
+
+    diagnostics, commands = _controlled_collector_unit(
+        executor,
+        {
+            "stdout_tail": "",
+            "stderr_tail": "Could not find 'dist/tests/verify.test.js'\n",
+            "exit_code": 1,
+            "passed": False,
+        },
+        static=ArtifactQualityEvidence(scan_mode="pure_static"),
     )
-
-    with patch(
-        "polaris.cells.factory.pipeline.internal.factory_stage_executor.subprocess.run",
-        return_value=failed_test,
-    ) as run_command:
-        diagnostics = executor._collect_director_stage_materialization_diagnostics()
-
-    assert run_command.call_args.args[0] == ["npm", "test"]
+    assert commands == [["npm", "test"]]
     assert any("npm test failed" in item for item in diagnostics)
     assert any("dist/tests/verify.test.js" in item for item in diagnostics)
 
@@ -1403,7 +1482,7 @@ def test_collect_materialization_diagnostics_flags_missing_package_test_files(tm
     (tmp_path / "src" / "main.ts").write_text("export const n = 1;\n", encoding="utf-8")
     # No tsconfig → skip tsc, still report missing tests.
     executor = OrchestrationStageExecutor(tmp_path)
-    diagnostics = executor._collect_director_stage_materialization_diagnostics()
+    diagnostics = asyncio.run(executor._collect_director_stage_materialization_diagnostics())
     assert any("missing test source files" in item for item in diagnostics)
 
 

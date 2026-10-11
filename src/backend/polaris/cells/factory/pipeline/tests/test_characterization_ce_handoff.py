@@ -314,11 +314,12 @@ class TestChiefEngineerHandoffGuards:
             {
                 "code": "chief_engineer.portfolio_structural_recovered",
                 "severity": "warning",
-                "detail": "Relocated CE tool arguments and revalidated the exact portfolio schema.",
+                "detail": "Normalized CE tool arguments and revalidated the exact portfolio schema.",
                 "task_id": "CE-PORTFOLIO-test",
                 "source_hash": recovered.metadata["chief_engineer_portfolio_structural_recovery"]["source_hash"],
                 "recovered_hash": recovered.metadata["chief_engineer_portfolio_structural_recovery"]["recovered_hash"],
                 "repair_codes": ["move_root_shared_behavior_contract"],
+                "artifact_path_normalizations": [],
                 "provider_call_consumed": False,
             }
         ]
@@ -1255,7 +1256,7 @@ class TestChiefEngineerHandoffGuards:
         command = captured_commands[0]
         assert command.stream is True
         assert command.context["delivery_mode"] == "analyze_only"
-        assert command.context["llm_max_tokens"] == 16_384
+        assert command.context["llm_max_tokens"] == 60_000
         assert command.context["reasoning_budget_tokens"] == 4_096
         assert command.context["temperature"] == 0.2
         assert command.context["response_format_mode"] == "json"
@@ -1805,10 +1806,21 @@ class TestChiefEngineerHandoffGuards:
                 )
             )
 
+    @pytest.mark.parametrize(
+        "policy,budget",
+        [
+            ({}, 60000),
+            ({"max_output_tokens": 64000, "max_tokens": 20000}, 64000),
+            ({"llm_max_tokens": 48000, "max_tokens": 20000}, 48000),
+            ({"metadata": {"task_execution_contract": {"context_budget": {"max_tokens": 32000}}}}, 32000),
+        ],
+    )
     def test_chief_engineer_schema_repair_uses_separate_claim_and_closes_stage(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        policy: dict[str, Any],
+        budget: int,
     ) -> None:
         executor = _executor(tmp_path)
         keepers = _capture_chief_engineer_lease_keepers(monkeypatch)
@@ -1830,7 +1842,7 @@ class TestChiefEngineerHandoffGuards:
             created_at="2026-06-25T00:00:00+00:00",
         )
 
-        context = _factory_stage_context()
+        context = _factory_stage_context(policy)
         result = asyncio.run(executor._execute_chief_engineer_review(run, context))
 
         assert result.status == "success"
@@ -1847,10 +1859,11 @@ class TestChiefEngineerHandoffGuards:
         assert repair_command.metadata["max_retries"] == 1
         assert repair_command.metadata["validate_output"] is True
         assert repair_command.metadata["temperature"] == 0.0
-        assert repair_command.metadata["llm_max_tokens"] == 8_192
+        assert commands[0].context["llm_max_tokens"] == budget
+        assert repair_command.metadata["llm_max_tokens"] == budget
         assert repair_command.metadata["reasoning_budget_tokens"] == 2_048
         assert repair_command.context["chief_engineer_schema_repair"] is True
-        assert repair_command.context["llm_max_tokens"] == 8_192
+        assert repair_command.context["llm_max_tokens"] == budget
         assert repair_command.context["reasoning_budget_tokens"] == 2_048
         assert repair_command.context["language"] == "python"
         assert repair_command.context["task_type"] == "implement"
@@ -2168,7 +2181,7 @@ class TestChiefEngineerHandoffGuards:
                 repair_round=1,
                 semantic_patch=False,
             )
-            == 8_192
+            == 60_000
         )
         assert (
             OrchestrationStageExecutor._chief_engineer_schema_repair_output_tokens(
@@ -2176,7 +2189,7 @@ class TestChiefEngineerHandoffGuards:
                 repair_round=2,
                 semantic_patch=False,
             )
-            == 16_384
+            == 60_000
         )
         assert (
             OrchestrationStageExecutor._chief_engineer_schema_repair_output_tokens(
@@ -2184,7 +2197,7 @@ class TestChiefEngineerHandoffGuards:
                 repair_round=2,
                 semantic_patch=True,
             )
-            == 8_192
+            == 60_000
         )
 
     def test_chief_engineer_thinking_only_result_uses_bounded_schema_repair(
@@ -2937,6 +2950,23 @@ class TestChiefEngineerHandoffGuards:
         ]
         assert commands[1].structured_output_contract.schema_name == "chief_engineer_blueprint_portfolio"
         assert commands[2].structured_output_contract.schema_name == "chief_engineer_semantic_repair_patch"
+        from polaris.cells.roles.kernel.internal.context_gateway.context_override_processor import (
+            ContextOverrideProcessor,
+        )
+        from polaris.cells.roles.kernel.internal.llm_caller.context_audit._payloads import (
+            _ce_required_command_row_coverage,
+        )
+
+        expected_rows = commands[0].context["ce_required_command_authority"]
+        for command in commands:
+            assert command.context["ce_required_command_authority"] == expected_rows
+            message = ContextOverrideProcessor(detect_prompt_injection=True).process_context_override(command.context)
+            assert message is not None
+            final_messages = json.loads(json.dumps([message]))
+            coverage = _ce_required_command_row_coverage(
+                SimpleNamespace(role="chief_engineer", context=command.context), final_messages
+            )
+            assert coverage["required"] is True and coverage["pass"] is True
         assert commands[2].context["chief_engineer_semantic_repair_diagnosis"]["diagnostic_codes"] == [
             "chief_engineer.delivery_depth.prod_files_below_minimum"
         ]

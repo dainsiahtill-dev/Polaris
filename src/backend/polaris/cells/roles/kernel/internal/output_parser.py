@@ -18,6 +18,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.roles.kernel.internal.tool_call_protocol import (
+    CanonicalToolCallParser,
+    iter_protocol_envelopes,
+    json_data_string_spans,
+)
 from polaris.cells.roles.kernel.internal.turn_engine.artifacts import (
     AssistantRawContent,
 )
@@ -46,10 +51,11 @@ _VISIBLE_PROTOCOL_CLOSE_RE = re.compile(
     r"</(?:output|answer)\s*>",
     re.IGNORECASE,
 )
-_TOOL_RESULT_BLOCK_RE = re.compile(
-    r"<(?:tool_result|tool_results|function_result|function_results)\b[^>]*>.*?</(?:tool_result|tool_results|function_result|function_results)\s*>",
-    re.IGNORECASE | re.DOTALL,
+_TOOL_RESULT_OPEN_RE = re.compile(
+    r"<(?P<angle>tool_result|tool_results|function_result|function_results)\b[^>]*>",
+    re.IGNORECASE,
 )
+_THINKING_OPEN_RE = re.compile(r"<(?P<angle>thinking)>")
 
 
 def _tool_name_match_keys(tool_name: str) -> set[str]:
@@ -160,10 +166,29 @@ class OutputParser:
         token = str(content or "")
         if not token.strip():
             return ""
-        sanitized = _TOOL_RESULT_BLOCK_RE.sub("", token)
-        sanitized = _VISIBLE_PROTOCOL_OPEN_RE.sub("", sanitized)
-        sanitized = _VISIBLE_PROTOCOL_CLOSE_RE.sub("", sanitized)
-        sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
+
+        def strip_outside_data(pattern: re.Pattern[str], text: str) -> str:
+            spans = json_data_string_spans(text)
+            return pattern.sub(
+                lambda match: match.group(0) if any(start <= match.start() < end for start, end in spans) else "",
+                text,
+            )
+
+        result_ranges = [
+            (opening.start(), closing.end())
+            for opening, closing in iter_protocol_envelopes(
+                token, json_data_string_spans(token), opening_pattern=_TOOL_RESULT_OPEN_RE
+            )
+        ]
+        sanitized = CanonicalToolCallParser._strip_ranges(token, result_ranges)
+        sanitized = strip_outside_data(_VISIBLE_PROTOCOL_OPEN_RE, sanitized)
+        sanitized = strip_outside_data(_VISIBLE_PROTOCOL_CLOSE_RE, sanitized)
+        spans = json_data_string_spans(sanitized)
+        sanitized = re.sub(
+            r"\n{3,}",
+            lambda match: match.group(0) if any(start <= match.start() < end for start, end in spans) else "\n\n",
+            sanitized,
+        )
         from polaris.cells.roles.kernel.internal.turn_engine.utils import (
             sanitize_assistant_transcript_message,
         )
@@ -230,23 +255,44 @@ class OutputParser:
             ThinkingResult: 思考过程和清理后的内容
         """
         token = str(content or "")
-        thinking_pattern = r"<thinking>(.*?)</thinking\s*>"
-        match = re.search(thinking_pattern, token, re.DOTALL)
-
-        if match:
-            thinking = match.group(1).strip()
-            clean_content = self.strip_visible_protocol_wrappers(re.sub(thinking_pattern, "", token, flags=re.DOTALL))
+        protected = json_data_string_spans(token)
+        thinking_ranges = [
+            (opening, closing)
+            for opening, closing in iter_protocol_envelopes(token, protected, opening_pattern=_THINKING_OPEN_RE)
+        ]
+        if thinking_ranges:
+            opening, closing = thinking_ranges[0]
+            thinking = token[opening.end() : closing.start()].strip()
+            clean_content = self.strip_visible_protocol_wrappers(
+                CanonicalToolCallParser._strip_ranges(
+                    token, [(opening.start(), closing.end()) for opening, closing in thinking_ranges]
+                )
+            )
             return ThinkingResult(thinking=thinking, clean_content=clean_content)
 
         # 容错：部分模型会输出不完整结束标签 "</thinking"（缺少 ">"
         # 或被传输截断）。这类输出仍应被视为 thinking，不应泄漏到可见正文。
         open_tag = "<thinking>"
-        open_idx = token.find(open_tag)
+        open_idx = next(
+            (
+                match.start()
+                for match in re.finditer(re.escape(open_tag), token)
+                if not any(start <= match.start() < end for start, end in protected)
+            ),
+            -1,
+        )
         if open_idx >= 0:
             head = token[:open_idx]
             remainder = token[open_idx + len(open_tag) :]
             close_marker = "</thinking"
-            close_idx = remainder.find(close_marker)
+            close_idx = next(
+                (
+                    match.start()
+                    for match in re.finditer(re.escape(close_marker), remainder)
+                    if not any(start <= open_idx + len(open_tag) + match.start() < end for start, end in protected)
+                ),
+                -1,
+            )
             if close_idx >= 0:
                 thinking = remainder[:close_idx].strip()
                 tail_idx = close_idx + len(close_marker)

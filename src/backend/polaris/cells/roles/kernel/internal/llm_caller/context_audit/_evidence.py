@@ -24,6 +24,7 @@ from ._constants import (
     _REF_BASED_SUPERSEDED_FINDING_CODES,
 )
 from ._payloads import (
+    _ce_required_command_row_coverage,
     _request_sampling_audit,
 )
 from ._primitives import (
@@ -178,16 +179,33 @@ def final_request_evidence_coverage_violation(
     """Return a strict evidence coverage violation, if this request must fail closed."""
 
     source = _final_request_evidence_enforcement_source(ai_request)
+    evidence_coverage = audit.get("final_request_evidence_coverage")
+    if not isinstance(evidence_coverage, dict):
+        return None
+    ce_rows = _mapping(evidence_coverage.get("ce_required_command_authority"))
+    if not ce_rows:
+        # An audit projection losing the required-table result is a missing
+        # input proof, even if a later ref binder recomputes aggregate pass.
+        ce_rows = _ce_required_command_row_coverage(ai_request, [], role_id=str(evidence_coverage.get("role_id") or ""))
+    ce_rows_failed = ce_rows.get("required") is True and ce_rows.get("pass") is not True
+    if not source and ce_rows.get("required") is True:
+        source = "chief_engineer.required_command_planning_rows"
     if not source:
         return None
-    evidence_coverage = audit.get("final_request_evidence_coverage")
-    if not isinstance(evidence_coverage, dict) or evidence_coverage.get("pass") is True:
+    if evidence_coverage.get("pass") is True and not ce_rows_failed:
         return None
     missing_refs = missing_required_refs_from_evidence_coverage(evidence_coverage)
     missing_tools = missing_required_tools_from_evidence_coverage(evidence_coverage)
-    if not missing_refs and not missing_tools and evidence_coverage.get("role_identity_ok", True):
+    if (
+        not missing_refs
+        and not missing_tools
+        and evidence_coverage.get("role_identity_ok", True)
+        and not ce_rows_failed
+    ):
         return None
     message_parts = ["Final provider request evidence coverage failed"]
+    if ce_rows_failed:
+        message_parts.append("ce_required_command_authority_final_request_mismatch")
     if missing_refs:
         message_parts.append("missing_required_refs=" + ",".join(missing_refs))
     if missing_tools:
@@ -202,6 +220,10 @@ def final_request_evidence_coverage_violation(
         "role_identity_ok": bool(evidence_coverage.get("role_identity_ok", True)),
         "missing_required_refs": missing_refs,
         "missing_required_tools": missing_tools,
+        "error_code": "ce_required_command_authority_final_request_mismatch"
+        if ce_rows_failed
+        else "final_request_evidence_coverage_failed",
+        "ce_required_command_authority": ce_rows,
         "request_hash": str(evidence_coverage.get("request_hash") or audit.get("request_hash") or ""),
         "message": "; ".join(message_parts),
     }
@@ -344,7 +366,14 @@ def _final_request_evidence_coverage(
         else ()
     )
     total_required = len(required_refs) + len(required_tools)
+    ce_rows = _ce_required_command_row_coverage(
+        ai_request, messages, role_id=role_id, source_messages=prepared.messages
+    )
+    if ce_rows["required"]:
+        total_required += 1
     total_missing = len(missing_required_refs) + len(missing_required_tools)
+    if ce_rows["required"] and not ce_rows["pass"]:
+        total_missing += 1
     coverage_ratio = 1.0 if total_required == 0 else max(0.0, (total_required - total_missing) / total_required)
     return {
         "schema_version": "polaris.final_request_evidence_coverage.v1",
@@ -410,7 +439,8 @@ def _final_request_evidence_coverage(
         "ledger_evidence": _ledger_evidence(ai_request, receipt_refs=receipt_refs),
         "redaction_safety": _final_request_redaction_safety(messages),
         "coverage_ratio": round(coverage_ratio, 4),
-        "pass": bool(role_identity_ok and not missing_required_refs and not missing_required_tools),
+        "ce_required_command_authority": ce_rows,
+        "pass": bool(role_identity_ok and not missing_required_refs and not missing_required_tools and ce_rows["pass"]),
     }
 
 

@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
+
 SCHEMA_VERSION = "cross_artifact.interface_snapshot.v1"
 CONTRACT_SCHEMA_VERSION = "cross_artifact.interface_contract.v1"
 
@@ -188,6 +190,7 @@ class SymbolIndexSnapshot:
     imports: tuple[InterfaceImport, ...]
     unknown_export_paths: tuple[str, ...] = field(default_factory=tuple)
     schema_version: str = SCHEMA_VERSION
+    incomplete_reasons: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -204,6 +207,7 @@ class SymbolIndexSnapshot:
             },
             "imports": [item.to_dict() for item in self.imports],
             "unknown_export_paths": list(self.unknown_export_paths),
+            **({"incomplete_reasons": list(self.incomplete_reasons)} if self.incomplete_reasons else {}),
         }
 
     def stable_hash(self) -> str:
@@ -292,15 +296,26 @@ def build_symbol_index_snapshot(
     workspace: str | Path,
     *,
     relative_paths: Iterable[str] | None = None,
+    reader: WorkspaceReadSnapshot | None = None,
+    source_paths: Iterable[str] | None = None,
 ) -> SymbolIndexSnapshot:
     """Build a deterministic import/export snapshot for supported languages."""
 
     root = Path(workspace).resolve()
-    files = tuple(_iter_source_files(root))
+    if reader is not None and reader.root != root:
+        raise ValueError("source snapshot reader workspace binding mismatch")
+    files = (
+        tuple(path for path in source_paths if Path(path).suffix.lower() in _SOURCE_EXTS)
+        if source_paths is not None
+        else tuple(_iter_source_files(root))
+    )
+    relative_paths = tuple(relative_paths) if relative_paths is not None else None
     physical: dict[str, tuple[InterfaceSymbol, ...]] = {}
     imports: list[InterfaceImport] = []
     reexports: dict[str, tuple[_ReexportEdge, ...]] = {}
     unknown_export_paths: set[str] = set()
+    incomplete_reasons: list[str] = []
+    source_files = frozenset(files) if reader is not None else None
 
     for relative_path in files:
         if relative_paths is not None and not _path_in_scope(relative_path, relative_paths):
@@ -311,10 +326,27 @@ def build_symbol_index_snapshot(
             collect_imports = True
         full_path = root / relative_path
         try:
-            text = full_path.read_text(encoding="utf-8", errors="replace")[:1_000_000]
-        except (OSError, RuntimeError, ValueError):
+            if reader is not None:
+                read = reader.read(full_path)
+                if read.status != "readable":
+                    unknown_export_paths.add(relative_path)
+                    incomplete_reasons.append(f"symbol_source_unknown:{relative_path}:{read.status}:{read.detail}")
+                    continue
+                text = read.text
+                if len(text) > 1_000_000:
+                    unknown_export_paths.add(relative_path)
+                    incomplete_reasons.append(f"symbol_source_truncated:{relative_path}")
+            else:
+                text = full_path.read_text(encoding="utf-8", errors="replace")
+            text = text[:1_000_000]
+        except (OSError, RuntimeError, ValueError) as exc:
+            if reader is not None:
+                unknown_export_paths.add(relative_path)
+                incomplete_reasons.append(f"symbol_source_unknown:{relative_path}:{type(exc).__name__}:{exc}")
             continue
-        symbols, file_imports, file_reexports, unknown_exports = _scan_file_interfaces(root, relative_path, text)
+        symbols, file_imports, file_reexports, unknown_exports = _scan_file_interfaces(
+            root, relative_path, text, **({"source_files": source_files} if reader is not None else {})
+        )
         if symbols:
             physical[relative_path] = tuple(symbols)
         if collect_imports:
@@ -325,7 +357,7 @@ def build_symbol_index_snapshot(
             unknown_export_paths.add(relative_path)
 
     namespace, resolved_unknown_export_paths = _resolve_namespace_exports(
-        root, physical, reexports, unknown_export_paths
+        root, physical, reexports, unknown_export_paths, source_files=source_files
     )
     return SymbolIndexSnapshot(
         workspace=root.as_posix(),
@@ -334,6 +366,7 @@ def build_symbol_index_snapshot(
         namespace_exports={key: tuple(value) for key, value in namespace.items()},
         imports=tuple(imports),
         unknown_export_paths=tuple(sorted(resolved_unknown_export_paths)),
+        incomplete_reasons=tuple(incomplete_reasons),
     )
 
 
@@ -342,10 +375,17 @@ def scan_cross_artifact_consistency(
     *,
     relative_paths: Iterable[str] | None = None,
     contract: CrossArtifactInterfaceContract | Mapping[str, Any] | None = None,
+    reader: WorkspaceReadSnapshot | None = None,
+    source_snapshot: SymbolIndexSnapshot | None = None,
 ) -> list[CrossArtifactConsistencyIssue]:
     """Compare named consumers and optional CE contract against actual exports."""
 
-    snapshot = build_symbol_index_snapshot(workspace, relative_paths=relative_paths)
+    root = Path(workspace).resolve()
+    if reader is not None and reader.root != root:
+        raise ValueError("source snapshot reader workspace binding mismatch")
+    snapshot = source_snapshot or build_symbol_index_snapshot(workspace, relative_paths=relative_paths, reader=reader)
+    if snapshot.workspace != root.as_posix():
+        raise ValueError("source snapshot workspace binding mismatch")
     issues: list[CrossArtifactConsistencyIssue] = []
     parsed_contract: CrossArtifactInterfaceContract | None = None
     requirement_by_owner_symbol: dict[tuple[str, str], CrossArtifactInterfaceRequirement] = {}
@@ -372,6 +412,7 @@ def scan_cross_artifact_consistency(
                 Path(snapshot.workspace),
                 import_ref.resolved_owner_path,
                 name,
+                source_files=frozenset(snapshot.files) if reader is not None or source_snapshot is not None else None,
             ):
                 continue
             declared_requirement = requirement_by_owner_symbol.get((owner_path, name))
@@ -576,6 +617,10 @@ def _validate_contract_against_snapshot(
 ) -> list[CrossArtifactConsistencyIssue]:
     issues: list[CrossArtifactConsistencyIssue] = []
     for requirement in contract.interfaces:
+        if snapshot.incomplete_reasons and requirement.owner_path in snapshot.unknown_export_paths:
+            # Controlled read failures are coverage gaps, not evidence that a
+            # declared symbol is absent. The caller retains incomplete reasons.
+            continue
         actual = {symbol.name: symbol for symbol in snapshot.namespace_exports.get(requirement.owner_path, ())}
         symbol = actual.get(requirement.name)
         if symbol is None:
@@ -623,19 +668,21 @@ def _scan_file_interfaces(
     root: Path,
     relative_path: str,
     text: str,
+    *,
+    source_files: frozenset[str] | None = None,
 ) -> tuple[list[InterfaceSymbol], list[InterfaceImport], list[_ReexportEdge], bool]:
     suffix = Path(relative_path).suffix.lower()
     if suffix == ".py":
-        return _scan_python_file(root, relative_path, text)
+        return _scan_python_file(root, relative_path, text, source_files=source_files)
     if suffix in _TS_JS_EXTS:
-        return _scan_ts_js_file(root, relative_path, text)
+        return _scan_ts_js_file(root, relative_path, text, source_files=source_files)
     if suffix == ".go":
         return _scan_go_file(relative_path, text), [], [], False
     return [], [], [], False
 
 
 def _scan_python_file(
-    root: Path, relative_path: str, text: str
+    root: Path, relative_path: str, text: str, *, source_files: frozenset[str] | None = None
 ) -> tuple[list[InterfaceSymbol], list[InterfaceImport], list[_ReexportEdge], bool]:
     try:
         tree = ast.parse(text)
@@ -667,7 +714,7 @@ def _scan_python_file(
                 continue
             symbols = tuple(alias.name.strip() for alias in node.names if alias.name.strip() and alias.name != "*")
             target_module = _resolve_python_import_module_id(relative_path, node.module or "", node.level or 0)
-            owner_path = _python_module_path(root, target_module)
+            owner_path = _python_module_path(root, target_module, source_files=source_files)
             imports.append(
                 InterfaceImport(
                     importer_path=relative_path,
@@ -749,7 +796,7 @@ def _match_starts_in_ts_js_code(mask: list[bool], start: int) -> bool:
 
 
 def _scan_ts_js_file(
-    root: Path, relative_path: str, text: str
+    root: Path, relative_path: str, text: str, *, source_files: frozenset[str] | None = None
 ) -> tuple[list[InterfaceSymbol], list[InterfaceImport], list[_ReexportEdge], bool]:
     exports: list[InterfaceSymbol] = []
     imports: list[InterfaceImport] = []
@@ -791,7 +838,7 @@ def _scan_ts_js_file(
         mapping = _parse_ts_export_clause(match.group("inner"))
         specifier = str(match.group("spec") or "").strip()
         if specifier:
-            owner = _resolve_ts_relative_path(root, relative_path, specifier)
+            owner = _resolve_ts_relative_path(root, relative_path, specifier, source_files=source_files)
             if owner:
                 reexports.append(_ReexportEdge(specifier=owner, symbols=mapping))
             else:
@@ -807,7 +854,9 @@ def _scan_ts_js_file(
     for match in _TS_EXPORT_STAR_RE.finditer(text):
         if not _match_starts_in_ts_js_code(code_mask, match.start()):
             continue
-        owner = _resolve_ts_relative_path(root, relative_path, str(match.group("spec") or ""))
+        owner = _resolve_ts_relative_path(
+            root, relative_path, str(match.group("spec") or ""), source_files=source_files
+        )
         if owner:
             reexports.append(_ReexportEdge(specifier=owner, symbols={}, export_all=True))
         else:
@@ -818,7 +867,11 @@ def _scan_ts_js_file(
         if match.group("typeonly") or not _ts_symbol_coherence_enabled():
             continue
         specifier = str(match.group("spec") or "").strip()
-        owner = _resolve_ts_relative_path(root, relative_path, specifier) if specifier.startswith(".") else ""
+        owner = (
+            _resolve_ts_relative_path(root, relative_path, specifier, source_files=source_files)
+            if specifier.startswith(".")
+            else ""
+        )
         names = tuple(_parse_ts_import_names(match.group("names")))
         if owner and names:
             imports.append(
@@ -848,6 +901,8 @@ def _resolve_namespace_exports(
     physical: Mapping[str, tuple[InterfaceSymbol, ...]],
     reexports: Mapping[str, tuple[_ReexportEdge, ...]],
     initial_unknown_export_paths: set[str],
+    *,
+    source_files: frozenset[str] | None = None,
 ) -> tuple[dict[str, tuple[InterfaceSymbol, ...]], set[str]]:
     cache: dict[str, tuple[InterfaceSymbol, ...]] = {}
     unknown_paths: set[str] = set(initial_unknown_export_paths)
@@ -862,7 +917,7 @@ def _resolve_namespace_exports(
         for edge in reexports.get(path, ()):
             source_path = edge.specifier
             if source_path not in physical and source_path not in reexports:
-                source_path = _python_module_path(root, source_path) or source_path
+                source_path = _python_module_path(root, source_path, source_files=source_files) or source_path
             if source_path in inherited_unknown:
                 unknown_paths.add(path)
                 continue
@@ -986,24 +1041,31 @@ def _resolve_python_import_module_id(importer_path: str, module: str, level: int
     return ".".join(part for part in package_parts if part)
 
 
-def _python_module_path(root: Path, module_id: str) -> str:
+def _python_module_path(root: Path, module_id: str, *, source_files: frozenset[str] | None = None) -> str:
     if not module_id:
         return ""
     relative_base = Path(*module_id.split("."))
     candidates = (relative_base.with_suffix(".py"), relative_base / "__init__.py")
     for candidate in candidates:
         full = root / candidate
-        if full.is_file():
+        if candidate.as_posix() in source_files if source_files is not None else full.is_file():
             return candidate.as_posix()
     return ""
 
 
-def _python_submodule_owner_path(root: Path, owner_path: str, name: str) -> str:
+def _python_submodule_owner_path(
+    root: Path, owner_path: str, name: str, *, source_files: frozenset[str] | None = None
+) -> str:
     if not owner_path or not name:
         return ""
     owner = root / owner_path
     package_dir = owner.parent if owner.name == "__init__.py" else owner.with_suffix("")
     for candidate in (package_dir / f"{name}.py", package_dir / name / "__init__.py"):
+        if source_files is not None:
+            relative = candidate.relative_to(root).as_posix()
+            if relative in source_files:
+                return relative
+            continue
         try:
             resolved = candidate.resolve()
             resolved.relative_to(root)
@@ -1014,7 +1076,9 @@ def _python_submodule_owner_path(root: Path, owner_path: str, name: str) -> str:
     return ""
 
 
-def _resolve_ts_relative_path(root: Path, importer_path: str, specifier: str) -> str:
+def _resolve_ts_relative_path(
+    root: Path, importer_path: str, specifier: str, *, source_files: frozenset[str] | None = None
+) -> str:
     if not specifier.startswith("."):
         return ""
     base = (root / importer_path).parent / specifier
@@ -1028,15 +1092,15 @@ def _resolve_ts_relative_path(root: Path, importer_path: str, specifier: str) ->
         candidates.extend(base / f"index{ext}" for ext in _TS_JS_RESOLUTION_EXTS)
     for candidate in candidates:
         try:
-            resolved = candidate.resolve()
+            resolved = Path(os.path.abspath(candidate)) if source_files is not None else candidate.resolve()
             resolved.relative_to(root)
         except (OSError, ValueError):
             continue
-        if resolved.is_file():
+        if resolved.relative_to(root).as_posix() in source_files if source_files is not None else resolved.is_file():
             return resolved.relative_to(root).as_posix()
     collapsed = _collapse_redundant_relative_directory(importer_path, specifier)
     if collapsed and collapsed != specifier:
-        return _resolve_ts_relative_path(root, importer_path, collapsed)
+        return _resolve_ts_relative_path(root, importer_path, collapsed, source_files=source_files)
     return ""
 
 

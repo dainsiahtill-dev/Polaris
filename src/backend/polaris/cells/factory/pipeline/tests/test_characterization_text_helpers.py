@@ -475,7 +475,7 @@ class TestPMDeterministicContractMetadata:
 
         assert OrchestrationStageExecutor._pm_deterministic_contract_metadata_for_context(run, {}) == {}
 
-    def test_factory_bench_metadata_enables_preemptive_deterministic_pm(self) -> None:
+    def test_factory_bench_metadata_cannot_enable_deterministic_pm(self) -> None:
         run = FactoryRun(
             id="factory-bench",
             config=FactoryConfig(name="bench-run"),
@@ -493,11 +493,7 @@ class TestPMDeterministicContractMetadata:
 
         metadata = OrchestrationStageExecutor._pm_deterministic_contract_metadata_for_context(run, {})
 
-        assert metadata["deterministic_pm_contracts"] is True
-        assert metadata["factory_bench_project_id"] == "L1-06"
-        assert metadata["factory_bench_deterministic_pm"] is True
-        assert metadata["pm_route_audit_probe"] is True
-        assert metadata["factory_recovery"] == "bench_preemptive_deterministic_contracts"
+        assert metadata == {}
 
     def test_explicit_context_flag_enables_deterministic_pm_without_bench_semantics(self) -> None:
         run = FactoryRun(

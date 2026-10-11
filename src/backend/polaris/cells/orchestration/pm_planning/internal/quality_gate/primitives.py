@@ -110,9 +110,9 @@ _PM_EXECUTABLE_BACKTICK_RE = re.compile(r"`([^`]{2,})`")
 _PM_PLACEHOLDER_ACCEPTANCE_RE = re.compile(
     r"("
     r"占位\s*(?:输出|脚本|检查|测试|即可|可以)"
-    r"|(?:可|可以|允许)[^\n。；;]*(?:占位|placeholder|stub|dummy)"
+    r"|(?:可|可以|允许)(?:(?!占位|placeholder|stub|dummy)[^\n。；;])*(?:占位|placeholder|stub|dummy)"
     r"|(?:最小|空|empty)[\w\s-]*(?:占位|placeholder|stub|dummy)"
-    r"|(?:placeholder|stub|dummy)[\w\s-]*(?:output|script|only|suffices?|is\s+ok)"
+    r"|(?:placeholder|stub|dummy)(?:(?!\b(?:and|but|allow|permit|placeholder|stub|dummy)\b)[\w\s-])*(?:output|script|only|suffices?|is\s+ok)"
     r"|manifest[\w\s-]*only"
     r"|只检查\s*(?:manifest|package\.json)"
     r"|仅检查\s*(?:manifest|package\.json)"
@@ -176,6 +176,7 @@ _PM_SCOPE_SUFFIXES = {
     ".toml",
     ".ts",
     ".tsx",
+    ".xml",
     ".yaml",
     ".yml",
 }
@@ -832,14 +833,41 @@ def _has_executable_or_file_acceptance_anchor(acceptance_items: list[str]) -> bo
 
 
 def _has_placeholder_or_manifest_only_acceptance(acceptance_items: list[str]) -> bool:
+    """Check each weak-gate match in its local clause, including its polarity.
+
+    A prohibition or cleanup only governs the nearby match. It must not exempt
+    a separate allowance elsewhere in the same acceptance item.
+    """
     for item in acceptance_items:
         normalized = _normalize_text(item)
-        if (
-            normalized
-            and not _PM_PLACEHOLDER_CLEANUP_ACCEPTANCE_RE.search(normalized)
-            and _PM_PLACEHOLDER_ACCEPTANCE_RE.search(normalized)
-        ):
-            return True
+        clauses = re.split(
+            r"[\n。；;，,!?！？]|\b(?:but|however|and)\b|但是|但|然而|(?:且|并)(?=允许|可以)",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        for clause in clauses:
+            for match in _PM_PLACEHOLDER_ACCEPTANCE_RE.finditer(clause):
+                # Permission alternatives may begin before the actual weak
+                # gate (e.g. 不允许占位); locate the subject of the match.
+                subject = re.search(
+                    r"占位|placeholder|stub|dummy|manifest|只检查|仅检查|only|just|merely", match.group(), re.IGNORECASE
+                )
+                start = match.start() + (subject.start() if subject else 0)
+                prefix = clause[:start]
+                previous_subjects = list(re.finditer(r"占位|placeholder|stub|dummy|manifest", prefix, re.IGNORECASE))
+                local_start = previous_subjects[-1].end() if previous_subjects else 0
+                prefix = prefix[local_start:]
+                prohibited = re.search(
+                    r"(?:非|无|不|不再)\s*$"
+                    r"|(?:禁止|不得|不能|不要|不可|不允许|不可以)"
+                    r"(?:\s|使用|采用|包含|提供|产生|执行|允许|接受|输出|生成|任何|形式|的|仅|只)*$"
+                    r"|\b(?:no|non[-\s]|not|never|without)\s*(?:(?:allow|permit|use|using|accept|the|a|any)\s+)*$",
+                    prefix,
+                    re.IGNORECASE,
+                )
+                cleanup = _PM_PLACEHOLDER_CLEANUP_ACCEPTANCE_RE.search(clause[local_start : match.end()])
+                if not prohibited and not cleanup:
+                    return True
     return False
 
 

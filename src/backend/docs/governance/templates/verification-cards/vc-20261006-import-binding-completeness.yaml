@@ -1,0 +1,27 @@
+id: vc-20261006-import-binding-completeness
+issue: POL-17
+mode: implementation
+classification: pattern
+owner: repair-kernel-language-engineer
+blueprint: docs/blueprints/POLARIS_IMPORT_BINDING_COMPLETENESS_20261006.md
+cell: director.runtime
+state_owners_changed: false
+effects_changed: false
+public_contracts_changed: false
+assumptions:
+  - E1/E2 fail because the import parser silently filters unsupported retained bindings.
+  - E3 fail because identifier escapes and joiners are omitted from lexical boundaries.
+  - E4 fail because a type-only symbol is accepted as a runtime value.
+premortem:
+  - Reject unsupported whole clauses rather than prove a filtered subset.
+  - Preserve shared type-aware helper callers and strict typed canonical path priority.
+  - Prove local value declarations behind export aliases rather than trust alias text.
+verification:
+  - Public raw and typed Plan plus materialization probes; input hashes unchanged; zero effects.
+  - Private authored TypeScript fixtures via existing compiler, with versions and exit codes.
+  - Original binding frontier plus new cases, four frontiers and contract1.
+  - Contract1-7 plus four frontiers and C++ normalization; report B1/B6 separately.
+  - Differential Ruff, mypy, format and git diff checks; no broad formatting or installation.
+limitations:
+  - Component proof is not unattended fresh isolated L1-L12 delivery.
+  - No provider request, physical tool effect, authoritative receipt or QA settlement exercised.

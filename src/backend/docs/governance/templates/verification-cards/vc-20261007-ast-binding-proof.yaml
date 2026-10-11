@@ -1,0 +1,40 @@
+id: vc-20261007-ast-binding-proof
+classification: pattern
+owner: director.runtime
+issue: POL-22
+mode: implementation
+blueprint: docs/blueprints/POLARIS_AST_BINDING_PROOF_20261007.md
+assumption_register:
+  - assumption: module-root AST declarations distinguish expression-private and runtime value names
+    evidence: actual employee grammar program has lexical_declaration, not root class for named expression
+  - assumption: all real matching imports must be retained and completely proved
+    evidence: POL-21 multiple-valid-imports exact proposal compiler TS2307
+  - assumption: source spans use UTF-8 bytes across deployed Rust ABI
+    evidence: employee Unicode probe via KernelOne adapters; strict char conversion required
+  - assumption: provider absence, parse errors, missing nodes or unsupported ABI must refuse
+    evidence: explicit parser refusal tests; no regex fallback
+pre_mortem:
+  - arbitrary descendant traversal creates false module values
+  - first-match rewriting misses second import or unproven bindings
+  - regex selection mutates comments or templates
+  - byte offsets used as Unicode character offsets corrupt source
+  - error recovery or partial import parsing advertises unsafe proof
+verification_plan:
+  - public raw/typed QA-SCOPE, QA-MULTI, QA-NONCODE RED then GREEN with exact content
+  - genuine AST ABI, Unicode, same-line statements, error and absence tests
+  - original 112 binding tests unchanged; four frontiers and contract1
+  - contract1-7, four frontiers, new AST tests, cpp normalization and actual shared helper callers
+  - private TS5.9.3 strict noEmitOnError compile exact positive proposal, empty types and typeRoots
+  - Ruff check and format delta against task baseline; mypy; git diff --check
+verification_commands:
+  - rtk proxy python3 .superpowers/sdd/2026-10-06-paperclip-repair-frontier/ast-binding-proof/validate.py
+  - rtk proxy python3 .superpowers/sdd/2026-10-06-paperclip-repair-frontier/ast-binding-proof/compiler.py
+  - rtk proxy python3 .superpowers/sdd/2026-10-06-paperclip-repair-frontier/ast-binding-proof/static_checks.py
+scope:
+  - typescript_syntax/imports_exports.py
+  - typescript_syntax/common/import_text_ops.py
+  - typescript_syntax/module_binding_proof.py
+  - tests/test_unique_export_binding_frontier.py additions only
+  - tests/test_typescript_ast_binding_proof.py
+authority: private derived proof only; generic public Plan/Run and policy/receipt/revalidation unchanged
+unrun: full repository and release gates; live authorized effects, settlement and fresh isolated L1-L12

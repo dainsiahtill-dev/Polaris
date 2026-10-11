@@ -38,6 +38,7 @@ from polaris.cells.control_plane.verifier_policy.public import (
 from polaris.cells.director.tasking.public.service import (
     build_director_execution_profile_snapshot,
 )
+from polaris.cells.roles.kernel.public.llm_caller_contracts import resolve_role_output_budget
 from polaris.cells.runtime.task_market.public.contracts import (
     AcknowledgeTaskStageCommandV1,
     ClaimTaskWorkItemCommandV1,
@@ -45,7 +46,11 @@ from polaris.cells.runtime.task_market.public.contracts import (
     PublishTaskWorkItemCommandV1,
 )
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
-from polaris.kernelone.llm.budget_policy import chief_engineer_structured_output_tokens
+from polaris.kernelone.llm.budget_policy import (
+    TIMEOUT_OVERRIDE_CONTEXT_KEYS,
+    chief_engineer_generation_floor_seconds_for_output_tokens,
+    chief_engineer_structured_output_tokens,
+)
 from polaris.kernelone.quality.file_ownership_ledger import (
     normalize_file_ownership_target,
     read_file_owners,
@@ -73,15 +78,7 @@ _CE_REQUEUE_CONTEXT_KEYS = frozenset(
 
 
 def _ce_fission_max_output_tokens() -> int:
-    """Output-token budget for the CE step-fission LLM call (I3-r17).
-
-    The shared role-caller default is 4000, which is structurally below the
-    reasoning a model such as MiniMax-M3 burns before emitting the JSON answer
-    (live r17: ~9.7k thinking tokens, finish_reason=length, empty content). The
-    engine clamps the request to the model's max_output_tokens, so this only
-    raises the floor where the model allows; the provider self-heal then carries
-    it the rest of the way. Env-tunable, never a hardcoded project value.
-    """
+    """Reuse the structured CE default and explicit deployment override."""
     return chief_engineer_structured_output_tokens()
 
 
@@ -1142,6 +1139,32 @@ class CEConsumer:
         )
         message = message + render_edit_contract(owned_elsewhere)
 
+        from math import ceil
+
+        trusted_context = payload.get("context")
+        budget_context = trusted_context if isinstance(trusted_context, dict) else {}
+        fission_output_tokens = resolve_role_output_budget(
+            context=budget_context, requested=_ce_fission_max_output_tokens()
+        )
+        generation_floor = ceil(chief_engineer_generation_floor_seconds_for_output_tokens(fission_output_tokens))
+        fission_timeout_seconds = max(300, generation_floor)
+        for key in TIMEOUT_OVERRIDE_CONTEXT_KEYS:
+            raw_timeout = budget_context.get(key)
+            if raw_timeout is None or isinstance(raw_timeout, bool):
+                continue
+            try:
+                explicit_timeout = int(str(raw_timeout).strip())
+            except (TypeError, ValueError):
+                continue
+            if explicit_timeout > 0:
+                fission_timeout_seconds = explicit_timeout
+                break
+        if fission_timeout_seconds < generation_floor:
+            raise RuntimeError(
+                "chief_engineer_fission_timeout_below_generation_floor:"
+                f"requested={fission_timeout_seconds},generation_floor={generation_floor}"
+            )
+
         def _invoke(extra: str = "") -> dict[str, Any]:
             has_loop = True
             try:
@@ -1152,15 +1175,12 @@ class CEConsumer:
                 "_transaction_kernel_forced_tool_definitions": [],
                 "_transaction_kernel_forced_tool_choice": "none",
                 "disable_internal_tool_rounds": True,
-                "llm_call_timeout_seconds": 300,
-                "request_timeout_seconds": 300,
-                "timeout_seconds": 300,
+                "llm_call_timeout_seconds": fission_timeout_seconds,
+                "request_timeout_seconds": fission_timeout_seconds,
+                "timeout_seconds": fission_timeout_seconds,
                 "cognitive_runtime_approval_mode": "auto_accept",
                 "cognitive_runtime_approval_scope": "chief_engineer_step_fission_preflight",
-                # Reasoning-sized output budget so the fission JSON survives
-                # the model's thinking burn (I3-r17); clamped to the model's
-                # max_output_tokens by the engine.
-                "llm_max_tokens": _ce_fission_max_output_tokens(),
+                "llm_max_tokens": fission_output_tokens,
             }
             command = ExecuteRoleSessionCommandV1(
                 role="chief_engineer",
@@ -1186,7 +1206,7 @@ class CEConsumer:
                 },
                 stream=False,
                 host_kind="chief_engineer_blueprint",
-                timeout_seconds=300,
+                timeout_seconds=fission_timeout_seconds,
             )
             runtime = RoleRuntimeService()
             if not has_loop:

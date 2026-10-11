@@ -6,17 +6,22 @@ import asyncio
 import contextlib
 import copy
 import logging
+import re
 import time
 import uuid
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.control_plane.run_ledger.public import (
     project_native_tool_call_envelopes_to_metadata,
 )
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    FactoryRoleFrozenSemanticRequestV1,
     FactoryRoleSemanticRequestIdentityV1,
 )
-from polaris.kernelone.llm.engine import AIExecutor
+from polaris.cells.roles.kernel.public.generation_outcome import GENERATION_OUTCOME_SCHEMA, RoleGenerationOutcomeV1
+from polaris.kernelone.llm.budget_policy import DEFAULT_ROLE_OUTPUT_TOKENS, HARD_OUTPUT_TOKEN_CLAMP
+from polaris.kernelone.llm.engine import AIExecutor, ResponseNormalizer
 from polaris.kernelone.llm.engine._executor_base import coerce_required_flag
 
 from ...llm_cache import get_global_llm_cache
@@ -494,6 +499,12 @@ class _InvokerCallMixin:
     ) -> LLMResponse:
         """Normalize a successful response, store cache, emit end, and build result."""
         raw_payload = response.raw if isinstance(response.raw, dict) else {}
+        # Generation termination is provider evidence, not transport completion.
+        # Retain only a bounded reason token; never project the raw provider body.
+        native_finish_reason = ResponseNormalizer.extract_finish_reason(raw_payload)
+        finish_reason = (
+            native_finish_reason if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", native_finish_reason) else "unknown"
+        )
         # DEBUG: Log raw LLM response for debugging parsing issues
         output_text = str(getattr(response, "output", "") or "")
         logger.debug(
@@ -506,8 +517,6 @@ class _InvokerCallMixin:
         response_text = output_text
         if not response_text.strip() and raw_payload:
             try:
-                from polaris.kernelone.llm.engine import ResponseNormalizer
-
                 response_text = ResponseNormalizer.extract_text(raw_payload)
             except (RuntimeError, ValueError):
                 response_text = str(getattr(response, "output", "") or "")
@@ -627,6 +636,7 @@ class _InvokerCallMixin:
 
         event_metadata: dict[str, Any] = {
             "elapsed_ms": round(elapsed_ms, 2),
+            "finish_reason": finish_reason,
             "cached": False,
             "source": "llm",
             "compression_applied": prepared.context_result.compression_applied if prepared.context_result else False,
@@ -670,6 +680,7 @@ class _InvokerCallMixin:
         response_metadata: dict[str, Any] = {
             "model": response_model_name,
             "provider": response_provider,
+            "finish_reason": finish_reason,
             **native_tool_metadata,
             "elapsed_ms": round(elapsed_ms, 2),
             "run_id": run_id,
@@ -690,6 +701,36 @@ class _InvokerCallMixin:
             active_request=active_request,
             profile=profile,
         )
+
+        audit = response_metadata.get("final_request_context_audit")
+        sampling = audit.get("sampling") if isinstance(audit, dict) else None
+        observed_max_tokens = sampling.get("max_tokens") if isinstance(sampling, dict) else None
+        if type(observed_max_tokens) is not int or not 0 < observed_max_tokens <= HARD_OUTPUT_TOKEN_CLAMP:
+            observed_max_tokens = None
+        freeze_id = semantic_hash = None
+        frozen = prepared.factory_semantic_request
+        if frozen is not None and type(frozen) is FactoryRoleFrozenSemanticRequestV1:
+            if frozen.identity.call_id == call_id and frozen.identity.run_id == run_id:
+                freeze_id = frozen.identity.request_freeze_id
+                semantic_hash = frozen.final_semantic_request_hash
+            else:
+                response_metadata["generation_outcome_freeze_binding_unavailable"] = "local_call_identity_mismatch"
+        outcome = RoleGenerationOutcomeV1.from_payload(
+            {
+                "schema_version": GENERATION_OUTCOME_SCHEMA,
+                "run_id": run_id,
+                "call_id": call_id,
+                "native_finish_reason": native_finish_reason
+                if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", native_finish_reason)
+                else None,
+                "max_tokens": observed_max_tokens,
+                "response_sha256": sha256(response_text.encode("utf-8")).hexdigest(),
+                "request_freeze_id": freeze_id,
+                "final_semantic_request_hash": semantic_hash,
+            }
+        )
+        if outcome is not None:
+            response_metadata["generation_outcome"] = outcome.to_payload()
 
         return LLMResponse(
             content=response_text,
@@ -1127,7 +1168,7 @@ class _InvokerCallMixin:
         context: ContextRequest,
         response_model: type | None = None,
         temperature: float = 0.7,
-        max_tokens: int = 4000,
+        max_tokens: int = DEFAULT_ROLE_OUTPUT_TOKENS,
         prompt_fingerprint: str | None = None,
         platform_retry_max: int = 1,
         run_id: str | None = None,

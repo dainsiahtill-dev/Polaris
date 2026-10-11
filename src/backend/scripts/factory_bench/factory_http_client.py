@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -9,7 +10,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Mapping
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import websockets
 from websockets.exceptions import WebSocketException
@@ -72,6 +73,61 @@ def _http_error_payload(exc: urllib.error.HTTPError) -> dict[str, Any]:
         "body": raw,
         "json": parsed if isinstance(parsed, dict) else None,
     }
+
+
+class _RejectHTTPRedirects(urllib.request.HTTPRedirectHandler):
+    """Do not forward authenticated Supervisor commands to a redirected origin."""
+
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+def _open_http_request(req: urllib.request.Request, *, timeout_s: float, strict_transport: bool) -> Any:
+    if strict_transport:
+        # An explicitly local Supervisor must not send credentials through an
+        # ambient HTTP proxy or follow redirects, even to another loopback port.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectHTTPRedirects())
+        return opener.open(req, timeout=timeout_s)
+    return urllib.request.urlopen(req, timeout=timeout_s)
+
+
+def _redact_http_error(payload: dict[str, Any], token: str) -> dict[str, Any]:
+    def scrub(value: Any) -> Any:
+        if isinstance(value, str):
+            return value.replace(token, "[REDACTED]") if token else value
+        if isinstance(value, dict):
+            return {
+                key: "[REDACTED]" if str(key).lower() in {"token", "authorization", "api_key"} else scrub(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        return value
+
+    result = cast(dict[str, Any], scrub(payload))
+    if result.get("json") is not None:
+        result["body"] = json.dumps(result["json"], ensure_ascii=False)
+    return result
+
+
+def _decode_http_json(raw: str, *, return_errors: bool, strict_transport: bool, token: str) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        payload = None
+    if strict_transport and return_errors and not isinstance(payload, dict):
+        return {
+            "_http_error": _redact_http_error(
+                {
+                    "status": 200,
+                    "reason": "invalid_json_object",
+                    "body": raw,
+                    "json": payload,
+                },
+                token,
+            )
+        }
+    return cast(dict[str, Any] | None, payload)
 
 
 def _append_query_params(url: str, params: Mapping[str, str]) -> str:
@@ -215,6 +271,7 @@ def _http_post_json(
     token: str = "",
     max_retries: int = DEFAULT_MAX_RETRIES,
     return_errors: bool = False,
+    strict_transport: bool = False,
 ) -> dict[str, Any] | None:
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -224,7 +281,7 @@ def _http_post_json(
     for attempt in range(attempts):
         try:
             req = urllib.request.Request(url, data=data, method="POST", headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            with _open_http_request(req, timeout_s=timeout_s, strict_transport=strict_transport) as resp:
                 raw = resp.read().decode("utf-8") or "{}"
             break
         except urllib.error.HTTPError as exc:
@@ -238,8 +295,11 @@ def _http_post_json(
                 time.sleep(delay)
                 continue
             error_payload = _http_error_payload(exc)
+            if strict_transport:
+                error_payload = _redact_http_error(error_payload, token)
+            error_summary = f"{error_payload['status']} {error_payload['reason']}" if strict_transport else str(exc)
             print(
-                f"[factory-bench] backend POST failed: {url}: {exc}; body={error_payload.get('body') or ''}",
+                f"[factory-bench] backend POST failed: {url}: {error_summary}; body={error_payload.get('body') or ''}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -247,12 +307,13 @@ def _http_post_json(
                 return {"_http_error": error_payload}
             return None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-            print(f"[factory-bench] backend POST failed: {url}: {exc}", file=sys.stderr, flush=True)
+            reason = str(exc).replace(token, "[REDACTED]") if strict_transport and token else str(exc)
+            print(f"[factory-bench] backend POST failed: {url}: {reason}", file=sys.stderr, flush=True)
             if return_errors:
                 return {
                     "_http_error": {
                         "status": 0,
-                        "reason": str(exc),
+                        "reason": reason,
                         "body": "",
                         "json": None,
                         "exception": type(exc).__name__,
@@ -262,10 +323,7 @@ def _http_post_json(
             return None
     else:
         return None
-    try:
-        return json.loads(raw)
-    except ValueError:
-        return None
+    return _decode_http_json(raw, return_errors=return_errors, strict_transport=strict_transport, token=token)
 
 
 def _http_get_json(
@@ -274,6 +332,8 @@ def _http_get_json(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     token: str = "",
     max_retries: int = DEFAULT_MAX_RETRIES,
+    return_errors: bool = False,
+    strict_transport: bool = False,
 ) -> dict[str, Any] | None:
     """GET JSON with retries for rate-limit and transport/timeouts under load.
 
@@ -293,7 +353,7 @@ def _http_get_json(
     for attempt in range(attempts):
         try:
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            with _open_http_request(req, timeout_s=timeout_s, strict_transport=strict_transport) as resp:
                 raw = resp.read().decode("utf-8") or "{}"
             break
         except urllib.error.HTTPError as exc:
@@ -321,7 +381,13 @@ def _http_get_json(
                 )
                 time.sleep(delay)
                 continue
-            print(f"[factory-bench] backend GET failed: {url}: {exc}", file=sys.stderr, flush=True)
+            error_payload = _http_error_payload(exc) if return_errors else {}
+            if strict_transport:
+                error_payload = _redact_http_error(error_payload, token)
+            reason = str(exc).replace(token, "[REDACTED]") if strict_transport and token else str(exc)
+            print(f"[factory-bench] backend GET failed: {url}: {reason}", file=sys.stderr, flush=True)
+            if return_errors:
+                return {"_http_error": error_payload}
             return None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             last_exc = exc
@@ -338,16 +404,25 @@ def _http_get_json(
                 )
                 time.sleep(delay)
                 continue
-            print(f"[factory-bench] backend GET failed: {url}: {exc}", file=sys.stderr, flush=True)
+            reason = str(exc).replace(token, "[REDACTED]") if strict_transport and token else str(exc)
+            print(f"[factory-bench] backend GET failed: {url}: {reason}", file=sys.stderr, flush=True)
+            if return_errors:
+                return {
+                    "_http_error": {
+                        "status": 0,
+                        "reason": reason,
+                        "body": "",
+                        "json": None,
+                        "exception": type(exc).__name__,
+                        "url": url,
+                    }
+                }
             return None
     else:
         if last_exc is not None:
             print(f"[factory-bench] backend GET failed: {url}: {last_exc}", file=sys.stderr, flush=True)
         return None
-    try:
-        return json.loads(raw)
-    except ValueError:
-        return None
+    return _decode_http_json(raw, return_errors=return_errors, strict_transport=strict_transport, token=token)
 
 
 def start_factory_run(
@@ -455,12 +530,29 @@ def get_audit_bundle(
     """
 
     url = _append_query_params(f"{backend_url}/v2/factory/runs/{run_id}/audit-bundle", {"workspace": workspace})
-    return _http_get_json(
+    response = _http_get_json(
         url,
         token=token,
         timeout_s=timeout_s,
         max_retries=max_retries,
     )
+    if not isinstance(response, dict):
+        return response
+    qualification = response.get("role_route_qualification")
+    if isinstance(qualification, dict) and (
+        not workspace
+        or qualification.get("workspace") != os.path.realpath(workspace)
+        or qualification.get("factory_run_id") != run_id
+        or qualification.get("schema_version") != "roles.kernel.factory_provider_route_qualification.v1"
+        or qualification.get("source") != "roles.kernel.canonical_physical_attempt"
+        or response.get("run_id") != run_id
+    ):
+        response = {
+            **response,
+            "role_route_qualification": None,
+            "role_route_qualification_error": {"error_code": "audit_bundle_target_scope_mismatch"},
+        }
+    return response
 
 
 def get_run_artifacts(

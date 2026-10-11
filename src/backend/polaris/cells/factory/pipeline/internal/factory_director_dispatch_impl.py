@@ -333,6 +333,25 @@ async def _execute_director_binding_fanout(
             submission_bindings.append(binding)
     active_bindings = submission_bindings
     authority_port.require_grant_capacity("director", len(active_bindings))
+    # Freeze dispatch obligations before any worker starts. The final physical
+    # context pins this declaration; observed completions never define it.
+    declared_bindings = list(
+        {
+            _binding_key(binding): {key: str(binding.get(key) or "") for key in ("provider_id", "model", "binding_id")}
+            for binding in [*bindings, *readiness_skipped]
+        }.values()
+    )
+    declared_skips = [
+        {
+            **{key: str(binding.get(key) or "") for key in ("provider_id", "model", "binding_id")},
+            "reason": str(binding.get("reason") or ""),
+            "source": "factory.director_dispatch",
+        }
+        for binding in readiness_skipped
+    ] + [
+        {**binding, "reason": "binding_quarantined", "source": "factory.director_dispatch"}
+        for binding in quarantined_skipped
+    ]
 
     async def _run_binding(binding: dict[str, str]) -> CommandResult:
         binding_tasks = assigned_tasks_by_key.get(_binding_key(binding))
@@ -351,18 +370,38 @@ async def _execute_director_binding_fanout(
             "fanout_assigned_tasks": list(binding_tasks or []),
             "fanout_assigned_task_count": len(binding_tasks or []),
         }
-        return cast(
-            CommandResult,
-            await executor._call_with_factory_role_evidence_authority(
-                authority_port,
-                "director",
-                lambda: service.execute_director_run(
-                    workspace=workspace,
-                    tasks=binding_tasks,
-                    options=binding_opts,
+
+        async def dispatch() -> CommandResult:
+            return cast(
+                CommandResult,
+                await executor._call_with_factory_role_evidence_authority(
+                    authority_port,
+                    "director",
+                    lambda: service.execute_director_run(
+                        workspace=workspace,
+                        tasks=binding_tasks,
+                        options=binding_opts,
+                    ),
                 ),
-            ),
+            )
+
+        factory_run_id = str(binding_metadata.get("factory_run_id") or "").strip()
+        if not factory_run_id:
+            # Historical component callers have no Factory scope and cannot
+            # produce qualified Factory routes through this path.
+            return await dispatch()
+        from polaris.cells.roles.kernel.public.provider_attempt_lifecycle_replay import (
+            bind_factory_provider_route_obligations,
         )
+
+        with bind_factory_provider_route_obligations(
+            workspace=workspace,
+            factory_run_id=factory_run_id,
+            role="director",
+            expected=declared_bindings,
+            skips=declared_skips,
+        ):
+            return await dispatch()
 
     submission_tasks: list[asyncio.Task[CommandResult]] = []
     done_submissions: set[asyncio.Task[CommandResult]] = set()
@@ -1666,6 +1705,7 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
             run=run,
             stage_status=stage_status,
             error_code=error_code,
+            context=context,
         )
         if materialization_settle:
             settlement_metadata["director_stage_materialization_quality_settle"] = materialization_settle
@@ -1701,7 +1741,42 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
                     "missing_before": list(lifecycle_seal.get("missing_before") or ()),
                 }
             )
-        if materialization_settle or lifecycle_seal:
+        if materialization_settle and materialization_settle.get("ok") is not True:
+            if materialization_settle.get("reason") != "settle_not_applicable":
+                dispatch_payload["prior_dispatch_failure"] = {
+                    "status": stage_status,
+                    "error_code": error_code,
+                    "root_cause_hint": root_cause_hint,
+                }
+                dispatch_payload["materialization_verification"] = materialization_settle
+                dispatch_payload["materialization_verification_error_code"] = (
+                    "director.materialization_verification_failed"
+                )
+                stage_status = "failed"
+                error_code = error_code or "director.materialization_verification_failed"
+                root_cause_hint = root_cause_hint or str(
+                    materialization_settle.get("detail") or materialization_settle.get("reason")
+                )
+                dispatch_payload["status"] = stage_status
+                dispatch_payload["error_code"] = error_code
+                dispatch_payload["root_cause_hint"] = root_cause_hint
+                dispatch_payload["failure_stage"] = "director_dispatch"
+                verification_code = "director.materialization_verification_failed"
+                verification_hint = str(materialization_settle.get("reason") or verification_code)
+                failure_signal = {
+                    "code": verification_code,
+                    "severity": "error",
+                    "failure_class": "materialization_verification",
+                    "root_cause_hint": verification_hint,
+                    "detail": str(materialization_settle.get("detail") or verification_hint),
+                }
+                stage_signals.append(failure_signal)
+                settlement_metadata.update(
+                    error_code=verification_code,
+                    failure_class="materialization_verification",
+                    root_cause_hint=verification_hint,
+                )
+        elif materialization_settle or lifecycle_seal:
             # R181/M06: settle can complete on-disk delivery after authority was
             # evaluated. Reconcile boundary against workspace + re-evaluate so
             # false task_runtime_not_converged / canonical_task_boundary_missing
@@ -1739,16 +1814,52 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
                         "reason_code": final_authority.reason_code,
                     }
                 )
-            if stage_signal_path or stage_signals:
-                # Refresh signal artifact with settle / seal evidence.
-                stage_signal_path = executor._write_stage_signal_artifact(
-                    stage="director_dispatch",
-                    run_id=run.id,
-                    signals=stage_signals,
+        # Check promises after every settlement/recovery path, including an
+        # already-converged TaskBoard that never enters the dispatch loop.
+        # Existence is necessary only; canonical receipts and verifier authority
+        # remain the prerequisite for success above.
+        if stage_status == "success" and any(task.get("generated_outputs") for task in pm_tasks):
+            missing_declared_targets = executor._missing_declared_delivery_targets(pm_tasks)
+            if missing_declared_targets:
+                stage_status = "failed"
+                error_code = "director.declared_delivery_targets_missing"
+                root_cause_hint = "Declared delivery targets are absent after settlement: " + ", ".join(
+                    missing_declared_targets
                 )
-                dispatch_payload["signals"] = stage_signals
-                dispatch_payload["evidence_paths"]["stage_signals"] = stage_signal_path
-                executor._write_json_artifact("dispatch/log.json", dispatch_payload)
+                stage_signals.append(
+                    {
+                        "code": error_code,
+                        "severity": "error",
+                        "detail": root_cause_hint,
+                        "missing_declared_delivery_targets": missing_declared_targets,
+                    }
+                )
+                dispatch_payload.update(
+                    status=stage_status,
+                    error_code=error_code,
+                    root_cause_hint=root_cause_hint,
+                    missing_declared_delivery_targets=missing_declared_targets,
+                )
+                settlement_metadata.update(
+                    error_code=error_code,
+                    root_cause_hint=root_cause_hint,
+                    missing_declared_delivery_targets=missing_declared_targets,
+                )
+        if stage_signal_path or stage_signals:
+            # Persist failed verification as well as recovery; the initial
+            # dispatch projection predates materialization verification.
+            stage_signal_path = executor._write_stage_signal_artifact(
+                stage="director_dispatch",
+                run_id=run.id,
+                signals=stage_signals,
+            )
+            dispatch_payload["signals"] = stage_signals
+            dispatch_payload["evidence_paths"]["stage_signals"] = stage_signal_path
+            dispatch_payload["failure_stage"] = "director_dispatch" if stage_status == "failed" else ""
+            executor._write_json_artifact("dispatch/log.json", dispatch_payload)
+            executor._mirror_director_artifacts(run.id, ["dispatch/log.json"])
+            if stage_signal_path not in artifacts:
+                artifacts.append(stage_signal_path)
     if stage_status == "cancelled":
         return StageResult(
             stage="director_dispatch",
@@ -1757,6 +1868,10 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
             artifacts=artifacts,
             metadata=settlement_metadata,
         )
+    if stage_status == "failed":
+        settlement_metadata.setdefault("error_code", error_code)
+        settlement_metadata.setdefault("root_cause_hint", root_cause_hint)
+        settlement_metadata["signals"] = [dict(signal) for signal in stage_signals]
     return StageResult(
         stage="director_dispatch",
         status=stage_status,

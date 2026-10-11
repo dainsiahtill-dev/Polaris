@@ -1,0 +1,43 @@
+id: vc-20261008-static-snapshot-descriptor-transfer
+issue: POL-50
+mode: implementation
+classification: pattern
+owner: Director tools engineer
+reviewer: Root
+budget_seconds: 2400
+production_scope:
+  - src/backend/polaris/kernelone/quality/interface_ledger.py
+reader_scope: WorkspaceReadSnapshot._open_workspace_root and read direct opener ownership/cleanup only
+test: src/backend/polaris/kernelone/quality/tests/test_static_scan_snapshot_descriptor_transfer.py
+assumptions:
+  - Pending child belongs to reader immediately after successful os.open.
+  - Interrupts must propagate and all reader-owned directory FDs must close.
+  - No-follow namespace identities and snapshot evidence remain unchanged.
+  - Normal os.close returns None; no other thread closes these private descriptors.
+pre_mortem:
+  - Fixed line injection may silently stop firing after edits.
+  - Cleared ownership before close can leak; retained ownership can double-close.
+  - Cleanup exception may mask the original interrupt.
+red_evidence:
+  exact_probe_sha256: ca5e7e1a3cbb8d460a719c1cc63a2fd0882c326aee40d2d88860901bfe4dc37d
+  root: old line 214; propagated KeyboardInterrupt; one child directory FD leaked
+  nested: old line 298; propagated KeyboardInterrupt; one child directory FD leaked
+verification:
+  - Semantic actual-child trace with matching directory inode and distinct parent.
+  - KeyboardInterrupt propagation and exact before/after FD maps.
+  - Normal trace controls; OSError; Unicode; readable/cache/missing/unknown pairs.
+  - Immutable original 92 and 195 plus long/short 288 consumers and two calibrations.
+  - Exact archived original/reviewer/helper/aggregate/syntax/effect/confirmation probes.
+  - Ruff and format check; scoped mypy; retain normalized six-error strict debt.
+limitations:
+  - Python line-event handoffs tested; arbitrary opcode/syscall interrupts not proved.
+  - No platform runtime or full T05/native/Factory/fresh Bench qualification.
+authority: External engineering evidence only; Root independent acceptance and natural drain required.
+implementation_run: 81b01479-2428-4522-8bfd-de46b44c78cd
+final_contract: 15 passed; twelve actual acquired-child traces; three normal controls and three propagated interrupts
+regression: 92 frontier; 195 components; 288 long and 288 short consumers; two long and two short calibrations
+exact_original_probes: 19 passed; 55 passed; 55 passed
+confirmation_residual: exact original 4 PASS and 1 FAIL retained
+strict_residual: six normalized pre-existing no-any-return diagnostics; zero added
+old_probe_postfix: unchanged bytes and assertions; exit 1 because old root line does not fire; not GREEN
+status: implementation_complete_pending_root_acceptance

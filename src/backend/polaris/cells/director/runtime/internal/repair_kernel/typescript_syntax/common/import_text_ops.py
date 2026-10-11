@@ -8,14 +8,19 @@ from difflib import SequenceMatcher
 from pathlib import PurePosixPath
 from typing import Any
 
+from polaris.kernelone.quality.artifact_quality import _ts_js_code_mask
+
 from ...contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
 from ...javascript_syntax import repair_javascript_export_contract_placeholders
 from ...path_files import normalize_base_files_strict, normalize_repair_path_strict
 from ..constants import *  # noqa: F403
+from ..constants import _TS_IDENTIFIER_RE
+from ..module_binding_proof import parse_module_binding_facts
 from .path_ops import *  # noqa: F403
 from .plan_ops import *  # noqa: F403
 from .parse_ops import *  # noqa: F403
 from .misc_ops import *  # noqa: F403
+from .misc_ops import _typescript_brace_balance_delta, _typescript_import_pairs_from_clause
 
 """Shared TypeScript repair helpers: import_text_ops."""
 
@@ -348,11 +353,36 @@ def _typescript_named_specifier_indent(symbols: str) -> str:
             return indent or "  "
     return "  "
 
-def _typescript_module_exports_symbol(module_text: str, symbol: str) -> bool:
+def _typescript_module_exports_symbol(module_text: str, symbol: str, *, require_value: bool = False) -> bool:
+    """Require export syntax in code, never source examples in non-code spans."""
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return False
+    if require_value:
+        facts = parse_module_binding_facts(module_text)
+        return facts is not None and symbol in facts.runtime_exports
+    mask = _ts_js_code_mask(module_text)
+    code = "".join(char if mask[index] else " " for index, char in enumerate(module_text))
+    # This shared mask does not parse regex literals or nested templates.
+    # Refuse uncertain candidates, including division, rather than prove an
+    # export from text that may still belong to one of those lexical forms.
+    if "`" in module_text or "/" in code:
+        return False
+    # The supported identifier subset is ASCII. Escapes, joiners and other
+    # Unicode continuations must not let a longer name prove an ASCII prefix.
+    if "\\" in code or any(ord(char) > 127 and not char.isspace() for char in code):
+        return False
     escaped = re.escape(symbol)
-    if re.search(rf"\bexport\s+(?:type|interface|enum|class|const|let|var|function)\s+{escaped}\b", module_text):
-        return True
-    for match in re.finditer(r"\bexport\s+(?:type\s+)?\{(?P<symbols>[^}]+)\}", module_text):
+    declaration = (
+        r"\bexport\s+default\s+(?=[A-Za-z_$0-9({[])"
+        if symbol == "default"
+        else rf"\bexport\s+(?:async\s+)?(?:type|interface|enum|class|const|let|var|function)\s+{escaped}(?![\w$])"
+    )
+    for match in re.finditer(declaration, code):
+        if _typescript_brace_balance_delta(code[: match.start()]) == 0:
+            return True
+    for match in re.finditer(r"\bexport\s+(?:type\s+)?\{(?P<symbols>[^}]+)\}", code):
+        if _typescript_brace_balance_delta(code[: match.start()]) != 0:
+            continue
         for token in str(match.group("symbols") or "").split(","):
             parts = re.split(r"\s+as\s+", token.strip(), maxsplit=1)
             exported = parts[-1].strip()

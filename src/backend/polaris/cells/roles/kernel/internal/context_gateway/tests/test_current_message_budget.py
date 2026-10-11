@@ -223,3 +223,36 @@ def test_private_runtime_trace_preserves_current_payload(
     )
     assert longest["input_chars"] > 4000
     assert longest["input_sha256"] == longest["output_sha256"]
+
+
+@pytest.mark.parametrize("extra_tokens", [0, 1, 2])
+async def test_current_admission_exact_limit_and_one_token_over(tmp_path: Path, extra_tokens: int) -> None:
+    gateway = RoleContextGateway(_profile(max_context_tokens=1024), workspace=tmp_path)
+    # Preserve the existing one-token empty-projection floor as well as framing.
+    payload = "x" * (4052 + 4 * extra_tokens)
+    if extra_tokens:
+        with pytest.raises(BudgetExceededError) as caught:
+            await gateway.build_context(ContextRequest(message=payload), system_prompt="identity")
+        assert (caught.value.limit, caught.value.requested, caught.value.current) == (
+            (1024, 1025, 1024) if extra_tokens == 1 else (1018, 1019, 1018)
+        )
+    else:
+        result = await gateway.build_context(ContextRequest(message=payload), system_prompt="identity")
+        assert result.messages[-1] == {"role": "user", "content": payload}
+        assert result.token_estimate == 1024
+
+
+@pytest.mark.parametrize("policy_limit,model_window,expected_limit", [(8000, 2000, 1700), (1200, 8000, 1200)])
+async def test_budget_refusal_keeps_small_window_and_explicit_policy_cap(
+    tmp_path: Path, policy_limit: int, model_window: int, expected_limit: int
+) -> None:
+    from unittest.mock import patch
+
+    from polaris.kernelone.context.context_os import StateFirstContextOS
+
+    with patch.object(StateFirstContextOS, "resolved_context_window", new=model_window):
+        gateway = RoleContextGateway(_profile(max_context_tokens=policy_limit), workspace=tmp_path)
+        with pytest.raises(BudgetExceededError) as caught:
+            await gateway.build_context(ContextRequest(message="x" * 10000), system_prompt="identity")
+    assert caught.value.limit == expected_limit - 6
+    assert caught.value.requested == 2504

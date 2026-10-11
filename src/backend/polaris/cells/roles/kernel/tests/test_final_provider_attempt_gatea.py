@@ -5,19 +5,13 @@ import copy
 import json
 import threading
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Coroutine, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from polaris.cells.events.fact_stream.public import (
-    BootstrapFactStreamWorkspaceCommandV1,
-    QueryFactEventsV1,
-    bootstrap_fact_stream_workspace,
-    query_fact_events,
-)
 from polaris.cells.roles.kernel.internal.llm_caller import (
     final_provider_attempt_gate as gate_module,
     final_provider_attempt_qualification as qualification_module,
@@ -27,7 +21,6 @@ from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     FinalRequestEvidenceCoverageError,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_gate import (
-    DurableFinalProviderAttemptSnapshotStore,
     FinalProviderAttemptGate,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_inflight import (
@@ -41,17 +34,33 @@ from polaris.cells.roles.kernel.internal.llm_caller.final_request_metrics import
     provider_native_request_metrics,
     validated_final_context_evidence,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import (
     _helpers as invoker_helpers,
     _structured as invoker_structured,
 )
+from polaris.cells.roles.kernel.internal.llm_caller.response_types import PreparedLLMRequest
 from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import StreamEngine
 from polaris.cells.roles.kernel.public.physical_attempt_control import (
     FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
     FactoryPhysicalAttemptGrantViewV1,
 )
 from polaris.cells.roles.kernel.tests import test_role_turn_request_fact_projection as request_fact_test
+from polaris.cells.roles.kernel.tests._final_provider_attempt_gate_helpers import (  # noqa: F401
+    _assert_one_coverage_rejection_and_zero_physical_effects,
+    _AsyncPostContext,
+    _AsyncResponse,
+    _AsyncSession,
+    _AsyncStreamContent,
+    _bootstrap,
+    _failed_coverage_audit,
+    _gate,
+    _prepared_with_dispatch_port,
+    _qualified_factory_fixture,
+    _run_fixture_coroutine,
+    _wire_body,
+    _wire_body_from_semantic,
+    _wire_request,
+)
 from polaris.cells.roles.kernel.tests._physical_attempt_control_test_double import (
     FactoryPhysicalAttemptTestControlError as FactoryPhysicalAttemptControlError,
     FactoryPhysicalAttemptTestControlPort as FactoryPhysicalAttemptLiveControlPort,
@@ -65,25 +74,7 @@ from polaris.infrastructure.llm.providers.provider_helpers import (
 )
 from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshotAuditPinRepository
 from polaris.kernelone.llm.engine.contracts import FrozenFinalProviderAttemptV1, bind_physical_provider_dispatch_port
-from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.types import Usage
-
-from polaris.cells.roles.kernel.tests._final_provider_attempt_gate_helpers import (  # noqa: F401
-    _AsyncPostContext,
-    _AsyncResponse,
-    _AsyncSession,
-    _AsyncStreamContent,
-    _assert_one_coverage_rejection_and_zero_physical_effects,
-    _bootstrap,
-    _failed_coverage_audit,
-    _gate,
-    _prepared_with_dispatch_port,
-    _qualified_factory_fixture,
-    _run_fixture_coroutine,
-    _wire_body,
-    _wire_body_from_semantic,
-    _wire_request,
-)
 
 
 class _Response:
@@ -101,6 +92,740 @@ class ClientResponseError(RuntimeError):
     """Retry-shaped aiohttp response error for physical stream tests."""
 
 
+async def _prepare_owned_snapshot_request(
+    workspace: Path,
+    *,
+    stage: str = "pm_initial",
+    prebuilt: bool = True,
+) -> tuple[Any, PreparedLLMRequest, Any]:
+    """Real gateway/preparation, with only external ContextOS services isolated."""
+    from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+    from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
+    from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+        FactoryRoleSemanticRequestIdentityV1,
+        bind_factory_role_evidence_authority,
+    )
+    from polaris.kernelone.context.context_os import StateFirstContextOS
+    from polaris.kernelone.context.contracts import TurnEngineContextRequest
+
+    role = "pm" if stage.startswith("pm") else "chief_engineer"
+    control = FactoryPhysicalAttemptLiveControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    control.register_grant(
+        FactoryPhysicalAttemptGrantViewV1(
+            schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+            verification_scope="factory",
+            factory_run_id="factory-run-1",
+            role=role,
+            stage="pm_planning" if role == "pm" else "chief_engineer",
+            workspace_fencing_token=1,
+            stage_claim_attempt=1,
+            stage_claim_nonce="snapshot-stage",
+            execution_authority_hash="f" * 64,
+            attempt_budget=32,
+        )
+    )
+    cutoff = request_fact_test._B32CutoffPort()
+    authority = request_fact_test._b32_authority(
+        cutoff,
+        role=role,
+        physical_attempt_control_port=control,
+        execution_authority_hash="f" * 64,
+        attempt_budget=32,
+    )
+    profile: Any = request_fact_test._profile(role)
+    profile.context_policy = SimpleNamespace(
+        max_history_turns=8,
+        max_context_tokens=262144,
+        include_project_structure=True,
+        include_task_history=False,
+        compression_strategy="truncate",
+    )
+    profile.context_domain = "generic"
+    override: dict[str, Any] = {
+        "request_purpose": "task_planning" if role == "pm" else "blueprint",
+        "_transaction_kernel_forced_tool_definitions": [],
+        "_transaction_kernel_forced_tool_choice": "none",
+    }
+    if role == "chief_engineer":
+        override["pm_task_contract"] = request_fact_test._pm_contract_set()
+        override["ce_required_command_authority"] = [
+            {
+                "task_id": f"TASK-{i // 4 + 1}",
+                "modality": "test",
+                "argv": ["node", "--test", f"test-{i}.js"],
+                "cwd": ".",
+                "authority_hash": f"{i:064x}",
+            }
+            for i in range(28)
+        ]
+        override["pm_task_contract"]["ce_required_command_authority"] = override["ce_required_command_authority"]
+    message = "Plan current tasks."
+    if stage == "pm_revision":
+        message = "Correct the current PM contract after quality feedback: return complete tasks JSON."
+    elif stage == "ce_correction":
+        message = "Correct the current CE blueprint after schema feedback: return complete blueprint JSON."
+    context = TurnEngineContextRequest(message=message, context_override=override)
+    projection = SimpleNamespace(
+        head_anchor="",
+        tail_anchor="",
+        active_window=(),
+        snapshot=None,
+        run_card=SimpleNamespace(
+            current_goal="", open_loops=(), latest_user_intent="", pending_followup_action="", last_turn_outcome=""
+        ),
+    )
+    identity_index = ["pm_initial", "pm_revision", "ce_nonstream", "ce_stream", "ce_correction"].index(stage) + 1
+    identity = FactoryRoleSemanticRequestIdentityV1(
+        run_id="snapshot-child",
+        turn_id=f"snapshot-child:turn:{identity_index}",
+        call_id=f"{identity_index:032x}",
+        request_freeze_id=f"{identity_index + 16:032x}",
+    )
+    with (
+        patch.object(StateFirstContextOS, "project", return_value=projection),
+        patch.object(StateFirstContextOS, "resolved_context_window", new=262144),
+        patch("polaris.cells.roles.kernel.internal.context_gateway.gateway.get_event_writer", return_value=Mock()),
+        bind_factory_role_evidence_authority(authority),
+    ):
+        if prebuilt:
+            source = await RoleContextGateway(profile, workspace=workspace).build_context(
+                context,
+                system_prompt=f"You are {role}.",
+            )
+            override["_transaction_kernel_prebuilt_messages"] = [dict(item) for item in source.messages]
+        prepared = await LLMRequestPreparer(workspace=str(workspace))._prepare_llm_request(
+            profile=profile,
+            system_prompt=f"You are {role}.",
+            context=context,
+            temperature=0.2,
+            max_tokens=60000,
+            stream=stage == "ce_stream",
+            factory_semantic_identity=identity,
+        )
+    assert len(cutoff.acquire_requests) == len(cutoff.resolve_acks) == 1
+    return profile, prepared, control
+
+
+def _assert_snapshot_no_physical_effects(workspace: Path, control: Any) -> None:
+    state = control.budget_state("f" * 64)
+    assert state.reserved_count == state.committed_count == state.terminal_count == state.consumed_attempts == 0
+    assert state.remaining_attempts == 32
+    assert (
+        StrictProviderAttemptLifecycleStore.for_factory_run(
+            workspace=str(workspace),
+            factory_run_id="factory-run-1",
+        ).query_strict()
+        == ()
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prebuilt", [False, True])
+@pytest.mark.parametrize("stage", ["pm_initial", "pm_revision", "ce_nonstream", "ce_stream", "ce_correction"])
+async def test_owned_factory_snapshot_qualifies_real_persistence_and_native_dispatch(
+    tmp_path: Path,
+    stage: str,
+    prebuilt: bool,
+) -> None:
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+        build_final_request_context_audit_for_request,
+    )
+    from polaris.infrastructure.llm.providers.openai_provider import _build_openai_payload
+
+    _bootstrap(tmp_path)
+    profile, prepared, control = await _prepare_owned_snapshot_request(tmp_path, stage=stage, prebuilt=prebuilt)
+    frozen = prepared.factory_semantic_request
+    port = prepared.factory_dispatch_port
+    assert frozen is not None and port is not None
+    active = copy.deepcopy(prepared.ai_request.context["chat_messages"])
+    context_ref = await invoker_helpers._store_active_request_context_snapshot(
+        workspace=str(tmp_path),
+        active_request=prepared.ai_request,
+        prepared=prepared,
+        profile=profile,
+        run_id=frozen.identity.run_id,
+        call_id=frozen.identity.call_id,
+    )
+    assert context_ref and len(context_ref) == 24 and all(c in "0123456789abcdef" for c in context_ref)
+    snapshot = qualification_module._read_context_snapshot(workspace=str(tmp_path), context_snapshot_ref=context_ref)
+    payload = json.loads(frozen.canonical_final_payload_json)
+    assert snapshot["messages"] == payload["messages"] == prepared.messages
+    assert {item.get("name") for item in snapshot["messages"]} >= {
+        "context_override",
+        "project_structure",
+        "repo_identity",
+    }
+    assert all(set(item) == {"role", "content"} for item in active)
+    assert prepared.ai_request.context["chat_messages"] == active
+    assert payload["max_tokens"] == prepared.ai_request.options["max_tokens"] == 60000
+    assert snapshot["provider_request"][
+        "factory_final_request"
+    ] == qualification_module.final_request_snapshot_evidence(frozen)
+    audit = port.bind_final_request_context_audit(
+        build_final_request_context_audit_for_request(
+            ai_request=prepared.ai_request,
+            prepared=prepared,
+            profile=profile,
+        )
+    )
+    if stage.startswith("ce"):
+        coverage = audit["final_request_evidence_coverage"]["ce_required_command_authority"]
+        assert coverage["pass"] is True and len(coverage["included_rows"]) == 28
+    port.enforce_final_request_evidence_coverage(ai_request=prepared.ai_request, audit=audit)
+    port.qualify(final_request_context_audit=audit, context_snapshot_ref=context_ref)
+    _assert_snapshot_no_physical_effects(tmp_path, control)
+    stream = stage == "ce_stream"
+    port.bind_provider_route_authority(
+        provider_id=profile.provider_id,
+        provider_type="openai_compat",
+        model=profile.model,
+        mode="stream" if stream else "invoke",
+        provider_config={"base_url": "https://example.test"},
+    )
+    route = port._physical_route_authority
+    assert route is not None
+    body = _build_openai_payload(
+        prompt=prepared.input_text,
+        model=profile.model,
+        api_path="/v1/chat/completions",
+        stream=stream,
+        config={**prepared.request_options, "chat_messages": active},
+    )
+    assert body == route["expected_body"]
+    assert sum(item["role"] == "system" for item in body["messages"]) == 1
+    assert all("name" not in item for item in body["messages"])
+    wire = {
+        "endpoint": route["exact_endpoint"],
+        "headers": {},
+        "body": body,
+        "transport": {"kind": route["exact_transport_kind"], "timeout_seconds" if stream else "timeout": 5},
+    }
+    calls: list[Mapping[str, Any]] = []
+    if stream:
+        session = _AsyncSession(_AsyncResponse(chunks=(b"ok",)), [])
+
+        def open_stream(request: Mapping[str, Any]) -> Any:
+            calls.append(request)
+            return session.post(str(request["endpoint"]), json=request["body"])
+
+        async def consume(response: Any) -> AsyncIterator[str]:
+            async for chunk in response.content:
+                yield chunk.decode("utf-8")
+
+        assert [
+            item
+            async for item in port.dispatch_stream_async(
+                wire_request=wire,
+                open_stream=open_stream,
+                consume=consume,
+            )
+        ] == ["ok"]
+    else:
+
+        def send(request: Mapping[str, Any]) -> str:
+            calls.append(request)
+            return "ok"
+
+        assert port.dispatch_sync(wire_request=wire, send=send) == "ok"
+    assert len(calls) == 1
+    final_evidence = port.final_context_evidence()
+    assert final_evidence is not None
+    final_ref, final_audit = final_evidence
+    final_snapshot = qualification_module._read_context_snapshot(
+        workspace=str(tmp_path), context_snapshot_ref=final_ref
+    )
+    assert final_snapshot["messages"] == payload["messages"]
+    assert final_snapshot["provider_request"]["final_physical_request"]["body"] == body
+    assert final_audit["audit_scope"] == "provider_native_wire"
+    assert control.budget_state("f" * 64).consumed_attempts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["pm_initial", "ce_nonstream"])
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "content",
+        "role",
+        "order",
+        "add",
+        "remove",
+        "malformed",
+        "missing_active",
+        "spoof_name",
+        "owner_name",
+        "owner_missing",
+        "owner_malformed",
+        "freeze_missing",
+        "port_missing",
+        "stale_request",
+        "stale_freeze",
+        "freeze_tamper",
+        "attempt_identity",
+    ],
+)
+async def test_owned_snapshot_producer_rejects_drift_before_transport(tmp_path: Path, attack: str, stage: str) -> None:
+    _bootstrap(tmp_path)
+    profile, prepared, control = await _prepare_owned_snapshot_request(tmp_path, stage=stage)
+    frozen = prepared.factory_semantic_request
+    assert frozen is not None
+    active_request = prepared.ai_request
+    chat = active_request.context["chat_messages"]
+    run_id, call_id = frozen.identity.run_id, frozen.identity.call_id
+    if attack == "content":
+        chat[1]["content"] += " altered"
+    elif attack == "role":
+        chat[1]["role"] = "user"
+    elif attack == "order":
+        chat[1], chat[2] = chat[2], chat[1]
+    elif attack == "add":
+        chat.append({"role": "user", "content": "unexpected"})
+    elif attack == "remove":
+        chat.pop(1)
+    elif attack == "malformed":
+        chat.append(None)
+    elif attack == "missing_active":
+        active_request.context.pop("chat_messages")
+    elif attack == "spoof_name":
+        chat[1]["name"] = "repo_identity"
+    elif attack == "owner_name":
+        prepared.messages[1]["name"] = "spoofed"
+    elif attack == "owner_missing":
+        # Even plausible caller names cannot replace missing owned source.
+        active_request.context["chat_messages"] = copy.deepcopy(prepared.messages)
+        prepared.messages = []
+    elif attack == "owner_malformed":
+        prepared.messages = cast(Any, [None])
+    elif attack == "freeze_missing":
+        prepared.factory_semantic_request = None
+    elif attack == "port_missing":
+        prepared.factory_dispatch_port = None
+    elif attack == "stale_request":
+        active_request = copy.copy(active_request)
+    elif attack == "stale_freeze":
+        _, other, _ = await _prepare_owned_snapshot_request(tmp_path, stage="pm_revision")
+        prepared.factory_semantic_request = other.factory_semantic_request
+    elif attack == "freeze_tamper":
+        object.__setattr__(frozen, "final_semantic_request_hash", "e" * 64)
+    else:
+        call_id = "e" * 32
+    context_ref = await invoker_helpers._store_active_request_context_snapshot(
+        workspace=str(tmp_path),
+        active_request=active_request,
+        prepared=prepared,
+        profile=profile,
+        run_id=run_id,
+        call_id=call_id,
+    )
+    assert context_ref is None
+    assert "context_snapshot_ref" not in active_request.context
+    assert active_request.context["context_snapshot_degraded"]["reason"]
+    from polaris.kernelone.storage.io_paths import resolve_storage_roots
+
+    contexts_root = Path(resolve_storage_roots(str(tmp_path)).runtime_root) / "contexts"
+    assert not contexts_root.exists() or not list(contexts_root.glob("*/*"))
+    calls: list[object] = []
+
+    class Executor:
+        async def invoke(self, request: object, **kwargs: Any) -> None:
+            calls.append(request)
+
+    with pytest.raises((RuntimeError, ValueError, TypeError)):
+        if attack == "attempt_identity":
+            from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+                build_final_request_context_audit_for_request,
+            )
+
+            port = prepared.factory_dispatch_port
+            assert port is not None
+            port.qualify(
+                final_request_context_audit=port.bind_final_request_context_audit(
+                    build_final_request_context_audit_for_request(
+                        ai_request=active_request, prepared=prepared, profile=profile
+                    ),
+                ),
+                context_snapshot_ref="",
+            )
+        else:
+            await invoker_helpers._invoke_executor_with_factory_dispatch(
+                executor=Executor(),
+                prepared=prepared,
+                request=active_request,
+                profile=profile,
+            )
+    assert calls == []
+    _assert_snapshot_no_physical_effects(tmp_path, control)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["pm_initial", "ce_nonstream"])
+@pytest.mark.parametrize(
+    "attack", ["name_removed", "name_changed", "replace", "delete", "after_pass_replace", "after_pass_delete"]
+)
+async def test_owned_snapshot_strict_qualification_rejects_stored_tamper(
+    tmp_path: Path, attack: str, stage: str
+) -> None:
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+        build_final_request_context_audit_for_request,
+    )
+    from polaris.kernelone.llm.engine import AIExecutor
+    from polaris.kernelone.storage.io_paths import resolve_storage_roots
+
+    _bootstrap(tmp_path)
+    profile, prepared, control = await _prepare_owned_snapshot_request(tmp_path, stage=stage)
+    frozen, port = prepared.factory_semantic_request, prepared.factory_dispatch_port
+    assert frozen is not None and port is not None
+    context_ref = await invoker_helpers._store_active_request_context_snapshot(
+        workspace=str(tmp_path),
+        active_request=prepared.ai_request,
+        prepared=prepared,
+        profile=profile,
+        run_id=frozen.identity.run_id,
+        call_id=frozen.identity.call_id,
+    )
+    assert context_ref
+    snapshot = qualification_module._read_context_snapshot(workspace=str(tmp_path), context_snapshot_ref=context_ref)
+    audit = port.bind_final_request_context_audit(
+        build_final_request_context_audit_for_request(
+            ai_request=prepared.ai_request,
+            prepared=prepared,
+            profile=profile,
+        )
+    )
+    if attack.startswith("after_pass"):
+        port.qualify(final_request_context_audit=audit, context_snapshot_ref=context_ref)
+        port.bind_provider_route_authority(
+            provider_id=profile.provider_id,
+            provider_type="openai_compat",
+            model=profile.model,
+            mode="invoke",
+            provider_config={"base_url": "https://example.test"},
+        )
+        _assert_snapshot_no_physical_effects(tmp_path, control)
+    if attack.startswith("name"):
+        if attack == "name_removed":
+            snapshot["messages"][1].pop("name")
+        else:
+            snapshot["messages"][1]["name"] = "spoofed"
+        context_ref = AIExecutor._store_context_messages_sync(
+            str(tmp_path),
+            snapshot["messages"],
+            frozen.identity.run_id,
+            frozen.identity.call_id,
+            snapshot["provider_request"],
+        )
+        prepared.ai_request.context["context_snapshot_ref"] = context_ref
+        audit = port.bind_final_request_context_audit(
+            build_final_request_context_audit_for_request(
+                ai_request=prepared.ai_request,
+                prepared=prepared,
+                profile=profile,
+            )
+        )
+        expected_error = "context_snapshot_messages_mismatch"
+    else:
+        path = Path(resolve_storage_roots(str(tmp_path)).runtime_root) / "contexts" / context_ref[:2] / context_ref
+        if attack.endswith("replace"):
+            path.write_text("{}", encoding="utf-8")
+            expected_error = "context_snapshot_hash_mismatch"
+        else:
+            path.unlink()
+            expected_error = "context_snapshot_unreadable"
+    calls: list[object] = []
+    with pytest.raises(qualification_module.FinalProviderAttemptQualificationError, match=expected_error):
+        if attack.startswith("after_pass"):
+            route = port._physical_route_authority
+            assert route is not None
+            port.dispatch_sync(
+                wire_request={
+                    "endpoint": route["exact_endpoint"],
+                    "headers": {},
+                    "body": route["expected_body"],
+                    "transport": {"kind": route["exact_transport_kind"], "timeout": 5},
+                },
+                send=lambda request: calls.append(request),
+            )
+        else:
+            port.qualify(final_request_context_audit=audit, context_snapshot_ref=context_ref)
+            calls.append("transport")
+    assert calls == []
+    _assert_snapshot_no_physical_effects(tmp_path, control)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("case", ["genuine", "decoy", "wire_substitution"])
+@pytest.mark.asyncio
+async def test_ce_prebuilt_factory_cutoff_enforces_current_table_before_transport(
+    tmp_path: Path,
+    stream: bool,
+    case: str,
+) -> None:
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+        build_final_request_context_audit_for_request,
+    )
+    from polaris.cells.roles.kernel.tests.test_context_gateway_integration import _prepare_ce_boundary
+    from polaris.infrastructure.llm.providers.openai_provider import _build_openai_payload
+
+    genuine = case != "decoy"
+    expected_pass = case == "genuine"
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    cutoff = request_fact_test._B32CutoffPort()
+    authority = request_fact_test._b32_authority(cutoff)
+    profile, prepared, capture = await _prepare_ce_boundary(
+        tmp_path, genuine=genuine, stream=stream, authority=authority
+    )
+    port = prepared.factory_dispatch_port
+    assert port is not None
+    assert len(cutoff.acquire_requests) == len(cutoff.resolve_acks) == 1
+    assert prepared.factory_semantic_request is not None
+    frozen = json.loads(prepared.factory_semantic_request.canonical_final_payload_json)
+    capture["frozen_messages"] = frozen["messages"]
+    if case == "wire_substitution":
+        # A complete frozen source cannot excuse loss in the actual provider body.
+        chat = prepared.ai_request.context["chat_messages"]
+        prepared.ai_request.context["chat_messages"] = [
+            item for item in chat if "[CE_REQUIRED_COMMAND_AUTHORITY_JSON]\n" not in item["content"]
+        ]
+    wire = _build_openai_payload(
+        prompt=prepared.input_text,
+        model=profile.model,
+        api_path="/v1/chat/completions",
+        stream=stream,
+        config={**prepared.request_options, "chat_messages": prepared.ai_request.context["chat_messages"]},
+    )
+    assert all("name" not in item for item in prepared.ai_request.context["chat_messages"])
+    audit = build_final_request_context_audit_for_request(
+        ai_request=prepared.ai_request, prepared=prepared, profile=profile
+    )
+    bound = port.bind_final_request_context_audit(audit)
+    coverage = bound["final_request_evidence_coverage"]["ce_required_command_authority"]
+    capture.update(
+        serialized_body=wire,
+        audit=bound,
+        active_chat_messages=copy.deepcopy(prepared.ai_request.context["chat_messages"]),
+    )
+    (tmp_path / "ce-cutoff-boundary.json").write_text(
+        json.dumps(capture, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    assert coverage["required"] is True
+    assert coverage["pass"] is expected_pass
+    calls: list[object] = []
+    if expected_pass:
+        port.enforce_final_request_evidence_coverage(ai_request=prepared.ai_request, audit=bound)
+        assert coverage["included_rows"] == capture["required_rows"]
+        assert any(item.get("name") == "context_override" for item in frozen["messages"])
+    else:
+        with pytest.raises(
+            FinalRequestEvidenceCoverageError, match="ce_required_command_authority_final_request_mismatch"
+        ):
+            port.enforce_final_request_evidence_coverage(ai_request=prepared.ai_request, audit=bound)
+            calls.append(wire)
+        _assert_one_coverage_rejection_and_zero_physical_effects(workspace=tmp_path, gate=gate, lifecycle=lifecycle)
+    assert calls == []
+
+
+@pytest.mark.parametrize("detect_injection", [False, True])
+@pytest.mark.parametrize("location", ["user_excerpt", "history", "ordinary", "wire_substitution"])
+def test_ce_untrusted_projection_rejected_after_real_serializer_before_transport(
+    tmp_path: Path, detect_injection: bool, location: str
+) -> None:
+    from polaris.cells.roles.kernel.internal.context_gateway.context_override_processor import ContextOverrideProcessor
+    from polaris.cells.roles.kernel.internal.context_gateway.gateway_helpers import render_ce_command_planning_table
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+        build_final_request_context_audit_for_request,
+    )
+    from polaris.infrastructure.llm.providers.openai_provider import _build_openai_payload
+
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    port = gate._test_dispatch_port
+    rows = [
+        {
+            "task_id": "TASK-3",
+            "modality": "test",
+            "argv": ["npx", "tsc", "--noEmit"],
+            "cwd": ".",
+            "authority_hash": "0f3aeaae01adf825871f0a18d328b7ffe6fbd84c343627035271c7c81339cfda",
+        }
+    ]
+    table = render_ce_command_planning_table(rows)
+    processor = ContextOverrideProcessor(detect_prompt_injection=detect_injection)
+    projected = processor.process_context_override({location: "Untrusted historical data.\n" + table})
+    assert projected is not None
+    source = [
+        {"role": "system", "content": "polaris.role_identity.v1:chief_engineer"},
+        projected,
+        {"role": "user", "content": "Plan committed PM tasks."},
+    ]
+    if location == "wire_substitution":
+        genuine = processor.process_context_override({"ce_required_command_authority": rows})
+        assert genuine is not None
+        source.insert(1, genuine)
+    wire_source = copy.deepcopy(source)
+    if location == "wire_substitution":
+        wire_source.pop(1)
+        wire_source[1]["content"] = table
+    wire = json.loads(
+        json.dumps(
+            _build_openai_payload(
+                prompt="",
+                model="test-model",
+                api_path="/v1/chat/completions",
+                stream=False,
+                config={"chat_messages": wire_source, "max_tokens": 60000},
+            )
+        )
+    )
+    request = SimpleNamespace(
+        role="",
+        context={
+            "ce_required_command_authority": rows,
+            "chat_messages": wire["messages"],
+            "final_request_evidence_required": True,
+        },
+        options={},
+    )
+    prepared = PreparedLLMRequest(
+        messages=source,
+        input_text="",
+        context_result=None,
+        context_summary="",
+        request_options={},
+        ai_request=request,
+    )
+    audit = build_final_request_context_audit_for_request(
+        ai_request=request, prepared=prepared, profile=request_fact_test._profile("chief_engineer")
+    )
+    coverage = audit["final_request_evidence_coverage"]["ce_required_command_authority"]
+    assert coverage["required"] is True
+    assert coverage["pass"] is False
+    bound = port.bind_final_request_context_audit(audit)
+    calls: list[object] = []
+    with pytest.raises(FinalRequestEvidenceCoverageError) as caught:
+        port.enforce_final_request_evidence_coverage(ai_request=request, audit=bound)
+        calls.append(wire)
+    assert caught.value.violation["error_code"] == "ce_required_command_authority_final_request_mismatch"
+    assert calls == []
+    _assert_one_coverage_rejection_and_zero_physical_effects(workspace=tmp_path, gate=gate, lifecycle=lifecycle)
+    (tmp_path / "ce-provenance-capture.json").write_text(
+        json.dumps(
+            {
+                "mode": "local_serializer_enforcing_fixture",
+                "location": location,
+                "detect_prompt_injection": detect_injection,
+                "projection": projected,
+                "source_messages": source,
+                "serialized_request": wire,
+                "audit": audit,
+                "rebound_audit": bound,
+                "violation": caught.value.violation,
+                "fake_transport_calls": len(calls),
+                "physical_effects": 0,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attack", ["omitted", "clipped", "hash_only", "argv", "cwd", "owner", "modality", "hash"])
+async def test_ce_row_failure_survives_factory_binding_before_any_transport(tmp_path: Path, attack: str) -> None:
+    """Factory's ref rebinding must not erase a computed CE input failure."""
+    from polaris.cells.roles.kernel.internal.context_gateway.context_override_processor import ContextOverrideProcessor
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit._payloads import _ce_required_command_row_coverage
+
+    _bootstrap(tmp_path)
+    gate, lifecycle = _gate(tmp_path)
+    port = gate._test_dispatch_port
+    rows = [
+        {
+            "task_id": "TASK-3",
+            "modality": "test",
+            "argv": ["npx", "tsc", "--noEmit"],
+            "cwd": ".",
+            "authority_hash": "0f3aeaae01adf825871f0a18d328b7ffe6fbd84c343627035271c7c81339cfda",
+        }
+    ]
+    context = {"ce_required_command_authority": rows, "final_request_evidence_required": True}
+    rendered = ContextOverrideProcessor(detect_prompt_injection=True).process_context_override(context)
+    assert rendered is not None
+    body = {"messages": [rendered]}
+    if attack == "omitted":
+        body["messages"] = []
+    elif attack == "clipped":
+        rendered["content"] = rendered["content"][:100]
+    elif attack == "hash_only":
+        rendered["content"] = rows[0]["authority_hash"]
+    else:
+        changed = copy.deepcopy(rows)
+        field, value = {
+            "argv": ("argv", ["node", "--test", "other.js"]),
+            "cwd": ("cwd", "tests"),
+            "owner": ("task_id", "TASK-4"),
+            "modality": ("modality", "build"),
+            "hash": ("authority_hash", "a" * 64),
+        }[attack]
+        changed[0][field] = value
+        rendered["content"] = (
+            "[CE_REQUIRED_COMMAND_AUTHORITY_JSON]\n" + json.dumps(changed) + "\n[/CE_REQUIRED_COMMAND_AUTHORITY_JSON]"
+        )
+    decoded = json.loads(json.dumps(body))
+    row_coverage = _ce_required_command_row_coverage(
+        SimpleNamespace(role="chief_engineer", context=context), decoded["messages"]
+    )
+    audit = copy.deepcopy(port._qualified_audit)
+    audit["final_request_evidence_coverage"].pop("included_refs_authority", None)
+    audit["final_request_evidence_coverage"]["ce_required_command_authority"] = row_coverage
+    audit["final_request_evidence_coverage"]["pass"] = False
+    bound = port.bind_final_request_context_audit(audit)
+    # Existing Factory cutoff legitimately rebinds refs and recomputes pass.
+    assert bound["final_request_evidence_coverage"]["pass"] is True
+    prepared = _prepared_with_dispatch_port(frozen=port.frozen_semantic_request, dispatch_port=port)
+    prepared.ai_request.context["final_request_evidence_required"] = True
+    calls: list[object] = []
+
+    class Executor:
+        async def invoke(self, request: object, *, physical_dispatch_port: object) -> str:
+            calls.append(request)
+            return "forbidden"
+
+    with (
+        patch.object(invoker_helpers, "context_snapshot_matches_frozen_attempt", return_value=True),
+        patch.object(invoker_helpers, "build_final_request_context_audit_for_request", return_value=audit),
+        pytest.raises(FinalRequestEvidenceCoverageError, match="ce_required_command_authority_final_request_mismatch"),
+    ):
+        await invoker_module._invoke_executor_with_factory_dispatch(
+            executor=Executor(),
+            prepared=prepared,
+            request=prepared.ai_request,
+            profile=request_fact_test._profile("director"),
+        )
+    assert calls == []
+    _assert_one_coverage_rejection_and_zero_physical_effects(workspace=tmp_path, gate=gate, lifecycle=lifecycle)
+    (tmp_path / "ce-rejection-capture.json").write_text(
+        json.dumps(
+            {
+                "mode": "local_gate_fixture",
+                "attack": attack,
+                "decoded_serialized_body": decoded,
+                "row_coverage": row_coverage,
+                "factory_rebound_coverage": bound["final_request_evidence_coverage"],
+                "diagnostic": "ce_required_command_authority_final_request_mismatch",
+                "fake_transport_calls": len(calls),
+                "physical_effects": 0,
+                "one_durable_rejection_asserted": True,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_final_context_evidence_rejects_incomplete_claimed_physical_audit() -> None:
@@ -647,7 +1372,7 @@ async def test_stream_terminal_events_use_one_physical_ref_and_native_audit(tmp_
     class _Executor:
         async def invoke_stream(self, _request: object, *, physical_dispatch_port: object):
             assert physical_dispatch_port is dispatch_port
-            dispatch_port._qualified_gate(wire, expected_stream=True)
+            cast(Any, dispatch_port)._qualified_gate(wire, expected_stream=True)
             yield {"type": "chunk", "content": "ok"}
 
     async def _store_context_messages(*_args: object, **_kwargs: object) -> str:
@@ -807,9 +1532,13 @@ def test_factory_gate_conserves_reserve_start_send_terminal_under_one_authority(
     gate, _lifecycle = _gate(tmp_path)
     sends: list[Mapping[str, Any]] = []
 
+    def send(frozen: Mapping[str, Any]) -> str:
+        sends.append(frozen)
+        return "ok"
+
     result = gate.dispatch_sync(
         wire_request=_wire_request(gate),
-        send=lambda frozen: sends.append(frozen) or "ok",
+        send=send,
     )
 
     assert result == "ok"

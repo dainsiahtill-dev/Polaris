@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+import re
+import stat
 import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Mapping
 
 from polaris.kernelone.quality.artifact_quality._constants import (
+    _ARTIFACT_QUALITY_SKIP_DIRS,
     _ARTIFACT_QUALITY_SOURCE_EXTS,
     _DETERMINISTIC_SCAFFOLD_MARKERS,
     _GENERIC_STORE_MAP_RE,
@@ -32,6 +35,7 @@ from polaris.kernelone.quality.artifact_quality._issues import (
     _file_artifact_quality_issue,
 )
 from polaris.kernelone.quality.artifact_quality._models import (
+    ArtifactQualityDeferredCheck,
     ArtifactQualityEvidence,
     ArtifactQualityIssue,
     _FileArtifactQualityEvidence,
@@ -59,17 +63,24 @@ from polaris.kernelone.quality.artifact_quality._scan_typescript import (
     _scan_typescript_tsconfig_evidence,
 )
 from polaris.kernelone.quality.artifact_quality._syntax import (
+    _check_source_file_syntax_static,
     check_source_file_syntax,
 )
 from polaris.kernelone.quality.cross_artifact_interfaces import (
     CrossArtifactConsistencyIssue,
     CrossArtifactInterfaceContract,
+    SymbolIndexSnapshot,
     build_contract_amendment_request,
+    build_symbol_index_snapshot,
     plan_cross_artifact_repairs,
     scan_cross_artifact_consistency,
 )
 from polaris.kernelone.quality.interface_ledger import (
+    DeclaredInterfaceLedgerSnapshot,
+    WorkspaceReadSnapshot,
     read_all_declared_interfaces,
+    read_declared_interface_ledger_snapshot,
+    read_declared_interface_ledger_status,
     read_declared_interfaces,
     validate_declared_interface_issues_against_snapshot,
 )
@@ -97,14 +108,26 @@ def scan_workspace_artifact_quality_evidence(
     relative_paths: Iterable[str] | None = None,
     interface_contract: CrossArtifactInterfaceContract | Mapping[str, Any] | None = None,
     task_id: str = "",
+    scan_mode: str = "legacy",
 ) -> ArtifactQualityEvidence:
-    """Scan artifacts and return structured evidence without changing old callers."""
+    """Scan artifacts; ``pure_static`` returns required process checks as intents.
+
+    Empty errors in static mode do not establish compiler or verifier success.
+    Default legacy mode retains the existing process/bytecode behavior.
+    """
+
+    if scan_mode not in {"legacy", "pure_static"}:
+        raise ValueError(f"unsupported scan_mode: {scan_mode!r}")
+    pure_static = scan_mode == "pure_static"
 
     try:
         root_full = Path(workspace_full).resolve()
     except (OSError, RuntimeError, ValueError):
         message = "Artifact quality scan failed: workspace path cannot be resolved"
         return _artifact_quality_evidence(
+            scan_mode=scan_mode,
+            scan_complete=False,
+            incomplete_reasons=("workspace_path_unresolved",),
             errors=(message,),
             issues=(
                 ArtifactQualityIssue(
@@ -121,6 +144,9 @@ def scan_workspace_artifact_quality_evidence(
     if not root_full.exists() or not root_full.is_dir():
         message = "Artifact quality scan failed: workspace path does not exist"
         return _artifact_quality_evidence(
+            scan_mode=scan_mode,
+            scan_complete=False,
+            incomplete_reasons=("workspace_path_missing",),
             errors=(message,),
             issues=(
                 ArtifactQualityIssue(
@@ -139,34 +165,117 @@ def scan_workspace_artifact_quality_evidence(
     typed_issues: list[Any] = []
     scanned_relative_paths: list[str] = []
     cross_artifact_issues: tuple[CrossArtifactConsistencyIssue, ...] = ()
+    deferred_checks: list[ArtifactQualityDeferredCheck] = []
+    incomplete_reasons: list[str] = []
+    reader = WorkspaceReadSnapshot(root_full) if pure_static else None
+    ledger_snapshots: dict[str, DeclaredInterfaceLedgerSnapshot] = {}
+    source_snapshot: SymbolIndexSnapshot | None = None
+    aggregate_paths: tuple[str, ...] | None = None
+    static_ledger_options: dict[str, Any] = (
+        {"pure_static": True, "incomplete_reasons": incomplete_reasons, "ledger_snapshots": ledger_snapshots}
+        if pure_static
+        else {}
+    )
+
+    def record_source_incomplete(reasons: Iterable[str]) -> None:
+        # A cached refusal already has one public per-file coverage identity
+        # and its full detail in errors/issues. Keep new sibling/package faults.
+        for reason in reasons:
+            if any(
+                reason.startswith(
+                    (
+                        f"symbol_source_unknown:{path}:",
+                        f"javascript_specialist_source_unknown:{path}:",
+                        f"python_specialist_source_unknown:{path}:",
+                    )
+                )
+                and f"file_unreadable:{path}" in incomplete_reasons
+                for path in scanned_relative_paths
+            ):
+                continue
+            incomplete_reasons.append(reason)
+
+    def coverage(*, stopped: str = "") -> dict[str, Any]:
+        project_checks = (
+            _static_project_checks(
+                root_full, scanned_relative_paths, reader=reader, incomplete_reasons=incomplete_reasons
+            )
+            if pure_static
+            else ()
+        )
+        reasons = [*incomplete_reasons, *([stopped] if stopped else [])]
+        if reader is not None:
+            reasons.extend(reader.drift_reasons())
+        return {
+            "scan_mode": scan_mode,
+            "deferred_checks": (
+                *deferred_checks,
+                *project_checks,
+            ),
+            "scan_complete": not reasons,
+            "incomplete_reasons": reasons,
+        }
+
     try:
+        # Materialize single-use iterables once; ledger and scanner share scope.
+        if pure_static and relative_paths is not None:
+            relative_paths = tuple(relative_paths)
+        aggregates_safe = True
+        if pure_static:
+            for cache_root in _interface_ledger_roots(root_full, pure_static=True):
+                ledger_snapshots[cache_root] = read_declared_interface_ledger_snapshot(
+                    root_full.as_posix(), cache_root, reader=reader
+                )
+            # Aggregate helpers inspect sibling exports beyond explicit entries.
+            # Refuse these reads if traversal detects unvisited ancestry.
+            aggregate_unknown: list[str] = []
+            aggregate_paths = tuple(
+                path.relative_to(root_full).as_posix()
+                for path in _iter_static_files(root_full, None, aggregate_unknown)
+            )
+            if aggregate_unknown:
+                aggregates_safe = False
+                incomplete_reasons.extend(aggregate_unknown)
         interface_contract = interface_contract or _declared_interface_contract(
             root_full=root_full,
             relative_paths=relative_paths,
             task_id=task_id,
+            **static_ledger_options,
         )
         paths = (
-            _iter_target_files(root_full, relative_paths)
+            _iter_static_files(root_full, relative_paths, incomplete_reasons)
+            if pure_static
+            else _iter_target_files(root_full, relative_paths)
             if relative_paths is not None
             else sys.modules[__package__]._iter_workspace_source_files(root_full)
         )
         for full_path in paths:
             if len(errors) >= 50:
                 return _artifact_quality_evidence(
+                    **coverage(stopped="error_limit"),
                     errors=errors,
                     issues=typed_issues,
                     scanned_relative_paths=tuple(scanned_relative_paths),
                 )
             relative_path = full_path.relative_to(root_full).as_posix()
             scanned_relative_paths.append(relative_path)
-            file_evidence = _scan_file_evidence(root_full, full_path, relative_path)
+            if pure_static:
+                # Discover parser coverage before any per-file helper can fail.
+                deferred_checks.extend(_static_file_checks(relative_path))
+            file_evidence = (
+                _scan_file_evidence(root_full, full_path, relative_path, pure_static=True, reader=reader)
+                if pure_static
+                else _scan_file_evidence(root_full, full_path, relative_path)
+            )
             errors.extend(file_evidence.errors)
             typed_issues.extend(file_evidence.issues)
-        if len(errors) < 50:
+            deferred_checks.extend(file_evidence.deferred_checks)
+            incomplete_reasons.extend(file_evidence.incomplete_reasons)
+        if len(errors) < 50 and not pure_static:
             typecheck_evidence = _scan_typescript_project_typecheck_evidence(root_full, scanned_relative_paths)
             errors.extend(typecheck_evidence.errors)
             typed_issues.extend(typecheck_evidence.issues)
-        if len(errors) < 50:
+        if len(errors) < 50 and not pure_static:
             go_compile_evidence = _scan_go_project_compile_evidence(root_full, scanned_relative_paths)
             errors.extend(go_compile_evidence.errors)
             typed_issues.extend(go_compile_evidence.issues)
@@ -174,36 +283,64 @@ def scan_workspace_artifact_quality_evidence(
                 go_test_evidence = _scan_go_project_test_evidence(root_full, scanned_relative_paths)
                 errors.extend(go_test_evidence.errors)
                 typed_issues.extend(go_test_evidence.issues)
-        if len(errors) < 50:
-            js_export_evidence = _scan_javascript_named_export_evidence(root_full, scanned_relative_paths)
+        if pure_static and aggregates_safe:
+            source_snapshot = build_symbol_index_snapshot(
+                root_full,
+                relative_paths=scanned_relative_paths if relative_paths is not None else None,
+                reader=reader,
+                source_paths=aggregate_paths,
+            )
+            # A per-file refusal already has a stable public coverage reason.
+            # Keep that identity while adding previously unvisited owner faults.
+            record_source_incomplete(source_snapshot.incomplete_reasons)
+            static_ledger_options["source_snapshot"] = source_snapshot
+        # Specialists share the original reader/inventory. Cached diagnostics
+        # remain valid evidence even when final metadata reports source drift.
+        if len(errors) < 50 and (pure_static or aggregates_safe):
+            js_export_evidence = _scan_javascript_named_export_evidence(
+                root_full,
+                scanned_relative_paths,
+                reader=reader if pure_static else None,
+                source_paths=aggregate_paths if pure_static else None,
+                source_inventory_complete=aggregates_safe if pure_static else True,
+            )
             errors.extend(js_export_evidence.errors)
             typed_issues.extend(js_export_evidence.issues)
-        if len(errors) < 50:
-            python_term_evidence = _scan_python_acceptance_term_pair_evidence(root_full, scanned_relative_paths)
+            record_source_incomplete(js_export_evidence.incomplete_reasons)
+        if len(errors) < 50 and (pure_static or aggregates_safe):
+            python_term_evidence = _scan_python_acceptance_term_pair_evidence(
+                root_full, scanned_relative_paths, **({"reader": reader} if pure_static else {})
+            )
             errors.extend(python_term_evidence.errors)
             typed_issues.extend(python_term_evidence.issues)
-        if len(errors) < 50:
+            record_source_incomplete(python_term_evidence.incomplete_reasons)
+        if len(errors) < 50 and (pure_static or aggregates_safe):
             python_alias_evidence = _scan_python_acceptance_npm_node_alias_evidence(
                 root_full,
                 scanned_relative_paths,
+                **({"reader": reader} if pure_static else {}),
             )
             errors.extend(python_alias_evidence.errors)
             typed_issues.extend(python_alias_evidence.issues)
-        if len(errors) < 50:
+            record_source_incomplete(python_alias_evidence.incomplete_reasons)
+        if len(errors) < 50 and aggregates_safe:
             cross_artifact_issues = tuple(
                 scan_cross_artifact_consistency(
                     root_full,
                     relative_paths=scanned_relative_paths if relative_paths is not None else None,
                     contract=interface_contract,
+                    source_snapshot=source_snapshot if pure_static else None,
+                    reader=reader if pure_static else None,
                 )
             )
             errors.extend(
                 issue.to_error_message() for issue in cross_artifact_issues if not issue.code.startswith("contract_")
             )
-        if len(errors) < 50:
+        if len(errors) < 50 and aggregates_safe:
             declared_interface_issues = _scan_declared_interface_ledger_issues(
                 root_full,
                 scanned_relative_paths if relative_paths is not None else None,
+                **static_ledger_options,
             )
             typed_issues.extend(declared_interface_issues)
             errors.extend(
@@ -214,10 +351,16 @@ def scan_workspace_artifact_quality_evidence(
     except (OSError, RuntimeError, ValueError) as exc:
         message = f"Artifact quality scan failed: {exc}"
         return _artifact_quality_evidence(
-            errors=(message,),
-            issues=(_artifact_quality_scan_failure_issue(message, exc=exc),),
+            **coverage(stopped="scan_exception"),
+            errors=(*errors, message) if pure_static else (message,),
+            issues=(*typed_issues, _artifact_quality_scan_failure_issue(message, exc=exc))
+            if pure_static
+            else (_artifact_quality_scan_failure_issue(message, exc=exc),),
+            scanned_relative_paths=scanned_relative_paths,
+            cross_artifact_issues=cross_artifact_issues,
         )
     return _artifact_quality_evidence(
+        **coverage(stopped="error_limit" if len(errors) >= 50 else ""),
         errors=errors,
         issues=typed_issues,
         scanned_relative_paths=scanned_relative_paths,
@@ -230,22 +373,154 @@ def scan_workspace_artifact_quality_evidence(
     )
 
 
+def _static_project_checks(
+    root_full: Path,
+    paths: list[str],
+    *,
+    reader: WorkspaceReadSnapshot | None = None,
+    incomplete_reasons: list[str] | None = None,
+) -> tuple[ArtifactQualityDeferredCheck, ...]:
+    """Describe project gates without resolving tools or running commands.
+
+    Group nested projects by their nearest manifest; missing manifests still
+    require validation and cannot silently erase a compiler requirement.
+    """
+    groups: dict[tuple[str, str], list[str]] = {}
+    for relative in paths:
+        path = Path(relative)
+        suffix = path.suffix.lower()
+        kinds: tuple[str, ...]
+        if suffix in {".ts", ".tsx"} or path.name == "tsconfig.json":
+            kinds, manifest = ("typescript_project_typecheck",), "tsconfig.json"
+        elif suffix == ".go" or path.name == "go.mod":
+            kinds = (
+                ("go_project_compile", "go_project_test") if relative.endswith("_test.go") else ("go_project_compile",)
+            )
+            manifest = "go.mod"
+        else:
+            continue
+        project = ""
+        for parent in path.parents:
+            candidate = root_full / parent / manifest
+            if reader is not None:
+                try:
+                    _, witness = reader.confined_path(candidate)
+                    exists = witness is not None and stat.S_ISREG(witness.st_mode)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    if incomplete_reasons is not None:
+                        incomplete_reasons.append(f"project_manifest_unknown:{candidate}:{exc}")
+                    exists = False
+            else:
+                exists = candidate.is_file()
+            if exists:
+                project = parent.as_posix()
+                break
+        for kind in kinds:
+            groups.setdefault((kind, project), []).append(relative)
+    return tuple(
+        ArtifactQualityDeferredCheck(kind, tuple(scope), project_relative_path=project or ".")
+        for (kind, project), scope in groups.items()
+    )
+
+
+def _static_file_checks(relative_path: str) -> tuple[ArtifactQualityDeferredCheck, ...]:
+    suffix = Path(relative_path).suffix.lower()
+    if suffix in {".js", ".mjs", ".cjs", ".jsx"}:
+        return (ArtifactQualityDeferredCheck("javascript_parser", (relative_path,)),)
+    if suffix in {".ts", ".tsx"}:
+        return (ArtifactQualityDeferredCheck("typescript_parser", (relative_path,)),)
+    return ()
+
+
+def _iter_static_files(
+    root_full: Path, relative_paths: Iterable[str] | None, incomplete_reasons: list[str]
+) -> Iterable[Path]:
+    """Traverse the requested scope without silently filtering unknown files."""
+    seen: set[Path] = set()
+
+    def raise_walk_error(error: OSError) -> None:
+        raise error
+
+    def directory_files(directory: Path) -> Iterable[Path]:
+        for current, dirs, names in os.walk(directory, onerror=raise_walk_error, followlinks=False):
+            dirs[:] = [name for name in dirs if name not in _ARTIFACT_QUALITY_SKIP_DIRS]
+            for name in dirs[:]:
+                path = Path(current) / name
+                if path.is_symlink():
+                    incomplete_reasons.append(f"scope_symlink_unvisited:{path.relative_to(root_full).as_posix()}")
+                    dirs.remove(name)
+            for name in names:
+                yield Path(current) / name
+
+    for raw in relative_paths if relative_paths is not None else (".",):
+        requested = root_full / str(raw).replace("\\", "/")
+        full = Path(os.path.abspath(requested))
+        if not full.is_relative_to(root_full):
+            incomplete_reasons.append(f"scope_outside_workspace:{raw}")
+            continue
+        if any(part in _ARTIFACT_QUALITY_SKIP_DIRS for part in full.relative_to(root_full).parts):
+            incomplete_reasons.append(f"scope_excluded:{raw}")
+            continue
+        # Inspect parents before descendants, and before normalizing away '..'.
+        # A linked ancestor must never lead even metadata reads outside scope.
+        if any(
+            path.is_symlink() for path in (*reversed(requested.parents), requested) if path.is_relative_to(root_full)
+        ):
+            incomplete_reasons.append(f"scope_symlink_unvisited:{raw}")
+            continue
+        if not full.exists():
+            incomplete_reasons.append(f"scope_missing:{raw}")
+            continue
+        candidates = directory_files(full) if full.is_dir() else (full,)
+        for candidate in candidates:
+            if candidate.is_symlink():
+                incomplete_reasons.append(f"scope_symlink_unvisited:{candidate.relative_to(root_full).as_posix()}")
+                continue
+            resolved = candidate.resolve()
+            if not resolved.is_relative_to(root_full):
+                incomplete_reasons.append(f"scope_outside_workspace:{candidate.relative_to(root_full).as_posix()}")
+                continue
+            if resolved not in seen and resolved.is_file():
+                seen.add(resolved)
+                yield resolved
+
+
 def _declared_interface_contract(
     *,
     root_full: Path,
     relative_paths: Iterable[str] | None,
     task_id: str,
+    pure_static: bool = False,
+    incomplete_reasons: list[str] | None = None,
+    ledger_snapshots: dict[str, DeclaredInterfaceLedgerSnapshot] | None = None,
 ) -> CrossArtifactInterfaceContract | None:
     declared: dict[str, dict[str, Any]] = {}
     target_files = list(relative_paths) if relative_paths is not None else None
-    for cache_root in ("", root_full.as_posix()):
+    for cache_root in _interface_ledger_roots(root_full, pure_static=pure_static):
         try:
+            if pure_static:
+                snapshot = (
+                    ledger_snapshots[cache_root]
+                    if ledger_snapshots is not None
+                    else read_declared_interface_ledger_snapshot(root_full.as_posix(), cache_root)
+                )
+                status, detail = read_declared_interface_ledger_status(
+                    root_full.as_posix(), cache_root, snapshot=snapshot
+                )
+                if status == "unknown" and incomplete_reasons is not None:
+                    incomplete_reasons.append(f"interface_ledger_unknown:{cache_root}:{detail}")
             entries = (
-                read_declared_interfaces(root_full.as_posix(), cache_root, target_files)
+                read_declared_interfaces(
+                    root_full.as_posix(), cache_root, target_files, snapshot=snapshot if pure_static else None
+                )
                 if target_files is not None
-                else read_all_declared_interfaces(root_full.as_posix(), cache_root)
+                else read_all_declared_interfaces(
+                    root_full.as_posix(), cache_root, snapshot=snapshot if pure_static else None
+                )
             )
-        except (OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError) as exc:
+            if pure_static and incomplete_reasons is not None:
+                incomplete_reasons.append(f"interface_ledger_read_failed:{cache_root}:{type(exc).__name__}:{exc}")
             continue
         for target, entry in entries.items():
             current = declared.setdefault(target, {"identifiers": [], "public_symbols": [], "signatures": []})
@@ -299,20 +574,40 @@ def _artifact_quality_task_id(
 def _scan_declared_interface_ledger_issues(
     root_full: Path,
     relative_paths: Iterable[str] | None,
+    *,
+    pure_static: bool = False,
+    incomplete_reasons: list[str] | None = None,
+    ledger_snapshots: dict[str, DeclaredInterfaceLedgerSnapshot] | None = None,
+    source_snapshot: SymbolIndexSnapshot | None = None,
 ) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
     target_files = list(relative_paths) if relative_paths is not None else None
-    for cache_root in ("", root_full.as_posix()):
+    for cache_root in _interface_ledger_roots(root_full, pure_static=pure_static):
         try:
+            if pure_static:
+                snapshot = (
+                    ledger_snapshots[cache_root]
+                    if ledger_snapshots is not None
+                    else read_declared_interface_ledger_snapshot(root_full.as_posix(), cache_root)
+                )
+                status, detail = read_declared_interface_ledger_status(
+                    root_full.as_posix(), cache_root, snapshot=snapshot
+                )
+                if status == "unknown" and incomplete_reasons is not None:
+                    incomplete_reasons.append(f"interface_ledger_unknown:{cache_root}:{detail}")
             issues.extend(
                 issue.to_artifact_quality_issue()
                 for issue in validate_declared_interface_issues_against_snapshot(
                     root_full.as_posix(),
                     cache_root,
                     target_files,
+                    ledger_snapshot=snapshot if pure_static else None,
+                    source_snapshot=source_snapshot if pure_static else None,
                 )
             )
-        except (OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError) as exc:
+            if pure_static and incomplete_reasons is not None:
+                incomplete_reasons.append(f"interface_ledger_validation_failed:{cache_root}:{type(exc).__name__}:{exc}")
             continue
     deduped: dict[str, dict[str, Any]] = {}
     for issue in issues:
@@ -322,6 +617,14 @@ def _scan_declared_interface_ledger_issues(
         if raw:
             deduped.setdefault(raw, issue)
     return list(deduped.values())
+
+
+def _interface_ledger_roots(root_full: Path, *, pure_static: bool) -> tuple[str, ...]:
+    if not pure_static:
+        return ("", root_full.as_posix())
+    # Supplying a nonempty root prevents the ledger reader's write-probing
+    # resolver. Keep the existing workspace-root legacy read candidate.
+    return ((root_full / ".polaris/runtime").as_posix(), root_full.as_posix())
 
 
 def _tool_receipt_contamination_error(relative_path: str, text: str) -> str:
@@ -354,17 +657,56 @@ def _source_narration_contamination_error(relative_path: str, text: str) -> str:
     )
 
 
-def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) -> _FileArtifactQualityEvidence:
+def _scan_file_evidence(
+    root_full: Path,
+    full_path: Path,
+    relative_path: str,
+    *,
+    pure_static: bool = False,
+    reader: WorkspaceReadSnapshot | None = None,
+) -> _FileArtifactQualityEvidence:
     """Return legacy and typed artifact-quality findings for one file."""
 
+    suffix = full_path.suffix.lower()
+    deferred_checks: list[ArtifactQualityDeferredCheck] = []
+    incomplete_reasons: list[str] = []
+    if pure_static:
+        deferred_checks.extend(_static_file_checks(relative_path))
+        if (
+            not deferred_checks
+            and suffix not in {".py", ".json", ".html", ".htm", ".go", ".md", ".markdown"}
+            and full_path.name.lower() not in {"cargo.toml", "go.mod"}
+        ):
+            incomplete_reasons.append(f"unsupported_source:{relative_path}")
     try:
-        text = full_path.read_text(encoding="utf-8", errors="replace")[:1_000_000]
-    except (OSError, RuntimeError, ValueError):
+        if pure_static:
+            reader = reader or WorkspaceReadSnapshot(root_full)
+            read = reader.read(full_path)
+            if read.status != "readable":
+                raise OSError(f"{read.status}:{read.detail}")
+            text = read.text
+        else:
+            text = full_path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, RuntimeError, ValueError) as exc:
+        if pure_static:
+            message = f"Artifact quality scan failed: unreadable {relative_path}: {exc}"
+            return _FileArtifactQualityEvidence(
+                errors=(message,),
+                issues=(_artifact_quality_scan_failure_issue(message, exc=exc),),
+                deferred_checks=tuple(deferred_checks),
+                incomplete_reasons=(f"file_unreadable:{relative_path}",),
+            )
         return _FileArtifactQualityEvidence()
+    if pure_static and len(text) > 1_000_000:
+        incomplete_reasons.append(f"file_truncated:{relative_path}")
+    syntax_text = text
+    text = text[:1_000_000]
 
     receipt_error = _tool_receipt_contamination_error(relative_path, text)
     if receipt_error:
         return _FileArtifactQualityEvidence(
+            deferred_checks=tuple(deferred_checks),
+            incomplete_reasons=(*incomplete_reasons, f"file_checks_skipped:{relative_path}") if pure_static else (),
             errors=(receipt_error,),
             issues=(
                 _file_artifact_quality_issue(
@@ -378,6 +720,8 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     narration_error = _source_narration_contamination_error(relative_path, text)
     if narration_error:
         return _FileArtifactQualityEvidence(
+            deferred_checks=tuple(deferred_checks),
+            incomplete_reasons=(*incomplete_reasons, f"file_checks_skipped:{relative_path}") if pure_static else (),
             errors=(narration_error,),
             issues=(
                 _file_artifact_quality_issue(
@@ -390,6 +734,17 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
 
     errors: list[str] = []
     issues: list[ArtifactQualityIssue] = []
+    if pure_static and suffix in {".md", ".markdown"}:
+        issues.append(
+            ArtifactQualityIssue(
+                code="non_executable_document",
+                message="Documentation covered by snapshot and contamination checks; no executable syntax verdict.",
+                path=relative_path,
+                severity="info",
+                source="file_artifact_scanner",
+                metadata={"artifact_kind": "documentation", "execution_qualified": False},
+            )
+        )
 
     def append_file_issue(
         error: str,
@@ -412,9 +767,21 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
             )
         )
 
-    syntax = check_source_file_syntax(str(full_path))
+    syntax = (
+        _check_source_file_syntax_static(str(full_path), text=syntax_text)
+        if pure_static
+        else check_source_file_syntax(str(full_path))
+    )
     if syntax is not None and syntax.get("ok") is False:
-        syntax_detail = str(syntax.get("error"))[:200]
+        syntax_detail = str(syntax.get("error"))
+        # The absolute fixture/workspace prefix must not consume the bounded
+        # display budget before an actionable compiler diagnostic is shown.
+        syntax_detail = syntax_detail.replace(str(full_path), relative_path)
+        syntax_detail = syntax_detail.replace(str(root_full) + os.sep, "")
+        diagnostic = re.search(r"\b(?:TS\d+|[A-Za-z]*Error):[^\n]*", syntax_detail)
+        if diagnostic is not None and diagnostic.end() > 200:
+            syntax_detail = f"{diagnostic.group(0)}\n{syntax_detail[: diagnostic.start()].rstrip()}"
+        syntax_detail = syntax_detail[:200]
         syntax_error = f"Artifact quality scan failed: syntax error in {relative_path}: {syntax_detail}"
         errors.append(syntax_error)
         issues.append(
@@ -431,9 +798,15 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
             )
         )
     if os.path.basename(relative_path).lower() == "package.json":
-        manifest_evidence = _scan_package_manifest_evidence(root_full, text, relative_path)
+        manifest_evidence = (
+            _scan_package_manifest_evidence(root_full, text, relative_path, pure_static=True)
+            if pure_static
+            else _scan_package_manifest_evidence(root_full, text, relative_path)
+        )
         errors.extend(manifest_evidence.errors)
         issues.extend(manifest_evidence.issues)
+        deferred_checks.extend(manifest_evidence.deferred_checks)
+        incomplete_reasons.extend(manifest_evidence.incomplete_reasons)
     if os.path.basename(relative_path).lower() == "cargo.toml":
         cargo_evidence = _scan_cargo_manifest_missing_binary_evidence(root_full, text, relative_path)
         errors.extend(cargo_evidence.errors)
@@ -442,10 +815,15 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
         tsconfig_evidence = _scan_typescript_tsconfig_evidence(text, relative_path)
         errors.extend(tsconfig_evidence.errors)
         issues.extend(tsconfig_evidence.issues)
-    typescript_import_evidence = _scan_typescript_import_evidence(root_full, full_path, text, relative_path)
+    typescript_import_evidence = _scan_typescript_import_evidence(
+        root_full, full_path, text, relative_path, **({"reader": reader} if pure_static else {})
+    )
     errors.extend(typescript_import_evidence.errors)
     issues.extend(typescript_import_evidence.issues)
-    typescript_red_flag_evidence = _scan_typescript_syntax_red_flag_evidence(root_full, full_path, text, relative_path)
+    incomplete_reasons.extend(typescript_import_evidence.incomplete_reasons)
+    typescript_red_flag_evidence = _scan_typescript_syntax_red_flag_evidence(
+        root_full, full_path, text, relative_path, **({"reader": reader} if pure_static else {})
+    )
     if typescript_red_flag_evidence.issues:
         # Prefer the typed, directly repairable TS red-flag contract over the
         # environment-dependent generic syntax checker projection for the same
@@ -455,6 +833,7 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
         issues = [issue for issue in issues if issue.code != "syntax_error"]
     errors.extend(typescript_red_flag_evidence.errors)
     issues.extend(typescript_red_flag_evidence.issues)
+    incomplete_reasons.extend(typescript_red_flag_evidence.incomplete_reasons)
     html_module_script_evidence = _scan_html_typescript_module_script_evidence(
         root_full, full_path, text, relative_path
     )
@@ -512,6 +891,8 @@ def _scan_file_evidence(root_full: Path, full_path: Path, relative_path: str) ->
     residual_errors = tuple(error for error in errors if str(error or "").strip() not in direct_issue_messages)
     string_projected_issues = sys.modules[__package__]._artifact_quality_issues_from_errors(residual_errors)
     return _FileArtifactQualityEvidence(
+        deferred_checks=tuple(deferred_checks),
+        incomplete_reasons=tuple(incomplete_reasons),
         errors=tuple(errors),
         issues=(*issues, *string_projected_issues),
     )

@@ -224,7 +224,17 @@ async def test_stage_settle_reuses_owner_and_records_assets_before_close(
     )
     executor = _executor(tmp_path)
     executor._director_stage_should_run_materialization_quality_settle = lambda **_k: True
-    executor._collect_director_stage_materialization_diagnostics = lambda: next(scans)
+
+    async def collect(
+        *, run: SimpleNamespace, context: dict[str, object], preparation_results: list[dict], sessions: list[object]
+    ) -> stage.MaterializationDiagnostics:
+        # Coverage/interface unit only; no Group admission or physical positive.
+        assert run.id == "factory-1" and context == {}
+        return stage.MaterializationDiagnostics(
+            next(scans), static_evidence={"scan_mode": "pure_static", "scan_complete": True}
+        )
+
+    executor._collect_director_stage_materialization_diagnostics = collect
     executor._workspace_quality_repair_diagnostic_target_files = lambda _d: ["package.json"]
     executor._workspace_quality_repair_target_files = lambda: ["package.json"]
 
@@ -326,7 +336,17 @@ async def test_cancelled_settle_does_not_leave_owner_heartbeat_running(
     owner, _ = _validated_owner(tmp_path, monkeypatch)
     executor = _executor(tmp_path)
     executor._director_stage_should_run_materialization_quality_settle = lambda **_k: True
-    executor._collect_director_stage_materialization_diagnostics = lambda: ["package.json: repair"]
+
+    async def collect(
+        *, run: SimpleNamespace, context: dict[str, object], preparation_results: list[dict], sessions: list[object]
+    ) -> stage.MaterializationDiagnostics:
+        # Owner/cancel unit only; this observation has no deferred processes.
+        assert run.id == "factory-1" and context == {}
+        return stage.MaterializationDiagnostics(
+            ["package.json: repair"], static_evidence={"scan_mode": "pure_static", "scan_complete": True}
+        )
+
+    executor._collect_director_stage_materialization_diagnostics = collect
     executor._workspace_quality_repair_diagnostic_target_files = lambda _d: ["package.json"]
     executor._claim_workspace_quality_repair_attempt = lambda **_k: (
         "TASK-1",

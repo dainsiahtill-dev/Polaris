@@ -8,6 +8,7 @@ HTTP facade.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -59,6 +60,7 @@ from polaris.cells.events.fact_stream.public import (
     query_fact_stream_head,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
+    TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1,
     TASK_RUNTIME_EXECUTION_STREAM_V1,
 )
 from polaris.infrastructure.log_pipeline.jetstream_publisher import get_log_jetstream_publisher
@@ -77,9 +79,7 @@ _RUN_LEDGER_FACT_PROOF_MAX_PAGES = (
     _RUN_LEDGER_FACT_PROOF_MAX_RECORDS + _RUN_LEDGER_FACT_PROOF_PAGE_SIZE - 1
 ) // _RUN_LEDGER_FACT_PROOF_PAGE_SIZE
 _TASK_RUNTIME_SCOPE_FACT_CACHE_MAX = 4
-_TASK_RUNTIME_SCOPE_FACT_CACHE: OrderedDict[
-    tuple[str, int, str, str, str], tuple[dict[str, Any], ...]
-] = OrderedDict()
+_TASK_RUNTIME_SCOPE_FACT_CACHE: OrderedDict[tuple[str, int, str, str, str], tuple[dict[str, Any], ...]] = OrderedDict()
 _TASK_RUNTIME_SCOPE_FACT_CACHE_LOCK = threading.RLock()
 
 
@@ -391,11 +391,11 @@ def _empty_projection(
 
 
 def _canonical_ledger_dir(workspace: Path) -> Path:
-    return Path(resolve_runtime_path(str(workspace), "runtime/control_plane/ledger"))
+    return Path(resolve_runtime_path(str(workspace), "runtime/control_plane/ledger", read_only=True))
 
 
 def _ledger_dirs(workspace: Path, *, include_migration_ledgers: bool = False) -> list[Path]:
-    canonical_runtime_root = Path(resolve_runtime_path(str(workspace), "runtime"))
+    canonical_runtime_root = Path(resolve_runtime_path(str(workspace), "runtime", read_only=True))
     legacy_runtime_root = (workspace / "runtime").resolve()
     runtime_roots = [canonical_runtime_root]
     # Project-local runtime migration is write-once/read-many: all new events
@@ -904,9 +904,7 @@ def _merge_task_boundary(projects: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         verdict_count += _count_value(boundary.get("verdict_count"))
         historical_failed_count += _count_value(boundary.get("historical_failed_count"))
-        suppressed_non_mutating_deferred_count += _count_value(
-            boundary.get("suppressed_non_mutating_deferred_count")
-        )
+        suppressed_non_mutating_deferred_count += _count_value(boundary.get("suppressed_non_mutating_deferred_count"))
         boundary_latest = boundary.get("latest")
         if isinstance(boundary_latest, dict) and boundary_latest:
             latest = dict(boundary_latest)
@@ -976,6 +974,318 @@ def _project_from_events(project_id: str, events: list[dict[str, Any]]) -> dict[
     }
 
 
+def _capture_strict_fact_stream(workspace: Path, stream: str) -> list[dict[str, Any]]:
+    """Capture full verified records, rejecting pagination drift and cycles."""
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    total: int | None = None
+    while True:
+        page = query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(workspace),
+                stream=stream,
+                limit=1000,
+                offset=offset,
+                strict_integrity=True,
+            )
+        )
+        if total is not None and total != page.total:
+            raise ValueError("canonical_fact_head_drift")
+        total = page.total
+        rows.extend(page.events)
+        if page.next_offset == 0:
+            if len(rows) != total:
+                raise ValueError("canonical_fact_capture_incomplete")
+            return rows
+        if page.next_offset <= offset:
+            raise ValueError("canonical_fact_pagination_invalid")
+        offset = page.next_offset
+
+
+_TASK_ROW_DECLARATION_KINDS = frozenset(
+    {"created", "materialized", "factory_run_bound", "updated", "runtime_reset_removed"}
+)
+
+
+def _canonical_task_row_declaration(row: dict[str, Any], payload: dict[str, Any], workspace: Path) -> bool:
+    """Validate producer-shaped row declarations without granting execution.
+
+    TaskRuntime emits these kinds with session=None. A retained workflow run
+    and snapshot session describe row history, not a new execution claim.
+    Compact historical execution records lack the producer's declaration
+    fields; they retain the original strict execution-identity checks.
+    Source/workspace/scope and digest fences belong to the caller.
+    """
+    kind = row.get("event_type")
+    if kind not in _TASK_ROW_DECLARATION_KINDS:
+        return False
+    if not any(key in payload for key in ("schema_version", "event_type", "session_id", "task_row_snapshot")):
+        return False
+    if payload.get("schema_version") != TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1 or payload.get("event_type") != kind:
+        raise ValueError("canonical_lineage_declaration_shape_invalid")
+    # The producer owns this payload identity; FactStream's event_id is separate.
+    transition_id = payload.get("transition_id")
+    if not isinstance(transition_id, str) or not transition_id.strip():
+        raise ValueError("canonical_lineage_declaration_transition_invalid")
+    snapshot = payload.get("task_row_snapshot")
+    envelope = row.get("metadata")
+    details = payload.get("details")
+    if not isinstance(snapshot, dict) or not isinstance(envelope, dict) or not isinstance(details, dict):
+        raise ValueError("canonical_lineage_declaration_shape_invalid")
+    task_metadata = snapshot.get("metadata")
+    if not isinstance(task_metadata, dict):
+        raise ValueError("canonical_lineage_declaration_shape_invalid")
+    task_id = payload.get("task_id")
+    if (
+        not isinstance(task_id, str)
+        or not task_id.strip()
+        or envelope.get("task_id") != task_id
+        or str(snapshot.get("id") or "") != task_id
+        or (row.get("aggregate_id") and row["aggregate_id"] != task_id)
+    ):
+        raise ValueError("canonical_lineage_task_identity_invalid")
+    run_id = payload.get("run_id")
+    if (
+        not isinstance(run_id, str)
+        or run_id != run_id.strip()
+        or (envelope.get("run_id") or "") != run_id
+        or snapshot.get("workflow_run_id") != run_id
+    ):
+        raise ValueError("canonical_lineage_run_identity_invalid")
+    if payload.get("session_id") != "" or row.get("correlation_id"):
+        raise ValueError("canonical_lineage_declaration_session_invalid")
+    # Runtime metadata may retain a historical session; every supplied run
+    # must still agree. Never use that metadata to manufacture a child.
+    runtime_execution = task_metadata.get("runtime_execution")
+    if runtime_execution is not None and not isinstance(runtime_execution, dict):
+        raise ValueError("canonical_lineage_declaration_shape_invalid")
+    for history in (task_metadata, runtime_execution or {}):
+        for field in ("workflow_run_id", "run_id"):
+            if history.get(field) and history[field] != run_id:
+                raise ValueError("canonical_lineage_run_identity_invalid")
+    if runtime_execution:
+        if runtime_execution.get("task_id") and str(runtime_execution["task_id"]) != task_id:
+            raise ValueError("canonical_lineage_task_identity_invalid")
+        if (
+            snapshot.get("session_id")
+            and runtime_execution.get("session_id")
+            and snapshot["session_id"] != runtime_execution["session_id"]
+        ):
+            raise ValueError("canonical_lineage_declaration_session_invalid")
+    factory = payload.get("factory_run_id") or ""
+    project = payload.get("project_id") or payload.get("factory_bench_project_id") or ""
+    for scope in (payload, task_metadata, envelope):
+        if scope.get("factory_run_id") and scope["factory_run_id"] != factory:
+            raise ValueError("canonical_lineage_factory_identity_invalid")
+        for field in ("project_id", "factory_bench_project_id"):
+            if scope.get(field) and scope[field] != project:
+                raise ValueError("canonical_lineage_project_identity_invalid")
+    if (task_metadata.get("factory_run_id") or "") != factory or (
+        task_metadata.get("factory_bench_project_id") or ""
+    ) != (payload.get("factory_bench_project_id") or ""):
+        raise ValueError("canonical_lineage_declaration_scope_invalid")
+    if not isinstance(payload.get("workspace"), str) or not payload["workspace"].strip():
+        raise ValueError("canonical_lineage_declaration_shape_invalid")
+    for scope in (snapshot, task_metadata, envelope):
+        if scope.get("workspace") and Path(str(scope["workspace"])).resolve() != workspace:
+            raise ValueError("canonical_lineage_workspace_mismatch")
+    if payload.get("status") != snapshot.get("status"):
+        raise ValueError("canonical_lineage_declaration_transition_invalid")
+    if kind == "factory_run_bound" and details.get("factory_run_id") != factory:
+        raise ValueError("canonical_lineage_factory_identity_invalid")
+    if kind == "updated":
+        # TaskBoard normalizes these non-execution statuses; metadata-only
+        # updates can also retain an old terminal/execution state.
+        requested_status = details.get("status")
+        if not isinstance(requested_status, str) or requested_status.strip().lower() not in {
+            "",
+            "queued",
+            "pending",
+            "blocked",
+            "ready",
+        }:
+            raise ValueError("canonical_lineage_declaration_transition_invalid")
+    if kind == "runtime_reset_removed" and (
+        not factory
+        or details.get("reset_factory_run_id") != factory
+        or not isinstance(details.get("reset_keep_plan"), bool)
+        or not details.get("previous_status")
+        or payload.get("status") != "removed"
+        or payload.get("execution_state") != "removed"
+        or snapshot.get("status") != "removed"
+    ):
+        raise ValueError("canonical_lineage_declaration_reset_invalid")
+    return True
+
+
+def _validate_native_lineage_session(row: dict[str, Any], payload: dict[str, Any]) -> None:
+    """Retain execution identity requirements for native session transitions."""
+    if not any(key in payload for key in ("schema_version", "event_type", "session_id", "task_row_snapshot")):
+        return
+    if row.get("event_type") not in {
+        "claimed",
+        "claim_renewed",
+        "heartbeat_renewed",
+        "completed",
+        "failed",
+        "cancelled",
+        "suspended",
+    }:
+        return
+    session_id = payload.get("session_id")
+    if (
+        payload.get("schema_version") != TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1
+        or payload.get("event_type") != row.get("event_type")
+        or not isinstance(session_id, str)
+        or not session_id.strip()
+        or row.get("correlation_id") != session_id
+    ):
+        raise ValueError("canonical_lineage_execution_session_invalid")
+    task_id = payload.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("canonical_lineage_task_identity_invalid")
+
+
+def _canonical_qualification_inputs(
+    workspace: Path,
+    query: ReadRunLedgerProjectionQueryV1,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], tuple[str, ...], dict[str, Any]]:
+    """Join only stable, digest-verified facts from the selected workspace.
+
+    Two identical captures fence concurrent changes across the lineage and CP
+    streams. This bounded read rejects drift instead of certifying another read.
+    Historical undigested data remains available through compatibility queries.
+    """
+    streams = (TASK_RUNTIME_EXECUTION_STREAM_V1, _EXECUTION_CONTROL_PLANE_STREAM)
+    captured = {stream: _capture_strict_fact_stream(workspace, stream) for stream in streams}
+    verified = {stream: _capture_strict_fact_stream(workspace, stream) for stream in streams}
+    if captured != verified:
+        raise ValueError("canonical_fact_head_drift")
+    task_facts: list[dict[str, Any]] = []
+    owners: dict[str, set[tuple[str, str]]] = {}
+    child_tasks: dict[str, set[str]] = {}
+    for row in captured[TASK_RUNTIME_EXECUTION_STREAM_V1]:
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError("canonical_lineage_payload_invalid")
+        run_id = _event_run_id(payload)
+        factory = str(payload.get("factory_run_id") or "").strip()
+        project = str(payload.get("project_id") or payload.get("factory_bench_project_id") or "").strip()
+        if run_id:
+            owners.setdefault(run_id, set()).add((factory, project))
+        matches = (
+            (factory == query.factory_run_id and project == query.project_id)
+            if _has_factory_project_scope(query)
+            else (run_id == query.run_id)
+        )
+        if not matches:
+            continue
+        if row.get("source") != "runtime.task_runtime":
+            raise ValueError("canonical_lineage_source_invalid")
+        recorded_workspace = str(payload.get("workspace") or "").strip()
+        if recorded_workspace and Path(recorded_workspace).resolve() != workspace:
+            raise ValueError("canonical_lineage_workspace_mismatch")
+        if _canonical_task_row_declaration(row, payload, workspace):
+            # Preserve the captured immutable fact, but exclude row declarations
+            # from child authority and execution requirements. A real execution
+            # fact still has to qualify the child independently.
+            continue
+        _validate_native_lineage_session(row, payload)
+        if not run_id or (row.get("metadata") or {}).get("run_id") != run_id:
+            raise ValueError("canonical_lineage_run_identity_invalid")
+        task_id = str(payload.get("task_id") or "").strip()
+        if task_id and (row.get("metadata") or {}).get("task_id") != task_id:
+            raise ValueError("canonical_lineage_task_identity_invalid")
+        if task_id:
+            child_tasks.setdefault(run_id, set()).add(task_id)
+        projected = dict(payload)
+        projected.update(fact_event_id=row["event_id"], fact_event_seq=row["seq"], fact_stream=streams[0])
+        projected.setdefault("project_id", project)
+        task_facts.append(projected)
+    children = _unique_run_ids([_event_run_id(fact) for fact in task_facts])
+    if _has_factory_project_scope(query) and not children:
+        raise ValueError("canonical_factory_child_lineage_missing")
+    for child in children:
+        if len(owners[child]) != 1:
+            raise ValueError("canonical_factory_child_lineage_conflict")
+    run_ids = _unique_run_ids((query.run_id, *children))
+    events: list[dict[str, Any]] = []
+    for row in captured[_EXECUTION_CONTROL_PLANE_STREAM]:
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError("canonical_control_plane_payload_invalid")
+        event = payload.get("event")
+        if not isinstance(event, dict):
+            raise ValueError("canonical_control_plane_event_missing")
+        run_id = _event_run_id(event)
+        if run_id not in run_ids:
+            continue
+        if row.get("source") != "control_plane.run_ledger":
+            raise ValueError("canonical_control_plane_source_invalid")
+        if payload.get("run_id") != run_id or (row.get("metadata") or {}).get("run_id") != run_id:
+            raise ValueError("canonical_control_plane_run_identity_invalid")
+        token = event.get("job_token")
+        token_map = token if isinstance(token, dict) else {}
+        for scope in (payload, event, token_map):
+            recorded_workspace = str(scope.get("workspace") or "").strip()
+            if recorded_workspace and Path(recorded_workspace).resolve() != workspace:
+                raise ValueError("canonical_control_plane_workspace_mismatch")
+        event_task = str(event.get("task_id") or token_map.get("task_id") or "").strip()
+        if run_id in children and event_task and event_task not in child_tasks.get(run_id, set()):
+            raise ValueError("canonical_control_plane_task_mismatch")
+        boundary = event.get("task_boundary_verdict")
+        if isinstance(boundary, dict):
+            # Projection prefers nonempty nested identities over the envelope.
+            # Check those actual values, including another task in this child,
+            # before projection can consume them. Missing values retain the
+            # existing envelope defaults.
+            for field, expected_identity in (("task_id", event_task), ("run_id", run_id)):
+                nested_identity = str(boundary.get(field) or "").strip()
+                if nested_identity and nested_identity != expected_identity:
+                    raise ValueError("canonical_task_boundary_identity_mismatch")
+        if (
+            run_id in children
+            and event.get("event_type") == "task_boundary_verdict"
+            and (
+                event_task not in child_tasks.get(run_id, set())
+                or token_map.get("task_id") != event.get("task_id")
+                or token_map.get("run_id") != run_id
+            )
+        ):
+            raise ValueError("canonical_task_boundary_identity_mismatch")
+        if query.project_id and _event_project_id(event) != query.project_id:
+            # TaskBoundary's native token project is its exact task, while
+            # TaskRuntime owns the catalog/factory ancestry. Only this schema
+            # may use that task-level boundary, proven by the captured lineage.
+            native_boundary = (
+                event.get("event_type") == "task_boundary_verdict"
+                and run_id in children
+                and event_task in child_tasks.get(run_id, set())
+                and event.get("task_id") == event_task
+                and token_map.get("task_id") == event_task
+                and token_map.get("run_id") == run_id
+                and _event_project_id(event) == event_task
+            )
+            if not native_boundary:
+                raise ValueError("canonical_control_plane_project_mismatch")
+        projected = dict(event)
+        projected.update(fact_event_id=row["event_id"], fact_event_seq=row["seq"], fact_stream=streams[1])
+        projected.setdefault("recorded_at", row["occurred_at"])
+        events.append(projected)
+    present = {_event_run_id(event) for event in events}
+    if not run_ids or any(run_id not in present for run_id in run_ids):
+        raise ValueError("canonical_scoped_control_plane_facts_missing")
+    evidence = {
+        "strict_integrity": True,
+        "canonical_only": True,
+        "captured_heads": {stream: len(rows) for stream, rows in captured.items()},
+        "captured_hash": hashlib.sha256(
+            json.dumps(captured, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+    }
+    return task_facts, events, run_ids, evidence
+
+
 def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedgerProjectionResultV1:
     """Read and project platform run ledger events for one workspace.
 
@@ -989,7 +1299,13 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
     workspace = Path(query.workspace).expanduser().resolve()
     query_scope = _query_scope(query)
     factory_project_scoped = _has_factory_project_scope(query)
-    if factory_project_scoped:
+    canonical_evidence: dict[str, Any] = {}
+    if query.canonical_only:
+        task_runtime_facts, events, consumed_run_ids, canonical_evidence = _canonical_qualification_inputs(
+            workspace, query
+        )
+        paths: list[Path] = []
+    elif factory_project_scoped:
         task_runtime_facts = _read_task_runtime_execution_facts(
             workspace=workspace,
             factory_run_id=query.factory_run_id,
@@ -1083,6 +1399,7 @@ def read_run_ledger_projection(query: ReadRunLedgerProjectionQueryV1) -> RunLedg
             "status": "ready" if ok else "failed",
             "audit_path": str(_canonical_ledger_dir(workspace)),
             "migration_ledgers_included": query.include_migration_ledgers,
+            "canonical_evidence": canonical_evidence,
             "query_scope": query_scope,
             "consumed_run_ids": list(consumed_run_ids),
             "total": projected,
@@ -1515,17 +1832,13 @@ def append_tool_call_lifecycle_event(command: AppendToolCallLifecycleEventComman
     )
 
     if looks_like_managed_process_tool_lifecycle_substitute(command.lifecycle_receipt):
-        raise ControlPlaneRunLedgerV1Error(
-            "managed_process_lifecycle_forbids_tool_lifecycle_substitute"
-        )
+        raise ControlPlaneRunLedgerV1Error("managed_process_lifecycle_forbids_tool_lifecycle_substitute")
     if str(command.stage or "").strip().lower() in {
         "managed_process",
         "managed_process_lifecycle",
         "process_receipt",
     }:
-        raise ControlPlaneRunLedgerV1Error(
-            "managed_process_lifecycle_forbids_tool_lifecycle_substitute:stage"
-        )
+        raise ControlPlaneRunLedgerV1Error("managed_process_lifecycle_forbids_tool_lifecycle_substitute:stage")
 
     event = build_tool_call_lifecycle_run_ledger_event(
         run_id=command.run_id,

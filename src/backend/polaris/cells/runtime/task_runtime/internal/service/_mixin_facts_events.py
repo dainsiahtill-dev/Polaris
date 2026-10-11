@@ -497,6 +497,10 @@ class _FactsEventsMixin(_ServiceMixinBase):
                             correlation_id=str(payload.get("session_id") or "").strip() or None,
                             idempotency_key=idempotency_key,
                             expected_seq=expected_seq,
+                            # New envelopes always carry KernelOne digests.
+                            # Keep old undigested history resumable without
+                            # rewriting it; canonical qualification is strict.
+                            strict_integrity=False,
                         )
                     )
                 except FactStreamError as exc:

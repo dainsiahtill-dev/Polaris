@@ -1,0 +1,54 @@
+id: vc-20261007-quality-input-identity
+classification: pattern
+owner: director.runtime
+issue: POL-26
+mode: implementation
+blueprint: docs/blueprints/POLARIS_MULTISPEC_REPAIR_CLOSURE_20261007.md
+assumption_register:
+  - assumption: raw equality cannot establish conflicting canonical import identity
+    evidence: ACTIVE raw shortcut merges before structural comparison
+    falsification: same raw with distinct case-sensitive specifiers or canonical paths must retain both
+  - assumption: existing RepairDiagnostic semantic identity already includes canonical specifier
+    evidence: contracts.py discriminator preserves explicit IDs and case-sensitive specifier
+    falsification: duplicate evidence must coalesce without changing caller DTOs or explicit IDs
+  - assumption: missing import identity is unproved and stale raw cannot fill it
+    evidence: typed normalization retains explicit canonical metadata without parsing raw
+    falsification: missing and conflicting typed metadata remain visible in public coverage
+  - assumption: legacy code and location refinement remains valuable
+    evidence: public migration adapter retains precise normalized compiler diagnostics
+    falsification: exact raw/typed compiler duplicates still retain precise code and location
+pre_mortem:
+  - adding specifier only to structural key leaves raw shortcut collapse
+  - single index per raw hides one of several canonical identities
+  - missing specifier or stale raw guesses incorrectly authorize merge
+  - merging paths, explicit IDs or incompatible metadata silently loses evidence
+  - fixing identity exposes composition failure; planned cannot imply successful composition
+scope:
+  - src/backend/polaris/cells/director/runtime/public/service/_projections.py
+  - src/backend/polaris/cells/director/runtime/tests/test_quality_input_identity_frontier.py
+  - src/backend/docs/governance/templates/verification-cards/vc-20261007-quality-input-identity.yaml
+forbidden: AST, Composer, normalizer, contracts, existing tests, target projects, API writes
+verification_plan:
+  - RED then GREEN public coverage and PlanProbe with raw-only, typed-only and mixed evidence
+  - distinct specifiers, reversed order, shared raw/message, stale raw path, duplicate and missing identities
+  - canonical path conflicts, case-sensitive specifiers, explicit IDs and metadata conflicts
+  - different-importer complete positive; same-importer composition failure remains reported
+  - input and normalized DTO hashes unchanged; no write, spawn, network or grant during query
+  - collect and run contracts 1-7, four frontiers, AST and C++ normalization plus new frontier
+  - scoped Ruff, baseline format comparison, mypy and diff check
+verification_commands:
+  - rtk proxy python3 "$PAPERCLIP_RUN_SCRATCH_DIR/run_check.py" red-tests rtk proxy .venv/bin/python3.13 -m pytest -q -p no:cacheprovider src/backend/polaris/cells/director/runtime/tests/test_quality_input_identity_frontier.py --basetemp "$PAPERCLIP_RUN_SCRATCH_DIR/red-pytest"
+  - rtk proxy python3 "$PAPERCLIP_RUN_SCRATCH_DIR/run_check.py" green-tests rtk proxy .venv/bin/python3.13 -m pytest -q -p no:cacheprovider src/backend/polaris/cells/director/runtime/tests/test_quality_input_identity_frontier.py --basetemp "$PAPERCLIP_RUN_SCRATCH_DIR/green-pytest"
+authority: external component evidence only; Root independent acceptance required
+validation_evidence:
+  directory: .superpowers/sdd/2026-10-06-paperclip-repair-frontier/quality-input-identity/
+  red: final-red-preimage.txt
+  green: expanded-green-tests.txt
+  public_before: red-public-v1.txt
+  public_after: green-public-v1.txt
+  actual_compiler: compiler-public-v1.txt
+  regression_collection: selected-collect-final.txt
+  regression_run: selected-run-final.txt
+  static: final-ruff.txt, final-format.txt, final-mypy.txt, final-diff-check.txt
+residual: QA-COMPOSE-MULTISPEC remains before_hash_mismatch; no partial-success claim
+unrun: Provider, Bench, service, effect execution, settlement, all-repository and release gates

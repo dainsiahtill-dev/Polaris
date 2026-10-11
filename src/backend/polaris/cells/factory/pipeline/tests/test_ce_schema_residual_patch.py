@@ -27,7 +27,7 @@ SCHEMA: dict[str, Any] = {
     },
     "required": ["stable", "steps"],
 }
-BASE: dict[str, Any] = {"stable": "KEEP", "steps": [{"given": "A", "then": "B"}], "extra": {"note": "draft"}}
+BASE: dict[str, Any] = {"stable": "KEEP", "steps": [{"given": "A", "then": "B"}], "extra": "draft"}
 
 
 def _patch() -> dict[str, Any]:
@@ -52,7 +52,7 @@ def test_mixed_error_patch_handles_existing_array_element_without_replacing_sibl
         {"operation": "add", "path": ["steps", 0, "when"]},
     ]
     assert plan.compose(_patch()) == {"stable": "KEEP", "steps": [{"given": "A", "when": "C", "then": "B"}]}
-    assert BASE == {"stable": "KEEP", "steps": [{"given": "A", "then": "B"}], "extra": {"note": "draft"}}
+    assert BASE == {"stable": "KEEP", "steps": [{"given": "A", "then": "B"}], "extra": "draft"}
 
 
 @pytest.mark.parametrize("attack", ["hash", "path", "overwrite", "reorder", "missing", "extra", "value"])
@@ -98,6 +98,27 @@ def test_type_errors_remain_strict_reconstruction() -> None:
     invalid = deepcopy(BASE)
     invalid["stable"] = 5
     assert plan_ce_schema_residual_patch(candidate=invalid, schema=SCHEMA) is None
+
+
+@pytest.mark.parametrize("displaced", [{"task_id": "TASK-1", "steps": ["keep"]}, [{"task_id": "TASK-1"}]])
+def test_nonempty_forbidden_container_requires_full_reconstruction(displaced: Any) -> None:
+    base = {"stable": "KEEP", "steps": [], "task_plans": displaced}
+    assert plan_ce_schema_residual_patch(candidate=base, schema=SCHEMA) is None
+
+
+def test_producer_context_supplies_typed_exact_edit_template() -> None:
+    base = {"stable": "KEEP", "steps": [{"given": "A", "then": "B"}], "extra": "draft"}
+    plan = plan_ce_schema_residual_patch(candidate=base, schema=SCHEMA)
+    assert plan is not None
+    context = plan.provider_context()
+    template = context["edit_template"]
+    assert template["base_candidate_hash"] == plan.base_candidate_hash
+    assert template["edits"][1] == {"operation": "add", "path": ["steps", 0, "when"]}
+    assert context["edit_value_schemas"][1] == {"type": "string"}
+    assert context["edit_path_component_types"][1] == ["string", "integer", "string"]
+    assert "value" not in template["edits"][1]
+    with pytest.raises(ValueError, match="ce_schema_patch_payload_rejected"):
+        plan.compose(template)
 
 
 def test_ambiguous_pattern_properties_remain_strict_reconstruction() -> None:

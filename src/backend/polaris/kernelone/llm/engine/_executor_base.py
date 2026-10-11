@@ -545,6 +545,43 @@ def _string_list(value: Any) -> list[str]:
     return result[:32]
 
 
+def planning_output_budget_error(
+    role: str,
+    requested: int,
+    model_spec: Any,
+    *,
+    overhead_tokens: int | None = None,
+    original_messages: Any = None,
+    effective_messages: Any = None,
+    final_output_tokens: int | None = None,
+) -> str | None:
+    """Pure exact-output guard shared by both planning transport modes."""
+    if role not in {"pm", "chief_engineer"}:
+        return None
+    cap = int(model_spec.max_output_tokens or 0)
+    window = int(model_spec.max_context_tokens or 0)
+    if cap <= 0 or window <= 0:
+        return "planning_output_budget_model_limits_unavailable"
+    if requested > cap:
+        return f"planning_output_budget_model_limit_exceeded:requested={requested},model_output_limit={cap}"
+    detail = f"requested={requested},window={window}"
+    if overhead_tokens is not None and requested + overhead_tokens + 64 > window:
+        return f"planning_output_budget_context_window_exceeded:{detail},overhead={overhead_tokens},reserve=64"
+    if isinstance(original_messages, list) and original_messages:
+        retained = effective_messages if isinstance(effective_messages, list) else []
+        original_system = [m for m in original_messages if isinstance(m, dict) and m.get("role") == "system"]
+        retained_system = [m for m in retained if isinstance(m, dict) and m.get("role") == "system"]
+        if original_system != retained_system:
+            return f"planning_output_budget_context_window_exceeded:{detail},reason=pinned_system_context_changed"
+        original_user = [m for m in original_messages if isinstance(m, dict) and m.get("role") == "user"]
+        retained_user = [m for m in retained if isinstance(m, dict) and m.get("role") == "user"]
+        if original_user and (not retained_user or original_user[-1] != retained_user[-1]):
+            return f"planning_output_budget_context_window_exceeded:{detail},reason=pinned_requirement_context_changed"
+    if final_output_tokens is not None and final_output_tokens != requested:
+        return f"planning_output_budget_context_window_exceeded:{detail},available_output={final_output_tokens},overhead={overhead_tokens}"
+    return None
+
+
 def clamp_output_tokens_to_window(
     invoke_cfg: dict[str, Any],
     model_spec: Any,

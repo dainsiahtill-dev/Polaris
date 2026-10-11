@@ -1,0 +1,53 @@
+id: vc-20261008-static-scan-snapshot-closure
+issue: POL-48
+mode: implementation
+classification: pattern
+owner: Director-tools-engineer
+reviewer: Root
+assumptions:
+  - id: reread-race
+    claim: safe entry preflight cannot authorize later independent content reads
+    evidence: exact aggregate RED exit 1; exact syntax RED exit 1, three suffixes
+  - id: shared-witness
+    claim: syntax, namespace and ledger validation must reuse original text
+    evidence: per-scan WorkspaceReadSnapshot already confines actual opens
+  - id: no-import-cycle
+    claim: reader can stay in interface_ledger
+    evidence: ledger cross-artifact import is function-local, not initialization
+pre_mortem:
+  - lost blockers after unreadable owners
+  - deleted source omitted by later enumeration
+  - independent helper bypasses cached text
+  - old load injection misreported as actual reader fault
+verification:
+  tests:
+    - src/backend/polaris/kernelone/quality/tests/test_static_scan_snapshot_closure.py
+  gates: [exact-aggregate, exact-syntax, immutable-19, immutable-55, immutable-extension, immutable-5, components-157, consumers-288, calibrations-2, ruff, format, scoped-mypy, strict-delta]
+  red: {aggregate_exit: 1, aggregate_external_attempts: 1, syntax_exit: 1, syntax_external_attempts: 3}
+  expected: same confined text; drift and unknown explicit; known diagnostics retained
+  observed:
+    exact_aggregate: exit 0; zero outside reads; drift explicit
+    exact_syntax: exit 0; Python/JSON/HTML zero outside reads; drift explicit
+    original: 19 passed
+    negative: 55 passed
+    extension: 55 passed
+    confirmation: 4 passed; 1 old-load injection mismatch retained
+    components: 195 passed (157 original + 38 new)
+    consumers: 288 passed
+    calibrations: 2 passed
+    scoped_mypy: pass
+    strict_debt: unchanged normalized 3 current, 4 historical production, 45 historical test
+    effect_witness: 4 cases; zero scanner effects; fixture mutations separately recorded
+  report: .superpowers/sdd/2026-10-06-paperclip-repair-frontier/static-snapshot-closure-v1/REPORT.json
+blocker:
+  status: blocked_scope
+  owner: Root
+  evidence: remaining_read_probe.py; three intercepted outside content reads; exit 1
+  files:
+    - src/backend/polaris/kernelone/quality/artifact_quality/_scan_python.py
+    - src/backend/polaris/kernelone/quality/artifact_quality/_scan_javascript.py
+  action: independent replay after real release; authorize one writer for specialist snapshot injection
+boundaries:
+  - no old test changes, provider, service, Bench, target runtime or API writes
+  - no self approval or delivery verdict
+  - Root independently verifies namespace release and effects

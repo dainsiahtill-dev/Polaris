@@ -317,6 +317,54 @@ async def test_execute_pm_run_propagates_metadata_to_role_entry_and_request(
     assert stub.request.metadata["projection"]["scenario_id"] == "scenario_alpha"
 
 
+@pytest.mark.parametrize(
+    "options,want_stage,want_call,want_output",
+    [
+        ({}, 1530, 750, 60000),
+        ({"max_tokens": 20000}, 530, 250, 20000),
+        ({"metadata": {"task_execution_contract": {"context_budget": {"max_tokens": 20000}}}}, 530, 250, 20000),
+        ({"max_output_tokens": 64000}, 1630, 800, 64000),
+        ({"metadata": {"execution_strategy": {"output_budget_tokens": 64000}}}, 1630, 800, 64000),
+        ({"llm_max_tokens": 20000, "metadata": {"llm_max_tokens": 64000}}, 530, 250, 20000),
+        ({"timeout_seconds": 1800, "llm_call_timeout_seconds": 800}, 1800, 800, 60000),
+        ({"timeout_seconds": 600}, None, None, None),
+        ({"metadata": {"pm_planning_deadline_epoch_seconds": float("nan")}}, None, None, None),
+        ({"metadata": {"pm_planning_deadline_epoch_seconds": float("inf")}}, None, None, None),
+        ({"metadata": {"pm_planning_deadline_epoch_seconds": 11505.0}}, None, None, None),
+    ],
+)
+async def test_pm_command_admits_timeout_before_workflow_submission(
+    tmp_path, monkeypatch, options, want_stage, want_call, want_output
+):
+    from polaris.cells.orchestration.pm_dispatch.internal import orchestration_command_service as module
+
+    if options.get("metadata", {}).get("pm_planning_deadline_epoch_seconds") == 11505.0:
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(
+            module, "datetime", SimpleNamespace(now=lambda _: datetime.fromtimestamp(10000, timezone.utc))
+        )
+    stub = _SubmitCaptureService()
+
+    async def get_service():
+        return stub
+
+    monkeypatch.setattr(module, "get_orchestration_service", get_service)
+    monkeypatch.setattr(module, "register_all_adapters", lambda _: None)
+    result = await OrchestrationCommandService(settings={}).execute_pm_run(str(tmp_path), "pm", options)
+    if want_stage is None:
+        assert result.status == "failed" and stub.request is None
+        assert "pm_planning" in result.message and "budget" in result.message
+    else:
+        assert result.status == "pending", result.message
+        request = stub.request
+        assert request.metadata["timeout_seconds"] == want_stage
+        assert request.role_entries[0].metadata["timeout_seconds"] == want_stage
+        assert request.role_entries[0].metadata["llm_call_timeout_seconds"] == want_call
+        assert request.role_entries[0].metadata["llm_max_tokens"] == want_output
+
+
 def test_factory_stage_sequence_forces_unique_full_chain() -> None:
     assert _canonical_factory_stage_sequence(["pm_planning"]) == [
         "pm_planning",

@@ -10,12 +10,29 @@ Public exports:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_schemas,
     resolve_tool_call_provider,
 )
+from polaris.kernelone.llm.budget_policy import DEFAULT_ROLE_OUTPUT_TOKENS, resolve_output_budget_tokens
+
+from .generation_outcome import RoleGenerationOutcomeV1, bind_role_generation_outcome
 
 __all__ = [
+    "DEFAULT_ROLE_OUTPUT_TOKENS",
+    "RoleGenerationOutcomeV1",
+    "bind_role_generation_outcome",
     "build_native_tool_schemas",
+    "resolve_role_output_budget",
     "resolve_tool_call_provider",
 ]
+
+
+def resolve_role_output_budget(
+    *, context: Mapping[str, Any] | None = None, requested: int = DEFAULT_ROLE_OUTPUT_TOKENS
+) -> int:
+    """Compatibility facade for KernelOne's canonical pure output resolver."""
+    return resolve_output_budget_tokens(requested, dict(context) if context is not None else None)

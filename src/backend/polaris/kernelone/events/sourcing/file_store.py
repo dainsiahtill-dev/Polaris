@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING, Any
 from polaris.kernelone.fs import KernelFileSystem, LockedRegularFileError, LockedRegularFileSetV1, StreamLeaseV1
 from polaris.kernelone.fs.contracts import DurabilityMode, validate_durability
 from polaris.kernelone.fs.registry import get_default_adapter
-from polaris.kernelone.storage import WorkspaceRuntimeIdentity, resolve_workspace_runtime_identity
+from polaris.kernelone.storage import (
+    WorkspaceRuntimeIdentity,
+    read_only_platform_lock_roots,
+    resolve_workspace_runtime_identity,
+)
 
 from .models import (
     EventEnvelope,
@@ -25,6 +29,7 @@ from .models import (
     ExpectedSequenceDriftError,
     IdempotencyConflictError,
     StrictEventRecordError,
+    _decode_strict_raw_record,
     decode_strict_event_record,
     new_event_id,
     utc_now_iso,
@@ -185,11 +190,17 @@ class JsonlEventStore:
         kernel_fs: KernelFileSystem | None = None,
         strict_max_records: int = _DEFAULT_STRICT_MAX_RECORDS,
         strict_max_bytes: int = _DEFAULT_STRICT_MAX_BYTES,
+        read_only: bool = False,
+        validate_legacy_history: bool = False,
     ) -> None:
         workspace_token = str(workspace or "").strip()
         if not workspace_token:
             raise ValueError("workspace is required")
-        self._storage_identity = resolve_workspace_runtime_identity(workspace_token)
+        if type(read_only) is not bool or type(validate_legacy_history) is not bool:
+            raise TypeError("event store read/legacy-validation options must be bool")
+        self._read_only = read_only
+        self._validate_legacy_history = validate_legacy_history
+        self._storage_identity = resolve_workspace_runtime_identity(workspace_token, read_only=read_only)
         self._workspace = self._storage_identity.workspace_abs
         self._root_logical_dir = self._normalize_root(root_logical_dir)
         self._kernel_fs = kernel_fs or KernelFileSystem(self._workspace, get_default_adapter())
@@ -243,6 +254,8 @@ class JsonlEventStore:
         allocating a sequence; its configured record and byte limits are
         explicit fail-closed complexity bounds, not timing-based test gates.
         """
+        if self._read_only:
+            raise EventSourcingError("read-only event store cannot append", code="read_only_store")
         if not isinstance(strict_integrity, bool):
             raise ValueError("strict_integrity must be a bool")
         normalized_durability = validate_durability(durability)
@@ -447,6 +460,8 @@ class JsonlEventStore:
         with self._locked_streams(logical_path) as leases:
             lease = leases.lease(logical_path)
             lease.open_existing(writable=True)
+            if self._validate_legacy_history and not strict_integrity and lease.exists:
+                self._validate_legacy_append_history(lease.read_bytes(), stream=semantic.stream)
             records = self._read_lease_records_cached(
                 stream=semantic.stream,
                 logical_path=logical_path,
@@ -503,7 +518,9 @@ class JsonlEventStore:
                     actual_seq=next_seq,
                 )
             envelope = self._build_envelope(semantic=semantic, seq=next_seq)
-            record = envelope.to_record(include_integrity_digest=strict_integrity)
+            # Managed new facts carry their own digest. Legacy compatibility appends
+            # retain old bytes; strict qualification never upgrades old records.
+            record = envelope.to_record(include_integrity_digest=strict_integrity or self._validate_legacy_history)
             encoded = (
                 json.dumps(
                     record,
@@ -542,6 +559,50 @@ class JsonlEventStore:
                     records=[*records, envelope],
                 )
             return envelope
+
+    @staticmethod
+    def _validate_legacy_append_history(content: bytes, *, stream: str) -> None:
+        """Allow well-formed historical facts without certifying missing digests.
+
+        This runs under the existing append descriptor lease. It neither
+        changes old bytes nor feeds a synthesized digest into strict replay.
+        A malformed or tampered history cannot become a successful append via
+        the compatibility reader's skipped-record/cache behavior.
+        """
+        try:
+            if content and not content.endswith(b"\n"):
+                raise ValueError("legacy_execution_history_torn_tail")
+            previous = 0
+            for raw in content.decode("utf-8").splitlines():
+                record = _decode_strict_raw_record(raw)
+                if "integrity_digest" in record:
+                    event = decode_strict_event_record(raw)
+                else:
+                    event = EventEnvelope.from_record(record)
+                    # Compatibility coercions/defaults are not valid history.
+                    if event.to_record() != record:
+                        raise ValueError("legacy_execution_history_shape_invalid")
+                    if record.get("schema_version") != 1 or record.get("event_version") != 1:
+                        raise ValueError("legacy_execution_history_version_invalid")
+                    if any(
+                        type(record.get(key)) is not int or record[key] <= 0
+                        for key in ("schema_version", "event_version", "seq")
+                    ):
+                        raise ValueError("legacy_execution_history_numeric_shape_invalid")
+                    if any(
+                        type(record.get(key)) is not str or not record[key].strip()
+                        for key in ("event_id", "stream", "event_type", "occurred_at", "source")
+                    ):
+                        raise ValueError("legacy_execution_history_identity_shape_invalid")
+                if event.stream != stream or event.seq != previous + 1:
+                    raise ValueError("legacy_execution_history_sequence_invalid")
+                previous = event.seq
+        except (UnicodeDecodeError, ValueError, TypeError, EventSourcingError) as exc:
+            raise EventSourcingError(
+                "fact stream history is corrupt; append refused",
+                code="stream_history_integrity_failed",
+                details={"stream": stream, "reason": str(exc), "legacy_qualification_allowed": False},
+            ) from exc
 
     def _build_envelope(
         self,
@@ -680,19 +741,26 @@ class JsonlEventStore:
         same lock realm (R143/R144 advisory lock timeouts).
         """
 
-        try:
-            return LockedRegularFileSetV1.acquire(
-                runtime_root=self._storage_identity.runtime_root,
-                storage_identity_token=self._storage_identity.token,
-                logical_paths=logical_paths,
-                timeout_seconds=15.0,
-            )
-        except LockedRegularFileError as exc:
-            raise EventSourcingError(
-                "event stream lock or descriptor capability failed",
-                code=exc.code,
-                details=dict(exc.details),
-            ) from exc
+        roots = read_only_platform_lock_roots() if self._read_only else (None,)
+        for root in roots:
+            try:
+                return LockedRegularFileSetV1.acquire(
+                    runtime_root=self._storage_identity.runtime_root,
+                    storage_identity_token=self._storage_identity.token,
+                    logical_paths=logical_paths,
+                    platform_lock_root=root,
+                    timeout_seconds=15.0,
+                    read_only=self._read_only,
+                )
+            except LockedRegularFileError as exc:
+                if self._read_only and exc.code == "lock_authority_missing" and root != roots[-1]:
+                    continue
+                raise EventSourcingError(
+                    "event stream lock or descriptor capability failed",
+                    code=exc.code,
+                    details={**exc.details, "searched_lock_roots": list(roots)},
+                ) from exc
+        raise EventSourcingError("platform lock roots unavailable", code="lock_authority_missing")
 
     def _read_strict_records_locked(self, *, stream: str, logical_path: str) -> list[EventEnvelope]:
         """Read and validate one stream under the central persistent stream lock."""

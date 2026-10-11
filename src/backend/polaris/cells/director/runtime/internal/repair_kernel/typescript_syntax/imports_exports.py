@@ -13,7 +13,10 @@ from ..javascript_syntax import repair_javascript_export_contract_placeholders
 from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
 from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
+from .common.misc_ops import _typescript_identifier_used_outside_span, _typescript_import_pairs_from_clause
 from .common.path_ops import _normalize_repair_path
+from .common.plan_ops import _text_replace_operations_from_repair
+from .module_binding_proof import ModuleBindingFacts, parse_module_binding_facts
 
 """TypeScript syntax repair module: imports_exports."""
 
@@ -1435,9 +1438,10 @@ def _build_relative_import_plan(
     rule_id: str,
     mode_filter: str,
 ) -> RepairPlan | None:
-    operations: list[RepairOperation] = []
+    operations_by_path: dict[str, list[RepairOperation]] = {}
     repairs: list[dict[str, str]] = []
     updated = dict(base_files)
+    facts_cache: dict[str, ModuleBindingFacts | None] = {}
     for item in _parse_unresolved_relative_import_errors(diagnostics):
         importer = item["file"]
         specifier = item["specifier"]
@@ -1487,6 +1491,7 @@ def _build_relative_import_plan(
                 importer_path=importer,
                 content=content,
                 specifier=specifier,
+                facts_cache=facts_cache,
             )
             if not actual_target:
                 continue
@@ -1497,11 +1502,12 @@ def _build_relative_import_plan(
             )
             if corrected == specifier:
                 continue
-            operation = _replace_import_specifier_operation(
+            operation = _replace_proven_typescript_import_specifiers_operation(
                 path=importer,
                 content=content,
                 specifier=specifier,
                 replacement=corrected,
+                facts=facts_cache.get(content),
                 metadata={
                     "repair_kind": "typescript_unique_export_import",
                     "specifier": specifier,
@@ -1513,8 +1519,42 @@ def _build_relative_import_plan(
         if operation is None:
             continue
         updated[operation.path] = _apply_single_text_operation(content, operation)
-        operations.append(operation)
+        operations_by_path.setdefault(operation.path, []).append(operation)
         repairs.append({"file": importer, **metadata})
+    operations: list[RepairOperation] = []
+    for path, proven_operations in sorted(operations_by_path.items()):
+        original = str(base_files[path])
+        repaired = updated[path]
+        if repaired == original:
+            continue
+        if len(proven_operations) == 1:
+            operations.append(proven_operations[0])
+            continue
+        # Intermediate spans are proof inputs only. Emit one original-base net
+        # replacement, including unchanged intervening text for interleaved imports.
+        operation_metadata = {
+            "repair_kind": proven_operations[0].metadata["repair_kind"],
+            "imports": tuple(dict(item.metadata) for item in proven_operations),
+            "batched_same_file_imports": True,
+        }
+        net_operations = _text_replace_operations_from_repair(
+            path=path, original=original, repaired=repaired, metadata=operation_metadata
+        )
+        start = net_operations[0].span_start
+        end = net_operations[-1].span_end
+        assert start is not None and end is not None
+        operations.append(
+            RepairOperation(
+                kind="text_replace",
+                path=path,
+                span_start=start,
+                span_end=end,
+                expected=original[start:end],
+                replacement=repaired[start : len(repaired) - (len(original) - end)],
+                before_hash=sha256_text(original),
+                metadata=operation_metadata,
+            )
+        )
     return _repair_plan_or_none(
         rule_id=rule_id,
         source_tool=source_tool,
@@ -1529,7 +1569,7 @@ def _parse_unresolved_relative_import_errors(diagnostics: Sequence[RepairDiagnos
     seen: set[tuple[str, str]] = set()
     for diagnostic in diagnostics:
         specifier_value = diagnostic.metadata.get("specifier")
-        if diagnostic.code == "unresolved_relative_import" and "specifier" in diagnostic.metadata:
+        if diagnostic.code == "unresolved_relative_import":
             if isinstance(specifier_value, str):
                 file = _normalize_repair_path(str(diagnostic.path or ""))
                 specifier = specifier_value.strip()
@@ -1538,8 +1578,8 @@ def _parse_unresolved_relative_import_errors(diagnostics: Sequence[RepairDiagnos
                     if key not in seen:
                         seen.add(key)
                         parsed.append({"file": file, "specifier": specifier})
-            # Canonical fields, valid or invalid, cannot be overridden by raw
-            # provenance with a stale owner path or contradictory specifier.
+            # Canonical fields, including an absent specifier, cannot be
+            # overridden by raw provenance with a stale owner or specifier.
             continue
         for match in _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE.finditer(str(diagnostic.raw or diagnostic.message or "")):
             item = {
@@ -1611,7 +1651,9 @@ def _replace_import_specifier_operation(
     )
 
 def _typescript_import_statement_for_specifier(content: str, specifier: str) -> re.Match[str] | None:
-    pattern = re.compile(_TS_IMPORT_FROM_SPECIFIER_TEMPLATE.format(specifier=re.escape(specifier)))
+    # A clause may span lines, but must not consume another statement.
+    template = _TS_IMPORT_FROM_SPECIFIER_TEMPLATE.replace("(?P<clause>.*?)", "(?P<clause>[^;]*?)")
+    pattern = re.compile(template.format(specifier=re.escape(specifier)), re.DOTALL)
     return pattern.search(content)
 
 def _typescript_import_pairs_for_specifier(content: str, specifier: str) -> list[tuple[str, str]]:
@@ -1655,26 +1697,71 @@ def _find_unique_typescript_export_for_import(
     importer_path: str,
     content: str,
     specifier: str,
+    facts_cache: dict[str, ModuleBindingFacts | None] | None = None,
 ) -> str:
-    match = _typescript_import_statement_for_specifier(content, specifier)
-    if match is None:
+    cache = facts_cache if facts_cache is not None else {}
+
+    def facts_for(text: str) -> ModuleBindingFacts | None:
+        if text not in cache:
+            cache[text] = parse_module_binding_facts(text)
+        return cache[text]
+
+    importer_facts = facts_for(content)
+    if importer_facts is None:
         return ""
-    needed_symbols = [
-        imported
-        for imported, local in _typescript_import_pairs_for_specifier(content, specifier)
-        if imported != "default" and _typescript_identifier_used_outside_span(content, local, match.span())
-    ]
+    statements = tuple(item for item in importer_facts.imports if item.specifier == specifier)
+    if not statements or any(not item.supported for item in statements):
+        return ""
+    needed_symbols = frozenset(binding.imported for item in statements for binding in item.bindings)
     if not needed_symbols:
         return ""
-    candidates = [
-        path
-        for path, text in base_files.items()
-        if path != importer_path
-        and path.endswith((".ts", ".tsx"))
-        and not path.endswith(".d.ts")
-        and all(_typescript_module_exports_symbol(text, symbol) for symbol in needed_symbols)
-    ]
+    candidates = []
+    for path, text in base_files.items():
+        if path == importer_path or not path.endswith(".ts") or path.endswith(".d.ts"):
+            continue
+        facts = facts_for(text)
+        if facts is not None and needed_symbols <= facts.runtime_exports:
+            candidates.append(path)
     return candidates[0] if len(candidates) == 1 else ""
+
+
+def _replace_proven_typescript_import_specifiers_operation(
+    *,
+    path: str,
+    content: str,
+    specifier: str,
+    replacement: str,
+    facts: ModuleBindingFacts | None,
+    metadata: Mapping[str, object],
+) -> RepairOperation | None:
+    """Rewrite every validated real source span, preserving intervening bytes."""
+    if facts is None:
+        return None
+    statements = tuple(item for item in facts.imports if item.specifier == specifier)
+    if not statements or any(not item.supported for item in statements):
+        return None
+    spans = sorted(item.specifier_span for item in statements)
+    previous_end = 0
+    for start, end in spans:
+        if start < previous_end or end > len(content) or start >= end or content[start:end] != specifier:
+            return None
+        if start < 1 or end >= len(content) or content[start - 1] not in "\"'" or content[end] != content[start - 1]:
+            return None
+        previous_end = end
+    start, end = spans[0][0], spans[-1][1]
+    rewritten = content[start:end]
+    for left, right in reversed(spans):
+        rewritten = rewritten[: left - start] + replacement + rewritten[right - start :]
+    return RepairOperation(
+        kind="text_replace",
+        path=path,
+        span_start=start,
+        span_end=end,
+        expected=content[start:end],
+        replacement=rewritten,
+        before_hash=sha256_text(content),
+        metadata=dict(metadata),
+    )
 
 def _export_existing_typescript_declaration(text: str, symbol: str) -> str:
     escaped = re.escape(symbol)

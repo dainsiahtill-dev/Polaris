@@ -16,13 +16,10 @@ from typing import Any
 
 from polaris.kernelone.constants import DIRECTOR_TIMEOUT_SECONDS
 from polaris.kernelone.llm.budget_policy import (
-    BUDGET_CONTEXT_KEYS_CANONICAL,
-    CANONICAL_NESTED_CONTAINER_KEYS,
-    OUTPUT_BUDGET_CONTEXT_KEYS,
-    STRATEGY_NESTED_BUDGET_KEYS,
     TIMEOUT_CEILING_CONTEXT_KEYS,
     TIMEOUT_OVERRIDE_CONTEXT_KEYS,
-    clamp_output_tokens,
+    resolve_context_output_budget_tokens as _foundation_context_output_budget_tokens,
+    resolve_output_budget_tokens,
 )
 
 from .request_facts import request_fact_source
@@ -152,11 +149,7 @@ def _select_viable_factory_deadline_epoch(
     """
 
     candidates = _factory_execution_deadline_epochs(context_override)
-    viable = [
-        (source, epoch)
-        for source, epoch in candidates
-        if (epoch - now) >= minimum_remaining_seconds
-    ]
+    viable = [(source, epoch) for source, epoch in candidates if (epoch - now) >= minimum_remaining_seconds]
     if not viable:
         return None
     return min(viable, key=lambda item: item[1])
@@ -190,16 +183,8 @@ def _clamp_factory_director_timeout_to_deadline(
 
 
 def _coerce_context_max_tokens_override(raw: Any) -> int | None:
-    """Parse a per-request max-token override from trusted runtime context."""
-    if raw is None:
-        return None
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return None
-    if value <= 0:
-        return None
-    return clamp_output_tokens(value)
+    """Compatibility delegate for trusted override coercion."""
+    return _foundation_context_output_budget_tokens({"llm_max_tokens": raw})
 
 
 def _mapping_payload(value: Any) -> dict[str, Any]:
@@ -207,30 +192,8 @@ def _mapping_payload(value: Any) -> dict[str, Any]:
 
 
 def resolve_context_output_budget_tokens(context_override: Any) -> int | None:
-    """Resolve the output-token budget declared in trusted runtime context.
-
-    THE one canonical key scan (budget_policy blueprint Phase 1):
-    ``kernel/transaction_factory`` delegates here instead of keeping its
-    mirrored copy. Key lists are owned by ``polaris.kernelone.llm.budget_policy``.
-    """
-    if not isinstance(context_override, dict):
-        return None
-    for key in OUTPUT_BUDGET_CONTEXT_KEYS:
-        max_tokens = _coerce_context_max_tokens_override(context_override.get(key))
-        if max_tokens is not None:
-            return max_tokens
-    for payload_key in BUDGET_CONTEXT_KEYS_CANONICAL:
-        payload = _mapping_payload(context_override.get(payload_key))
-        nested_containers = [_mapping_payload(payload.get(key)) for key in CANONICAL_NESTED_CONTAINER_KEYS]
-        for nested_key in STRATEGY_NESTED_BUDGET_KEYS:
-            max_tokens = _coerce_context_max_tokens_override(payload.get(nested_key))
-            for container in nested_containers:
-                if max_tokens is not None:
-                    break
-                max_tokens = _coerce_context_max_tokens_override(container.get(nested_key))
-            if max_tokens is not None:
-                return max_tokens
-    return None
+    """Compatibility delegate to KernelOne's canonical pure context scan."""
+    return _foundation_context_output_budget_tokens(context_override)
 
 
 def _resolve_context_max_tokens_override(context_override: Any) -> int | None:
@@ -265,17 +228,8 @@ def resolve_timeout_seconds(profile: Any, context_override: Any | None = None) -
 
 
 def resolve_max_tokens(requested: Any, context_override: Any | None = None) -> int:
-    """Resolve LLM output token budget from trusted runtime context."""
-
-    context_max_tokens = _resolve_context_max_tokens_override(context_override)
-    if context_max_tokens is not None:
-        return context_max_tokens
-
-    try:
-        value = int(requested)
-    except (TypeError, ValueError):
-        value = 4000
-    return clamp_output_tokens(value)
+    """Compatibility delegate to KernelOne's canonical pure output resolver."""
+    return resolve_output_budget_tokens(requested, context_override)
 
 
 _TRANSACTION_KERNEL_TEMPERATURE_OVERRIDE_KEY = "_transaction_kernel_temperature_override"

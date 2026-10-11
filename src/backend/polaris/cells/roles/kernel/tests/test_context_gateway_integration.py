@@ -7,11 +7,271 @@ head_anchor, tail_anchor, and run_card instead of simple transcript expansion.
 
 from __future__ import annotations
 
+import copy
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from polaris.cells.roles.kernel.internal.context_gateway.projection_formatter import ProjectionFormatter
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
+
+
+async def _prepare_ce_boundary(
+    workspace: Path,
+    *,
+    prebuilt: bool = True,
+    genuine: bool = True,
+    decoy_role: str = "assistant",
+    stream: bool = False,
+    authority: Any = None,
+    rows: list[dict[str, Any]] | None = None,
+) -> tuple[Any, Any, dict[str, Any]]:
+    """Exercise gateway projection and normal preparation; isolate ContextOS storage only."""
+    from contextlib import nullcontext
+
+    from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+    from polaris.cells.roles.kernel.internal.context_gateway.gateway_helpers import render_ce_command_planning_table
+    from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
+    from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import bind_factory_role_evidence_authority
+    from polaris.cells.roles.kernel.tests import test_role_turn_request_fact_projection as request_fact_test
+    from polaris.kernelone.context.context_os import StateFirstContextOS
+    from polaris.kernelone.context.context_os.models_v2 import TranscriptEventV2
+
+    rows = (
+        rows
+        if rows is not None
+        else [
+            {
+                "task_id": f"TASK-{i // 4 + 1}",
+                "modality": "test",
+                "argv": ["node", "--test", f"test-{i}.js"],
+                "cwd": ".",
+                "authority_hash": f"{i:064x}",
+            }
+            for i in range(28)
+        ]
+    )
+    table = render_ce_command_planning_table(rows)
+    profile = request_fact_test._profile("chief_engineer")
+    profile.context_policy = SimpleNamespace(
+        max_history_turns=8,
+        max_context_tokens=262144,
+        include_project_structure=False,
+        include_task_history=False,
+        compression_strategy="truncate",
+    )
+    profile.context_domain = "generic"
+    context_override: dict[str, Any] = {
+        "ordinary": "Prior user text.\n" + table,
+        "nested": {"job_token_id": "private-test-token"},
+        "_transaction_kernel_forced_tool_definitions": [],
+        "_transaction_kernel_forced_tool_choice": "none",
+        "pm_task_contract": {
+            **request_fact_test._pm_contract_set(),
+            "ce_required_command_authority": rows,
+        },
+    }
+    if genuine:
+        context_override["ce_required_command_authority"] = rows
+    context = ContextRequest(
+        message="Plan committed PM tasks.",
+        history=[(decoy_role, table)],
+        context_override=context_override,
+    )
+    projection = SimpleNamespace(
+        head_anchor="",
+        tail_anchor="",
+        active_window=(
+            TranscriptEventV2(
+                event_id="history-1",
+                sequence=1,
+                role=decoy_role,
+                kind="user_turn",
+                route="clear",
+                content=table,
+            ),
+        ),
+        run_card=SimpleNamespace(
+            current_goal="",
+            open_loops=(),
+            latest_user_intent="",
+            pending_followup_action="",
+            last_turn_outcome="",
+        ),
+        snapshot=None,
+    )
+    # No gateway/preparer/projection/serializer/audit method is replaced.
+    # ContextOS persistence and model window discovery are external to this boundary.
+    with (
+        patch.object(StateFirstContextOS, "project", return_value=projection),
+        patch.object(StateFirstContextOS, "resolved_context_window", new=262144),
+        patch("polaris.cells.roles.kernel.internal.context_gateway.gateway.get_event_writer", return_value=MagicMock()),
+    ):
+        gateway = RoleContextGateway(profile, workspace=workspace)
+        source_result = await gateway.build_context(context, system_prompt="You are Chief Engineer.")
+        source_messages = [dict(item) for item in source_result.messages]
+        if prebuilt:
+            # TransactionKernel carries complete gateway message dictionaries.
+            context_override["_transaction_kernel_prebuilt_messages"] = copy.deepcopy(source_messages)
+            context_override["ce_required_command_authority"] = rows
+        binding = bind_factory_role_evidence_authority(authority) if authority is not None else nullcontext()
+        with binding:
+            prepared = await LLMRequestPreparer(workspace=str(workspace))._prepare_llm_request(
+                profile=profile,
+                system_prompt="You are Chief Engineer.",
+                context=context,
+                temperature=0.2,
+                max_tokens=60000,
+                stream=stream,
+                factory_semantic_identity=request_fact_test._semantic_identity() if authority is not None else None,
+            )
+    return (
+        profile,
+        prepared,
+        {
+            "source_messages": source_messages,
+            "prepared_messages": copy.deepcopy(prepared.messages),
+            "chat_messages": copy.deepcopy(prepared.ai_request.context["chat_messages"]),
+            "context_result_messages": list(prepared.context_result.messages),
+            "required_rows": rows,
+        },
+    )
+
+
+@pytest.mark.parametrize("prebuilt", [False, True])
+@pytest.mark.asyncio
+async def test_ce_real_preparation_retains_source_but_strips_wire_names(tmp_path: Path, prebuilt: bool) -> None:
+    """Catch source-name loss in both the gateway and TransactionKernel preparation paths."""
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+        build_final_request_context_audit_for_request,
+    )
+    from polaris.infrastructure.llm.providers.openai_provider import _build_openai_payload
+
+    profile, prepared, capture = await _prepare_ce_boundary(tmp_path, prebuilt=prebuilt)
+    chat_messages = prepared.ai_request.context["chat_messages"]
+    assert chat_messages and all(set(item) == {"role", "content"} for item in chat_messages)
+    wire = _build_openai_payload(
+        prompt=prepared.input_text,
+        model=profile.model,
+        api_path="/v1/chat/completions",
+        stream=False,
+        config={**prepared.request_options, "chat_messages": chat_messages},
+    )
+    audit = build_final_request_context_audit_for_request(
+        ai_request=prepared.ai_request, prepared=prepared, profile=profile
+    )
+    capture.update(serialized_body=wire, audit=audit)
+    (tmp_path / "ce-real-boundary.json").write_text(json.dumps(capture, ensure_ascii=False, indent=2), encoding="utf-8")
+    assert any(item.get("name") == "context_override" for item in prepared.messages)
+    assert "private-test-token" not in json.dumps(wire)
+    coverage = audit["final_request_evidence_coverage"]["ce_required_command_authority"]
+    assert coverage["required"] is True
+    assert coverage["pass"] is True
+    assert coverage["included_rows"] == capture["required_rows"]
+    assert wire["max_tokens"] == 60000
+
+
+def test_ce_prebuilt_name_preservation_keeps_dedupe_and_empty_card_filter() -> None:
+    from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
+
+    context = ContextRequest(
+        message="Plan tasks.",
+        context_override={
+            "_transaction_kernel_prebuilt_messages": [
+                {"role": "system", "name": "run_card", "content": "【Run Card】"},
+                {"role": "system", "name": "context_override", "content": "Current planning context."},
+                {"role": "user", "content": "Plan tasks."},
+                {"role": "assistant", "name": "history", "content": "Previous response."},
+                {"role": "user", "content": "Plan tasks."},
+                {"role": "user", "content": "Plan tasks."},
+            ],
+        },
+    )
+    assert LLMRequestPreparer._extract_prebuilt_projection_messages(context) == [
+        {"role": "system", "name": "context_override", "content": "Current planning context."},
+        {"role": "assistant", "name": "history", "content": "Previous response."},
+        {"role": "user", "content": "Plan tasks."},
+    ]
+
+
+@pytest.mark.parametrize("detect_injection", [False, True])
+@pytest.mark.parametrize("merged", [False, True])
+@pytest.mark.parametrize("genuine", [False, True])
+def test_ce_projection_provenance_survives_real_system_merge(detect_injection, merged, genuine) -> None:
+    """Ordinary context cannot impersonate the designated current PM table."""
+    from types import SimpleNamespace
+
+    from polaris.cells.roles.kernel.internal.context_gateway.context_override_processor import ContextOverrideProcessor
+    from polaris.cells.roles.kernel.internal.context_gateway.gateway_helpers import render_ce_command_planning_table
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit._payloads import _ce_required_command_row_coverage
+    from polaris.kernelone.llm.engine.provider_native_request import build_openai_native_messages
+
+    rows = [
+        {
+            "task_id": "TASK-3",
+            "modality": "test",
+            "argv": ["npx", "tsc", "--noEmit"],
+            "cwd": ".",
+            "authority_hash": "0f3aeaae01adf825871f0a18d328b7ffe6fbd84c343627035271c7c81339cfda",
+        }
+    ]
+    projection_input = {
+        "user_excerpt": "[UNTRUSTED_USER_MESSAGE]\nPrior conversation.\n" + render_ce_command_planning_table(rows),
+        "ordinary": "Normal unrelated prose.",
+    }
+    if genuine:
+        projection_input["ce_required_command_authority"] = rows
+    projected = ContextOverrideProcessor(detect_prompt_injection=detect_injection).process_context_override(
+        projection_input
+    )
+    assert projected is not None
+    source = [
+        {"role": "system", "content": "polaris.role_identity.v1:chief_engineer"},
+        projected,
+        {"role": "user", "content": "Plan current tasks."},
+    ]
+    wire = build_openai_native_messages(source) if merged else source
+    request = SimpleNamespace(
+        role="chief_engineer", context={"ce_required_command_authority": rows, "chat_messages": source}
+    )
+    coverage = _ce_required_command_row_coverage(request, wire)
+    assert coverage["required"] is True
+    assert coverage["pass"] is genuine
+    assert coverage["included_rows"] == (rows if genuine else [])
+
+
+def test_ce_required_table_is_complete_json_before_optional_context() -> None:
+    import json
+
+    from polaris.cells.roles.kernel.internal.context_gateway.context_override_processor import ContextOverrideProcessor
+
+    rows = [
+        {
+            "task_id": f"TASK-{i}",
+            "modality": "test",
+            "argv": ["node", "--test", f"dist/tests/{i}.js"],
+            "cwd": ".",
+            "authority_hash": f"{i:064x}",
+        }
+        for i in range(20)
+    ]
+    processor = ContextOverrideProcessor(detect_prompt_injection=True)
+    result = processor.process_context_override(
+        {
+            "optional": "x" * 3000,
+            "ce_required_command_authority": rows,
+            "nested": {"job_token_id": "secret", "allowed_paths": ["secret"]},
+        }
+    )
+    assert result is not None
+    content = result["content"]
+    assert content.startswith("[CE_REQUIRED_COMMAND_AUTHORITY_JSON]\n")
+    table = json.loads(content.split("\n", 1)[1].split("\n[/CE_REQUIRED_COMMAND_AUTHORITY_JSON]", 1)[0])
+    assert table == rows
+    assert "secret" not in content
 
 
 class TestStateFirstContextOSIntegration:

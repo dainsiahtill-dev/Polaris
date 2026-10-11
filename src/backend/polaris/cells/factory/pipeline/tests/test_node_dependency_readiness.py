@@ -6,7 +6,6 @@ import hashlib
 import io
 import json
 import shutil
-import subprocess
 import tarfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -14,8 +13,11 @@ from typing import Any
 
 import pytest
 from polaris.cells.factory.pipeline.internal import factory_materialization_impl as materialization
+from polaris.cells.factory.pipeline.internal.factory_run_models import FactoryConfig, FactoryRun, FactoryRunStatus
+from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
 from polaris.cells.factory.pipeline.internal.factory_workspace_quality import WorkspaceQualityRunner
 from polaris.cells.factory.pipeline.tests.test_native_validation_inputs import authored as authored
+from polaris.kernelone.quality.artifact_quality import ArtifactQualityDeferredCheck, ArtifactQualityEvidence
 
 
 def _json(path: Path, value: object) -> None:
@@ -127,29 +129,53 @@ def test_preparation_rejects_authored_source_drift_without_restoring_it(
     assert source.read_text(encoding="utf-8") == "changed"
 
 
-def test_collector_surfaces_preparation_failure_even_with_existing_compiler(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.asyncio
+async def test_collector_surfaces_preparation_failure_even_with_existing_compiler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authored: tuple[Any, Any, Any]
 ) -> None:
-    from types import SimpleNamespace
-
+    portfolio, contract, fs = authored
     _cached(tmp_path)
     (tmp_path / "node_modules/alpha/package.json").unlink()
     (tmp_path / "node_modules/.bin").mkdir()
     (tmp_path / "node_modules/.bin/tsc").write_text("existing", encoding="utf-8")
     _json(tmp_path / "tsconfig.json", {})
-    executor = SimpleNamespace(
-        workspace=tmp_path,
-        _ensure_director_stage_materialization_typescript_toolchain=lambda: {
+    executor = OrchestrationStageExecutor(tmp_path)
+    executor._read_json_artifact_payload = fs.read_json
+    run = FactoryRun(
+        id=contract.run_id,
+        config=FactoryConfig(name="dependency-fixture"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-10-04T00:00:00+00:00",
+        metadata={
+            "stage_results": {"chief_engineer_review": {"status": "success", "artifacts": [portfolio.portfolio_path]}}
+        },
+    )
+    monkeypatch.setattr(
+        executor,
+        "_ensure_director_stage_materialization_typescript_toolchain",
+        lambda *, run: {
             "command": ["npm", "install"],
             "passed": False,
             "exit_code": 17,
             "stderr_tail": "installation failed",
         },
     )
-    monkeypatch.setattr("polaris.kernelone.quality.scan_workspace_artifact_quality", lambda _: [])
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""))
-    diagnostics = materialization._collect_director_stage_materialization_diagnostics(executor)
-    assert any("dependency_preparation" in row and "17" in row and "installation failed" in row for row in diagnostics)
+    monkeypatch.setattr(
+        "polaris.kernelone.quality.scan_workspace_artifact_quality_evidence",
+        lambda _, *, scan_mode: ArtifactQualityEvidence(
+            scan_mode=scan_mode, deferred_checks=(ArtifactQualityDeferredCheck("typescript_project_typecheck", ()),)
+        ),
+    )
+    diagnostics = await materialization._collect_director_stage_materialization_diagnostics(
+        executor, run=run, context={"project_id": contract.project_id, "factory_run_id": run.id}
+    )
+    preparation = diagnostics.preparation_results[0]
+    assert preparation["passed"] is False and preparation["exit_code"] == 17
+    assert preparation["stderr_tail"] == "installation failed"
+    assert any(
+        "dependency_preparation_failed" in row and "17" in row and "installation failed" in row
+        for row in diagnostics.blockers
+    )
 
 
 def _package_tarball(root: Path, name: str) -> Path:
@@ -236,7 +262,8 @@ def test_cancel_or_unproved_drain_never_becomes_preparation_success(
         )
 
 
-def test_materialization_uses_explicit_authenticated_run_and_retains_preparation_result(
+@pytest.mark.asyncio
+async def test_materialization_uses_explicit_authenticated_run_and_retains_preparation_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     authored: tuple[Any, Any, Any],
@@ -270,15 +297,26 @@ def test_materialization_uses_explicit_authenticated_run_and_retains_preparation
             }
         },
     )
-    monkeypatch.setattr("polaris.kernelone.quality.scan_workspace_artifact_quality", lambda _: [])
+    # Only the scanner coverage projection is doubled; npm preparation and
+    # the original untrusted Group rejection remain real.
+    monkeypatch.setattr(
+        "polaris.kernelone.quality.scan_workspace_artifact_quality_evidence",
+        lambda _, *, scan_mode: ArtifactQualityEvidence(
+            scan_mode=scan_mode, deferred_checks=(ArtifactQualityDeferredCheck("typescript_project_typecheck", ()),)
+        ),
+    )
     results: list[dict[str, Any]] = []
-    diagnostics = materialization._collect_director_stage_materialization_diagnostics(
-        executor, run=run, preparation_results=results
+    diagnostics = await materialization._collect_director_stage_materialization_diagnostics(
+        executor,
+        run=run,
+        context={"project_id": contract.project_id, "factory_run_id": run.id},
+        preparation_results=results,
     )
     assert diagnostics == []
     assert len(results) == 1 and results[0]["passed"] is True
     assert results[0]["exit_code"] == 0
     assert (tmp_path / "node_modules/alpha/package.json").is_file()
+    assert "verification_isolation_binary_untrusted" in str(diagnostics.blockers)
 
 
 def test_unsafe_dependency_symlink_is_rejected_before_installer_effect(
@@ -470,14 +508,34 @@ async def test_postcommit_preparation_failure_is_not_discarded_when_metadata_bec
     )
     monkeypatch.setattr(quality, "_workspace_quality_causal_repair_target_files", lambda *args, **kwargs: [])
     monkeypatch.setattr(materialization, "_director_stage_deferred_repair_owner_targets", lambda *args, **kwargs: {})
-    monkeypatch.setattr(
-        "polaris.kernelone.quality.scan_workspace_artifact_quality",
-        lambda root: (
+
+    async def collect(
+        *,
+        run: FactoryRun,
+        context: dict[str, Any] | None,
+        preparation_results: list[dict[str, Any]],
+        sessions: list[Any],
+    ) -> materialization.MaterializationDiagnostics:
+        # This integration exercises the real DEO and preparation owners. The
+        # collector/coverage interface is a unit projection, not a Group run.
+        assert run.id == contract.run_id and context is not None
+        diagnostics = (
             ["src/a.py: fixture requires original-owner repair"]
             if (tmp_path / "src/a.py").read_text(encoding="utf-8") == "before\n"
             else []
-        ),
-    )
+        )
+        if not materialization.node_dependency_readiness(tmp_path).ready:
+            preparation = await materialization._await_materialization_preparation(executor, run)
+            preparation_results.append(preparation)
+            if preparation["passed"] is not True:
+                diagnostics.append("dependency_preparation_failed:" + str(preparation))
+        return materialization.MaterializationDiagnostics(
+            diagnostics,
+            static_evidence={"scan_mode": "pure_static", "scan_complete": True},
+            preparation_results=preparation_results,
+        )
+
+    monkeypatch.setattr(executor, "_collect_director_stage_materialization_diagnostics", collect)
 
     async def commit(**kwargs: Any) -> list[dict[str, Any]]:
         _same_attempt, effects = await _real_effect(tmp_path, attempt=attempt)
@@ -503,6 +561,7 @@ async def test_postcommit_preparation_failure_is_not_discarded_when_metadata_bec
     result = await materialization._run_director_stage_materialization_quality_settle(
         executor,
         run=run,
+        context={"project_id": contract.project_id, "factory_run_id": run.id, "workspace": str(tmp_path)},
         stage_status="failed",
         error_code="director_missing_write_receipt",
     )

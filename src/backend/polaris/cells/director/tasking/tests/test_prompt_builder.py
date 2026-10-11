@@ -40,6 +40,17 @@ def _prompt_builder() -> PromptBuilder:
     )
 
 
+def test_pol77_prompt_renders_expected_outputs_as_read_build_obligations() -> None:
+    output = {"task_id": "build", "path": "dist/main.js", "inputs": [{"task_id": "build", "path": "src/main.ts"}],
+              "build": {"argv": ["npm", "run", "build"], "cwd": "."}}
+    task = _task({"target_files": ["src/main.ts"], "manifest_entrypoint_contract": {
+        "generated_outputs": [output], "allowed_local_entrypoints": ["src/main.ts", "dist/main.js"]}})
+    text = _prompt_builder()._contract_context_section(task)
+    assert "Expected generated outputs (read/build obligations; no direct write grant)" in text
+    assert "dist/main.js" in text
+    assert "npm" in text and "build" in text
+
+
 # --------------------------------------------------------------------------
 # _extract_architecture_context / _get_module_for_task
 # --------------------------------------------------------------------------

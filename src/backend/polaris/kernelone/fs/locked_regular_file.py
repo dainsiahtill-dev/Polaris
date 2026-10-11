@@ -108,6 +108,11 @@ def _identity(fd: int) -> tuple[int, int]:
     return info.st_dev, info.st_ino
 
 
+def _authority_owner(info: os.stat_result, *, code: str, name: str) -> None:
+    if os.name == "posix" and info.st_uid != os.geteuid():
+        raise _fail(code, "authority owner differs from effective UID", name=name)
+
+
 def _regular(fd: int, *, code: str, name: str) -> tuple[int, int]:
     try:
         info = os.fstat(fd)
@@ -117,6 +122,8 @@ def _regular(fd: int, *, code: str, name: str) -> tuple[int, int]:
         raise _fail(code, "authority or stream object is not a regular file", name=name)
     if info.st_nlink != 1:
         raise _fail("hard_link_rejected", "authority or stream object has multiple links", name=name)
+    if code in {"stream_lock_invalid", "lock_anchor_invalid", "lock_provision_invalid"}:
+        _authority_owner(info, code=code, name=name)
     return info.st_dev, info.st_ino
 
 
@@ -695,6 +702,8 @@ class StreamLeaseV1:
 
     def open_existing(self, *, writable: bool = False) -> bool:
         with self._owner._operation():
+            if writable:
+                self._owner._require_writable()
             try:
                 self._ensure_parent(create=False)
             except LockedRegularFileError as exc:
@@ -767,6 +776,7 @@ class StreamLeaseV1:
 
     def append_bytes(self, payload: bytes, *, fsync_file: bool, fsync_parent_on_create: bool) -> None:
         with self._owner._operation():
+            self._owner._require_writable()
             if not payload:
                 raise ValueError("append payload must not be empty")
             durability = self._directory_durability
@@ -838,6 +848,8 @@ class StreamLeaseV1:
                 raise cause from exc
 
     def _ensure_parent(self, *, create: bool) -> None:
+        if create:
+            self._owner._require_writable()
         if self._parent_fd is not None:
             return
         fd = os.dup(self._owner._root_fd_required())
@@ -1037,6 +1049,7 @@ class LockedRegularFileSetV1:
     platform_lock_root: str = ""
     timeout_seconds: float = 2.0
     format_revision: str = LOCK_AUTHORITY_FORMAT_REVISION
+    _read_only: bool = field(default=False, repr=False)
     _state: str = field(default="ACTIVE", init=False)
     _mutex: threading.RLock = field(default_factory=threading.RLock, init=False)
     _anchor_fd: int | None = field(default=None, init=False)
@@ -1281,8 +1294,12 @@ class LockedRegularFileSetV1:
         platform_lock_root: str | None = None,
         timeout_seconds: float = 2.0,
         format_revision: str = LOCK_AUTHORITY_FORMAT_REVISION,
+        read_only: bool = False,
     ) -> LockedRegularFileSetV1:
         """Acquire only a previously provisioned authority and enrolled stream locks."""
+
+        if type(read_only) is not bool:
+            raise ValueError("read_only must be a bool")
 
         instance = cls(
             os.path.abspath(runtime_root),
@@ -1291,6 +1308,7 @@ class LockedRegularFileSetV1:
             platform_lock_root or default_platform_lock_root(),
             float(timeout_seconds),
             format_revision,
+            _read_only=read_only,
         )
         instance._acquire()
         return instance
@@ -1313,6 +1331,7 @@ class LockedRegularFileSetV1:
         """Transfer unopened lock custody without weakening ordinary close semantics."""
 
         with self._operation():
+            self._require_writable()
             if any(
                 lease._file_fd is not None
                 or lease._parent_fd is not None
@@ -1423,6 +1442,9 @@ class LockedRegularFileSetV1:
         paths = [_logical_path(path) for path in self.logical_paths]
         if len({path for path, _ in paths}) != len(paths):
             raise ValueError("locked stream paths must be distinct")
+        # Capture the same canonical spelling for acquisition, revalidation
+        # and inherited custody; raw aliases must never select another key.
+        self.logical_paths = tuple(path for path, _ in paths)
         authority_fd = self._open_authority_dir(self.platform_lock_root, self.storage_identity_token, create=False)
         try:
             self._anchor_fd = self._open_anchor(authority_fd, writable=False)
@@ -1444,14 +1466,17 @@ class LockedRegularFileSetV1:
                 self._validate_authority()
                 name = _key(self.storage_identity_token, path)
                 try:
-                    fd = os.open(name, _flags(writable=True), dir_fd=self._realm_fd)
+                    fd = os.open(name, _flags(writable=not self._read_only), dir_fd=self._realm_fd)
                 except FileNotFoundError:
                     raise _fail("stream_lock_missing", "stream lock key is not enrolled", logical_path=path) from None
                 except OSError as exc:
                     raise _fail("stream_lock_invalid", "stream lock key is unsafe", errno=exc.errno) from exc
                 try:
-                    _regular(fd, code="stream_lock_invalid", name=name)
-                    self._acquire_lock(fd, fcntl.LOCK_EX, deadline=deadline)
+                    identity = _regular(fd, code="stream_lock_invalid", name=name)
+                    self._acquire_lock(fd, fcntl.LOCK_SH if self._read_only else fcntl.LOCK_EX, deadline=deadline)
+                    self._verify_lock_key(
+                        self._realm_fd, name, LockFileIdentityV1(*identity), writable=not self._read_only
+                    )
                 except BaseException:
                     # Not yet enrolled in _lock_fds: normal close cannot see it.
                     with contextlib.suppress(OSError):
@@ -1479,6 +1504,17 @@ class LockedRegularFileSetV1:
             )
             if _identity(self._realm_fd) != (self._binding.realm_device, self._binding.realm_inode):
                 raise _fail("lock_realm_binding_mismatch", "held realm identity changed")
+            for path, fd in zip(
+                sorted(self.logical_paths, key=lambda path: _key(self.storage_identity_token, path)),
+                self._lock_fds,
+                strict=False,
+            ):
+                self._verify_lock_key(
+                    self._realm_fd,
+                    _key(self.storage_identity_token, path),
+                    LockFileIdentityV1(*_identity(fd)),
+                    writable=not self._read_only,
+                )
             anchor_fd = self._open_anchor(authority_fd, writable=False)
             try:
                 if _identity(anchor_fd) != _identity(self._anchor_fd):
@@ -1493,6 +1529,15 @@ class LockedRegularFileSetV1:
                 os.close(anchor_fd)
         finally:
             os.close(authority_fd)
+
+    @property
+    def read_only(self) -> bool:
+        """The acquired capability cannot be upgraded through the public lease API."""
+        return self._read_only
+
+    def _require_writable(self) -> None:
+        if self._read_only:
+            raise _fail("read_only_lease", "read-only lease cannot write or transfer custody")
 
     def _root_fd_required(self) -> int:
         if self._root_fd is None:
@@ -1517,6 +1562,7 @@ class LockedRegularFileSetV1:
             root_fd = _open_absolute_directory(canonical_root, create=create, durability=durability)
         except FileNotFoundError:
             raise _fail("lock_authority_missing", "platform lock root is absent") from None
+        authority_fd: int | None = None
         try:
             created = False
             try:
@@ -1532,6 +1578,7 @@ class LockedRegularFileSetV1:
                 authority_fd = os.open(token, _flags(directory=True), dir_fd=root_fd)
             authority_path = os.path.join(canonical_root, token)
             _directory(authority_fd, name=authority_path)
+            _authority_owner(os.fstat(authority_fd), code="lock_authority_owner_mismatch", name=authority_path)
             _verify_directory_entry(
                 root_fd,
                 token,
@@ -1547,6 +1594,10 @@ class LockedRegularFileSetV1:
                     parent_fd=root_fd,
                 )
             return authority_fd
+        except BaseException:
+            if authority_fd is not None:
+                os.close(authority_fd)
+            raise
         finally:
             os.close(root_fd)
 
@@ -1722,6 +1773,7 @@ class LockedRegularFileSetV1:
             ) from exc
         try:
             _directory(fd, name="realm")
+            _authority_owner(os.fstat(fd), code="lock_realm_owner_mismatch", name="realm")
             _verify_directory_entry(
                 authority_fd,
                 "realm",
@@ -1839,11 +1891,13 @@ class LockedRegularFileSetV1:
         )
 
     @staticmethod
-    def _verify_lock_key(realm_fd: int, name: str, expected_identity: LockFileIdentityV1) -> None:
+    def _verify_lock_key(
+        realm_fd: int, name: str, expected_identity: LockFileIdentityV1, *, writable: bool = True
+    ) -> None:
         """Reopen a lock key and prove it is the pre-fsync physical object."""
 
         try:
-            fd = os.open(name, _flags(writable=True), dir_fd=realm_fd)
+            fd = os.open(name, _flags(writable=writable), dir_fd=realm_fd)
         except OSError as exc:
             raise _fail(
                 "stream_lock_invalid",

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,7 @@ from polaris.kernelone.quality.artifact_quality._issues import (
 from polaris.kernelone.quality.artifact_quality._models import (
     _FileArtifactQualityEvidence,
 )
+from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
 
 _JS_NAMED_IMPORT_RE = re.compile(
     r"\bimport\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*from\s*['\"](?P<specifier>\.\.?/[^'\"]+)['\"]"
@@ -55,6 +58,10 @@ _JS_MEMBER_SKIP = frozenset(
 def _scan_javascript_named_export_evidence(
     root_full: Path,
     relative_paths: list[str],
+    *,
+    reader: WorkspaceReadSnapshot | None = None,
+    source_paths: tuple[str, ...] | None = None,
+    source_inventory_complete: bool = True,
 ) -> _FileArtifactQualityEvidence:
     """Catch ESM named-import holes that ``node --check`` cannot see.
 
@@ -64,6 +71,8 @@ def _scan_javascript_named_export_evidence(
     keeps this on the Director repair path without executing CLI entrypoints.
     """
 
+    if reader is not None and reader.root != root_full.absolute():
+        raise ValueError("specialist reader workspace binding mismatch")
     importers = [
         str(Path(path).as_posix()).lstrip("./")
         for path in relative_paths
@@ -75,16 +84,39 @@ def _scan_javascript_named_export_evidence(
     errors: list[str] = []
     issues: list[Any] = []
     seen: set[str] = set()
-    workspace_exports = _workspace_javascript_named_exports(root_full)
+    incomplete_reasons: list[str] = []
+    if reader is not None and source_paths is None:
+        raise ValueError("controlled JavaScript specialist requires original source inventory")
+    inventory = frozenset(source_paths) if source_paths is not None else None
+    workspace_exports = _workspace_javascript_named_exports(
+        root_full, reader=reader, source_paths=source_paths, incomplete_reasons=incomplete_reasons
+    )
+    exports_complete = source_inventory_complete and not incomplete_reasons
+
+    def evidence() -> _FileArtifactQualityEvidence:
+        return _FileArtifactQualityEvidence(
+            errors=tuple(errors), issues=tuple(issues), incomplete_reasons=tuple(incomplete_reasons)
+        )
+
     for importer in importers:
-        importer_path = root_full / importer
-        try:
-            importer_text = importer_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
+        importer_text = _javascript_specialist_text(root_full, importer, reader, incomplete_reasons)
+        if importer_text is None:
             continue
         for spec_match in _JS_RELATIVE_FROM_RE.finditer(importer_text):
             specifier = str(spec_match.group("specifier") or "")
-            if _resolve_relative_js_module(root_full, importer, specifier) is not None:
+            previous_unknowns = len(incomplete_reasons)
+            if (
+                _resolve_relative_js_module(
+                    root_full,
+                    importer,
+                    specifier,
+                    reader=reader,
+                    source_paths=inventory,
+                    incomplete_reasons=incomplete_reasons,
+                )
+                is not None
+                or len(incomplete_reasons) != previous_unknowns
+            ):
                 continue
             raw = f"{importer}: Error [ERR_MODULE_NOT_FOUND]: Cannot find module '{specifier}'"
             if raw in seen:
@@ -105,14 +137,20 @@ def _scan_javascript_named_export_evidence(
                 )
             )
             if len(errors) >= 20:
-                return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
+                return evidence()
         for match in _JS_NAMED_IMPORT_RE.finditer(importer_text):
-            exporter = _resolve_relative_js_module(root_full, importer, str(match.group("specifier") or ""))
+            exporter = _resolve_relative_js_module(
+                root_full,
+                importer,
+                str(match.group("specifier") or ""),
+                reader=reader,
+                source_paths=inventory,
+                incomplete_reasons=incomplete_reasons,
+            )
             if exporter is None:
                 continue
-            try:
-                exporter_text = (root_full / exporter).read_text(encoding="utf-8")
-            except (OSError, UnicodeError):
+            exporter_text = _javascript_specialist_text(root_full, exporter, reader, incomplete_reasons)
+            if exporter_text is None:
                 continue
             for raw_symbol in str(match.group("symbols") or "").split(","):
                 symbol = raw_symbol.split(" as ", 1)[0].strip()
@@ -145,7 +183,7 @@ def _scan_javascript_named_export_evidence(
                     )
                 )
                 if len(errors) >= 20:
-                    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
+                    return evidence()
         _append_javascript_namespace_member_issues(
             root_full,
             importer=importer,
@@ -153,20 +191,24 @@ def _scan_javascript_named_export_evidence(
             errors=errors,
             issues=issues,
             seen=seen,
+            reader=reader,
+            source_paths=inventory,
+            incomplete_reasons=incomplete_reasons,
         )
         if len(errors) >= 20:
-            return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
-        _append_javascript_missing_catalog_fixture_issues(
-            importer=importer,
-            importer_text=importer_text,
-            workspace_exports=workspace_exports,
-            errors=errors,
-            issues=issues,
-            seen=seen,
-        )
+            return evidence()
+        if exports_complete:
+            _append_javascript_missing_catalog_fixture_issues(
+                importer=importer,
+                importer_text=importer_text,
+                workspace_exports=workspace_exports,
+                errors=errors,
+                issues=issues,
+                seen=seen,
+            )
         if len(errors) >= 20:
-            return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
-    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
+            return evidence()
+    return evidence()
 
 
 def _append_javascript_namespace_member_issues(
@@ -177,6 +219,9 @@ def _append_javascript_namespace_member_issues(
     errors: list[str],
     issues: list[Any],
     seen: set[str],
+    reader: WorkspaceReadSnapshot | None = None,
+    source_paths: frozenset[str] | None = None,
+    incomplete_reasons: list[str] | None = None,
 ) -> None:
     """Flag ``import * as ns`` member access that sibling modules do not export.
 
@@ -184,15 +229,17 @@ def _append_javascript_namespace_member_issues(
     ``node --check`` and named-import scan stayed green; ``npm test`` failed.
     """
 
+    reasons = incomplete_reasons if incomplete_reasons is not None else []
     for match in _JS_NAMESPACE_IMPORT_RE.finditer(importer_text):
         alias = str(match.group("alias") or "")
         specifier = str(match.group("specifier") or "")
-        exporter = _resolve_relative_js_module(root_full, importer, specifier)
+        exporter = _resolve_relative_js_module(
+            root_full, importer, specifier, reader=reader, source_paths=source_paths, incomplete_reasons=reasons
+        )
         if not alias or exporter is None:
             continue
-        try:
-            exporter_text = (root_full / exporter).read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
+        exporter_text = _javascript_specialist_text(root_full, exporter, reader, reasons)
+        if exporter_text is None:
             continue
         exported = set(_javascript_named_exports(exporter_text))
         for member_match in _JS_MEMBER_ACCESS_RE.finditer(importer_text):
@@ -281,21 +328,51 @@ def _append_javascript_missing_catalog_fixture_issues(
             return
 
 
-def _workspace_javascript_named_exports(root_full: Path) -> set[str]:
-    names: set[str] = set()
+def _javascript_specialist_text(
+    root_full: Path, relative: str, reader: WorkspaceReadSnapshot | None, incomplete_reasons: list[str]
+) -> str | None:
+    """Use the existing scan snapshot, never an independent controlled reopen."""
+    if reader is not None:
+        if reader.root != root_full.absolute():
+            raise ValueError("specialist reader workspace binding mismatch")
+        read = reader.read(root_full / relative)
+        if read.status == "readable":
+            return read.text
+        incomplete_reasons.append(f"javascript_specialist_source_unknown:{relative}:{read.status}:{read.detail}")
+        return None
     try:
-        candidates = list(root_full.rglob("*"))
+        return (root_full / relative).read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+
+def _workspace_javascript_named_exports(
+    root_full: Path,
+    *,
+    reader: WorkspaceReadSnapshot | None = None,
+    source_paths: tuple[str, ...] | None = None,
+    incomplete_reasons: list[str] | None = None,
+) -> set[str]:
+    names: set[str] = set()
+    reasons = incomplete_reasons if incomplete_reasons is not None else []
+    if reader is not None and source_paths is None:
+        raise ValueError("controlled JavaScript export inventory is required")
+    try:
+        if reader is not None:
+            assert source_paths is not None  # The explicit guard above fails closed.
+            candidates = [root_full / path for path in source_paths]
+        else:
+            candidates = list(root_full.rglob("*"))
     except OSError:
         return names
     for path in candidates:
-        if not path.is_file() or path.suffix.lower() not in _JS_SUFFIXES:
+        if path.suffix.lower() not in _JS_SUFFIXES or (reader is None and not path.is_file()):
             continue
         if any(part in {".git", "node_modules", "dist", "build"} for part in path.parts):
             continue
-        try:
-            names.update(_javascript_named_exports(path.read_text(encoding="utf-8")))
-        except (OSError, UnicodeError):
-            continue
+        text = _javascript_specialist_text(root_full, path.relative_to(root_full).as_posix(), reader, reasons)
+        if text is not None:
+            names.update(_javascript_named_exports(text))
     return names
 
 
@@ -339,7 +416,15 @@ def _javascript_module_exports_symbol(text: str, symbol: str) -> bool:
     return symbol in set(_javascript_named_exports(text))
 
 
-def _resolve_relative_js_module(root_full: Path, importer: str, specifier: str) -> str | None:
+def _resolve_relative_js_module(
+    root_full: Path,
+    importer: str,
+    specifier: str,
+    *,
+    reader: WorkspaceReadSnapshot | None = None,
+    source_paths: frozenset[str] | None = None,
+    incomplete_reasons: list[str] | None = None,
+) -> str | None:
     token = str(specifier or "").strip()
     if not token.startswith("."):
         return None
@@ -352,6 +437,27 @@ def _resolve_relative_js_module(root_full: Path, importer: str, specifier: str) 
         candidates.extend([f"{raw}{suffix}" for suffix in _JS_SUFFIXES])
         candidates.extend([f"{raw}/index{suffix}" for suffix in _JS_SUFFIXES])
     for candidate in candidates:
+        if reader is not None:
+            # Preserve lexical ancestry checks before normalizing '..', but do
+            # not consult live metadata to resolve an already witnessed owner.
+            normalized = Path(os.path.normpath(candidate)).as_posix()
+            lexical_parts = Path(candidate).parts
+            if ".." not in lexical_parts and source_paths is not None and normalized in source_paths:
+                return normalized
+            try:
+                full, witness = reader.confined_path(root_full / candidate)
+                normalized = full.relative_to(root_full).as_posix()
+                if source_paths is not None and normalized in source_paths:
+                    return normalized
+                if witness is not None and stat.S_ISREG(witness.st_mode):
+                    if incomplete_reasons is not None:
+                        incomplete_reasons.append(f"javascript_module_inventory_unknown:{candidate}")
+                    return None
+            except (OSError, RuntimeError, ValueError) as exc:
+                if incomplete_reasons is not None:
+                    incomplete_reasons.append(f"javascript_module_resolution_unknown:{candidate}:{exc}")
+                return None
+            continue
         normalized = str(Path(candidate).as_posix()).lstrip("./")
         if (root_full / normalized).is_file():
             return normalized

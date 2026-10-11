@@ -18,7 +18,7 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
-from polaris.kernelone.audit.context_os_prompt import CONTROL_PLANE_PROMPT_KEYS
+from polaris.kernelone.audit.context_os_prompt import CONTROL_PLANE_PROMPT_KEYS, find_control_plane_prompt_content_hits
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 
 # One taxonomy owns both prevention and detection. ContextOverrideProcessor
@@ -33,6 +33,65 @@ _CONTROL_PLANE_CONTEXT_KEYS = CONTROL_PLANE_PROMPT_KEYS
 # blow the window; the weak model cannot use multi-thousand-token metadata anyway.
 _DEFAULT_CONTEXT_OVERRIDE_VALUE_CHAR_CAP = 1500
 _MAX_CONTEXT_OVERRIDE_VALUE_CHAR_CAP = 16000
+
+CE_COMMAND_TABLE_KEY = "ce_required_command_authority"
+CE_COMMAND_TABLE_START = "[CE_REQUIRED_COMMAND_AUTHORITY_JSON]"
+CE_COMMAND_TABLE_END = "[/CE_REQUIRED_COMMAND_AUTHORITY_JSON]"
+_CE_COMMAND_FIELDS = frozenset({"task_id", "modality", "argv", "cwd", "authority_hash"})
+
+
+def neutralize_ce_command_table_delimiters(text: str) -> str:
+    """Reserve planning-table delimiters for the designated gateway segment.
+
+    Preserve ordinary/history data as readable quoted text. This is projection
+    hygiene, not an execution grant or a private provenance token.
+    """
+    for marker in (CE_COMMAND_TABLE_START, CE_COMMAND_TABLE_END):
+        text = text.replace(marker, "\\u005b" + marker[1:])
+    return text
+
+
+def ce_command_planning_rows(value: Any) -> list[dict[str, Any]]:
+    """Copy exact safe planning rows, never issue or validate execution permission.
+
+    The caller's mapping is untrusted planning data. Committed provenance and
+    command permission still require the existing Factory live owner contract.
+    No opaque DTOs or extra fields are stringified into the provider request.
+    """
+    if type(value) is not list or not value:
+        raise ValueError("ce_required_command_authority_invalid")
+    rows: list[dict[str, Any]] = []
+    for row in value:
+        if type(row) is not dict or set(row) != _CE_COMMAND_FIELDS:
+            raise ValueError("ce_required_command_authority_invalid")
+        texts = [row[key] for key in ("task_id", "modality", "cwd", "authority_hash")]
+        argv = row["argv"]
+        if type(argv) is not list or not argv:
+            raise ValueError("ce_required_command_authority_invalid")
+        texts.extend(argv)
+        if any(type(item) is not str or not item or find_control_plane_prompt_content_hits(item) for item in texts):
+            raise ValueError("ce_required_command_authority_invalid")
+        if any(neutralize_ce_command_table_delimiters(item) != item for item in texts):
+            raise ValueError("ce_required_command_authority_invalid")
+        digest = row["authority_hash"]
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise ValueError("ce_required_command_authority_invalid")
+        if row["modality"] not in {"environment_prep", "build", "test", "lint", "entrypoint"}:
+            raise ValueError("ce_required_command_authority_invalid")
+        rows.append({**row, "argv": list(argv)})
+    return rows
+
+
+def render_ce_command_planning_table(value: Any) -> str:
+    """Render complete JSON ahead of optional prose; no per-value clipping."""
+    rows = ce_command_planning_rows(value)
+    return (
+        CE_COMMAND_TABLE_START
+        + "\n"
+        + json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        + "\n"
+        + CE_COMMAND_TABLE_END
+    )
 
 
 def _context_override_value_char_cap() -> int:

@@ -11,6 +11,7 @@ import contextlib
 import hashlib
 import json
 import os
+import select
 import signal
 import subprocess
 import threading
@@ -30,6 +31,7 @@ from polaris.kernelone.fs.locked_regular_file import (
 from polaris.kernelone.process.process_tree import isolated_process_group_kwargs
 from polaris.kernelone.storage.layout import kernelone_home
 
+from .pidfd import pidfd_open, pidfd_send_signal
 from .shared_service_identity import (
     SharedNATSError,
     capture_identity,
@@ -146,14 +148,25 @@ def _native_ready(identity: dict[str, Any], deadline: float, cancel: threading.E
         cancel.wait(min(0.025, _remaining(deadline, cancel)))
 
 
-def _drain(child: subprocess.Popen[bytes]) -> None:
+def _drain(child: subprocess.Popen[bytes], *, descriptor: int | None = None) -> None:
     if child.poll() is not None:
         return
-    descriptor = os.pidfd_open(child.pid)
+    owns_descriptor = descriptor is None
+    if descriptor is None:
+        try:
+            descriptor = pidfd_open(child.pid)
+        except ProcessLookupError as exc:
+            # The owned child may exit and be reaped between poll and pidfd_open.
+            # ESRCH alone does not prove that our child has been drained.
+            try:
+                child.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                raise SharedNATSError("shared_nats_reconciliation_required", "exact child exit not proved") from exc
+            return
     try:
         for sig in (signal.SIGTERM, signal.SIGKILL):
             with contextlib.suppress(ProcessLookupError):
-                signal.pidfd_send_signal(descriptor, sig)
+                pidfd_send_signal(descriptor, sig)
             try:
                 child.wait(timeout=2)
                 return
@@ -161,12 +174,14 @@ def _drain(child: subprocess.Popen[bytes]) -> None:
                 continue
         raise SharedNATSError("shared_nats_reconciliation_required", "exact child drain not proved")
     finally:
-        os.close(descriptor)
+        if owns_descriptor:
+            os.close(descriptor)
 
 
 def _open_log(path: Path) -> TextIO:
     try:
-        return KernelFileSystem(str(path.parent), get_default_adapter()).workspace_open_log_append(path.name)
+        handle: TextIO = KernelFileSystem(str(path.parent), get_default_adapter()).workspace_open_log_append(path.name)
+        return handle
     except (ValueError, PathSecurityError, GuardedRegularFileSnapshotError) as exc:
         raise SharedNATSError("shared_nats_identity_conflict", "unsafe service log") from exc
 
@@ -185,6 +200,7 @@ def _start(
 ) -> dict[str, Any]:
     ticket = writer.detach_for_inheritance()
     child: subprocess.Popen[bytes] | None = None
+    descriptor: int | None = None
     committed = False
     generation = "polaris-shared-" + uuid.uuid4().hex
     try:
@@ -214,7 +230,10 @@ def _start(
                 pass_fds=ticket.pass_fds,
                 **isolated_process_group_kwargs(),
             )
-        _PENDING[child.pid] = (child, ticket)
+            _PENDING[child.pid] = (child, ticket)
+            # Retain this exact incarnation through identity/readiness checks
+            # and any failed-start drain; never reopen a reusable PID later.
+            descriptor = pidfd_open(child.pid)
         identity = capture_identity(
             child.pid,
             generation=generation,
@@ -239,13 +258,17 @@ def _start(
         committed = True
         return identity
     finally:
-        if child is not None and not committed:
-            _drain(child)  # Failure deliberately retains ticket and child in _PENDING.
-            if "identity" in locals():
-                _record(lease, "STOPPED", identity)
-        ticket.close()
-        if child is not None:
-            _PENDING.pop(child.pid, None)
+        try:
+            if child is not None and not committed:
+                _drain(child, descriptor=descriptor)  # Failure retains ticket and child in _PENDING.
+                if "identity" in locals():
+                    _record(lease, "STOPPED", identity)
+            ticket.close()
+            if child is not None:
+                _PENDING.pop(child.pid, None)
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
 
 
 def _ensure(
@@ -264,7 +287,7 @@ def _ensure(
     with _control(arguments, deadline, cancel) as control:
         lease = control.lease(_CONTROL)
         record = _read_record(lease)
-        identity = record.get("identity", {})
+        identity: dict[str, Any] = record.get("identity", {})
         writer = _writer(arguments, min(0.005, _remaining(deadline, cancel)))
         if writer is None:
             if not identity or "pid" not in identity:
@@ -450,12 +473,35 @@ def stop_shared_nats_runtime(identity: dict[str, Any], *, allow_service_disrupti
         current = _read_record(lease).get("identity")
         if current != identity:
             raise SharedNATSError("shared_nats_identity_conflict", "maintenance generation differs")
-        descriptor = os.pidfd_open(int(identity["pid"]))
+        descriptor: int | None
         try:
-            validate_identity(identity)
+            descriptor = pidfd_open(int(identity["pid"]))
+        except ProcessLookupError:
+            descriptor = None
+        try:
+            retired = descriptor is None
+            if descriptor is not None:
+                waiter = select.poll()
+                waiter.register(descriptor, select.POLLIN)
+                retired = any(events & select.POLLIN for _, events in waiter.poll(0))
+            # A retired record still needs its physical store and free writer
+            # fence. Neither ESRCH nor a journal entry permits PID-only signals.
+            if retired:
+                try:
+                    if not incarnation_dead(identity) or (
+                        directory_identity(Path(identity["store"])) != identity["store_identity"]
+                    ):
+                        raise ValueError("retired incarnation/store proof differs")
+                except (OSError, ValueError, KeyError, TypeError) as proof_error:
+                    raise SharedNATSError(
+                        "shared_nats_identity_conflict", "retired identity proof unavailable"
+                    ) from proof_error
+            else:
+                validate_identity(identity)
             for sig in (signal.SIGTERM, signal.SIGKILL):
-                with contextlib.suppress(ProcessLookupError):
-                    signal.pidfd_send_signal(descriptor, sig)
+                if descriptor is not None and not retired:
+                    with contextlib.suppress(ProcessLookupError):
+                        pidfd_send_signal(descriptor, sig)
                 deadline = time.monotonic() + 2
                 while time.monotonic() < deadline:
                     writer = _writer(arguments)
@@ -466,4 +512,5 @@ def stop_shared_nats_runtime(identity: dict[str, Any], *, allow_service_disrupti
                     time.sleep(0.01)
             raise SharedNATSError("shared_nats_reconciliation_required", "writer still fenced after stop")
         finally:
-            os.close(descriptor)
+            if descriptor is not None:
+                os.close(descriptor)

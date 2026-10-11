@@ -9,6 +9,22 @@ from unittest.mock import MagicMock, patch
 import pytest
 from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import CEConsumer
 from polaris.cells.control_plane.run_ledger.public import stable_hash
+from polaris.cells.roles.adapters.tests.test_pm_factory_controlled_identity import (
+    _isolated_external_delivery as _isolated_external_delivery,
+)
+
+
+@pytest.fixture(autouse=True)
+def _local_consumer_workspace(tmp_path, monkeypatch):
+    """Replace legacy /test fixture paths with an actual isolated workspace."""
+    original = CEConsumer.__init__
+
+    def initialize(self, *, workspace, **kwargs):
+        if workspace == "/test" or workspace.startswith("/test/"):
+            workspace = str(tmp_path / workspace.removeprefix("/test").lstrip("/"))
+        original(self, workspace=workspace, **kwargs)
+
+    monkeypatch.setattr(CEConsumer, "__init__", initialize)
 
 
 def _parent_authority_payload(
@@ -50,11 +66,11 @@ def _parent_authority_payload(
 
 
 class TestCEConsumerInit:
-    def test_valid_construction(self) -> None:
+    def test_valid_construction(self, tmp_path: Path) -> None:
         with patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service") as mock_get:
             mock_get.return_value = MagicMock()
             consumer = CEConsumer(workspace="/test/workspace", worker_id="w1")
-            assert consumer._workspace == "/test/workspace"
+            assert consumer._workspace == str(tmp_path / "workspace")
             assert consumer._worker_id == "w1"
             assert consumer._visibility_timeout == 900
             assert isinstance(consumer._work_event, threading.Event)
@@ -655,7 +671,7 @@ class TestCEFissionMaxOutputTokens:
 
         monkeypatch.delenv("KERNELONE_CE_FISSION_MAX_TOKENS", raising=False)
         # maximum platform floor so large CE fission JSON is not truncated.
-        assert _ce_fission_max_output_tokens() == 128_000
+        assert _ce_fission_max_output_tokens() == 60_000
 
     def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import _ce_fission_max_output_tokens
@@ -667,9 +683,46 @@ class TestCEFissionMaxOutputTokens:
         from polaris.cells.chief_engineer.blueprint.internal.ce_consumer import _ce_fission_max_output_tokens
 
         monkeypatch.setenv("KERNELONE_CE_FISSION_MAX_TOKENS", "not-a-number")
-        assert _ce_fission_max_output_tokens() == 128_000
+        assert _ce_fission_max_output_tokens() == 60_000
         monkeypatch.setenv("KERNELONE_CE_FISSION_MAX_TOKENS", "0")
-        assert _ce_fission_max_output_tokens() == 128_000
+        assert _ce_fission_max_output_tokens() == 60_000
+
+
+@pytest.mark.parametrize(
+    "context,budget",
+    [
+        ({}, 60000),
+        ({"llm_max_tokens": 48000, "max_tokens": 1024}, 48000),
+        ({"task_execution_contract": {"context_budget": {"max_output_tokens": 64000}}}, 64000),
+    ],
+)
+def test_fission_initial_and_correction_reuse_resolved_context(tmp_path, monkeypatch, context, budget):
+    import json
+    from types import SimpleNamespace
+
+    from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+    monkeypatch.delenv("KERNELONE_CE_FISSION_MAX_TOKENS", raising=False)
+    monkeypatch.setattr(
+        "polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service", lambda: MagicMock()
+    )
+    commands = []
+
+    async def execute(self, command):
+        commands.append(command)
+        return SimpleNamespace(ok=True, output=json.dumps({"construction_steps": []}), metadata={})
+
+    monkeypatch.setattr(RoleRuntimeService, "execute_role_session", execute)
+    consumer = CEConsumer(workspace=str(tmp_path), worker_id="budget-test")
+    _, errors = consumer._run_step_fission(
+        "TASK-1", {"target_files": ["src/model.py"], "context": context}, blueprint_id="blueprint"
+    )
+    assert errors and len(commands) == 2
+    for command in commands:
+        assert command.role == "chief_engineer"
+        assert command.context["llm_max_tokens"] == budget
+        assert command.timeout_seconds >= budget / 80
+    assert commands[0].context == commands[1].context
 
 
 class TestCrossParentFileOwnershipInjection:

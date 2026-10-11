@@ -21,11 +21,21 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from polaris.cells.roles.kernel.public.llm_caller_contracts import resolve_role_output_budget
 from polaris.kernelone.constants import MAX_LLM_PROVIDER_TIMEOUT_SECONDS
 from polaris.kernelone.llm.budget_policy import (
+    BUDGET_CONTEXT_KEYS_CANONICAL,
+    DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS,
     FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS,
+    OUTPUT_BUDGET_CONTEXT_KEYS,
+    PM_PLANNING_LOGICAL_REQUEST_COUNT,
+    PM_PLANNING_SETTLEMENT_GRACE_SECONDS,
+    TIMEOUT_CEILING_CONTEXT_KEYS,
+    TIMEOUT_OVERRIDE_CONTEXT_KEYS,
     chief_engineer_generation_floor_seconds_for_output_tokens,
     chief_engineer_portfolio_generation_floor_seconds,
+    chief_engineer_structured_output_tokens,
+    resolve_pm_planning_time_budget,
 )
 
 from .factory_deadline_policy import (
@@ -34,6 +44,7 @@ from .factory_deadline_policy import (
     TaskDependencyScheduleV1,
     resolve_chief_engineer_portfolio_admission,
     resolve_director_dispatch_admission,
+    resolve_pm_planning_admission,
 )
 
 # ── Module-level tuning constants ────────────────────────────────────────
@@ -409,6 +420,32 @@ def director_dispatch_deadline_admission_decision(
     )
 
 
+def pm_planning_deadline_admission(context: dict[str, Any]) -> tuple[int, int, FactoryDeadlineAdmissionV1]:
+    """Resolve trusted output and admit both PM calls through the shared policy."""
+    planning_policy = dict(context)
+    metadata = context.get("metadata")
+    if isinstance(metadata, dict):
+        for key in (
+            *OUTPUT_BUDGET_CONTEXT_KEYS,
+            *BUDGET_CONTEXT_KEYS_CANONICAL,
+            *TIMEOUT_OVERRIDE_CONTEXT_KEYS,
+            *TIMEOUT_CEILING_CONTEXT_KEYS,
+            "timeout",
+        ):
+            if key not in planning_policy and key in metadata:
+                planning_policy[key] = metadata[key]
+    output_tokens = resolve_role_output_budget(context=planning_policy, requested=DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS)
+    stage_timeout, call_timeout = resolve_pm_planning_time_budget(output_tokens, planning_policy)
+    admission = resolve_pm_planning_admission(
+        remaining_seconds=factory_deadline_remaining_seconds(context),
+        requested_timeout_seconds=stage_timeout,
+        minimum_stage_seconds=PM_PLANNING_LOGICAL_REQUEST_COUNT * call_timeout + PM_PLANNING_SETTLEMENT_GRACE_SECONDS,
+        chief_engineer_timeout_seconds=chief_engineer_llm_timeout_seconds(planning_policy),
+        policy=factory_deadline_budget_policy(context),
+    )
+    return output_tokens, call_timeout, admission
+
+
 # ── Chief Engineer timeout / lease / admission ──────────────────────────
 
 
@@ -443,7 +480,14 @@ def chief_engineer_llm_timeout_seconds(context: dict[str, Any]) -> int:
         if value is not None:
             return value
 
-    return _DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS
+    output_tokens = resolve_role_output_budget(context=context, requested=chief_engineer_structured_output_tokens())
+    return min(
+        MAX_LLM_PROVIDER_TIMEOUT_SECONDS,
+        max(
+            _DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS,
+            math.ceil(chief_engineer_generation_floor_seconds_for_output_tokens(output_tokens)),
+        ),
+    )
 
 
 def chief_engineer_execution_attempt_lease_budget(

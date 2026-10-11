@@ -24,6 +24,7 @@ from polaris.kernelone.planning import PlanValidationResult
 from ..base import BaseRoleAdapter
 
 if TYPE_CHECKING:
+    from .revision import PMRevisionBase
 
     class _PMAdapterProtocol(Protocol):
         """Static surface shared by every PM mixin (type-check only)."""
@@ -90,6 +91,7 @@ if TYPE_CHECKING:
             *,
             projection_hint: dict[str, Any] | None = None,
             directive_analysis: dict[str, Any] | None = None,
+            output_budget_tokens: int | None = None,
         ) -> str: ...
 
         def _build_pm_retry_message(
@@ -98,7 +100,12 @@ if TYPE_CHECKING:
             directive: str,
             quality: dict[str, Any],
             previous_output: str,
+            validated_candidate: bool = False,
             projection_hint: dict[str, Any] | None = None,
+            revision_base: PMRevisionBase | None = None,
+            output_budget_tokens: int | None = None,
+            generation_diagnostic: dict[str, Any] | None = None,
+            directive_analysis: dict[str, Any] | None = None,
         ) -> str: ...
 
         def _analyze_directive_complexity(
@@ -120,6 +127,7 @@ if TYPE_CHECKING:
             *,
             directive: str,
             projection_hint: dict[str, Any] | None = None,
+            diagnostics: list[dict[str, Any]] | None = None,
         ) -> list[dict[str, Any]]: ...
 
         def _extract_tasks_from_payload(self, payload: Any) -> list[Any]: ...

@@ -95,6 +95,7 @@ from polaris.kernelone.quality.artifact_quality._issues import (
 
 # Models + public API (AST-owned public surface).
 from polaris.kernelone.quality.artifact_quality._models import (
+    ArtifactQualityDeferredCheck,
     ArtifactQualityEvidence,
     ArtifactQualityIssue,
     _FileArtifactQualityEvidence,
@@ -183,6 +184,7 @@ def _reexport_implementation_surface() -> None:
 _reexport_implementation_surface()
 
 __all__ = [
+    "ArtifactQualityDeferredCheck",
     "ArtifactQualityEvidence",
     "ArtifactQualityIssue",
     "artifact_quality_issue_key",

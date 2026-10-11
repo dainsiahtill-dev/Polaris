@@ -27,7 +27,13 @@ from polaris.kernelone.audit.context_os_prompt import (
 )
 from polaris.kernelone.context.prompt_safety import prompt_safe_tool_failure_summary
 
-from .gateway_helpers import _CONTROL_PLANE_CONTEXT_KEYS, _context_override_value_char_cap
+from .gateway_helpers import (
+    _CONTROL_PLANE_CONTEXT_KEYS,
+    CE_COMMAND_TABLE_KEY,
+    _context_override_value_char_cap,
+    neutralize_ce_command_table_delimiters,
+    render_ce_command_planning_table,
+)
 from .security import SecuritySanitizer
 
 logger = logging.getLogger(__name__)
@@ -107,6 +113,9 @@ class ContextOverrideProcessor:
         has_injection = False
         value_char_cap = _context_override_value_char_cap()
 
+        if CE_COMMAND_TABLE_KEY in context_override:
+            filtered_items.append(render_ce_command_planning_table(context_override[CE_COMMAND_TABLE_KEY]))
+
         for item_index, (key, value) in enumerate(context_override.items()):
             if item_index >= _PROMPT_PROJECTION_MAX_TOP_LEVEL_ITEMS:
                 filtered_items.append(_PROMPT_PROJECTION_LIMIT_MARKER)
@@ -114,6 +123,8 @@ class ContextOverrideProcessor:
             if type(key) is not str:
                 continue
             normalized_key = normalize_control_plane_prompt_key(key)
+            if normalized_key == CE_COMMAND_TABLE_KEY:
+                continue
             if normalized_key.startswith("_") or normalized_key in _CONTROL_PLANE_CONTEXT_KEYS:
                 continue
 
@@ -140,18 +151,18 @@ class ContextOverrideProcessor:
                     # escape + mark untrusted, keep the information.
                     has_injection = True
                     neutralized = SecuritySanitizer.sanitize_history_content(str_value, detect_injection=True)
-                    filtered_items.append(f"{key}: {neutralized}")
+                    filtered_items.append(neutralize_ce_command_table_delimiters(f"{key}: {neutralized}"))
                     logger.warning("Prompt injection detected in context_override key: %s", key)
                     continue
 
                 # Check for dangerous key names
                 if any(d in key.lower() for d in ("system", "role", "ignore", "override")):
                     has_injection = True
-                    filtered_items.append(f"{key}: [FILTERED_SUSPICIOUS_KEY]")
+                    filtered_items.append(neutralize_ce_command_table_delimiters(f"{key}: [FILTERED_SUSPICIOUS_KEY]"))
                     logger.warning("Suspicious context_override key: %s", key)
                     continue
 
-            filtered_items.append(f"{key}: {str_value}")
+            filtered_items.append(neutralize_ce_command_table_delimiters(f"{key}: {str_value}"))
 
         if not filtered_items:
             return None

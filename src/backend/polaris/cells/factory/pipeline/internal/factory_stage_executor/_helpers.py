@@ -27,6 +27,7 @@ from polaris.kernelone.constants import (
     MAX_LLM_PROVIDER_TIMEOUT_SECONDS,  # noqa: F401 — re-exported for characterization-test surface
 )
 from polaris.kernelone.llm.budget_policy import (
+    DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS,
     DIRECTOR_QUALITY_REPAIR_TIMEOUT_SECONDS,
     FACTORY_LLM_STAGE_MIN_START_BUDGET_SECONDS,
 )
@@ -41,7 +42,7 @@ from ..factory_deadline_calculations import (  # noqa: F401 — re-exported for 
 from ._pkg_proxy import pkg
 
 logger = logging.getLogger("polaris.cells.factory.pipeline.internal.factory_stage_executor")
-_CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS = 8_192
+_CHIEF_ENGINEER_SCHEMA_REPAIR_MAX_TOKENS = DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS
 _CHIEF_ENGINEER_PORTFOLIO_REASONING_BUDGET_TOKENS = 4_096
 _CHIEF_ENGINEER_SCHEMA_REPAIR_REASONING_BUDGET_TOKENS = 2_048
 _CHIEF_ENGINEER_SCHEMA_REPAIR_ERROR_MAX_CHARS = 2_000

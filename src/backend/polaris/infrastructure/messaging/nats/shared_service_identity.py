@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import signal
 import socket
 import stat
 import sys
@@ -13,6 +12,8 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+from .pidfd import pidfd_open, pidfd_send_signal
 
 
 class SharedNATSError(RuntimeError):
@@ -22,12 +23,12 @@ class SharedNATSError(RuntimeError):
 
 
 def require_capability() -> None:
-    if sys.platform != "linux" or not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+    if sys.platform != "linux":
         raise SharedNATSError("shared_nats_capability_unavailable", "Linux proc/pidfd descriptor fencing required")
     try:
-        descriptor = os.pidfd_open(os.getpid())
+        descriptor = pidfd_open(os.getpid())
         try:
-            signal.pidfd_send_signal(descriptor, 0)
+            pidfd_send_signal(descriptor, 0)
         finally:
             os.close(descriptor)
     except (OSError, NotImplementedError) as exc:

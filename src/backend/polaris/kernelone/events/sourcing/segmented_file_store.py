@@ -8,14 +8,20 @@ import json
 import os
 import re
 from dataclasses import asdict, dataclass, replace
+from pathlib import Path
 from typing import Any, Mapping
 
 from polaris.kernelone.events.sourcing.models import new_event_id, utc_now_iso
-from polaris.kernelone.fs import KernelFileSystem, LockedRegularFileError, LockedRegularFileSetV1
+from polaris.kernelone.fs import (
+    KernelFileSystem,
+    LockedRegularFileError,
+    LockedRegularFileSetV1,
+    read_guarded_regular_file_snapshot,
+)
 from polaris.kernelone.fs.contracts import DurabilityMode, validate_durability
 from polaris.kernelone.fs.locked_regular_file import default_platform_lock_root
 from polaris.kernelone.fs.registry import get_default_adapter
-from polaris.kernelone.storage import WorkspaceRuntimeIdentity, resolve_workspace_runtime_identity
+from polaris.kernelone.storage import WorkspaceRuntimeIdentity, resolve_runtime_path, resolve_workspace_runtime_identity
 
 _STREAM_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SEGMENT_RE = re.compile(r"^segment-(\d{6})\.jsonl$")
@@ -105,6 +111,7 @@ class SegmentedJsonlEventStore:
         segment_max_events: int = _MAX_SEGMENT_EVENTS,
         kernel_fs: KernelFileSystem | None = None,
         lock_timeout_seconds: float = 2.0,
+        read_only: bool = False,
     ) -> None:
         workspace_token = str(workspace or "").strip()
         stream_token = str(logical_stream or "").strip()
@@ -116,7 +123,8 @@ class SegmentedJsonlEventStore:
             raise ValueError("segment_max_events must be an int")
         if not 1 <= segment_max_events <= _MAX_SEGMENT_EVENTS:
             raise ValueError(f"segment_max_events must be between 1 and {_MAX_SEGMENT_EVENTS}")
-        self._storage_identity = resolve_workspace_runtime_identity(workspace_token)
+        self._read_only = read_only
+        self._storage_identity = resolve_workspace_runtime_identity(workspace_token, read_only=read_only)
         self._kernel_fs = kernel_fs or KernelFileSystem(self._storage_identity.workspace_abs, get_default_adapter())
         self._logical_stream = stream_token
         self._segment_max_events = segment_max_events
@@ -164,6 +172,8 @@ class SegmentedJsonlEventStore:
     def ensure(self) -> SegmentedLedgerHeadV1:
         """Perform the restart/full-integrity pass and atomically rebuild indexes."""
 
+        if self._read_only:
+            raise SegmentedEventStoreError("read-only store cannot initialize", code="read_only_store")
         with self._locked():
             _events, cursor = self._full_scan_and_rebuild_locked()
             return self._head(cursor)
@@ -179,6 +189,8 @@ class SegmentedJsonlEventStore:
         expected_global_seq: int | None = None,
         require_idempotency_replay: bool = False,
     ) -> SegmentedStoredEventV1:
+        if self._read_only:
+            raise SegmentedEventStoreError("read-only store cannot append", code="read_only_store")
         durability = validate_durability(durability)
         event_type = str(event_type or "").strip()
         source = str(source or "").strip()
@@ -368,7 +380,7 @@ class SegmentedJsonlEventStore:
         tail_first_previous_event = _ZERO_HASH
         tail_content_hash = _ZERO_HASH
         for position, index in enumerate(indices):
-            raw = self._kernel_fs.read_bytes(self.segment_logical_path(index))
+            raw = self._read_bytes(self.segment_logical_path(index))
             storage_bytes += len(raw)
             segment_previous_event = prior_hash
             segment_previous_seal = prior_seal
@@ -404,7 +416,7 @@ class SegmentedJsonlEventStore:
                 "duplicate idempotency key in authoritative segments",
                 code="duplicate_idempotency_key",
             )
-        locator_shard_hashes = self._rebuild_locator_indexes_locked(tuple(events))
+        locator_shard_hashes = {} if self._read_only else self._rebuild_locator_indexes_locked(tuple(events))
         cursor = _Cursor(
             schema=_CURSOR_SCHEMA,
             logical_stream=self._logical_stream,
@@ -421,14 +433,15 @@ class SegmentedJsonlEventStore:
             storage_bytes=storage_bytes,
             locator_shard_hashes=locator_shard_hashes,
         )
-        self._write_cursor_locked(cursor)
+        if not self._read_only:
+            self._write_cursor_locked(cursor)
         return tuple(events), cursor
 
     def _discover_segments_locked(self) -> tuple[int, ...]:
         logical_directory = f"{self._storage_prefix}/segments"
-        if not self._kernel_fs.exists(logical_directory):
+        directory = self._read_path(logical_directory)
+        if not directory.exists():
             return ()
-        directory = self._kernel_fs.resolve_path(logical_directory)
         names = tuple(sorted(entry.name for entry in os.scandir(directory)))
         matches = [_SEGMENT_RE.fullmatch(name) for name in names]
         if any(match is None for match in matches):
@@ -439,6 +452,8 @@ class SegmentedJsonlEventStore:
         return indices
 
     def _load_or_rebuild_cursor_locked(self) -> _Cursor:
+        if self._read_only:
+            return self._full_scan_and_rebuild_locked()[1]
         try:
             cursor = self._load_cursor_locked()
         except SegmentedEventStoreError:
@@ -446,6 +461,23 @@ class SegmentedJsonlEventStore:
         if cursor is None:
             _events, cursor = self._full_scan_and_rebuild_locked()
         return cursor
+
+    def _read_path(self, logical_path: str) -> Path:
+        if not self._read_only:
+            return self._kernel_fs.resolve_path(logical_path)
+        path = Path(resolve_runtime_path(self.storage_identity.workspace_abs, logical_path, read_only=True))
+        if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+            raise SegmentedEventStoreError("read path contains symlink", code="read_path_symlink")
+        return path
+
+    def _read_bytes(self, logical_path: str) -> bytes:
+        if not self._read_only:
+            return self._kernel_fs.read_bytes(logical_path)
+        path = self._read_path(logical_path)
+        relative = str(path.relative_to(self.storage_identity.runtime_root))
+        return read_guarded_regular_file_snapshot(
+            self.storage_identity.runtime_root, relative, 64 * 1024 * 1024
+        ).content
 
     def _validate_tail_cursor_locked(self, cursor: _Cursor) -> _Cursor:
         if cursor.total_count == 0:
@@ -455,7 +487,7 @@ class SegmentedJsonlEventStore:
         if cursor.tail_segment_index is None:
             raise SegmentedEventStoreError("invalid cursor tail", code="invalid_cursor")
         try:
-            raw = self._kernel_fs.read_bytes(self.segment_logical_path(cursor.tail_segment_index))
+            raw = self._read_bytes(self.segment_logical_path(cursor.tail_segment_index))
             if self._hash_bytes(raw) != cursor.tail_content_hash:
                 raise SegmentedEventStoreError("tail content drift", code="tail_content_drift")
             first_global = cursor.total_count - cursor.tail_segment_event_count + 1
@@ -710,7 +742,7 @@ class SegmentedJsonlEventStore:
         head_seq = int(state["head_seq"])
         page: list[SegmentedStoredEventV1] = []
         while next_seq <= head_seq and len(page) < limit:
-            raw = self._kernel_fs.read_bytes(self.segment_logical_path(segment_index))
+            raw = self._read_bytes(self.segment_logical_path(segment_index))
             first_global = next_seq - local_seq + 1
             events, _seal = self._parse_segment_bytes(
                 raw,
@@ -809,7 +841,7 @@ class SegmentedJsonlEventStore:
         segment_index = int(state["head_tail_segment"])
         local_seq = int(state["head_tail_local"])
         head_seq = int(state["head_seq"])
-        raw = self._kernel_fs.read_bytes(self.segment_logical_path(segment_index))
+        raw = self._read_bytes(self.segment_logical_path(segment_index))
         events, _seal = self._parse_segment_bytes(
             raw,
             segment_index=segment_index,
@@ -1011,18 +1043,28 @@ class SegmentedJsonlEventStore:
         }
 
     def _locked(self) -> LockedRegularFileSetV1:
-        try:
-            return LockedRegularFileSetV1.acquire(
-                runtime_root=self._storage_identity.runtime_root,
-                storage_identity_token=self._storage_identity.token,
-                logical_paths=(self._control_logical_path,),
-                platform_lock_root=default_platform_lock_root(),
-                timeout_seconds=self._lock_timeout_seconds,
-            )
-        except LockedRegularFileError as exc:
-            raise SegmentedEventStoreError(
-                "segmented ledger lock unavailable", code=exc.code, details=exc.details
-            ) from exc
+        from polaris.kernelone.storage import read_only_platform_lock_roots
+
+        roots = read_only_platform_lock_roots() if self._read_only else (default_platform_lock_root(),)
+        for root in roots:
+            try:
+                return LockedRegularFileSetV1.acquire(
+                    runtime_root=self._storage_identity.runtime_root,
+                    storage_identity_token=self._storage_identity.token,
+                    logical_paths=(self._control_logical_path,),
+                    platform_lock_root=root,
+                    timeout_seconds=self._lock_timeout_seconds,
+                    read_only=self._read_only,
+                )
+            except LockedRegularFileError as exc:
+                if self._read_only and exc.code == "lock_authority_missing" and root != roots[-1]:
+                    continue
+                raise SegmentedEventStoreError(
+                    "segmented ledger lock unavailable",
+                    code=exc.code,
+                    details={**exc.details, "searched_lock_roots": list(roots)},
+                ) from exc
+        raise SegmentedEventStoreError("platform lock roots unavailable", code="lock_authority_missing")
 
     def _head(self, cursor: _Cursor) -> SegmentedLedgerHeadV1:
         return SegmentedLedgerHeadV1(

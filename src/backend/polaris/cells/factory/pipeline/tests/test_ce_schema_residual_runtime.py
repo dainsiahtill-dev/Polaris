@@ -239,7 +239,7 @@ class _NativeEndpoint:
                         "TASK-FOREIGN"
                     )
                 self.base["construction_plan"].pop("task_plans")
-                self.base["item"] = {"draft_note": "This is not a declared portfolio member."}
+                self.base["item"] = "This is not a declared portfolio member."
                 payload = deepcopy(self.base)
             elif self.ce_calls == 2:
                 assert self.base is not None
@@ -373,6 +373,13 @@ def isolated_native_endpoint(
     monkeypatch.setenv("NO_PROXY", "*")
     monkeypatch.setenv("no_proxy", "*")
     monkeypatch.setenv("KERNELONE_LIGHTWEIGHT_STREAM_SESSIONS", "0")
+    # A preceding unit test may have cached the lightweight fake aiohttp
+    # module. Reset only these test-owned import caches so this fixture always
+    # uses the installed real transport, with all sockets still restricted.
+    from polaris.infrastructure.llm.providers.provider_helpers import _http_pooling
+
+    monkeypatch.setattr(_http_pooling, "_aiohttp_module", None)
+    monkeypatch.setattr(_http_pooling, "_REAL_CLIENT_SESSION_TYPE", None)
     # Delivery push is outside this test: canonical Factory/FactStream/attempt
     # ledgers remain real. Do not contact the developer's shared NATS process.
     monkeypatch.setenv("KERNELONE_NATS_ENABLED", "0")
@@ -440,7 +447,7 @@ def test_real_factory_runtime_adjudicates_residual_patch_without_replaying_pm(
         await service.start_run(factory_run.id)
         context = {
             "directive": "Build a Python cancellation plan library with behavior tests and README. This is a library, not a CLI or application.",
-            "timeout": 1200,
+            "timeout": 5400,
         }
         pm_result = await service.execute_stage(factory_run.id, "pm_planning", context)
         assert pm_result.status == "success", pm_result.output
@@ -473,9 +480,55 @@ def test_real_factory_runtime_adjudicates_residual_patch_without_replaying_pm(
             == 1
         )
         assert not isolated_native_endpoint.errors
+        expected_rows = sorted(
+            [
+                {
+                    key: value
+                    for key, value in VerificationCommandAuthorityV1(
+                        task_id=task["id"], modality=row["modality"], argv=tuple(row["argv"]), cwd=row["cwd"]
+                    )
+                    .to_dict()
+                    .items()
+                    if key in {"task_id", "modality", "argv", "cwd", "authority_hash"}
+                }
+                for task in pm_tasks
+                for row in task["verification_commands"]
+            ],
+            key=lambda row: row["authority_hash"],
+        )
+        for ce_request in isolated_native_endpoint.requests[pm_posts:]:
+            tables = []
+            for message in ce_request["messages"]:
+                content = message.get("content", "")
+                if message["role"] == "system" and "\n[CE_REQUIRED_COMMAND_AUTHORITY_JSON]\n" in content:
+                    tables.append(
+                        json.loads(
+                            content.split("[CE_REQUIRED_COMMAND_AUTHORITY_JSON]\n", 1)[1].split(
+                                "\n[/CE_REQUIRED_COMMAND_AUTHORITY_JSON]", 1
+                            )[0]
+                        )
+                    )
+            assert tables == [expected_rows]
         patch_request = isolated_native_endpoint.requests[pm_posts + 1]
         patch_parameters = patch_request["tools"][0]["function"]["parameters"]
         assert patch_parameters["required"] == ["base_candidate_hash", "edits"]
+        edit_context_text = next(
+            message["content"].split("Untrusted draft and exact edit context: ", 1)[1]
+            for message in patch_request["messages"]
+            if message["role"] == "user" and "Untrusted draft and exact edit context: " in message["content"]
+        )
+        edit_context, _ = json.JSONDecoder().raw_decode(edit_context_text)
+        edit_schemas = patch_parameters["properties"]["edits"]["prefixItems"]
+        assert edit_context["template_is_model_input_only"] is True
+        assert edit_context["edit_template"] == {
+            "base_candidate_hash": patch_parameters["properties"]["base_candidate_hash"]["const"],
+            "edits": [
+                {"operation": item["properties"]["operation"]["const"], "path": item["properties"]["path"]["const"]}
+                for item in edit_schemas
+            ],
+        }
+        assert edit_context["edit_value_schemas"] == [item["properties"].get("value") for item in edit_schemas]
+        assert edit_context["edit_path_component_types"] == [["string", "string"], ["string"]]
         assert patch_parameters["properties"]["edits"]["prefixItems"][0]["properties"]["path"]["const"] == [
             "construction_plan",
             "task_plans",
@@ -541,6 +594,25 @@ def test_real_factory_runtime_adjudicates_residual_patch_without_replaying_pm(
         assert snapshot["provider_request_id"] == patch_start.provider_request_id
         wire_tools = snapshot["durable_view"]["physical_wire"]["body"]["tools"]
         assert wire_tools[0]["function"]["parameters"] == patch_parameters
+        request_captures: list[dict[str, Any]] = []
+        for fact in ce_starts:
+            ref = fact.context_snapshot_ref
+            stored = json.loads((runtime_root / "contexts" / ref[:2] / ref).read_text(encoding="utf-8"))
+            audit = stored["durable_view"]["final_request_qualification"]["final_request_context_audit"]
+            row_coverage = audit["final_request_evidence_coverage"]["ce_required_command_authority"]
+            assert row_coverage["required"] is True and row_coverage["pass"] is True
+            assert row_coverage["required_rows"] == row_coverage["included_rows"] == expected_rows
+            wire_body = stored["durable_view"]["physical_wire"]["body"]
+            assert wire_body["max_tokens"] == 60000
+            assert wire_body == isolated_native_endpoint.requests[pm_posts + len(request_captures)]
+            request_captures.append(
+                {
+                    "context_snapshot_ref": ref,
+                    "provider_request_id": fact.provider_request_id,
+                    "physical_body": wire_body,
+                    "final_request_context_audit": audit,
+                }
+            )
         if isolated_native_endpoint.outcome == "accept":
             llm_events = [
                 json.loads(line)
@@ -573,6 +645,26 @@ def test_real_factory_runtime_adjudicates_residual_patch_without_replaying_pm(
         assert all(
             not (tmp_path / target).exists()
             for target in ("src/cancel.py", "tests/test_cancel.py", "requirements.txt", "README.md")
+        )
+        (tmp_path / "ce-local-captures.json").write_text(
+            json.dumps(
+                {
+                    "mode": "local_fake_http",
+                    "outcome": isolated_native_endpoint.outcome,
+                    "factory_run_id": factory_run.id,
+                    "workspace": str(tmp_path),
+                    "stage_status": ce_result.status,
+                    "pm_hash_preserved": pm_hash,
+                    "physical_requests": request_captures,
+                    "full_safe_decoded_responses": isolated_native_endpoint.outputs[pm_posts:],
+                    "review": review,
+                    "settled": drain.settled,
+                    "target_files_written": False,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
         )
 
     asyncio.run(run())

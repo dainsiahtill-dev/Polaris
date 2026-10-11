@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, fields
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleSemanticRequestIdentityV1,
 )
+from polaris.cells.roles.profile.public.service import RoleProfile
 from polaris.kernelone.llm.runtime_config import (
     RoleBindingSlot,
     clear_role_provider_override,
@@ -40,7 +42,6 @@ from ..stream_handler import (
 
 if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
-    from polaris.cells.roles.profile.public.service import RoleProfile
 
 from ._helpers import (
     _invoke_executor_with_factory_dispatch,
@@ -54,6 +55,15 @@ from ._helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _SelectedBindingRoleProfile(RoleProfile):
+    """Live selection evidence; the dispatch port freezes this safe identity."""
+
+    selected_role_binding_json: str = ""
+    role_route_obligations_json: str = ""
+    route_fallback_authorization_json: str = ""
 
 
 class _InvokerBindingMixin:
@@ -77,12 +87,33 @@ class _InvokerBindingMixin:
 
     @staticmethod
     def _profile_for_binding(profile: RoleProfile, slot: RoleBindingSlot) -> RoleProfile:
+        selection = json.dumps(
+            {
+                "schema_version": "llm.selected_role_binding.v1",
+                "role": slot.role_id,
+                "provider_id": slot.provider_id,
+                "model": slot.model,
+                "binding_id": slot.binding_id,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         try:
-            return replace(profile, provider_id=slot.provider_id, model=slot.model)
-        except (TypeError, ValueError):
+            values = {item.name: getattr(profile, item.name) for item in fields(RoleProfile)}
+            values.update(
+                provider_id=slot.provider_id,
+                model=slot.model,
+                selected_role_binding_json=selection,
+                role_route_obligations_json=str(getattr(profile, "role_route_obligations_json", "") or ""),
+                route_fallback_authorization_json=str(getattr(profile, "route_fallback_authorization_json", "") or ""),
+            )
+            return _SelectedBindingRoleProfile(**values)
+        except (AttributeError, TypeError, ValueError):
             clone = SimpleNamespace(**vars(profile))
             clone.provider_id = slot.provider_id
             clone.model = slot.model
+            clone.selected_role_binding_json = selection
             return clone  # type: ignore[return-value]
 
     @staticmethod
@@ -125,7 +156,65 @@ class _InvokerBindingMixin:
         )
 
     @staticmethod
+    def _with_route_obligations(
+        profile: RoleProfile, role_id: str, candidates: tuple[RoleBindingSlot, ...]
+    ) -> RoleProfile:
+        if getattr(profile, "role_route_obligations_json", "") or not candidates:
+            return profile
+        declared = candidates if role_id == "director" else candidates[:1]
+        rows = list(
+            {
+                (slot.provider_id, slot.model, slot.binding_id): {
+                    "provider_id": slot.provider_id,
+                    "model": slot.model,
+                    "binding_id": slot.binding_id,
+                }
+                for slot in declared
+            }.values()
+        )
+        clone = SimpleNamespace(**vars(profile))
+        clone.role_route_obligations_json = json.dumps(
+            {"source": "roles.kernel.binding_selection", "expected": rows, "skips": []},
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return clone  # type: ignore[return-value]
+
+    @staticmethod
+    def _profile_for_selected_route(role_id: str, profile: RoleProfile) -> RoleProfile:
+        """Carry the existing default/worker route without selecting a fallback.
+
+        The default is the declared primary slot, never a tuple search. A route
+        differing from that primary (or the explicit worker override) has no
+        binding provenance here and remains unqualified. No health selection or
+        provider/model change is performed for observation.
+        """
+        if getattr(profile, "selected_role_binding_json", ""):
+            return profile
+        candidates = get_role_binding_candidates(role_id)
+        override = get_role_binding_override(role_id)
+        if override:
+            slot = RoleBindingSlot(
+                role_id=role_id,
+                provider_id=str(override.get("provider_id") or ""),
+                model=str(override.get("model") or ""),
+                binding_id=str(override.get("binding_id") or ""),
+            )
+        else:
+            if not candidates:
+                return profile
+            slot = candidates[0]
+        if slot.role_id != role_id or slot.provider_id != profile.provider_id or slot.model != profile.model:
+            return profile
+        profile = _InvokerBindingMixin._with_route_obligations(profile, role_id, (slot,) if override else candidates)
+        return _InvokerBindingMixin._profile_for_binding(profile, slot)
+
+    @staticmethod
     def _profile_for_healthy_binding(role_id: str, profile: RoleProfile) -> RoleProfile:
+        if getattr(profile, "selected_role_binding_json", ""):
+            return profile
+        candidates = get_role_binding_candidates(role_id)
         binding = get_role_binding_override(role_id)
         if binding:
             provider_id = str(binding.get("provider_id") or "").strip()
@@ -140,25 +229,41 @@ class _InvokerBindingMixin:
                     binding_id=binding_id,
                 )
                 if fanout_locked:
-                    return _InvokerBindingMixin._profile_for_binding(profile, slot)
+                    return _InvokerBindingMixin._profile_for_binding(
+                        _InvokerBindingMixin._with_route_obligations(profile, role_id, (slot,)), slot
+                    )
                 if is_role_binding_healthy(
                     role_id,
                     provider_id=provider_id,
                     model=model,
                     binding_id=binding_id,
                 ):
-                    return _InvokerBindingMixin._profile_for_binding(profile, slot)
+                    return _InvokerBindingMixin._profile_for_binding(
+                        _InvokerBindingMixin._with_route_obligations(profile, role_id, (slot,)), slot
+                    )
 
         if _InvokerBindingMixin._profile_uses_healthy_binding(role_id, profile):
+            # The configured primary is an actual slot, rather than a binding
+            # reconstructed from model text. Preserve profile routing when it
+            # does not correspond to that selected primary; such calls cannot
+            # provide historical binding qualification.
+            if candidates:
+                primary = candidates[0]
+                if primary.provider_id == profile.provider_id and primary.model == profile.model:
+                    return _InvokerBindingMixin._profile_for_binding(
+                        _InvokerBindingMixin._with_route_obligations(profile, role_id, (primary,)), primary
+                    )
             return profile
-        for slot in get_role_binding_candidates(role_id):
+        for slot in candidates:
             if is_role_binding_healthy(
                 role_id,
                 provider_id=slot.provider_id,
                 model=slot.model,
                 binding_id=slot.binding_id,
             ):
-                return _InvokerBindingMixin._profile_for_binding(profile, slot)
+                return _InvokerBindingMixin._profile_for_binding(
+                    _InvokerBindingMixin._with_route_obligations(profile, role_id, (slot,)), slot
+                )
         return profile
 
     @staticmethod
@@ -235,6 +340,26 @@ class _InvokerBindingMixin:
                 binding_id=slot.binding_id or None,
             )
             fallback_profile = self._profile_for_binding(profile, slot)
+            from_selection = json.loads(str(getattr(profile, "selected_role_binding_json", "") or "{}"))
+            if factory_semantic_identity is not None and from_selection:
+                clone = SimpleNamespace(**vars(fallback_profile))
+                clone.route_fallback_authorization_json = json.dumps(
+                    {
+                        "source": "roles.kernel.role_binding_fallback",
+                        "from_request_freeze_id": factory_semantic_identity.request_freeze_id,
+                        "from_binding": {key: from_selection[key] for key in ("provider_id", "model", "binding_id")},
+                        "to_binding": {
+                            "provider_id": slot.provider_id,
+                            "model": slot.model,
+                            "binding_id": slot.binding_id,
+                        },
+                        "trigger_error_category": classify_error(original_error),
+                    },
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                fallback_profile = clone
             try:
                 self._emit_call_retry_event(
                     event_emitter=event_emitter,

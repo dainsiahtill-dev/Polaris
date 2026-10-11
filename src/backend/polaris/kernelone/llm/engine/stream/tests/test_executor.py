@@ -85,6 +85,216 @@ class _BudgetManager:
         )
 
 
+@pytest.mark.parametrize(
+    "role,requested,cap,window,long_system,long_requirement,want,diagnostic",
+    [
+        ("chief_engineer", 60000, 65536, 1000000, False, False, 60000, None),
+        ("pm", 60000, 65536, 1000000, False, False, 60000, None),
+        ("chief_engineer", 64000, 65536, 1000000, False, False, 64000, None),
+        ("chief_engineer", 1536, 32768, 1000000, False, False, 1536, None),
+        ("chief_engineer", 60000, 32768, 1000000, False, False, None, "model_limit_exceeded"),
+        ("pm", 60000, 32768, 1000000, False, False, None, "model_limit_exceeded"),
+        ("chief_engineer", 60000, 65536, 60032, False, False, None, "context_window_exceeded"),
+        ("chief_engineer", 60000, 65536, 60200, True, False, None, "pinned_system_context_changed"),
+        ("chief_engineer", 60000, 65536, 60200, False, True, None, "pinned_requirement_context_changed"),
+        ("director", 60000, 32768, 1000000, False, False, 32768, None),
+        ("qa", 60000, 32768, 1000000, False, False, 32768, None),
+    ],
+)
+async def test_planning_stream_budget_at_serialized_transport(
+    tmp_path, monkeypatch, role, requested, cap, window, long_system, long_requirement, want, diagnostic
+):
+    from dataclasses import asdict
+    from types import SimpleNamespace
+
+    from polaris.infrastructure.llm.providers import openai_provider
+    from polaris.kernelone.llm.engine.stream import executor as stream_module
+
+    wires = []
+    receipts = []
+
+    async def transport(url, headers, payload, timeout):
+        assert url == "https://stream-budget.example.test/v1/chat/completions"
+        wires.append(json.loads(json.dumps(payload)))
+        yield {"choices": [{"delta": {"content": "complete"}, "finish_reason": None}]}
+        yield {
+            "choices": [{"delta": {}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11},
+        }
+
+    monkeypatch.setattr(openai_provider, "invoke_stream_with_retry", transport)
+    monkeypatch.setattr(stream_module._debug_stream_module, "emit_debug_event", lambda **_: None)
+    monkeypatch.setattr(
+        stream_module._providers_module,
+        "get_provider_manager",
+        lambda: SimpleNamespace(get_provider_instance=lambda _: openai_provider.OpenAIProvider()),
+    )
+    executor = StreamExecutor(workspace=str(tmp_path), final_request_receipt_sink=receipts.append)
+    configuration = {
+        "type": "openai_compat",
+        "base_url": "https://stream-budget.example.test/v1",
+        "retries": 0,
+        "model_specific": {"budget-model": {"max_context_tokens": window, "max_output_tokens": cap}},
+    }
+    monkeypatch.setattr(executor, "_get_provider_config", lambda _: configuration)
+    requirement = "Original requirement retained exactly." + (
+        " distinctive requirement" * 1000 if long_requirement else ""
+    )
+    messages = [
+        {"role": "system", "content": f"You are {role}" + (" retained system context" * 1000 if long_system else "")},
+        {"role": "user", "content": requirement},
+    ]
+    request = AIRequest(
+        task_type=TaskType.DIALOGUE,
+        role=role,
+        provider_id="budget-provider",
+        model="budget-model",
+        input="requirement" if long_requirement else requirement,
+        options={"max_tokens": requested, "timeout": 750},
+        context={"chat_messages": messages},
+    )
+    events = [event async for event in executor.invoke_stream(request)]
+    (tmp_path / "planning-stream-proof.json").write_text(
+        json.dumps(
+            {
+                "request": asdict(request),
+                "wires": wires,
+                "receipts": receipts,
+                "events": [asdict(event) for event in events],
+            },
+            default=str,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    if diagnostic:
+        assert wires == [] and receipts == []
+        assert len(events) == 1 and events[0].type.value == "error"
+        assert diagnostic in events[0].error
+    else:
+        assert not [event.error for event in events if event.error]
+        assert events[-1].type.value == "complete"
+        assert len(wires) == 1 and wires[0]["max_tokens"] == want
+        assert wires[0]["messages"] == messages
+        assert receipts[0]["payload"]["final_max_tokens"] == want
+
+
+@pytest.mark.parametrize(
+    "cap,window,diagnostic",
+    [(65536, 1000000, None), (32768, 1000000, "model_limit_exceeded"), (65536, 60032, "context_window_exceeded")],
+)
+async def test_initial_ce_stream_runtime_freeze_matches_actual_serialized_request(
+    tmp_path, monkeypatch, cap, window, diagnostic
+):
+    from dataclasses import asdict
+
+    from polaris.cells.factory.pipeline.tests.test_factory_role_evidence_authority_sa import (
+        _authority,
+        _resolved_cut,
+        _Resolver,
+    )
+    from polaris.cells.roles.adapters.tests.test_pm_factory_controlled_identity import _local_runtime
+    from polaris.cells.roles.kernel.internal.llm_caller.invoker import _binding
+    from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import bind_factory_role_evidence_authority
+    from polaris.cells.roles.profile.public.service import RoleProfile, RolePromptPolicy, RoleToolPolicy
+    from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+    from polaris.infrastructure.llm.providers import openai_provider
+    from polaris.kernelone.llm.runtime_config import RoleBindingSlot
+
+    port, _, _, facts = _authority(
+        tmp_path=tmp_path, stage="chief_engineer_review", resolver=_Resolver(_resolved_cut("chief_engineer"))
+    )
+    workspace = tmp_path / "workspace"
+    runtime, freezes, _ = _local_runtime(workspace, monkeypatch, [])
+    runtime._kernels[str(workspace)].registry.register(
+        RoleProfile(
+            role_id="chief_engineer",
+            display_name="Chief Engineer",
+            description="Engineering blueprint",
+            provider_id="local-provider",
+            model="local-model",
+            prompt_policy=RolePromptPolicy(core_template_id="chief_engineer"),
+            tool_policy=RoleToolPolicy(whitelist=["repo_tree", "file_exists"]),
+        )
+    )
+    slot = RoleBindingSlot(
+        role_id="chief_engineer", provider_id="local-provider", model="local-model", binding_id="local-binding"
+    )
+    monkeypatch.setattr(_binding, "get_role_binding_candidates", lambda _: (slot,))
+    configuration = {
+        "type": "openai_compat",
+        "base_url": "https://stream-budget.example.test/v1",
+        "retries": 0,
+        "model_specific": {"local-model": {"max_context_tokens": window, "max_output_tokens": cap}},
+    }
+    monkeypatch.setattr(StreamExecutor, "_get_provider_config", lambda *_: configuration)
+    monkeypatch.setattr(StreamExecutor, "_resolve_provider_model", lambda *_: ("local-provider", "local-model"))
+    wires = []
+
+    async def transport(url, headers, payload, timeout):
+        assert url == "https://stream-budget.example.test/v1/chat/completions"
+        wires.append(json.loads(json.dumps(payload)))
+        yield {
+            "choices": [
+                {
+                    "delta": {"content": '{"construction_plan":{"steps":[]},"scope_for_apply":[],"risk_flags":[]}'},
+                    "finish_reason": None,
+                }
+            ]
+        }
+        yield {
+            "choices": [{"delta": {}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11},
+        }
+
+    monkeypatch.setattr(openai_provider, "invoke_stream_with_retry", transport)
+    authority = port.mint_authority_binding("chief_engineer")
+    command = ExecuteRoleSessionCommandV1(
+        role="chief_engineer",
+        session_id="ce-budget-session",
+        workspace=str(workspace),
+        run_id="ce-budget-child",
+        user_message="Original CE portfolio requirement retained.",
+        stream=True,
+        timeout_seconds=750,
+        context={"llm_max_tokens": 60000, "llm_call_timeout_seconds": 750},
+    )
+    with bind_factory_role_evidence_authority(authority):
+        result = await runtime.execute_role_session(command)
+    (tmp_path / "ce-stream-runtime-proof.json").write_text(
+        json.dumps(
+            {
+                "result": asdict(result),
+                "wires": wires,
+                "freezes": [asdict(freeze) if freeze is not None else None for freeze in freezes],
+                "facts": facts.events,
+            },
+            default=str,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    if diagnostic:
+        assert not result.ok and wires == []
+        assert diagnostic in str(result)
+    else:
+        assert result.ok, result
+        assert len(wires) == 1 and wires[0]["max_tokens"] == 60000
+        assert len(freezes) == 1 and freezes[0] is not None
+        frozen = json.loads(freezes[0].canonical_final_payload_json)
+        assert frozen["role"] == "chief_engineer"
+        assert (
+            "Chief Engineer" in wires[0]["messages"][0]["content"] or "工部尚书" in wires[0]["messages"][0]["content"]
+        )
+        assert "Original CE portfolio requirement retained." in str(wires[0]["messages"])
+        assert frozen["max_tokens"] == 60000
+        from polaris.kernelone.llm.engine.provider_native_request import build_openai_native_messages
+
+        assert build_openai_native_messages(frozen["messages"]) == wires[0]["messages"]
+        assert frozen["tools"] == wires[0]["tools"]
+        assert frozen["tool_choice"] == wires[0]["tool_choice"]
+
+
 class TestStreamExecutorInit:
     """Tests for StreamExecutor initialization."""
 
@@ -144,7 +354,7 @@ class TestStreamExecutorInvokeStreamErrors:
             provider_id="provider-a",
             model="model-a",
             input="build portfolio",
-            options={"timeout": 125},
+            options={"timeout": 125, "max_tokens": 1024},
         )
 
         events = [event async for event in executor.invoke_stream(request)]
@@ -276,6 +486,7 @@ class TestStreamExecutorInvokeStreamErrors:
             provider_id="provider-a",
             model="model-a",
             input="unqualified sidecar",
+            options={"max_tokens": 1024},
         )
 
         events = [event async for event in executor.invoke_stream(request, physical_dispatch_port=object())]
@@ -344,6 +555,7 @@ class TestStreamExecutorInvokeStreamErrors:
             provider_id="provider-a",
             model="model-a",
             input="build portfolio",
+            options={"max_tokens": 1024},
         )
 
         events = [event async for event in executor.invoke_stream(request, physical_dispatch_port=port)]
@@ -400,6 +612,7 @@ class TestStreamExecutorInvokeStreamErrors:
             provider_id="provider-a",
             model="model-a",
             input="build portfolio",
+            options={"max_tokens": 1024},
         )
 
         events = [
@@ -486,6 +699,7 @@ class TestStreamExecutorInvokeStreamErrors:
                     provider_id="provider-a",
                     model="model-a",
                     input="build portfolio",
+                    options={"max_tokens": 1024},
                 ),
                 physical_dispatch_port=_FactoryGovernedPort(),
             )
@@ -549,6 +763,7 @@ class TestStreamExecutorInvokeStreamErrors:
                     provider_id="provider-a",
                     model="model-a",
                     input="live stream",
+                    options={"max_tokens": 1024},
                 )
             )
         ]

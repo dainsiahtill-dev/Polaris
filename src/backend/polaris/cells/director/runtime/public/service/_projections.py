@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any, Mapping
 
 from polaris.cells.director.runtime.internal.repair_kernel.contracts import (
@@ -629,14 +630,62 @@ def _repair_diagnostics_from_artifact_quality_issues(
     artifact_quality_issues: Sequence[Mapping[str, Any]],
 ) -> tuple[RepairDiagnostic, ...]:
     diagnostics: list[RepairDiagnostic] = []
-    for public_diagnostic in normalize_director_repair_issue_diagnostics(artifact_quality_issues):
-        diagnostics.append(_to_internal_repair_diagnostic(public_diagnostic))
+    # Evidence must reach the compatibility check before semantic-ID dedup.
+    # Equal IDs can still carry complementary or conflicting typed metadata.
+    for issue in artifact_quality_issues:
+        for public_diagnostic in normalize_director_repair_issue_diagnostics((issue,)):
+            diagnostics.append(_to_internal_repair_diagnostic(public_diagnostic))
     return tuple(diagnostics)
+
+
+def _repair_diagnostic_has_explicit_id(diagnostic: RepairDiagnostic) -> bool:
+    return diagnostic.diagnostic_id != replace(diagnostic, diagnostic_id="").diagnostic_id
+
+
+def _repair_diagnostic_specifier(diagnostic: RepairDiagnostic) -> str:
+    value = diagnostic.metadata.get("specifier")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _repair_diagnostic_evidence_is_compatible(primary: RepairDiagnostic, additive: RepairDiagnostic) -> bool:
+    """Raw prose is evidence, never authority over conflicting canonical facts."""
+    if primary.path and additive.path and primary.path != additive.path:
+        return False
+    for field in ("line", "column", "span_start", "span_end"):
+        left, right = getattr(primary, field), getattr(additive, field)
+        if left is not None and right is not None and left != right:
+            return False
+    if (
+        _repair_diagnostic_has_explicit_id(primary)
+        and _repair_diagnostic_has_explicit_id(additive)
+        and primary.diagnostic_id != additive.diagnostic_id
+    ):
+        return False
+    import_identity_required = (
+        "specifier" in primary.metadata
+        or "specifier" in additive.metadata
+        or primary.code in {"unresolved_relative_import", "typescript_ts2307"}
+        or additive.code in {"unresolved_relative_import", "typescript_ts2307"}
+    )
+    if import_identity_required:
+        specifier = _repair_diagnostic_specifier(primary)
+        if not specifier or specifier != _repair_diagnostic_specifier(additive):
+            return False
+        if not primary.path or not additive.path:
+            return False
+    for key in ("module", "symbol", "imported_symbol", "importer_path", "exporter_path", "target_file"):
+        left, right = primary.metadata.get(key), additive.metadata.get(key)
+        if left is not None and right is not None and left != right:
+            return False
+    return True
 
 
 def _merge_repair_diagnostic_evidence(primary: RepairDiagnostic, additive: RepairDiagnostic) -> RepairDiagnostic:
     metadata = dict(additive.metadata)
     metadata.update(primary.metadata)
+    diagnostic_id = additive.diagnostic_id if _repair_diagnostic_has_explicit_id(additive) else primary.diagnostic_id
+    if "diagnostic_id" in metadata:
+        metadata["diagnostic_id"] = diagnostic_id
     return RepairDiagnostic(
         source=primary.source,
         code=primary.code,
@@ -647,7 +696,7 @@ def _merge_repair_diagnostic_evidence(primary: RepairDiagnostic, additive: Repai
         column=primary.column if primary.column is not None else additive.column,
         span_start=primary.span_start if primary.span_start is not None else additive.span_start,
         span_end=primary.span_end if primary.span_end is not None else additive.span_end,
-        diagnostic_id=primary.diagnostic_id,
+        diagnostic_id=diagnostic_id,
         raw=primary.raw or additive.raw,
         metadata=metadata,
     )
@@ -657,18 +706,23 @@ def _repair_diagnostic_raw_key(diagnostic: RepairDiagnostic) -> str:
     return str(diagnostic.raw or diagnostic.message or "").strip()
 
 
-def _repair_diagnostic_structural_key(diagnostic: RepairDiagnostic) -> tuple[str, str, str, str, str] | None:
+def _repair_diagnostic_structural_key(diagnostic: RepairDiagnostic) -> str | None:
     code = str(diagnostic.code or "").strip()
     path = str(diagnostic.path or "").strip()
     if not code or not path:
         return None
-    return (
-        code,
-        path,
-        str(diagnostic.line or ""),
-        str(diagnostic.column or ""),
-        str(diagnostic.message or "").strip(),
-    )
+    specifier = _repair_diagnostic_specifier(diagnostic)
+    # Reuse the contract's case-sensitive semantic discriminator. For a known
+    # import target, differing display messages do not create a new finding.
+    return RepairDiagnostic(
+        source="quality_input_identity",
+        code=code,
+        path=path,
+        line=diagnostic.line,
+        column=diagnostic.column,
+        message="" if specifier else diagnostic.message,
+        metadata={"specifier": specifier} if specifier else {},
+    ).diagnostic_id
 
 
 def _repair_diagnostics_from_quality_inputs(
@@ -685,30 +739,42 @@ def _repair_diagnostics_from_quality_inputs(
     """
 
     diagnostics = list(normalize_artifact_quality_errors(list(artifact_quality_errors)))
-    index_by_raw = {
-        raw_key: index for index, item in enumerate(diagnostics) if (raw_key := _repair_diagnostic_raw_key(item))
-    }
-    index_by_structural = {
-        structural_key: index
-        for index, item in enumerate(diagnostics)
-        if (structural_key := _repair_diagnostic_structural_key(item)) is not None
-    }
+    index_by_raw: dict[str, list[int]] = {}
+    index_by_structural: dict[str, list[int]] = {}
+    for index, item in enumerate(diagnostics):
+        if raw_key := _repair_diagnostic_raw_key(item):
+            index_by_raw.setdefault(raw_key, []).append(index)
+        if (structural_key := _repair_diagnostic_structural_key(item)) is not None:
+            index_by_structural.setdefault(structural_key, []).append(index)
     for diagnostic in _repair_diagnostics_from_artifact_quality_issues(artifact_quality_issues):
         raw_key = _repair_diagnostic_raw_key(diagnostic)
-        if raw_key and raw_key in index_by_raw:
-            index = index_by_raw[raw_key]
-            diagnostics[index] = _merge_repair_diagnostic_evidence(diagnostics[index], diagnostic)
-            continue
         structural_key = _repair_diagnostic_structural_key(diagnostic)
-        if structural_key is not None and structural_key in index_by_structural:
-            index = index_by_structural[structural_key]
+        candidates = dict.fromkeys([*index_by_raw.get(raw_key, ()), *index_by_structural.get(structural_key or "", ())])
+        matched_index = next(
+            (
+                index
+                for index in candidates
+                if _repair_diagnostic_evidence_is_compatible(diagnostics[index], diagnostic)
+            ),
+            None,
+        )
+        if matched_index is not None:
+            index = matched_index
             diagnostics[index] = _merge_repair_diagnostic_evidence(diagnostics[index], diagnostic)
-            continue
-        diagnostics.append(diagnostic)
-        if raw_key:
-            index_by_raw[raw_key] = len(diagnostics) - 1
-        if structural_key is not None:
-            index_by_structural[structural_key] = len(diagnostics) - 1
+        else:
+            index = len(diagnostics)
+            diagnostics.append(diagnostic)
+        # Record every alias after refinement; one raw string may refer to
+        # several distinct canonical findings and must retain all candidates.
+        for key in {raw_key, _repair_diagnostic_raw_key(diagnostics[index])} - {""}:
+            bucket = index_by_raw.setdefault(key, [])
+            if index not in bucket:
+                bucket.append(index)
+        for structural_alias in {structural_key, _repair_diagnostic_structural_key(diagnostics[index])} - {None}:
+            if structural_alias is not None:
+                bucket = index_by_structural.setdefault(structural_alias, [])
+                if index not in bucket:
+                    bucket.append(index)
     return tuple(diagnostics)
 
 

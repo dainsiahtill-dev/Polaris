@@ -73,6 +73,10 @@ from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
     evaluate_canonical_factory_authority,
 )
 from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
+    _executor,
+    _verified_delivery_recovery_authority,
+)
 from polaris.cells.roles.adapters.public import (
     build_director_materialization_quality_repair_message,
     extract_workspace_quality_summary,
@@ -92,10 +96,112 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
 
 
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
-    _executor,
-    _verified_delivery_recovery_authority,
+@pytest.mark.parametrize(
+    "extra,want_stage,want_call,want_output",
+    [
+        ({}, 1530, 750, 60000),
+        ({"max_output_tokens": 64000}, 1630, 800, 64000),
+        ({"task_execution_contract": {"context_budget": {"max_tokens": 48000}}}, 1230, 600, 48000),
+        ({"metadata": {"max_output_tokens": 48000}}, 1230, 600, 48000),
+        ({"timeout": 1800}, 1800, 750, 60000),
+        ({"timeout": 600}, None, None, 60000),
+        ({"llm_call_timeout_seconds": 600}, None, None, 60000),
+        ({"remaining": 2000}, None, None, 60000),
+        ({"factory_run_deadline_epoch_seconds": float("nan")}, None, None, 60000),
+    ],
 )
+async def test_pm_factory_admitted_wait_and_role_entry_are_aligned(
+    tmp_path, monkeypatch, extra, want_stage, want_call, want_output
+):
+    from polaris.cells.orchestration.pm_dispatch.internal import orchestration_command_service as command_module
+    from polaris.cells.orchestration.workflow_runtime.public.service import (
+        OrchestrationSnapshot,
+        RunStatus,
+        TaskPhase,
+    )
+
+    executor = OrchestrationStageExecutor(tmp_path)
+    requests = []
+    waits = []
+
+    class BoundaryReachedError(Exception):
+        pass
+
+    class SubmitService:
+        async def submit_run(self, request):
+            requests.append(request)
+            return OrchestrationSnapshot(
+                run_id=request.run_id,
+                workspace=str(tmp_path),
+                mode=request.mode.value,
+                status=RunStatus.PENDING,
+                current_phase=TaskPhase.INIT,
+            )
+
+    async def get_service():
+        return SubmitService()
+
+    monkeypatch.setattr(command_module, "get_orchestration_service", get_service)
+    monkeypatch.setattr(command_module, "register_all_adapters", lambda _: None)
+    service = command_module.OrchestrationCommandService(settings={})
+    monkeypatch.setattr(
+        stage_executor_module, "TaskRuntimeService", lambda *_: SimpleNamespace(reset_records=lambda **_: {"ok": True})
+    )
+    monkeypatch.setattr(executor, "_build_orchestration_service", lambda _: service)
+    monkeypatch.setattr(executor, "_factory_role_evidence_cutoff_port", lambda _: None)
+    monkeypatch.setattr(executor, "_read_catalog_contract", lambda: {})
+    monkeypatch.setattr(executor, "_pm_deterministic_contract_metadata_for_context", lambda *_: {})
+
+    async def call_boundary(_port, _role, thunk):
+        return await thunk()
+
+    monkeypatch.setattr(executor, "_call_with_factory_role_evidence_authority", call_boundary)
+
+    async def wait_boundary(_service, result, *, timeout_seconds, **_):
+        waits.append({"child_run_id": result.run_id, "timeout_seconds": timeout_seconds})
+        raise BoundaryReachedError()
+
+    monkeypatch.setattr(executor, "_wait_run_completion", wait_boundary)
+    extra = dict(extra)
+    remaining = extra.pop("remaining", 5400)
+    context = {
+        "directive": "Full original requirement preserved.",
+        "factory_run_deadline_epoch_seconds": time.time() + remaining,
+        **extra,
+    }
+    run = SimpleNamespace(id="factory-budget-run", metadata={})
+    if want_stage is None:
+        result = await executor._execute_pm_planning(run, context)
+        assert result.status == "failed" and "pm" in result.output.lower() and "budget" in result.output.lower()
+        assert requests == [] and waits == []
+        proof = {"result": {"status": result.status, "output": result.output}}
+    else:
+        with pytest.raises(BoundaryReachedError):
+            await executor._execute_pm_planning(run, context)
+        assert len(requests) == 1 and len(waits) == 1
+        request = requests[0]
+        entry = request.role_entries[0]
+        assert entry.role_id == "pm" and context["directive"] in entry.input
+        assert waits[0]["child_run_id"] == request.run_id
+        assert (
+            waits[0]["timeout_seconds"]
+            == request.metadata["timeout_seconds"]
+            == entry.metadata["timeout_seconds"]
+            == want_stage
+        )
+        assert entry.metadata["llm_call_timeout_seconds"] == want_call
+        assert entry.metadata["llm_max_tokens"] == want_output
+        assert 0 < entry.metadata["pm_planning_deadline_epoch_seconds"] - time.time() <= want_stage
+        admission = entry.metadata["pm_deadline_admission"]
+        assert admission["timeout_seconds"] == want_stage and admission["budget_plan"]["conserved"]
+        assert admission["reservation_breakdown"]["chief_engineer_project_call"] == want_call
+        assert admission["reservation_breakdown"]["qa_finalization"] == 120
+        proof = {
+            "metadata": request.metadata,
+            "role_entry": {"role_id": entry.role_id, "input": entry.input, "metadata": entry.metadata},
+            "waits": waits,
+        }
+    (tmp_path / "pm-wait-role-entry-proof.json").write_text(json.dumps(proof, default=str, indent=2), encoding="utf-8")
 
 
 class TestPmMetaDiagnostic:

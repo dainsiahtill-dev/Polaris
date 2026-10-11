@@ -1,0 +1,49 @@
+id: vc-20261007-static-scan-read-boundary
+issue: POL-47
+mode: implementation
+classification: pattern
+owner: Director-tools-engineer
+reviewer: Root
+assumptions:
+  - id: lexical-position
+    claim: whitespace tokens cannot establish shell invocation coverage
+    evidence: exact RED 55 probe; six invocation failures and printf lookalike
+  - id: read-confinement
+    claim: ancestry and terminal links must be rejected before actual reads
+    evidence: exact RED ledger/runtime/import external content attempts
+  - id: read-witness
+    claim: ledger payload and coverage must share one actual read
+    evidence: exact confirmation readable status then missing legacy load
+pre_mortem:
+  - resolving linked ancestors before confinement
+  - broken links classified as optional missing
+  - legacy load injection mistaken for new-reader execution
+  - unknown export surface swallowed as complete
+verification:
+  tests:
+    - src/backend/polaris/kernelone/quality/tests/test_static_scan_read_boundary_frontier.py
+  gates: [immutable-19, immutable-55, immutable-extension, immutable-5, original-32-46, exact-288, legacy-2, effect-trap, hash-witness, ruff, format, mypy-delta]
+  red: {original: 19, negative_pass: 45, negative_fail: 10, confirm_pass: 0, confirm_fail: 5, effects: 0}
+  expected: confined reads; same ledger payload consumed; unknown explicit; diagnostics retained
+  observed:
+    original_probe: 19 passed
+    original_negative: 55 passed
+    confirmation_extension: 55 passed
+    confirmation: 4 passed, 1 legacy-load-injection mismatch retained
+    frontier: 79 passed
+    original_components: 78 passed
+    effects: zero in immutable pure-static probes
+    external_content_attempts: zero in final immutable probes
+    scoped_mypy: pass
+    strict_debt: unchanged 4 and 45 findings
+  report: .superpowers/sdd/2026-10-06-paperclip-repair-frontier/static-read-boundary-closure-v1/REPORT.json
+blocker:
+  owner: Root
+  status: blocked_scope
+  evidence: aggregate-scope-red private interleaving probe, exit 1
+  file: src/backend/polaris/kernelone/quality/cross_artifact_interfaces.py
+  action: authorize unique writer to inject confined reader/snapshot into public aggregate scanner
+boundaries:
+  - only four assigned production files and explicitly assigned work products
+  - no existing tests, AST, identity, runtime, Factory, targets or Paperclip writes
+  - no independent acceptance, real release or fresh project completion claim

@@ -2056,8 +2056,9 @@ def test_public_repair_rust_aggregate_bindings_fail_closed_without_safe_plan(
             assert planning_payload["error_message"]
         else:
             assert source_tool in runtime_repair_source_tools()
-            assert planning_payload["error_code"] is None
-            assert planning_payload["error_message"] is None
+            # Registered but unplannable differs from the unsupported aggregate label.
+            assert planning_payload["error_code"] == "repair_not_planned"
+            assert planning_payload["error_message"]
         assert planning_payload["plan_summary"] is None
         if planning_payload["composition_summary"] is not None:
             assert planning_payload["composition_summary"]["ok"] is False

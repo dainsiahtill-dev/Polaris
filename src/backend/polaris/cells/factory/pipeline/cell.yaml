@@ -45,6 +45,7 @@ public_contracts:
   errors:
   - FactoryPipelineErrorV1
 depends_on:
+- orchestration.pm_planning
 - orchestration.workflow_runtime
 - roles.runtime
 - runtime.task_runtime

@@ -25,6 +25,7 @@ class StartInstanceRequest(BaseModel):
     backend_reload: bool = True
     frontend_vite: bool = True
     start_frontend: bool = True
+    require_fresh_instance: bool = False
     bench: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

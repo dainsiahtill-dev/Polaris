@@ -23,6 +23,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     validate_director_handoff_from_payload,
 )
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
+from polaris.cells.orchestration.pm_planning.public.artifact_contracts import validate_pm_artifact_contracts
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleEvidenceAuthorityBindingV1,
     bind_factory_role_evidence_authority,
@@ -73,8 +74,6 @@ from ..factory_role_evidence_authority import (
 from ..factory_run_completion import RunCompletionWaiter
 from ..factory_run_models import (
     _PM_ARCHITECT_DOC_MAX_CHARS,
-    _PM_DIRECTIVE_MAX_CHARS,
-    _PM_ORIGINAL_DIRECTIVE_MAX_CHARS,
     FactoryRun,
     StageResult,
 )
@@ -85,9 +84,6 @@ from ..factory_stage_artifact_bindings import (
 from ..factory_workspace_quality import WorkspaceQualityRunner
 from ._helpers import (
     _FACTORY_WORKSPACE_RUN_LEASE_METADATA_KEY,
-    _LANGUAGE_NEUTRAL_EXTENSIONS,
-    _LANGUAGE_NEUTRAL_FILENAMES,
-    _LANGUAGE_SOURCE_EXTENSIONS,
     _PM_PLAN_ARTIFACT_MAX_BYTES,
     _PRE_DIRECTOR_PLATFORM_PREFIXES,
     _PRE_DIRECTOR_SNAPSHOT_KIND,
@@ -215,11 +211,17 @@ class _Mixin00:
     def _missing_declared_delivery_targets(self, tasks: list[dict[str, Any]]) -> list[str]:
         workspace_root = self.workspace.resolve()
         missing: list[str] = []
-        for target in self._collect_declared_delivery_targets(tasks):
+        contract = validate_pm_artifact_contracts(
+            tasks, primary_language=str(self._read_catalog_contract().get("primary_language") or "")
+        )
+        if not contract.ok:
+            return [f"artifact_contract_invalid:{d['path']}" for d in contract.diagnostics]
+        generated = [row["path"] for row in contract.generated_outputs]
+        for target in dict.fromkeys([*self._collect_declared_delivery_targets(tasks), *generated]):
             try:
                 path = (workspace_root / target).resolve()
                 path.relative_to(workspace_root)
-                target_exists = path.exists()
+                target_exists = path.is_file() if target in generated else path.exists()
             except (OSError, RuntimeError, ValueError):
                 missing.append(target)
                 continue
@@ -517,68 +519,61 @@ class _Mixin00:
             return f"tasks_plan_meta_diagnostic_tasks:{meta_diagnostic}"
         return ""
 
+    def _pm_plan_origin_qualification(self, relative_path: str = "tasks/plan.json") -> dict[str, Any]:
+        """Read adapter-owned planning origin; absence never qualifies a probe."""
+        result: dict[str, Any] = {"contract_origin": "unqualified", "real_planning_qualified": False}
+        try:
+            payload = json.loads(self._artifact_path(relative_path).read_text(encoding="utf-8"))
+            quality = payload.get("quality_gate") if isinstance(payload, dict) else None
+            if not isinstance(quality, dict):
+                return result
+            signals = quality.get("signals")
+            origins = (
+                [s for s in signals if isinstance(s, dict) and s.get("code") == "pm.contracts.origin"]
+                if isinstance(signals, list)
+                else []
+            )
+            if len(origins) != 1:
+                return result
+            result["contract_origin"] = str(origins[0].get("contract_origin") or "unqualified")
+            result["real_planning_qualified"] = bool(
+                result["contract_origin"] == "provider_planning"
+                and origins[0].get("real_planning_qualified") is True
+                and type(quality.get("score")) is int
+                and quality["score"] >= 80
+                and quality.get("critical_issue_count") == 0
+            )
+        except (OSError, TypeError, ValueError):
+            return result
+        return result
+
     @staticmethod
     def _is_pm_meta_diagnostic_task(task: dict[str, Any]) -> bool:
         return helpers.is_pm_meta_diagnostic_task(task)
 
     def _validate_pm_plan_language_consistency(self, relative_path: str = "tasks/plan.json") -> str:
-        """Check that PM plan target_files match the catalog primary_language.
-
-        Detects context bleed where the PM model plans files in the wrong
-        language (e.g. ``.java`` files for a ``javascript`` project).
-        Returns an empty string when consistent, or a diagnostic message.
-        """
-        catalog_path = self.workspace / ".polaris" / "catalog_contract.json"
-        if not catalog_path.exists():
-            return ""
-        try:
-            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return ""
-        primary_language = str(catalog.get("primary_language") or "").strip().lower()
-        if not primary_language:
-            return ""
-        expected_extensions = _LANGUAGE_SOURCE_EXTENSIONS.get(primary_language)
-        if not expected_extensions:
+        """Revalidate the final plan with the exact same pure PM admission gate."""
+        catalog = self._read_catalog_contract()
+        if not catalog:
             return ""
         tasks = self._load_pm_plan_tasks(relative_path)
-        if not tasks:
+        result = validate_pm_artifact_contracts(tasks, primary_language=str(catalog.get("primary_language") or ""))
+        if result.ok:
             return ""
-        wrong_lang_files: list[str] = []
-        for task in tasks:
-            if not isinstance(task, dict):
-                continue
-            target_files = task.get("target_files")
-            if not isinstance(target_files, list):
-                continue
-            for file_path in target_files:
-                if not isinstance(file_path, str):
-                    continue
-                normalized = file_path.replace("\\", "/")
-                filename = Path(normalized).name.lower()
-                if filename in _LANGUAGE_NEUTRAL_FILENAMES:
-                    continue
-                ext = Path(normalized).suffix.lower()
-                if ext in _LANGUAGE_NEUTRAL_EXTENSIONS or not ext:
-                    continue
-                # Bench injects tests/test_product.py as a validation script;
-                # it is not project source code, so skip test directories.
-                if normalized.startswith("tests/") or "/tests/" in normalized:
-                    continue
-                if ext not in expected_extensions:
-                    wrong_lang_files.append(file_path)
-        if not wrong_lang_files:
-            return ""
-        sample = wrong_lang_files[:5]
-        return (
-            f"pm_plan_language_mismatch: catalog primary_language={primary_language!r} "
-            f"but {len(wrong_lang_files)} target_files use wrong extensions "
-            f"(e.g. {sample}). "
-            f"PM likely confused this project with a different language project."
+        return f"catalog primary_language={catalog.get('primary_language')!r}: " + "; ".join(
+            f"{d['code']}: {d['path']}: {d['message']}" for d in result.diagnostics[:5]
         )
 
     def _read_catalog_contract(self) -> dict[str, Any]:
         return pm_contract_norm.read_catalog_contract(self.workspace)
+
+    def _validate_pm_plan_artifact_contract(self, relative_path: str = "tasks/plan.json") -> str:
+        """Artifact/action admission applies even without a language catalog."""
+        result = validate_pm_artifact_contracts(
+            self._load_pm_plan_tasks(relative_path),
+            primary_language=str(self._read_catalog_contract().get("primary_language") or ""),
+        )
+        return "; ".join(f"{d['code']}: {d['path']}: {d['message']}" for d in result.diagnostics[:5])
 
     @staticmethod
     def _catalog_delivery_depth_contract(catalog: dict[str, Any]) -> dict[str, Any]:
@@ -632,10 +627,12 @@ class _Mixin00:
         context: dict[str, Any],
         *,
         project_declared_target_files: list[str],
+        generated_outputs: list[dict[str, Any]] | None = None,
     ) -> None:
         pm_contract_norm.inject_project_declared_target_contract(
             context,
             project_declared_target_files=project_declared_target_files,
+            generated_outputs=generated_outputs,
         )
 
     def _enrich_pm_plan_contract_artifact(self, relative_path: str = "tasks/plan.json") -> dict[str, Any]:
@@ -653,6 +650,16 @@ class _Mixin00:
             return {"changed": False, "task_count": 0, "declared_target_count": 0}
 
         task_rows = [dict(item) for item in raw_tasks if isinstance(item, dict)]
+        artifact_contract = validate_pm_artifact_contracts(
+            task_rows, primary_language=str(self._read_catalog_contract().get("primary_language") or "")
+        )
+        if not artifact_contract.ok:
+            return {
+                "changed": False,
+                "task_count": len(task_rows),
+                "declared_target_count": 0,
+                "contract_diagnostics": list(artifact_contract.diagnostics),
+            }
         project_declared_targets = self._collect_pm_project_declared_target_files(task_rows)
         changed = False
         enriched_tasks: list[Any] = []
@@ -668,6 +675,7 @@ class _Mixin00:
             self._inject_project_declared_target_contract(
                 task,
                 project_declared_target_files=project_declared_targets,
+                generated_outputs=list(artifact_contract.generated_outputs),
             )
             after = json.dumps(task, sort_keys=True, ensure_ascii=False)
             if before != after:
@@ -683,6 +691,7 @@ class _Mixin00:
             "changed": changed,
             "task_count": len(task_rows),
             "declared_target_count": len(project_declared_targets),
+            "generated_target_count": len(artifact_contract.generated_outputs),
             "source_target_count": len(self._filter_source_target_files(project_declared_targets)),
         }
 
@@ -1044,10 +1053,11 @@ class _Mixin00:
         return helpers.strip_prompt_meta_lines(text)
 
     def _build_pm_planning_directive(self, raw_directive: Any) -> str:
-        user_directive = self._strip_prompt_meta_lines(str(raw_directive or "").strip())
+        user_directive = str(raw_directive or "")
         sections = [
             "请基于 Architect 阶段产物生成 PM 执行任务合同。任务必须覆盖需求、实现、验证、QA 闭环；"
-            "每个任务必须包含 goal、scope、steps、acceptance、depends_on，并能交给 Director 直接执行。"
+            "每个任务必须包含 goal、steps、acceptance、depends_on 与真实 scope_paths/target_files；"
+            "保留独特约束，可省略重复 scope/description。先交 Chief Engineer 形成蓝图，再由 Director 执行。"
         ]
         for rel_path, label in (
             ("docs/plan.md", "Architect Plan"),
@@ -1068,12 +1078,11 @@ class _Mixin00:
             sections.extend(
                 [
                     "",
-                    "## Original Requirement Excerpt",
-                    self._compact_text_for_prompt(user_directive, max_chars=_PM_ORIGINAL_DIRECTIVE_MAX_CHARS),
+                    "## Original Requirement (complete)",
+                    user_directive,
                 ]
             )
-        compacted = "\n".join(sections).strip()
-        return self._compact_text_for_prompt(compacted, max_chars=_PM_DIRECTIVE_MAX_CHARS)
+        return "\n".join(sections)
 
     def _build_director_task_filter(self, tasks: list[dict[str, Any]]) -> str:
         return helpers.build_director_task_filter(tasks)
@@ -1570,27 +1579,13 @@ class _Mixin00:
             str(source.get("deterministic_pm_contracts") or "").strip().lower() in {"1", "true", "yes", "on"}
             for source in metadata_sources
         )
-        bench_metadata = next(
-            (source for source in metadata_sources if str(source.get("factory_bench_project_id") or "").strip()),
-            {},
-        )
-        if not explicit_deterministic and not bench_metadata:
+        if not explicit_deterministic:
             return {}
 
-        result: dict[str, Any] = {"deterministic_pm_contracts": True}
-        if bench_metadata:
-            result.update(
-                {
-                    "factory_bench_project_id": str(bench_metadata.get("factory_bench_project_id") or "").strip(),
-                    "factory_bench_level": bench_metadata.get("factory_bench_level"),
-                    "factory_bench_deterministic_pm": True,
-                    "pm_route_audit_probe": True,
-                    "factory_recovery": "bench_preemptive_deterministic_contracts",
-                }
-            )
-        else:
-            result["factory_recovery"] = "explicit_deterministic_contracts"
-        return result
+        return {
+            "deterministic_pm_contracts": True,
+            "factory_recovery": "explicit_deterministic_contracts",
+        }
 
     @staticmethod
     def _director_dispatch_timeout_seconds(

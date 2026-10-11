@@ -1,0 +1,61 @@
+id: vc-20261007-ts5110-owned-config
+issue: POL-19
+mode: implementation
+classification: pattern
+owner: repair-kernel-language-engineer
+acceptance_owner: Root
+blueprint: docs/blueprints/POLARIS_TS5110_OWNED_CONFIG_20261007.md
+assumptions:
+  - claim: TS5110 normalization already preserves canonical path.
+    evidence: real public normalization for configs/tsconfig.build.json
+  - claim: Registry and existing tsconfig_lib planner lack TS5110 support.
+    evidence: real public coverage uncovered plus planner source
+reuse:
+  - director.runtime tsconfig_lib executable binding
+  - public Plan/Run and materialization plan-probe
+  - existing composer/policy/executor/receipt/revalidation
+allowed_product_files:
+  - src/backend/polaris/cells/director/runtime/internal/repair_kernel/registry/_rules_typescript.py
+  - src/backend/polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax/config_scaffold.py
+new_test: src/backend/polaris/cells/director/runtime/tests/test_ts5110_owned_config_frontier.py
+pre_mortem:
+  - Never guess root or enlarge exact config ownership.
+  - Reject inherited, ambiguous, invalid and contradictory inputs.
+  - Preserve strict/lib/target and unrelated options.
+  - Unit effect injection does not establish production artifact receipt authority.
+verification:
+  - RED/GREEN real public normalization/coverage/Plan/materialization probe
+  - negative fail-closed config frontier, allowed-path and stale-hash checks
+  - private authored TypeScript compiler reproduction and revalidation
+  - existing config regression plus contracts 1-7, all frontiers and cpp normalization
+  - Ruff/mypy/format/diff check with baseline debt reported
+status: implementation_incomplete_scope_blocker
+closed_findings:
+  - TS5110 coverage on existing executable tsconfig_lib binding
+  - exact standalone root/nested module-only public planning
+  - private compiler unit-effect hash receipt and real revalidation
+open_findings:
+  - id: TS5110-OWNER-COLLISION
+    phenomenon: tsconfig.json and ./tsconfig.json differing content still plan
+    root_cause: typescript_runtime.py collapses raw map keys before authorized planner
+    evidence: ts5110-owned-config/dynamic-probe-r2.txt and two retained failing tests
+    unblock_owner: Root/CTO
+    action: authorize a unique owner for pre-normalization Plan/Run collision rejection
+    requested_file: src/backend/polaris/cells/director/runtime/internal/repair_kernel/typescript_runtime.py
+remaining_validation:
+  - Root independent code review and QA after scope-blocker closure
+  - release gate and fresh isolated project delivery
+  - production policy-authorized ProjectArtifactReceipt evidence
+observed_results:
+  final_selector: contracts 1-7, all six frontier files, materialization routing, verifier provenance, cpp normalize, AST binding proof
+  collected: 983
+  passed: 981
+  failed: 2
+  exit_code: 1
+  config_regression: 12 passed, exit 0
+  mypy: 3 files passed, exit 0
+  new_test_ruff: passed, exit 0
+  product_ruff: existing config_scaffold debt 63 baseline to 54 current, no new signatures
+  product_format: existing config_scaffold debt, exit 1
+  diff_check: passed, exit 0
+  acceptance: withheld

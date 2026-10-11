@@ -132,6 +132,79 @@ class _ScriptedExecutor:
         raise AssertionError("executor invoked more times than scripted")
 
 
+def test_pol79_foreign_typed_freeze_remains_unavailable(monkeypatch):
+    import time
+
+    from polaris.cells.roles.kernel.internal.llm_caller.invoker import _call
+    from polaris.cells.roles.kernel.public.generation_outcome import RoleGenerationOutcomeV1
+    from polaris.cells.roles.kernel.tests.test_final_request_evidence_cutoff import _valid_frozen_semantic_request
+
+    profile = _profile(role_id="pm")
+    prepared = _prepared(profile)
+    prepared.factory_semantic_request = _valid_frozen_semantic_request()
+    monkeypatch.setattr(_call, "_with_final_request_context_audit", lambda metadata, **kw: dict(metadata))
+    monkeypatch.setattr(LLMInvoker, "_emit_call_end_event", lambda *a, **kw: None)
+    invoker = LLMInvoker(workspace="ws", enable_cache=False)
+    response = invoker._finalize_call_response(
+        cache=None,
+        prepared=prepared,
+        active_request=prepared.ai_request,
+        response=AIResponse.success(output="same", raw={"stop_reason": "max_tokens"}),
+        cache_eligible=False,
+        prompt_fingerprint=None,
+        temperature=0.7,
+        model="model-x",
+        profile=profile,
+        prompt_tokens=1,
+        turn_round=0,
+        role_id="pm",
+        run_id="pm-child",
+        task_id=None,
+        attempt=0,
+        call_id="a" * 32,
+        event_emitter=None,
+        start_time=time.perf_counter(),
+    )
+    item = RoleGenerationOutcomeV1.from_payload(response.metadata["generation_outcome"])
+    assert item.call_id == "a" * 32 and item.run_id == "pm-child"
+    assert item.request_freeze_id is None and item.final_semantic_request_hash is None
+    assert item.max_tokens is None and item.native_finish_reason == "max_tokens"
+    assert response.metadata["generation_outcome_freeze_binding_unavailable"] == "local_call_identity_mismatch"
+
+
+@pytest.mark.parametrize(
+    "reason,budget", [("max_tokens", 4000), ("end_turn", 2048), (None, None), ("invalid reason", True)]
+)
+async def test_pol79_fresh_invoker_outcome_uses_local_response_and_audit(monkeypatch, reason, budget):
+    from hashlib import sha256
+
+    from polaris.cells.roles.kernel.public.generation_outcome import RoleGenerationOutcomeV1
+
+    rec = _EventRecorder()
+    rec.install(monkeypatch)
+    profile = _profile(role_id="pm")
+    prepared = _prepared(profile)
+    _patch_prepare(monkeypatch, prepared)
+    from polaris.cells.roles.kernel.internal.llm_caller.invoker import _call
+
+    def with_audit(metadata, **kwargs):
+        return {**metadata, "final_request_context_audit": {"sampling": {"max_tokens": budget}}}
+
+    monkeypatch.setattr(_call, "_with_final_request_context_audit", with_audit)
+    executor = _ScriptedExecutor([AIResponse.success(output='{"tasks":[', raw={"stop_reason": reason})])
+    invoker = LLMInvoker(workspace="ws", enable_cache=False, executor=executor)
+    response = await invoker.call(profile=profile, system_prompt="sys", context=_ctx(None), run_id="pm-child")
+    assert response.error is None
+    item = RoleGenerationOutcomeV1.from_payload(response.metadata.get("generation_outcome"))
+    assert item is not None
+    assert item.call_id == rec.start[0]["call_id"]
+    assert item.run_id == "pm-child"
+    assert item.native_finish_reason == (reason if reason in {"max_tokens", "end_turn"} else None)
+    assert item.max_tokens == (budget if type(budget) is int else None)
+    assert item.response_sha256 == sha256(response.content.encode("utf-8")).hexdigest()
+    assert item.request_freeze_id is None and item.final_semantic_request_hash is None
+
+
 def test_executor_context_snapshot_coverage_uses_structured_context_before_text_needles() -> None:
     coverage = _coverage_flags(
         context={
@@ -366,6 +439,7 @@ async def test_cache_hit_early_return(monkeypatch: pytest.MonkeyPatch) -> None:
     assert resp.error is None
     assert resp.content == "cached-text"
     assert resp.metadata["cached"] is True
+    assert "generation_outcome" not in resp.metadata
     assert resp.token_estimate == len("cached-text") // 2
     assert executor.requests == []
     # end event emitted with cached source

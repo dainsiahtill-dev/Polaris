@@ -40,6 +40,7 @@ from polaris.cells.chief_engineer.blueprint.public.contracts._helpers import (
     project_completion_catalog_snapshot_hash,
     project_completion_verifier_policy_snapshot_hash,
 )
+from polaris.cells.orchestration.pm_planning.public.artifact_contracts import GeneratedOutputV1
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,8 @@ class ChiefEngineerPortfolioTaskV1:
     allowed_source_suffixes: tuple[str, ...] = field(default_factory=tuple)
     entrypoint_kind_authority: str = ""
     delivery_depth_contract: Mapping[str, Any] = field(default_factory=dict)
+    context_files: tuple[str, ...] = field(default_factory=tuple)
+    generated_outputs: tuple[GeneratedOutputV1, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         task_id = _require_non_empty("task_id", self.task_id)
@@ -97,6 +100,14 @@ class ChiefEngineerPortfolioTaskV1:
             _relative_path_tuple("target_files", self.target_files, require_items=True),
         )
         object.__setattr__(self, "scope_paths", _relative_path_tuple("scope_paths", self.scope_paths))
+        context_files = _relative_path_tuple("context_files", self.context_files)
+        if set(context_files) & set(self.target_files):
+            raise ValueError("context_files must not overlap target_files")
+        object.__setattr__(self, "context_files", context_files)
+        if not isinstance(self.generated_outputs, tuple) or any(type(row) is not GeneratedOutputV1 for row in self.generated_outputs):
+            raise ValueError("generated_outputs must contain typed GeneratedOutputV1 records")
+        if {row.path for row in self.generated_outputs} & set(self.target_files):
+            raise ValueError("generated_outputs must not overlap target_files")
         object.__setattr__(self, "dependencies", dependencies)
         entrypoint_targets = _relative_path_tuple("entrypoint_targets", self.entrypoint_targets)
         unknown_entrypoint_targets = sorted(set(entrypoint_targets) - set(self.target_files))
@@ -140,7 +151,7 @@ class ChiefEngineerPortfolioTaskV1:
     def to_dict(self) -> dict[str, Any]:
         """Return the normalized PM-authoritative task projection."""
 
-        return {
+        result: dict[str, Any] = {
             "task_id": self.task_id,
             "objective": self.objective,
             "target_files": list(self.target_files),
@@ -154,6 +165,12 @@ class ChiefEngineerPortfolioTaskV1:
             "entrypoint_kind_authority": self.entrypoint_kind_authority,
             "delivery_depth_contract": dict(self.delivery_depth_contract),
         }
+        # Absent/empty optional fields retain historical sealed hash semantics.
+        if self.context_files:
+            result["context_files"] = list(self.context_files)
+        if self.generated_outputs:
+            result["generated_outputs"] = [row.to_dict() for row in self.generated_outputs]
+        return result
 
 
 _PORTFOLIO_AUTHORITY_CARRIER_SEAL = object()

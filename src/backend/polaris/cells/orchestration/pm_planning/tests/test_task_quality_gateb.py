@@ -7,6 +7,7 @@ check_quality_promote_candidate, get_quality_gate_config, and helpers.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -21,10 +22,151 @@ from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
     evaluate_pm_task_quality,
     get_quality_gate_config,
 )
+from polaris.cells.orchestration.pm_planning.public.artifact_contracts import validate_pm_artifact_contracts
 
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
+
+
+def _generated_fission_contract() -> dict[str, Any]:
+    build = {"argv": ["npx", "tsc", "-p", "."], "cwd": "."}
+    return {
+        "language": "typescript",
+        "tasks": [
+            {
+                "id": "BUILD",
+                "title": "Implement typed modules and executable tests",
+                "goal": "Implement modules, tests and delivery documentation",
+                "assigned_to": "Director",
+                "phase": "implementation",
+                "depends_on": [],
+                "target_files": [
+                    "package.json",
+                    "tsconfig.json",
+                    "src/models/item.ts",
+                    "src/core/run.ts",
+                    "src/main.ts",
+                    "tests/run.test.ts",
+                    "README.md",
+                ],
+                "steps": ["Implement typed modules", "Test invalid inputs"],
+                "acceptance": ["Run `npx tsc -p .` passes"],
+                "verification_commands": [{"modality": "build", **build}],
+                "generated_outputs": [
+                    {
+                        "path": "dist/item.js",
+                        "inputs": [{"task_id": "BUILD", "path": "src/models/item.ts"}],
+                        "build": build,
+                    },
+                    {
+                        "path": "dist/run.js",
+                        "inputs": [
+                            {"task_id": "BUILD", "path": "src/models/item.ts"},
+                            {"task_id": "BUILD", "path": "src/core/run.ts"},
+                        ],
+                        "build": build,
+                    },
+                ],
+            }
+        ],
+    }
+
+
+def test_generated_fission_conserves_unique_producers_and_shared_ancestor_inputs(tmp_path: Any) -> None:
+    payload = _generated_fission_contract()
+    original = deepcopy(payload)
+    assert not validate_pm_artifact_contracts(payload["tasks"], primary_language="typescript").diagnostics
+    stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+    assert stats["oversized_director_tasks_split"] == 1
+    records = [(task["id"], row) for task in payload["tasks"] for row in task.get("generated_outputs", [])]
+    assert [(identity, row["path"]) for identity, row in records] == [
+        ("BUILD-source-models", "dist/item.js"),
+        ("BUILD-source-core", "dist/run.js"),
+    ]
+    assert records[0][1]["inputs"] == [{"task_id": "BUILD-source-models", "path": "src/models/item.ts"}]
+    assert records[1][1]["inputs"] == [
+        {"task_id": "BUILD-source-models", "path": "src/models/item.ts"},
+        {"task_id": "BUILD-source-core", "path": "src/core/run.ts"},
+    ]
+    assert all(row["build"] == {"argv": ["npx", "tsc", "-p", "."], "cwd": "."} for _, row in records)
+    assert not validate_pm_artifact_contracts(payload["tasks"], primary_language="typescript").diagnostics
+    assert {p for t in payload["tasks"] for p in t["target_files"]} == set(original["tasks"][0]["target_files"])
+    assert "dist/run.js" not in {p for t in payload["tasks"] for p in t["target_files"]}
+
+
+@pytest.mark.parametrize(
+    "fault", ["external_only", "duplicate_source", "missing_build", "missing_input", "foreign_language"]
+)
+def test_generated_fission_requires_proven_mapping_without_losing_declarations(tmp_path: Any, fault: str) -> None:
+    payload = _generated_fission_contract()
+    task = payload["tasks"][0]
+    if fault == "external_only":
+        payload["tasks"].insert(
+            0,
+            {
+                "id": "INPUT",
+                "assigned_to": "Director",
+                "phase": "implementation",
+                "target_files": ["src/models/item.ts", "src/core/run.ts"],
+                "depends_on": [],
+            },
+        )
+        task["target_files"] = [p for p in task["target_files"] if p not in {"src/models/item.ts", "src/core/run.ts"}]
+        task["target_files"].extend(["src/extra/a.ts", "src/extra/b.ts"])
+        task["depends_on"] = ["INPUT"]
+        for row in task["generated_outputs"]:
+            for item in row["inputs"]:
+                item["task_id"] = "INPUT"
+    elif fault == "duplicate_source":
+        # The input identity now has two possible original source rows.
+        payload["tasks"].insert(0, {"id": "BUILD", "target_files": ["src/models/item.ts"], "depends_on": []})
+    elif fault == "missing_build":
+        task["verification_commands"] = []
+    elif fault == "missing_input":
+        task["generated_outputs"][0]["inputs"][0]["path"] = "src/absent.ts"
+    else:
+        task["generated_outputs"][0]["inputs"][0]["path"] = "README.md"
+    before = deepcopy(task["generated_outputs"])
+    stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+    assert stats["oversized_director_tasks_split"] == 0
+    assert (
+        next(t for t in payload["tasks"] if t["id"] == "BUILD" and "generated_outputs" in t)["generated_outputs"]
+        == before
+    )
+    assert any("boundary is too broad" in issue for issue in evaluate_pm_task_quality(payload)["critical_issues"])
+
+
+def test_generated_fission_rebinds_unsplit_codegen_consumers_and_keeps_exact_external_inputs(tmp_path: Any) -> None:
+    payload = _generated_fission_contract()
+    build = {"argv": ["npx", "tsc", "src/models/item.ts", "--outDir", "dist"], "cwd": "."}
+    payload["tasks"].append(
+        {
+            "id": "CODEGEN",
+            "title": "Compile external typed input",
+            "assigned_to": "Director",
+            "phase": "implementation",
+            "target_files": ["scripts/compile.ts"],
+            "depends_on": ["BUILD"],
+            "verification_commands": [{"modality": "build", **build}],
+            "generated_outputs": [
+                {
+                    "path": "dist/external.js",
+                    "inputs": [{"task_id": "BUILD", "path": "src/models/item.ts"}],
+                    "build": build,
+                }
+            ],
+        }
+    )
+    stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+    assert stats["oversized_director_tasks_split"] == 1
+    consumer = next(task for task in payload["tasks"] if task["id"] == "CODEGEN")
+    assert consumer["generated_outputs"][0]["inputs"] == [
+        {"task_id": "BUILD-source-models", "path": "src/models/item.ts"}
+    ]
+    assert consumer["generated_outputs"][0]["build"] == build
+    assert consumer["depends_on"] == ["BUILD-docs"]
+    assert not validate_pm_artifact_contracts(payload["tasks"], primary_language="typescript").diagnostics
 
 
 class TestAutofixPmContractForQuality:
@@ -2041,3 +2183,116 @@ class TestGetQualityGateConfig:
         monkeypatch.setenv("KERNELONE_PM_TASK_QUALITY_RETRIES", "bad")
         cfg = get_quality_gate_config()
         assert cfg["max_retries"] == 3
+
+
+def test_fission_synchronizes_existing_exact_output_mirror_without_touching_opaque_metadata(tmp_path: Any) -> None:
+    payload = _generated_fission_contract()
+    original = payload["tasks"][0]
+    original["metadata"] = {"generated_outputs": deepcopy(original["generated_outputs"]), "unrelated": {"keep": True}}
+    metadata_before = deepcopy(original["metadata"])
+    stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+    assert stats["oversized_director_tasks_split"] == 1
+    records = [(task["id"], row) for task in payload["tasks"] for row in task["metadata"].get("generated_outputs", [])]
+    assert records == [
+        (
+            "BUILD-source-models",
+            {
+                "path": "dist/item.js",
+                "inputs": [{"task_id": "BUILD-source-models", "path": "src/models/item.ts"}],
+                "build": {"argv": ["npx", "tsc", "-p", "."], "cwd": "."},
+            },
+        ),
+        (
+            "BUILD-source-core",
+            {
+                "path": "dist/run.js",
+                "inputs": [
+                    {"task_id": "BUILD-source-models", "path": "src/models/item.ts"},
+                    {"task_id": "BUILD-source-core", "path": "src/core/run.ts"},
+                ],
+                "build": {"argv": ["npx", "tsc", "-p", "."], "cwd": "."},
+            },
+        ),
+    ]
+    for task in payload["tasks"]:
+        assert task["metadata"]["unrelated"] == {"keep": True}
+        if "generated_outputs" in task:
+            assert task["metadata"]["generated_outputs"] == task["generated_outputs"]
+            assert task["metadata"]["generated_outputs"] is not task["generated_outputs"]
+        else:
+            assert "generated_outputs" not in task["metadata"]
+    assert original["metadata"] == metadata_before
+
+
+@pytest.mark.parametrize("fault", ["ambiguous_owner", "missing_build", "missing_input", "late_mapping_failure"])
+def test_failed_fission_keeps_original_output_mirror_atomic(tmp_path: Any, fault: str) -> None:
+    payload = _generated_fission_contract()
+    original = payload["tasks"][0]
+    if fault == "ambiguous_owner":
+        # With only external inputs, no split child is a proved producer.
+        payload["tasks"].insert(
+            0,
+            {
+                "id": "INPUT",
+                "target_files": ["src/models/item.ts", "src/core/run.ts"],
+                "depends_on": [],
+                "generated_outputs": [],
+            },
+        )
+        original["target_files"] = [
+            path for path in original["target_files"] if path not in {"src/models/item.ts", "src/core/run.ts"}
+        ]
+        original["target_files"].extend(["src/extra/a.ts", "src/extra/b.ts"])
+        original["depends_on"] = ["INPUT"]
+        for row in original["generated_outputs"]:
+            for item in row["inputs"]:
+                item["task_id"] = "INPUT"
+    elif fault == "missing_build":
+        original["verification_commands"] = []
+    elif fault == "missing_input":
+        original["generated_outputs"][0]["inputs"][0]["path"] = "src/absent.ts"
+    else:
+        # Original graph is valid; the split mapping fails only after assigning
+        # BUILD outputs, on an unsplit external-only declaration in another split.
+        extra = deepcopy(original)
+        extra["id"] = "EXTERNAL"
+        extra["depends_on"] = ["BUILD"]
+        extra["target_files"] = [
+            "src/extra/a.ts",
+            "src/extra/b.ts",
+            "src/extra/c.ts",
+            "src/extra/d.ts",
+            "src/extra/e.ts",
+            "src/extra/f.ts",
+            "src/extra/g.ts",
+            "README.extra.md",
+        ]
+        extra["generated_outputs"] = [
+            {
+                "path": "dist/external.js",
+                "inputs": [{"task_id": "BUILD", "path": "src/models/item.ts"}],
+                "build": {"argv": ["npx", "tsc", "-p", "."], "cwd": "."},
+            }
+        ]
+        payload["tasks"].append(extra)
+    for task in payload["tasks"]:
+        task["metadata"] = {"generated_outputs": deepcopy(task["generated_outputs"]), "unrelated": ["keep"]}
+    before = deepcopy(payload["tasks"])
+    stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+    assert stats["oversized_director_tasks_split"] == 0
+    assert [task["id"] for task in payload["tasks"]] == [task["id"] for task in before]
+    for task, prior in zip(payload["tasks"], before, strict=True):
+        assert task["generated_outputs"] == prior["generated_outputs"]
+        assert task["metadata"] == prior["metadata"]
+        assert task["target_files"] == prior["target_files"]
+
+
+@pytest.mark.parametrize("alias", [None, [], [{"path": "dist/opaque.js"}], {"generated_outputs_trusted": True}])
+def test_gate_does_not_promote_conflicting_opaque_metadata_to_validated_mirror(tmp_path: Any, alias: Any) -> None:
+    payload = _generated_fission_contract()
+    payload["tasks"][0]["metadata"] = {"generated_outputs": deepcopy(alias), "unrelated": ["keep"]}
+    autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
+    for task in payload["tasks"]:
+        assert task["metadata"]["generated_outputs"] == alias
+        assert task["metadata"]["unrelated"] == ["keep"]
+    assert not validate_pm_artifact_contracts(payload["tasks"], primary_language="typescript").diagnostics

@@ -1,0 +1,35 @@
+id: vc-20261007-static-scan-effects
+issue: POL-40
+classification: pattern
+owner: external-director-tools-engineer
+mode: implementation
+assumptions:
+  - id: legacy-effects
+    claim: legacy public scanner mixes reads with bytecode and subprocess effects
+    evidence: _syntax.py and _scan.py; POL-35 RAW plus private dynamic reproduction
+  - id: projection-loss
+    claim: coverage must survive file, package, aggregate and serialization boundaries
+    evidence: _scan.py, _scan_package.py, _issues.py, _models.py
+pre_mortem:
+  - transitive process call retained in pure static branch
+  - early error limit or exception loses deferred requirements
+  - empty errors misrepresented as compiler pass
+verification:
+  tests:
+    - polaris/kernelone/quality/tests/test_artifact_quality_static_scan.py
+    - polaris/kernelone/quality/tests/test_artifact_quality.py
+    - polaris/tests/unit/kernelone/quality/test_artifact_quality.py
+  gates: [effect-trap, fixture-hash-before-after, ruff, mypy, pytest]
+  expected: zero effects in pure_static; required deferred checks retained; legacy preserved
+  observed:
+    pure_static: 32 passed
+    regression: 286 passed, 2 failed
+    ruff: pass
+    format: pass
+    mypy: pass
+  unresolved:
+    - readonly unit scanner test runner assumes no preceding TS parser process
+    - readonly patch-residue test assumes marker diagnostic is always first
+boundaries:
+  - no Factory, Director, process, sandbox, target, model or configuration changes
+  - no fresh Bench delivery or T05 environment qualification claim

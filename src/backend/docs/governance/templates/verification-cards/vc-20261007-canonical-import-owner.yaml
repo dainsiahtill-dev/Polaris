@@ -1,0 +1,60 @@
+id: vc-20261007-canonical-import-owner
+issue: POL-33
+mode: implementation
+classification: pattern
+owner: director.runtime
+blueprint: docs/blueprints/POLARIS_CANONICAL_IMPORT_OWNER_20261007.md
+assumption_register:
+  - assumption: canonical unresolved code cannot obtain absent identity from raw provenance
+    evidence: exact QA replay exits 1 and plans checks/stale.ts for checks/current.ts
+    falsification: absent same/different raw owner yields no operation through three public interfaces
+  - assumption: legacy unresolved text already has a normalized canonical specifier
+    evidence: diagnostics._normalize_one_error preserves path and specifier for the original regex
+    falsification: original raw unresolved and TS2307 controls still plan exact current-file output
+  - assumption: the private branch change preserves prior identity and original-base composition
+    evidence: no upstream/builder/Composer modification needed
+    falsification: selected existing regressions and 28 shared callers remain green
+pre_mortem:
+  - raw fallback silently grants authority to unknown canonical identity
+  - legitimate legacy text is incorrectly refused
+  - status-only fix leaves unsafe operation present
+  - prior dirty changes or old evidence are overwritten
+scope:
+  - src/backend/polaris/cells/director/runtime/internal/repair_kernel/typescript_syntax/imports_exports.py
+  - src/backend/polaris/cells/director/runtime/tests/test_canonical_import_owner_frontier.py
+forbidden: other product files, old tests, target projects, runtime, API writes, services, Provider, Bench
+verification_plan:
+  - original QA fixture RED and GREEN with complete proposal and parser trace
+  - new public frontier RED and GREEN with immutable input/hash
+  - absent/invalid/explicit/legacy/order/duplicate/mixed positive and negative controls
+  - exact private TS5.9.3 original and public output compile with isolated type roots
+  - query import/call no-write/spawn/network audit hook
+  - collect and run original 847 selectors plus frontier and 28 shared callers
+  - scoped mypy/Ruff/format debt delta and git diff check
+verification_commands:
+  - rtk proxy .venv/bin/python3.13 .superpowers/sdd/2026-10-06-paperclip-repair-frontier/canonical-import-owner-gap-v1/run_checks.py qa-red-v1 rtk proxy .venv/bin/python3.13 .superpowers/sdd/2026-10-06-paperclip-repair-frontier/combined-multispec-independent-qa-v1/unknown_identity.py.txt
+  - rtk proxy .venv/bin/python3.13 -m pytest -q -o addopts= -p no:cacheprovider src/backend/polaris/cells/director/runtime/tests/test_canonical_import_owner_frontier.py
+evidence_directory: .superpowers/sdd/2026-10-06-paperclip-repair-frontier/canonical-import-owner-gap-v1/
+authority: external engineering evidence only; independent Root review required
+validation_evidence:
+  exact_qa_red: qa-red-v1.txt
+  exact_qa_green: qa-green-v1.txt
+  final_frontier_preimage: frontier-preimage-final.txt
+  final_frontier_current: frontier-green-v4.txt
+  selected_collection: selected-collect-final.txt
+  selected_run: selected-run-v2.txt
+  shared_callers: shared-callers-v1.txt
+  compiler: compiler-results-v1.json
+  runtime_catalog_and_coverage: catalog-audit-v2.txt
+  strict_types: mypy-strict-final.txt
+  scope: task-source-v2.diff, integrity-final-v2.json
+acceptance:
+  component_tests: 931 collected; 931 passed (847 existing plus 84 new)
+  shared_callers: 28 passed; case/unused/unique_export operations observed
+  preimage: 28 failed; 56 passed
+  compiler: original and absent exit 2 TS2307; three explicit public outputs exit 0
+  strict_mypy: two source files pass
+  new_test_quality: Ruff and format pass
+  production_quality_debt: 111 Ruff findings unchanged; existing format debt preserved
+  independent_acceptance: pending Root and distinct reviewer; TS5110 remains gated
+unrun: Provider, Bench, services, target execution, authoritative receipts, settlement, full-repo/release gates

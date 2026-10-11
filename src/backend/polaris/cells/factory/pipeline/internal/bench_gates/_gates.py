@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import sys
@@ -1074,10 +1075,42 @@ def build_llm_route_audit(
     expected_bindings: dict[str, list[dict[str, Any]]] | None = None,
     required_roles: tuple[str, ...] = _REQUIRED_LLM_ROLES,
     require_all_director_routes: bool = True,
+    server_qualification: dict[str, Any] | None = None,
+    workspace: str = "",
+    factory_run_id: str = "",
+    project_id: str = "",
 ) -> dict[str, Any]:
-    expected = (
-        expected_bindings if isinstance(expected_bindings, dict) else resolve_expected_llm_bindings(required_roles)
-    )
+    if workspace or factory_run_id or project_id or server_qualification is not None:
+        server_evidence = server_qualification if isinstance(server_qualification, dict) else {}
+        scoped = (
+            server_evidence.get("schema_version") == "roles.kernel.factory_provider_route_qualification.v1"
+            and server_evidence.get("source") == "roles.kernel.canonical_physical_attempt"
+            and bool(workspace)
+            and bool(factory_run_id)
+            and bool(project_id)
+            and server_evidence.get("workspace") == os.path.realpath(workspace)
+            and server_evidence.get("factory_run_id") == factory_run_id
+            and server_evidence.get("project_id") == project_id
+        )
+        if not scoped:
+            return {
+                "ok": False,
+                "roles": {},
+                "errors": ["scoped_server_route_qualification_unavailable"],
+                "summary": "LLM route audit unavailable: scoped server evidence required",
+            }
+        roles = server_evidence.get("roles")
+        complete = isinstance(roles, dict) and all(
+            isinstance(roles.get(role), dict) and roles[role].get("ok") is True for role in required_roles
+        )
+        if require_all_director_routes and "director" in required_roles:
+            complete = complete and isinstance(roles, dict) and roles["director"].get("all_routes_ok") is True
+        return {
+            **server_evidence,
+            "ok": server_evidence.get("ok") is True and complete,
+            "multi_route_required": require_all_director_routes,
+        }
+    expected = expected_bindings if isinstance(expected_bindings, dict) else {}
     candidate_events = [
         event for event in events if event.get("invocation") and _norm_role(event.get("role")) in required_roles
     ]

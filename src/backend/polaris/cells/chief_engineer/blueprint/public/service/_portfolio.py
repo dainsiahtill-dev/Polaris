@@ -9,7 +9,7 @@ import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 
@@ -1471,11 +1471,11 @@ def project_chief_engineer_effective_obligation_view(
     if authority_carrier is not None:
         if type(authority_carrier) is not _ChiefEngineerPortfolioAuthorityCarrierV1:
             raise ValueError("effective obligation view requires exact Factory-issued authority carrier")
-        if not _verify_chief_engineer_portfolio_authority_carrier(authority_carrier):
+        carrier = cast(_ChiefEngineerPortfolioAuthorityCarrierV1, authority_carrier)
+        if not _verify_chief_engineer_portfolio_authority_carrier(carrier):
             raise ValueError("effective obligation view authority carrier signature is invalid")
-        if authority_carrier.tasks != tasks:
+        if carrier.tasks != tasks:
             raise ValueError("effective obligation view PM tasks do not match authority carrier")
-        carrier = authority_carrier
     completion = _portfolio_mapping(payload.get("project_completion_contract"), field_name="completion")
     obligations = _portfolio_mapping(completion.get("obligations"), field_name="obligations")
     raw_rows = {
@@ -2222,7 +2222,9 @@ def _normalize_portfolio_completion_contract(
         normalized_verification_rows: list[dict[str, Any]] = []
         used_completion_obligation_ids = set(known_completion_obligation_ids)
 
-        def claim_verification_obligation_id(*, preferred: str, fallback: str) -> str:
+        def claim_verification_obligation_id(
+            *, preferred: str, fallback: str, reserved_ids: frozenset[str] = frozenset()
+        ) -> str:
             """Reserve one verifier id without colliding with delivery facts.
 
             Provider output may reuse the covered artifact id as the verifier
@@ -2231,9 +2233,9 @@ def _normalize_portfolio_completion_contract(
             artifact identity and mint only the derived verifier identity.
             """
 
-            candidate_id = preferred if preferred not in used_completion_obligation_ids else fallback
+            candidate_id = preferred if preferred not in used_completion_obligation_ids | reserved_ids else fallback
             suffix = 2
-            while candidate_id in used_completion_obligation_ids:
+            while candidate_id in used_completion_obligation_ids | reserved_ids:
                 candidate_id = f"{fallback}-{suffix:03d}"
                 suffix += 1
             used_completion_obligation_ids.add(candidate_id)
@@ -2298,30 +2300,57 @@ def _normalize_portfolio_completion_contract(
             sorted(required_test_artifacts_by_owner.items()),
             start=1,
         ):
-            test_authorities = authorities_for(modality="test", owner_task_id=owner_task_id)
-            if len(test_authorities) != 1:
+            # Immutable duplicate identities share one binding/receipt. Distinct
+            # argv/cwd identities always remain independent required verifiers.
+            test_authorities = sorted(
+                {
+                    item.authority_hash: item for item in authorities_for(modality="test", owner_task_id=owner_task_id)
+                }.values(),
+                key=lambda item: item.authority_hash,
+            )
+            if not test_authorities:
                 raise ValueError(
-                    "required test artifact owner must have exactly one committed PM test authority; "
+                    "required test artifact owner must have committed PM test authority; "
                     f"owner_task_id={owner_task_id!r}; matches={len(test_authorities)}"
                 )
-            seed_id = claim_verification_obligation_id(
-                preferred=(
-                    str(required_test_seed_rows[0]["obligation_id"])
-                    if index == 1 and required_test_seed_rows
-                    else f"verification-authority-test-{index:03d}"
-                ),
-                fallback=f"verification-authority-test-{index:03d}",
-            )
-            normalized_verification_rows.append(
-                {
-                    "obligation_id": seed_id,
-                    "modality": "test",
-                    "command_authority_hash": test_authorities[0].authority_hash,
-                    "applicability": "required",
-                    "covers_obligation_ids": sorted(set(covered_ids) | model_test_coverage),
-                    "owner_task_id": owner_task_id,
-                }
-            )
+            owner_seeds = [row for row in required_test_seed_rows if row["owner_task_id"] == owner_task_id]
+            used_seed_ids: set[str] = set()
+            for command_index, authority in enumerate(test_authorities, start=1):
+                exact_seeds = [row for row in owner_seeds if row["command_authority_hash"] == authority.authority_hash]
+                seed = next((row for row in exact_seeds if str(row["obligation_id"]) not in used_seed_ids), None)
+                if seed is None:
+                    # Reuse commandless advisory IDs only when they cannot be
+                    # mistaken for a different committed command binding.
+                    seed = next(
+                        (
+                            row
+                            for row in owner_seeds
+                            if row["command_authority_hash"] is None and str(row["obligation_id"]) not in used_seed_ids
+                        ),
+                        None,
+                    )
+                fallback = f"verification-authority-test-{index:03d}"
+                if command_index > 1:
+                    fallback += f"-{command_index:03d}"
+                seed_id = claim_verification_obligation_id(
+                    preferred=str(seed["obligation_id"]) if seed is not None else fallback,
+                    fallback=fallback,
+                    reserved_ids=frozenset(
+                        str(row["obligation_id"]) for row in required_test_seed_rows if row is not seed
+                    ),
+                )
+                if seed is not None:
+                    used_seed_ids.add(str(seed["obligation_id"]))
+                normalized_verification_rows.append(
+                    {
+                        "obligation_id": seed_id,
+                        "modality": "test",
+                        "command_authority_hash": authority.authority_hash,
+                        "applicability": "required",
+                        "covers_obligation_ids": sorted(set(covered_ids) | model_test_coverage),
+                        "owner_task_id": owner_task_id,
+                    }
+                )
         if not required_test_artifacts_by_owner and not_applicable_test_artifacts:
             normalized_verification_rows.append(
                 {

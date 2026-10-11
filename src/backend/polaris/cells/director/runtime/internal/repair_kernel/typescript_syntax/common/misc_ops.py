@@ -430,39 +430,51 @@ def _resolve_case_variant_base_file(*, base_files: Mapping[str, str], relative_p
     return matches[0] if len(matches) == 1 else ""
 
 
-def _typescript_import_pairs_from_clause(clause: str) -> list[tuple[str, str]]:
+def _typescript_import_pairs_from_clause(clause: str, *, allow_type_only: bool = True) -> list[tuple[str, str]]:
+    """Parse a complete supported clause, never a filtered subset of bindings."""
     clause = str(clause or "").strip()
-    if clause.startswith("type "):
-        clause = clause[5:].strip()
+    type_prefix = re.match(r"type\s+", clause)
+    if type_prefix:
+        if not allow_type_only:
+            return []
+        clause = clause[type_prefix.end() :].strip()
     pairs: list[tuple[str, str]] = []
-    namespace_match = re.fullmatch(r"\*\s+as\s+([A-Za-z_$][\w$]*)", clause)
-    if namespace_match:
-        return []
-    compact_clause = clause.replace(" ", "")
     if clause.startswith("{") and clause.endswith("}"):
         default_clause = ""
         named_clause = clause[1:-1]
-    elif ",{" in compact_clause:
+    elif "," in clause:
         default_clause, named_clause = clause.split(",", 1)
         named_clause = named_clause.strip()
-        named_clause = named_clause[1:-1] if named_clause.startswith("{") and named_clause.endswith("}") else ""
+        if not (named_clause.startswith("{") and named_clause.endswith("}")):
+            return []
+        named_clause = named_clause[1:-1]
     else:
         default_clause = clause
         named_clause = ""
     default_name = default_clause.strip()
-    if _TS_IDENTIFIER_RE.fullmatch(default_name):
+    if default_name:
+        if not _TS_IDENTIFIER_RE.fullmatch(default_name):
+            return []
         pairs.append(("default", default_name))
-    for raw_part in named_clause.split(","):
+    parts = named_clause.split(",")
+    if parts[-1].strip() == "":
+        parts.pop()  # One legal trailing comma, or an empty named clause.
+    for raw_part in parts:
         part = raw_part.strip()
         if not part:
-            continue
-        if part.startswith("type "):
-            part = part[5:].strip()
-        alias_parts = re.split(r"\s+as\s+", part, maxsplit=1, flags=re.IGNORECASE)
-        imported = alias_parts[0].strip()
-        local = alias_parts[-1].strip()
-        if _TS_IDENTIFIER_RE.fullmatch(imported) and _TS_IDENTIFIER_RE.fullmatch(local):
-            pairs.append((imported, local))
+            return []
+        type_prefix = re.match(r"type\s+", part)
+        if type_prefix:
+            if not allow_type_only:
+                return []
+            part = part[type_prefix.end() :].strip()
+        binding = re.fullmatch(
+            r"(?P<imported>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s+as\s+(?P<local>[A-Za-z_$][A-Za-z0-9_$]*))?", part
+        )
+        if binding is None:
+            return []
+        imported = binding.group("imported")
+        pairs.append((imported, binding.group("local") or imported))
     return pairs
 
 

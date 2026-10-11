@@ -771,6 +771,29 @@ async def test_factory_physical_attempt_control_port_drift_during_acquire_fails_
 
 
 
+@pytest.mark.parametrize(
+    ("field_name", "corrupted_value", "expected_exception", "expected_error"),
+    [
+        (
+            "schema_version",
+            "polaris.forged.v1",
+            ValueError,
+            "factory_role_evidence_authority_binding_schema_mismatch",
+        ),
+        ("verification_scope", "other", ValueError, "verification_scope_mismatch"),
+        ("factory_run_id", "", ValueError, "factory_run_id_missing"),
+        ("cutoff_port", object(), TypeError, "factory_role_evidence_cutoff_port_required"),
+        (
+            "physical_attempt_control_port",
+            object(),
+            TypeError,
+            "factory_physical_attempt_control_port_required",
+        ),
+        ("attempt_budget", 0, ValueError, "attempt_budget_invalid"),
+        ("execution_authority_hash", "0", ValueError, "execution_authority_hash_invalid"),
+    ],
+)
+@pytest.mark.asyncio
 async def test_factory_authority_mutation_after_bind_fails_before_cutoff(
     field_name: str,
     corrupted_value: object,
@@ -1182,17 +1205,18 @@ async def test_b33_fallback_ladder_semantic_change_refreezes_with_new_port(
 
     with (
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_active_request_context_snapshot",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._call._store_active_request_context_snapshot",
             AsyncMock(side_effect=_snapshot),
         ),
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._with_final_request_context_audit",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._call._with_final_request_context_audit",
             side_effect=_audit,
         ),
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._required_tool_not_called_error",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._call._required_tool_not_called_error",
             return_value="",
         ),
+        patch.object(type(invoker), "_emit_call_retry_event", autospec=True) as emit_retry,
     ):
         result = await invoker._run_fallback_ladder(
             request_preparer=request_preparer,
@@ -1231,6 +1255,7 @@ async def test_b33_fallback_ladder_semantic_change_refreezes_with_new_port(
     assert result.prepared is retry_prepared
     assert executor.invoke.await_args.kwargs["physical_dispatch_port"] is retry_prepared.factory_dispatch_port
     assert order == ["reprepare", "snapshot", "audit", "invoke"]
+    emit_retry.assert_called_once()
 
 
 @pytest.mark.parametrize("text_fallback", [False, True], ids=["native", "text"])
@@ -1271,21 +1296,22 @@ async def test_b33_required_tool_retry_semantic_change_refreezes_with_new_port(
 
     with (
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._profile_lacks_forced_tool_choice",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._call._profile_lacks_forced_tool_choice",
             return_value=text_fallback,
         ),
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_active_request_context_snapshot",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._call._store_active_request_context_snapshot",
             AsyncMock(side_effect=_snapshot),
         ),
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._with_final_request_context_audit",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._call._with_final_request_context_audit",
             side_effect=_audit,
         ),
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._required_tool_not_called_error",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._call._required_tool_not_called_error",
             return_value="",
         ),
+        patch.object(type(invoker), "_emit_call_retry_event", autospec=True) as emit_retry,
     ):
         result = await invoker._retry_required_tool_if_missing(
             request_preparer=request_preparer,
@@ -1320,6 +1346,7 @@ async def test_b33_required_tool_retry_semantic_change_refreezes_with_new_port(
     assert result[0] is retry_prepared
     assert executor.invoke.await_args.kwargs["physical_dispatch_port"] is retry_prepared.factory_dispatch_port
     assert order == ["reprepare", "snapshot", "audit", "invoke"]
+    emit_retry.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1340,7 +1367,7 @@ async def test_b33_structured_native_passes_exact_port_identity() -> None:
     with (
         patch.object(LLMInvoker, "_emit_call_retry_event"),
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._with_final_request_context_audit",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._structured._with_final_request_context_audit",
             side_effect=lambda payload, **_kwargs: payload,
         ),
     ):
@@ -1429,13 +1456,14 @@ async def test_b33_structured_manual_fallback_refreezes_with_new_port() -> None:
 
     with (
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_active_request_context_snapshot",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._call._store_active_request_context_snapshot",
             AsyncMock(side_effect=_snapshot),
         ),
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._with_final_request_context_audit",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._call._with_final_request_context_audit",
             side_effect=_audit,
         ),
+        patch.object(type(invoker), "_emit_call_retry_event", autospec=True) as emit_retry,
         pytest.raises(RuntimeError, match="stop-after-new-port"),
     ):
         await invoker._run_structured_fallback(
@@ -1462,6 +1490,7 @@ async def test_b33_structured_manual_fallback_refreezes_with_new_port() -> None:
     )
     assert executor.invoke.await_args.kwargs["physical_dispatch_port"] is retry_prepared.factory_dispatch_port
     assert order == ["reprepare", "snapshot", "audit", "invoke"]
+    emit_retry.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1599,7 +1628,7 @@ async def test_b33_public_factory_call_zero_transport_stops_before_executor_and_
             prepare,
         ),
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_call_start_context_snapshot",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._call._store_call_start_context_snapshot",
             snapshot,
         ),
         patch(
@@ -1652,7 +1681,7 @@ async def test_factory_semantic_structured_call_stops_before_all_dispatch_ladder
             prepare,
         ),
         patch(
-            "polaris.cells.roles.kernel.internal.llm_caller.invoker._store_call_start_context_snapshot",
+            "polaris.cells.roles.kernel.internal.llm_caller.invoker._structured._store_call_start_context_snapshot",
             snapshot,
         ),
         bind_factory_role_evidence_authority(_b32_identity_authority()),
@@ -2213,3 +2242,69 @@ def test_final_request_context_audit_does_not_count_degraded_blueprint_fallback(
     assert "has_chief_engineer_blueprint" in audit["context_quality"]["missing_coverage"]
 
 
+def _b32_prepared_factory_request() -> Any:
+    messages = [
+        {
+            "role": "system",
+            "content": "You are Director.\n\npolaris.role_identity.v1:director",
+        },
+        {"role": "user", "content": "Implement."},
+    ]
+    ai_request = SimpleNamespace(
+        input="Implement.",
+        context={"chat_messages": messages},
+        options={},
+        provider_id="provider-a",
+        model="kimi-for-coding",
+    )
+    return SimpleNamespace(
+        messages=messages,
+        input_text="Implement.",
+        context_result=SimpleNamespace(
+            token_estimate=3,
+            compression_strategy=None,
+            compression_applied=False,
+            metadata={},
+        ),
+        context_summary="summary",
+        request_options={},
+        ai_request=ai_request,
+        factory_semantic_request=Mock(),
+        factory_dispatch_port=Mock(),
+        __post_init__=lambda: None,
+    )
+
+
+def _b33_propagating_prepared(*, native_response_format: bool = False) -> SimpleNamespace:
+    request = SimpleNamespace(provider_id="provider-a", model="model-a", context={}, options={})
+    return SimpleNamespace(
+        ai_request=request,
+        messages=[],
+        request_options={},
+        context_summary="summary",
+        context_os_audit={},
+        context_result=SimpleNamespace(
+            token_estimate=1,
+            compression_applied=False,
+            compression_strategy=None,
+        ),
+        factory_semantic_request=object(),
+        factory_dispatch_port=Mock(),
+        native_response_format=native_response_format,
+        native_tool_mode="disabled",
+        native_tool_schemas=[],
+        response_format_mode="plain_text",
+        __post_init__=Mock(),
+    )
+
+
+def _assert_invoker_owned_identity(identity: object, *, run_id: str, turn_round: int) -> None:
+    identity_type = getattr(cutoff_contract, "FactoryRoleSemanticRequestIdentityV1", None)
+    assert identity_type is not None, "B3.2 semantic identity contract missing"
+    assert type(identity) is identity_type
+    assert identity.run_id == run_id
+    assert identity.turn_id == f"{run_id}:turn:{turn_round}"
+    assert len(identity.call_id) == 32
+    assert len(identity.request_freeze_id) == 32
+    assert identity.call_id != "f" * 32
+    assert identity.request_freeze_id != "e" * 32

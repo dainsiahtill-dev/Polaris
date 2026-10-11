@@ -15,6 +15,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     project_completion_audit_evidence_to_metadata,
     task_boundary_failure_evidence_from_verdict,
 )
+from polaris.cells.roles.kernel.public.generation_outcome import RoleGenerationOutcomeV1
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
 
@@ -121,6 +122,9 @@ def role_result_metadata_from_profile(
             metadata["context_os_audit"] = context_os_audit_summary
 
     if isinstance(llm_response_metadata, dict):
+        outcome = RoleGenerationOutcomeV1.from_payload(llm_response_metadata.get("generation_outcome"))
+        if outcome is not None:
+            metadata["generation_outcome"] = outcome.to_payload()
         for key in _LLM_RESPONSE_METADATA_KEYS:
             if key in llm_response_metadata and key not in metadata:
                 value = llm_response_metadata.get(key)

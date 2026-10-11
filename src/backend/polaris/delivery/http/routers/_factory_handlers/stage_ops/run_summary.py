@@ -32,7 +32,7 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 logger = logging.getLogger("polaris.delivery.http.routers.factory")
 
 from ..mapping import *
-from ._common import _safe_events_tail_limit
+from ._common import _resolve_task_identifier, _safe_events_tail_limit
 
 
 def _model_dump_json_dict(value: Any) -> dict[str, Any]:
@@ -179,6 +179,15 @@ def _build_factory_audit_bundle(
     events_tail = events[-tail_limit:] if tail_limit > 0 else []
     gates = status_payload.get("gates")
     failure = status_payload.get("failure")
+    stage_failure = run.metadata.get("failure")
+    if (
+        isinstance(failure, dict)
+        and isinstance(stage_failure, dict)
+        and failure.get("code") == stage_failure.get("code")
+    ):
+        signals = stage_failure.get("signals")
+        if isinstance(signals, list):
+            failure = {**failure, "signals": [dict(signal) for signal in signals if isinstance(signal, dict)]}
 
     convergence = _build_director_convergence(
         run=run,
@@ -260,9 +269,21 @@ def _attach_control_plane_projection(
     projection_errors: list[dict[str, str]] = []
     run_ledger_projection: dict[str, Any] | None = None
     try:
+        project_id = str(identity.get("canonical_project_id") or "").strip()
+        if not project_id:
+            raise ValueError("canonical project identity is missing from the stored Factory start request")
         projection = read_run_ledger_projection(
-            ReadRunLedgerProjectionQueryV1(workspace=str(workspace), run_id=run.id)
+            ReadRunLedgerProjectionQueryV1(
+                workspace=str(workspace),
+                run_id=run.id,
+                factory_run_id=run.id,
+                project_id=project_id,
+                include_migration_ledgers=False,
+                canonical_only=True,
+            )
         ).projection
+        if projection.get("available") is not True:
+            raise ValueError("canonical scoped run ledger is not available")
     except (OSError, RuntimeError, ValueError, TypeError) as exc:
         projection_errors.append(
             {

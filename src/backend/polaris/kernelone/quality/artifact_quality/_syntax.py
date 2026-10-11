@@ -8,11 +8,36 @@ import py_compile
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.quality.artifact_quality._constants import (
     _TS_RETURN_OBJECT_OPEN_RE,
 )
+
+
+def _check_source_file_syntax_static(absolute_path: str, *, text: str | None = None) -> dict[str, Any] | None:
+    """Read-only syntax checks; process-based parsers are deferred by the caller."""
+    suffix = Path(absolute_path).suffix.lower()
+    if suffix not in {".py", ".json", ".html", ".htm"}:
+        return None
+    if text is None:
+        text = Path(absolute_path).read_text(
+            encoding="utf-8", errors="replace" if suffix in {".html", ".htm"} else "strict"
+        )
+    if suffix == ".py":
+        try:
+            compile(text, absolute_path, "exec", dont_inherit=True)
+        except (SyntaxError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+    if suffix == ".json":
+        try:
+            json.loads(text)
+        except json.JSONDecodeError as exc:
+            return {"ok": False, "error": f"invalid JSON: {exc}"}
+        return {"ok": True}
+    return _check_html_completeness(absolute_path, text=text)
 
 
 def _iter_typescript_return_object_bodies(text: str) -> list[str]:
@@ -107,7 +132,7 @@ def _iter_typescript_return_object_bodies(text: str) -> list[str]:
     return bodies
 
 
-def _check_html_completeness(absolute_path: str) -> dict[str, Any]:
+def _check_html_completeness(absolute_path: str, *, text: str | None = None) -> dict[str, Any]:
     """Detect structurally truncated HTML.
 
     An output-budget-truncated write produces a file that simply STOPS —
@@ -116,8 +141,9 @@ def _check_html_completeness(absolute_path: str) -> dict[str, Any]:
     tags, and nothing in the chain noticed). Not a validator — only the
     truncation signature is checked.
     """
-    with open(absolute_path, encoding="utf-8", errors="replace") as fh:
-        text = fh.read()
+    if text is None:
+        with open(absolute_path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
     lowered = text.lower()
     problems: list[str] = []
     if "<html" in lowered and "</html>" not in lowered:

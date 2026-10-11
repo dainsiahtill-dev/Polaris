@@ -168,9 +168,10 @@ class _Mixin03:
         run: FactoryRun,
         stage_status: str,
         error_code: str,
+        context: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         return await materialization_impl._run_director_stage_materialization_quality_settle(
-            self, run=run, stage_status=stage_status, error_code=error_code
+            self, run=run, stage_status=stage_status, error_code=error_code, context=context
         )
 
     def _apply_workspace_quality_repairs(
@@ -269,7 +270,10 @@ class _Mixin03:
                                 candidate
                                 for candidate in workspace_root.rglob(basename)
                                 if candidate.is_file()
-                                and candidate.relative_to(workspace_root).as_posix().casefold().endswith(normalized_suffix)
+                                and candidate.relative_to(workspace_root)
+                                .as_posix()
+                                .casefold()
+                                .endswith(normalized_suffix)
                                 and not set(candidate.relative_to(workspace_root).parts).intersection(
                                     {".git", ".polaris", "node_modules", "build", "dist"}
                                 )
@@ -318,9 +322,7 @@ class _Mixin03:
             error_text = str(raw_error or "")
             for match in re.finditer(r"\((?P<path>[^()]+)\)", error_text):
                 append_workspace_path(match.group("path"), target=causal_traceback_candidates)
-            traceback_matches = list(
-                re.finditer(r"\bFile\s+[\"'](?P<path>[^\"']+)[\"']\s*,\s*line\s+\d+", error_text)
-            )
+            traceback_matches = list(re.finditer(r"\bFile\s+[\"'](?P<path>[^\"']+)[\"']\s*,\s*line\s+\d+", error_text))
             for match in reversed(traceback_matches):
                 append_workspace_path(match.group("path"), target=causal_traceback_candidates)
         candidates = [*compiler_site_candidates, *causal_traceback_candidates, *candidates]

@@ -35,6 +35,18 @@ from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("path,allowed", [
+    ("pom.xml", True), ("maven/pom.xml", True), ("config.xml", True),
+    ("/tmp/pom.xml", False), ("../pom.xml", False), ("config/../pom.xml", False),
+    ("C:/tmp/pom.xml", False), ("modify pom.xml outside workspace", False),
+])
+def test_xml_scope_classification_keeps_relative_containment(path: str, allowed: bool) -> None:
+    from polaris.cells.orchestration.pm_planning.internal.quality_gate.primitives import (
+        _is_concrete_pm_scope_path,
+    )
+    assert _is_concrete_pm_scope_path(path) is allowed
+
+
 
 
 class TestStripWrappingQuotes:
@@ -829,5 +841,4 @@ class TestEvaluatePmTaskQualityEdgeCases:
 # ---------------------------------------------------------------------------
 # autofix_pm_contract_for_quality
 # ---------------------------------------------------------------------------
-
 

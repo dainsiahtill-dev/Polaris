@@ -15,6 +15,7 @@ from polaris.cells.control_plane.run_ledger.public import (
     native_tool_call_facts_from_sources,
     project_native_tool_call_facts_to_metadata,
 )
+from polaris.cells.roles.kernel.public.generation_outcome import RoleGenerationOutcomeV1
 
 _LLM_RESPONSE_USAGE_METADATA_KEYS: tuple[str, ...] = (
     "context_os_audit",
@@ -63,6 +64,10 @@ def llm_response_metadata_from_usage(usage: Mapping[str, Any] | None) -> dict[st
     for key in _LLM_RESPONSE_USAGE_METADATA_KEYS:
         if key in usage:
             metadata[key] = _copy_metadata_value(usage.get(key))
+
+    outcome = RoleGenerationOutcomeV1.from_payload(usage.get("generation_outcome"))
+    if outcome is not None:
+        metadata["generation_outcome"] = outcome.to_payload()
 
     native_facts = native_tool_call_facts_from_sources(usage, [])
     if native_facts:

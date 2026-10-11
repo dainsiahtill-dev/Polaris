@@ -15,8 +15,11 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import math
 import os
 import re
+import time
+from copy import deepcopy
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -27,8 +30,21 @@ from polaris.cells.orchestration.pm_planning.public.service import (
     autofix_pm_contract_for_quality,
     evaluate_pm_task_quality,
 )
+from polaris.cells.roles.kernel.public.llm_caller_contracts import (
+    bind_role_generation_outcome,
+    resolve_role_output_budget,
+)
 from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
 from polaris.kernelone.fs.text_ops import write_text_atomic
+from polaris.kernelone.llm.budget_policy import (
+    BUDGET_CONTEXT_KEYS_CANONICAL,
+    DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS,
+    OUTPUT_BUDGET_CONTEXT_KEYS,
+    PM_PLANNING_SETTLEMENT_GRACE_SECONDS,
+    TIMEOUT_OVERRIDE_CONTEXT_KEYS,
+    chief_engineer_generation_floor_seconds_for_output_tokens,
+    resolve_pm_planning_time_budget,
+)
 from polaris.kernelone.planning import (
     Plan,
     PlanStep,
@@ -49,6 +65,7 @@ from .pm import (
     PMPlanArtifactMixin,
     PMPromptBuildingMixin,
 )
+from .pm.parsing import _PMContractError
 
 # ---------------------------------------------------------------------------
 # Re-export frozen constants and pure helpers from the leaf module so the
@@ -111,6 +128,13 @@ from .pm.pm_text_utils import (
     _pm_target_files_include_tests,
     _pm_text,
     _pm_title_fragment,
+)
+from .pm.revision import (
+    apply_revision,
+    canonical_json,
+    content_hash,
+    make_revision_base,
+    revision_derivation,
 )
 from .runtime_dialogue import invoke_role_runtime_first
 
@@ -234,7 +258,11 @@ class PMAdapter(
         """执行 PM 任务."""
         self._reset_task_runtime_transition_failures()
         stage = str(input_data.get("stage", "pm")).strip().lower()
-        directive = str(input_data.get("input", "")).strip()
+        directive = str(input_data.get("input", ""))
+        # Exact Factory binding and requirement bytes survive the normal entry.
+        # Whitespace-only input keeps its existing empty-request behavior.
+        if not directive.strip():
+            directive = ""
 
         if stage == "architect":
             result = await self._run_architect_stage(task_id, directive)
@@ -284,6 +312,40 @@ class PMAdapter(
                 "error": str(e),
             }
 
+    @staticmethod
+    def _record_pm_generation_outcome(
+        response: Any,
+        response_text: str,
+        planning_context: dict[str, Any],
+        quality_signals: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Use own-call facts only when the exact visible text and child bind."""
+        metadata = response.get("metadata") if isinstance(response, dict) else None
+        outcome, unavailable = bind_role_generation_outcome(
+            metadata,
+            response_text=response_text,
+            expected_run_id=str(planning_context.get("run_id") or ""),
+        )
+        diagnostic: dict[str, Any] = {
+            "response_sha256": hashlib.sha256(response_text.encode("utf-8")).hexdigest(),
+            "response_chars": len(response_text),
+        }
+        if outcome is not None:
+            diagnostic["generation_outcome"] = outcome.to_payload()
+        else:
+            diagnostic["generation_outcome_unavailable"] = unavailable
+        quality_signals.append(
+            {
+                "code": "pm.generation.outcome",
+                "severity": "info",
+                "detail": "Bound own-call generation facts; parse/quality retain authority."
+                if outcome is not None
+                else str(unavailable),
+                **diagnostic,
+            }
+        )
+        return diagnostic
+
     async def _run_pm_stage(
         self,
         task_id: str,
@@ -297,6 +359,49 @@ class PMAdapter(
         dedup_cancelled_rows = self._deduplicate_existing_board_tasks()
         quality_signals.extend(self._task_runtime_dedup_quality_signals(dedup_cancelled_rows))
         tasks_snapshot = self._list_board_task_rows()
+
+        # Resolve the exact trusted policy snapshot before analyzing/rendering.
+        # Free-form input_data and model metadata cannot supply output policy.
+        planning_context: dict[str, Any] = {"request_purpose": "task_planning"}
+        child_run_id = context.get("run_id")
+        if isinstance(child_run_id, str) and child_run_id.strip():
+            planning_context["run_id"] = child_run_id.strip()
+        metadata = context.get("metadata")
+        trusted_metadata = metadata if isinstance(metadata, dict) else {}
+        for key in (*TIMEOUT_OVERRIDE_CONTEXT_KEYS, *OUTPUT_BUDGET_CONTEXT_KEYS, *BUDGET_CONTEXT_KEYS_CANONICAL):
+            if key in context:
+                planning_context[key] = deepcopy(context[key])
+            elif key in trusted_metadata:
+                planning_context[key] = deepcopy(trusted_metadata[key])
+        output_budget_tokens = resolve_role_output_budget(
+            context=planning_context, requested=DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS
+        )
+        planning_context["llm_max_tokens"] = output_budget_tokens
+        pm_deadline = context.get(
+            "pm_planning_deadline_epoch_seconds", trusted_metadata.get("pm_planning_deadline_epoch_seconds")
+        )
+        if not any(key in planning_context for key in TIMEOUT_OVERRIDE_CONTEXT_KEYS):
+            from math import ceil
+
+            planning_context["llm_call_timeout_seconds"] = max(
+                60, ceil(chief_engineer_generation_floor_seconds_for_output_tokens(output_budget_tokens))
+            )
+
+        def dispatch_context(mode: str) -> dict[str, Any]:
+            dispatched = {**planning_context, "mode": mode}
+            if pm_deadline is not None:
+                deadline = float(pm_deadline)
+                if isinstance(pm_deadline, bool) or not math.isfinite(deadline):
+                    raise ValueError("pm_planning_budget_invalid_deadline")
+                remaining = math.floor(deadline - time.time() - PM_PLANNING_SETTLEMENT_GRACE_SECONDS)
+                floor = max(
+                    60, math.ceil(chief_engineer_generation_floor_seconds_for_output_tokens(output_budget_tokens))
+                )
+                if remaining < floor:
+                    raise ValueError(f"pm_planning_budget_deadline_exhausted:remaining={remaining},required={floor}")
+                _, call_timeout = resolve_pm_planning_time_budget(output_budget_tokens, planning_context)
+                dispatched["llm_call_timeout_seconds"] = min(call_timeout, remaining)
+            return dispatched
 
         # Phase 2.1: Meta-planning - analyze directive before task generation
         directive_analysis: dict[str, Any] | None = None
@@ -312,6 +417,7 @@ class PMAdapter(
                             f"estimated_tasks={directive_analysis.get('estimated_task_count')}; "
                             f"strategy={directive_analysis.get('recommended_strategy')}"
                         ),
+                        "analysis_source": directive_analysis.get("analysis_source"),
                     }
                 )
                 # Apply adaptive task count hint if complexity is high
@@ -334,6 +440,7 @@ class PMAdapter(
                 directive,
                 projection_hint=projection_hint,
                 directive_analysis=directive_analysis,
+                output_budget_tokens=output_budget_tokens,
             )
 
             # Apply meta-planning hints to guide decomposition strategy
@@ -401,12 +508,20 @@ class PMAdapter(
                     context=context,
                 )
             else:
-                response = await self._call_role_llm(message, context={"mode": "pm_task_contract"})
+                response = await self._call_role_llm(message, context=dispatch_context("pm_task_contract"))
                 raw_output = self._response_text(response)
+                generation_diagnostic = self._record_pm_generation_outcome(
+                    response,
+                    raw_output,
+                    planning_context,
+                    quality_signals,
+                )
+                contract_diagnostics: list[dict[str, Any]] = []
                 contracts = self._extract_task_contracts(
                     raw_output,
                     directive=directive,
                     projection_hint=projection_hint,
+                    diagnostics=contract_diagnostics,
                 )
                 if contracts:
                     normalized_contracts, quality = self._evaluate_contract_quality(
@@ -415,29 +530,123 @@ class PMAdapter(
                         context=context,
                     )
                 else:
+                    quality = {
+                        "ok": False,
+                        "score": 0,
+                        "critical_issues": [str(item["code"]) for item in contract_diagnostics]
+                        or ["pm_contracts_missing"],
+                        "warnings": [],
+                        "summary": "; ".join(str(item["message"]) for item in contract_diagnostics)
+                        or "pm_contracts_missing",
+                        "contract_diagnostics": contract_diagnostics,
+                    }
                     quality_signals.append(
                         {
                             "code": "pm.contracts.unparseable_first_attempt",
                             "severity": "warning",
                             "detail": "PM first attempt returned no parseable task contracts",
+                            "contract_diagnostics": contract_diagnostics,
                         }
                     )
 
             if not using_deterministic_contracts and (
                 (not contracts) or (not quality.get("ok", False) or int(quality.get("score") or 0) < 80)
             ):
+                first_critical = quality.get("critical_issues")
+                quality_signals.append(
+                    {
+                        "code": "pm.contracts.quality_revision",
+                        "severity": "warning",
+                        "detail": "PM first attempt requires the existing bounded quality revision",
+                        "score": int(quality.get("score") or 0),
+                        "critical_issues": [str(item) for item in first_critical[:8]]
+                        if isinstance(first_critical, list)
+                        else [],
+                        "parsed_task_count": len(contracts),
+                        "contract_diagnostics": quality.get("contract_diagnostics", []),
+                    }
+                )
+                revision_base = make_revision_base(
+                    raw_output,
+                    workspace=self.workspace,
+                    run_id=planning_context.get("run_id"),
+                    task_id=task_id,
+                    directive=directive,
+                    quality=quality,
+                    projection_hint=projection_hint,
+                )
+                if revision_base is not None:
+                    base_evidence = {
+                        "schema_version": "pm.task_revision_base.v1",
+                        "base_hash": revision_base.base_hash,
+                        "identity": revision_base.identity,
+                        "base": {"tasks": revision_base.tasks},
+                        "original_response": revision_base.response,
+                        "original_response_hash": content_hash(revision_base.response),
+                        "view": revision_base.view,
+                        "execution_qualified": False,
+                    }
+                    base_text = canonical_json(base_evidence)
+                    base_path = Path(
+                        resolve_runtime_path(
+                            self.workspace,
+                            f"runtime/signals/pm_revision/{revision_base.base_hash}.base.json",
+                        )
+                    )
+                    write_text_atomic(base_path, base_text, encoding="utf-8")
+                    quality_signals.append(
+                        {
+                            "code": "pm.contracts.revision_base",
+                            "severity": "info",
+                            "detail": "Immutable original candidate retained before the one correction request; no execution authority.",
+                            "base_hash": revision_base.base_hash,
+                            "artifact_hash": content_hash(base_text),
+                            "artifact_path": str(base_path),
+                            "identity": revision_base.identity,
+                            "original_response_hash": base_evidence["original_response_hash"],
+                        }
+                    )
                 retry_prompt = self._build_pm_retry_message(
                     directive=directive,
                     quality=quality,
                     previous_output=raw_output,
+                    validated_candidate=bool(contracts),
                     projection_hint=projection_hint,
+                    revision_base=revision_base,
+                    output_budget_tokens=output_budget_tokens,
+                    generation_diagnostic=generation_diagnostic,
+                    directive_analysis=directive_analysis,
                 )
-                response = await self._call_role_llm(retry_prompt, context={"mode": "pm_task_contract_retry"})
+                response = await self._call_role_llm(retry_prompt, context=dispatch_context("pm_task_contract_retry"))
                 retry_output = self._response_text(response)
-                contracts = self._extract_task_contracts(
-                    retry_output,
-                    directive=directive,
-                    projection_hint=projection_hint,
+                self._record_pm_generation_outcome(response, retry_output, planning_context, quality_signals)
+                contract_diagnostics = []
+                raw_merged_candidate: dict[str, Any] | None = None
+                candidate_output = retry_output
+                if revision_base is not None:
+                    try:
+                        raw_merged_candidate = apply_revision(revision_base, retry_output)
+                        candidate_output = canonical_json(raw_merged_candidate)
+                    except (_PMContractError, ValueError) as exc:
+                        contract_diagnostics.append(
+                            exc.diagnostic
+                            if isinstance(exc, _PMContractError)
+                            else {
+                                "code": "pm_revision_invalid",
+                                "path": "$",
+                                "message": str(exc),
+                            }
+                        )
+                        candidate_output = ""
+                contracts = (
+                    self._extract_task_contracts(
+                        candidate_output,
+                        directive=directive,
+                        projection_hint=projection_hint,
+                        diagnostics=contract_diagnostics,
+                    )
+                    if candidate_output
+                    else []
                 )
                 if contracts:
                     normalized_contracts, quality = self._evaluate_contract_quality(
@@ -445,91 +654,93 @@ class PMAdapter(
                         directive=directive,
                         context=context,
                     )
+                    if revision_base is not None:
+                        dependency_result = self._validate_task_contracts(normalized_contracts)
+                        if not dependency_result.is_valid:
+                            quality = {
+                                **quality,
+                                "ok": False,
+                                "score": 0,
+                                "critical_issues": [
+                                    *quality.get("critical_issues", []),
+                                    "pm_revision_dependencies_invalid",
+                                ],
+                            }
                 else:
                     quality_signals.append(
                         {
                             "code": "pm.contracts.unparseable_after_retry",
                             "severity": "error",
                             "detail": "PM retry still returned no parseable task contracts",
+                            "contract_diagnostics": contract_diagnostics,
                         }
                     )
-                    synthesized_contracts = self._synthesize_task_contracts_from_directive(
-                        directive=directive,
-                        projection_hint=projection_hint,
+                    normalized_contracts = []
+                    quality = {
+                        "ok": False,
+                        "score": 0,
+                        "critical_issues": [str(item["code"]) for item in contract_diagnostics]
+                        or ["pm_contracts_unparseable_after_retry"],
+                        "warnings": [],
+                        "summary": "; ".join(str(item["message"]) for item in contract_diagnostics)
+                        or "pm_contracts_unparseable_after_retry",
+                        "contract_diagnostics": contract_diagnostics,
+                    }
+                if revision_base is not None:
+                    derivation = revision_derivation(
+                        revision_base,
+                        retry_output,
+                        raw_merged_candidate=raw_merged_candidate,
+                        normalized_plan=normalized_contracts,
+                        quality=quality,
                     )
-                    if synthesized_contracts:
-                        normalized_contracts, quality = self._evaluate_contract_quality(
-                            synthesized_contracts,
-                            directive=directive,
-                            context=context,
+                    derivation_text = canonical_json(derivation)
+                    derivation_hash = content_hash(derivation_text)
+                    derivation_path = Path(
+                        resolve_runtime_path(
+                            self.workspace,
+                            f"runtime/signals/pm_revision/{derivation_hash}.json",
                         )
-                        quality_signals.append(
-                            {
-                                "code": "pm.contracts.synthetic_recovery",
-                                "severity": "warning",
-                                "detail": (
-                                    "PM outputs remained unparseable after retry; "
-                                    "recovered by deterministic directive-based contracts"
-                                ),
-                            }
-                        )
-                    else:
-                        normalized_contracts = []
-                        quality = {
-                            "ok": False,
-                            "score": 0,
-                            "critical_issues": ["pm_contracts_unparseable_after_retry"],
-                            "warnings": [],
-                            "summary": "pm_contracts_unparseable_after_retry",
+                    )
+                    write_text_atomic(derivation_path, derivation_text, encoding="utf-8")
+                    quality_signals.append(
+                        {
+                            "code": "pm.contracts.revision_derivation",
+                            "severity": "info",
+                            "detail": "Retained model base plus explicit typed edits; raw merge and normalization are separate.",
+                            "artifact_path": str(derivation_path),
+                            "artifact_hash": derivation_hash,
+                            "base_hash": revision_base.base_hash,
+                            "original_response_hash": derivation["original_response_hash"],
+                            "revision_response_hash": derivation["revision_response_hash"],
+                            "raw_merged_candidate_hash": derivation["raw_merged_candidate_hash"],
+                            "normalized_plan_hash": derivation["normalized_plan_hash"],
+                            "identity": revision_base.identity,
+                            "merged_candidate_is_original_provider_response": False,
                         }
+                    )
                 raw_output = f"{raw_output}\n\n[retry]\n{retry_output}"
-
-            if not using_deterministic_contracts and (
-                (not normalized_contracts) or (not quality.get("ok", False) or int(quality.get("score") or 0) < 80)
-            ):
-                synthesized_contracts = self._synthesize_task_contracts_from_directive(
-                    directive=directive,
-                    projection_hint=projection_hint,
-                )
-                if synthesized_contracts:
-                    synthesized_normalized, synthesized_quality = self._evaluate_contract_quality(
-                        synthesized_contracts,
-                        directive=directive,
-                        context=context,
-                    )
-                    if (
-                        synthesized_normalized
-                        and synthesized_quality.get("ok", False)
-                        and int(synthesized_quality.get("score") or 0) >= 80
-                    ):
-                        normalized_contracts = synthesized_normalized
-                        quality = synthesized_quality
-                        quality_signals.append(
-                            {
-                                "code": "pm.contracts.synthetic_quality_recovery",
-                                "severity": "warning",
-                                "detail": (
-                                    "PM LLM contracts failed the execution-readiness gate; "
-                                    "recovered with deterministic directive-based contracts"
-                                ),
-                            }
-                        )
-                    else:
-                        critical_raw = synthesized_quality.get("critical_issues")
-                        quality_signals.append(
-                            {
-                                "code": "pm.contracts.synthetic_recovery_failed_quality",
-                                "severity": "error",
-                                "detail": str(synthesized_quality.get("summary") or "synthetic_quality_failed"),
-                                "critical_issues": [
-                                    str(item) for item in (critical_raw if isinstance(critical_raw, list) else [])[:8]
-                                ],
-                            }
-                        )
 
             score = int(quality.get("score") or 0)
             _raw_critical = quality.get("critical_issues") if isinstance(quality, dict) else None
             critical_issues: list[str] = _raw_critical if isinstance(_raw_critical, list) else []
+            contract_origin = "synthesized_fixture" if using_deterministic_contracts else "provider_planning"
+            real_planning_qualified = bool(
+                not using_deterministic_contracts
+                and normalized_contracts
+                and quality.get("ok") is True
+                and not critical_issues
+                and score >= 80
+            )
+            quality_signals.append(
+                {
+                    "code": "pm.contracts.origin",
+                    "severity": "info",
+                    "detail": "Contract origin and planning qualification are separate from route invocation.",
+                    "contract_origin": contract_origin,
+                    "real_planning_qualified": real_planning_qualified,
+                }
+            )
             if critical_issues or score < 80:
                 quality_signals.append(
                     {
@@ -550,7 +761,7 @@ class PMAdapter(
                     }
                 )
 
-            if critical_issues or not normalized_contracts:
+            if critical_issues or not normalized_contracts or score < 80 or quality.get("ok") is not True:
                 block_reason = (
                     f"PM quality gate blocked execution; score={score}; critical={len(critical_issues)}; "
                     f"tasks={len(normalized_contracts)}"
@@ -561,6 +772,7 @@ class PMAdapter(
                         "severity": "error",
                         "detail": block_reason,
                         "critical_issues": [str(item) for item in critical_issues[:8]],
+                        "contract_diagnostics": quality.get("contract_diagnostics", []),
                     }
                 )
                 plan_path = self._write_plan_artifact(
@@ -608,6 +820,8 @@ class PMAdapter(
                 )
                 return {
                     "success": False,
+                    "contract_origin": contract_origin,
+                    "real_planning_qualified": False,
                     "stage": "pm",
                     "tasks_created": 0,
                     "tasks": [],
@@ -657,6 +871,8 @@ class PMAdapter(
             self._update_task_progress(task_id, "completed")
             return {
                 "success": True,
+                "contract_origin": contract_origin,
+                "real_planning_qualified": real_planning_qualified,
                 "stage": "pm",
                 "tasks_created": len(created_tasks),
                 "tasks": [t.get("subject", "unknown") for t in created_tasks],
@@ -848,6 +1064,8 @@ class PMAdapter(
 
         probe_context: dict[str, Any] = {
             "mode": "pm_task_contract_route_probe",
+            "request_purpose": "route_probe",
+            "real_planning_qualified": False,
             "deterministic_pm_contracts": True,
             "route_audit_probe": True,
             "task_id": normalized_task_id,

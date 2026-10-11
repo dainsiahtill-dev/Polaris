@@ -173,6 +173,7 @@ class FactoryRunAuditBundleResponse(BaseModel):
     control_plane_projection_error: dict[str, Any] | None = None
     exact_run_causal_audit: dict[str, Any] | None = None
     exact_run_causal_audit_error: dict[str, Any] | None = None
+    role_route_qualification: dict[str, Any] | None = None
 
 
 class SessionDeleteResponse(BaseModel):

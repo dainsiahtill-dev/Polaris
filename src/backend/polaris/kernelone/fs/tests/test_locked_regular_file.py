@@ -143,6 +143,256 @@ def _leases(root: Path, *logical_paths: str) -> LockedRegularFileSetV1:
     )
 
 
+def _readonly_acquire(root: Path, *, read_only: bool = True) -> LockedRegularFileSetV1:
+    return LockedRegularFileSetV1.acquire(
+        runtime_root=str(root),
+        storage_identity_token="storage-token",
+        logical_paths=("runtime/events/readonly.jsonl",),
+        platform_lock_root=str(root.parent / "authority"),
+        timeout_seconds=0.15,
+        read_only=read_only,
+    )
+
+
+@pytest.mark.parametrize("alias", [r"runtime\events\readonly.jsonl", " runtime/events/readonly.jsonl "])
+@pytest.mark.parametrize("read_only", [False, True])
+def test_canonical_lock_aliases_revalidate_and_exclude_writers(tmp_path: Path, alias: str, read_only: bool) -> None:
+    root = tmp_path / "runtime"
+    canonical = "runtime/events/readonly.jsonl"
+    with _leases(root, canonical) as writer:
+        writer.lease(canonical).append_bytes(b"existing", fsync_file=True, fsync_parent_on_create=True)
+    with LockedRegularFileSetV1.acquire(
+        runtime_root=str(root),
+        storage_identity_token="storage-token",
+        logical_paths=(alias,),
+        platform_lock_root=str(root.parent / "authority"),
+        read_only=read_only,
+    ) as holder:
+        lease = holder.lease(alias)
+        assert lease is holder.lease(canonical)
+        assert lease.open_existing()
+        assert lease.read_bytes() == b"existing"
+        with pytest.raises(LockedRegularFileError) as error:
+            _readonly_acquire(root, read_only=False)
+        assert error.value.code == "lock_acquisition_timeout"
+        if read_only:
+            with _readonly_acquire(root) as reader:
+                assert reader.lease(canonical).open_existing()
+                assert reader.lease(canonical).read_bytes() == b"existing"
+        else:
+            with pytest.raises(LockedRegularFileError) as error:
+                _readonly_acquire(root)
+            assert error.value.code == "lock_acquisition_timeout"
+    with _readonly_acquire(root, read_only=False) as writer:
+        assert writer.lease(canonical).open_existing()
+
+
+def test_readonly_lease_uses_only_read_descriptors_and_rejects_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "runtime"
+    with _leases(root, "runtime/events/readonly.jsonl") as writer:
+        writer.lease("runtime/events/readonly.jsonl").append_bytes(
+            b"existing", fsync_file=True, fsync_parent_on_create=True
+        )
+    before = {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    original_open = os.open
+
+    def no_write_open(path: str, flags: int, *args: object, **kwargs: object) -> int:
+        if flags & (os.O_RDWR | os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+            raise OSError(errno.EROFS, "read-only filesystem")
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(locked_regular_file.os, "open", no_write_open)
+    with _readonly_acquire(root) as reader:
+        lease = reader.lease("runtime/events/readonly.jsonl")
+        assert lease.open_existing()
+        assert lease.read_bytes() == b"existing"
+        for action in (
+            lambda: lease.open_existing(writable=True),
+            lambda: lease.append_bytes(b"changed", fsync_file=True, fsync_parent_on_create=True),
+            reader.detach_for_inheritance,
+        ):
+            with pytest.raises(LockedRegularFileError, match="read-only") as error:
+                action()
+            assert error.value.code == "read_only_lease"
+        assert lease.read_bytes() == b"existing"
+    assert {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+
+def test_readonly_interprocess_readers_exclude_writer_and_writer_excludes_reader(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    with _leases(root, "runtime/events/readonly.jsonl"):
+        pass
+
+    def probe(mode: bool, want: str) -> None:
+        code = """
+import sys
+from polaris.kernelone.fs.locked_regular_file import LockedRegularFileSetV1, LockedRegularFileError
+try:
+    with LockedRegularFileSetV1.acquire(runtime_root=sys.argv[1], storage_identity_token="storage-token", logical_paths=("runtime/events/readonly.jsonl",), platform_lock_root=sys.argv[2], timeout_seconds=0.15, read_only=sys.argv[3]=="True"):
+        print("acquired", flush=True)
+except LockedRegularFileError as exc:
+    print(exc.code, flush=True)
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(root), str(root.parent / "authority"), str(mode)],
+            env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[4])},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == want
+
+    with _readonly_acquire(root):
+        probe(True, "acquired")
+        probe(False, "lock_acquisition_timeout")
+    with _readonly_acquire(root, read_only=False):
+        probe(True, "lock_acquisition_timeout")
+    probe(False, "acquired")
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "missing_authority",
+        "missing_key",
+        "corrupt_anchor",
+        "anchor_symlink",
+        "key_symlink",
+        "key_hardlink",
+        "key_directory",
+        "realm_drift",
+        "root_drift",
+        "revision_drift",
+    ],
+)
+def test_readonly_authority_rejects_invalid_existing_state_without_writes_or_fd_leaks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str
+) -> None:
+    root = tmp_path / "runtime"
+    if defect != "missing_authority":
+        with _leases(root, "runtime/events/readonly.jsonl"):
+            pass
+        authority = root.parent / "authority" / "storage-token"
+        key = next((authority / "realm").iterdir())
+        anchor = authority / "anchor.lock"
+        if defect == "missing_key":
+            key.unlink()
+        elif defect == "corrupt_anchor":
+            anchor.write_text("{}", encoding="utf-8")
+        elif defect == "anchor_symlink":
+            anchor.rename(authority / "old-anchor")
+            anchor.symlink_to(authority / "old-anchor")
+        elif defect == "key_symlink":
+            key.rename(tmp_path / "old-key")
+            key.symlink_to(tmp_path / "old-key")
+        elif defect == "key_hardlink":
+            os.link(key, tmp_path / "other-key")
+        elif defect == "key_directory":
+            key.unlink()
+            key.mkdir()
+        elif defect == "realm_drift":
+            (authority / "realm").rename(authority / "old-realm")
+            (authority / "realm").mkdir()
+        elif defect == "root_drift":
+            root.rename(tmp_path / "old-runtime")
+            root.mkdir()
+        elif defect == "revision_drift":
+            data = json.loads(anchor.read_text(encoding="utf-8"))
+            data["format_revision"] = "foreign-generation"
+            anchor.write_text(json.dumps(data), encoding="utf-8")
+    before = {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file() and not p.is_symlink()}
+    descriptors = len(os.listdir("/proc/self/fd"))
+    original_open = os.open
+
+    def readonly_open(path, flags, *args, **kwargs):
+        assert not flags & (os.O_RDWR | os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_APPEND)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(locked_regular_file.os, "open", readonly_open)
+    with pytest.raises(LockedRegularFileError):
+        _readonly_acquire(root)
+    assert len(os.listdir("/proc/self/fd")) == descriptors
+    assert {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file() and not p.is_symlink()} == before
+
+
+def test_two_independent_readers_hold_shared_lock_until_both_release(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    with _leases(root, "runtime/events/readonly.jsonl"):
+        pass
+    code = """
+import sys
+from polaris.kernelone.fs.locked_regular_file import LockedRegularFileSetV1
+with LockedRegularFileSetV1.acquire(runtime_root=sys.argv[1], storage_identity_token="storage-token", logical_paths=("runtime/events/readonly.jsonl",), platform_lock_root=sys.argv[2], read_only=True):
+    print("held", flush=True)
+    sys.stdin.readline()
+"""
+    processes = []
+    try:
+        for _ in range(2):
+            process = subprocess.Popen(
+                [sys.executable, "-c", code, str(root), str(root.parent / "authority")],
+                env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[4])},
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+            )
+            processes.append(process)
+            assert process.stdout.readline().strip() == "held"
+        with pytest.raises(LockedRegularFileError, match="deadline"):
+            _readonly_acquire(root, read_only=False)
+        processes[0].communicate("release\n", timeout=5)
+        assert processes[0].returncode == 0
+        with pytest.raises(LockedRegularFileError, match="deadline"):
+            _readonly_acquire(root, read_only=False)
+        processes[1].communicate("release\n", timeout=5)
+        assert processes[1].returncode == 0
+        with _readonly_acquire(root, read_only=False):
+            pass
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+
+
+@pytest.mark.parametrize("entry", ["authority", "realm", "anchor", "key"])
+def test_readonly_rejects_foreign_uid_authority_without_descriptor_leaks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str
+) -> None:
+    root = tmp_path / "runtime"
+    with _leases(root, "runtime/events/readonly.jsonl"):
+        pass
+    authority = root.parent / "authority" / "storage-token"
+    paths = {
+        "authority": authority,
+        "realm": authority / "realm",
+        "anchor": authority / "anchor.lock",
+        "key": next((authority / "realm").iterdir()),
+    }
+    foreign = paths[entry].stat()
+    original_fstat = os.fstat
+
+    def foreign_owner(fd):
+        result = original_fstat(fd)
+        if (result.st_dev, result.st_ino) == (foreign.st_dev, foreign.st_ino):
+            values = list(result)
+            values[4] = result.st_uid + 1
+            return os.stat_result(values)
+        return result
+
+    descriptors = len(os.listdir("/proc/self/fd"))
+    monkeypatch.setattr(locked_regular_file.os, "fstat", foreign_owner)
+    with pytest.raises(LockedRegularFileError, match="owner"):
+        _readonly_acquire(root)
+    assert len(os.listdir("/proc/self/fd")) == descriptors
+
+
 def _hold_realm_then_append(
     root: str,
     ready: multiprocessing.synchronize.Event,

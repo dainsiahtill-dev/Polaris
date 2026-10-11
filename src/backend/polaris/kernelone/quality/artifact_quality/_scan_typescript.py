@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
@@ -50,6 +51,7 @@ from polaris.kernelone.quality.artifact_quality._models import (
 from polaris.kernelone.quality.artifact_quality._syntax import (
     _iter_typescript_return_object_bodies,
 )
+from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
 
 
 def _scan_typescript_tsconfig_evidence(text: str, relative_path: str) -> _FileArtifactQualityEvidence:
@@ -122,6 +124,8 @@ def _scan_typescript_syntax_red_flag_evidence(
     full_path: Path,
     text: str,
     relative_path: str,
+    *,
+    reader: WorkspaceReadSnapshot | None = None,
 ) -> _FileArtifactQualityEvidence:
     """Return TypeScript syntax red flags as strings and direct typed issues."""
 
@@ -186,7 +190,10 @@ def _scan_typescript_syntax_red_flag_evidence(
                     ),
                 ),
             )
-    type_export_error = _typescript_isolated_modules_type_reexport_error(root_full, text)
+    incomplete_reasons: list[str] = []
+    type_export_error = _typescript_isolated_modules_type_reexport_error(
+        root_full, text, reader=reader, incomplete_reasons=incomplete_reasons
+    )
     if type_export_error:
         error = (
             "Artifact quality scan failed: TypeScript isolatedModules requires "
@@ -206,7 +213,7 @@ def _scan_typescript_syntax_red_flag_evidence(
                 ),
             ),
         )
-    return _FileArtifactQualityEvidence()
+    return _FileArtifactQualityEvidence(incomplete_reasons=tuple(incomplete_reasons))
 
 
 def _html_module_script_quality_issue(error: str, relative_path: str, *, src: str) -> ArtifactQualityIssue:
@@ -384,8 +391,14 @@ def _scan_html_typescript_module_script_evidence(
     return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
 
 
-def _typescript_isolated_modules_type_reexport_error(root_full: Path, text: str) -> str:
-    if not _typescript_project_uses_isolated_modules(root_full):
+def _typescript_isolated_modules_type_reexport_error(
+    root_full: Path,
+    text: str,
+    *,
+    reader: WorkspaceReadSnapshot | None = None,
+    incomplete_reasons: list[str] | None = None,
+) -> str:
+    if not _typescript_project_uses_isolated_modules(root_full, reader=reader, incomplete_reasons=incomplete_reasons):
         return ""
     type_names = {str(match.group("name") or "") for match in _TS_TYPE_DECL_RE.finditer(text)}
     if not type_names:
@@ -402,9 +415,20 @@ def _typescript_isolated_modules_type_reexport_error(root_full: Path, text: str)
     return ""
 
 
-def _typescript_project_uses_isolated_modules(root_full: Path) -> bool:
+def _typescript_project_uses_isolated_modules(
+    root_full: Path, *, reader: WorkspaceReadSnapshot | None = None, incomplete_reasons: list[str] | None = None
+) -> bool:
     try:
-        payload = json.loads((root_full / "tsconfig.json").read_text(encoding="utf-8"))
+        if reader is not None:
+            read = reader.read(root_full / "tsconfig.json")
+            if read.status != "readable":
+                if read.status == "unknown" and incomplete_reasons is not None:
+                    incomplete_reasons.append(f"typescript_config_unknown:{read.path}:{read.detail}")
+                return False
+            content = read.text
+        else:
+            content = (root_full / "tsconfig.json").read_text(encoding="utf-8")
+        payload = json.loads(content)
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
         return False
     if not isinstance(payload, dict):
@@ -631,17 +655,28 @@ def _scan_typescript_import_evidence(
     full_path: Path,
     text: str,
     relative_path: str,
+    *,
+    reader: WorkspaceReadSnapshot | None = None,
 ) -> _FileArtifactQualityEvidence:
     """Return TypeScript/JavaScript import findings as strings and typed issues."""
 
     if full_path.suffix.lower() not in _TS_JS_SOURCE_EXTS:
         return _FileArtifactQualityEvidence()
-    declared_dependencies = _declared_package_dependencies(root_full)
+    incomplete_reasons: list[str] = []
+    if reader is not None:
+        _static_typescript_import_coverage(root_full, full_path, text, reader, incomplete_reasons)
+    declared_dependencies = _declared_package_dependencies(
+        root_full, reader=reader, incomplete_reasons=incomplete_reasons
+    )
     errors: list[str] = []
     issues: list[ArtifactQualityIssue] = []
     code_mask = _ts_js_code_mask(text)
     is_typescript = full_path.suffix.lower() in _TS_SOURCE_EXTS
-    has_package_manifest = (root_full / "package.json").is_file()
+    has_package_manifest = (
+        reader.read(root_full / "package.json").status == "readable"
+        if reader is not None
+        else (root_full / "package.json").is_file()
+    )
     node_types_error_added = False
     for match in _IMPORT_SPECIFIER_RE.finditer(text):
         if not _match_starts_in_ts_js_code(code_mask, match.start()):
@@ -650,7 +685,9 @@ def _scan_typescript_import_evidence(
         if not specifier:
             continue
         if specifier.startswith((".", "/")):
-            if not _relative_import_exists(root_full, full_path, specifier):
+            if not _relative_import_exists(
+                root_full, full_path, specifier, reader=reader, incomplete_reasons=incomplete_reasons
+            ):
                 error = f"Artifact quality scan failed: unresolved relative import {specifier!r} in {relative_path}"
                 errors.append(error)
                 issues.append(
@@ -719,16 +756,31 @@ def _scan_typescript_import_evidence(
             text,
             relative_path,
             code_mask=code_mask,
+            reader=reader,
         )
         errors.extend(symbol_coherence_evidence.errors)
         issues.extend(symbol_coherence_evidence.issues)
-    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
+        incomplete_reasons.extend(symbol_coherence_evidence.incomplete_reasons)
+    return _FileArtifactQualityEvidence(
+        errors=tuple(errors), issues=tuple(issues), incomplete_reasons=tuple(incomplete_reasons)
+    )
 
 
-def _declared_package_dependencies(root_full: Path) -> set[str]:
+def _declared_package_dependencies(
+    root_full: Path, *, reader: WorkspaceReadSnapshot | None = None, incomplete_reasons: list[str] | None = None
+) -> set[str]:
     package_path = root_full / "package.json"
     try:
-        payload = json.loads(package_path.read_text(encoding="utf-8"))
+        if reader is not None:
+            read = reader.read(package_path)
+            if read.status != "readable":
+                if read.status == "unknown" and incomplete_reasons is not None:
+                    incomplete_reasons.append(f"import_package_unknown:{read.path}:{read.detail}")
+                return set()
+            content = read.text
+        else:
+            content = package_path.read_text(encoding="utf-8")
+        payload = json.loads(content)
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
         return set()
     if not isinstance(payload, dict):
@@ -752,7 +804,21 @@ def _node_types_declared(declared_dependencies: set[str]) -> bool:
     return "@types/node" in declared_dependencies
 
 
-def _relative_import_exists(root_full: Path, importer_path: Path, specifier: str) -> bool:
+def _relative_import_exists(
+    root_full: Path,
+    importer_path: Path,
+    specifier: str,
+    *,
+    reader: WorkspaceReadSnapshot | None = None,
+    incomplete_reasons: list[str] | None = None,
+) -> bool:
+    if reader is not None:
+        return (
+            _resolve_typescript_module_file(
+                root_full, importer_path, specifier, reader=reader, incomplete_reasons=incomplete_reasons
+            )
+            is not None
+        )
     base = (
         (importer_path.parent / specifier).resolve() if specifier.startswith(".") else (root_full / specifier).resolve()
     )
@@ -916,9 +982,30 @@ def _typescript_module_exports(text: str) -> set[str] | None:
     return exports
 
 
-def _resolve_typescript_module_file(root_full: Path, importer_path: Path, specifier: str) -> Path | None:
+def _resolve_typescript_module_file(
+    root_full: Path,
+    importer_path: Path,
+    specifier: str,
+    *,
+    reader: WorkspaceReadSnapshot | None = None,
+    incomplete_reasons: list[str] | None = None,
+) -> Path | None:
     """Resolve a RELATIVE TS/JS import specifier to its single sibling file."""
     if not specifier.startswith("."):
+        return None
+    if reader is not None:
+        base = importer_path.parent / specifier
+        for candidate in _relative_import_candidates(base):
+            try:
+                full, witness = reader.confined_path(candidate)
+                if witness is not None and stat.S_ISREG(witness.st_mode):
+                    return full
+            except (OSError, RuntimeError, ValueError) as exc:
+                if incomplete_reasons is not None:
+                    incomplete_reasons.append(f"import_path_unknown:{candidate}:{type(exc).__name__}:{exc}")
+                return None
+        if incomplete_reasons is not None:
+            incomplete_reasons.append(f"import_target_missing:{importer_path}:{specifier}")
         return None
     base = (importer_path.parent / specifier).resolve()
     try:
@@ -935,7 +1022,23 @@ def _resolve_typescript_module_file(root_full: Path, importer_path: Path, specif
     return None
 
 
-def _read_typescript_module_exports(module_file: Path) -> set[str] | None:
+def _read_typescript_module_exports(
+    module_file: Path, *, reader: WorkspaceReadSnapshot | None = None, incomplete_reasons: list[str] | None = None
+) -> set[str] | None:
+    if reader is not None:
+        read = reader.read(module_file)
+        if read.status != "readable":
+            if incomplete_reasons is not None:
+                incomplete_reasons.append(f"import_content_unknown:{read.path}:{read.detail}")
+            return None
+        if len(read.text.encode("utf-8")) > _TS_MODULE_READ_CAP_BYTES:
+            if incomplete_reasons is not None:
+                incomplete_reasons.append(f"import_content_truncated:{read.path}")
+            return None
+        surface = _typescript_module_exports(read.text)
+        if surface is None and incomplete_reasons is not None:
+            incomplete_reasons.append(f"import_export_surface_unknown:{read.path}")
+        return surface
     try:
         if module_file.stat().st_size > _TS_MODULE_READ_CAP_BYTES:
             return None
@@ -984,6 +1087,7 @@ def _scan_typescript_symbol_coherence_evidence(
     relative_path: str,
     *,
     code_mask: list[bool] | None = None,
+    reader: WorkspaceReadSnapshot | None = None,
 ) -> _FileArtifactQualityEvidence:
     """Flag named imports of a resolvable relative sibling that the sibling never
     exports — the TS/JS analogue of the Python symbol-coherence check. Conservative
@@ -993,6 +1097,7 @@ def _scan_typescript_symbol_coherence_evidence(
     """
     errors: list[str] = []
     issues: list[ArtifactQualityIssue] = []
+    incomplete_reasons: list[str] = []
     seen: set[tuple[str, str]] = set()
     exports_cache: dict[Path, set[str] | None] = {}
     mask = code_mask if code_mask is not None else _ts_js_code_mask(text)
@@ -1007,11 +1112,15 @@ def _scan_typescript_symbol_coherence_evidence(
         imported = _parse_ts_clause_names(match.group("names"), for_export=False)
         if not imported:
             continue
-        module_file = _resolve_typescript_module_file(root_full, full_path, specifier)
+        module_file = _resolve_typescript_module_file(
+            root_full, full_path, specifier, reader=reader, incomplete_reasons=incomplete_reasons
+        )
         if module_file is None:
             continue
         if module_file not in exports_cache:
-            exports_cache[module_file] = _read_typescript_module_exports(module_file)
+            exports_cache[module_file] = _read_typescript_module_exports(
+                module_file, reader=reader, incomplete_reasons=incomplete_reasons
+            )
         surface = exports_cache[module_file]
         if surface is None:
             continue
@@ -1037,4 +1146,41 @@ def _scan_typescript_symbol_coherence_evidence(
                     root_full=root_full,
                 )
             )
-    return _FileArtifactQualityEvidence(errors=tuple(errors), issues=tuple(issues))
+    return _FileArtifactQualityEvidence(
+        errors=tuple(errors), issues=tuple(issues), incomplete_reasons=tuple(incomplete_reasons)
+    )
+
+
+def _static_typescript_import_coverage(
+    root_full: Path, full_path: Path, text: str, reader: WorkspaceReadSnapshot, incomplete_reasons: list[str]
+) -> None:
+    """Visit relative import/export reads without trusting entry scope as a grant."""
+    visited: set[Path] = set()
+    pending = [(full_path, text)]
+    while pending:
+        importer, content = pending.pop()
+        if importer in visited:
+            continue
+        visited.add(importer)
+        mask = _ts_js_code_mask(content)
+        for match in _IMPORT_SPECIFIER_RE.finditer(content):
+            if not _match_starts_in_ts_js_code(mask, match.start()):
+                continue
+            specifier = str(match.group(1) or "").strip()
+            if not specifier.startswith((".", "/")):
+                continue
+            module = _resolve_typescript_module_file(
+                root_full, importer, specifier, reader=reader, incomplete_reasons=incomplete_reasons
+            )
+            if module is None:
+                continue
+            read = reader.read(module)
+            if read.status != "readable":
+                incomplete_reasons.append(f"import_content_unknown:{module}:{read.detail}")
+                continue
+            if len(read.text.encode("utf-8")) > _TS_MODULE_READ_CAP_BYTES:
+                incomplete_reasons.append(f"import_content_truncated:{module}")
+                continue
+            if _typescript_module_exports(read.text) is None:
+                incomplete_reasons.append(f"import_export_surface_unknown:{module}")
+            pending.append((module, read.text))

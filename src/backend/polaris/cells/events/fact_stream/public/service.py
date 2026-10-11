@@ -255,7 +255,16 @@ def append_fact_event(command: AppendFactEventCommandV1) -> FactEventAppendedV1:
     idempotency_key = str(command.idempotency_key or "").strip()
     store: JsonlEventStore | None = None
     try:
-        store = JsonlEventStore(command.workspace)
+        store = JsonlEventStore(
+            command.workspace,
+            # TaskRuntime's existing compatibility append contract preserves
+            # undigested resume history, while its new typed facts must be
+            # strict-readable. Other non-strict producers retain their explicit
+            # diagnostic-only semantics; no global historical upgrade occurs.
+            validate_legacy_history=(
+                command.stream == "task_runtime.execution" and command.source == "runtime.task_runtime"
+            ),
+        )
         effective_run_id, effective_task_id = _resolve_provenance_envelope(
             command=command,
             workspace_abs=store.storage_identity.workspace_abs,
@@ -349,8 +358,8 @@ def _find_existing_idempotent_event(
 def _query_failure_storage_observation(query: QueryFactEventsV1) -> dict[str, Any]:
     """Bounded read-only leaf evidence; never enroll or authorize a stream."""
     try:
-        logical = JsonlEventStore(query.workspace).stream_logical_path(query.stream)
-        physical = Path(resolve_runtime_path(query.workspace, logical))
+        logical = JsonlEventStore(query.workspace, read_only=True).stream_logical_path(query.stream)
+        physical = Path(resolve_runtime_path(query.workspace, logical, read_only=True))
         try:
             read_guarded_regular_file_snapshot(physical.parent, physical.name, 1)
         except GuardedRegularFileSnapshotError as exc:
@@ -369,7 +378,7 @@ def query_fact_events(query: QueryFactEventsV1) -> FactStreamQueryResultV1:
     """Query canonical fact events with pagination and optional filters."""
     _reject_ordinary_segmented_stream(query.stream)
     try:
-        store = JsonlEventStore(query.workspace)
+        store = JsonlEventStore(query.workspace, read_only=True)
         result = store.query(
             stream=query.stream,
             limit=query.limit,
@@ -413,7 +422,7 @@ def query_fact_stream_head(query: QueryFactStreamHeadV1) -> FactStreamHeadV1:
     _reject_ordinary_segmented_stream(query.stream)
 
     try:
-        store = JsonlEventStore(query.workspace)
+        store = JsonlEventStore(query.workspace, read_only=True)
         current_seq = store.current_seq(query.stream, strict_integrity=query.strict_integrity)
     except (ValueError, EventSourcingError) as exc:
         raise FactStreamError(
@@ -435,13 +444,16 @@ def query_fact_stream_head(query: QueryFactStreamHeadV1) -> FactStreamHeadV1:
     )
 
 
-def _segmented_authority_store(workspace: str, *, logical_stream: str) -> SegmentedJsonlEventStore:
+def _segmented_authority_store(
+    workspace: str, *, logical_stream: str, read_only: bool = False
+) -> SegmentedJsonlEventStore:
     """Build a segmented store with an authority-grade lock acquisition budget."""
 
     return SegmentedJsonlEventStore(
         workspace,
         logical_stream=logical_stream,
         lock_timeout_seconds=_SEGMENTED_AUTHORITY_LOCK_TIMEOUT_SECONDS,
+        read_only=read_only,
     )
 
 
@@ -509,7 +521,7 @@ def query_segmented_fact_ledger_head(
     query: QuerySegmentedFactLedgerHeadV1,
 ) -> SegmentedFactLedgerHeadV1:
     _require_segmented_authority_stream(query.logical_stream)
-    store = _segmented_authority_store(query.workspace, logical_stream=query.logical_stream)
+    store = _segmented_authority_store(query.workspace, logical_stream=query.logical_stream, read_only=True)
     try:
         head = store.head(strict_integrity=query.strict_integrity)
     except (LockedRegularFileError, SegmentedEventStoreError, ValueError) as exc:
@@ -521,7 +533,7 @@ def query_segmented_fact_events(
     query: QuerySegmentedFactEventsV1,
 ) -> SegmentedFactQueryResultV1:
     _require_segmented_authority_stream(query.logical_stream)
-    store = _segmented_authority_store(query.workspace, logical_stream=query.logical_stream)
+    store = _segmented_authority_store(query.workspace, logical_stream=query.logical_stream, read_only=True)
     try:
         result = store.query(
             limit=query.limit,

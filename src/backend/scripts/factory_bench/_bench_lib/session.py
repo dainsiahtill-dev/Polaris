@@ -18,6 +18,7 @@ def _pull_namespace(module: object) -> None:
         g[key] = value
 
 
+from scripts.factory_bench import factory_http_client as _supervisor_http
 from scripts.factory_bench._bench_lib import artifacts as _artifacts
 
 _pull_namespace(_artifacts)
@@ -993,6 +994,161 @@ def _wait_backend_health(backend_url: str, token: str, *, timeout_s: float = 45.
     return False
 
 
+def _validate_launcher_supervisor_url(url: str) -> str:
+    """Accept only an explicit credential-free loopback HTTP(S) origin."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname or ""
+        loopback = host == "localhost" or ipaddress.ip_address(host).is_loopback
+        port = parsed.port
+    except ValueError:
+        raise ValueError("Supervisor URL must be a loopback HTTP(S) origin") from None
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not loopback
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or (port is not None and port <= 0)
+    ):
+        raise ValueError("Supervisor URL must be a credential-free loopback HTTP(S) origin")
+    return url.rstrip("/")
+
+
+def _launcher_supervisor_token() -> str:
+    token = os.environ.get("POLARIS_LAUNCHER_SUPERVISOR_TOKEN", "").strip()
+    if not token or any(char in token for char in "\r\n"):
+        raise ValueError("POLARIS_LAUNCHER_SUPERVISOR_TOKEN must contain a valid explicit credential")
+    return token
+
+
+class _NativeSupervisorTransportError(RuntimeError):
+    def __init__(self, error: str, evidence: Mapping[str, Any] | None = None) -> None:
+        super().__init__(error)
+        self.evidence = dict(evidence or {"code": error})
+
+
+class _RemoteBenchInstanceSupervisor:
+    """Use the authenticated product owner; never spawn from the Bench process."""
+
+    def __init__(self, url: str, instance_id: str) -> None:
+        from polaris.cells.instances.public.service import normalize_instance_id
+
+        self.url = _validate_launcher_supervisor_url(url)
+        self._token = _launcher_supervisor_token()
+        if not instance_id or instance_id == "main" or instance_id != normalize_instance_id(instance_id):
+            raise _NativeSupervisorTransportError("native_supervisor_start_identity_rejected")
+        self._instance_id = instance_id
+
+    def _request(self, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        options = {"token": self._token, "max_retries": 0, "return_errors": True, "strict_transport": True}
+        if body is None:
+            response = _supervisor_http._http_get_json(self.url + path, **options)
+        else:
+            # The native Supervisor performs backend/frontend identity waits.
+            # This command is single-attempt; an uncertain start is never replayed.
+            response = _supervisor_http._http_post_json(self.url + path, body, timeout_s=180.0, **options)
+        if not isinstance(response, dict):
+            raise _NativeSupervisorTransportError("native_supervisor_invalid_response")
+        if "_http_error" in response:
+            evidence = response["_http_error"]
+            if not isinstance(evidence, dict):
+                raise self._response_error("native_supervisor_invalid_error_response", response)
+            raise _NativeSupervisorTransportError(
+                "native_supervisor_request_failed", _supervisor_http._redact_http_error(evidence, self._token)
+            )
+        return response
+
+    def list_instances(self) -> list[dict[str, Any]]:
+        response = self._request("/v2/instances")
+        instances = response.get("instances")
+        if not isinstance(instances, list) or any(not isinstance(item, dict) for item in instances):
+            raise self._response_error("native_supervisor_registry_not_available", response)
+        return instances
+
+    def _response_error(self, error: str, response: Mapping[str, Any]) -> _NativeSupervisorTransportError:
+        return _NativeSupervisorTransportError(
+            error,
+            _supervisor_http._redact_http_error(
+                {
+                    "status": 200,
+                    "reason": error,
+                    "json": dict(response),
+                },
+                self._token,
+            ),
+        )
+
+    def stop_instance(self, instance_id: str) -> dict[str, Any]:
+        from urllib.parse import quote
+
+        from polaris.cells.instances.public.service import normalize_instance_id
+
+        if (
+            not instance_id
+            or instance_id != normalize_instance_id(instance_id)
+            or instance_id in {"main", self._instance_id}
+        ):
+            raise _NativeSupervisorTransportError("native_supervisor_stop_identity_rejected")
+        response = self._request(f"/v2/instances/{quote(instance_id, safe='')}/stop", {})
+        instance = response.get("instance")
+        if (
+            not isinstance(instance, dict)
+            or instance.get("instance_id") != instance_id
+            or instance.get("status") != "stopped"
+        ):
+            raise self._response_error("native_supervisor_stop_not_confirmed", response)
+        return instance
+
+    def start_instance(self, request: dict[str, Any]) -> dict[str, Any]:
+        if request.get("instance_id") != self._instance_id:
+            raise _NativeSupervisorTransportError("native_supervisor_start_identity_rejected")
+        response = self._request("/v2/instances/start", request)
+        instance = response.get("instance")
+        if not isinstance(instance, dict):
+            raise self._response_error("native_supervisor_instance_missing", response)
+        # A successful HTTP status is transport evidence, not launch identity.
+        for field in ("instance_id", "kind", "workspace", "runtime_root", "polaris_root"):
+            if instance.get(field) != request.get(field):
+                raise self._response_error(f"native_supervisor_{field}_mismatch", response)
+        metadata = instance.get("metadata")
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("instance_launch_receipt") != request["metadata"]["instance_launch_receipt"]
+        ):
+            raise self._response_error("native_supervisor_launch_receipt_mismatch", response)
+        if (
+            metadata.get("internal_test_only") is not True
+            or metadata.get("backend_binding") != "isolated_backend_instance"
+        ):
+            raise self._response_error("native_supervisor_metadata_mismatch", response)
+        token = instance.get("token")
+        if not isinstance(token, str) or not token.strip() or token == self._token:
+            raise self._response_error("native_supervisor_project_token_missing_or_shared", response)
+        from urllib.parse import urlsplit
+
+        for kind, reserved_port in (("backend", 49977), ("frontend", 5173)):
+            try:
+                url = _validate_launcher_supervisor_url(str(instance.get(f"{kind}_url") or ""))
+                port = urlsplit(url).port
+            except ValueError:
+                raise self._response_error(f"native_supervisor_{kind}_url_invalid", response) from None
+            observed_port = instance.get(f"{kind}_port")
+            if (
+                not isinstance(observed_port, int)
+                or isinstance(observed_port, bool)
+                or port != observed_port
+                or observed_port <= reserved_port
+            ):
+                raise self._response_error(f"native_supervisor_{kind}_port_mismatch", response)
+        return instance
+
+
 def _start_isolated_bench_project_instance(
     *,
     bench_session_id: str,
@@ -1003,6 +1159,7 @@ def _start_isolated_bench_project_instance(
     project_workspace: str,
     backend_token: str,
     launch_receipt: Mapping[str, Any] | None = None,
+    launcher_supervisor_url: str = "",
 ) -> dict[str, Any] | None:
     """Start a project-scoped Polaris instance for internal factory_bench runs."""
     try:
@@ -1033,13 +1190,17 @@ def _start_isolated_bench_project_instance(
             raise RuntimeError(
                 f"isolated launch receipt source root mismatch: runner={_BACKEND_ROOT} receipt={receipt_backend_root}"
             )
-        polaris_root = default_polaris_root()
+        polaris_root = _REPO_ROOT if launcher_supervisor_url else default_polaris_root()
         supervisor_backend_root = resolve_backend_source_root(polaris_root / "src" / "backend")
         if supervisor_backend_root != _BACKEND_ROOT:
             raise RuntimeError(
                 f"instance supervisor source root mismatch: runner={_BACKEND_ROOT} supervisor={supervisor_backend_root}"
             )
-        supervisor = InstanceSupervisor()
+        supervisor = (
+            _RemoteBenchInstanceSupervisor(launcher_supervisor_url, str(receipt.get("instance_id") or ""))
+            if launcher_supervisor_url
+            else InstanceSupervisor()
+        )
         stopped_predecessors: list[str] = []
         source_run_id = str(receipt.get("workspace_source_run_id") or "").strip()
         attempt_run_id = str(receipt.get("run_id") or "").strip()
@@ -1052,7 +1213,7 @@ def _start_isolated_bench_project_instance(
                 if not isinstance(prior, Mapping):
                     continue
                 prior_id = str(prior.get("instance_id") or "").strip()
-                if not prior_id or prior_id == str(receipt.get("instance_id") or ""):
+                if not prior_id or prior_id == "main" or prior_id == str(receipt.get("instance_id") or ""):
                     continue
                 if str(prior.get("kind") or "") != "bench_project":
                     continue
@@ -1113,6 +1274,15 @@ def _start_isolated_bench_project_instance(
                 },
             }
         )
+    except _NativeSupervisorTransportError as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "failure_class": "platform_failure",
+            "error_type": type(exc).__name__,
+            "error_detail": str(exc),
+            "platform_error": exc.evidence,
+        }
     except InstanceRegistryError as exc:
         _logger.error("factory bench isolated instance registry unavailable: %s", exc)
         return {
@@ -1141,6 +1311,13 @@ def _start_isolated_bench_project_instance(
             "error_detail": "Instance Supervisor did not return a per-instance token",
         }
     if not _wait_backend_health(str(instance.get("backend_url") or ""), instance_token):
+        if launcher_supervisor_url:
+            return {
+                "ok": False,
+                "error": "native_supervisor_project_health_unconfirmed",
+                "instance_id": instance.get("instance_id"),
+                "launch_receipt": receipt,
+            }
         metadata = instance.get("metadata")
         if isinstance(metadata, dict):
             metadata["backend_health"] = "starting"

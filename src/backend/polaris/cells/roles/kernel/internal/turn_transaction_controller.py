@@ -1438,6 +1438,22 @@ class TurnTransactionController:
                 result["llm_response_metadata"] = dict(raw_metadata)
                 break
 
+        # Other legacy evidence retains its historical selection. This atomic
+        # object belongs only to the actual last call, including missing rows.
+        from polaris.cells.roles.kernel.public.generation_outcome import RoleGenerationOutcomeV1
+
+        response_metadata = result.get("llm_response_metadata", {})
+        response_metadata.pop("generation_outcome", None)
+        if ledger.llm_calls:
+            last_call = ledger.llm_calls[-1]
+            last_metadata = last_call.get("metadata") if isinstance(last_call, dict) else None
+            outcome = RoleGenerationOutcomeV1.from_payload(
+                last_metadata.get("generation_outcome") if isinstance(last_metadata, dict) else None
+            )
+            if outcome is not None:
+                response_metadata["generation_outcome"] = outcome.to_payload()
+                result["llm_response_metadata"] = response_metadata
+
         # Expose the full ledger so callers can commit it to the ContextOS snapshot
         result["ledger"] = ledger
 

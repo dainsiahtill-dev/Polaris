@@ -19,6 +19,7 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from collections.abc import Mapping, Sequence
@@ -31,6 +32,7 @@ from polaris.kernelone.context.cache_stability import (
     get_prefix_drift_observer,
 )
 from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
+from polaris.kernelone.errors import BudgetExceededError
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,66 @@ class GatewayTelemetry:
         if not run_dir or not os.path.isdir(run_dir):
             return ""
         return os.path.join(run_dir, "events", "runtime.events.jsonl")
+
+    def emit_budget_exceeded_observation(
+        self,
+        request: ContextRequest,
+        *,
+        error: BudgetExceededError,
+        preparation_stage: str,
+        enforcement_budget_tokens: int,
+        system_prompt_tokens: int,
+        system_prompt: str | None,
+        role_policy_limit_tokens: int,
+        model_window_tokens: int | None,
+        remaining_current_tokens: int | None = None,
+        current_instruction_tokens: int | None = None,
+        sanitized_current: str | None = None,
+    ) -> None:
+        """Best-effort preflight diagnostics, never a ContextPack or receipt.
+
+        Only explicit producer-owned operands and fingerprints enter the
+        existing local observation sink. All observer failures are isolated
+        from the original typed admission error; no request/config/error dump.
+        """
+        try:
+            events_path = self.resolve_run_events_path(request)
+            if not events_path:
+                return
+            output: dict[str, Any] = {
+                "preparation_stage": preparation_stage,
+                "error_code": error.code,
+                "limit": error.limit,
+                "requested": error.requested,
+                "current": error.current,
+                "enforcement_budget_tokens": enforcement_budget_tokens,
+                "system_prompt_tokens": system_prompt_tokens,
+                "role_policy_limit_tokens": role_policy_limit_tokens,
+            }
+            if model_window_tokens is not None:
+                output["model_window_tokens"] = model_window_tokens
+            if remaining_current_tokens is not None:
+                output["remaining_current_tokens"] = remaining_current_tokens
+            if current_instruction_tokens is not None:
+                output["current_instruction_tokens"] = current_instruction_tokens
+            texts = {"raw_current": str(request.message or ""), "system_prompt": str(system_prompt or "")}
+            if sanitized_current is not None:
+                texts["sanitized_current"] = sanitized_current
+            for name, text in texts.items():
+                output[f"{name}_chars"] = len(text)
+                output[f"{name}_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            _gateway_module().emit_event(
+                events_path,
+                kind="observation",
+                actor="System",
+                name="context.budget_exceeded",
+                ok=False,
+                refs={"run_id": request.run_id, "role": self._role_id, "task_id": request.task_id},
+                summary="Context admission refused: budget exceeded",
+                output=output,
+            )
+        except Exception:  # noqa: BLE001 -- diagnostics must preserve the original admission exception
+            logger.debug("context.budget_exceeded observation failed")
 
     def emit_context_build_observation(
         self,

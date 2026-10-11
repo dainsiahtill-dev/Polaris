@@ -55,6 +55,24 @@ _PM_CONTRACT_HASH = "a" * 64
 _VERIFIER_POLICY_HASH = "b" * 64
 
 
+def test_pol77_portfolio_binds_optional_read_and_generated_contract_and_preserves_empty_hash() -> None:
+    from polaris.cells.orchestration.pm_planning.public.artifact_contracts import GeneratedOutputV1
+
+    base = ChiefEngineerPortfolioTaskV1(task_id="build", objective="Compile", target_files=("src/main.ts",))
+    output = GeneratedOutputV1("dist/main.js", (("build", "src/main.ts"),), ("npm", "run", "build"), ".")
+    extended = ChiefEngineerPortfolioTaskV1(task_id="build", objective="Compile", target_files=("src/main.ts",),
+                                           context_files=("package.json",), generated_outputs=(output,))
+    assert "context_files" not in base.to_dict()
+    assert "generated_outputs" not in base.to_dict()
+    assert extended.to_dict()["generated_outputs"] == [output.to_dict()]
+    assert stable_hash(base.to_dict()) != stable_hash(extended.to_dict())
+    assert extended != base
+    with pytest.raises(ValueError, match="entrypoint_targets"):
+        ChiefEngineerPortfolioTaskV1(task_id="build", objective="Compile", target_files=("src/main.ts",),
+                                     generated_outputs=(output,), entrypoint_targets=("dist/main.js",))
+
+
+
 def _command_authority(
     task_id: str,
     modality: str,

@@ -13,6 +13,8 @@ from ..javascript_syntax import repair_javascript_export_contract_placeholders
 from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
 from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
+from .common.plan_ops import _repair_plan_or_none
+from .constants import TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL
 
 """TypeScript syntax repair module: config_scaffold."""
 
@@ -171,6 +173,8 @@ def _build_typescript_tsconfig_lib_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str,
 ) -> RepairPlan | None:
+    if any(diagnostic.code.lower() == "typescript_ts5110" for diagnostic in diagnostics):
+        return _build_typescript_ts5110_owned_config_plan(base_files=base_files, diagnostics=diagnostics, mode=mode)
     tsconfig_text = str(base_files.get("tsconfig.json") or "")
     if not tsconfig_text:
         return None
@@ -267,6 +271,100 @@ def _build_typescript_tsconfig_lib_plan(
             "removed_options": removed_options,
         },
     )
+
+
+def _ts5110_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject duplicate JSON keys rather than choosing an ambiguous option."""
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError(f"Duplicate TS5110 config key: {key}")
+        payload[key] = value
+    return payload
+
+
+def _ts5110_reject_json_constant(value: str) -> None:
+    raise ValueError(f"Non-JSON TS5110 config constant: {value}")
+
+
+def _build_typescript_ts5110_owned_config_plan(
+    *,
+    base_files: Mapping[str, str],
+    diagnostics: Sequence[RepairDiagnostic],
+    mode: str,
+) -> RepairPlan | None:
+    """Align only module in exact, standalone, compiler-proven owned configs.
+
+    Canonical diagnostic identity is authoritative; raw evidence cannot redirect
+    a typed diagnostic. No config discovery, inheritance or option relaxation.
+    """
+    required_by_path: dict[str, str] = {}
+    matched = tuple(item for item in diagnostics if item.code.lower() == "typescript_ts5110")
+    for diagnostic in matched:
+        path = str(diagnostic.path or "")
+        if (
+            not path
+            or path != normalize_repair_path_strict(path)
+            or ":" in path
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            or not re.fullmatch(r"tsconfig(?:\.[A-Za-z0-9_-]+)*\.json", path.rsplit("/", 1)[-1])
+            or path not in base_files
+        ):
+            return None
+        proof = re.fullmatch(
+            r"Option 'module' must be set to '(NodeNext|Node16)' when option "
+            r"'moduleResolution' is set to '(NodeNext|Node16)'\.",
+            diagnostic.message.strip(),
+        )
+        if proof is None or proof.group(1) != proof.group(2):
+            return None
+        required = proof.group(1)
+        if path in required_by_path and required_by_path[path] != required:
+            return None
+        required_by_path[path] = required
+
+    operations: list[RepairOperation] = []
+    for path, required in sorted(required_by_path.items()):
+        original = base_files[path]
+        try:
+            payload = json.loads(
+                original, object_pairs_hook=_ts5110_json_object, parse_constant=_ts5110_reject_json_constant
+            )
+        except (ValueError, RecursionError):
+            return None
+        if not isinstance(payload, dict) or "extends" in payload or "references" in payload:
+            return None
+        options = payload.get("compilerOptions")
+        if not isinstance(options, dict):
+            return None
+        resolution = options.get("moduleResolution")
+        module = options.get("module")
+        if not isinstance(resolution, str) or resolution.casefold() != required.casefold():
+            return None
+        if "module" in options and not isinstance(module, str):
+            return None
+        if isinstance(module, str) and module.casefold() == required.casefold():
+            return None
+        operations.append(
+            RepairOperation(
+                kind="json_set",
+                path=path,
+                json_path=("compilerOptions", "module"),
+                value=required,
+                before_hash=sha256_text(original),
+                metadata={"repair_kind": "typescript_ts5110_module_resolution", "required_module": required},
+            )
+        )
+    return _repair_plan_or_none(
+        rule_id="typescript.tsconfig_module_resolution",
+        source_tool=TYPESCRIPT_TSCONFIG_LIB_SOURCE_TOOL,
+        operations=operations,
+        diagnostics=matched,
+        mode=mode,
+        risk_level="medium",
+        metadata={"required_module_by_config": required_by_path, "exact_owned_config_required": True},
+    )
+
 
 def _build_typescript_tsconfig_rootdir_plan(
     *,

@@ -577,6 +577,59 @@ class OrchestrationCommandService:
 
             # Determine role based on run_type
             role_id = "architect" if run_type == "architect" else "pm"
+            if role_id == "pm":
+                from polaris.kernelone.llm.budget_policy import (
+                    BUDGET_CONTEXT_KEYS_CANONICAL,
+                    DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS,
+                    OUTPUT_BUDGET_CONTEXT_KEYS,
+                    PM_PLANNING_LOGICAL_REQUEST_COUNT,
+                    PM_PLANNING_SETTLEMENT_GRACE_SECONDS,
+                    TIMEOUT_CEILING_CONTEXT_KEYS,
+                    resolve_output_budget_tokens,
+                    resolve_pm_planning_time_budget,
+                )
+
+                planning_policy = dict(metadata_overrides)
+                for key in (
+                    *OUTPUT_BUDGET_CONTEXT_KEYS,
+                    *BUDGET_CONTEXT_KEYS_CANONICAL,
+                    *TIMEOUT_CEILING_CONTEXT_KEYS,
+                    "timeout",
+                    "timeout_seconds",
+                    "llm_call_timeout_seconds",
+                    "request_timeout_seconds",
+                ):
+                    if key in opts:
+                        planning_policy[key] = opts[key]
+                output_tokens = resolve_output_budget_tokens(DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS, planning_policy)
+                stage_timeout, call_timeout = resolve_pm_planning_time_budget(output_tokens, planning_policy)
+                stage_deadline = planning_policy.get("pm_planning_deadline_epoch_seconds")
+                if stage_deadline is None:
+                    stage_deadline = datetime.now(timezone.utc).timestamp() + stage_timeout
+                else:
+                    import math
+
+                    try:
+                        deadline_epoch = float(stage_deadline)
+                    except (TypeError, ValueError):
+                        raise ValueError("pm_planning_budget_invalid_deadline") from None
+                    if isinstance(stage_deadline, bool) or not math.isfinite(deadline_epoch):
+                        raise ValueError("pm_planning_budget_invalid_deadline")
+                    remaining = deadline_epoch - datetime.now(timezone.utc).timestamp()
+                    # Round only sub-second entry construction; retain both call
+                    # floors and the admitted settlement allowance.
+                    minimum_stage = (
+                        PM_PLANNING_LOGICAL_REQUEST_COUNT * call_timeout + PM_PLANNING_SETTLEMENT_GRACE_SECONDS
+                    )
+                    if math.ceil(remaining) < minimum_stage:
+                        raise ValueError("pm_planning_budget_deadline_exhausted")
+                metadata_overrides = {
+                    **metadata_overrides,
+                    "llm_max_tokens": output_tokens,
+                    "llm_call_timeout_seconds": call_timeout,
+                    "timeout_seconds": stage_timeout,
+                    "pm_planning_deadline_epoch_seconds": stage_deadline,
+                }
 
             # Build role entries
             # NOTE: scope_paths must include workspace for adapter path resolution

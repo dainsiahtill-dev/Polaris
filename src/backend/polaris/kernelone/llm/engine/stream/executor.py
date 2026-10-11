@@ -32,6 +32,7 @@ from .._executor_base import (
     coerce_required_flag,
     estimate_payload_overhead_tokens,
     get_provider_config,
+    planning_output_budget_error,
     provider_type_policy_error,
     resolve_provider_model,
     resolve_requested_output_tokens,
@@ -826,12 +827,25 @@ class StreamExecutor:
         invoke_cfg = self._build_invoke_config(provider_cfg, request.options)
         invoke_cfg["stream"] = True
         model_spec = self.model_catalog.resolve(provider_id, model, provider_cfg)
+        required_output_tokens = self._coerce_int(request.options.get("max_tokens")) or self._coerce_int(
+            invoke_cfg.get("max_tokens")
+        )
+        planning_error = planning_output_budget_error(request.role, required_output_tokens, model_spec)
+        if planning_error:
+            yield AIStreamEvent.error_event(planning_error)
+            return
         requested_output_tokens = self._resolve_requested_output_tokens(request.options, invoke_cfg, model_spec)
         if requested_output_tokens > 0:
             invoke_cfg["max_tokens"] = requested_output_tokens
 
         early_chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
         payload_overhead = estimate_payload_overhead_tokens(invoke_cfg, early_chat_messages)
+        planning_error = planning_output_budget_error(
+            request.role, required_output_tokens, model_spec, overhead_tokens=payload_overhead
+        )
+        if planning_error:
+            yield AIStreamEvent.error_event(planning_error)
+            return
 
         budget_decision = self.token_budget.enforce(
             request.input,
@@ -871,6 +885,16 @@ class StreamExecutor:
                 invoke_cfg["chat_messages"] = effective_chat_messages
                 clamp_prompt_text = "\n".join(str(m.get("content") or "") for m in effective_chat_messages)
 
+        planning_error = planning_output_budget_error(
+            request.role,
+            required_output_tokens,
+            model_spec,
+            original_messages=chat_messages,
+            effective_messages=effective_chat_messages,
+        )
+        if planning_error:
+            yield AIStreamEvent.error_event(planning_error)
+            return
         max_tokens_before_clamp = self._coerce_int(invoke_cfg.get("max_tokens"))
         clamp_output_tokens_to_window(
             invoke_cfg,
@@ -879,6 +903,16 @@ class StreamExecutor:
             overhead_tokens=payload_overhead,
             logger_prefix="[stream-executor]",
         )
+        planning_error = planning_output_budget_error(
+            request.role,
+            required_output_tokens,
+            model_spec,
+            overhead_tokens=payload_overhead,
+            final_output_tokens=self._coerce_int(invoke_cfg.get("max_tokens")),
+        )
+        if planning_error:
+            yield AIStreamEvent.error_event(planning_error)
+            return
         if physical_dispatch_port is not None:
             route_binder = getattr(physical_dispatch_port, "bind_provider_route_authority", None)
             if callable(route_binder):

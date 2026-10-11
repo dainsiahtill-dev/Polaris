@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
+from polaris.kernelone.llm import budget_policy
 from polaris.kernelone.llm.budget_policy import (
     CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKEN_ENV,
     DEFAULT_CHIEF_ENGINEER_STRUCTURED_OUTPUT_TOKENS,
@@ -31,6 +34,95 @@ from polaris.kernelone.llm.budget_policy import (
 )
 
 
+@pytest.mark.parametrize("key", ["llm_max_tokens", "max_output_tokens", "max_tokens"])
+def test_foundation_output_budget_top_level_aliases(key: str) -> None:
+    resolver = getattr(budget_policy, "resolve_output_budget_tokens", None)
+    assert callable(resolver), "Pure output resolution must be available without importing a Cell"
+    assert resolver(60_000, {key: "64000"}) == 64_000
+
+
+@pytest.mark.parametrize(
+    "payload_key",
+    [
+        "task_execution_contract",
+        "director_execution_contract",
+        "task_execution_strategy",
+        "director_execution_strategy",
+        "execution_strategy",
+    ],
+)
+@pytest.mark.parametrize("key", ["output_budget_tokens", "llm_max_tokens", "max_output_tokens", "max_tokens"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_foundation_output_budget_contract_aliases(payload_key: str, key: str, nested: bool) -> None:
+    resolver = getattr(budget_policy, "resolve_output_budget_tokens", None)
+    assert callable(resolver), "Pure contract scanning must belong to KernelOne"
+    payload = {"context_budget": {key: "20000"}} if nested else {key: "20000"}
+    assert resolver(60_000, {payload_key: payload}) == 20_000
+
+
+@pytest.mark.parametrize(
+    ("requested", "context", "expected"),
+    [
+        (60_000, None, 60_000),
+        (None, {}, 4_000),
+        ("bad", {}, 4_000),
+        (0, {}, 1),
+        (-2, {}, 1),
+        (128_001, {}, 128_000),
+        ("64000", {}, 64_000),
+        (2.9, {}, 2),
+        (True, {}, 1),
+        (60_000, {"llm_max_tokens": True}, 1),
+        (60_000, {"llm_max_tokens": 2.9}, 2),
+        (60_000, {"llm_max_tokens": 128_001}, 128_000),
+        (60_000, {"llm_max_tokens": 0, "max_output_tokens": -2, "max_tokens": "bad"}, 60_000),
+        (60_000, {"llm_max_tokens": "bad", "max_tokens": 20_000}, 20_000),
+        (60_000, {"llm_max_tokens": 1_024, "max_output_tokens": 2_048, "max_tokens": 3_072}, 1_024),
+        (60_000, {"max_tokens_floor": 96_000}, 60_000),
+        (60_000, {"task_execution_strategy": {"budget_policy": {"max_tokens": 20_000}}}, 60_000),
+        (60_000, {"task_execution_strategy": {"llm_sampling": {"max_tokens": 20_000}}}, 60_000),
+        (
+            60_000,
+            {"task_execution_contract": {"context_budget": {"output_budget_tokens": 20_000}, "llm_max_tokens": 64_000}},
+            20_000,
+        ),
+        (
+            60_000,
+            {
+                "task_execution_contract": {
+                    "output_budget_tokens": 64_000,
+                    "context_budget": {"output_budget_tokens": 20_000},
+                }
+            },
+            64_000,
+        ),
+        (
+            60_000,
+            {
+                "task_execution_contract": {"max_tokens": 20_000},
+                "director_execution_contract": {"output_budget_tokens": 64_000},
+            },
+            20_000,
+        ),
+        (
+            60_000,
+            {"task_execution_contract": {"max_tokens": "bad"}, "director_execution_strategy": {"max_tokens": 64_000}},
+            64_000,
+        ),
+        (60_000, {"task_execution_contract": [], "execution_strategy": {"max_tokens": 20_000}}, 20_000),
+        (60_000, [], 60_000),
+    ],
+)
+def test_foundation_output_budget_preserves_coercion_precedence_and_defaults(
+    requested: Any,
+    context: Any,
+    expected: int,
+) -> None:
+    resolver = getattr(budget_policy, "resolve_output_budget_tokens", None)
+    assert callable(resolver), "Canonical output resolution must be available in KernelOne"
+    assert resolver(requested, context) == expected
+
+
 @pytest.mark.parametrize(
     ("raw_value", "expected"),
     [
@@ -54,15 +146,15 @@ def test_chief_engineer_structured_output_budget_has_one_policy(
 @pytest.mark.parametrize(
     ("task_count", "raw_cap", "expected"),
     [
-        (1, None, 16_384),
-        (3, None, 16_384),
-        (5, None, 20_480),
-        (32, None, HARD_OUTPUT_TOKEN_CLAMP),
-        (64, None, HARD_OUTPUT_TOKEN_CLAMP),
+        (1, None, 60_000),
+        (8, None, 60_000),
+        (20, None, 60_000),
+        (32, None, 60_000),
+        (64, None, 60_000),
         (10, "20000", 20_000),
     ],
 )
-def test_chief_engineer_portfolio_budget_scales_with_project_size(
+def test_chief_engineer_portfolio_budget_preserves_planning_role_policy(
     task_count: int,
     raw_cap: str | None,
     expected: int,
@@ -75,9 +167,9 @@ def test_chief_engineer_portfolio_budget_scales_with_project_size(
 @pytest.mark.parametrize(
     ("task_count", "expected_floor"),
     [
-        (1, 16_384 / 80.0),  # 204.8s — floor for the 16384-token minimum portfolio
-        (3, 16_384 / 80.0),  # still at the 16384 floor for small portfolios
-        (5, 20_480 / 80.0),  # 256.0s — scales once past the floor
+        (1, 750.0),
+        (8, 750.0),
+        (20, 750.0),
     ],
 )
 def test_chief_engineer_portfolio_generation_floor_scales_with_output_budget(

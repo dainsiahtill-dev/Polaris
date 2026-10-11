@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
     from polaris.cells.roles.profile.public.service import RoleProfile
 
+    from . import LLMInvoker
+
 from ._helpers import (
     _enforce_factory_semantic_zero_transport,
     _invoker_owned_factory_semantic_identity,
@@ -50,6 +52,7 @@ class _InvokerStreamMixin:
 
         def _emit_call_error_event(self, **kwargs: Any) -> None: ...
         def _is_stream_cancel_requested(self, context: Any) -> bool: ...
+        def _profile_for_selected_route(self, role_id: str, profile: RoleProfile) -> RoleProfile: ...
 
     # ========================================================================
     # Streaming call (migrated from call_stream.py)
@@ -125,6 +128,7 @@ class _InvokerStreamMixin:
             return
 
         try:
+            profile = self._profile_for_selected_route(role_id, profile)
             request_preparer = LLMRequestPreparer(
                 workspace=self.workspace,
                 formatter=self._formatter,
@@ -306,7 +310,7 @@ class _InvokerStreamMixin:
         """Decision-phase LLM call via DecisionCaller."""
         from ..decision_caller import DecisionCaller
 
-        caller = DecisionCaller(self)
+        caller = DecisionCaller(cast("LLMInvoker", self))
         return await caller.call(
             profile=profile,
             system_prompt=system_prompt,
@@ -331,7 +335,7 @@ class _InvokerStreamMixin:
         """Finalization-phase LLM call via FinalizationCaller."""
         from ..finalization_caller import FinalizationCaller
 
-        caller = FinalizationCaller(self)
+        caller = FinalizationCaller(cast("LLMInvoker", self))
         return await caller.call(
             profile=profile,
             system_prompt=system_prompt,

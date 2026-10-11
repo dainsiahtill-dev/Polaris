@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -18,7 +19,14 @@ from polaris.kernelone.events.final_request_evidence import (
     summarize_workspace_quality_evidence_context_slot,
     target_scope_evidence_entry,
 )
+from polaris.kernelone.llm.engine.provider_native_request import build_openai_native_messages
 
+from ...context_gateway.gateway_helpers import (
+    CE_COMMAND_TABLE_END,
+    CE_COMMAND_TABLE_KEY,
+    CE_COMMAND_TABLE_START,
+    ce_command_planning_rows,
+)
 from ..response_types import PreparedLLMRequest
 from ._constants import (
     _ARCHITECTURE_OR_FILE_PLAN_KEYS,
@@ -57,6 +65,107 @@ from ._request_core import (
     _task_metadata,
     _task_type_value,
 )
+
+
+def _ce_required_command_row_coverage(
+    ai_request: Any,
+    messages: list[dict[str, Any]],
+    *,
+    role_id: str = "",
+    source_messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Bind typed rows to the designated projection and its serialized segment.
+
+    Coverage conveys model input only. Factory live proof/freeze/owner checks
+    remain mandatory and no caller mapping grants execution permission.
+    """
+    context = _request_context(ai_request)
+    pm_evidence = _pm_contract_payload(ai_request)
+    expected_rows = context.get(CE_COMMAND_TABLE_KEY, pm_evidence.get(CE_COMMAND_TABLE_KEY))
+    role = str(role_id or getattr(ai_request, "role", "") or "").strip().lower()
+    authority = _mapping(context.get("project_completion_authority"))
+    raw_committed_rows = authority.get("verification_command_authority")
+    enabled = role == "chief_engineer" and (expected_rows is not None or raw_committed_rows is not None)
+    result: dict[str, Any] = {"required": enabled, "pass": True, "required_rows": [], "included_rows": []}
+    if not enabled:
+        return result
+    result["pass"] = False
+    result["diagnostic"] = "ce_required_command_authority_final_request_mismatch"
+    try:
+        expected = ce_command_planning_rows(expected_rows)
+        if raw_committed_rows is not None:
+            if type(raw_committed_rows) is not list or any(type(row) is not dict for row in raw_committed_rows):
+                return result
+            committed = ce_command_planning_rows(
+                [
+                    {key: row.get(key) for key in ("task_id", "modality", "argv", "cwd", "authority_hash")}
+                    for row in raw_committed_rows
+                ]
+            )
+            if expected != committed:
+                return result
+    except ValueError:
+        return result
+    result["required_rows"] = expected
+    # The source keeps gateway segment names; native serializers can drop them
+    # while merging system messages. Ordinary context/history is never a source
+    # just because its eventual provider role is system. Do not search arbitrary
+    # prose for a matching row/hash or accept a caller-supplied coverage flag.
+    # Normal preparation owns the named source. Its role/content-only transport
+    # projection must never override that provenance, even when nonempty.
+    source = source_messages
+    if source is None:
+        source = context.get("chat_messages", context.get("messages"))
+        if type(source) is not list or not source:
+            source = messages
+    tables: list[list[dict[str, Any]]] = []
+    for message in source:
+        if type(message) is not dict or message.get("name") != "context_override":
+            continue
+        content = message.get("content")
+        if message.get("role") != "system" or type(content) is not str:
+            continue
+        content = content.removeprefix("⚠️ CONTEXT_OVERRIDE_WITH_FILTERED_CONTENT:\n")
+        marker = CE_COMMAND_TABLE_START + "\n"
+        if not content.startswith(marker):
+            continue
+        if content.count(CE_COMMAND_TABLE_START) != 1 or content.count(CE_COMMAND_TABLE_END) != 1:
+            return result
+        raw, separator, tail = content[len(marker) :].partition("\n" + CE_COMMAND_TABLE_END)
+        if not separator or (tail and not tail.startswith("\n")):
+            return result
+        try:
+            tables.append(ce_command_planning_rows(json.loads(raw)))
+        except (ValueError, TypeError):
+            return result
+    if len(tables) != 1:
+        return result
+
+    def system_segments(items: list[dict[str, Any]]) -> list[str]:
+        return [
+            item["content"]
+            for item in items
+            if type(item) is dict and item.get("role") == "system" and type(item.get("content")) is str
+        ]
+
+    final_segments = system_segments(messages)
+    # Compare the complete source-bound system projection, not a substring.
+    # Reuse KernelOne's serializer so untrusted neighboring segments cannot
+    # replace a missing table after message names/boundaries have been merged.
+    source_segments = system_segments(source)
+    native_source_segments = system_segments(build_openai_native_messages(source))
+    preserved = final_segments in (source_segments, native_source_segments)
+    if source_messages is not None:
+        # Independently conserve the actual provider input. The Factory physical
+        # gate subsequently binds the exact serialized body to its frozen request.
+        chat_messages = context.get("chat_messages", context.get("messages"))
+        if type(chat_messages) is list:
+            wire_segments = system_segments(build_openai_native_messages(chat_messages))
+            preserved = preserved and wire_segments == native_source_segments
+    if preserved and any(CE_COMMAND_TABLE_START + "\n" in segment for segment in final_segments):
+        result["included_rows"] = tables[0]
+        result["pass"] = tables[0] == expected
+    return result
 
 
 def _looks_like_module_interface_contract(value: Any) -> bool:

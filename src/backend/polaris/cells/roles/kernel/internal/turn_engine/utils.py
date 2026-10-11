@@ -208,18 +208,19 @@ def sanitize_assistant_transcript_message(
     token = str(text or "")
     if not token.strip():
         return ""
-    try:
-        from polaris.cells.roles.kernel.internal.tool_call_protocol import (
-            CanonicalToolCallParser,
-        )
+    from polaris.cells.roles.kernel.internal.tool_call_protocol import (
+        CanonicalToolCallParser,
+        strip_transport_whitespace,
+    )
 
+    try:
         _, remainder = CanonicalToolCallParser.extract_text_calls_and_remainder(
             token,
             allowed_tool_names=allowed_tool_names,
         )
-        return str(remainder or "").strip()
+        return strip_transport_whitespace(str(remainder or ""))
     except (ValueError, TypeError, AttributeError):
-        return token.strip()
+        return strip_transport_whitespace(token)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
