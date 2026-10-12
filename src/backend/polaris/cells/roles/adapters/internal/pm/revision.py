@@ -76,8 +76,8 @@ def content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _error(message: str, path: str = "$") -> _PMContractError:
-    return _PMContractError({"code": "pm_revision_invalid", "path": path, "message": message})
+def _error(message: str, path: str = "$", **details: Any) -> _PMContractError:
+    return _PMContractError({"code": "pm_revision_invalid", "path": path, "message": message, **details})
 
 
 def _canonical_id(value: Any) -> bool:
@@ -151,9 +151,11 @@ def make_revision_base(
     semantic_fields = _semantic_revision_fields(tasks, paths, quality, diagnostics)
     if semantic_fields is None:
         return None
-    artifact_mode = any(isinstance(d, dict) and str(d.get("code", "")).startswith(
-        ("artifact_", "generated_output_", "pm_plan_language_mismatch")
-    ) for d in diagnostics)
+    artifact_mode = any(
+        isinstance(d, dict)
+        and str(d.get("code", "")).startswith(("artifact_", "generated_output_", "pm_plan_language_mismatch"))
+        for d in diagnostics
+    )
     diagnosed_fields: dict[str, set[str]] = {}
     for diagnostic in diagnostics:
         if not isinstance(diagnostic, dict):
@@ -165,7 +167,7 @@ def make_revision_base(
                 )
         for task, source_path in zip(tasks, paths, strict=True):
             if str(diagnostic.get("path", "")).startswith(source_path + "."):
-                field = str(diagnostic["path"])[len(source_path) + 1:].split("[", 1)[0].split(".", 1)[0]
+                field = str(diagnostic["path"])[len(source_path) + 1 :].split("[", 1)[0].split(".", 1)[0]
                 diagnosed_fields.setdefault(task["id"], set()).add(field)
                 diagnosed_fields[task["id"]].update(diagnostic.get("repair_fields", []))
     source_graph_ids = {identity for identity, fields in diagnosed_fields.items() if "generated_outputs" in fields}
@@ -194,13 +196,17 @@ def make_revision_base(
         set_fields = dict(_SET_TYPES)
         row = {field: task[field] for field in _OVERVIEW if field in task}
         for field, type_name in _DIAGNOSTIC_TYPES.items():
-            if field in diagnosed_fields.get(task["id"], set()) or field in semantic_fields.get(task["id"], set()) or any(
-                isinstance(d, dict)
-                and (
-                    d.get("path") == f"{source_path}.{field}"
-                    or str(d.get("path", "")).startswith(f"{source_path}.{field}[")
+            if (
+                field in diagnosed_fields.get(task["id"], set())
+                or field in semantic_fields.get(task["id"], set())
+                or any(
+                    isinstance(d, dict)
+                    and (
+                        d.get("path") == f"{source_path}.{field}"
+                        or str(d.get("path", "")).startswith(f"{source_path}.{field}[")
+                    )
+                    for d in diagnostics
                 )
-                for d in diagnostics
             ):
                 set_fields[field] = type_name
                 if field in task:
@@ -362,7 +368,7 @@ def _validate_value(field: str, value: Any, type_name: str) -> None:
                 or any(part in {"", "..", "."} for part in path.split("/"))
                 or str(PurePosixPath(path)) != path
             ):
-                raise _error(f"Noncanonical relative path in {field}: {path!r}")
+                raise _error(f"Noncanonical relative path in {field}: {path!r}", repairable=False)
     if field in {"depends_on", "dependencies"} and (
         any(not _canonical_id(dep) for dep in value) or len(value) != len(set(value))
     ):
@@ -425,7 +431,8 @@ def apply_revision(base: PMRevisionBase, response: str) -> dict[str, Any]:
 
     Failure never changes base, accepts a prefix, falls back to a replacement
     plan, or grants task execution. Dependencies and verifier values cannot be
-    repaired implicitly by normalization.
+    repaired implicitly by normalization. Authorized array set+append operations
+    compose in that order on a private copy; retained provider text stays raw.
     """
     if not response.strip().startswith("{"):
         raise _error("Revision must be one bare complete JSON object")
@@ -440,7 +447,9 @@ def apply_revision(base: PMRevisionBase, response: str) -> dict[str, Any]:
     }:
         raise _error("Unexpected revision envelope fields")
     if patch["schema_version"] != _SCHEMA or patch["base_hash"] != base.base_hash:
-        raise _error("Revision schema/base does not match the retained local candidate")
+        raise _error(
+            "Revision schema/base does not match the retained local candidate", "$.base_hash", repairable=False
+        )
     if any(not isinstance(patch[key], list) for key in ("updates", "add_tasks", "remove_task_ids")):
         raise _error("Revision operation containers must be arrays")
     originals = base.tasks
@@ -452,9 +461,9 @@ def apply_revision(base: PMRevisionBase, response: str) -> dict[str, Any]:
         or len(set(removed)) != len(removed)
         or any(task_id not in manifest["remove_task_ids"] for task_id in removed)
     ):
-        raise _error("Task removal is not authorized by the server manifest")
+        raise _error("Task removal is not authorized by the server manifest", "$.remove_task_ids", repairable=False)
     updates: dict[str, dict[str, Any]] = {}
-    for update in patch["updates"]:
+    for update_index, update in enumerate(patch["updates"]):
         if (
             not isinstance(update, dict)
             or update.keys() - {"task_id", "set", "append"}
@@ -463,23 +472,50 @@ def apply_revision(base: PMRevisionBase, response: str) -> dict[str, Any]:
             raise _error("Unknown update shape or task ID")
         task_id = update["task_id"]
         if task_id not in by_id or task_id in updates or task_id in removed:
-            raise _error("Unknown, duplicate or conflicting update target")
+            raise _error(
+                "Unknown, duplicate or conflicting update target",
+                f"$.updates[{update_index}].task_id",
+                task_id=task_id,
+                repairable=False,
+            )
         sets, appends = update.get("set", {}), update.get("append", {})
         if not isinstance(sets, dict) or not isinstance(appends, dict) or not (sets or appends):
             raise _error("Update must contain explicit set/append fields")
-        if sets.keys() & appends.keys():
-            raise _error("set and append cannot target the same field")
         permission = manifest["tasks"].get(task_id)
         if not isinstance(permission, dict):
             raise _error(f"Task {task_id!r} is not server-authorized for revision")
         for kind, fields in (("set", sets), ("append", appends)):
             for field, value in fields.items():
+                field_path = f"$.updates[{update_index}].{kind}.{field}"
                 if field not in permission[kind]:
-                    raise _error(f"Field {field!r} is not server-authorized for {kind}")
-                _validate_value(field, value, permission[kind][field])
+                    raise _error(
+                        f"Field {field!r} is not server-authorized for {kind}",
+                        field_path,
+                        task_id=task_id,
+                        field=field,
+                        operation=kind,
+                        repairable=any(field in permission[other] for other in ("set", "append") if other != kind),
+                        authorized_operations=[other for other in ("set", "append") if field in permission[other]],
+                    )
+                try:
+                    _validate_value(field, value, permission[kind][field])
+                except _PMContractError as exc:
+                    raise _PMContractError(
+                        {**exc.diagnostic, "path": field_path, "task_id": task_id, "field": field, "operation": kind}
+                    ) from exc
         if "acceptance" in appends and "acceptance_criteria" in sets:
             raise _error("Conflicting acceptance alias operations")
-        updates[task_id] = update
+        # Validate each original operation and its permission before composing.
+        # Never mutate the decoded provider edit or infer an unauthorized append.
+        normalized_sets, normalized_appends = dict(sets), dict(appends)
+        for field in sorted(sets.keys() & appends.keys()):
+            if not isinstance(sets[field], list) or not isinstance(appends[field], list):
+                raise _error("Only arrays may use set and append on the same field")
+            combined = [*sets[field], *appends[field]]
+            _validate_value(field, combined, permission["set"][field])
+            normalized_sets[field] = combined
+            del normalized_appends[field]
+        updates[task_id] = {"task_id": task_id, "set": normalized_sets, "append": normalized_appends}
     added_ids: set[str] = set()
     for task in patch["add_tasks"]:
         _validate_added_task(task)
@@ -501,6 +537,73 @@ def apply_revision(base: PMRevisionBase, response: str) -> dict[str, Any]:
     _complete_pm_tasks({"tasks": merged})
     _validate_dependencies(merged)
     return {"tasks": merged}
+
+
+def revision_progress_state(candidate: dict[str, Any] | None, quality: dict[str, Any]) -> tuple[str, str]:
+    """Fingerprint diagnosed operands, never unrelated changes in model prose."""
+    diagnostics = quality.get("contract_diagnostics", [])
+    critical = quality.get("critical_issues", [])
+    diagnosis = {"critical_issues": critical, "contract_diagnostics": diagnostics}
+    diagnosis_hash = content_hash(canonical_json(diagnosis))
+    if candidate is None:
+        return "no_valid_candidate", diagnosis_hash
+    tasks = candidate["tasks"]
+    by_id = {task["id"]: task for task in tasks}
+    fields: dict[str, set[str]] = {}
+
+    def include(task_id: str, names: set[str]) -> None:
+        if task_id in by_id:
+            fields.setdefault(task_id, set()).update(names)
+
+    for diagnostic in diagnostics:
+        if not isinstance(diagnostic, dict):
+            continue
+        path = str(diagnostic.get("path", ""))
+        match = re.match(r"^\$\.tasks\[(\d+)\]\.([a-z_]+)", path)
+        task_id = diagnostic.get("task_id")
+        provenance = diagnostic.get("provenance", {})
+        if task_id not in by_id and isinstance(provenance, dict):
+            task_id = provenance.get("original_task_id")
+        if task_id not in by_id and match and int(match[1]) < len(tasks):
+            task_id = tasks[int(match[1])]["id"]
+        field = diagnostic.get("field") or (match[2] if match else None)
+        if isinstance(task_id, str) and isinstance(field, str):
+            names = {field}
+            repair_fields = diagnostic.get("repair_fields", [])
+            if isinstance(repair_fields, list):
+                names.update(name for name in repair_fields if isinstance(name, str))
+            include(task_id, names)
+    verifier_issues = {
+        "verification_commands_invalid",
+        "verification_commands_missing",
+        "verification_environment_prep_missing",
+        "verification_delivery_gate_missing",
+        "verification_entrypoint_missing",
+    }
+    for issue in critical:
+        if issue in verifier_issues:
+            for task_id in by_id:
+                include(task_id, {"verification_commands"})
+        elif isinstance(issue, str) and issue.startswith("factory_typescript_contract_missing:"):
+            for task_id in by_id:
+                include(task_id, {"target_files", "scope_paths"})
+        elif issue == "pm_revision_dependencies_invalid":
+            for task_id in by_id:
+                include(task_id, {"depends_on", "dependencies"})
+        elif isinstance(issue, str):
+            task_id, separator, message = issue.partition(": ")
+            if separator and message.startswith("acceptance "):
+                include(task_id, {"acceptance", "acceptance_criteria"})
+    operands = [
+        {"task_id": task_id, "fields": {name: by_id[task_id].get(name) for name in sorted(names)}}
+        for task_id, names in sorted(fields.items())
+    ]
+    # A threshold-only quality failure can improve its measured score; unresolved
+    # concrete diagnostics still require a change in their own operands.
+    state: dict[str, Any] = {"operands": operands}
+    if not critical and not diagnostics:
+        state["score"] = quality.get("score", 0)
+    return content_hash(canonical_json(state)), diagnosis_hash
 
 
 def revision_derivation(

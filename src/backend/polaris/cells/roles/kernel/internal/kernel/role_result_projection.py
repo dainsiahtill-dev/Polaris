@@ -86,6 +86,7 @@ def tool_results_from_batch_receipt(batch_receipt: dict[str, Any] | None) -> lis
                 "tool": result.get("tool_name", ""),
                 "tool_name": result.get("tool_name", ""),
                 "result": result.get("result"),
+                "error": result.get("error"),
                 "success": result.get("status") == "success",
                 "status": result.get("status"),
                 "call_id": result.get("call_id", ""),

@@ -1223,6 +1223,26 @@ def _candidate_effective_obligation_view(
     return view
 
 
+def _invalid_behavior_obligation_references(
+    invariants: list[dict[str, Any]],
+    completion_obligation_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Locate residual references without changing the candidate or authority."""
+
+    allowed_ids = set(completion_obligation_ids)
+    findings: list[dict[str, Any]] = []
+    for invariant in invariants:
+        unknown_ids = sorted(set(invariant["covered_obligation_ids"]) - allowed_ids)
+        if unknown_ids:
+            findings.append(
+                {
+                    "invariant_id": invariant["invariant_id"],
+                    "unknown_completion_obligation_ids": unknown_ids,
+                }
+            )
+    return findings
+
+
 def project_chief_engineer_semantic_repair_provider_context(
     candidate: ChiefEngineerSemanticRepairCandidateV1,
     diagnosis: ChiefEngineerSemanticRepairDiagnosisV1,
@@ -1390,12 +1410,20 @@ def project_chief_engineer_semantic_repair_provider_context(
     allowed = set(diagnosis.allowed_operations)
     if "artifact_upsert" in allowed:
         current["artifacts"] = deepcopy(sections["artifacts"])
+        owner_corrections = deepcopy(effective_view.get("artifact_owner_corrections", []))
+        projection["artifact_owner_corrections"] = owner_corrections
+        corrected_owners = {row["obligation_id"]: row["pm_authorized_owner_task_id"] for row in owner_corrections}
         artifact_identity_fields = ("path", "semantic_role", "owner_task_id")
         identity_policy["artifact_upsert"] = {
             "id_field": "obligation_id",
             "immutable_fields": list(artifact_identity_fields),
             "existing_identities": {
-                str(row["obligation_id"]): {field: row.get(field) for field in artifact_identity_fields}
+                str(row["obligation_id"]): {
+                    field: corrected_owners.get(str(row["obligation_id"]), row.get(field))
+                    if field == "owner_task_id"
+                    else row.get(field)
+                    for field in artifact_identity_fields
+                }
                 for row in current_artifacts
                 if isinstance(row.get("obligation_id"), str) and str(row["obligation_id"]).strip()
             },
@@ -1404,6 +1432,13 @@ def project_chief_engineer_semantic_repair_provider_context(
                 "mint a new unique obligation_id and leave the existing row unchanged."
             ),
         }
+        if owner_corrections:
+            projection["artifact_owner_repair_policy"] = (
+                "For every artifact_owner_corrections row, upsert the same obligation_id and preserve path, "
+                "semantic_role, and applicability; use pm_authorized_owner_task_id. Existing owner identities "
+                "above use authenticated immutable PM scope rather than the rejected provider owner. "
+                "A new obligation_id would leave the invalid existing row in place and create duplicate paths."
+            )
     if "entrypoint_upsert" in allowed:
         current["artifacts"] = deepcopy(sections["artifacts"])
         current["entrypoints"] = deepcopy(sections["entrypoints"])
@@ -1439,6 +1474,17 @@ def project_chief_engineer_semantic_repair_provider_context(
         current["verification"] = deepcopy(sections["verification"])
         current["behavior_invariants"] = deepcopy(sections["behavior_invariants"])
         projection["allowed_completion_obligation_ids"] = effective_view["retained_completion_obligation_ids"]
+        projection["invalid_behavior_obligation_references"] = _invalid_behavior_obligation_references(
+            _rows("behavior_invariants", sections["behavior_invariants"]),
+            effective_view["retained_completion_obligation_ids"],
+        )
+        projection["behavior_obligation_reference_repair_policy"] = (
+            "Correct every invariant listed in invalid_behavior_obligation_references by upserting the "
+            "same invariant_id with valid covered_obligation_ids. A new invariant_id does not replace an "
+            "invalid existing row. Use only allowed_completion_obligation_ids or identities added by lawful "
+            "diagnosis-authorized upserts in the same atomic patch; do not invent completion obligations. "
+            "Untouched valid invariants need not be repeated."
+        )
     if "task_behavior_ref_replace" in allowed:
         current["behavior_invariants"] = deepcopy(sections["behavior_invariants"])
         current["task_behavior_refs"] = deepcopy(sections["task_behavior_refs"])
@@ -1834,8 +1880,12 @@ def compose_chief_engineer_semantic_repair(
     for row in invariants:
         if row["owner_task_id"] not in task_ids or not set(row["consumer_task_ids"]).issubset(task_ids):
             raise ValueError("behavior invariant owner/consumer is outside candidate task set")
-        if not set(row["covered_obligation_ids"]).issubset(set(all_obligation_ids)):
-            raise ValueError("behavior invariant references unknown completion obligations")
+    invalid_behavior_refs = _invalid_behavior_obligation_references(invariants, all_obligation_ids)
+    if invalid_behavior_refs:
+        raise ValueError(
+            "behavior invariant references unknown completion obligations: "
+            + json.dumps(invalid_behavior_refs, ensure_ascii=False, sort_keys=True)
+        )
     behavior["invariants"] = invariants
     construction["shared_behavior_contract"] = behavior
 

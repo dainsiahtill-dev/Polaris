@@ -1427,9 +1427,24 @@ class DirectorAdapter(BaseRoleAdapter):
         projection = _copy_mapping_payload(handoff.get("task_completion_projection")) or {}
         if handoff.get("allowed") is not True or str(projection.get("run_id") or "").strip() != factory_run_id:
             return None
+        dependency_metadata: dict[str, Any] = {}
+        if isinstance(live_parent, dict) and str(live_metadata.get("factory_run_id") or "").strip() == factory_run_id:
+            # Reusing committed artifacts replaces write receipts, not the
+            # frozen dependency graph. Dropping these edges leaves later tests
+            # with only their immediate documentation parent and no source API.
+            for key in (
+                "depends_on_external",
+                "dependency_task_ids",
+                "depends_on",
+                "depends_on_task_ids",
+                "resolved_depends_on_task_ids",
+            ):
+                if key in live_metadata:
+                    dependency_metadata[key] = live_metadata[key]
         return {
             "id": parent_task_id,
             "metadata": {
+                **dependency_metadata,
                 "external_task_id": parent_task_id,
                 "factory_run_id": factory_run_id,
                 "task_completion_projection": projection,

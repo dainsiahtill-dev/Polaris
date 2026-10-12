@@ -786,7 +786,7 @@ describe('ContextOSWorkspace', () => {
 
     // The internal pipeline stages carry data-state and reflect derived metrics.
     const truthlogStage = screen.getByTestId('contextos-role-panel-stage-pm-truthlog');
-    expect(truthlogStage).toHaveAttribute('data-state', 'active');
+    expect(truthlogStage).toHaveAttribute('data-state', 'idle'); // retained history is not current execution
     expect(truthlogStage.textContent).toContain('1 事件');
 
     // Token / duration badges appear on the PM llm_completed event row.

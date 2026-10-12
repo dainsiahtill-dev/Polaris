@@ -44,3 +44,57 @@ acceptance:
   - Protected source and immutable input hashes preserved.
   - Root review and independent QA remain required.
 global_release_gates: not_executed_in_bounded_source_task
+corrective_reference_validation:
+  issue: POL-97
+  mode: implementation
+  owner: e42def29-b6a1-4fd2-9bf4-701fc0a3d747
+  classification: pattern
+  activation: Explicit Root activation after verified protected namespace release and negative QA disposition
+  source_preimage_sha256: 5e4f867fd83896eda1c5517a46cb97d5e38dd392e2ad00388c72404462c34f67
+  assumptions:
+    - id: R1
+      claim: Malformed effective reference fields reach canonical validation then lossy raw fallback.
+      evidence: .superpowers/sdd/2026-10-11-contextos-reference-validation/implementation/repro-before.json
+    - id: R2
+      claim: Canonical transcript defaults already support absent optional references.
+      evidence: TranscriptEventV2 fields and valid legacy controls
+    - id: R3
+      claim: Flat-field precedence must be applied before canonical reference validation.
+      evidence: Existing setdefault decoder and precedence regression cases
+    - id: R4
+      claim: Supported consumers propagate model validation errors before successful consumption.
+      evidence: Blueprint consumer trace plus real continuity and memory consumer regressions
+  pre_mortem:
+    - Silent error recovery erases metadata or fabricates a successful receipt.
+    - Validating shadowed nested fields changes flat-field precedence.
+    - Caller or archived input is mutated on failure.
+    - Second schema broadens coercion or malformed plan admission.
+  verification:
+    test: src/backend/polaris/kernelone/context/tests/test_contextos_reference_validation.py
+    runner: .superpowers/sdd/2026-10-11-contextos-reference-validation/implementation/run_check.py
+    phases: [baseline, red, green, prior51, regression, controls, ruff, format, format-check, mypy, diff]
+    expected: RED exposes malformed reference success; GREEN rejects without mutation; prior51 passes; wider signatures classified.
+  acceptance:
+    - Invalid selected nested or flat reference fields raise canonical ValidationError.
+    - Invalid nested container raises explicit ValueError; absent or empty reference remains valid.
+    - Metadata, provenance, state and nested caller mappings remain intact.
+    - Real private receipt export/import and archived JSON restore preserve valid content.
+    - Existing schemas and PM strict admission remain unchanged.
+    - All 51 earlier tests remain unmodified and re-executed.
+    - Independent review and native qualification remain separate.
+  author_verification:
+    status: implementation_complete_review_pending
+    red_v2: {failed: 23, passed: 10, exit_code: 1}
+    green: {passed: 33, exit_code: 0}
+    prior51: {passed: 51, exit_code: 0, assertions_modified: false}
+    baseline: {failed: 17, passed: 1806, skipped: 14, xfailed: 1, exit_code: 1}
+    regression: {failed: 17, passed: 1839, skipped: 14, xfailed: 1, exit_code: 1}
+    broad_new_failure_nodes: 0
+    broad_changed_failure_signatures: 0
+    private_default_root_controls: {passed: 23, exit_code: 0}
+    root_graph_control: {passed: 1, exit_code: 0}
+    ruff_format_mypy_strict_diff: passed
+    schemas_compared_identical: 7
+    report: .superpowers/sdd/2026-10-11-contextos-reference-validation/implementation/REPORT.json
+    review: Normal Paperclip policy review by local-board; independent revalidation still required.
+    native_delivery: not_executed_or_qualified

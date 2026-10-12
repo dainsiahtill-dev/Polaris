@@ -235,10 +235,10 @@ describe('buildTelemetryFromStream', () => {
 
     expect(t.totalCalls).toBe(1);
     expect(t.errorCount).toBe(1);
-    expect(t.totalTokens).toBe(7069);
+    expect(t.totalTokens).toBe(0);
     expect(t.contextTokensLatest).toBe(7069);
     expect(telemetryRoleCalls(t, 'director')).toBe(1);
-    expect(telemetryRoleTokens(t, 'director')).toBe(7069);
+    expect(telemetryRoleTokens(t, 'director')).toBe(0);
     expect(t.events[0].category).toBe('error');
     expect(t.events[0].isCall).toBe(true);
     expect(t.events[0].callId).toBe('call-circuit-open');
@@ -302,14 +302,14 @@ describe('buildTelemetryFromStream', () => {
 
     expect(t.projectionCount).toBe(1);
     expect(t.totalCalls).toBe(1);
-    expect(t.totalTokens).toBe(4627);
+    expect(t.totalTokens).toBe(5037);
     expect(t.contextTokensLatest).toBe(4627);
     expect(t.events.some((event) => event.projectionKey === 'final:PM:call-final-context')).toBe(true);
   });
 
-  it('aggregates ContextOS main tokens from final/context request size while preserving usage split', () => {
+  it('aggregates provider usage separately from final/context request size', () => {
     const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
-    expect(t.totalTokens).toBe(1932); // contextTokens is the request-side context size
+    expect(t.totalTokens).toBe(3386); // provider usage includes input and output, independent of request size
     expect(t.promptTokens).toBe(1932);
     expect(t.completionTokens).toBe(1454);
     expect(t.estimatedCalls).toBe(0); // journal usage is real, never char-estimated
@@ -325,7 +325,7 @@ describe('buildTelemetryFromStream', () => {
     expect(t.events).toHaveLength(1);
     expect(t.parsedLines).toBe(1);
     expect(t.totalCalls).toBe(1);
-    expect(t.totalTokens).toBe(1932);
+    expect(t.totalTokens).toBe(3386);
     expect(t.promptTokens).toBe(1932);
     expect(t.completionTokens).toBe(1454);
     expect(filterEventsForRole(t.events, 'pm')).toHaveLength(1);
@@ -378,12 +378,12 @@ describe('buildTelemetryFromStream', () => {
     const t = buildTelemetryFromStream([], [pmRoleCall], []);
 
     expect(t.totalCalls).toBe(1);
-    expect(t.totalTokens).toBe(4096);
+    expect(t.totalTokens).toBe(4686);
     expect(t.promptTokens).toBe(2732);
     expect(t.completionTokens).toBe(1954);
     expect(t.contextTokensLatest).toBe(4096);
     expect(t.lastLatencyMs).toBe(19178);
-    expect(telemetryRoleTokens(t, 'pm')).toBe(4096);
+    expect(telemetryRoleTokens(t, 'pm')).toBe(4686);
     expect(telemetryRoleHasUsageChannel(t, 'pm')).toBe(true);
     expect(t.events[0].contextSnapshotRef).toBe('e3db3551d74e5741fd664b7b');
     expect(t.events[0].callId).toBe('call-pm-1');
@@ -419,8 +419,8 @@ describe('buildTelemetryFromStream', () => {
     expect(t.totalCalls).toBe(1);
     expect(t.promptTokens).toBe(3210);
     expect(t.completionTokens).toBe(456);
-    expect(t.totalTokens).toBe(3210);
-    expect(telemetryRoleTokens(t, 'director')).toBe(3210);
+    expect(t.totalTokens).toBe(3666);
+    expect(telemetryRoleTokens(t, 'director')).toBe(3666);
     expect(telemetryRoleHasUsageChannel(t, 'director')).toBe(true);
   });
 
@@ -461,8 +461,8 @@ describe('buildTelemetryFromStream', () => {
     expect(t.totalCalls).toBe(1);
     expect(t.promptTokens).toBe(2732);
     expect(t.completionTokens).toBe(1954);
-    expect(t.totalTokens).toBe(2732);
-    expect(telemetryRoleTokens(t, 'pm')).toBe(2732);
+    expect(t.totalTokens).toBe(4686);
+    expect(telemetryRoleTokens(t, 'pm')).toBe(4686);
   });
 
   it('does not count llm_call_start prompt tokens as final provider usage while preserving context size', () => {
@@ -777,7 +777,7 @@ describe('buildTelemetryFromStream', () => {
   it('aggregates events + real tokens by actor', () => {
     const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
     // PM: llm_completed (call, 1932 context tok) + prompt_context (projection). llm_waiting/thinking filtered.
-    expect(t.byActor['PM']).toMatchObject({ totalTokens: 1932, calls: 1, events: 2 });
+    expect(t.byActor['PM']).toMatchObject({ totalTokens: 3386, calls: 1, events: 2 });
     expect(t.byActor['PM'].promptTokens).toBe(1932);
     expect(t.byActor['PM'].completionTokens).toBe(1454);
     expect(t.byActor['PM'].toolTokens).toBe(0);
@@ -855,7 +855,7 @@ describe('telemetry role helpers', () => {
   });
 
   it('reports REAL per-role tokens from the journal llm usage channel', () => {
-    expect(telemetryRoleTokens(t, 'pm')).toBe(1932);
+    expect(telemetryRoleTokens(t, 'pm')).toBe(3386);
     expect(telemetryRoleTokens(t, 'director')).toBe(0); // its call failed, no usage
   });
 
@@ -1134,11 +1134,12 @@ describe('provider usage compatibility', () => {
     });
 
     const t = buildTelemetryFromStream([], [entry], []);
-    expect(t.totalTokens).toBe(2300);
-    expect(t.toolTokens).toBe(200);
+    expect(t.totalTokens).toBe(0);
+    expect(t.toolTokens).toBe(200); // schema estimate is retained separately
     expect(t.events[0].usageSource).toBe('request_estimate');
+    expect(t.events[0].toolTokens).toBe(200); // retained request-schema estimate, outside cumulative provider usage
     expect(t.events[0].hasUsage).toBe(false);
-    expect(telemetryRoleTokens(t, 'director')).toBe(2300);
+    expect(telemetryRoleTokens(t, 'director')).toBe(0);
   });
 });
 

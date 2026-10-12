@@ -38,6 +38,28 @@ def _policy_with_input_limits(
     )
 
 
+@pytest.mark.parametrize("policy_source", ["constructor", "environment", "snapshot"])
+def test_default_input_policy_accepts_normal_large_repair_message(
+    policy_source: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("KERNELONE_CONTEXT_OS_MAX_MESSAGE_SIZE", raising=False)
+    if policy_source == "environment":
+        policy = StateFirstContextOSPolicy.from_env()
+    elif policy_source == "snapshot":
+        policy = StateFirstContextOSPolicy.from_dict({})
+    else:
+        policy = StateFirstContextOSPolicy()
+    context_os = StateFirstContextOS(policy=policy, workspace=str(tmp_path))
+    try:
+        # This size occurred in native Director repair evidence. It fits well
+        # within the total input budget and must reach context projection.
+        context_os._validate_project_input([{"role": "user", "content": "x" * 103_020}])
+    finally:
+        context_os.__exit__(None, None, None)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("messages", "policy", "expected_constraint"),

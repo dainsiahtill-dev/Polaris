@@ -356,7 +356,6 @@ def chief_engineer_portfolio_output_errors(
         if not isinstance(consumers, list):
             errors.append("project_interface_contract.consumer_declarations must be an array")
     behavior_obligation_refs: list[tuple[int, tuple[str, ...]]] = []
-    behavior_authority_rows: list[tuple[str, frozenset[str], frozenset[str]]] = []
     behavior_invariant_ids: set[str] = set()
     behavior_contract_valid = True
     behavior_contract = construction_plan.get("shared_behavior_contract")
@@ -409,13 +408,6 @@ def chief_engineer_portfolio_output_errors(
                     )
                     behavior_obligation_refs.append((index, parsed_invariant.covered_obligation_ids))
                     behavior_invariant_ids.add(parsed_invariant.invariant_id)
-                    behavior_authority_rows.append(
-                        (
-                            parsed_invariant.owner_task_id,
-                            frozenset(parsed_invariant.consumer_task_ids),
-                            frozenset(parsed_invariant.covered_obligation_ids),
-                        )
-                    )
                 except (TypeError, ValueError) as exc:
                     errors.append(f"shared_behavior_contract.invariants[{index}] invalid: {exc}")
                     behavior_contract_valid = False
@@ -479,63 +471,4 @@ def chief_engineer_portfolio_output_errors(
                             + ", ".join(unknown_ids)
                         )
                         completion_cross_refs_valid = False
-            if completion_cross_refs_valid and behavior_contract_valid:
-                artifacts = obligations.get("artifacts")
-                verification = obligations.get("verification")
-                if isinstance(artifacts, list) and isinstance(verification, list):
-                    required_sources: dict[str, set[str]] = {}
-                    required_tests: dict[str, set[str]] = {}
-                    for row in artifacts:
-                        if not isinstance(row, Mapping) or row.get("applicability") != "required":
-                            continue
-                        owner = str(row.get("owner_task_id") or "").strip()
-                        obligation_id = str(row.get("obligation_id") or "").strip()
-                        role = str(row.get("semantic_role") or "").strip()
-                        if not owner or not obligation_id:
-                            continue
-                        if (
-                            authorized_artifact_obligation_ids is not None
-                            and obligation_id not in authorized_artifact_obligation_ids
-                        ):
-                            # Raw provider rows are not authority. Cross-task
-                            # behavior audit must consume the same immutable CE
-                            # task/path projection used by completion/depth.
-                            continue
-                        if role in {"source", "entrypoint"}:
-                            required_sources.setdefault(owner, set()).add(obligation_id)
-                        elif role == "test":
-                            required_tests.setdefault(owner, set()).add(obligation_id)
-
-                    test_verifier_coverage = {
-                        str(row.get("obligation_id") or "").strip(): {
-                            str(item).strip() for item in row.get("covers_obligation_ids") or () if str(item).strip()
-                        }
-                        for row in verification
-                        if isinstance(row, Mapping)
-                        and row.get("applicability") == "required"
-                        and row.get("modality") == "test"
-                    }
-                    for test_owner, test_obligations in required_tests.items():
-                        source_owners = set(required_sources) - {test_owner}
-                        if not source_owners:
-                            continue
-                        linked = False
-                        for owner, consumers, covered in behavior_authority_rows:
-                            expanded_covered = set(covered)
-                            for obligation_id in covered:
-                                expanded_covered.update(test_verifier_coverage.get(obligation_id, ()))
-                            if (
-                                owner in source_owners
-                                and test_owner in consumers
-                                and bool(expanded_covered & required_sources[owner])
-                                and bool(expanded_covered & test_obligations)
-                            ):
-                                linked = True
-                                break
-                        if not linked:
-                            errors.append(
-                                "shared_behavior_contract behavior invariant lacks cross-task "
-                                "production-and-test obligation coverage: "
-                                f"test_owner={test_owner}"
-                            )
     return errors

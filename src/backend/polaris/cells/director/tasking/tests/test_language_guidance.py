@@ -257,6 +257,47 @@ def test_node_cli_does_not_infer_express_framework_requirement() -> None:
     assert "framework_best_practices" not in strategy.evidence_requirements
 
 
+def test_tsx_command_does_not_require_react_framework_evidence() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Implement TypeScript simulation and its Node test entrypoint",
+        description="Build core domain modules, HTML canvas and the CLI; use npx tsx tests/garden.test.ts.",
+        metadata={
+            "language": "typescript",
+            "verification_commands": [{"modality": "test", "argv": ["npx", "tsx", "tests/garden.test.ts"]}],
+        },
+        target_files=["src/domain/entities.ts", "src/simulation/garden.ts", "src/scene/main.ts", "index.html"],
+        scope_paths=[],
+    )
+    strategy = resolve_director_execution_strategy(profile, metadata={})
+    assert profile.language == "typescript"
+    assert profile.framework == ""
+    assert "framework_best_practices" not in strategy.evidence_requirements
+
+
+def test_framework_guidance_is_available_without_becoming_execution_authority() -> None:
+    profile = resolve_director_execution_profile(
+        subject="Implement a React UI",
+        description="Build a React stateful component and its tests.",
+        metadata={"language": "typescript", "framework": "react"},
+        target_files=["src/App.tsx"],
+        scope_paths=[],
+    )
+    _identity, guidance = build_language_section(
+        ["src/App.tsx"],
+        subject="Implement a React UI",
+        description="Build a React stateful component and its tests.",
+        metadata={"language": "typescript", "framework": "react"},
+    )
+    strategy = resolve_director_execution_strategy(profile, metadata={})
+    assert profile.framework == "react"
+    assert "React" in guidance
+    assert "pm_task_contract" in strategy.evidence_requirements
+    assert "chief_engineer_blueprint" in strategy.evidence_requirements
+    assert "target_files_or_declared_scopes" in strategy.evidence_requirements
+    assert "framework_best_practices" not in strategy.evidence_requirements
+    assert "language_best_practices" not in strategy.evidence_requirements
+
+
 def test_javascript_metadata_overrides_python_validation_terms() -> None:
     profile = resolve_director_execution_profile(
         subject="Implement JavaScript npm meteor wish queue",

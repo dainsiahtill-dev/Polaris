@@ -105,6 +105,24 @@ def canonical_settle_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> d
     )
     monkeypatch.setattr(quality, "_workspace_quality_causal_repair_target_files", lambda *_a, **_k: ["package.json"])
     monkeypatch.setattr(quality, "_record_workspace_quality_repair_artifact_receipts", lambda _pending: ())
+
+    async def unavailable_provider(*_args: Any, **_kwargs: Any) -> tuple[list[Any], dict[str, Any]]:
+        # Scheduling units exercise deterministic receipts without real provider
+        # calls. Continuation/provider semantics have their own test module.
+        return [], {"attempted": True, "success": False, "error_code": "unit_provider_unavailable"}
+
+    monkeypatch.setattr(quality, "_apply_workspace_quality_llm_repairs", unavailable_provider)
+    unit_port = SimpleNamespace(mint_authority_binding=lambda _role: object())
+
+    async def unavailable_provider_scope(_port: Any, _role: str, operation: Any, **_kwargs: Any) -> Any:
+        return await operation()
+
+    monkeypatch.setattr(
+        OrchestrationStageExecutor, "_factory_role_evidence_cutoff_port", staticmethod(lambda _context: unit_port)
+    )
+    monkeypatch.setattr(
+        OrchestrationStageExecutor, "_call_with_factory_role_evidence_authority", staticmethod(unavailable_provider_scope)
+    )
     return owner
 
 

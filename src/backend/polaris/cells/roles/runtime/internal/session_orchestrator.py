@@ -326,6 +326,13 @@ class SessionStateReducer:
             normalized = self._normalize_progress(self.state.task_progress)
         if envelope.continuation_mode == TurnContinuationMode.END_SESSION:
             return "done"
+        current = self._normalize_progress(self.state.task_progress)
+        # A local repair is still part of the verification phase.
+        if (
+            self.state.structured_findings.get("_canonical_role_kernel") is True
+            and _PHASE_PROGRESS_PRIORITY.get(current, 0) > _PHASE_PROGRESS_PRIORITY.get(normalized, 0)
+        ):
+            return current
         return normalized
 
     def _build_last_failure(
@@ -336,9 +343,10 @@ class SessionStateReducer:
         failure_class = getattr(envelope, "failure_class", None)
         visible_content = getattr(envelope.turn_result, "visible_content", "")
         next_intent = getattr(envelope, "next_intent", None)
-        if failure_class is None and not stop_reason and not visible_content:
+        error_summary = str(envelope.session_patch.get("error_summary") or "")
+        if failure_class is None and not stop_reason and not visible_content and not error_summary:
             return None
-        summary = stop_reason or next_intent or visible_content
+        summary = stop_reason or next_intent or error_summary or visible_content
         if not summary:
             return None
         failure_class_value = failure_class.value if failure_class else ""
@@ -395,7 +403,7 @@ class SessionStateReducer:
         marker = "EXPLORATION_STREAK_HARD_BLOCK"
         mandatory = str(self.state.structured_findings.get("mandatory_instruction", "") or "")
 
-        if not self._is_materialize_changes_mode():
+        if not self._is_materialize_changes_mode() or self.state.structured_findings.get("_canonical_role_kernel") is True:
             self.state.structured_findings.pop(key, None)
             if marker in mandatory:
                 cleaned = "\n".join(line for line in mandatory.splitlines() if marker not in line).strip()
@@ -503,6 +511,7 @@ class RoleSessionOrchestrator:
     ) -> None:
         self.session_id = session_id
         self.kernel = kernel
+        self._canonical_role_kernel = getattr(kernel, "canonical_role_kernel", False) is True
         self.workspace = workspace
         self.role = role
         self.policy = ContinuationPolicy(max_auto_turns=max_auto_turns)
@@ -513,6 +522,8 @@ class RoleSessionOrchestrator:
             max_turns=max_auto_turns,
             artifacts={},
         )
+        if self._canonical_role_kernel:
+            self.state.structured_findings["_canonical_role_kernel"] = True
         self._state_reducer = SessionStateReducer(self.state)
         self._artifact_store = SessionArtifactStore(
             workspace=workspace,
@@ -521,7 +532,10 @@ class RoleSessionOrchestrator:
         self._shadow_engine = shadow_engine
         self._slm_warmup_task: asyncio.Task[Any] | None = None
         # 尝试从 checkpoint 恢复会话状态（多 Turn resume）
-        self._try_load_checkpoint()
+        # Canonical turns recover through roles.session and TransactionKernel;
+        # a derived checkpoint from an earlier submission is not authority.
+        if not self._canonical_role_kernel:
+            self._try_load_checkpoint()
 
     def _get_role_and_tools(self) -> tuple[str, list[dict[str, Any]]]:
         """Get the role definition and tool definitions for the orchestrator's role (cached per role).
@@ -678,6 +692,8 @@ class RoleSessionOrchestrator:
             self._slm_warmup_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._slm_warmup_task
+        if self._canonical_role_kernel:
+            return
         # 清理 CognitiveGateway 单例资源（warmup task 等）
         try:
             from polaris.cells.roles.kernel.public.transaction_contracts import (
@@ -701,7 +717,7 @@ class RoleSessionOrchestrator:
 
         session_span_id = f"session_{uuid4().hex}"
 
-        if self.state.turn_count == 0:
+        if self.state.turn_count == 0 and not self._canonical_role_kernel:
             try:
                 from polaris.cells.roles.kernel.public.transaction_contracts import (
                     CognitiveGateway,
@@ -835,7 +851,7 @@ class RoleSessionOrchestrator:
                     if is_first_turn
                     else self._build_continuation_prompt(envelope or self._build_empty_envelope())
                 )
-                if is_first_turn and first_prompt:
+                if is_first_turn and first_prompt and not self._canonical_role_kernel:
                     bootstrap_knowledge = await self._retrieve_bootstrapping_knowledge(first_prompt)
                     if bootstrap_knowledge:
                         current_prompt = f"{bootstrap_knowledge}\n\nCurrent Task: {current_prompt}"
@@ -856,7 +872,7 @@ class RoleSessionOrchestrator:
                 envelope = None
                 completion_event = None
                 tool_definitions: list[dict[str, Any]] = []
-                role_def, profile_tool_defs = self._get_role_and_tools()
+                role_def, profile_tool_defs = ("", []) if self._canonical_role_kernel else self._get_role_and_tools()
                 if profile_tool_defs:
                     tool_definitions = profile_tool_defs
 
@@ -886,7 +902,8 @@ class RoleSessionOrchestrator:
 
                 envelope = self._apply_mutation_bypass_local_recovery(envelope)
                 envelope = self._state_reducer.enforce_materialize_changes_guard(envelope)
-                envelope = self._apply_read_only_termination_exemption(envelope)
+                if not self._canonical_role_kernel:
+                    envelope = self._apply_read_only_termination_exemption(envelope)
 
                 new_turn_index = self.state.turn_count + 1
                 if envelope.artifacts_to_persist:
@@ -1093,6 +1110,15 @@ class RoleSessionOrchestrator:
         findings = get_active_findings(self.state.structured_findings)
         # FIX-20250421: 使用 original_goal（永不丢失）替代 goal（可能被覆盖）
         goal = self.state.original_goal or self.state.goal or "（未设定明确目标）"
+        if self._canonical_role_kernel:
+            # The gateway projects role identity and committed observations.
+            # Do not carry legacy forced tools or raw reads through this prompt.
+            failure = str((self.state.last_failure or {}).get("summary") or "")
+            return (
+                f"{goal}\n\n继续当前任务。依据当前 ContextOS 和真实工具收据选择下一步，"
+                "先读取需要的证据，完成剩余修改和验证。验证失败时只修复对应问题并重新验证。"
+                f"\n当前阶段：{self.state.task_progress}。最近反馈：{failure}"
+            )
         progress = self.state.task_progress
         normalized_progress = self._state_reducer._normalize_progress(progress)
         turn = self.state.turn_count

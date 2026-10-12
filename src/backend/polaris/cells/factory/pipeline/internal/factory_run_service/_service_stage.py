@@ -758,7 +758,7 @@ class _FactoryRunServiceStageMixin:
         checkpoint_ref: str,
         persistence_intent_sha256: str,
     ) -> None:
-        """Prove 8 MiB capacity for both ordered transaction records."""
+        """Prove event-chain capacity for both ordered transaction records."""
 
         (preview_stage,) = await self.store.preflight_authoritative_events(run_id, (stage_event,))
         marker_preview = {

@@ -143,17 +143,20 @@ def build_contract_retry_context(
     retry_lines = [
         "RETRY CONTRACT: The previous tool batch was rejected because it did not include any write tool",
         "while the user explicitly requested code/file modification.",
-        "You must replan now and emit ONE valid tool batch before finalization.",
+        "Use the supplied native tool interface to perform the edit before finalization.",
+        "If the runtime explicitly supplies a text tool fallback, follow that protocol instead.",
         "HARD GATE: never return plain-text-only completion for a mutation request.",
     ]
     if write_tools:
         retry_lines.append("Allowed write tools in this turn: " + ", ".join(write_tools) + ".")
         retry_lines.append("Include at least one of the allowed write tools in the emitted batch.")
-        retry_lines.append(
-            "Do not guess exact-match edit search text. "
-            "For create-file or whole-file replacement tasks, prefer write_file. "
-            "For existing targeted edits, prefer edit_blocks or edit_file after verifying exact content."
-        )
+        retry_lines.append("Do not guess exact-match edit search text; use the supplied current content.")
+        if "write_file" in write_tools:
+            retry_lines.append("For create-file or whole-file replacement tasks, prefer write_file.")
+        if "edit_blocks" in write_tools:
+            retry_lines.append("For existing targeted edits, prefer edit_blocks after verifying exact content.")
+        elif "edit_file" in write_tools:
+            retry_lines.append("For existing targeted edits, use edit_file with exact current content.")
     # Weak-model EASIEST-PATH: the line-range form of edit_blocks removes the hardest
     # task (reproducing exact SEARCH text). Steer low-precision models there explicitly.
     if "edit_blocks" in write_tools:
@@ -210,7 +213,7 @@ def build_contract_retry_context(
         "RETRY MODE ACTIVE: discard only the previous staged execution workflow "
         "(e.g., understand-first/read-first).\n"
         "Do not discard the role identity, workspace, target files, tool schema, or safety constraints.\n"
-        "Output a single valid TOOL_BATCH immediately under the constraints below.\n"
+        "Call the supplied native tools directly; do not serialize an internal decision or tool batch.\n"
         "Do not emit plain-text-only response."
     )
     system_content_parts = []
@@ -323,7 +326,7 @@ def append_retry_enforcement_hint(
             "RETRY ENFORCEMENT: previous retry output is still invalid.\n"
             f"Reason: {reason}\n"
             f"Allowed tools for this retry scope: {rendered_allowed}\n"
-            "You MUST emit one TOOL_BATCH that uses only allowed tools, and includes at least one write tool.\n"
+            "Call a supplied native write tool using only allowed tools; do not serialize an internal tool batch.\n"
             "INVALID retry outputs: read_file-only, list_directory-only, execute_command-only.\n"
             "VALID retry output must include a write tool call.\n"
             + (f"MANDATORY write tool for this retry: {forced_write_tool_name}." if forced_write_tool_name else "")
@@ -514,7 +517,7 @@ def build_retry_write_after_bootstrap_context(
                 payload_text = payload_text[:1200] + " ...[truncated]"
         if status == "success":
             summary_lines.append(f"- {tool_name}: {payload_text}")
-            if resolved_file and resolved_file not in successful_files:
+            if file_content and resolved_file and resolved_file not in successful_files:
                 successful_files.append(resolved_file)
         else:
             summary_lines.append(f"- {tool_name}: ERROR {payload_text}")
@@ -527,14 +530,19 @@ def build_retry_write_after_bootstrap_context(
         else "Mandatory: include at least one write tool."
     )
     summary_block = "\n".join(summary_lines) if summary_lines else "- (no readable bootstrap receipts)"
+    role_definition = _extract_role_definition_block(original_context)
     retry_system = (
-        "WRITE RETRY MODE: bootstrap read context has been collected.\n"
-        "Now emit exactly one TOOL_BATCH for implementation (write stage), no extra read-only exploration.\n"
-        f"{forced_line}\n"
-        "If you cannot determine exact patch, still emit a write-tool call with best-effort scoped edit arguments.\n"
-        "Bootstrap read summary:\n"
-        f"{summary_block}"
+        (role_definition + "\n" if role_definition else "")
+        + "Continue implementation through the supplied native tool interface.\n"
+        + "If the runtime explicitly supplies a text tool fallback, use that protocol instead.\n"
+        + f"{forced_line}\n"
+        + "Use exact current file content for edits; never guess a patch. "
+        + "Existence checks do not provide file contents or write authority. "
+        + "These observations do not expand the original task's authorized write scope.\n"
+        + "Bootstrap observations:\n"
+        + summary_block
     )
+    retry_system += "\n" + "\n".join(_retry_write_guidance_pins(original_context))
     # C3 (2026-06-16 deliberation): on a from-scratch CREATE the real write
     # target does not exist on disk yet, so it can never appear in
     # successful_files (which only collects files the bootstrap successfully
@@ -549,7 +557,9 @@ def build_retry_write_after_bootstrap_context(
     # names every sibling file.
     if successful_files and not from_scratch_create:
         retry_system += (
-            "\nWrite targets must be selected from successfully-read files only: " + ", ".join(successful_files) + "."
+            "\nCurrent content available for these reference files: "
+            + ", ".join(successful_files)
+            + ". Only original authorized targets may be edited."
         )
     if failed_files:
         retry_system += "\nDo NOT edit unresolved paths (read failed): " + ", ".join(failed_files) + "."

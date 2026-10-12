@@ -16,6 +16,9 @@ from polaris.kernelone.trace.tracer import TraceRecorder, UnifiedTracer
 
 
 class _DummyModelCatalog:
+    def __init__(self, *, max_output_tokens: int = 512) -> None:
+        self.max_output_tokens = max_output_tokens
+
     def resolve(self, provider_id: str, model: str, provider_cfg: dict[str, object]) -> ModelSpec:
         del provider_cfg
         return ModelSpec(
@@ -23,7 +26,7 @@ class _DummyModelCatalog:
             provider_type="fake",
             model=model,
             max_context_tokens=4096,
-            max_output_tokens=512,
+            max_output_tokens=self.max_output_tokens,
         )
 
 
@@ -477,7 +480,9 @@ async def test_stream_executor_anthropic_placeholder_input_waits_for_json_delta(
 
     executor = StreamExecutor(
         workspace=str(tmp_path),
-        model_catalog=_DummyModelCatalog(),
+        # This decoder regression must reach the provider. CE planning rightly
+        # rejects the default 512-token stub before a stream can be decoded.
+        model_catalog=_DummyModelCatalog(max_output_tokens=4096),
         token_budget=_DummyBudgetManager(),
     )
     monkeypatch.setattr(

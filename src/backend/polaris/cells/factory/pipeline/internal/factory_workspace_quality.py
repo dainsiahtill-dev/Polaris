@@ -915,6 +915,13 @@ print(f"Java javac passed for {len(files)} source file(s)")
             cancel_control=cancel_control,
         )
 
+    @staticmethod
+    def _command_group_observation(group: VerificationGroup, command_id: int | None) -> dict[str, Any]:
+        """Keep this command's observation without duplicating earlier records."""
+        observation = group.effects_summary()
+        observation["commands"] = [row for row in observation["commands"] if row["command_id"] == command_id]
+        return observation
+
     def _run_resolved_command(
         self,
         *,
@@ -927,6 +934,7 @@ print(f"Java javac passed for {len(files)} source file(s)")
         verification_group: VerificationGroup | None = None,
         cancel_control: ProcessTreeRunControl | None = None,
     ) -> dict[str, Any]:
+        prepared = None
         try:
             if verification_group is None:
                 completed = run_process_tree_safe(
@@ -994,7 +1002,9 @@ print(f"Java javac passed for {len(files)} source file(s)")
             if nested_diagnostics:
                 result["nested_diagnostics"] = nested_diagnostics
             if verification_group is not None:
-                result["verification_group"] = verification_group.effects_summary()
+                result["verification_group"] = self._command_group_observation(
+                    verification_group, prepared.command_id if prepared is not None else None
+                )
             if zero_native_tests:
                 result["error"] = "cargo_test_zero_tests"
             elif masked_failure_reason:
@@ -1029,7 +1039,9 @@ print(f"Java javac passed for {len(files)} source file(s)")
                     }
                 )
             if verification_group is not None:
-                result["verification_group"] = verification_group.effects_summary()
+                result["verification_group"] = self._command_group_observation(
+                    verification_group, prepared.command_id if prepared is not None else None
+                )
             return result
         except (ProcessTreeCancelledError, ProcessTreeDrainError):
             # These are physical lifecycle outcomes, not ordinary verifier

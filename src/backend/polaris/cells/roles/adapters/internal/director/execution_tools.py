@@ -1216,7 +1216,9 @@ class DirectorToolExecutor:
                 return {"ok": False, "error": f"Search text not found in file: {search[:50]}..."}
 
             rel_path = target.relative_to(workspace).as_posix()
-            new_content = content.replace(search, replace, 1)
+            replace_all = args.get("replace_all") is True
+            replacement_count = content.count(search) if replace_all else 1
+            new_content = content.replace(search, replace, -1 if replace_all else 1)
             json_config_result = _validate_or_repair_json_config_content(rel_path=rel_path, content=new_content)
             if not json_config_result.get("ok"):
                 return json_config_result
@@ -1285,7 +1287,7 @@ class DirectorToolExecutor:
                 )
                 replace_result = {
                     "ok": True,
-                    "replacements": 1,
+                    "replacements": replacement_count,
                     "broadcast_ok": broadcast_file_written(
                         file_path=rel_path,
                         operation="modify",
@@ -1312,7 +1314,7 @@ class DirectorToolExecutor:
                     file_path=rel_path,
                     old_text=search,
                     new_text=replace,
-                    count=1,
+                    count=-1 if replace_all else 1,
                     message_bus=self._message_bus,
                     worker_id=self._worker_id,
                     task_id=task_id,

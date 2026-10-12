@@ -483,8 +483,7 @@ def query_blueprint_provenance(
     delegated_pm_targets = {
         path
         for path in missing_pm_targets
-        if _pm_task_declares_ce_owned_topology(pm_task)
-        and completion_owner_by_path.get(path) not in {None, "", task_id}
+        if completion_owner_by_path.get(path) not in {None, "", task_id}
     }
     unresolved_missing_pm_targets = [
         path for path in missing_pm_targets if path not in delegated_pm_targets

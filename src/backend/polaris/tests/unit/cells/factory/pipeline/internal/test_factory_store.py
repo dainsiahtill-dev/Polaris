@@ -371,6 +371,38 @@ class TestFactoryStore:
         assert captured.value.code == "factory_checkpoint_immutable_collision"
 
     @pytest.mark.asyncio
+    async def test_written_large_run_and_checkpoint_remain_strictly_readable(self, tmp_store: FactoryStore) -> None:
+        run = MagicMock()
+        run.id = "run-large"
+        run.updated_at = run.created_at = "2026-10-12T00:00:00Z"
+        run.status.value = "failed"
+        document = {"id": run.id, "status": "failed", "metadata": {"evidence": "x" * (5 * 1024 * 1024)}}
+        run.to_dict.return_value = document
+        await tmp_store.save_run(run)
+        reference = await tmp_store.checkpoint(run)
+        assert await tmp_store.read_strict_run_snapshot(run.id) == document
+        assert await tmp_store.read_strict_checkpoint_snapshot(run.id, reference) == document
+
+    @pytest.mark.asyncio
+    async def test_snapshot_writer_rejects_unreadable_size_before_replacing_previous_state(
+        self, tmp_store: FactoryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(factory_store_module, "_FACTORY_RUN_SNAPSHOT_MAX_BYTES", 1000)
+        run = MagicMock()
+        run.id = "run-bounded"
+        run.updated_at = run.created_at = "2026-10-12T00:00:00Z"
+        run.status.value = "failed"
+        run.to_dict.return_value = {"id": run.id, "status": "failed"}
+        await tmp_store.save_run(run)
+        before = (tmp_store.get_run_dir(run.id) / "run.json").read_bytes()
+        run.to_dict.return_value = {"id": run.id, "metadata": {"evidence": "x" * 2000}}
+        with pytest.raises(FactoryRunSnapshotError, match="size"):
+            await tmp_store.save_run(run)
+        with pytest.raises(FactoryRunSnapshotError, match="size"):
+            await tmp_store.checkpoint(run)
+        assert (tmp_store.get_run_dir(run.id) / "run.json").read_bytes() == before
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "raw,code",
         [

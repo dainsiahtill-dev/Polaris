@@ -185,6 +185,142 @@ def _diagnosis(candidate, operations=("behavior_invariant_upsert",)):
     )
 
 
+def _known_wrong_source_owner_candidate(tmp_path):
+    seed, tasks, carrier = _bound_candidate(tmp_path)
+    payload = deepcopy(seed.candidate)
+    payload["construction_plan"]["shared_behavior_contract"]["invariants"] = [
+        _behavior(("artifact-main", "artifact-tests")).to_dict()
+    ]
+    source = next(
+        row
+        for row in payload["project_completion_contract"]["obligations"]["artifacts"]
+        if row["obligation_id"] == "artifact-main"
+    )
+    source["owner_task_id"] = "TASK-B"
+    return replace(seed, candidate=payload), tasks, carrier
+
+
+def test_unique_known_source_owner_failure_keeps_canonical_gate_and_routes_typed_repair(tmp_path):
+    candidate, tasks, carrier = _known_wrong_source_owner_candidate(tmp_path)
+    view = project_chief_engineer_effective_obligation_view(candidate.candidate, tasks=tasks, authority_carrier=carrier)
+    assert view["final_roster_complete"] is False
+    assert view["normalization_findings"][0]["repair_operation"] == "artifact_upsert"
+    with pytest.raises(ChiefEngineerBlueprintErrorV1, match="active artifact owner_task_id does not own"):
+        _portfolio._normalize_portfolio_completion_contract(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=carrier.workspace,
+                run_id=carrier.run_id,
+                tasks=tasks,
+                authority_carrier=carrier,
+                llm_blueprint=dict(candidate.candidate),
+            ),
+            candidate.candidate["project_completion_contract"],
+            carrier=carrier,
+        )
+    errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
+        candidate.candidate, tasks=tasks, authority_carrier=carrier
+    )
+    diagnosis = OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(
+        candidate=candidate, output_errors=errors
+    )
+    assert "artifact_upsert" in diagnosis.allowed_operations
+    assert "entrypoint_upsert" not in diagnosis.allowed_operations
+
+
+def test_unique_source_owner_repair_context_projects_pm_identity_then_composer_closes(tmp_path):
+    candidate, tasks, carrier = _known_wrong_source_owner_candidate(tmp_path)
+    before = deepcopy(candidate.candidate)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.artifact_owner_contract.invalid",),
+        allowed_operations=("artifact_upsert",),
+    )
+    context = project_chief_engineer_semantic_repair_provider_context(
+        candidate, diagnosis, tasks=tasks, authority_carrier=carrier
+    )
+    identity = context["upsert_identity_policy"]["artifact_upsert"]["existing_identities"]["artifact-main"]
+    assert identity["owner_task_id"] == "TASK-A"
+    assert context["artifact_owner_corrections"] == [
+        {
+            "obligation_id": "artifact-main",
+            "path": "src/main.py",
+            "provider_owner_task_id": "TASK-B",
+            "pm_authorized_owner_task_id": "TASK-A",
+        }
+    ]
+    assert candidate.candidate == before
+    row = next(
+        item
+        for item in before["project_completion_contract"]["obligations"]["artifacts"]
+        if item["obligation_id"] == "artifact-main"
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        artifact_upserts=(ArtifactObligationV1(**row),),
+    )
+    after, receipt = compose_chief_engineer_semantic_repair(
+        candidate, diagnosis, patch, tasks=tasks, authority_carrier=carrier
+    )
+    final = project_chief_engineer_effective_obligation_view(after.candidate, tasks=tasks, authority_carrier=carrier)
+    assert final["final_roster_complete"] is True
+    assert final["normalization_errors"] == []
+    assert receipt.changed_semantic_ids == ("artifact-main",)
+    assert after.candidate["construction_plan"] == before["construction_plan"]
+
+
+@pytest.mark.parametrize("owner", ["TASK-UNKNOWN", None])
+def test_unknown_source_owner_cannot_gain_artifact_repair_route(tmp_path, owner):
+    candidate, tasks, carrier = _known_wrong_source_owner_candidate(tmp_path)
+    payload = deepcopy(candidate.candidate)
+    payload["project_completion_contract"]["obligations"]["artifacts"][0]["owner_task_id"] = owner
+    view = project_chief_engineer_effective_obligation_view(payload, tasks=tasks, authority_carrier=carrier)
+    assert view["final_roster_complete"] is False
+    assert all(item["repair_operation"] is None for item in view["normalization_findings"])
+
+
+def test_parallel_source_owners_cannot_gain_artifact_repair_route(tmp_path):
+    seed, tasks, _carrier = _known_wrong_source_owner_candidate(tmp_path)
+    parallel = ChiefEngineerPortfolioTaskV1(
+        task_id="TASK-C",
+        objective="Parallel source work",
+        target_files=("src/main.py",),
+        scope_paths=("src/main.py",),
+        primary_language="python",
+        allowed_source_suffixes=(".py",),
+    )
+    tasks = (*tasks, parallel)
+    carrier = _portfolio_command_authority(tasks=tasks, workspace=tmp_path)["authority_carrier"]
+    view = project_chief_engineer_effective_obligation_view(seed.candidate, tasks=tasks, authority_carrier=carrier)
+    assert view["final_roster_complete"] is False
+    assert view["normalization_findings"][0]["repair_operation"] is None
+    assert view["artifact_owner_corrections"] == []
+
+
+def test_owner_repair_context_localizes_all_unique_owner_errors_in_one_envelope(tmp_path):
+    candidate, tasks, carrier = _known_wrong_source_owner_candidate(tmp_path)
+    payload = deepcopy(candidate.candidate)
+    optional = next(
+        row
+        for row in payload["project_completion_contract"]["obligations"]["artifacts"]
+        if row["obligation_id"] == "OBL-7"
+    )
+    optional["owner_task_id"] = "TASK-B"
+    candidate = replace(candidate, candidate=payload)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.artifact_owner_contract.invalid",),
+        allowed_operations=("artifact_upsert",),
+    )
+    context = project_chief_engineer_semantic_repair_provider_context(
+        candidate, diagnosis, tasks=tasks, authority_carrier=carrier
+    )
+    assert {row["obligation_id"] for row in context["artifact_owner_corrections"]} == {"artifact-main", "OBL-7"}
+    identities = context["upsert_identity_policy"]["artifact_upsert"]["existing_identities"]
+    assert identities["artifact-main"]["owner_task_id"] == "TASK-A"
+    assert identities["OBL-7"]["owner_task_id"] == "TASK-A"
+
+
 def test_authenticated_view_matches_real_final_normalizer_and_is_pure(tmp_path, monkeypatch):
     candidate, tasks, carrier = _bound_candidate(tmp_path)
     command = BuildChiefEngineerBlueprintPortfolioCommandV1(

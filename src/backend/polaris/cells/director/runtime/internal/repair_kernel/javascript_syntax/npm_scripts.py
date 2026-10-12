@@ -11,6 +11,7 @@ from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_te
 from ._shared import (
     _compiled_typescript_entrypoint,
     _compiled_typescript_entrypoint_for_missing,
+    _compiled_typescript_output_path,
     _diagnostic_script_name,
     _fallback_script_for_missing_entrypoint,
     _has_typescript_context,
@@ -137,9 +138,9 @@ def build_npm_script_contract_plan(
     elif has_typescript_context and (
         _has_repairable_test_script_error(raw_errors) or _has_repairable_test_script_diagnostic(matched_diagnostics)
     ):
-        updates[("scripts", "test")] = (
-            _fallback_script_for_recursive_script("test", normalized_base, package_payload) or "npm run build"
-        )
+        replacement = _fallback_script_for_recursive_script("test", normalized_base, package_payload)
+        if replacement:
+            updates[("scripts", "test")] = replacement
 
     if _has_fixed_port_start_script_error(raw_errors) or _has_fixed_port_start_script_diagnostic(matched_diagnostics):
         for script_name in ("start", "serve", "dev", "preview"):
@@ -353,13 +354,35 @@ def _node_test_runner_script(base_files: Mapping[str, str]) -> str:
         path
         for path in base_files
         if path.startswith("tests/")
-        and path.endswith(".js")
-        and (PurePosixPath(path).name.startswith("test_") or PurePosixPath(path).name.endswith(".test.js"))
+        and path.endswith((".js", ".mjs", ".cjs", ".ts", ".tsx"))
+        and (PurePosixPath(path).name.startswith("test_") or ".test." in PurePosixPath(path).name)
     )
     if "tests/test_basic.js" in test_paths:
         test_paths.remove("tests/test_basic.js")
         test_paths.insert(0, "tests/test_basic.js")
-    return "node --test" if not test_paths else "node --test " + " ".join(test_paths)
+    typed_paths = [path for path in test_paths if path.endswith((".ts", ".tsx"))]
+    if typed_paths:
+        config = _parse_package_json(base_files.get("tsconfig.json", ""))
+        options = config.get("compilerOptions") if config else None
+        if (
+            not isinstance(options, Mapping)
+            or config.get("extends")
+            or options.get("noEmit") is True
+            or options.get("outFile")
+            or not isinstance(options.get("rootDir"), str)
+            or not isinstance(options.get("outDir"), str)
+        ):
+            return ""
+        root, output = (PurePosixPath(options[key]) for key in ("rootDir", "outDir"))
+        if any(path.is_absolute() or ".." in path.parts for path in (root, output)):
+            return ""
+        if any(not PurePosixPath(path).is_relative_to(root) for path in typed_paths):
+            return ""
+        test_paths = [
+            _compiled_typescript_output_path(base_files, path) if path in typed_paths else path for path in test_paths
+        ]
+    runner = "node --test" if not test_paths else "node --test " + " ".join(shlex.quote(path) for path in test_paths)
+    return "npm run build && " + runner if typed_paths else runner
 
 
 def _placeholder_scripts(errors: Sequence[str]) -> tuple[str, ...]:
@@ -525,9 +548,11 @@ def _fallback_script_for_recursive_script(
             return "npm run build && node dist/verify.js"
         return "npm run build"
     if normalized == "test":
+        if any(path.startswith("tests/") and ".test." in PurePosixPath(path).name for path in base_files):
+            return _node_test_runner_script(base_files)
         if "src/verify.ts" in base_files:
-            return "npm run build && node dist/verify.js"
-        return "npm run build"
+            return "npm run build && node " + shlex.quote(_compiled_typescript_output_path(base_files, "src/verify.ts"))
+        return ""
     if normalized in {"start", "serve", "dev", "preview"}:
         entrypoint = _compiled_typescript_entrypoint(base_files, package_payload)
         return f"npm run build && node {entrypoint}" if entrypoint else "npm run build"

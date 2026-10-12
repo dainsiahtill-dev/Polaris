@@ -573,7 +573,9 @@ def _run_materialization_node_manifest(
                 base_files=base_files,
                 artifact_quality_errors=artifact_quality_errors,
                 artifact_quality_issues=artifact_quality_issues,
-                allowed_paths=tuple(dict.fromkeys(allowed)),
+                allowed_paths=("package.json",)
+                if source_tool == "deterministic_npm_script_contract_repair"
+                else tuple(dict.fromkeys(allowed)),
                 use_editor=True,
                 convergence_verifier=convergence_verifier,
                 execution_attempt=execution_attempt,
@@ -767,7 +769,29 @@ def _collect_materialization_node_manifest_base_files(
     )
     for relative_path in ("package.json", "scripts/test.mjs", "scripts/test.js", "scripts/test.cjs"):
         _add_existing_materialization_base_file(base_files, workspace_path, relative_path)
+    if source_tool == "deterministic_npm_script_contract_repair":
+        _add_compiled_node_entrypoint_inputs(
+            base_files, workspace_path, artifact_quality_errors, artifact_quality_issues
+        )
     return base_files
+
+
+def _add_compiled_node_entrypoint_inputs(
+    base_files: dict[str, str],
+    workspace_path: Path,
+    artifact_quality_errors: list[str],
+    artifact_quality_issues: Sequence[Mapping[str, Any]],
+) -> None:
+    """Read related TS inputs for manifest planning; never grant them write scope."""
+    coverage = _project_coverage_preaudit(artifact_quality_errors, artifact_quality_issues=artifact_quality_issues)
+    for item in coverage.get("items") or ():
+        diagnostic = item.get("diagnostic") or {}
+        metadata = diagnostic.get("metadata") or {}
+        if metadata.get("script_issue") == "missing_compiled_entrypoint":
+            _add_bounded_workspace_materialization_base_files(
+                base_files, workspace_path, allowed_suffixes=(".ts", ".tsx"), max_files=512
+            )
+            return
 
 
 def _collect_materialization_target_runtime_base_files(
@@ -1537,6 +1561,7 @@ def _project_materialization_plan_probe_preaudit(
         collect_unmatched_diagnostic_paths=True,
         task=task,
     )
+    _add_compiled_node_entrypoint_inputs(base_files, workspace_path, artifact_quality_errors, quality_issue_payloads)
     plan_probe = query_director_repair_materialization_plan_probe(
         QueryDirectorRepairMaterializationPlanProbeV1(
             artifact_quality_errors=tuple(str(item) for item in artifact_quality_errors),

@@ -238,10 +238,18 @@ class _Mixin03:
         workspace_root = self.workspace.resolve()
         candidates: list[str] = []
         causal_traceback_candidates: list[str] = []
+        source_loader_importers: list[str] = []
 
         def append_workspace_path(raw_path: str, *, target: list[str] | None = None) -> None:
             path = str(raw_path or "").strip().replace("\\", "/")
             diagnostic_path = Path(path.removeprefix("file://"))
+            if diagnostic_path.is_absolute() and str(diagnostic_path).startswith("/workspace/"):
+                # Controlled verifier namespaces mount this exact project at
+                # /workspace; resolve its diagnostic against the actual root.
+                if ".." in diagnostic_path.parts:
+                    return
+                path = diagnostic_path.relative_to("/workspace").as_posix()
+                diagnostic_path = Path(path)
             if path and diagnostic_path.is_absolute():
                 try:
                     path = diagnostic_path.resolve().relative_to(workspace_root).as_posix()
@@ -290,6 +298,8 @@ class _Mixin03:
         diagnostics = normalize_director_repair_diagnostics([str(item) for item in artifact_quality_errors or []])
         for diagnostic in diagnostics:
             append_workspace_path(str(diagnostic.path or ""))
+            if diagnostic.metadata.get("module_error_kind") == "node_esm_typescript_source_import":
+                append_workspace_path(str(diagnostic.path or ""), target=source_loader_importers)
 
         # Compiler-owned translation units outrank the verifier wrapper that
         # merely observed their failure.  A Python unittest traceback often
@@ -346,6 +356,10 @@ class _Mixin03:
         if "package.json" in joined_errors and (workspace_root / "package.json").is_file():
             candidates.append("package.json")
         for source_path in list(candidates):
+            if source_path in source_loader_importers:
+                # An ESM resolution error identifies the importing file as
+                # the edit site. Imported sources remain read context.
+                continue
             candidates.extend(self._workspace_quality_relative_import_targets(source_path))
         return _dedupe_workspace_repair_paths(candidates)
 
@@ -1085,14 +1099,55 @@ class _Mixin03:
         ]
         findings = tuple(str(item).strip() for item in raw_findings if str(item).strip())
         target_files = tuple(self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json")))
-        commit_context = self._director_stage_materialization_settle_commit_context(
-            run=run,
-            run_id=qa_run_id,
-            diagnostics=[],
-            factory_stage="quality_gate",
-        )
-        job_token_raw = commit_context.get("job_token")
+        # QA publishes report evidence, not a Director workspace mutation.
+        # Reuse the exact canonical boundary's committed lineage metadata.
+        from polaris.cells.events.fact_stream.public import QueryFactEventsV1, query_fact_events
+
+        projection = self._canonical_factory_projection(run, context)
+        boundary = (projection.get("task_boundary") or {}).get("latest_by_task", {}).get(task_id) or {}
+        source_content_id = str(boundary.get("content_id") or "")
+        if not source_content_id:
+            return {"success": False, "reason": "canonical_qa_source_boundary_missing"}
+        source_event: dict[str, Any] | None = None
+        offset = 0
+        try:
+            while source_event is None:
+                page = query_fact_events(
+                    QueryFactEventsV1(
+                        workspace=str(self.workspace),
+                        stream="execution.control_plane",
+                        run_id=qa_run_id,
+                        limit=1000,
+                        offset=offset,
+                    )
+                )
+                for fact in page.events:
+                    event = (fact.get("payload") or {}).get("event") or {}
+                    if (
+                        fact.get("source") == "control_plane.run_ledger"
+                        and event.get("content_id") == source_content_id
+                    ):
+                        source_event = event
+                        break
+                if source_event is not None or not page.next_offset:
+                    break
+                offset = page.next_offset
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {"success": False, "reason": f"canonical_qa_source_read_failed:{type(exc).__name__}:{exc}"}
+        if source_event is None:
+            return {"success": False, "reason": "canonical_qa_source_fact_missing"}
+        job_token_raw = source_event.get("job_token")
         job_token = dict(job_token_raw) if isinstance(job_token_raw, Mapping) else {}
+        requested_project = self._canonical_project_id(context)
+        if (
+            source_event.get("task_id") != task_id
+            or source_event.get("run_id") != qa_run_id
+            or job_token.get("task_id") != task_id
+            or job_token.get("run_id") != qa_run_id
+            or not job_token.get("project_id")
+            or (requested_project and job_token.get("project_id") != requested_project)
+        ):
+            return {"success": False, "reason": "canonical_qa_source_token_identity_mismatch"}
         report_content_hash = hashlib.sha256(
             json.dumps(qa_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()

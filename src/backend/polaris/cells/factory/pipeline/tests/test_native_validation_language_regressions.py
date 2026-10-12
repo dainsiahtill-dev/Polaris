@@ -33,23 +33,21 @@ from polaris.cells.runtime.execution_broker.public import (
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
 
-def test_unmounted_invocation_alias_is_not_admitted_by_mounted_target(tmp_path: Path) -> None:
+def test_unmounted_invocation_alias_executes_mounted_target(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     (source / "input.txt").write_text("private input", encoding="utf-8")
     alias = tmp_path / "unmounted-alias"
     alias.symlink_to("/usr/bin/true")
-    with (
-        verification_group(
-            workspace=source,
-            candidate_id="alias",
-            input_hashes={
-                "input.txt": hashlib.sha256(b"private input").hexdigest(),
-            },
-        ) as group,
-        pytest.raises(RuntimeError, match="toolchain_unmounted"),
-    ):
-        group.prepare_command([str(alias)])
+    with verification_group(
+        workspace=source,
+        candidate_id="alias",
+        input_hashes={
+            "input.txt": hashlib.sha256(b"private input").hexdigest(),
+        },
+    ) as group:
+        result = group.execute_command(group.prepare_command([str(alias)]), timeout=10)
+        assert result.returncode == 0
 
 
 def test_multicall_alias_dispatch_and_retarget_are_independently_bound(tmp_path: Path) -> None:

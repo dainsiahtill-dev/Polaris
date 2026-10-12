@@ -2847,7 +2847,8 @@ class TestQualityRepairMissingTargetContractA:
         assert adapter.repair_context["director_quality_repair"]["edit_preferred_target_files"] == ["models/exhibit.go"]
         assert "edit_preferred_single_target" in adapter.repair_message
         assert "Do not call read_file" not in adapter.repair_message
-        assert "call read_file for this target first when required by tool policy" in adapter.repair_message
+        assert "call read_file for this target first" not in adapter.repair_message
+        assert "CURRENT UTF-8 CONTENT" in adapter.repair_message
         assert "write_only_single_target" not in adapter.repair_message
         assert adapter._execution.allowed_tool_names == {"edit_file"}
         assert adapter._execution.allow_patch_fallback is False

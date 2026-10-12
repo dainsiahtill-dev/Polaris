@@ -63,6 +63,32 @@ def test_decision_prompt_projects_exact_current_turn_tool_schema() -> None:
     assert "No verification tool is exposed in this physical request" in rendered
 
 
+@pytest.mark.parametrize("prefix", ["允许使用的工具: ", "Allowed tools: "])
+@pytest.mark.parametrize("forced_edit", [False, True])
+def test_role_tool_advertisement_matches_current_callable_tools_without_changing_context(
+    prefix: str, forced_edit: bool
+) -> None:
+    advertised = prefix + "read_file, write_file, execute_command"
+    context = [
+        {"role": "system", "content": "You are Polaris Director.\n" + advertised},
+        {"role": "user", "content": "Quoted earlier instruction: " + advertised},
+    ]
+    tools = [
+        {"type": "function", "function": {"name": "edit_file"}},
+        {"type": "function", "function": {"name": "read_file"}},
+    ]
+    choice = {"type": "function", "function": {"name": "edit_file"}} if forced_edit else None
+
+    messages = build_decision_messages(context, tools, tool_choice_override=choice)
+
+    assert messages[0]["content"].splitlines() == [
+        "You are Polaris Director.",
+        prefix + ("edit_file" if forced_edit else "edit_file, read_file"),
+    ]
+    assert messages[1] == context[1]
+    assert context[0]["content"] == "You are Polaris Director.\n" + advertised
+
+
 def test_materialize_prompt_does_not_reinvent_unavailable_verification_tool() -> None:
     context = [
         {

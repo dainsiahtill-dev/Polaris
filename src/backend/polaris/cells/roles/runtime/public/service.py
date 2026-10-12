@@ -1013,6 +1013,28 @@ class RoleRuntimeService(
         command: ExecuteRoleSessionCommandV1,
     ) -> RoleExecutionResultV1:
         self._require_directed_effect_session_attempt(command)
+        from polaris.cells.roles.runtime.internal.kernel_session_turn import (
+            execute_kernel_session,
+            kernel_session_continuation_enabled,
+        )
+
+        if kernel_session_continuation_enabled(command):
+            contract_result = await execute_kernel_session(self, command)
+            evidence = self._emit_cognitive_runtime_shadow_artifacts(
+                source="roles.runtime.execute_role_session.continuous",
+                workspace=command.workspace,
+                role=command.role,
+                task_id=command.task_id,
+                session_id=command.session_id,
+                run_id=command.run_id,
+                result=contract_result,
+                metadata=command.metadata,
+                context=command.context,
+            )
+            return _with_result_metadata_patch(
+                contract_result,
+                _cognitive_runtime_result_patch(evidence=evidence, request_metadata=command.metadata),
+            )
         if command.stream:
             # Collect streaming events and assemble the final result.
             kernel = self._get_kernel(command.workspace)
@@ -1297,16 +1319,24 @@ class RoleRuntimeService(
         }
         yield fingerprint_event
 
+        from polaris.cells.roles.runtime.internal.kernel_session_turn import (
+            kernel_session_continuation_enabled,
+            stream_kernel_session,
+        )
+
+        continuous_session = kernel_session_continuation_enabled(command)
         kernel = self._get_kernel(command.workspace)
         streamed_content: list[str] = []
         streamed_thinking: list[str] = []
         streamed_tool_calls: list[str] = []
         final_stream_result: RoleTurnResult | None = None
         try:
-            async for event in kernel.run_stream(
-                command.role,
-                request,
-            ):
+            session_events = (
+                stream_kernel_session(self, command)
+                if continuous_session
+                else kernel.run_stream(command.role, request)
+            )
+            async for event in session_events:
                 # WS2: Accumulate tool calls into the strategy run context.
                 event_type = str(event.get("type") or "")
                 if event_type == "tool_call":
@@ -1364,15 +1394,16 @@ class RoleRuntimeService(
             usage_payload: dict[str, Any] = {"stream": True}
             if final_stream_result is not None:
                 usage_payload.update(dict(final_stream_result.execution_stats or {}))
-            await self._persist_session_turn_state(
-                command,
-                turn_history=list(final_stream_result.turn_history)
-                if final_stream_result and final_stream_result.turn_history
-                else [],
-                turn_events_metadata=list(final_stream_result.turn_events_metadata)
-                if final_stream_result and final_stream_result.turn_events_metadata
-                else None,
-            )
+            if not continuous_session:
+                await self._persist_session_turn_state(
+                    command,
+                    turn_history=list(final_stream_result.turn_history)
+                    if final_stream_result and final_stream_result.turn_history
+                    else [],
+                    turn_events_metadata=list(final_stream_result.turn_events_metadata)
+                    if final_stream_result and final_stream_result.turn_events_metadata
+                    else None,
+                )
             # WS2: Mark run ended and emit receipt.
             run_ctx = run_ctx.mark_ended()
             try:

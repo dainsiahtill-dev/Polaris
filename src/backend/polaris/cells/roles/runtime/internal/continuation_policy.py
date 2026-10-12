@@ -5,6 +5,7 @@ Contains Circuit Breaker and anti-dead-loop logic, with Speculative-Aware strate
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -497,6 +498,22 @@ class ContinuationPolicy:
         2. 哈希停滞：artifact hash 连续 2 个 turn 未变，且 speculative_hints 为空
         3. 验证阶段回归：progress 从 verifying 回退到 implementing
         """
+        if state.structured_findings.get("_canonical_role_kernel") is True:
+            # Stable phase/unchanged files during useful reads is not a stall.
+            # Reuse this policy's anti-loop boundary with physical observations.
+            signatures = []
+            for record in state.turn_history[-3:]:
+                receipt = record.get("batch_receipt") or {}
+                rows = receipt.get("results") or []
+                if not rows:
+                    return False
+                observations = [
+                    {key: row.get(key) for key in ("tool_name", "arguments", "status", "result")}
+                    for row in rows if isinstance(row, dict)
+                ]
+                signatures.append(json.dumps(observations, sort_keys=True, ensure_ascii=False, default=str))
+            return len(signatures) == 3 and len(set(signatures)) == 1
+
         trajectory = state.structured_findings.get("_findings_trajectory", [])
 
         # 检测 1: 语义进展停滞（task_progress 卡住）

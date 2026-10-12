@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import subprocess
 import sys
 import uuid
@@ -296,14 +297,61 @@ def _recover_director_stage_authority_after_delivery_settle(
 
     if prior_authority.director_stage_authorized:
         return prior_authority
-    # Re-read only canonical owner facts after settle. TaskRuntime history
-    # remains immutable; recovery is allowed solely when every contract task
-    # has a canonical completed_verified boundary with ledger coordinates and
-    # evidence, while every non-completed runtime row is terminal. No disk
-    # scan or synthetic verdict may authorize this transition.
+    # Refresh existing failed verdicts through their owning cell after delivery
+    # settle. The predecessor's evidence requirements, capability and immutable
+    # coordinates are preserved; missing verdicts cannot be synthesized here.
     try:
         projection = executor._canonical_factory_projection(run, context)
         latest_authority = helpers.evaluate_canonical_factory_authority(projection)
+        runtime_raw = projection.get("task_runtime_projection")
+        runtime = runtime_raw if isinstance(runtime_raw, Mapping) else {}
+        rows_raw = runtime.get("rows")
+        rows = rows_raw if isinstance(rows_raw, list) else []
+        terminal_scope = (
+            latest_authority.source_valid
+            and latest_authority.task_runtime_projection_authoritative
+            and latest_authority.contract_task_scope_valid
+            and bool(rows)
+            and all(
+                isinstance(row, Mapping)
+                and str(row.get("execution_state") or row.get("status") or "").strip().lower()
+                in {"completed", "failed", "cancelled"}
+                for row in rows
+            )
+        )
+        if terminal_scope:
+            from polaris.cells.control_plane.run_ledger.public import (
+                ReprojectTaskBoundaryVerdictCommandV1,
+                reproject_task_boundary_verdict,
+            )
+
+            boundaries = (projection.get("task_boundary") or {}).get("latest_by_task") or {}
+            changed = False
+            for raw_task_id, previous in boundaries.items():
+                if (
+                    helpers._canonical_task_id_token(raw_task_id) not in latest_authority.expected_task_ids
+                    or not isinstance(previous, Mapping)
+                    or bool(previous.get("ok"))
+                ):
+                    continue
+                predecessor = str(previous.get("content_id") or "").strip().lower()
+                child_run = str(previous.get("run_id") or "").strip()
+                if not child_run or not re.fullmatch(r"[0-9a-f]{64}", predecessor):
+                    continue
+                result = reproject_task_boundary_verdict(
+                    ReprojectTaskBoundaryVerdictCommandV1(
+                        workspace=str(executor.workspace),
+                        run_id=child_run,
+                        task_id=str(raw_task_id),
+                        expected_content_id=predecessor,
+                        reason="director_post_settle_workspace_revalidation",
+                    )
+                )
+                changed = changed or result.changed
+                logger.info("Director post-settle TaskBoundary task=%s status=%s", raw_task_id, result.status)
+            if changed:
+                projection = executor._canonical_factory_projection(run, context)
+                latest_authority = helpers.evaluate_canonical_factory_authority(projection)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         logger.warning("Director stage authority re-eval after settle failed: %s", exc)
         return None
@@ -546,7 +594,12 @@ async def _collect_director_stage_materialization_diagnostics(
             if not isinstance(payload, Mapping):
                 raise ValueError("materialization_package_not_object")
             scripts = payload.get("scripts")
+            build_script = str(scripts.get("build") or "").strip() if isinstance(scripts, Mapping) else ""
             test_script = str(scripts.get("test") or "").strip() if isinstance(scripts, Mapping) else ""
+            if build_script:
+                # Typechecking alone does not materialize generated test or
+                # entrypoint files. Build in the same owned Group before tests.
+                commands.append(["npm", "run", "build"])
             if test_script:
                 commands.append(["npm", "test"])
                 has_tests = any(
@@ -578,8 +631,11 @@ async def _collect_director_stage_materialization_diagnostics(
 
         contract = authenticated_preparation_contract(executor, run)
         project_id = executor._canonical_project_id(bound_context)
-        if not project_id or contract.project_id != project_id:
+        if project_id and contract.project_id != project_id:
             raise ValueError("materialization_context_project_mismatch")
+        # Stage-local contexts can omit presentation metadata. The committed CE
+        # contract already supplies the verified project identity for admission.
+        bound_context["project_id"] = contract.project_id
         needs_node = any(
             command[0] == "npm"
             or "node_modules/typescript/bin/tsc" in command
@@ -587,8 +643,12 @@ async def _collect_director_stage_materialization_diagnostics(
             for command in commands
         )
         if needs_node and not node_dependency_readiness(executor.workspace).ready:
-            if active:
-                raise ValueError("materialization_candidate_dependencies_changed_requires_preparation")
+            # A committed manifest repair invalidates the old dependency mount.
+            # Finish that group before owned preparation, then freeze a new
+            # source/dependency baseline rather than rejecting the repair itself.
+            for session in active:
+                session.close()
+            active.clear()
             preparation = await _await_materialization_preparation(executor, run, preparation_results=preparations)
             preparations.append(dict(preparation))
             if preparation.get("passed") is not True:
@@ -631,6 +691,41 @@ async def _collect_director_stage_materialization_diagnostics(
                 result["observed_command"] = result.get("command")
                 result["command"] = command
                 result["failure_kind"] = "admission"
+            if (
+                command == ["npm", "test"]
+                and result.get("passed") is True
+                and result.get("exit_code") == 0
+                and re.fullmatch(
+                    r"\s*(?:npm\s+run\s+(?:build|compile|lint|typecheck)|(?:npx\s+)?tsc\b[^;&|]*)\s*", test_script
+                )
+            ):
+                from polaris.cells.control_plane.verifier_policy.public.service import evaluate_verifier_proof
+
+                # Script names alone do not establish what ran. A build can
+                # legitimately include tests; reuse its physical test proof.
+                output = "\n".join(str(result.get(key) or "") for key in ("stdout_tail", "stderr_tail"))
+                if not evaluate_verifier_proof(
+                    profile_id="node.script_test",
+                    modality="test",
+                    exit_code=0,
+                    timed_out=False,
+                    output_bytes=output.encode("utf-8"),
+                ):
+                    result["passed"] = False
+                    result["error"] = (
+                        "npm manifest-only test script in package.json: scripts.test produced no test execution proof"
+                    )
+            if (
+                command == ["npm", "test"]
+                and result.get("passed") is True
+                and result.get("exit_code") == 0
+                and re.search(r"(?m)^# tests\s+0\s*$", str(result.get("stdout_tail") or ""))
+            ):
+                # Node can exit zero for an unmatched test glob. Preserve the
+                # physical exit code while rejecting the empty test verdict.
+                result["passed"] = False
+                result["error"] = "node_test_zero_tests: package.json scripts.test discovered no executable tests"
+                result["native_test_count"] = 0
             if result.get("passed") is not True or result.get("exit_code") != 0 or result.get("error"):
                 error = str(result.get("error") or "")
                 result.setdefault(
@@ -1013,6 +1108,15 @@ async def _run_director_stage_materialization_quality_settle(
             sessions=sessions,
             observations=observations,
         )
+        if result.get("reason") == "materialization_verifier_residual":
+            result = await _continue_materialization_verifier_repair(
+                executor,
+                run=run,
+                context=dict(context or {}),
+                result=result,
+                sessions=sessions,
+                observations=observations,
+            )
     except _MaterializationVerificationBlockedError as exc:
         result = {
             "ok": False,
@@ -1032,6 +1136,180 @@ class _MaterializationVerificationBlockedError(RuntimeError):
     def __init__(self, observation: MaterializationDiagnostics) -> None:
         self.observation = observation
         super().__init__("; ".join(observation.blockers))
+
+
+def _materialization_observation_with_coverage(observation: Any) -> MaterializationDiagnostics:
+    if not isinstance(observation, MaterializationDiagnostics):
+        observation = MaterializationDiagnostics(
+            [],
+            static_evidence={"scan_mode": "unknown", "scan_complete": False},
+            blockers=["materialization_collector_coverage_required"],
+        )
+    static = observation.static_evidence
+    if (
+        static.get("scan_mode") != "pure_static"
+        or static.get("scan_complete") is not True
+        or (static.get("deferred_checks") and static.get("controlled_checks_complete") is not True)
+    ):
+        observation.blockers.append("materialization_collector_coverage_incomplete")
+    return observation
+
+
+async def _continue_materialization_verifier_repair(
+    executor: Any,
+    *,
+    run: FactoryRun,
+    context: dict[str, Any],
+    result: dict[str, Any],
+    sessions: list[NativeValidationSession],
+    observations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Use the existing Director repair owner after deterministic settlement.
+
+    The prior attempt is closed before this bridge claims an original CE owner.
+    Provider success never settles the new attempt: its receipt-bound candidate
+    must pass controlled verification or demonstrate the existing progress rule.
+    """
+    from .factory_workspace_quality_impl import (
+        _apply_workspace_quality_llm_repairs,
+        _record_workspace_quality_repair_artifact_receipts,
+        _settle_pending_workspace_quality_repair_attempt,
+        _stop_workspace_quality_repair_heartbeat,
+    )
+
+    errors = list(result.get("post_commit_diagnostics") or ())
+    pending: Mapping[str, Any] | None = None
+    preparations: list[dict[str, Any]] = []
+    authority_binding = None
+    try:
+        for round_number in range(_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS):
+            if not errors:
+                break
+            before_results = observations[-1].get("verifier_results", []) if observations else []
+            for session in sessions:
+                session.before_repair()
+            authority_port = executor._factory_role_evidence_cutoff_port(context)
+            if authority_binding is None:
+                authority_binding = authority_port.mint_authority_binding("director")
+            tools, summary = await executor._call_with_factory_role_evidence_authority(
+                authority_port,
+                "director",
+                lambda _errors=list(errors), _attempt=int(result.get("repair_round_count") or 0) + round_number + 1: (
+                    _apply_workspace_quality_llm_repairs(
+                        executor,
+                        run=run,
+                        context=context,
+                        artifact_quality_errors=_errors,
+                        repair_attempt=_attempt,
+                    )
+                ),
+                authority_binding=authority_binding,
+            )
+            summary = dict(summary)
+            pending = summary.pop("_pending_task_runtime_repair_attempt", None)
+            result["llm_repair"] = {
+                key: value
+                for key, value in summary.items()
+                if key in {"attempted", "success", "error", "error_code", "repair_mode", "task_id"}
+                and (value is None or type(value) in {str, bool, int, float})
+            }
+            result["tool_result_count"] = int(result.get("tool_result_count") or 0) + len(tools)
+            if not isinstance(pending, Mapping):
+                pending = None
+                break
+            effects = [
+                item
+                for item in tools
+                if isinstance(item, Mapping)
+                and (
+                    str(item.get("tool_name") or item.get("tool") or "") in {"write_file", "edit_file", "delete_file"}
+                    or (
+                        isinstance(item.get("effect_receipt"), Mapping)
+                        and item["effect_receipt"].get("normalized_tool_name")
+                        in {"write_file", "edit_file", "delete_file"}
+                    )
+                )
+            ]
+            for session in sessions:
+                session.candidate(pending=pending, results=effects)
+            # Artifact receipts attest landed bytes independently of quality.
+            # Refresh them before a dependency change may require a new group.
+            _record_workspace_quality_repair_artifact_receipts(pending)
+            observation = _materialization_observation_with_coverage(
+                await executor._collect_director_stage_materialization_diagnostics(
+                    run=run,
+                    context=context,
+                    sessions=sessions,
+                    preparation_results=preparations,
+                )
+            )
+            observations.append(observation.to_dict())
+            if observation.blockers:
+                raise _MaterializationVerificationBlockedError(observation)
+            after_errors = list(observation)
+            effect = executor._workspace_quality_repair_effect(
+                before_signature=executor._workspace_quality_diagnostic_signature(errors),
+                after_signature=executor._workspace_quality_diagnostic_signature(after_errors),
+                verifier_passed=not after_errors,
+                write_tool_evidence=bool(effects),
+                before_results=before_results,
+                after_results=observation.verifier_results,
+                workspace=Path(executor.workspace),
+            )
+            accepted = effect in {"resolved", "progress"}
+            settlement = await _settle_pending_workspace_quality_repair_attempt(
+                executor,
+                pending,
+                accepted=accepted,
+                reason=f"director_stage_verifier_repair_{effect}",
+            )
+            pending = None
+            result["llm_repair"]["verifier_effect"] = effect
+            result["llm_repair"]["task_runtime_repair_attempt"] = settlement
+            if not accepted:
+                for session in sessions:
+                    session.restored()
+                if not settlement or settlement.get("settled") is not True or settlement.get("artifact_receipt_error"):
+                    break
+                # Feed the rejected candidate's real diagnostic to the same
+                # owner, while the restored baseline remains authoritative.
+                repair_context = dict(context.get("director_quality_repair") or {})
+                repair_context["candidate_rejection_errors"] = after_errors[:4]
+                repair_context["candidate_rejection_target_files"] = list(summary.get("repair_target_files") or ())[:12]
+                context["director_quality_repair"] = repair_context
+                continue
+            if not settlement or settlement.get("outcome") != "completed" or not settlement.get("settled"):
+                break
+            errors = after_errors
+            result["post_commit_diagnostics"] = errors
+            result["post_commit_diagnostic_count"] = len(errors)
+            result["project_artifact_receipt_count"] = int(result.get("project_artifact_receipt_count") or 0) + int(
+                settlement.get("project_artifact_receipt_count") or 0
+            )
+            result["mutated"] = True
+            if not errors:
+                result.update(
+                    ok=True, reason="director_stage_settle", detail="Director repair passed controlled verification"
+                )
+                break
+    except ProcessTreeDrainError:
+        # Keep the physical attempt unresolved until its process owner drains.
+        # Stopping renewal is independent of authorizing rollback/settlement.
+        if isinstance(pending, Mapping):
+            task, stop = pending.get("heartbeat_task"), pending.get("heartbeat_stop")
+            if isinstance(task, asyncio.Task) and isinstance(stop, asyncio.Event):
+                await _stop_workspace_quality_repair_heartbeat(task, stop)
+        pending = None
+        raise
+    finally:
+        if pending is not None:
+            await _settle_pending_workspace_quality_repair_attempt(
+                executor,
+                pending,
+                accepted=False,
+                reason="director_stage_verifier_repair_interrupted",
+            )
+    return result
 
 
 async def _run_materialization_settle_with_session(
@@ -1087,19 +1365,7 @@ async def _run_materialization_settle_with_session(
             observations.append(lifecycle)
             logger.warning("validation_lifecycle %s", json.dumps(lifecycle, ensure_ascii=False))
             raise
-        if not isinstance(observation, MaterializationDiagnostics):
-            observation = MaterializationDiagnostics(
-                [],
-                static_evidence={"scan_mode": "unknown", "scan_complete": False},
-                blockers=["materialization_collector_coverage_required"],
-            )
-        static = observation.static_evidence
-        if (
-            static.get("scan_mode") != "pure_static"
-            or static.get("scan_complete") is not True
-            or (static.get("deferred_checks") and static.get("controlled_checks_complete") is not True)
-        ):
-            observation.blockers.append("materialization_collector_coverage_incomplete")
+        observation = _materialization_observation_with_coverage(observation)
         observations.append(observation.to_dict())
         if observation.blockers:
             raise _MaterializationVerificationBlockedError(observation)

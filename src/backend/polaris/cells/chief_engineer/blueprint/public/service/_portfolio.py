@@ -36,12 +36,14 @@ from ..contracts import (
     QueryProjectCompletionContractV1,
     VerificationCommandAuthorityV1,
     VerificationObligationV1,
+    shared_behavior_contract_hash,
+)
+from ..contracts._blueprint_dtos import (
     _ChiefEngineerPortfolioAuthorityCarrierV1,
     _portfolio_authority_receipt_hash,
     _verify_chief_engineer_portfolio_authority_carrier,
-    project_completion_catalog_snapshot_hash,
-    shared_behavior_contract_hash,
 )
+from ..contracts._helpers import project_completion_catalog_snapshot_hash
 from ._helpers import (
     _BLUEPRINT_FILE_CONTAINER_KEYS,
     _BLUEPRINT_FILE_PATH_KEYS,
@@ -960,7 +962,7 @@ def derive_project_kind_authority_from_catalog_snapshot(
         ).encode("utf-8")
     ).hexdigest()
     return ProjectKindAuthorityV1(
-        project_kind=project_kind,  # type: ignore[arg-type]
+        project_kind=cast(Literal["application", "library"], project_kind),
         source_ref="chief_engineer.committed_pm_catalog_snapshot",
         source_hash=source_hash,
         justification=justification,
@@ -1471,7 +1473,7 @@ def project_chief_engineer_effective_obligation_view(
     if authority_carrier is not None:
         if type(authority_carrier) is not _ChiefEngineerPortfolioAuthorityCarrierV1:
             raise ValueError("effective obligation view requires exact Factory-issued authority carrier")
-        carrier = cast(_ChiefEngineerPortfolioAuthorityCarrierV1, authority_carrier)
+        carrier = authority_carrier
         if not _verify_chief_engineer_portfolio_authority_carrier(carrier):
             raise ValueError("effective obligation view authority carrier signature is invalid")
         if carrier.tasks != tasks:
@@ -1498,6 +1500,7 @@ def project_chief_engineer_effective_obligation_view(
     }
     errors: list[str] = []
     normalization_findings: list[dict[str, Any]] = []
+    artifact_owner_corrections: list[dict[str, Any]] = []
     complete = False
     if carrier is not None:
         command = BuildChiefEngineerBlueprintPortfolioCommandV1(
@@ -1516,6 +1519,8 @@ def project_chief_engineer_effective_obligation_view(
             complete = True
         except (ChiefEngineerBlueprintErrorV1, TypeError, ValueError) as exc:
             errors.append(str(exc))
+            if isinstance(exc, ChiefEngineerBlueprintErrorV1):
+                artifact_owner_corrections = [dict(row) for row in exc.details.get("artifact_owner_corrections", [])]
             normalization_findings.append(
                 {
                     "code": "invalid_project_completion_contract",
@@ -1565,6 +1570,7 @@ def project_chief_engineer_effective_obligation_view(
         "missing_authority_evidence": [] if carrier is not None else ["authenticated_portfolio_authority_carrier"],
         "normalization_errors": errors,
         "normalization_findings": normalization_findings,
+        "artifact_owner_corrections": artifact_owner_corrections,
         "obligations": effective,
         "retained_completion_obligation_ids": sorted(effective_ids),
         "excluded_completion_obligations": exclusions,
@@ -2279,12 +2285,19 @@ def _normalize_portfolio_completion_contract(
             row for row in verification_rows if row["modality"] == "test" and row["applicability"] == "required"
         ]
         known_artifact_ids = {str(row["obligation_id"]) for row in artifact_rows}
-        model_test_coverage = {
-            str(obligation_id)
-            for row in required_test_seed_rows
-            for obligation_id in row["covers_obligation_ids"]
-            if str(obligation_id) in known_artifact_ids
-        }
+        model_test_coverage_by_authority: dict[str, set[str]] = {}
+        for row in required_test_seed_rows:
+            if row["command_authority_hash"] is None or not authorities_for(modality="test"):
+                continue
+            # Reuse the immutable command-binding boundary. Coverage is local
+            # to this approved argv/cwd/owner identity; another test command's
+            # future artifacts must never become this command's prerequisites.
+            authority = authority_for_row(row)
+            model_test_coverage_by_authority.setdefault(authority.authority_hash, set()).update(
+                str(obligation_id)
+                for obligation_id in row["covers_obligation_ids"]
+                if str(obligation_id) in known_artifact_ids
+            )
 
         required_test_artifacts_by_owner: dict[str, list[str]] = {}
         not_applicable_test_artifacts = [
@@ -2341,13 +2354,24 @@ def _normalize_portfolio_completion_contract(
                 )
                 if seed is not None:
                     used_seed_ids.add(str(seed["obligation_id"]))
+                commandless_coverage = {
+                    str(obligation_id)
+                    for obligation_id in (seed["covers_obligation_ids"] if seed is not None else ())
+                    if seed is not None
+                    and seed["command_authority_hash"] is None
+                    and str(obligation_id) in known_artifact_ids
+                }
                 normalized_verification_rows.append(
                     {
                         "obligation_id": seed_id,
                         "modality": "test",
                         "command_authority_hash": authority.authority_hash,
                         "applicability": "required",
-                        "covers_obligation_ids": sorted(set(covered_ids) | model_test_coverage),
+                        "covers_obligation_ids": sorted(
+                            set(covered_ids)
+                            | model_test_coverage_by_authority.get(authority.authority_hash, set())
+                            | commandless_coverage
+                        ),
                         "owner_task_id": owner_task_id,
                     }
                 )
@@ -2507,6 +2531,9 @@ def _normalize_portfolio_completion_contract(
             entrypoints=tuple(_normalized_entrypoint_obligation(row) for row in normalized_entrypoint_rows),
             verification=tuple(verification_obligation(row) for row in normalized_verification_rows),
         )
+        known_task_ids = {task.task_id for task in command.tasks}
+        artifact_owner_corrections: list[dict[str, Any]] = []
+        artifact_owner_errors: list[str] = []
         for artifact in obligations.artifacts:
             if artifact.applicability == "not_applicable":
                 continue
@@ -2517,11 +2544,31 @@ def _normalize_portfolio_completion_contract(
                     f"obligation_id={artifact.obligation_id!r}:path={artifact.path!r}"
                 )
             if artifact.owner_task_id not in authorized_owners:
-                raise ValueError(
+                owner_error = (
                     "active artifact owner_task_id does not own its PM target/scope path; "
                     f"obligation_id={artifact.obligation_id!r}:path={artifact.path!r}:"
                     f"owner_task_id={artifact.owner_task_id!r}:authorized_owners={sorted(authorized_owners)}"
                 )
+                if artifact.owner_task_id not in known_task_ids or len(authorized_owners) != 1:
+                    raise ValueError(owner_error)
+                artifact_owner_errors.append(owner_error)
+                artifact_owner_corrections.append(
+                    {
+                        "obligation_id": artifact.obligation_id,
+                        "path": artifact.path,
+                        "provider_owner_task_id": artifact.owner_task_id,
+                        "pm_authorized_owner_task_id": next(iter(authorized_owners)),
+                    }
+                )
+        if artifact_owner_corrections:
+            raise _portfolio_contract_error(
+                "invalid project completion contract: " + "; ".join(artifact_owner_errors),
+                code="invalid_project_completion_contract",
+                details={
+                    "repair_operation": "artifact_upsert",
+                    "artifact_owner_corrections": artifact_owner_corrections,
+                },
+            )
 
         for entrypoint in obligations.entrypoints:
             if entrypoint.applicability == "not_applicable":

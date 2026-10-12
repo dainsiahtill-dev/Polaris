@@ -2416,6 +2416,59 @@ async def test_terminal_drain_revalidates_run_ledger_barrier_before_reset_and_re
 
 
 @pytest.mark.asyncio
+async def test_failed_gate_allows_pending_owner_abort_without_passing_delivery(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="failed_gate_pending_owner_test",
+        )
+    )
+    runtime = TaskRuntimeService(str(workspace))
+
+    def query_barrier(queried_workspace: str | Path, factory_run_id: str) -> FactorySettlementBarrierResultV1:
+        assert Path(queried_workspace) == workspace
+        pending = any(
+            row.get("status") == "pending"
+            and row.get("metadata", {}).get("factory_run_id") == factory_run_id
+            for row in runtime.list_observable_task_rows()
+        )
+        return replace(
+            _settlement_barrier(workspace=workspace, factory_run_id=factory_run_id, release_allowed=not pending),
+            passed=False,
+            blocking_reasons=("lifecycle_open", "run_ledger_gate_failed") if pending else ("run_ledger_gate_failed",),
+            failed_required_modalities=("command",),
+        )
+
+    service = FactoryRunService(
+        workspace,
+        executor=_FailedSettledStageExecutor(),
+        settlement_barrier_query=query_barrier,
+    )
+    run = await service.create_run(FactoryConfig(name="failed-gate-abort", stages=["director_dispatch"]))
+    await service.start_run(run.id)
+    row = runtime.create_task_row(subject="Not yet dispatched")
+    assert runtime.bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(workspace), task_id=str(row["id"]), factory_run_id=run.id
+        )
+    ).ok
+    await service.execute_stage(run.id, "director_dispatch", {"heartbeat_interval_seconds": 0})
+
+    terminal = await service.complete_run(run.id, success=False)
+
+    assert terminal.status is FactoryRunStatus.FAILED
+    assert terminal.metadata["factory_workspace_run_lease"]["state"] == "released"
+    barrier = terminal.metadata["factory_run_ledger_settlement_barrier"]
+    assert barrier["closed"] is True
+    assert barrier["passed"] is False
+    assert barrier["release_allowed"] is True
+    assert "run_ledger_gate_failed" in barrier["blocking_reasons"]
+
+
+@pytest.mark.asyncio
 async def test_recover_run_rejects_active_factory_child(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -3137,7 +3190,7 @@ async def test_retry_run_force_aborts_expired_open_parent_child(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_pm_planning_passes_factory_run_authority(
+async def test_pm_planning_passes_factory_run_authority_before_origin_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3200,7 +3253,11 @@ async def test_pm_planning_passes_factory_run_authority(
         },
     )
 
-    assert result.status == "success"
+    # This service double supplies no real planner artifact. It must stay
+    # unqualified while the reset operation still receives the exact run owner.
+    assert result.status == "failed"
+    assert result.metadata["error_code"] == "pm.real_planning_not_qualified"
+    assert result.metadata["real_planning_qualified"] is False
     assert captured["factory_run_id"] == run.id
     assert captured["keep_plan"] is True
 

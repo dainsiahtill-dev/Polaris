@@ -295,6 +295,7 @@ def _build_completion_metadata(
         ledger=ledger,
         llm_response_metadata=llm_response_metadata if isinstance(llm_response_metadata, dict) else None,
     )
+    metadata["transaction_kind"] = kind
     if kind == "handoff_workflow" and workflow_context is not None:
         handoff_pack = build_context_handoff_pack(kernel, tk_result, role, request)
         metadata["handoff_pack"] = handoff_pack.to_dict()
@@ -432,6 +433,22 @@ def _resolve_completion_status(
 ) -> tuple[str | None, bool]:
     error_msg: str | None = None
     is_complete = True
+    if kind == "tool_failure":
+        error_msg = (
+            str(finalization.get("error") or "tool_failure") if isinstance(finalization, Mapping) else "tool_failure"
+        )
+        if isinstance(finalization, Mapping):
+            metadata["failure_class"] = finalization.get("failure_class")
+        return error_msg, False
+    if kind == "continue_multi_turn":
+        metadata["transaction_kind"] = kind
+        metadata["needs_followup_workflow"] = True
+        metadata["workflow_reason"] = (
+            str(finalization.get("workflow_reason") or "observation")
+            if isinstance(finalization, Mapping)
+            else "observation"
+        )
+        return None, False
     if kind == "ask_user" and isinstance(finalization, dict):
         error_msg = finalization.get("error") or finalization.get("suspended_reason")
         is_complete = False

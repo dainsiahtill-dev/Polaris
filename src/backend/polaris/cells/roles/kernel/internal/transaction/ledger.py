@@ -79,6 +79,10 @@ class TransactionConfig:
     # off:   完全关闭 mutation guard
     mutation_guard_mode: Literal["strict", "warn", "off"] = "warn"
 
+    # A runtime-owned session can consume observation batches in later turns.
+    # This changes turn scheduling, never tool authorization or delivery gates.
+    continuous_execution: bool = False
+
     # === 结果截断配置 ===
     max_per_tool_result_chars: int = 3000
     max_total_result_chars: int = 8000

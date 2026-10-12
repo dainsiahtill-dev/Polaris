@@ -255,6 +255,9 @@ class _FactoryRunServiceLifecycleMixin:
                     # Residual after failed Director materialization/quality waves
                     # (L1-05 r79: task_boundary_failed blocked abort → lease stuck draining).
                     "task_boundary_failed",
+                    # Failed acceptance stays failed; it must not prevent
+                    # aborting never-dispatched owners during failure closeout.
+                    "run_ledger_gate_failed",
                 }
                 non_abortable = blocking - abortable_blockers
                 if not non_abortable and (
@@ -922,7 +925,11 @@ class _FactoryRunServiceLifecycleMixin:
                 raise ValueError(f"Run {run_id} not found")
 
             run = await self.assert_mutation_allowed(run_id, current_run=run)
-            self._physical_attempt_coordinator(run.id)
+            # Updating a terminal run's metadata does not start provider work.
+            # Durable mutation checks still apply; a process-local transport
+            # coordinator is needed when execution is open, not for this edit.
+            if run.status not in TERMINAL_RUN_STATUSES:
+                self._physical_attempt_coordinator(run.id)
             if "last_factory_stage_commit" in metadata:
                 raise FactoryStagePersistenceError(
                     "factory_stage_commit_pointer_mutation_forbidden",

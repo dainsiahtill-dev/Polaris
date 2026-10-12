@@ -990,7 +990,9 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
 }
 
 function eventDedupeKey(event: ContextOSEvent): string {
-  const stableRef = event.callId || event.contextSnapshotRef || event.promptHash || event.turnId || '';
+  const stableRef = event.callId
+    ? `${event.callId}:${event.contextSnapshotRef ?? ''}`
+    : event.contextSnapshotRef || '';
   if (stableRef && (event.isCall || event.hasUsage)) {
     return [
       'llm-call',
@@ -1054,14 +1056,51 @@ function dedupeEvents(events: ContextOSEvent[]): ContextOSEvent[] {
 }
 
 export function contextOSObservedTokens(event: ContextOSEvent): number {
-  if (event.finalRequestTokenEstimate !== null) return event.finalRequestTokenEstimate;
-  if (event.isCall || event.hasUsage) return event.contextTokens ?? event.totalTokens;
-  return 0;
+  return event.hasUsage ? event.totalTokens : 0;
+}
+
+/** Select one usage/terminal observation per captured physical request; keep raw events intact. */
+export function contextOSAccountingEvents(events: readonly ContextOSEvent[]): ContextOSEvent[] {
+  const candidates = events.filter((event) => event.isCall || event.hasUsage);
+  const refsByCall = new Map<string, Set<string>>();
+  for (const event of candidates) {
+    if (!event.callId || !event.contextSnapshotRef) continue;
+    const refs = refsByCall.get(event.callId) ?? new Set<string>();
+    refs.add(event.contextSnapshotRef);
+    refsByCall.set(event.callId, refs);
+  }
+  const selected = new Map<string, ContextOSEvent>();
+  const score = (event: ContextOSEvent) => [
+    event.hasUsage ? event.estimatedTokens ? 1 : 2 : 0,
+    event.promptTokens + event.completionTokens,
+    event.error || event.errorCode ? 1 : 0,
+    event.finalRequestContextAudit ? 1 : 0,
+    event.epoch,
+    event.seq,
+  ];
+  for (const event of candidates) {
+    const refs = event.callId ? refsByCall.get(event.callId) : undefined;
+    const ref = event.contextSnapshotRef || (refs?.size === 1 ? [...refs][0] : '');
+    // Without a request/call identity, legacy observations cannot prove unique physical calls.
+    // A missing reference cannot identify which of several retries produced usage.
+    const key = event.callId && (ref || !refs || refs.size <= 1)
+      ? `call:${event.callId}:${event.workerId ?? ''}:${ref}`
+      : !event.callId && ref
+        ? `snapshot:${ref}:${event.workerId ?? ''}`
+        : `legacy:${event.id}`;
+    const prior = selected.get(key);
+    const nextScore = score(event);
+    const priorScore = prior ? score(prior) : [];
+    const difference = nextScore.findIndex((value, index) => value !== priorScore[index]);
+    if (!prior || (difference >= 0 && nextScore[difference] > priorScore[difference])) selected.set(key, event);
+  }
+  return [...selected.values()];
 }
 
 function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOSTelemetry {
   events = dedupeEvents(events);
   if (events.length === 0) return EMPTY_TELEMETRY;
+  const accountingEvents = new Set(contextOSAccountingEvents(events));
 
   let totalCalls = 0;
   let estimatedCalls = 0;
@@ -1088,6 +1127,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
   let hasWorkers = false;
 
   for (const event of events) {
+    const accounted = accountingEvents.has(event);
     if (event.isProjection) projectionKeys.add(event.projectionKey || event.id);
     if (event.hasReceipt) receiptCount += 1;
     if (event.category === 'error') errorCount += 1;
@@ -1096,19 +1136,19 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
       latencyCount += 1;
     }
 
-    // ContextOS 主 token 聚合优先展示最终 provider request token（含 tools/response_format）。
-    const observedTokens = contextOSObservedTokens(event);
+    // Request estimates remain context-size evidence, separate from cumulative usage.
+    const observedTokens = accounted ? contextOSObservedTokens(event) : 0;
     totalTokens += observedTokens;
-    promptTokens += event.promptTokens;
-    completionTokens += event.completionTokens;
-    cachedTokens += event.cachedTokens;
-    cacheCreationTokens += event.cacheCreationTokens;
-    cacheReadTokens += event.cacheReadTokens;
-    toolTokens += event.toolTokens;
-    reasoningTokens += event.reasoningTokens;
-    audioTokens += event.audioTokens;
-    serverToolUseCount += event.serverToolUseCount;
-    if (event.estimatedTokens) estimatedCalls += 1;
+    promptTokens += accounted ? event.promptTokens : 0;
+    completionTokens += accounted ? event.completionTokens : 0;
+    cachedTokens += accounted ? event.cachedTokens : 0;
+    cacheCreationTokens += accounted ? event.cacheCreationTokens : 0;
+    cacheReadTokens += accounted ? event.cacheReadTokens : 0;
+    toolTokens += accounted ? event.toolTokens : 0;
+    reasoningTokens += accounted ? event.reasoningTokens : 0;
+    audioTokens += accounted ? event.audioTokens : 0;
+    serverToolUseCount += accounted ? event.serverToolUseCount : 0;
+    if (accounted && event.estimatedTokens) estimatedCalls += 1;
 
     const actorKey = event.actor;
     const actorAgg = byActor[actorKey] ?? {
@@ -1127,17 +1167,17 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
     };
     actorAgg.events += 1;
     actorAgg.totalTokens += observedTokens;
-    actorAgg.promptTokens += event.promptTokens;
-    actorAgg.completionTokens += event.completionTokens;
-    actorAgg.cachedTokens += event.cachedTokens;
-    actorAgg.cacheCreationTokens += event.cacheCreationTokens;
-    actorAgg.cacheReadTokens += event.cacheReadTokens;
-    actorAgg.toolTokens += event.toolTokens;
-    actorAgg.reasoningTokens += event.reasoningTokens;
-    actorAgg.audioTokens += event.audioTokens;
-    actorAgg.serverToolUseCount += event.serverToolUseCount;
+    actorAgg.promptTokens += accounted ? event.promptTokens : 0;
+    actorAgg.completionTokens += accounted ? event.completionTokens : 0;
+    actorAgg.cachedTokens += accounted ? event.cachedTokens : 0;
+    actorAgg.cacheCreationTokens += accounted ? event.cacheCreationTokens : 0;
+    actorAgg.cacheReadTokens += accounted ? event.cacheReadTokens : 0;
+    actorAgg.toolTokens += accounted ? event.toolTokens : 0;
+    actorAgg.reasoningTokens += accounted ? event.reasoningTokens : 0;
+    actorAgg.audioTokens += accounted ? event.audioTokens : 0;
+    actorAgg.serverToolUseCount += accounted ? event.serverToolUseCount : 0;
 
-    if (event.isCall || event.hasUsage) {
+    if (accounted) {
       totalCalls += 1;
       const modeKey = event.mode || 'unknown';
       const modeAgg = byMode[modeKey] ?? {
@@ -1155,15 +1195,15 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
       };
       modeAgg.calls += 1;
       modeAgg.totalTokens += observedTokens;
-      modeAgg.promptTokens += event.promptTokens;
-      modeAgg.completionTokens += event.completionTokens;
-      modeAgg.cachedTokens += event.cachedTokens;
-      modeAgg.cacheCreationTokens += event.cacheCreationTokens;
-      modeAgg.cacheReadTokens += event.cacheReadTokens;
-      modeAgg.toolTokens += event.toolTokens;
-      modeAgg.reasoningTokens += event.reasoningTokens;
-      modeAgg.audioTokens += event.audioTokens;
-      modeAgg.serverToolUseCount += event.serverToolUseCount;
+      modeAgg.promptTokens += accounted ? event.promptTokens : 0;
+      modeAgg.completionTokens += accounted ? event.completionTokens : 0;
+      modeAgg.cachedTokens += accounted ? event.cachedTokens : 0;
+      modeAgg.cacheCreationTokens += accounted ? event.cacheCreationTokens : 0;
+      modeAgg.cacheReadTokens += accounted ? event.cacheReadTokens : 0;
+      modeAgg.toolTokens += accounted ? event.toolTokens : 0;
+      modeAgg.reasoningTokens += accounted ? event.reasoningTokens : 0;
+      modeAgg.audioTokens += accounted ? event.audioTokens : 0;
+      modeAgg.serverToolUseCount += accounted ? event.serverToolUseCount : 0;
       byMode[modeKey] = modeAgg;
       actorAgg.calls += 1;
     }
@@ -1196,16 +1236,16 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
       };
       providerAgg.events += 1;
       providerAgg.totalTokens += observedTokens;
-      providerAgg.promptTokens += event.promptTokens;
-      providerAgg.completionTokens += event.completionTokens;
-      providerAgg.cachedTokens += event.cachedTokens;
-      providerAgg.cacheCreationTokens += event.cacheCreationTokens;
-      providerAgg.cacheReadTokens += event.cacheReadTokens;
-      providerAgg.toolTokens += event.toolTokens;
-      providerAgg.reasoningTokens += event.reasoningTokens;
-      providerAgg.audioTokens += event.audioTokens;
-      providerAgg.serverToolUseCount += event.serverToolUseCount;
-      if (event.isCall || event.hasUsage) providerAgg.calls += 1;
+      providerAgg.promptTokens += accounted ? event.promptTokens : 0;
+      providerAgg.completionTokens += accounted ? event.completionTokens : 0;
+      providerAgg.cachedTokens += accounted ? event.cachedTokens : 0;
+      providerAgg.cacheCreationTokens += accounted ? event.cacheCreationTokens : 0;
+      providerAgg.cacheReadTokens += accounted ? event.cacheReadTokens : 0;
+      providerAgg.toolTokens += accounted ? event.toolTokens : 0;
+      providerAgg.reasoningTokens += accounted ? event.reasoningTokens : 0;
+      providerAgg.audioTokens += accounted ? event.audioTokens : 0;
+      providerAgg.serverToolUseCount += accounted ? event.serverToolUseCount : 0;
+      if (accounted) providerAgg.calls += 1;
       if (event.epoch > 0 && (providerAgg.lastEpoch === null || event.epoch > providerAgg.lastEpoch)) {
         providerAgg.lastEpoch = event.epoch;
       }
@@ -1231,17 +1271,17 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
       };
       roleAgg.events += 1;
       roleAgg.totalTokens += observedTokens;
-      roleAgg.promptTokens += event.promptTokens;
-      roleAgg.completionTokens += event.completionTokens;
-      roleAgg.cachedTokens += event.cachedTokens;
-      roleAgg.cacheCreationTokens += event.cacheCreationTokens;
-      roleAgg.cacheReadTokens += event.cacheReadTokens;
-      roleAgg.toolTokens += event.toolTokens;
-      roleAgg.reasoningTokens += event.reasoningTokens;
-      roleAgg.audioTokens += event.audioTokens;
-      roleAgg.serverToolUseCount += event.serverToolUseCount;
-      if (event.isCall || event.hasUsage) roleAgg.calls += 1;
-      if (event.hasUsage) roleAgg.usageCalls += 1;
+      roleAgg.promptTokens += accounted ? event.promptTokens : 0;
+      roleAgg.completionTokens += accounted ? event.completionTokens : 0;
+      roleAgg.cachedTokens += accounted ? event.cachedTokens : 0;
+      roleAgg.cacheCreationTokens += accounted ? event.cacheCreationTokens : 0;
+      roleAgg.cacheReadTokens += accounted ? event.cacheReadTokens : 0;
+      roleAgg.toolTokens += accounted ? event.toolTokens : 0;
+      roleAgg.reasoningTokens += accounted ? event.reasoningTokens : 0;
+      roleAgg.audioTokens += accounted ? event.audioTokens : 0;
+      roleAgg.serverToolUseCount += accounted ? event.serverToolUseCount : 0;
+      if (accounted) roleAgg.calls += 1;
+      if (accounted && event.hasUsage) roleAgg.usageCalls += 1;
       byRole[roleId] = roleAgg;
     }
 
@@ -1268,16 +1308,16 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
       };
       workerAgg.events += 1;
       workerAgg.totalTokens += observedTokens;
-      workerAgg.promptTokens += event.promptTokens;
-      workerAgg.completionTokens += event.completionTokens;
-      workerAgg.cachedTokens += event.cachedTokens;
-      workerAgg.cacheCreationTokens += event.cacheCreationTokens;
-      workerAgg.cacheReadTokens += event.cacheReadTokens;
-      workerAgg.toolTokens += event.toolTokens;
-      workerAgg.reasoningTokens += event.reasoningTokens;
-      workerAgg.audioTokens += event.audioTokens;
-      workerAgg.serverToolUseCount += event.serverToolUseCount;
-      if (event.isCall || event.hasUsage) workerAgg.calls += 1;
+      workerAgg.promptTokens += accounted ? event.promptTokens : 0;
+      workerAgg.completionTokens += accounted ? event.completionTokens : 0;
+      workerAgg.cachedTokens += accounted ? event.cachedTokens : 0;
+      workerAgg.cacheCreationTokens += accounted ? event.cacheCreationTokens : 0;
+      workerAgg.cacheReadTokens += accounted ? event.cacheReadTokens : 0;
+      workerAgg.toolTokens += accounted ? event.toolTokens : 0;
+      workerAgg.reasoningTokens += accounted ? event.reasoningTokens : 0;
+      workerAgg.audioTokens += accounted ? event.audioTokens : 0;
+      workerAgg.serverToolUseCount += accounted ? event.serverToolUseCount : 0;
+      if (accounted) workerAgg.calls += 1;
       if (event.epoch > 0 && (workerAgg.lastEpoch === null || event.epoch > workerAgg.lastEpoch)) {
         workerAgg.lastEpoch = event.epoch;
         // 最近一次活动对应的事件携带的 actor 作为 worker 角色标记。

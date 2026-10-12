@@ -143,6 +143,12 @@ def _leases(root: Path, *logical_paths: str) -> LockedRegularFileSetV1:
     )
 
 
+def _initialize_stream_authority(root: Path, logical_path: str) -> None:
+    """Seed shared authority and prove setup did not create the data stream."""
+    with _leases(root, logical_path) as leases:
+        assert leases.lease(logical_path).open_existing() is False
+
+
 def _readonly_acquire(root: Path, *, read_only: bool = True) -> LockedRegularFileSetV1:
     return LockedRegularFileSetV1.acquire(
         runtime_root=str(root),
@@ -222,8 +228,7 @@ def test_readonly_lease_uses_only_read_descriptors_and_rejects_effects(
 
 def test_readonly_interprocess_readers_exclude_writer_and_writer_excludes_reader(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
-    with _leases(root, "runtime/events/readonly.jsonl"):
-        pass
+    _initialize_stream_authority(root, "runtime/events/readonly.jsonl")
 
     def probe(mode: bool, want: str) -> None:
         code = """
@@ -274,8 +279,7 @@ def test_readonly_authority_rejects_invalid_existing_state_without_writes_or_fd_
 ) -> None:
     root = tmp_path / "runtime"
     if defect != "missing_authority":
-        with _leases(root, "runtime/events/readonly.jsonl"):
-            pass
+        _initialize_stream_authority(root, "runtime/events/readonly.jsonl")
         authority = root.parent / "authority" / "storage-token"
         key = next((authority / "realm").iterdir())
         anchor = authority / "anchor.lock"
@@ -321,8 +325,7 @@ def test_readonly_authority_rejects_invalid_existing_state_without_writes_or_fd_
 
 def test_two_independent_readers_hold_shared_lock_until_both_release(tmp_path: Path) -> None:
     root = tmp_path / "runtime"
-    with _leases(root, "runtime/events/readonly.jsonl"):
-        pass
+    _initialize_stream_authority(root, "runtime/events/readonly.jsonl")
     code = """
 import sys
 from polaris.kernelone.fs.locked_regular_file import LockedRegularFileSetV1
@@ -352,8 +355,10 @@ with LockedRegularFileSetV1.acquire(runtime_root=sys.argv[1], storage_identity_t
             _readonly_acquire(root, read_only=False)
         processes[1].communicate("release\n", timeout=5)
         assert processes[1].returncode == 0
-        with _readonly_acquire(root, read_only=False):
-            pass
+        with _readonly_acquire(root, read_only=False) as writer:
+            lease = writer.lease("runtime/events/readonly.jsonl")
+            lease.append_bytes(b"writer-after-readers\n", fsync_file=True, fsync_parent_on_create=True)
+            assert lease.read_bytes() == b"writer-after-readers\n"
     finally:
         for process in processes:
             if process.poll() is None:
@@ -366,8 +371,7 @@ def test_readonly_rejects_foreign_uid_authority_without_descriptor_leaks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str
 ) -> None:
     root = tmp_path / "runtime"
-    with _leases(root, "runtime/events/readonly.jsonl"):
-        pass
+    _initialize_stream_authority(root, "runtime/events/readonly.jsonl")
     authority = root.parent / "authority" / "storage-token"
     paths = {
         "authority": authority,
@@ -611,8 +615,10 @@ def test_acquire_uses_one_monotonic_deadline_for_anchor_and_stream_locks(
         logical_paths=(logical_path,),
         platform_lock_root=str(authority_root),
         timeout_seconds=2.0,
-    ):
-        pass
+    ) as leases:
+        # The acquired set must expose its requested resource without creating
+        # a missing event file or introducing another lock/deadline budget.
+        assert leases.lease(logical_path).open_existing() is False
 
     assert len(observed_deadlines) == 2
     assert observed_deadlines[0] is not None
@@ -733,8 +739,7 @@ def test_root_replacement_and_displaced_lock_file_fail_closed(tmp_path: Path) ->
     assert root_error.value.code == "stream_identity_drift"
 
     stable_root = tmp_path / "stable" / "runtime"
-    with _leases(stable_root, "runtime/events/target.jsonl"):
-        pass
+    _initialize_stream_authority(stable_root, "runtime/events/target.jsonl")
     lock_path = next((stable_root.parent / "authority" / "storage-token" / "realm").iterdir())
     lock_path.unlink()
     lock_path.symlink_to(tmp_path / "outside-lock")

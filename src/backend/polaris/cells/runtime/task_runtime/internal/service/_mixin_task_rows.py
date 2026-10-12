@@ -6,6 +6,7 @@ import threading
 from collections import OrderedDict
 from contextlib import nullcontext
 from contextvars import ContextVar, Token
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, TypedDict
 
 from polaris.cells.events.fact_stream.public.contracts import (
@@ -859,6 +860,30 @@ class _TaskRowsMixin(_ServiceMixinBase):
                 ):
                     raise RuntimeError("factory_task_recovery_compare_and_set_failed")
             if session is not None:
+                # The old local-rework path suspended a fulfilled terminal
+                # session without removing its immutable settlement proof.
+                # Restore only that authorized legacy state after proving the
+                # exact original terminal intent and inactive DEO parent.
+                snapshot = self._board._load_task_snapshot_from_disk(normalized)
+                task_metadata = snapshot[0].metadata if snapshot is not None else {}
+                rework = task_metadata.get("factory_local_rework")
+                pending = self._pending_terminal_intent(session)
+                if (
+                    session.status == "suspended"
+                    and session.last_error == "factory_quality_same_task_local_rework_authorized"
+                    and isinstance(rework, Mapping)
+                    and rework.get("action_kind") == "publish_owner_rework"
+                    and rework.get("factory_run_id") == task_metadata.get("factory_run_id")
+                    and rework.get("external_task_id") == session.external_task_id
+                    and pending is not None
+                    and pending.get("outcome") in {"completed", "failed"}
+                ):
+                    restored = deepcopy(session)
+                    restored.status = str(pending["outcome"])
+                    restored.resumable = False
+                    restored_barrier = self._directed_effect_inactive_pre_barrier_locked(restored)
+                    if restored_barrier.allowed and self._write_session_locked(restored, allow_terminal_downgrade=True):
+                        session = restored
                 pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
                 if (
                     not pre_barrier.allowed
@@ -911,7 +936,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
                 )
                 if task is None:
                     raise RuntimeError("factory_task_recovery_compare_and_set_failed")
-            if session is not None:
+            if session is not None and not is_terminal_session_status(session.status):
                 session.mark_suspended(reason=reason or "task_reopened", resumable=True)
                 self._write_session_locked(
                     session,

@@ -665,6 +665,11 @@ def create_transaction_kernel(
             durable_commit_required=durable_commit_required,
             workspace=durable_workspace,
             mutation_guard_mode="strict" if role == "director" else "warn",
+            continuous_execution=(
+                isinstance(request.context_override, Mapping)
+                and isinstance(request.context_override.get("continuous_execution"), Mapping)
+                and request.context_override["continuous_execution"].get("enabled") is True
+            ),
             recon_required=resolve_recon_required(role, provider_profile),
         ),
         workflow_runtime=workflow_runtime,

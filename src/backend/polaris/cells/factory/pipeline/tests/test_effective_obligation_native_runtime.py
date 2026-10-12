@@ -144,7 +144,9 @@ def test_real_semantic_repair_wire_uses_final_obligation_roster(
         await service.start_run(factory.id)
         context = {
             "directive": "Build a Python cancellation plan library with behavior tests and README. This is a library, not a CLI or application.",
-            "timeout": 1200,
+            # Keep the full planning envelope when deployment output budgets
+            # require more than the old 1200-second fixture allowance.
+            "timeout": 5400,
         }
         pm = await service.execute_stage(factory.id, "pm_planning", context)
         assert pm.status == "success", pm.output

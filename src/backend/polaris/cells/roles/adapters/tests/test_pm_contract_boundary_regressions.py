@@ -73,26 +73,24 @@ def test_pol77_quality_hints_preserve_authored_and_readonly_fields(tmp_path: Pat
     assert {t["id"]: (t["target_files"], t["context_files"]) for t in normalized} == old
 
 
-def test_pol77_exact_native_artifact_conflicts_fail_before_task_creation(tmp_path: Path) -> None:
+def test_pol77_native_read_scopes_and_javascript_helpers_are_not_language_failures(tmp_path: Path) -> None:
     adapter = PMAdapter(workspace=str(tmp_path))
     directive = _pol77_input("DIRECTIVE.txt")
     contracts = adapter._extract_task_contracts(_pol77_input("RAW_PM_RESPONSE.txt"), directive=directive)
     _, quality = adapter._evaluate_contract_quality(contracts, directive=directive)
-    assert quality["ok"] is False
-    diagnostics = quality["contract_diagnostics"]
-    assert {d["task_id"] for d in diagnostics if d["code"] == "artifact_action_contract_invalid"} == {
-        "TASK-8",
-        "TASK-10",
-    }
+    assert quality["ok"] is True
+    diagnostics = quality.get("contract_diagnostics", [])
+    assert all(d["code"] != "pm_plan_language_mismatch" for d in diagnostics)
     assert all(d["code"] != "generated_output_declaration_missing" for d in diagnostics)
-    assert {candidate for d in diagnostics for candidate in d.get("proposal_task_ids", [])} == {"TASK-5", "TASK-6"}
     assert adapter.task_runtime.list_observable_task_rows() == []
 
 
 def test_pol77_revision_retains_raw_base_but_grants_only_diagnosed_fields(tmp_path: Path) -> None:
     from polaris.cells.roles.adapters.internal.pm.revision import apply_revision, make_revision_base
 
-    raw = _pol77_input("RAW_PM_RESPONSE.txt")
+    captured = json.loads(_pol77_input("RAW_PM_RESPONSE.txt"))
+    captured["tasks"][2]["target_files"].append("src/foreign.rs")
+    raw = json.dumps(captured, ensure_ascii=False)
     directive = _pol77_input("DIRECTIVE.txt")
     adapter = PMAdapter(workspace=str(tmp_path))
     contracts = adapter._extract_task_contracts(raw, directive=directive)
@@ -103,21 +101,15 @@ def test_pol77_revision_retains_raw_base_but_grants_only_diagnosed_fields(tmp_pa
     assert base is not None
     assert base.response == raw and base.tasks == json.loads(raw)["tasks"]
     manifest = base.view["edit_manifest"]["tasks"]
-    assert {identity for identity, permission in manifest.items() if permission["set"]} == {
-        "TASK-5",
-        "TASK-6",
-        "TASK-8",
-        "TASK-10",
-    }
-    assert manifest["TASK-5"]["set"]["generated_outputs"] == "generated_outputs_array"
+    assert {identity for identity, permission in manifest.items() if permission["set"]} == {"TASK-3"}
+    assert "target_files" in manifest["TASK-3"]["set"]
     assert "TASK-1" not in manifest
-    producer = next(task for task in base.view["tasks"] if task["id"] == "TASK-5")
-    assert "goal" not in producer and "steps" not in producer
+    producer = next(task for task in base.view["tasks"] if task["id"] == "TASK-3")
     assert "assigned_to" not in producer and "execution_backend" not in producer
-    for field in manifest["TASK-5"]["set"]:
-        if field in base.tasks[4]:
-            assert producer[field] == base.tasks[4][field]
-    assert base.tasks[4]["goal"] == json.loads(raw)["tasks"][4]["goal"]
+    for field in manifest["TASK-3"]["set"]:
+        if field in base.tasks[2]:
+            assert producer[field] == base.tasks[2][field]
+    assert base.tasks[2]["goal"] == json.loads(raw)["tasks"][2]["goal"]
     patch = {
         "schema_version": "pm.task_revision.v1",
         "base_hash": base.base_hash,
@@ -134,7 +126,14 @@ def _pol72_input(name: str) -> str:
         Path(__file__).resolve().parents[7]
         / ".superpowers/sdd/2026-10-06-paperclip-repair-frontier/pm-bounded-task-revision/fixtures"
     )
-    return (directory / name).read_text(encoding="utf-8")
+    text = (directory / name).read_text(encoding="utf-8")
+    if name == "PM_INITIAL_RESPONSE.txt":
+        # Preserve archived evidence. These budget/revision cases need an
+        # ownership-valid local input, independent of the captured PM overlap.
+        payload = json.loads(text)
+        payload["tasks"][1]["target_files"] = ["src/garden/simulation/garden.ts"]
+        return json.dumps(payload, ensure_ascii=False)
+    return text
 
 
 def _native_fake_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -682,7 +681,7 @@ def test_known_envelope_verifier_diagnostic_retains_original_path(tmp_path: Path
     assert quality["contract_diagnostics"][0]["path"] == "$.data.task_list[0].verification_commands[0].modality"
 
 
-def test_autofix_task_splitting_does_not_duplicate_input_diagnostics(tmp_path: Path) -> None:
+def test_autofix_keeps_semantic_parent_and_original_input_diagnostic(tmp_path: Path) -> None:
     task = _task()
     task["target_files"] = [
         "package.json",
@@ -702,7 +701,9 @@ def test_autofix_task_splitting_does_not_duplicate_input_diagnostics(tmp_path: P
     adapter = PMAdapter(workspace=str(tmp_path))
     contracts = adapter._extract_task_contracts(json.dumps({"tasks": [task]}), directive="Create model")
     normalized, quality = adapter._evaluate_contract_quality(contracts, directive="Create model")
-    assert len(normalized) > 1
+    assert [item["id"] for item in normalized] == [contracts[0]["id"]]
+    assert quality["ok"] is False
+    assert "verification_commands_invalid" in quality["critical_issues"]
     assert len(quality["contract_diagnostics"]) == 1
     assert quality["contract_diagnostics"][0]["path"] == "$.tasks[0].verification_commands[0].modality"
 
@@ -729,12 +730,17 @@ def test_quality_validator_rejects_raw_mixed_rows_without_diagnostic_metadata(tm
 
 
 def _pol71_input(name: str) -> str:
-    """Immutable copied Root inputs; never access a historical target/runtime."""
+    """Use local ownership-valid candidates; retain the immutable Root inputs."""
     directory = (
         Path(__file__).resolve().parents[7]
         / ".superpowers/sdd/2026-10-06-paperclip-repair-frontier/pm-candidate-continuity-native-reason/fixtures"
     )
-    return (directory / name).read_text(encoding="utf-8").rstrip("\n")
+    text = (directory / name).read_text(encoding="utf-8").rstrip("\n")
+    if name == "PM_INITIAL_RESPONSE.txt":
+        payload = json.loads(text)
+        payload["tasks"][1]["target_files"] = ["src/garden/simulation/garden.ts"]
+        return json.dumps(payload, ensure_ascii=False)
+    return text
 
 
 def _pol71_config_revision() -> str:
@@ -970,7 +976,6 @@ async def test_pol71_malformed_complete_prefix_never_becomes_revision_candidate(
         "web/../index.html",
         "web\\index.html",
         "web/index.html/",
-        "web/index.html",
     ],
 )
 def test_pol71_html_path_alone_is_not_equivalent_entrypoint(tmp_path: Path, html: str) -> None:
@@ -1032,26 +1037,31 @@ _POL88_DIRECTIVE = "请基于 Architect 阶段产物生成 PM 执行任务合同
 _POL88_REVISION_RESPONSE = '{"schema_version":"pm.task_revision.v1","base_hash":"0b51a2123f4383ccbaa549b92a18ab4e2834ca887894b6dddce9255185a63820","updates":[{"task_id":"TASK-2","set":{"generated_outputs":[{"path":"dist/garden/index.js","inputs":[{"task_id":"TASK-2","path":"src/garden/index.ts"}],"build":{"argv":["npx","tsc","-p","."],"cwd":"."}},{"path":"dist/entry/browser/main.js","inputs":[{"task_id":"TASK-2","path":"src/entry/browser/main.ts"}],"build":{"argv":["npx","tsc","-p","."],"cwd":"."}},{"path":"dist/entry/server.js","inputs":[{"task_id":"TASK-2","path":"src/entry/server.ts"}],"build":{"argv":["npx","tsc","-p","."],"cwd":"."}}]}},{"task_id":"TASK-3","append":{"steps":["bind generated_outputs of TASK-2 only","verify dist artifacts exist via build re-run","run scripts/smoke.ts and tests/garden.test.ts via npm scripts","validate tsc --noEmit, package_scripts, min_files>=3, content keywords, source_target_coverage","collect QA evidence for behavior rules and report failures"],"acceptance":["TASK-3 generated_outputs reference only TASK-2 artifacts","build argv equals its typed build verifier","inputs bind self/ancestor authored targets","no new write grants introduced","evidence recorded for verification"]}}],"add_tasks":[],"remove_task_ids":[]}'
 
 
-def test_pol88_captured_fission_conserves_case_sensitive_sources_and_residual_html(tmp_path: Path) -> None:
+def test_pol88_captured_parent_conserves_case_sensitive_sources_and_nested_html(tmp_path: Path) -> None:
     from copy import deepcopy
 
     from polaris.cells.orchestration.pm_planning.public.artifact_contracts import validate_pm_artifact_contracts
-    from polaris.cells.roles.adapters.internal.pm.revision import make_revision_base
 
     adapter = PMAdapter(workspace=str(tmp_path))
-    contracts = adapter._extract_task_contracts(_POL88_RAW_RESPONSE, directive=_POL88_DIRECTIVE)
+    candidate = json.loads(_POL88_RAW_RESPONSE)
+    # Semantic parent/output conservation is tested independently of the captured
+    # CE task's duplicate write claims. The captured response stays immutable.
+    candidate["tasks"][0]["target_files"] = ["docs/blueprint/architecture.md"]
+    candidate["tasks"][0]["scope_paths"] = ["docs/blueprint"]
+    candidate_text = json.dumps(candidate, ensure_ascii=False)
+    contracts = adapter._extract_task_contracts(candidate_text, directive=_POL88_DIRECTIVE)
     before = deepcopy(contracts)
     assert len(contracts) == 3
     assert len(_POL88_DIRECTIVE) == 3235
     assert not validate_pm_artifact_contracts(contracts, primary_language="typescript").diagnostics
     normalized, quality = adapter._evaluate_contract_quality(contracts, directive=_POL88_DIRECTIVE)
     assert contracts == before
-    assert len(normalized) == 8
+    assert [task["id"] for task in normalized] == ["TASK-1", "TASK-2", "TASK-3"]
     records = [(task, row) for task in normalized for row in task.get("generated_outputs", [])]
     assert [(task["id"], row["path"]) for task, row in records] == [
-        ("TASK-2-entrypoints", "dist/garden/index.js"),
-        ("TASK-2-entrypoints", "dist/entry/browser/main.js"),
-        ("TASK-2-entrypoints", "dist/entry/server.js"),
+        ("TASK-2", "dist/garden/index.js"),
+        ("TASK-2", "dist/entry/browser/main.js"),
+        ("TASK-2", "dist/entry/server.js"),
     ]
     original_outputs = json.loads(_POL88_RAW_RESPONSE)["tasks"][1]["generated_outputs"]
     for task, row in records:
@@ -1062,39 +1072,14 @@ def test_pol88_captured_fission_conserves_case_sensitive_sources_and_residual_ht
         assert {"modality": "build", **row["build"]} in task["verification_commands"]
     assert not validate_pm_artifact_contracts(normalized, primary_language="typescript").diagnostics
     assert "src/garden/moonPhase.ts" in {p for task in normalized for p in task["target_files"]}
-    assert quality["task_fission"]["original_to_derived"]["TASK-2"] == [
-        "TASK-2-foundation",
-        "TASK-2-source-modules",
-        "TASK-2-source",
-        "TASK-2-entrypoints",
-        "TASK-2-tests",
-        "TASK-2-docs",
-    ]
-    assert quality["ok"] is False
-    assert quality["critical_issues"] == ["factory_typescript_contract_missing:index.html"]
-    assert (
-        make_revision_base(
-            _POL88_RAW_RESPONSE,
-            workspace=str(tmp_path),
-            run_id="captured",
-            task_id="pm",
-            directive=_POL88_DIRECTIVE,
-            quality=quality,
-        )
-        is None
-    )
-    prompt = adapter._build_pm_retry_message(
-        directive=_POL88_DIRECTIVE,
-        quality=quality,
-        previous_output=_POL88_RAW_RESPONSE,
-        validated_candidate=True,
-        output_budget_tokens=60000,
-    )
-    assert _POL88_DIRECTIVE in prompt
-    assert _POL88_RAW_RESPONSE in prompt
-    assert "60000 tokens" in prompt
-    assert "factory_typescript_contract_missing:index.html" in prompt
-    assert "pm.task_revision.v1" not in prompt
+    parent = normalized[1]
+    for field in ("goal", "target_files", "verification_commands", "depends_on"):
+        assert parent[field] == before[1][field]
+    assert parent["acceptance_criteria"][:len(before[1]["acceptance_criteria"])] == before[1]["acceptance_criteria"]
+    assert normalized[2]["depends_on"] == ["TASK-2"]
+    assert "task_fission" not in quality
+    assert quality["ok"] is True
+    assert quality["critical_issues"] == []
     assert adapter.task_runtime.list_observable_task_rows() == []
 
 
@@ -1138,7 +1123,7 @@ def test_pol88_actual_noop_plus_task3_append_remains_atomic_rejection(tmp_path: 
     assert set(base.view["edit_manifest"]["tasks"]) == {"TASK-2"}
 
 
-async def test_pol88_captured_html_full_reanswer_preserves_final_request_and_60000(
+async def test_pol88_captured_html_admitted_without_unnecessary_full_reanswer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dataclasses import replace
@@ -1149,7 +1134,6 @@ async def test_pol88_captured_html_full_reanswer_preserves_final_request_and_600
         workspace,
         monkeypatch,
         [
-            {"role": "assistant", "content": _POL88_RAW_RESPONSE},
             {"role": "assistant", "content": _POL88_RAW_RESPONSE},
         ],
     )
@@ -1164,20 +1148,16 @@ async def test_pol88_captured_html_full_reanswer_preserves_final_request_and_600
         result = await adapter._run_pm_stage(
             "pm-task", _POL88_DIRECTIVE, {}, {"run_id": "pm-pol88-captured", "timeout_seconds": 43}
         )
-    assert len(wires) == len(freezes) == len(runtime._test_commands) == 2
+    assert len(wires) == len(freezes) == len(runtime._test_commands) == 1
     assert all(wire["max_tokens"] == 60000 for wire in wires)
     assert {freeze.identity.run_id for freeze in freezes} == {"pm-pol88-captured"}
     for wire in wires:
         assert _POL88_DIRECTIVE in "\n".join(message.get("content", "") for message in wire["messages"])
         assert {tool["function"]["name"] for tool in wire["tools"]} == {"repo_tree", "file_exists"}
         assert wire["tool_choice"] == "auto"
-    correction = "\n".join(message.get("content", "") for message in wires[1]["messages"])
-    assert _POL88_RAW_RESPONSE in correction
-    assert "factory_typescript_contract_missing:index.html" in correction
-    assert "Private bounded revision" not in correction
-    assert result["success"] is False
-    assert result["tasks_created"] == 0
-    assert adapter.task_runtime.list_observable_task_rows() == []
+    assert result["success"] is True
+    assert result["tasks_created"] > 0
+    assert adapter.task_runtime.list_observable_task_rows()
     snapshots = [
         json.loads(path.read_text(encoding="utf-8"))
         for path in (workspace / ".polaris/runtime/contexts").glob("*/*")
@@ -1202,7 +1182,7 @@ async def test_pol88_captured_html_full_reanswer_preserves_final_request_and_600
         assert "**PM**" in semantic["messages"][0]["content"]
 
 
-def test_fission_normalization_keeps_rebound_inputs_for_an_unsplit_codegen_consumer(tmp_path: Path) -> None:
+def test_normalization_keeps_codegen_inputs_bound_to_authored_parent(tmp_path: Path) -> None:
     from polaris.cells.orchestration.pm_planning.public.artifact_contracts import validate_pm_artifact_contracts
     from polaris.cells.orchestration.pm_planning.tests.test_task_quality_gateb import _generated_fission_contract
 
@@ -1232,11 +1212,13 @@ def test_fission_normalization_keeps_rebound_inputs_for_an_unsplit_codegen_consu
     )
     consumer = next(task for task in normalized if task["id"] == "CODEGEN")
     assert consumer["generated_outputs"][0]["inputs"] == [
-        {"task_id": "BUILD-source-models", "path": "src/models/item.ts"}
+        {"task_id": "BUILD", "path": "src/models/item.ts"}
     ]
     assert consumer["generated_outputs"][0]["build"] == build
     assert contracts[-1]["generated_outputs"][0]["inputs"][0]["task_id"] == "BUILD"
-    assert quality["task_fission"]["original_to_derived"]["CODEGEN"] == ["CODEGEN"]
+    assert [task["id"] for task in normalized] == ["BUILD", "CODEGEN"]
+    assert consumer["depends_on"] == ["BUILD"]
+    assert "task_fission" not in quality
     assert not validate_pm_artifact_contracts(normalized, primary_language="typescript").diagnostics
 
 
@@ -1288,14 +1270,16 @@ def test_pol88_actual_task_rows_conserve_validated_output_metadata(tmp_path: Pat
 
     adapter, runtime = _metadata_capture_adapter(tmp_path)
     proposal = json.loads(_POL88_RAW_RESPONSE)
+    proposal["tasks"][0]["target_files"] = ["docs/blueprint/architecture.md"]
+    proposal["tasks"][0]["scope_paths"] = ["docs/blueprint"]
     proposal["tasks"][1]["metadata"] = {"unrelated": {"note": "retain raw model metadata"}}
     if html_entrypoint:
         proposal["tasks"][1]["target_files"].append("index.html")
     before = deepcopy(proposal)
     contracts = adapter._extract_task_contracts(json.dumps(proposal), directive=_POL88_DIRECTIVE)
     normalized, quality = adapter._evaluate_contract_quality(contracts, directive=_POL88_DIRECTIVE)
-    assert quality["ok"] is html_entrypoint
-    assert quality["critical_issues"] == ([] if html_entrypoint else ["factory_typescript_contract_missing:index.html"])
+    assert quality["ok"] is True
+    assert quality["critical_issues"] == []
     # This captures assembly only, even for the independently blocked candidate;
     # it is neither an admission test nor permission to create real task rows.
     rows = adapter._create_board_tasks(normalized)
@@ -1306,34 +1290,34 @@ def test_pol88_actual_task_rows_conserve_validated_output_metadata(tmp_path: Pat
     ]
     assert records == [
         (
-            "TASK-2-entrypoints",
+            "TASK-2",
             {
                 "path": "dist/garden/index.js",
-                "inputs": [{"task_id": "TASK-2-entrypoints", "path": "src/garden/index.ts"}],
+                "inputs": [{"task_id": "TASK-2", "path": "src/garden/index.ts"}],
                 "build": {"argv": ["npx", "tsc", "-p", "."], "cwd": "."},
             },
         ),
         (
-            "TASK-2-entrypoints",
+            "TASK-2",
             {
                 "path": "dist/entry/browser/main.js",
-                "inputs": [{"task_id": "TASK-2-entrypoints", "path": "src/entry/browser/main.ts"}],
+                "inputs": [{"task_id": "TASK-2", "path": "src/entry/browser/main.ts"}],
                 "build": {"argv": ["npx", "tsc", "-p", "."], "cwd": "."},
             },
         ),
         (
-            "TASK-2-entrypoints",
+            "TASK-2",
             {
                 "path": "dist/entry/server.js",
-                "inputs": [{"task_id": "TASK-2-entrypoints", "path": "src/entry/server.ts"}],
+                "inputs": [{"task_id": "TASK-2", "path": "src/entry/server.ts"}],
                 "build": {"argv": ["npx", "tsc", "-p", "."], "cwd": "."},
             },
         ),
     ]
-    assert len(rows) == len(normalized) == len(runtime.creation_payloads) == 8
+    assert len(rows) == len(normalized) == len(runtime.creation_payloads) == 3
     for task, row in zip(normalized, runtime.creation_payloads, strict=True):
         metadata = row["metadata"]
-        if task["id"] == "TASK-2-entrypoints":
+        if task["id"] == "TASK-2":
             assert metadata["generated_outputs"] == task["generated_outputs"]
             assert metadata["generated_outputs"] is not task["generated_outputs"]
         else:
@@ -1343,12 +1327,12 @@ def test_pol88_actual_task_rows_conserve_validated_output_metadata(tmp_path: Pat
         assert metadata["scope_paths"] == task["scope_paths"]
         assert metadata["assigned_to"] == task["assigned_to"]
         assert not any(path.startswith("dist/") for path in metadata["scope_paths"])
-        if task["id"].startswith("TASK-2-"):
+        if task["id"] == "TASK-2":
             assert metadata["unrelated"] == {"note": "retain raw model metadata"}
     assert proposal == before
 
 
-def test_actual_task_row_metadata_rebinds_unsplit_external_codegen_input(tmp_path: Path) -> None:
+def test_actual_task_row_metadata_preserves_external_codegen_input(tmp_path: Path) -> None:
     from copy import deepcopy
 
     from polaris.cells.orchestration.pm_planning.tests.test_task_quality_gateb import _generated_fission_contract
@@ -1382,11 +1366,11 @@ def test_actual_task_row_metadata_rebinds_unsplit_external_codegen_input(tmp_pat
     assert metadata["generated_outputs"] == [
         {
             "path": "dist/external.js",
-            "inputs": [{"task_id": "BUILD-source-models", "path": "src/models/item.ts"}],
+            "inputs": [{"task_id": "BUILD", "path": "src/models/item.ts"}],
             "build": {"argv": ["npx", "tsc", "src/models/item.ts"], "cwd": "."},
         }
     ]
-    assert metadata["depends_on_external"] == ["BUILD-docs"]
+    assert metadata["depends_on_external"] == ["BUILD"]
     assert metadata["unrelated"] == ["consumer"]
     assert proposal == before
 

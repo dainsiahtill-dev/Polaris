@@ -1064,7 +1064,7 @@ export function parseProcessStreamLine(channel: string, line: string): LogEntry 
       Parsing.toStringValue(parsed.type);
     const eventToken = eventName.toLowerCase();
     const summary = Parsing.firstDisplayString(parsed.summary, parsed.message, parsed.text);
-    const dataObj = parsed.data && typeof parsed.data === 'object' ? (parsed.data as Record<string, unknown>) : null;
+    const dataObj = firstRecord(parsed.data, parsed.payload);
     const rawObj = parsed.raw && typeof parsed.raw === 'object' ? (parsed.raw as Record<string, unknown>) : null;
     const resultObj = parsed.result && typeof parsed.result === 'object'
       ? (parsed.result as Record<string, unknown>)
@@ -1119,11 +1119,27 @@ export function parseProcessStreamLine(channel: string, line: string): LogEntry 
           dataObj?.status,
           rawObj?.status,
         ).toLowerCase();
+        const taskSnapshot = firstRecord(dataObj?.task_row_snapshot, rawObj?.task_row_snapshot);
+        const taskStream = `${parsed.stream || ''} ${parsed.fact_stream || ''} ${parsed.source || ''} ${parsed.type || ''}`.toLowerCase();
+        const taskError = Parsing.firstDisplayString(
+          parsed.last_error, dataObj?.last_error, rawObj?.last_error, taskSnapshot?.last_error,
+          parsed.error, dataObj?.error, rawObj?.error,
+        );
+        const verifierExit = resultObj?.exit_code ?? parsed.exit_code ?? dataObj?.exit_code ?? rawObj?.exit_code;
+        const verifierFailed = verifierExit !== undefined && verifierExit !== null && Number(verifierExit) !== 0;
+        // Compact TaskRuntime facts omit dependency rows. A blocked lifecycle
+        // is waiting, never a success; explicit errors/verifier failures below
+        // retain failure precedence even when that task still has dependencies.
+        const dependencyWait = structuredStatus === 'blocked'
+          && (taskStream.includes('task_runtime') || Boolean(taskSnapshot))
+          && !taskError && !verifierFailed && resultObj?.ok !== false;
         const structuredFailure =
           parsed.ok === false ||
           dataObj?.ok === false ||
           rawObj?.ok === false ||
-          ['failed', 'error', 'cancelled', 'blocked'].includes(structuredStatus);
+          resultObj?.ok === false || verifierFailed || Boolean(taskError) ||
+          ['failed', 'error', 'cancelled'].includes(structuredStatus) ||
+          (structuredStatus === 'blocked' && !dependencyWait);
         const structuredSuccess =
           parsed.ok === true ||
           dataObj?.ok === true ||
@@ -1131,6 +1147,7 @@ export function parseProcessStreamLine(channel: string, line: string): LogEntry 
           ['success', 'completed', 'passed'].includes(structuredStatus);
         const token = `${eventName} ${summary} ${dataMsg} ${rawMsg}`.toLowerCase();
         if (structuredFailure) level = 'error';
+        else if (dependencyWait) level = 'info';
         else if (structuredSuccess) level = 'success';
         else if (/error|failed|exception|traceback|timeout/.test(token)) level = 'error';
         else if (/warn|retry|blocked/.test(token)) level = 'warning';

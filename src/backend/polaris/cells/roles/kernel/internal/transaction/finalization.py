@@ -16,7 +16,6 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
-from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import BlockedReason
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import detect_inline_patch_escape
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger, VisibleOutput
@@ -705,28 +704,15 @@ class FinalizationHandler:
             mode = getattr(delivery_contract, "mode", DeliveryMode.ANALYZE_ONLY)
 
         if mode == DeliveryMode.MATERIALIZE_CHANGES:
-            # 【修复根因 B】：MATERIALIZE_CHANGES 模式的收口指令不再一刀切。
-            # 检测 receipt 中是否实际执行了写工具：
-            #   - 有写工具 → 要求 LLM 确认修改已完成并总结（而非再输出"计划"）
-            #   - 只有读工具 → 允许输出修改计划（因为还未执行写入）
-            _has_write_in_receipts = any(
-                str(r.get("tool_name", "")) in WRITE_TOOLS for receipt in receipts for r in receipt.get("results", [])
+            finalization_instruction = (
+                "【任务】根据每项工具的实际结果，准确说明当前进度和剩余工作。\n"
+                "【要求】只报告收据支持的修改和验证结果；写入成功不代表整个任务已经完成。\n"
+                "失败的写入或验证必须明确保留，未执行的验证不得声称通过。\n"
+                "不要贴出完整的可执行代码块或文件内容。\n"
+                "【约束】此阶段已关闭所有工具调用通道；不要调用任何工具，也不要请求额外输入。\n"
+                "仍需读取、修改或验证时，明确下一回合需要执行的工作，不得用文字总结代替实际执行。\n"
+                "请使用用户的语言回复。"
             )
-            if _has_write_in_receipts:
-                finalization_instruction = (
-                    "【任务】请确认修改已完成并给出简要总结。\n"
-                    "【要求】说明已修改的文件和核心变更点，不要输出完整代码块。\n"
-                    "【约束】此阶段已关闭所有工具调用通道；不要调用任何工具，也不要请求额外输入。\n"
-                    "请使用用户的语言回复。"
-                )
-            else:
-                finalization_instruction = (
-                    "【任务】基于以上读取结果，给出简明的修改计划或当前进度总结。\n"
-                    "【要求】只输出文字说明，不要贴出完整的可执行代码块或文件内容。\n"
-                    "【约束】此阶段已关闭所有工具调用通道；不要调用任何工具，也不要请求额外输入。\n"
-                    "如果需要修改文件，请在下一回合使用 write/edit 工具落盘，而不是把代码贴在回复中。\n"
-                    "请使用用户的语言回复。"
-                )
         elif mode == DeliveryMode.PROPOSE_PATCH:
             finalization_instruction = (
                 "【任务】基于以上结果，给出分析总结或 patch 提案。\n"

@@ -73,22 +73,25 @@ def _generated_fission_contract() -> dict[str, Any]:
     }
 
 
-def test_generated_fission_conserves_unique_producers_and_shared_ancestor_inputs(tmp_path: Any) -> None:
+def test_autofix_preserves_unique_producers_and_authored_generated_inputs(tmp_path: Any) -> None:
     payload = _generated_fission_contract()
     original = deepcopy(payload)
     assert not validate_pm_artifact_contracts(payload["tasks"], primary_language="typescript").diagnostics
     stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
-    assert stats["oversized_director_tasks_split"] == 1
+    assert stats["oversized_director_tasks_split"] == 0
     records = [(task["id"], row) for task in payload["tasks"] for row in task.get("generated_outputs", [])]
     assert [(identity, row["path"]) for identity, row in records] == [
-        ("BUILD-source-models", "dist/item.js"),
-        ("BUILD-source-core", "dist/run.js"),
+        ("BUILD", "dist/item.js"),
+        ("BUILD", "dist/run.js"),
     ]
-    assert records[0][1]["inputs"] == [{"task_id": "BUILD-source-models", "path": "src/models/item.ts"}]
+    assert records[0][1]["inputs"] == [{"task_id": "BUILD", "path": "src/models/item.ts"}]
     assert records[1][1]["inputs"] == [
-        {"task_id": "BUILD-source-models", "path": "src/models/item.ts"},
-        {"task_id": "BUILD-source-core", "path": "src/core/run.ts"},
+        {"task_id": "BUILD", "path": "src/models/item.ts"},
+        {"task_id": "BUILD", "path": "src/core/run.ts"},
     ]
+    assert payload["tasks"][0]["goal"] == original["tasks"][0]["goal"]
+    assert payload["tasks"][0]["acceptance"] == original["tasks"][0]["acceptance"]
+    assert payload["tasks"][0]["verification_commands"] == original["tasks"][0]["verification_commands"]
     assert all(row["build"] == {"argv": ["npx", "tsc", "-p", "."], "cwd": "."} for _, row in records)
     assert not validate_pm_artifact_contracts(payload["tasks"], primary_language="typescript").diagnostics
     assert {p for t in payload["tasks"] for p in t["target_files"]} == set(original["tasks"][0]["target_files"])
@@ -98,7 +101,7 @@ def test_generated_fission_conserves_unique_producers_and_shared_ancestor_inputs
 @pytest.mark.parametrize(
     "fault", ["external_only", "duplicate_source", "missing_build", "missing_input", "foreign_language"]
 )
-def test_generated_fission_requires_proven_mapping_without_losing_declarations(tmp_path: Any, fault: str) -> None:
+def test_autofix_preserves_generated_declarations_for_artifact_validation(tmp_path: Any, fault: str) -> None:
     payload = _generated_fission_contract()
     task = payload["tasks"][0]
     if fault == "external_only":
@@ -134,10 +137,16 @@ def test_generated_fission_requires_proven_mapping_without_losing_declarations(t
         next(t for t in payload["tasks"] if t["id"] == "BUILD" and "generated_outputs" in t)["generated_outputs"]
         == before
     )
-    assert any("boundary is too broad" in issue for issue in evaluate_pm_task_quality(payload)["critical_issues"])
+    result = validate_pm_artifact_contracts(payload["tasks"], primary_language="typescript")
+    # Compiling committed ancestor inputs is valid; malformed declarations still fail their own gate.
+    if fault == "external_only":
+        assert result.ok, result.diagnostics
+    else:
+        assert not result.ok
+        assert result.diagnostics
 
 
-def test_generated_fission_rebinds_unsplit_codegen_consumers_and_keeps_exact_external_inputs(tmp_path: Any) -> None:
+def test_autofix_keeps_codegen_consumer_inputs_bound_to_authored_parent(tmp_path: Any) -> None:
     payload = _generated_fission_contract()
     build = {"argv": ["npx", "tsc", "src/models/item.ts", "--outDir", "dist"], "cwd": "."}
     payload["tasks"].append(
@@ -159,13 +168,15 @@ def test_generated_fission_rebinds_unsplit_codegen_consumers_and_keeps_exact_ext
         }
     )
     stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
-    assert stats["oversized_director_tasks_split"] == 1
+    assert stats["oversized_director_tasks_split"] == 0
+    assert [task["id"] for task in payload["tasks"]] == ["BUILD", "CODEGEN"]
     consumer = next(task for task in payload["tasks"] if task["id"] == "CODEGEN")
     assert consumer["generated_outputs"][0]["inputs"] == [
-        {"task_id": "BUILD-source-models", "path": "src/models/item.ts"}
+        {"task_id": "BUILD", "path": "src/models/item.ts"}
     ]
     assert consumer["generated_outputs"][0]["build"] == build
-    assert consumer["depends_on"] == ["BUILD-docs"]
+    assert consumer["verification_commands"] == [{"modality": "build", **build}]
+    assert consumer["depends_on"] == ["BUILD"]
     assert not validate_pm_artifact_contracts(payload["tasks"], primary_language="typescript").diagnostics
 
 
@@ -232,7 +243,7 @@ class TestAutofixPmContractForQuality:
         assert stats["acceptance_added"] == 1
         assert "acceptance_criteria" in payload["tasks"][0]
 
-    def test_split_director_task_boundaries_do_not_inherit_broad_contract_text(self) -> None:
+    def test_autofix_preserves_coupled_director_contract_text(self) -> None:
         payload: dict[str, Any] = {
             "overall_goal": "主语言: javascript；实现一个 npm CLI 产品",
             "tasks": [
@@ -286,41 +297,16 @@ class TestAutofixPmContractForQuality:
             ],
         }
 
+        original = deepcopy(payload["tasks"][0])
         stats = autofix_pm_contract_for_quality(payload, workspace_full="/fake")
 
-        assert stats["oversized_director_tasks_split"] == 1
-        assert stats["task_boundary_tasks_added"] == 5
-        foundation = payload["tasks"][0]
-        foundation_blob = json.dumps(foundation, ensure_ascii=False).lower()
-        assert foundation["target_files"] == ["package.json"]
-        assert foundation["scope"] == "package.json"
-        assert foundation["steps"] == [
-            "Create or update only the listed project manifest/config files: package.json.",
-            "Keep package/build/test/start script definitions internally consistent with downstream source and test tasks.",
-            "Do not materialize downstream source, test, documentation, or model files in this boundary.",
-        ]
-        assert "src/index.js" not in foundation_blob
-        assert "src/models" not in foundation_blob
-        assert "tests/smoke.test.js" not in foundation_blob
-        assert "npm test" not in foundation_blob
-
-        source_models = next(task for task in payload["tasks"] if task["metadata"]["boundary_kind"] == "source_models")
-        source_blob = json.dumps(source_models, ensure_ascii=False).lower()
-        assert "package.json" not in source_blob
-        assert "tests/smoke.test.js" not in source_blob
-        assert "readme.md" not in source_blob
-        assert "src/models/priority.js" in source_blob
-        assert source_models["metadata"]["boundary_target_files"] == [
-            "src/models/meteor.js",
-            "src/models/wish.js",
-            "src/models/queue.js",
-            "src/models/priority.js",
-        ]
-
-        source_core = next(task for task in payload["tasks"] if task["metadata"]["boundary_kind"] == "source_core")
-        source_core_blob = json.dumps(source_core, ensure_ascii=False).lower()
-        assert "src/engine/rules.js" in source_core_blob
-        assert "src/models/meteor.js" not in source_core["target_files"]
+        assert stats["oversized_director_tasks_split"] == 0
+        assert stats["task_boundary_tasks_added"] == 0
+        assert [task["id"] for task in payload["tasks"]] == ["TASK-1"]
+        task = payload["tasks"][0]
+        for field in ("title", "goal", "description", "target_files", "scope_paths", "scope", "steps", "acceptance", "acceptance_criteria"):
+            assert task[field] == original[field]
+        assert "task_boundary_split" not in task.get("metadata", {})
 
     def test_flags_duplicate_javascript_domain_source_layouts(self) -> None:
         payload: dict[str, Any] = {
@@ -1772,7 +1758,7 @@ class TestAutofixPmContractForQuality:
         assert stats["game_domain_tasks_added"] == 0
         assert len(payload["tasks"]) == 1
 
-    def test_autofix_splits_oversized_director_task_boundaries(self, tmp_path: Any) -> None:
+    def test_autofix_preserves_large_authored_director_task_and_downstream_dependency(self, tmp_path: Any) -> None:
         payload: dict[str, Any] = {
             "workspace": str(tmp_path),
             "overall_goal": "Build a TypeScript market simulation with models, CLI, web entry, and tests.",
@@ -1831,36 +1817,22 @@ class TestAutofixPmContractForQuality:
             ],
         }
 
+        before = deepcopy(payload["tasks"])
         initial_report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
-        assert any("Director task boundary is too broad" in item for item in initial_report["critical_issues"])
+        assert initial_report["critical_issues"] == [], initial_report
 
         stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
 
-        assert stats["oversized_director_tasks_split"] == 1
-        assert stats["task_boundary_tasks_added"] == 4
-        split_tasks = [task for task in payload["tasks"] if str(task.get("id", "")).startswith("TASK-1-")]
-        assert [task["id"] for task in split_tasks] == [
-            "TASK-1-foundation",
-            "TASK-1-source-models",
-            "TASK-1-source-modules",
-            "TASK-1-entrypoints",
-            "TASK-1-tests",
-        ]
-        assert split_tasks[0]["target_files"] == ["package.json", "tsconfig.json"]
-        assert "src/models/Market.ts".lower() in split_tasks[1]["target_files"]
-        assert "src/types.ts".lower() in split_tasks[2]["target_files"]
-        assert "src/main.ts".lower() in split_tasks[3]["target_files"]
-        assert split_tasks[4]["target_files"] == ["tests/behavior.test.ts"]
-        assert split_tasks[1]["depends_on"] == ["TASK-1-foundation"]
-        assert split_tasks[2]["depends_on"] == ["TASK-1-source-models"]
-        assert split_tasks[3]["depends_on"] == ["TASK-1-source-modules"]
-        assert split_tasks[4]["depends_on"] == ["TASK-1-entrypoints"]
-        downstream = next(task for task in payload["tasks"] if task["id"] == "TASK-2")
-        assert downstream["depends_on"] == ["TASK-1-tests"]
+        assert stats["oversized_director_tasks_split"] == 0
+        assert stats["task_boundary_tasks_added"] == 0
+        assert [task["id"] for task in payload["tasks"]] == ["TASK-1", "TASK-2"]
+        for task, original in zip(payload["tasks"], before, strict=True):
+            for field in ("goal", "target_files", "scope_paths", "acceptance_criteria", "depends_on"):
+                assert task[field] == original[field]
         post_report = evaluate_pm_task_quality(payload, workspace_full=str(tmp_path))
-        assert not any("Director task boundary is too broad" in item for item in post_report["critical_issues"])
+        assert post_report["critical_issues"] == [], post_report
 
-    def test_autofix_keeps_cmake_as_foundation_not_docs(self, tmp_path: Any) -> None:
+    def test_autofix_keeps_cmake_in_complete_authored_cpp_contract(self, tmp_path: Any) -> None:
         payload: dict[str, Any] = {
             "workspace": str(tmp_path),
             "overall_goal": "Build a C++17 CLI translator.",
@@ -1892,16 +1864,16 @@ class TestAutofixPmContractForQuality:
             ],
         }
 
+        original = deepcopy(payload["tasks"][0])
         stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
-        assert stats["oversized_director_tasks_split"] == 1
-        by_id = {str(task.get("id")): task for task in payload["tasks"]}
-        assert "TASK-1-foundation" in by_id
-        assert "TASK-1-docs" in by_id
-        assert "TASK-1-entrypoints" in by_id
-        assert by_id["TASK-1-foundation"]["target_files"] == ["CMakeLists.txt"]
-        assert by_id["TASK-1-docs"]["target_files"] == ["README.md"]
-        assert by_id["TASK-1-entrypoints"]["target_files"] == ["src/main.cpp"]
-        assert "cmakelists.txt" not in {path for task in payload["tasks"] for path in task.get("target_files") or []}
+        assert stats["oversized_director_tasks_split"] == 0
+        assert [task["id"] for task in payload["tasks"]] == ["TASK-1"]
+        task = payload["tasks"][0]
+        assert task["target_files"] == original["target_files"]
+        assert task["goal"] == original["goal"]
+        assert task["acceptance_criteria"][:len(original["acceptance_criteria"])] == original["acceptance_criteria"]
+        assert "CMakeLists.txt" in task["target_files"]
+        assert "cmakelists.txt" not in task["target_files"]
 
     def test_autofix_keeps_lightweight_l1_director_task_single_boundary(self, tmp_path: Any) -> None:
         payload: dict[str, Any] = {
@@ -2185,43 +2157,21 @@ class TestGetQualityGateConfig:
         assert cfg["max_retries"] == 3
 
 
-def test_fission_synchronizes_existing_exact_output_mirror_without_touching_opaque_metadata(tmp_path: Any) -> None:
+def test_autofix_preserves_exact_output_mirror_and_opaque_metadata(tmp_path: Any) -> None:
     payload = _generated_fission_contract()
     original = payload["tasks"][0]
     original["metadata"] = {"generated_outputs": deepcopy(original["generated_outputs"]), "unrelated": {"keep": True}}
     metadata_before = deepcopy(original["metadata"])
     stats = autofix_pm_contract_for_quality(payload, workspace_full=str(tmp_path))
-    assert stats["oversized_director_tasks_split"] == 1
-    records = [(task["id"], row) for task in payload["tasks"] for row in task["metadata"].get("generated_outputs", [])]
-    assert records == [
-        (
-            "BUILD-source-models",
-            {
-                "path": "dist/item.js",
-                "inputs": [{"task_id": "BUILD-source-models", "path": "src/models/item.ts"}],
-                "build": {"argv": ["npx", "tsc", "-p", "."], "cwd": "."},
-            },
-        ),
-        (
-            "BUILD-source-core",
-            {
-                "path": "dist/run.js",
-                "inputs": [
-                    {"task_id": "BUILD-source-models", "path": "src/models/item.ts"},
-                    {"task_id": "BUILD-source-core", "path": "src/core/run.ts"},
-                ],
-                "build": {"argv": ["npx", "tsc", "-p", "."], "cwd": "."},
-            },
-        ),
-    ]
+    assert stats["oversized_director_tasks_split"] == 0
+    assert [task["id"] for task in payload["tasks"]] == ["BUILD"]
+    assert payload["tasks"][0]["generated_outputs"] == metadata_before["generated_outputs"]
     for task in payload["tasks"]:
         assert task["metadata"]["unrelated"] == {"keep": True}
-        if "generated_outputs" in task:
-            assert task["metadata"]["generated_outputs"] == task["generated_outputs"]
-            assert task["metadata"]["generated_outputs"] is not task["generated_outputs"]
-        else:
-            assert "generated_outputs" not in task["metadata"]
+        assert task["metadata"]["generated_outputs"] == task["generated_outputs"]
+        assert task["metadata"]["generated_outputs"] is not task["generated_outputs"]
     assert original["metadata"] == metadata_before
+    assert validate_pm_artifact_contracts(payload["tasks"], primary_language="typescript").ok
 
 
 @pytest.mark.parametrize("fault", ["ambiguous_owner", "missing_build", "missing_input", "late_mapping_failure"])

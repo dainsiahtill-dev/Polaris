@@ -820,17 +820,15 @@ class AuditQueryEngine:
             ts_clean = ts_clean[:-1] + "+00:00"
 
         try:
-            return datetime.fromisoformat(ts_clean).astimezone(timezone.utc)
+            parsed = datetime.fromisoformat(ts_clean)
         except ValueError:
-            pass
-
-        # Try parsing with just the date portion
-        try:
-            return datetime.strptime(ts_clean[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        except ValueError:
-            pass
-
-        return None
+            return None
+        # Match the datetime-input branch: an absent offset is UTC, independent
+        # of the operator's local timezone. Never manufacture a date from the
+        # prefix of a corrupt full timestamp.
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
 
     # -------------------------------------------------------------------------
     # Statistics

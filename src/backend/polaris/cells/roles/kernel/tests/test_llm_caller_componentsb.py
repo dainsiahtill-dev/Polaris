@@ -859,7 +859,7 @@ class TestFinalizationCaller:
             await caller.call(profile=profile, system_prompt="sys", context=context)
 
     def test_override_prebuilt_system_prompt(self) -> None:
-        """应替换 prebuilt messages 中的 system prompt."""
+        """收口阶段保留原始 system 指令并追加阶段提示。"""
         invoker = Mock()
         caller = FinalizationCaller(invoker)
 
@@ -878,7 +878,8 @@ class TestFinalizationCaller:
 
         override = new_context.context_override or {}
         messages = override["_transaction_kernel_prebuilt_messages"]
-        assert messages[0]["content"] == "new prompt"
+        assert "old" in messages[0]["content"]
+        assert "new prompt" in messages[0]["content"]
         assert messages[1]["content"] == "hi"
 
     def test_override_prebuilt_system_prompt_disables_transaction_tools(self) -> None:
@@ -902,7 +903,8 @@ class TestFinalizationCaller:
         new_context = caller._override_prebuilt_system_prompt(context, "finalization prompt")
 
         override = new_context.context_override or {}
-        assert override["_transaction_kernel_prebuilt_messages"][0]["content"] == "finalization prompt"
+        assert "old" in override["_transaction_kernel_prebuilt_messages"][0]["content"]
+        assert "finalization prompt" in override["_transaction_kernel_prebuilt_messages"][0]["content"]
         assert override["_transaction_kernel_forced_tool_definitions"] == []
         assert override["_transaction_kernel_forced_tool_choice"] == "none"
 

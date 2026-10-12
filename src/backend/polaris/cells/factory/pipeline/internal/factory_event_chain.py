@@ -22,7 +22,9 @@ FACTORY_EVENT_CHAIN_SCHEMA: Final[str] = "factory.event_chain.v1"
 FACTORY_EVENT_CHAIN_ZERO_HASH: Final[str] = "0" * 64
 FACTORY_RUN_ADMITTED_SCHEMA: Final[str] = "factory.run_admitted.v1"
 FACTORY_EVENT_CHAIN_MAX_RECORDS: Final[int] = 4096
-FACTORY_EVENT_CHAIN_MAX_BYTES: Final[int] = 8 * 1024 * 1024
+# Stage results include verification and repair evidence; ordinary retries must
+# fit alongside their history, within the same capacity as a run snapshot.
+FACTORY_EVENT_CHAIN_MAX_BYTES: Final[int] = 64 * 1024 * 1024
 
 _CHAIN_HASH_DOMAIN: Final[str] = "polaris.factory.event_chain.v1"
 _CHAIN_FIELDS: Final[frozenset[str]] = frozenset(

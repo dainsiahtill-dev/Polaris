@@ -480,6 +480,16 @@ def overlay_native_validation_candidate(
         receipt_refs: list[str] = []
         for row in round_repair_results:
             receipt, commit, physical = row.get("effect_receipt"), row.get("effect_receipt_commit"), row.get("result")
+            if (
+                isinstance(physical, Mapping)
+                and physical.get("no_op") is True
+                and physical.get("superseded") is True
+                and receipt is None
+                and commit is None
+            ):
+                # Runtime-superseded calls are observations, not landed writes.
+                # Keep the real committed siblings subject to every proof check.
+                continue
             if not isinstance(receipt, Mapping) or not isinstance(commit, Mapping) or not isinstance(physical, Mapping):
                 raise NativeValidationInputError("native_validation_effect_row_incomplete")
             if directed_effect_receipt_v2_errors(receipt, commit, prefix="candidate") != ():

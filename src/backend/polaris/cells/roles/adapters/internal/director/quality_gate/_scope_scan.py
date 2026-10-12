@@ -333,6 +333,25 @@ def _filter_npm_script_entrypoint_errors_to_task_write_scope(
                 deferred_errors.append(text)
                 deferred_targets.extend(owner_targets)
                 continue
+            # An invented script path has no downstream writer. Its repair
+            # belongs to the declared manifest writer, rather than every source
+            # task that happens to rescan that manifest. Full-project scans and
+            # the manifest's own task still retain the original failure.
+            manifest_path = typed_issue_paths_by_raw.get(text)
+            manifest_targets, _ = partition_paths_by_declared_scope(
+                [manifest_path] if manifest_path else [],
+                project_targets,
+                workspace_name=workspace_name,
+            )
+            if (
+                candidates
+                and not in_scope
+                and manifest_targets
+                and not _path_within_task_write_scope(manifest_path, task=task, workspace_name=workspace_name)
+            ):
+                deferred_errors.append(text)
+                deferred_targets.extend(manifest_targets)
+                continue
         local_module_match = _NPM_SCRIPT_MISSING_LOCAL_MODULE_RE.search(text)
         if local_module_match:
             entrypoint = typed_issue_paths_by_raw.get(text) or str(local_module_match.group("entrypoint") or "").strip()

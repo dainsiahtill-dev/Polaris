@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -253,6 +254,10 @@ def _html_script_source_sibling(root_full: Path, script_path: str) -> str:
     if not normalized.endswith(".js"):
         return ""
     stem = normalized[:-3]
+    # Some generators append .js to the complete TS filename. Recover the
+    # existing source name before testing ordinary extension replacements.
+    if stem.endswith((".ts", ".tsx")) and (root_full / stem).is_file():
+        return stem
     for suffix in (".ts", ".tsx"):
         candidate = f"{stem}{suffix}"
         if (root_full / candidate).is_file():
@@ -274,9 +279,9 @@ def _typescript_compiled_output_path(root_full: Path, source_path: str) -> str:
             out_dir_value = compiler_options.get("outDir")
             root_dir_value = compiler_options.get("rootDir")
             if isinstance(out_dir_value, str) and out_dir_value.strip():
-                out_dir = out_dir_value.strip().replace("\\", "/").strip("/") or out_dir
+                out_dir = PurePosixPath(out_dir_value.strip().replace("\\", "/")).as_posix().strip("/") or out_dir
             if isinstance(root_dir_value, str) and root_dir_value.strip():
-                root_dir = root_dir_value.strip().replace("\\", "/").strip("/")
+                root_dir = PurePosixPath(root_dir_value.strip().replace("\\", "/")).as_posix().strip("/")
 
     normalized_source = str(source_path or "").strip().replace("\\", "/").strip("/")
     source_without_ext = re.sub(r"\.tsx?$", "", normalized_source)
@@ -289,16 +294,17 @@ def _typescript_compiled_output_path(root_full: Path, source_path: str) -> str:
     return f"{out_dir}/{emitted_relative}.js".replace("//", "/").strip("/")
 
 
-def _html_script_prefixed_path(original_src: str, normalized_path: str) -> str:
+def _html_script_prefixed_path(original_src: str, normalized_path: str, relative_path: str = "") -> str:
     raw = str(original_src or "").strip()
     normalized = str(normalized_path or "").strip().replace("\\", "/").strip("/")
     if not normalized:
         return ""
     if raw.startswith("/"):
         return f"/{normalized}"
-    if raw.startswith("./"):
-        return f"./{normalized}"
-    return normalized
+    relative = posixpath.relpath(normalized, PurePosixPath(relative_path).parent.as_posix())
+    if raw.startswith("./") and not relative.startswith("."):
+        return f"./{relative}"
+    return relative
 
 
 def _html_module_script_compiled_javascript_issue(
@@ -314,8 +320,8 @@ def _html_module_script_compiled_javascript_issue(
     if not source_path:
         return None
     emitted_path = _typescript_compiled_output_path(root_full, source_path)
-    emitted_ref = _html_script_prefixed_path(src, emitted_path)
-    source_ref = _html_script_prefixed_path(src, script_path)
+    emitted_ref = _html_script_prefixed_path(src, emitted_path, relative_path)
+    source_ref = _html_script_prefixed_path(src, script_path, relative_path)
     error = (
         "Artifact quality scan failed: HTML module script references missing compiled JavaScript "
         f"{source_ref!r} in {relative_path}; TypeScript build emitted {emitted_ref!r}"
@@ -957,8 +963,8 @@ def _typescript_module_exports(text: str) -> set[str] | None:
     """Best-effort export surface of a TS/JS module, or ``None`` (fail-open).
 
     Returns ``None`` whenever the surface cannot be safely determined (any
-    surface-unknowable construct: ``export *``, ``export =``, CommonJS
-    ``module.exports``/``exports.x``, ambient ``declare module``, destructured
+    surface-unknowable construct: ``export *``, ``export =``, dynamic CommonJS
+    exports, ambient ``declare module``, destructured
     export). Capture is otherwise generous — missing a real export form would be
     a FALSE POSITIVE (a runnable product wrongly failed), whereas over-capturing
     only yields a benign false negative — so every plausible declaration and
@@ -966,9 +972,22 @@ def _typescript_module_exports(text: str) -> set[str] | None:
     """
     if not text:
         return None
-    if _TS_DYNAMIC_EXPORT_RE.search(text):
-        return None
-    exports: set[str] = set()
+    commonjs_assignments = list(re.finditer(r"\bexports\s*\.\s*(?P<name>[A-Za-z_$][\w$]*)\s*=(?!=|>)", text))
+    commonjs_markers = list(
+        re.finditer(
+            r"\bObject\s*\.\s*defineProperty\s*\(\s*exports\s*,\s*['\"]__esModule['\"]\s*,"
+            r"\s*\{\s*value\s*:\s*true\s*\}\s*\)",
+            text,
+        )
+    )
+    known_cjs_starts = {match.start() for match in (*commonjs_assignments, *commonjs_markers)}
+    mask = _ts_js_code_mask(text)
+    for match in _TS_DYNAMIC_EXPORT_RE.finditer(text):
+        if _match_starts_in_ts_js_code(mask, match.start()) and match.start() not in known_cjs_starts:
+            return None
+    exports: set[str] = {
+        match.group("name") for match in commonjs_assignments if _match_starts_in_ts_js_code(mask, match.start())
+    }
     for match in _TS_EXPORT_DECL_RE.finditer(text):
         name = (
             match.group("fn") or match.group("cls") or match.group("ty") or match.group("cenum") or match.group("var")

@@ -186,18 +186,22 @@ class _Mixin02:
                     not isinstance(finding, dict)
                     or set(finding) != {"code", "repair_operation", "detail"}
                     or finding["code"] != "invalid_project_completion_contract"
-                    or finding["repair_operation"] not in (None, "entrypoint_upsert")
+                    or finding["repair_operation"] not in (None, "entrypoint_upsert", "artifact_upsert")
                 ):
                     raise ValueError("chief_engineer_completion_normalization_finding_invalid")
                 if finding["repair_operation"] is None:
                     raise ChiefEngineerBlueprintErrorV1(str(finding["detail"]), code=finding["code"])
-                codes.append("chief_engineer.entrypoint_contract.invalid")
-                operations.append("entrypoint_upsert")
+                if finding["repair_operation"] == "artifact_upsert":
+                    codes.append("chief_engineer.artifact_owner_contract.invalid")
+                    operations.append("artifact_upsert")
+                else:
+                    codes.append("chief_engineer.entrypoint_contract.invalid")
+                    operations.append("entrypoint_upsert")
                 continue
             if error.startswith(("invalid project completion contract:", "effective completion obligations invalid:")):
                 # Untyped canonical authority failure is never promoted by a
                 # path/ID substring. Only the structured source finding above
-                # can authorize entrypoint repair for a normalization failure.
+                # can authorize typed repair for a normalization failure.
                 raise ChiefEngineerBlueprintErrorV1(str(raw_error), code="invalid_project_completion_contract")
             if "delivery depth infeasible" in error:
                 metric = "test_files" if "test_files=" in error else "prod_files"

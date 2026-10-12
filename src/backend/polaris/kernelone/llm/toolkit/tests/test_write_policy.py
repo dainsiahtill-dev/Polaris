@@ -87,6 +87,31 @@ def test_diff_package_manifest_reports_scripts_and_dependencies() -> None:
     assert diff.sections["devDependencies"].removed == {"vite": "6.0.0"}
 
 
+def test_manifest_can_remove_unused_script_while_retaining_delivery_commands() -> None:
+    before = {
+        "scripts": {
+            "build": "tsc",
+            "test": "node --test",
+            "start": "node dist/main.js",
+            "serve": "node scripts/serve.js",
+        }
+    }
+    after = {"scripts": {"build": "tsc", "test": "node --test", "start": "node dist/main.js"}}
+
+    verdict = validate_tool_write_policy(
+        changed_files=["package.json"],
+        allowed_scope=["package.json"],
+        operation="edit_file",
+        package_before=json.dumps(before),
+        package_after=json.dumps(after),
+    )
+
+    assert verdict.allowed is True, verdict.reasons
+    assert verdict.package_diff is not None
+    assert verdict.package_diff.sections["scripts"].removed == {"serve": "node scripts/serve.js"}
+    assert verdict.package_diff.sections["scripts"].changed == {}
+
+
 def test_validate_tool_write_policy_blocks_scope_and_agents_forbidden_paths() -> None:
     verdict = validate_tool_write_policy(
         changed_files=["src/generated/schema.ts", "src/other.ts"],

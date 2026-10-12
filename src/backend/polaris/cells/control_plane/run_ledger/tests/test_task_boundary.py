@@ -428,8 +428,7 @@ def test_task_boundary_ignores_inline_javascript_in_package_script(tmp_path: Pat
             {
                 "scripts": {
                     "copy:html": (
-                        "node -e \"import('node:fs').then(fs=>"
-                        "fs.copyFileSync('index.html','dist/index.html'))\""
+                        "node -e \"import('node:fs').then(fs=>fs.copyFileSync('index.html','dist/index.html'))\""
                     )
                 }
             },
@@ -464,8 +463,7 @@ def test_task_boundary_reprojection_supersedes_false_failure_without_role_replay
             {
                 "scripts": {
                     "copy:html": (
-                        "node -e \"import('node:fs').then(fs=>"
-                        "fs.copyFileSync('index.html','dist/index.html'))\""
+                        "node -e \"import('node:fs').then(fs=>fs.copyFileSync('index.html','dist/index.html'))\""
                     )
                 }
             },
@@ -487,9 +485,7 @@ def test_task_boundary_reprojection_supersedes_false_failure_without_role_replay
         "reason": "legacy parser treated inline JavaScript as an entrypoint",
         "target_files": ["package.json", "index.html"],
         "completed_artifacts": ["package.json", "index.html"],
-        "missing_entrypoint_targets": [
-            "import('node:fs').then(fs=>fs.copyFileSync('index.html','dist/index.html'))"
-        ],
+        "missing_entrypoint_targets": ["import('node:fs').then(fs=>fs.copyFileSync('index.html','dist/index.html'))"],
     }
     old_receipt = append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
@@ -543,6 +539,97 @@ def test_task_boundary_reprojection_supersedes_false_failure_without_role_replay
                 reason="stale",
             )
         )
+
+
+@pytest.mark.parametrize("capability_ok", [True, False])
+def test_task_boundary_reprojection_preserves_original_project_and_capability_facts(
+    tmp_path: Path, capability_ok: bool
+) -> None:
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            workspace=str(tmp_path),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="task_boundary_reprojection_scope_test",
+        )
+    )
+    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
+    run_id = "director-reproject-scope"
+    task_id = "TASK-ENTRY"
+    token = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "project_id": "project-original",
+        "token_id": "original-task-token",
+        "capability_audit": {
+            "ok": capability_ok,
+            "issues": [] if capability_ok else ["original-capability-failure"],
+        },
+        "gate_policy": {"required_evidence_modalities": ["tool"]},
+    }
+    predecessor = append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id=run_id,
+            event={
+                "event_type": "task_boundary_verdict",
+                "task_id": task_id,
+                "run_id": run_id,
+                "factory_run_id": "factory-original",
+                "project_id": "project-original",
+                "job_token": token,
+                "task_boundary_verdict": {
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "ok": False,
+                    "status": "missing_entrypoint_target",
+                    "target_files": ["index.html"],
+                    "completed_artifacts": ["index.html"],
+                    "missing_entrypoint_targets": ["removed-script.js"],
+                },
+            },
+        )
+    ).receipt["event"]
+
+    result = reproject_task_boundary_verdict(
+        ReprojectTaskBoundaryVerdictCommandV1(
+            workspace=str(tmp_path),
+            run_id=run_id,
+            task_id=task_id,
+            expected_content_id=predecessor["content_id"],
+            reason="workspace_manifest_reference_repaired",
+        )
+    )
+    from polaris.cells.control_plane.run_ledger.public.service import _read_execution_control_plane_facts
+
+    events = _read_execution_control_plane_facts(workspace=tmp_path, run_id=run_id)
+    successor = next(row for row in events if row.get("content_id") == result.content_id)
+    assert result.changed is True
+    assert successor["job_token"] == predecessor["job_token"]
+    assert successor["project_id"] == "project-original"
+    assert successor["factory_run_id"] == "factory-original"
+    assert successor["job_token"]["capability_audit"]["ok"] is capability_ok
+
+
+def test_nested_generated_html_entrypoint_defers_to_real_required_verifier(tmp_path: Path) -> None:
+    html = tmp_path / "src/pages/index.html"
+    html.parent.mkdir(parents=True)
+    html.write_text(
+        '<html><body><script type="module" src="../../dist/pages/main.js"></script></body></html>',
+        encoding="utf-8",
+    )
+    (tmp_path / "src/pages/main.ts").write_text("export const start = () => {};", encoding="utf-8")
+
+    verdict = evaluate_task_boundary_verdict(
+        workspace=tmp_path,
+        task_id="TASK-WEB",
+        target_files=["src/pages/index.html", "src/pages/main.ts"],
+        required_verifiers=["browser smoke"],
+    ).to_dict()
+
+    assert verdict["missing_entrypoint_targets"] == []
+    assert verdict["status"] == "required_verifier_missing"
+    assert verdict["missing_required_verifiers"] == ["browser smoke"]
+    assert verdict["ok"] is False
 
 
 def test_task_boundary_reports_missing_html_script_entrypoint(tmp_path: Path) -> None:

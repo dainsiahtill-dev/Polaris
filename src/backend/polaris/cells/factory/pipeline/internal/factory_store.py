@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 _FACTORY_EVENT_LOCK_TIMEOUT_SECONDS = 30.0
 _FACTORY_EVENT_LOCK_ACQUIRE_ATTEMPTS = 3
 _FACTORY_EVENT_LOCK_RETRY_SLEEP_SECONDS = 0.25
-_FACTORY_RUN_SNAPSHOT_MAX_BYTES = 4 * 1024 * 1024
+_FACTORY_RUN_SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024
 
 # Cross-loop safe file locks.
 # Do not use process-global asyncio.Lock here, because pytest/TestClient can
@@ -447,11 +447,25 @@ class FactoryStore:
         run_dir.mkdir(parents=True, exist_ok=True)
 
         run_file = run_dir / "run.json"
-        content = json.dumps(run.to_dict(), ensure_ascii=False, allow_nan=False, indent=2)
+        content = self._encode_snapshot(run.to_dict())
 
         # 完全异步的原子写入
         await self._write_file_atomic(run_file, content)
         return self.run_snapshot_ref(run.id)
+
+    @staticmethod
+    def _encode_snapshot(document: dict[str, Any]) -> str:
+        # Keep control snapshots compact, and never persist state that the
+        # descriptor-safe reader cannot consume during settlement or recovery.
+        content = json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        size = len(content.encode("utf-8"))
+        if size > _FACTORY_RUN_SNAPSHOT_MAX_BYTES:
+            raise FactoryRunSnapshotError(
+                "factory_run_snapshot_size_exceeded",
+                "Factory snapshot size exceeds the readable bound",
+                details={"size_bytes": size, "max_bytes": _FACTORY_RUN_SNAPSHOT_MAX_BYTES},
+            )
+        return content
 
     async def _write_file_atomic(self, run_file: Path, content: str) -> None:
         """异步文件写入 helper with Windows-safe replace retries."""
@@ -601,7 +615,7 @@ class FactoryStore:
         return self._strict_json_object(snapshot.content, logical_ref=logical_ref)
 
     async def read_strict_run_snapshot(self, run_id: str) -> dict[str, Any]:
-        """Strictly reread the current run snapshot under the 4 MiB bound."""
+        """Strictly reread the current run snapshot under the shared size bound."""
 
         return await asyncio.to_thread(self._read_strict_snapshot_sync, self.run_snapshot_ref(run_id))
 
@@ -634,7 +648,7 @@ class FactoryStore:
     async def checkpoint(self, run) -> str:
         """Create a checkpoint"""
         logical_ref = self.checkpoint_ref(run)
-        content = json.dumps(run.to_dict(), ensure_ascii=False, allow_nan=False, indent=2)
+        content = self._encode_snapshot(run.to_dict())
         await asyncio.to_thread(self._persist_immutable_checkpoint_sync, logical_ref, content.encode("utf-8"))
         return logical_ref
 
@@ -891,7 +905,7 @@ class FactoryStore:
         run_id: str,
         events: tuple[dict[str, Any], ...],
     ) -> tuple[dict[str, Any], ...]:
-        """Read-only 8 MiB preflight for an ordered event transaction."""
+        """Read-only capacity preflight for an ordered event transaction."""
 
         if not events:
             raise ValueError("events must contain at least one candidate")

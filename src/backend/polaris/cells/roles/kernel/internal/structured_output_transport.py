@@ -10,10 +10,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
+from xml.etree import ElementTree
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
@@ -729,12 +731,7 @@ def _normalize_schema_proven_self_named_empty_wrapper(
     """
 
     expected_type = _schema_container_type(schema)
-    if (
-        field_name
-        and expected_type is not None
-        and isinstance(value, Mapping)
-        and list(value) == [field_name]
-    ):
+    if field_name and expected_type is not None and isinstance(value, Mapping) and list(value) == [field_name]:
         wrapped = value[field_name]
         scalar_empty = wrapped is None or (isinstance(wrapped, str) and not wrapped.strip())
         empty_value: dict[str, Any] | list[Any] = {} if expected_type is dict else []
@@ -1335,6 +1332,77 @@ def validate_structured_output_stream_tool_call(
     _validate_payload(arguments, plan)
 
 
+def _decode_structured_xml_value(node: ElementTree.Element, schema: Mapping[str, Any]) -> Any:
+    """Decode one XML container using the caller's JSON types and item order."""
+
+    if node.attrib:
+        raise ValueError("structured_xml_argument_attributes")
+    children = list(node)
+    text = node.text or ""
+    container_type = _schema_container_type(schema)
+    if not children:
+        if container_type is not None and not text.strip():
+            return container_type()
+        if not _schema_type_includes(schema, "string") and text.strip():
+            try:
+                return json.loads(text, object_pairs_hook=_reject_duplicate_json_object_pairs)
+            except json.JSONDecodeError:
+                pass
+        return text
+    if text.strip() or any((child.tail or "").strip() for child in children):
+        raise ValueError("structured_xml_mixed_content")
+    if container_type is list or (container_type is None and all(child.tag == "item" for child in children)):
+        if not all(child.tag == "item" for child in children):
+            raise ValueError("structured_xml_array_item_shape")
+        items = schema.get("items")
+        item_schema = items if isinstance(items, Mapping) else {}
+        return [_decode_structured_xml_value(child, item_schema) for child in children]
+    properties = schema.get("properties")
+    properties = properties if isinstance(properties, Mapping) else {}
+    additional = schema.get("additionalProperties")
+    additional_schema = additional if isinstance(additional, Mapping) else {}
+    result: dict[str, Any] = {}
+    for child in children:
+        if child.tag in result:
+            raise ValueError("structured_xml_duplicate_member")
+        child_schema = properties.get(child.tag, additional_schema)
+        result[child.tag] = _decode_structured_xml_value(
+            child, child_schema if isinstance(child_schema, Mapping) else {}
+        )
+    return result
+
+
+def _structured_output_xml_payload(content: str, plan: StructuredOutputTransportPlan) -> dict[str, Any] | None:
+    """Recover a complete reserved result submission, never an executable call."""
+
+    if (
+        len(content) > _MAX_SCHEMA_CONTAINER_STRING_CHARS
+        or "<!DOCTYPE" in content.upper()
+        or "<!ENTITY" in content.upper()
+    ):
+        return None
+    # MiniMax sometimes exposes its control token before each XML tag.
+    # Remove it only at tag boundaries; scalar data otherwise remains intact.
+    cleaned = re.sub(re.escape("]<]minimax[>[") + r"(?=<)", "", content).strip()
+    cleaned = re.sub(r"(<\/?)(?:minimax:)(tool_call)(?=[\s>])", r"\1\2", cleaned)
+    try:
+        root = ElementTree.fromstring(cleaned)
+        if root.tag == "tool_call":
+            if root.attrib or (root.text or "").strip() or len(root) != 1:
+                return None
+            root = root[0]
+        if root.tag != "invoke" or root.attrib != {"name": STRUCTURED_OUTPUT_TOOL_NAME} or (root.tail or "").strip():
+            return None
+        # The invocation attribute names the protocol; arguments have no attributes.
+        argument_root = ElementTree.Element("arguments")
+        argument_root.text = root.text
+        argument_root.extend(list(root))
+        decoded = _decode_structured_xml_value(argument_root, plan.contract.json_schema)
+    except (ElementTree.ParseError, ValueError, RecursionError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
 def normalize_structured_output_response(
     response: dict[str, Any],
     plan: StructuredOutputTransportPlan | None,
@@ -1348,8 +1416,15 @@ def normalize_structured_output_response(
         raw_calls = response.get("native_tool_calls")
     calls = [item for item in raw_calls or [] if isinstance(item, Mapping)]
     result_calls = [item for item in calls if _tool_call_name(item) == STRUCTURED_OUTPUT_TOOL_NAME]
+    xml_submission = False
     if not result_calls:
-        return response
+        if calls:
+            return response
+        xml_payload = _structured_output_xml_payload(str(response.get("content") or ""), plan)
+        if xml_payload is None:
+            return response
+        result_calls = [{"name": STRUCTURED_OUTPUT_TOOL_NAME, "arguments": xml_payload}]
+        xml_submission = True
     if len(result_calls) != 1:
         raise ValueError("structured_output_tool_must_be_called_exactly_once")
     result_call = result_calls[0]
@@ -1363,6 +1438,8 @@ def normalize_structured_output_response(
         schema_normalization_policy=normalization_policy,
         schema_normalization_details=normalization_details,
     )
+    if xml_submission:
+        evidence["result_submission_format"] = "xml"
     normalized = _ValidatedStructuredOutputResponse(response)
     normalized["content"] = payload_json
     normalized["tool_calls"] = []

@@ -92,6 +92,20 @@ def _script_name(argv: tuple[str, ...]) -> str:
 
 def _node_profile(modality: str, argv: tuple[str, ...]) -> str:
     executable = _exe(argv)
+    if executable == "node" and modality == "entrypoint" and len(argv) >= 2:
+        entrypoint_path = PurePath(argv[1].replace("\\", "/"))
+        if (
+            not entrypoint_path.is_absolute()
+            and ".." not in entrypoint_path.parts
+            and entrypoint_path.suffix.casefold() in {".js", ".mjs", ".cjs"}
+        ):
+            return "node.file_entrypoint"
+    if executable == "npx" and len(argv) >= 2 and argv[1] == "tsc":
+        compiler_options = {item.casefold().split("=", 1)[0] for item in argv[2:]}
+        if modality == "lint" and "--noemit" in compiler_options:
+            return "node.typescript_check"
+        if modality == "build" and "--noemit" not in compiler_options:
+            return "node.typescript_build"
     if executable not in {"npm", "pnpm", "yarn", "bun"}:
         return ""
     subcommand = _subcommand(argv)
@@ -162,14 +176,19 @@ def _python_profile(modality: str, argv: tuple[str, ...]) -> str:
     if modality == "entrypoint" and executable in {"python", "python3", "py"} and len(argv) >= 2:
         if argv[1] not in {"-c", "-m"} and argv[1].endswith(".py"):
             return "python.script_entrypoint"
-        if len(argv) >= 3 and argv[1] == "-m" and argv[2] not in {
-            "compileall",
-            "pip",
-            "pytest",
-            "ruff",
-            "unittest",
-            "venv",
-        }:
+        if (
+            len(argv) >= 3
+            and argv[1] == "-m"
+            and argv[2]
+            not in {
+                "compileall",
+                "pip",
+                "pytest",
+                "ruff",
+                "unittest",
+                "venv",
+            }
+        ):
             return "python.module_entrypoint"
     return ""
 

@@ -7,6 +7,8 @@ import contextlib
 import hashlib
 import inspect
 import json
+import os
+import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -81,6 +83,88 @@ def test_missing_ce_blocks_before_any_verifier_spawn(tmp_path: Path, monkeypatch
     assert spawn.call_count == 0
     assert observation.blockers
     assert "requires_committed_ce_stage" in str(observation.blockers)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("compile_only,build_runs_tests", [(False, False), (True, False), (True, True)])
+async def test_collector_builds_before_tests_that_consume_generated_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, compile_only: bool, build_runs_tests: bool
+) -> None:
+    """Real isolated commands in a self-owned fixture; Factory admission is doubled."""
+    from polaris.cells.factory.pipeline.internal import factory_node_dependencies as dependencies
+    from polaris.cells.factory.pipeline.internal.native_validation_group import verification_group
+
+    workspace = tmp_path / "source"
+    workspace.mkdir()
+    files = {
+        "package.json": json.dumps(
+            {
+                "scripts": {
+                    "build": "node build.js" + (" && node --test dist/tests/*.test.js" if build_runs_tests else ""),
+                    "test": "npm run build" if compile_only else "node --test dist/tests/*.test.js",
+                }
+            }
+        ),
+        "build.js": (
+            "const fs = require('node:fs');\n"
+            "fs.mkdirSync('dist/tests', {recursive:true});\n"
+            "fs.copyFileSync('tests/verify.test.js', 'dist/tests/verify.test.js');\n"
+        ),
+        "tests/verify.test.js": "require('node:test')('real test', () => require('node:assert/strict').equal(2 + 2, 4));\n",
+    }
+    for name, content in files.items():
+        path = workspace / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(
+        dependencies,
+        "authenticated_preparation_contract",
+        Mock(return_value=SimpleNamespace(project_id="unit-project")),
+    )
+    monkeypatch.setattr(materialization, "node_dependency_readiness", Mock(return_value=SimpleNamespace(ready=True)))
+    node = shutil.which("node")
+    assert node is not None
+    tool_root = Path(node).resolve().parent.parent
+    # System roots are already mounted; avoid hashing all of /usr for a fixture.
+    tool_roots = () if tool_root in {Path("/usr"), Path("/usr/local")} else (tool_root,)
+    with verification_group(
+        workspace=workspace,
+        candidate_id="build-test-fixture",
+        input_hashes={name: hashlib.sha256(content.encode("utf-8")).hexdigest() for name, content in files.items()},
+        toolchain_roots=tool_roots,
+        staging_parent=tmp_path,
+    ) as group:
+
+        async def command(argv: list[str], timeout: float) -> dict[str, Any]:
+            result = group.execute_command(group.prepare_command(argv), timeout=timeout)
+            return {
+                "command": argv,
+                "exit_code": result.returncode,
+                "passed": result.returncode == 0,
+                "stdout_tail": result.stdout,
+                "stderr_tail": result.stderr,
+            }
+
+        monkeypatch.setattr(
+            materialization.NativeValidationSession,
+            "from_factory",
+            Mock(return_value=SimpleNamespace(run_command=command, close=lambda: None)),
+        )
+        result = await _collect(
+            OrchestrationStageExecutor(workspace), run=_run(), context={"project_id": "unit-project"}
+        )
+    assert not result.blockers
+    test = next(item for item in result.verifier_results if item["command"] == ["npm", "test"])
+    if compile_only and not build_runs_tests:
+        assert result
+        assert "npm manifest-only test script" in str(result)
+        assert test["exit_code"] == 0
+        assert test["passed"] is False
+    else:
+        assert not result
+        assert "# tests 1" in test["stdout_tail"]
+        assert test["passed"] is True
+    assert not (workspace / "dist").exists()
 
 
 def test_collector_consumes_static_inventory_without_second_tree_scan(
@@ -209,14 +293,81 @@ def _factory_owner(executor: Any, authored: tuple[Any, Any, Any]) -> tuple[Facto
     return run, {"project_id": contract.project_id, "factory_run_id": run.id, "workspace": str(executor.workspace)}
 
 
+def test_missing_context_project_id_uses_authenticated_ce_identity(
+    tmp_path: Path, authored: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src/authored.js").write_text("export function value() { return 1; }\n", encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    run, context = _factory_owner(executor, authored)
+    project_id = context.pop("project_id")
+    captured: dict[str, Any] = {}
+
+    def observe_admission(_executor: Any, _run: FactoryRun, bound_context: dict[str, Any], **_kwargs: Any) -> Any:
+        captured.update(bound_context)
+        raise RuntimeError("stop_after_project_binding")
+
+    monkeypatch.setattr(materialization.NativeValidationSession, "from_factory", observe_admission)
+    observation = asyncio.run(_collect(executor, run=run, context=context))
+
+    assert captured["project_id"] == project_id
+    assert "stop_after_project_binding" in str(observation.blockers)
+    assert "context_project_mismatch" not in str(observation.blockers)
+    assert "project_id" not in context
+
+
+def test_dependency_change_reopens_validation_group_after_owned_preparation(
+    tmp_path: Path, authored: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"node --test tests/verify.test.js"}}', encoding="utf-8")
+    (tmp_path / "tests").mkdir(exist_ok=True)
+    (tmp_path / "tests/verify.test.js").write_text("require('node:test')('value', () => {});\n", encoding="utf-8")
+    executor = OrchestrationStageExecutor(tmp_path)
+    run, context = _factory_owner(executor, authored)
+    old = SimpleNamespace(close=Mock())
+    sessions: list[Any] = [old]
+    monkeypatch.setattr(materialization, "node_dependency_readiness", Mock(return_value=SimpleNamespace(ready=False)))
+
+    async def prepare(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        old.close.assert_called_once()
+        assert sessions == []
+        return {"passed": True, "exit_code": 0}
+
+    preparation = AsyncMock(side_effect=prepare)
+    monkeypatch.setattr(materialization, "_await_materialization_preparation", preparation)
+
+    async def command(argv: list[str], _timeout: float) -> dict[str, Any]:
+        return {"command": argv, "exit_code": 0, "passed": True}
+
+    renewed = SimpleNamespace(run_command=command)
+    admission = Mock(return_value=renewed)
+    monkeypatch.setattr(materialization.NativeValidationSession, "from_factory", admission)
+
+    observation = asyncio.run(_collect(executor, run=run, context=context, sessions=sessions))
+
+    assert observation.blockers == []
+    preparation.assert_awaited_once()
+    admission.assert_called_once()
+    assert sessions == [renewed]
+    assert observation.preparation_results == [{"passed": True, "exit_code": 0}]
+
+
 def test_real_untrusted_group_rejects_before_effect_or_repair(
     tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
     authored: tuple[Any, Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Real CE persistence and original bwrap gate; no trusted callback/UID double."""
     from polaris.cells.factory.pipeline.internal import native_validation_group as group
 
+    # Select an actual untrusted PATH executable instead of assuming the host
+    # lacks a trusted system installation. Keep the original binary/UID gate.
+    fake_tools = tmp_path_factory.mktemp("untrusted-tools")
+    fake_bwrap = fake_tools / "bwrap"
+    fake_bwrap.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    fake_bwrap.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake_tools), prepend=os.pathsep)
     executor = OrchestrationStageExecutor(tmp_path)
     run, context = _factory_owner(executor, authored)
     spawn = Mock(side_effect=AssertionError("untrusted Group spawned"))
@@ -293,6 +444,11 @@ def test_identity_mismatch_never_opens_group(
         ({"exit_code": 9, "passed": False, "stderr_tail": "unstructured failure"}, "nonzero", False),
         (
             {"exit_code": 0, "passed": False, "error": "command exited 0 but output contains compiler errors"},
+            "verifier_failure",
+            False,
+        ),
+        (
+            {"exit_code": 0, "passed": True, "stdout_tail": "TAP version 13\n1..0\n# tests 0\n"},
             "verifier_failure",
             False,
         ),

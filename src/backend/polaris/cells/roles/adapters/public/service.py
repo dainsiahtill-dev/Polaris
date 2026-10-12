@@ -466,15 +466,20 @@ def resolve_director_causal_quality_repair_target_files(
         _rust_test_behavior_repair_target_files,
         _semantic_quality_repair_target_files,
     )
+    from ..internal.director.quality_gate._prompt_and_targets import _manifest_causal_quality_repair_targets
 
     errors = list(artifact_quality_errors)
     changed = list(changed_files)
+    manifest_targets, _ = _manifest_causal_quality_repair_targets(
+        artifact_quality_errors=errors, workspace_full=workspace_full
+    )
     python_runtime_candidates = _python_runtime_smoke_repair_target_files(
         artifact_quality_errors=errors,
         changed_files=changed,
         workspace_full=workspace_full,
     )
     candidates = [
+        *manifest_targets,
         *_explicit_artifact_quality_repair_target_files(
             artifact_quality_errors=errors,
             changed_files=changed,

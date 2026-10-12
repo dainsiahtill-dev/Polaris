@@ -236,6 +236,19 @@ def test_runtime_authority_leak_predicate_recurses_slots_mappings_and_ports() ->
     assert contains_factory_role_evidence_runtime_authority(_RaisingSlotWrapper()) is True
 
 
+def test_runtime_authority_scan_does_not_misclassify_large_scalar_diagnostics() -> None:
+    diagnostics = {
+        "records": [
+            {"path": f"source-{index}.ts", "hash": "a" * 64, "result": {"code": index, "passed": False}}
+            for index in range(1500)
+        ]
+    }
+
+    assert contains_factory_role_evidence_runtime_authority(diagnostics) is False
+    diagnostics["records"][-1]["result"]["authority"] = _authority_binding()
+    assert contains_factory_role_evidence_runtime_authority(diagnostics) is True
+
+
 def test_runtime_authority_leak_predicate_fails_closed_on_deep_mro_slots() -> None:
     base = type("_DeepSlotBase", (), {"__slots__": ("payload",)})
     derived = base

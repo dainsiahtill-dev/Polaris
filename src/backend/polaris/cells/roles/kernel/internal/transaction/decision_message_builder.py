@@ -20,6 +20,7 @@ so the controller can delegate to it without any per-turn object allocation.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.structured_output_transport import (
@@ -267,27 +268,75 @@ def _bind_repo_identity_discovery(messages: list[dict[str, Any]], callable_tools
                 message["content"] = "\n".join(guidance if line == old else line for line in content.split("\n"))
 
 
+def _omit_unreadable_result_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove unusable pointer text while preserving native tool exchanges."""
+
+    pointer_prefix = re.compile(
+        r"^\[Large (?:content|output) stored in receipt [^\]\n]+\]"
+        r"(?:\s*\[receipt_ref:[^\]\n]+\])?\s*"
+    )
+    retained: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("tool_calls") or message.get("function_call") or message.get("tool_call_id"):
+            retained.append(message)
+            continue
+        if message.get("role") not in {"user", "assistant", "tool"}:
+            retained.append(message)
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            retained.append(message)
+            continue
+        cleaned, removed = pointer_prefix.subn("", content, count=1)
+        if not removed:
+            retained.append(message)
+        elif cleaned.strip():
+            current = dict(message)
+            current["content"] = cleaned
+            current.pop("receipt_refs", None)
+            retained.append(current)
+    return retained
+
+
 def build_decision_messages(
     context: list[dict[str, Any]],
     tool_definitions: list[dict[str, Any]],
     ledger: TurnLedger | None = None,
     *,
     tool_choice_override: Any = None,
+    continuous_execution: bool = False,
 ) -> list[dict[str, Any]]:
     """Build decision-stage messages with single-batch execution constraints."""
     messages: list[dict[str, Any]] = _compact_tool_failure_messages(
         [dict(message) for message in context if message.get("metadata", {}).get("plane") != "control"]
     )
     callable_tools = resolve_callable_tool_names(tool_definitions, tool_choice_override)
+    if not set(callable_tools).intersection({"read_artifact", "read_receipt", "get_receipt"}):
+        messages = _omit_unreadable_result_history(messages)
     _bind_repo_identity_discovery(messages, callable_tools)
     if not tool_definitions:
         validate_required_tool_surface(context, callable_tools)
         return messages
 
+    # The role whitelist is an authorization ceiling, not this turn's offered
+    # tools. Correct its advertisement rather than leaving contradictory lists.
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") != "system" or not isinstance(content, str):
+            continue
+        lines = content.split("\n")
+        for index, line in enumerate(lines):
+            for prefix in ("允许使用的工具: ", "Allowed tools: "):
+                if line.startswith(prefix):
+                    lines[index] = prefix + (", ".join(callable_tools) if callable_tools else "none")
+                    break
+        message["content"] = "\n".join(lines)
+
     physical_tool_names = _physical_tool_names(tool_definitions)
     if require_exact_structured_output_tool_surface(tool_definitions):
         if callable_tools != [STRUCTURED_OUTPUT_TOOL_NAME]:
             raise ValueError("structured_output_tool_choice_unavailable")
+        messages = _omit_unreadable_result_history(messages)
         # The reserved structured-result tool is a Provider response protocol:
         # it has no side effect and never enters Tool Lifecycle or workspace
         # mutation. Do not contaminate this turn with the generic Director
@@ -388,7 +437,7 @@ def build_decision_messages(
             "系统约束 (只读规划): 当前为 SUPER 的只读规划阶段。"
             "只允许使用当前角色暴露的读取/探索工具，禁止尝试写入，禁止把本阶段当成代码落地阶段。"
         )
-    elif _is_platform_contract_single_batch or _is_materialize_single_batch:
+    elif not continuous_execution and (_is_platform_contract_single_batch or _is_materialize_single_batch):
         if _is_quality_repair:
             single_batch_guard = (
                 "SYSTEM CONSTRAINT (Execution): This is a SINGLE-BATCH materialization quality repair. "
@@ -488,7 +537,7 @@ def build_decision_messages(
         tool_choice_override=tool_choice_override,
         single_batch=_is_platform_contract_single_batch or _is_materialize_single_batch,
     )
-    if task_contract_hint and not _is_super_readonly_stage:
+    if task_contract_hint and not _is_super_readonly_stage and not continuous_execution:
         if is_materialize and not _is_super_mode:
             # MATERIALIZE 模式（非 SUPER）: 只保留正例模板和恢复协议，过滤掉 NEGATIVE/HARD GATE 规则
             positive_lines = []
@@ -524,7 +573,7 @@ def build_decision_messages(
         for m in context
         if str(m.get("role", "")).strip().lower() == "user"
     )
-    if _is_implementing_turn:
+    if _is_implementing_turn and not continuous_execution:
         enforcing_constraint = (
             "HARD GATE (Implementing Phase): You are now in the MODIFY phase. "
             "You MUST call at least one callable write tool in this turn. "

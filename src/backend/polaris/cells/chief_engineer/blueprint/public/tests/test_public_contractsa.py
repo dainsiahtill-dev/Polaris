@@ -4859,7 +4859,7 @@ def _cross_task_behavior_blueprint(*, include_invariant: bool) -> dict:
     }
 
 
-def test_cross_task_source_test_portfolio_requires_shared_behavior_before_persistence(tmp_path: Path) -> None:
+def test_cross_task_source_test_portfolio_preserves_verifiers_without_synthetic_links(tmp_path: Path) -> None:
     tasks = _cross_task_behavior_tasks()
     command = BuildChiefEngineerBlueprintPortfolioCommandV1(
         workspace=str(tmp_path),
@@ -4873,11 +4873,11 @@ def test_cross_task_source_test_portfolio_requires_shared_behavior_before_persis
         llm_blueprint=_cross_task_behavior_blueprint(include_invariant=False),
     )
 
-    with pytest.raises(ChiefEngineerBlueprintErrorV1) as exc_info:
-        build_chief_engineer_blueprint_portfolio(command)
-
-    assert exc_info.value.code == "blueprint_portfolio_behavior_contract_infeasible"
-    assert BlueprintPersistence(str(tmp_path), ensure_directory=False).list_all() == []
+    portfolio = build_chief_engineer_blueprint_portfolio(command)
+    completion = portfolio.project_completion_contract
+    assert completion is not None
+    assert any(artifact.semantic_role == "test" for artifact in completion.obligations.artifacts)
+    assert any(verifier.modality == "test" for verifier in completion.obligations.verification)
 
 
 def test_shared_behavior_contract_is_hashed_and_projected_to_every_linked_task(tmp_path: Path) -> None:

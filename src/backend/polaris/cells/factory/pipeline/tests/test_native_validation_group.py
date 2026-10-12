@@ -10,12 +10,26 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
 from polaris.kernelone.process import run_process_tree_safe
 
 
+def test_verification_workspace_can_live_below_operator_polaris_home() -> None:
+    from polaris.cells.factory.pipeline.internal.native_validation_group import _root
+
+    temporary_root = Path.home() / ".polaris" / "tmp"
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="verification-root-test-", dir=temporary_root) as directory:
+        workspace = Path(directory) / "workspace"
+        workspace.mkdir()
+        assert _root(workspace) == workspace.resolve()
+        metadata = workspace / ".polaris" / "runtime"
+        metadata.mkdir(parents=True)
+        with pytest.raises(RuntimeError, match="verification_root_unsafe"):
+            _root(metadata)
 def _write(root: Path, name: str, text: str) -> None:
     path = root / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,6 +83,67 @@ def _run(group: Any, argv: list[str]) -> subprocess.CompletedProcess[str]:
     completed = run_process_tree_safe(prepared.argv, cwd=prepared.cwd, timeout=10)
     group.record_result(prepared, completed, drained=True)
     return completed
+
+
+def test_external_tool_alias_executes_captured_target(tmp_path: Path) -> None:
+    workspace = tmp_path / "source"
+    workspace.mkdir()
+    _write(workspace, "source.txt", "unchanged\n")
+    tool_root = tmp_path / "tools"
+    (tool_root / "bin").mkdir(parents=True)
+    target = tool_root / "bin" / "real-tool"
+    shutil.copy2("/usr/bin/true", target)
+    alias_root = tmp_path / "aliases"
+    alias_root.mkdir()
+    alias = alias_root / "tool"
+    alias.symlink_to(target)
+
+    with _group(workspace, tmp_path, toolchain_roots=[tool_root]) as group:
+        prepared = group.prepare_command([str(alias)])
+        assert prepared.logical_argv == (str(alias),)
+        result = group.execute_command(prepared, timeout=10)
+        assert result.returncode == 0
+
+
+def test_external_script_alias_preserves_relative_modules_without_exposing_siblings(tmp_path: Path) -> None:
+    workspace = tmp_path / "source"
+    workspace.mkdir()
+    _write(workspace, "source.txt", "unchanged\n")
+    tool_root = tmp_path / "tools"
+    _write(tool_root, "bin/tool.js", "#!/usr/bin/env node\nrequire('../lib/cli.js');\n")
+    target = tool_root / "bin/tool.js"
+    target.chmod(0o755)
+    alias_root = tmp_path / "aliases"
+    alias_root.mkdir()
+    alias = alias_root / "tool"
+    alias.symlink_to(target)
+    _write(alias_root, "unrelated-secret", "must remain outside sandbox\n")
+    _write(
+        tool_root,
+        "lib/cli.js",
+        "const fs = require('fs');\n"
+        f"if (fs.existsSync({json.dumps(str(alias_root / 'unrelated-secret'))})) process.exit(9);\n"
+        "console.log('relative-module-loaded');\n",
+    )
+
+    with _group(workspace, tmp_path, toolchain_roots=[tool_root]) as group:
+        prepared = group.prepare_command([str(alias)])
+        result = group.execute_command(prepared, timeout=10)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "relative-module-loaded"
+
+
+def test_external_tool_alias_target_still_must_be_captured(tmp_path: Path) -> None:
+    workspace = tmp_path / "source"
+    workspace.mkdir()
+    _write(workspace, "source.txt", "unchanged\n")
+    target = tmp_path / "unmounted-tool"
+    shutil.copy2("/usr/bin/true", target)
+    alias = tmp_path / "tool-alias"
+    alias.symlink_to(target)
+
+    with _group(workspace, tmp_path) as group, pytest.raises(RuntimeError, match="verification_toolchain_unmounted"):
+        group.prepare_command([str(alias)])
 
 
 def test_failed_real_typescript_compiler_does_not_emit_into_live_fixture(tmp_path: Path) -> None:

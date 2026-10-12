@@ -383,6 +383,15 @@ async def test_current_real_committed_effect_overlays_frozen_baseline_without_re
         module, "query_project_artifact_receipt", lambda _query: pytest.fail("must not requery after claim")
     )
     pending = {"task_id": "DEO-LIFECYCLE", "task_row_id": attempt.task_id, "execution_attempt": attempt}
+    rows = [
+        *rows,
+        {
+            "tool_name": "edit_file",
+            "status": "success",
+            "effect_receipt": None,
+            "result": {"ok": True, "no_op": True, "superseded": True, "reason": "duplicate replay superseded"},
+        },
+    ]
     inputs = module.overlay_native_validation_candidate(
         baseline,
         pending=pending,

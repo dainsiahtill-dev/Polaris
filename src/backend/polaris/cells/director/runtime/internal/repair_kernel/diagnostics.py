@@ -94,7 +94,7 @@ _JAVASCRIPT_MODULE_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 _NODE_ESM_TYPESCRIPT_MODULE_NOT_FOUND_RE = re.compile(
-    r"Cannot find module\s+['\"]?(?P<missing>(?:file://)?/[^\s'\"]+\.js)['\"]?\s+"
+    r"Cannot find module\s+['\"]?(?P<missing>(?:file://)?/[^\s'\"]+)['\"]?\s+"
     r"imported from\s+['\"]?(?P<importer>(?:file://)?/[^\s'\"]+\.tsx?)['\"]?",
     re.IGNORECASE,
 )
@@ -211,6 +211,8 @@ def _workspace_validation_output_payload(text: str) -> tuple[str, str]:
                     return raw[: prefix.end() - 1].rstrip(), ""
                 return raw, ""
     return raw, ""
+
+
 _TAP_FIELD_RE = re.compile(r"(?m)^\s*(?P<key>actual|expected|operator):\s*(?P<value>.+?)\s*$", re.IGNORECASE)
 
 
@@ -247,9 +249,7 @@ def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiag
         # Multi-line string already carries primary + continuations.  Quoted
         # verifier output may instead carry an escaped stdout/stderr transcript
         # on one physical line; route that through the same causal-blob parser.
-        escaped_transcript = "\\n" in text and bool(
-            re.search(r"\\n(?:stdout|stderr):\\n", text, re.IGNORECASE)
-        )
+        escaped_transcript = "\\n" in text and bool(re.search(r"\\n(?:stdout|stderr):\\n", text, re.IGNORECASE))
         if "\n" in text or escaped_transcript or _WORKSPACE_VALIDATION_RE.search(text):
             flush_ts_buffer()
             diagnostics.extend(_normalize_text_error_blob(text))
@@ -322,9 +322,7 @@ def normalize_artifact_quality_errors(errors: Sequence[Any]) -> tuple[RepairDiag
                         **dict(diagnostic.metadata),
                         "language": "cpp",
                         "diagnostic_kind": "language_standard_incompatibility",
-                        "incompatible_symbol": cpp_standard_canonical_symbols.get(
-                            matched_symbol, matched_symbol
-                        ),
+                        "incompatible_symbol": cpp_standard_canonical_symbols.get(matched_symbol, matched_symbol),
                         "required_standard": cpp_standard_requirements[matched_symbol],
                         "origin_diagnostic_id": diagnostic.diagnostic_id,
                     },
@@ -353,6 +351,26 @@ def _normalize_text_error_blob(text: str) -> list[RepairDiagnostic]:
     if not command:
         return diagnostics
     if npm_command:
+        # Reuse scanner-owned script metadata instead of losing the manifest
+        # relationship when transport wrappers become runtime diagnostics.
+        from polaris.kernelone.quality import artifact_quality_issues_from_errors
+
+        enriched: list[RepairDiagnostic] = []
+        for diagnostic in diagnostics:
+            if diagnostic.code == "javascript_module_error":
+                issues = artifact_quality_issues_from_errors((diagnostic.raw,))
+                for issue in issues:
+                    metadata = issue.get("metadata") or {}
+                    script_metadata = {
+                        key: metadata[key]
+                        for key in ("script_name", "script_issue", "script_issue_source", "entrypoint")
+                        if key in metadata
+                    }
+                    if script_metadata:
+                        diagnostic = replace(diagnostic, metadata={**dict(diagnostic.metadata), **script_metadata})
+                        break
+            enriched.append(diagnostic)
+        diagnostics = enriched
         # Wrapper display prose is not a causal identity. Two missing targets
         # or port collisions must not deduplicate into the same generic failure.
         headline = next(
@@ -442,6 +460,11 @@ def _normalize_verifier_output_payload(blob: str, npm_command: str) -> list[Repa
                 continue
             residuals.append(residual)
         return expanded + residuals
+    node_loader_error = _normalize_node_esm_typescript_import(blob)
+    if node_loader_error is not None:
+        # TAP reports its failed file after an ESM loader exception. Keep the
+        # causal loader diagnostic rather than replacing it with that summary.
+        return [replace(node_loader_error, raw=contextual_blob)]
     tap_failures = _normalize_tap_failures(blob)
     if tap_failures:
         # Node TAP output is one causal failure island per ``not ok`` block.
@@ -935,6 +958,27 @@ def _typescript_error_continuation_lines(text: str, match_end: int) -> list[str]
     return continuations
 
 
+def _normalize_node_esm_typescript_import(text: str) -> RepairDiagnostic | None:
+    match = _NODE_ESM_TYPESCRIPT_MODULE_NOT_FOUND_RE.search(text)
+    if match is None:
+        return None
+    missing_path = str(match.group("missing") or "").removeprefix("file://")
+    importer_path = str(match.group("importer") or "").removeprefix("file://")
+    return RepairDiagnostic(
+        source="runtime_smoke",
+        code="javascript_module_error",
+        message=str(match.group(0)).strip(),
+        path=importer_path,
+        raw=text,
+        metadata={
+            "language": "javascript",
+            "module_error_kind": "node_esm_typescript_source_import",
+            "missing_module_path": missing_path,
+            "importer_path": importer_path,
+        },
+    )
+
+
 def _normalize_typescript_errors(text: str) -> list[RepairDiagnostic]:
     diagnostics: list[RepairDiagnostic] = []
     for match in _TS_ERROR_RE.finditer(text):
@@ -988,15 +1032,16 @@ def _normalize_typescript_errors(text: str) -> list[RepairDiagnostic]:
         )
     javascript_module_error = _JAVASCRIPT_MODULE_ERROR_RE.search(text)
     if javascript_module_error and _should_preserve_embedded_javascript_module_error(text, javascript_module_error):
-        diagnostics.append(
-            RepairDiagnostic(
+        module_diagnostic = _normalize_node_esm_typescript_import(text)
+        if module_diagnostic is None:
+            module_diagnostic = RepairDiagnostic(
                 source="runtime_smoke",
                 code="javascript_module_error",
                 message=str(javascript_module_error.group("message") or text).strip(),
                 raw=text,
                 metadata={"embedded_in_compiler_output": bool(diagnostics)},
             )
-        )
+        diagnostics.append(module_diagnostic)
     return diagnostics
 
 
@@ -1221,23 +1266,9 @@ def _normalize_one_error(text: str) -> RepairDiagnostic:
             metadata={"language": "html", "contract": "html_container"},
         )
 
-    node_esm_typescript_module_error = _NODE_ESM_TYPESCRIPT_MODULE_NOT_FOUND_RE.search(text)
+    node_esm_typescript_module_error = _normalize_node_esm_typescript_import(text)
     if node_esm_typescript_module_error:
-        missing_path = str(node_esm_typescript_module_error.group("missing") or "").removeprefix("file://")
-        importer_path = str(node_esm_typescript_module_error.group("importer") or "").removeprefix("file://")
-        return RepairDiagnostic(
-            source="runtime_smoke",
-            code="javascript_module_error",
-            message=str(node_esm_typescript_module_error.group(0) or text).strip(),
-            path=importer_path,
-            raw=text,
-            metadata={
-                "language": "javascript",
-                "module_error_kind": "node_esm_typescript_source_import",
-                "missing_module_path": missing_path,
-                "importer_path": importer_path,
-            },
-        )
+        return node_esm_typescript_module_error
 
     javascript_module_error = _JAVASCRIPT_MODULE_ERROR_RE.search(text)
     if javascript_module_error:

@@ -161,7 +161,13 @@ def extend_factory_run_deadline_for_same_run_retry(
     """
 
     stage = str(retry_stage or "").strip()
-    meta = dict(metadata)
+    # Initial admission is persisted inside factory_start_request. The first
+    # retry must inherit that budget before projecting retry fields at the run
+    # level; otherwise a valid caller budget is replaced by the legacy default.
+    start_request = metadata.get("factory_start_request")
+    start_metadata = start_request.get("metadata") if isinstance(start_request, Mapping) else None
+    meta = dict(start_metadata) if isinstance(start_metadata, Mapping) else {}
+    meta.update(metadata)
     try:
         extension_count = int(meta.get("factory_run_deadline_extension_count") or 0)
     except (TypeError, ValueError):

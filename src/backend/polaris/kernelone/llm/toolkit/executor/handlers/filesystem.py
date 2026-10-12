@@ -858,7 +858,10 @@ def _handle_edit_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
 
     # Text replace mode
     if search is not None:
-        return _edit_file_replace_mode(self, rel, file_content, search, replace or "", regex, tool_kwargs=kwargs)
+        return _edit_file_replace_mode(
+            self, rel, file_content, search, replace or "", regex,
+            replace_all=kwargs.get("replace_all", False), tool_kwargs=kwargs,
+        )
 
     return {"ok": False, "error": "Must specify either line range (start_line/end_line) or search/replace"}
 
@@ -1552,6 +1555,7 @@ def _edit_file_replace_mode(
     replace: str,
     regex: bool,
     *,
+    replace_all: bool = False,
     tool_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute text replace edit mode with fuzzy matching fallback."""
@@ -1563,13 +1567,16 @@ def _edit_file_replace_mode(
 
     if regex:
         try:
-            new_content, count = re.subn(search, replace, content, count=1)
+            new_content, count = re.subn(search, replace, content, count=0 if replace_all else 1)
         except re.error as e:
             return {"ok": False, "error": f"Invalid regex pattern: {e}"}
     elif search in content:
         # Exact match
-        new_content = content.replace(search, replace, 1)
-        count = 1
+        new_content = content.replace(search, replace, -1 if replace_all else 1)
+        count = content.count(search) if replace_all else 1
+    elif replace_all:
+        # A fuzzy single match cannot prove all-occurrences intent.
+        return {"ok": False, "file": rel, "error": "No exact matches found for replace_all"}
     else:
         # Try fuzzy matching to handle LLM character-level hallucinations
         # e.g., 'return0' -> 'return 0', wrong indentation, etc.

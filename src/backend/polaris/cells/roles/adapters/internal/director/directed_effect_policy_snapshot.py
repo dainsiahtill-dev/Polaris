@@ -1436,7 +1436,8 @@ class _DirectorEffectPolicySnapshotPort:
                 or ""
             )
             if search and search in target_read.old_content:
-                new_content = target_read.old_content.replace(search, replace, 1)
+                replace_all = values.get("replace_all") is True
+                new_content = target_read.old_content.replace(search, replace, -1 if replace_all else 1)
             elif content_provided and isinstance(proposed, str):
                 # Explicit full-body rewrite via content (common LLM edit_file usage).
                 new_content = proposed

@@ -272,7 +272,7 @@ def _html_script_entrypoints(workspace: Path) -> list[str]:
             src = _clean_path(match.group(1).split("#", 1)[0].split("?", 1)[0])
             if not src or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", src):
                 continue
-            candidates.append(_clean_path(html_path.parent.relative_to(workspace) / src))
+            candidates.append(posixpath.normpath(_clean_path(html_path.parent.relative_to(workspace) / src)))
     return _dedupe_paths(candidates)
 
 
@@ -604,6 +604,7 @@ def reproject_task_boundary_verdict(
         ReadRunLedgerProjectionQueryV1,
     )
     from polaris.cells.control_plane.run_ledger.public.service import (
+        _read_execution_control_plane_facts,
         append_run_ledger_event,
         read_run_ledger_projection,
     )
@@ -629,8 +630,7 @@ def reproject_task_boundary_verdict(
     reprojection_map = reprojection if isinstance(reprojection, dict) else {}
     if previous_content_id != command.expected_content_id:
         if (
-            str(reprojection_map.get("source_content_id") or "").strip().lower()
-            == command.expected_content_id
+            str(reprojection_map.get("source_content_id") or "").strip().lower() == command.expected_content_id
             and str(reprojection_map.get("reason") or "").strip() == command.reason
         ):
             return TaskBoundaryReprojectionResultV1(
@@ -676,6 +676,21 @@ def reproject_task_boundary_verdict(
             verdict=previous,
         )
 
+    # Reprojection changes the verdict, not its project or capability facts.
+    # Reuse the immutable predecessor rather than inventing a successful token.
+    source_event = next(
+        (
+            event
+            for event in _read_execution_control_plane_facts(
+                workspace=Path(command.workspace).expanduser().resolve(), run_id=command.run_id
+            )
+            if event.get("content_id") == previous_content_id
+        ),
+        None,
+    )
+    if source_event is None:
+        raise ControlPlaneRunLedgerV1Error("task_boundary_reprojection_source_event_missing")
+
     verdict["reprojection"] = {
         "schema_version": "polaris.task_boundary_reprojection.v1",
         "source_content_id": previous_content_id,
@@ -685,26 +700,23 @@ def reproject_task_boundary_verdict(
         "chief_engineer_restart_allowed": False,
         "director_restart_allowed": False,
     }
+    successor_event = {
+        "event_type": "task_boundary_verdict",
+        "stage": "task_boundary_reprojection",
+        "task_id": command.task_id,
+        "run_id": command.run_id,
+        "supersedes_task_boundary_content_id": previous_content_id,
+        "task_boundary_reprojection": dict(verdict["reprojection"]),
+        "task_boundary_verdict": verdict,
+    }
+    for scope_field in ("factory_run_id", "project_id", "job_token"):
+        if scope_field in source_event:
+            successor_event[scope_field] = source_event[scope_field]
     append_result = append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
             workspace=command.workspace,
             run_id=command.run_id,
-            event={
-                "event_type": "task_boundary_verdict",
-                "stage": "task_boundary_reprojection",
-                "task_id": command.task_id,
-                "run_id": command.run_id,
-                "supersedes_task_boundary_content_id": previous_content_id,
-                "task_boundary_reprojection": dict(verdict["reprojection"]),
-                "task_boundary_verdict": verdict,
-                "job_token": {
-                    "run_id": command.run_id,
-                    "task_id": command.task_id,
-                    "project_id": command.task_id,
-                    "capability_audit": {"ok": True, "issues": []},
-                    "gate_policy": {},
-                },
-            },
+            event=successor_event,
         )
     )
     receipt = append_result.receipt

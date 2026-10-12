@@ -6,6 +6,8 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 
 # High-priority dialog acts that get boosted priority in message selection
@@ -89,7 +91,7 @@ def normalize_confusable(text: str) -> str:
 
 
 def is_likely_base64_payload(text: str) -> bool:
-    """判断文本是否可能是 Base64 编码的 payload。"""
+    """Classify explicit encodings or decoded instruction overrides, not paths."""
     if _BASE64_EXPLICIT_PATTERN.search(text):
         return True
 
@@ -108,7 +110,12 @@ def is_likely_base64_payload(text: str) -> bool:
         if re.match(r"^[0-9a-fA-F]{40}$", content):
             continue
 
-        if "+" in content or "/" in content:
+        try:
+            decoded = base64.b64decode(content + "=" * (-len(content) % 4), validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            continue
+        decoded = normalize_confusable(decoded.lower())
+        if any(pattern.search(decoded) for pattern in _PROMPT_INJECTION_PATTERNS):
             return True
 
     return False

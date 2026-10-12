@@ -189,6 +189,34 @@ def _project_directed_effect_dropped_member_receipt(
     }
 
 
+def _terminal_feedback_class(receipts: list[dict]) -> str | None:
+    terminal = {
+        "POLICY_FAILURE",
+        "SECURITY_POLICY_VIOLATION",
+        "AUTHORITY_VIOLATION",
+        "AUTHORIZATION_FAILED",
+        "MISSING_BATCH_RECEIPT",
+        "MISSING_EFFECT_RECEIPT",
+        "MISSING_TOOL_RESULT",
+        "RUN_LEDGER_APPEND_FAILED",
+    }
+    for receipt in receipts:
+        for row in receipt.get("results", []):
+            if not isinstance(row, dict) or str(row.get("status", "")).lower() == "success":
+                continue
+            stack = [row]
+            for _ in range(4):
+                nested: list[dict] = []
+                for value in stack:
+                    for key in ("failure_class", "error_type", "error_code"):
+                        token = str(value.get(key, "")).upper()
+                        if token in terminal:
+                            return token
+                    nested.extend(value[key] for key in ("result", "metadata") if isinstance(value.get(key), dict))
+                stack = nested
+    return None
+
+
 class _ToolBatchExecuteMixin:
     """Mixin providing ToolBatchExecutor.execute_tool_batch."""
 
@@ -361,6 +389,7 @@ class _ToolBatchExecuteMixin:
         _is_implementing_phase = _current_phase == Phase.IMPLEMENTING
         _is_verifying_phase = _current_phase == Phase.VERIFYING
         _is_exploring_phase = _current_phase == Phase.EXPLORING
+        continuous_execution = bool(getattr(self.config, "continuous_execution", False))
 
         # FIX-20250421-v3: Text output interception for MATERIALIZE_CHANGES + EXPLORING.
         # If no tools are invoked in EXPLORING phase with MATERIALIZE_CHANGES mode,
@@ -431,7 +460,13 @@ class _ToolBatchExecuteMixin:
                 non_empty_tool_names,
             )
 
-        if _is_content_gathered_phase and _is_materialize and not _has_write and not _verification_read_exemption:
+        if (
+            not continuous_execution
+            and _is_content_gathered_phase
+            and _is_materialize
+            and not _has_write
+            and not _verification_read_exemption
+        ):
             if _enable_modification_contract:
                 # FIX-20250422-SUPER: 传递对话上下文以检测 SUPER_MODE 标记
                 _verdict = evaluate_modification_readiness(
@@ -548,7 +583,7 @@ class _ToolBatchExecuteMixin:
             )
 
         phase_blocked_invocations: list[Any] = []
-        if _is_implementing_phase and _has_broad_exploration and not _has_write:
+        if not continuous_execution and _is_implementing_phase and _has_broad_exploration and not _has_write:
             # FIX-20250421: Hard block when ALL tools are broad exploration — raise exception
             # This triggers retry orchestrator (is_mutation_contract_violation check with
             # "single_batch_contract_violation" prefix) and forces LLM to use write tools.
@@ -580,7 +615,7 @@ class _ToolBatchExecuteMixin:
             _conversation_has_super_mode_markers,
         )
 
-        if _is_verifying_phase and not _conversation_has_super_mode_markers(context):
+        if not continuous_execution and _is_verifying_phase and not _conversation_has_super_mode_markers(context):
             tool_names = [extract_invocation_tool_name(inv) for inv in invocations]
             has_verification = any(t in VERIFICATION_TOOLS for t in tool_names)
             if not has_verification:
@@ -611,7 +646,8 @@ class _ToolBatchExecuteMixin:
         target_files_known = bool(known_target_files) or bool(ledger.mutation_obligation.target_files_known)
         missing_read_evidence = int(ledger.mutation_obligation.read_evidence_count or 0) <= 0
         if (
-            requires_mutation
+            not continuous_execution
+            and requires_mutation
             and _is_materialize
             and _is_exploring_phase
             and target_files_known
@@ -674,7 +710,11 @@ class _ToolBatchExecuteMixin:
         # FIX-20250421: Upgrade to strict in implementing phase if broad exploration was attempted
         if _is_implementing_phase and _has_broad_exploration and not _has_write:
             guard_mode = "strict"
-        if requires_mutation and not tool_batch_has_authoritative_write_invocation(invocations):
+        if (
+            not continuous_execution
+            and requires_mutation
+            and not tool_batch_has_authoritative_write_invocation(invocations)
+        ):
             if guard_mode == "strict":
                 raise RuntimeError(
                     "single_batch_contract_violation: mutation requested but no write tool invocation in decision batch. "
@@ -1156,7 +1196,7 @@ class _ToolBatchExecuteMixin:
                     "error_types": list(failure_error_types),
                 }
             )
-            if batch_write_failures_require_llm_replan(merged_failed_receipt):
+            if not continuous_execution and batch_write_failures_require_llm_replan(merged_failed_receipt):
                 ledger.tool_batch_count = max(0, int(ledger.tool_batch_count or 0) - 1)
                 rendered_error_types = ",".join(failure_error_types) or "correctable_write_rejection"
                 raise RuntimeError(
@@ -1170,10 +1210,14 @@ class _ToolBatchExecuteMixin:
             # error_types=unknown because execute_command is not a WRITE_TOOLS
             # name. Observational/command failures must stay as receipts so the
             # model can re-issue read_file / single commands.
-            if any(is_write_tool_name(name) for name in failed_tool_names) or decision.get("finalize_mode") in {
-                FinalizeMode.LOCAL,
-                FinalizeMode.LLM_ONCE,
-            }:
+            if not continuous_execution and (
+                any(is_write_tool_name(name) for name in failed_tool_names)
+                or decision.get("finalize_mode")
+                in {
+                    FinalizeMode.LOCAL,
+                    FinalizeMode.LLM_ONCE,
+                }
+            ):
                 failure_details = _failed_batch_diagnostic_excerpt(receipts_as_dicts)
                 detail_suffix = f"; failure_details={failure_details}" if failure_details else ""
                 raise RuntimeError(
@@ -1288,7 +1332,8 @@ class _ToolBatchExecuteMixin:
                     )
 
         if (
-            requires_mutation
+            not continuous_execution
+            and requires_mutation
             and tool_batch_has_authoritative_write_invocation(invocations)
             and receipts_have_stale_edit_failure(receipts_as_dicts)
         ):
@@ -1304,7 +1349,7 @@ class _ToolBatchExecuteMixin:
         # which guided decoding satisfies (fix5: prose escapes dozens -> 0).
         # Without this trigger the ladder only fires on no-write batches, so a
         # model that volunteers malformed writes burns every turn unescalated.
-        if requires_mutation:
+        if not continuous_execution and requires_mutation:
             _shape_guard_receipt = _merge_batch_receipts(receipts_as_dicts)
             if _shape_guard_receipt and batch_write_results_all_failed_on_argument_shape(_shape_guard_receipt):
                 # This batch produced ZERO effects (every write failed on
@@ -1326,7 +1371,7 @@ class _ToolBatchExecuteMixin:
             invocations=[invocation.to_dict() for invocation in invocations],
         )
         if breaker_snapshot.triggered:
-            if _effect_receipts_from_batch_receipts(receipts_as_dicts):
+            if continuous_execution or _effect_receipts_from_batch_receipts(receipts_as_dicts):
                 # A partially successful mutation batch is already consumed:
                 # its effect receipts are authoritative and cannot be replaced
                 # by a second physical ToolBatch in the same logical turn.
@@ -1405,6 +1450,38 @@ class _ToolBatchExecuteMixin:
             )
 
         # === Phase 5: 确定下一步 ===
+        terminal_failure = _terminal_feedback_class(receipts_as_dicts) if continuous_execution else None
+        if terminal_failure:
+            return {
+                "kind": "tool_failure",
+                "batch_receipt": _merge_batch_receipts(receipts_as_dicts),
+                "finalization": {"error": terminal_failure, "failure_class": terminal_failure},
+                "visible_content": terminal_failure,
+            }
+        has_failed_feedback = any(
+            str(row.get("status", "")).lower() != "success"
+            for receipt in receipts_as_dicts
+            for row in receipt.get("results", [])
+            if isinstance(row, dict)
+        )
+        if (
+            continuous_execution
+            and _is_materialize
+            and (not tool_batch_has_authoritative_write_invocation(invocations) or has_failed_feedback)
+        ):
+            # A completed observation is input to the next decision, not a
+            # demand to invent a write or synthesize an extra summary call.
+            merged_batch_receipt = _merge_batch_receipts(receipts_as_dicts)
+            return {
+                "kind": "continue_multi_turn",
+                "batch_receipt": merged_batch_receipt,
+                "visible_content": "",
+                "finalization": {
+                    "needs_followup_workflow": True,
+                    "workflow_reason": "tool_failure" if has_failed_feedback else "observation",
+                },
+            }
+
         finalize_mode = decision.get("finalize_mode")
 
         if finalize_mode == FinalizeMode.NONE:

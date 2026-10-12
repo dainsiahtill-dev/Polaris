@@ -114,6 +114,18 @@ def _primary_llm_provider_failure_payload(primary_llm_summary: dict[str, Any] | 
     if not error_text:
         return None
 
+    if "final provider request evidence coverage failed" in lowered:
+        return {
+            "error": "director_final_request_context_evidence_missing",
+            "error_code": "final_request_context_evidence_missing",
+            "failure_class": FailureClassV1.EXECUTION_EVIDENCE_MISSING.value,
+            "responsible_layer": "execution_control_plane",
+            "materialization_mode": "final_request_context_validation_failed",
+            "failure_stage": "director_context_preflight",
+            "root_cause_hint": "final_request_context_evidence_missing",
+            "detail": "Director context preparation rejected the request before provider dispatch.",
+        }
+
     if "final_physical_context_snapshot_persist_failed" in lowered:
         return {
             "error": "director_final_request_context_persist_failed",

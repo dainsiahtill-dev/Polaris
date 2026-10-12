@@ -317,10 +317,12 @@ def _build_turn_history_and_events(
             continue
         tool_name = str(tr.get("tool") or "tool").strip() or "tool"
         result_value = tr.get("result")
+        error_text = str(tr.get("error") or "").strip()
         if result_value is not None:
             result_text = json.dumps(result_value, ensure_ascii=False)
+            if error_text:
+                result_text += f"\nError: {error_text}"
         else:
-            error_text = str(tr.get("error") or "").strip()
             result_text = f"Error: {error_text}" if error_text else ""
         if result_text:
             turn_history.append(("tool", result_text))
@@ -331,6 +333,8 @@ def _build_turn_history_and_events(
                     "event_id": f"tool_{tr.get('call_id', turn_id)}",
                     "kind": "tool_result",
                     "tool": tool_name,
+                    "status": tr.get("status"),
+                    "arguments": tr.get("arguments"),
                 }
             )
 

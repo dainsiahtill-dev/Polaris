@@ -185,10 +185,8 @@ def _evidence_requirements(
         requirements.append("architecture_or_file_plan")
     if _requires_module_interface_contract(profile):
         requirements.append("module_interface_contract")
-    if profile.language != "generic":
-        requirements.append("language_best_practices")
-    if profile.framework:
-        requirements.append("framework_best_practices")
+    # Language/framework guidance is useful prompt material, not execution
+    # authority. Its absence must not prevent an otherwise scoped LLM call.
     return tuple(dict.fromkeys(requirements))
 
 

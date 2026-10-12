@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public.directed_effect_receipt_validation import (
     directed_effect_receipt_payload_hash,
@@ -677,7 +677,7 @@ def _is_lower_sha256(value: Any) -> bool:
 def _directed_effect_receipt_payload_hash(receipt: dict[str, Any]) -> str | None:
     """Compatibility alias for existing tests and local callers."""
 
-    return directed_effect_receipt_payload_hash(receipt)
+    return cast(str | None, directed_effect_receipt_payload_hash(receipt))
 
 
 def _directed_effect_receipt_errors(receipt: dict[str, Any], *, index: int) -> list[str] | None:
@@ -942,11 +942,17 @@ def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any
                     )
                     if item
                 )
+        command_present = command_count_for_metadata > 0 or (
+            isinstance(commands, list) and any(isinstance(item, dict) for item in commands)
+        )
         _merge_evidence_modality(
             modalities,
             "command",
-            present=True,
-            ok=command_ok,
+            # Discovery can report a failed requirement without executing any
+            # command. Keep that missing receipt distinct from an actual exit
+            # failure; explicit declared receipts remain merged independently.
+            present=command_present,
+            ok=command_present and command_ok,
             detail=command_detail,
             metadata={
                 "command_count": command_count_for_metadata,
@@ -1118,8 +1124,7 @@ def _gate_revision_resolution_heads(event: dict[str, Any]) -> list[str]:
     raw_gate = event.get("gate")
     gate = raw_gate if isinstance(raw_gate, dict) else {}
     return _string_list(
-        event.get("resolves_gate_revision_branch_heads")
-        or gate.get("resolves_gate_revision_branch_heads")
+        event.get("resolves_gate_revision_branch_heads") or gate.get("resolves_gate_revision_branch_heads")
     )
 
 
@@ -1155,9 +1160,7 @@ def _effective_gate_event_indexes(
             {
                 "index": index,
                 "revision": _int_value(event.get("gate_revision") or gate.get("revision")),
-                "supersedes": _clean_string(
-                    event.get("supersedes_content_id") or gate.get("supersedes_content_id")
-                ),
+                "supersedes": _clean_string(event.get("supersedes_content_id") or gate.get("supersedes_content_id")),
                 "content_id": _clean_string(event.get("content_id") or event.get("event_id")),
                 "resolves": _gate_revision_resolution_heads(event),
             }
@@ -1211,8 +1214,7 @@ def _effective_gate_event_indexes(
         resolvers = [
             node
             for node in leaves
-            if set(node["resolves"]) == leaf_ids.difference({str(node["content_id"])})
-            and bool(node["resolves"])
+            if set(node["resolves"]) == leaf_ids.difference({str(node["content_id"])}) and bool(node["resolves"])
         ]
         if len(resolvers) == 1:
             resolver = resolvers[0]
@@ -1338,9 +1340,7 @@ def allocate_gate_revision_metadata(
         "supersedes_content_id": str(selected["content_id"]),
     }
     orphan_heads = sorted(
-        str(node["content_id"])
-        for node in heads
-        if str(node["content_id"]) != str(selected["content_id"])
+        str(node["content_id"]) for node in heads if str(node["content_id"]) != str(selected["content_id"])
     )
     if orphan_heads:
         metadata["resolves_gate_revision_branch_heads"] = orphan_heads
@@ -1443,8 +1443,8 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     task_boundary_verdicts: list[dict[str, Any]] = []
     tool_lifecycle_events: list[dict[str, Any]] = []
     tool_lifecycle_requirement_events: list[dict[str, Any]] = []
-    effective_gate_event_indexes, gate_revision_issues, gate_revision_resolutions = (
-        _effective_gate_event_indexes(events)
+    effective_gate_event_indexes, gate_revision_issues, gate_revision_resolutions = _effective_gate_event_indexes(
+        events
     )
     latest_task_boundaries = _latest_task_boundary_epochs(events)
     required_modalities_by_obligation = _required_modalities_by_gate_obligation(events)
@@ -1510,7 +1510,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         token_id = _clean_string(job_token.get("token_id"))
         if token_id:
             job_token_ids.append(token_id)
-        if gate_is_effective:
+        if gate_is_effective and token_id:
             latest_token = job_token
         physical_metadata = _dict_value(physical_evidence.get("metadata"))
         task_id = _clean_string(job_token.get("task_id") or physical_metadata.get("task_id"))

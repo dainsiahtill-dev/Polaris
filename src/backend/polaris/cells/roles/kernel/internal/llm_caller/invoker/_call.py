@@ -1327,12 +1327,62 @@ class _InvokerCallMixin:
             executor = self._get_executor()
             native_tool_fallback = False
             allow_native_tool_text_fallback = False
-            response = await _invoke_executor_with_factory_dispatch(
-                executor=executor,
-                prepared=prepared,
-                request=active_request,
-                profile=profile,
-            )
+            overload_retries = min(max(int(platform_retry_max), 0), 1)
+            for overload_attempt in range(overload_retries + 1):
+                try:
+                    response = await _invoke_executor_with_factory_dispatch(
+                        executor=executor, prepared=prepared, request=active_request, profile=profile
+                    )
+                except RuntimeError as invoke_error:
+                    error_text = str(invoke_error).lower()
+                    if overload_attempt >= overload_retries or not (
+                        "overloaded_error" in error_text or "529 server error" in error_text
+                    ):
+                        raise
+                else:
+                    response_ok, error_text = read_response_status(response)
+                    error_text = str(error_text or "").lower()
+                    if (
+                        response_ok
+                        or overload_attempt >= overload_retries
+                        or not ("overloaded_error" in error_text or "529 server error" in error_text)
+                    ):
+                        break
+                # Overload returned no proposal or effects. Prepare a fresh
+                # attempt under the existing authority and physical budget.
+                await asyncio.sleep(1)
+                factory_semantic_identity = _invoker_owned_factory_semantic_identity(
+                    run_id=run_id, turn_round=turn_round, call_id=call_id
+                )
+                prepared = await request_preparer._prepare_llm_request(
+                    profile=profile,
+                    system_prompt=system_prompt,
+                    context=context,
+                    temperature=effective_temperature,
+                    max_tokens=effective_max_tokens,
+                    stream=False,
+                    response_model=response_model,
+                    platform_retry_max=platform_retry_max,
+                    factory_semantic_identity=factory_semantic_identity,
+                )
+                _enforce_factory_semantic_zero_transport(prepared)
+                active_request = prepared.ai_request
+                await _store_call_start_context_snapshot(
+                    workspace=self.workspace, prepared=prepared, profile=profile, run_id=run_id, call_id=call_id
+                )
+                await self._emit_required_tool_retry_request_audit(
+                    prepared=prepared,
+                    role_id=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    call_id=call_id,
+                    model=model,
+                    event_emitter=event_emitter,
+                    retry_decision="provider_overload_retry",
+                    request=active_request,
+                    request_profile=profile,
+                )
             native_response_fallback = False
 
             is_response_ok, response_error = read_response_status(response)

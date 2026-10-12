@@ -846,8 +846,8 @@ class TestChiefEngineerHandoffGuards:
 
         assert not any("unknown completion obligations" in error for error in errors)
 
-    def test_portfolio_output_routes_cross_task_behavior_coverage_gap_to_semantic_repair(self) -> None:
-        """L3-22 r46: schema-valid invariants must connect production and test facts."""
+    def test_portfolio_output_accepts_test_verifier_reference_without_cross_task_bookkeeping(self) -> None:
+        """Actual verifier evidence, not redundant link geometry, proves behavior."""
 
         payload = json.loads(json.dumps(_single_task_chief_engineer_result().metadata["structured_output"]))
         payload["construction_plan"]["task_plans"] = {
@@ -886,10 +886,7 @@ class TestChiefEngineerHandoffGuards:
             task_ids=("TASK-PROD", "TASK-TEST"),
         )
 
-        assert errors == [
-            "shared_behavior_contract behavior invariant lacks cross-task production-and-test obligation coverage: "
-            "test_owner=TASK-TEST"
-        ]
+        assert errors == []
 
         payload["construction_plan"]["shared_behavior_contract"]["invariants"][0]["covered_obligation_ids"] = [
             "artifact-1",

@@ -148,7 +148,7 @@ _COMMENT_GUARDED_PATTERNS = frozenset(
 _DOCUMENTATION_PROSE_SUFFIXES = frozenset({".md", ".markdown", ".rst", ".txt"})
 _NEGATED_PLACEHOLDER_PREFIX_RE = re.compile(
     r"(?:\b(?:not|never|without|avoid(?:s|ed|ing)?|reject(?:s|ed|ing)?|forbid(?:s|den|ding)?)\b|"
-    r"instead\s+of|rather\s+than)[^.!?;:\n]{0,80}$",
+    r"instead\s+of|rather\s+than|禁止|不得|不能|避免|拒绝)[^.!?;:\n]{0,80}$",
     re.IGNORECASE,
 )
 
@@ -236,7 +236,7 @@ def low_quality_pattern_match(pattern: re.Pattern[str], content: str, *, rel_pat
             continue
         if needs_comment_guard and _match_is_inside_line_comment(line, rel_start):
             continue
-        if needs_comment_guard and _match_is_negated_placeholder_prose(line, rel_start, rel_path):
+        if _match_is_negated_placeholder_prose(line, rel_start, rel_path):
             continue
         return True
     return False

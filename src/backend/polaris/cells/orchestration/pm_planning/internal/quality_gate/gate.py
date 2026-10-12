@@ -808,6 +808,7 @@ def evaluate_pm_task_quality(
     task_count = len(tasks)
     critical_issues: list[str] = []
     warnings: list[str] = []
+    advisory_warning_count = 0
     seen_signatures: set[str] = set()
     low_action_count = 0
     phase_count = 0
@@ -824,7 +825,6 @@ def evaluate_pm_task_quality(
     active_dir = _normalize_path(os.path.dirname(active_doc)) if active_doc else ""
     is_card3d_contract = _is_card3d_pm_contract(normalized, tasks)
     is_game_contract = _is_game_pm_contract(normalized, tasks)
-    contract_bench_level = _normalized_factory_bench_level(normalized)
 
     for index, task in enumerate(tasks, start=1):
         if not isinstance(task, dict):
@@ -858,9 +858,19 @@ def evaluate_pm_task_quality(
         if not isinstance(acceptance, list):
             acceptance = task.get("acceptance")
         acceptance_items = [_normalize_text(item) for item in (acceptance or []) if _normalize_text(item)]
+        weak_acceptance_hint = _has_placeholder_or_manifest_only_acceptance(acceptance_items)
+        explicit_weak_permission = _has_placeholder_or_manifest_only_acceptance(
+            acceptance_items,
+            explicit_permission_only=True,
+        )
+        if weak_acceptance_hint and not explicit_weak_permission:
+            advisory_warning_count += 1
+            warnings.append(
+                f"{task_id}: acceptance prose needs review; actual artifact and verification obligations remain required"
+            )
         if not acceptance_items:
             critical_issues.append(f"{task_id}: acceptance criteria is missing")
-        elif _has_placeholder_or_manifest_only_acceptance(acceptance_items):
+        elif explicit_weak_permission:
             critical_issues.append(f"{task_id}: acceptance permits placeholder or manifest-only execution")
         elif _has_fragile_game_acceptance(acceptance_items):
             critical_issues.append(f"{task_id}: acceptance uses fragile random-sequence assertions")
@@ -979,20 +989,12 @@ def evaluate_pm_task_quality(
                 file_scopes = [path for path in concrete_task_paths if _is_file_like_pm_scope_path(path)]
                 if not file_targets and not file_scopes:
                     critical_issues.append(f"{task_id}: Director task requires file-level target_files or scope_paths")
-                missing_file_scope_targets = _file_scope_paths_missing_from_targets(task)
-                if missing_file_scope_targets:
-                    critical_issues.append(
-                        f"{task_id}: file-level scope_paths missing from target_files "
-                        f"({', '.join(missing_file_scope_targets[:3])})"
-                    )
-                boundary_task = task
-                if contract_bench_level is not None and _task_factory_bench_level(task) is None:
-                    boundary_task = {**task, "factory_bench_level": contract_bench_level}
-                if _director_task_is_too_broad(boundary_task):
-                    critical_issues.append(
-                        f"{task_id}: Director task boundary is too broad; split manifest/config, source, "
-                        "entrypoint, and test targets into dependent tasks"
-                    )
+                # Scope includes read context. JobToken derives write permission
+                # from target_files, so reading another task's configuration is
+                # not a missing write artifact or a reason to reject the plan.
+                # File count bounds execution batches, not semantic task authority.
+                # A coupled product keeps its complete goal, scope and verifiers;
+                # the Director session may materialize it across bounded turns.
 
         if docs_enabled:
             metadata_raw = task.get("metadata")
@@ -1063,7 +1065,7 @@ def evaluate_pm_task_quality(
 
     score = 100
     score -= min(60, len(critical_issues) * 12)
-    score -= min(30, len(warnings) * 3)
+    score -= min(30, (len(warnings) - advisory_warning_count) * 3)
     score = max(0, score)
     summary = (
         f"tasks={task_count}; critical={len(critical_issues)}; warnings={len(warnings)}; "
@@ -1188,19 +1190,9 @@ def autofix_pm_contract_for_quality(
         workspace_full=workspace_full,
         verify_command=verify_command,
     )
-    if not (is_card3d_contract or is_game_contract):
-        fission_provenance: dict[str, Any] = {}
-        split_task_count, added_task_count = _split_director_task_boundary_contracts_in_place(
-            normalized_tasks,
-            verify_command=verify_command,
-            primary_language=primary_language,
-            provenance=fission_provenance,
-        )
-        if fission_provenance:
-            normalized["_quality_gate_task_fission"] = fission_provenance
-        stats["oversized_director_tasks_split"] += split_task_count
-        stats["task_boundary_tasks_added"] += added_task_count
-        stats["task_count"] = len(normalized_tasks)
+    # Preserve model-authored semantic tasks. Filename buckets cannot prove
+    # independent goals or verifier readiness, so they must not manufacture
+    # authoritative child contracts from a coupled implementation task.
     has_dependency = False
 
     for index, task in enumerate(normalized_tasks, start=1):

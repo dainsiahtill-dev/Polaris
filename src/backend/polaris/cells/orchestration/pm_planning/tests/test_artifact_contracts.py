@@ -193,20 +193,19 @@ def test_explicit_compiler_options_follow_output_kind(language, output, argv, al
         assert "generated_output_build_invalid" in {row["code"] for row in result.diagnostics}
 
 
-def test_producer_proposals_follow_common_dependency_graph_without_output_ownership():
+def test_javascript_write_declaration_does_not_invent_a_generated_output_promise():
     tasks = _plan()
     tasks[0].pop("generated_outputs")
     tasks[1]["target_files"] = ["dist/main.js"]
     tasks[1]["context_files"] = []
     tasks[1]["verification_commands"] = []
     result = _validate(tasks)
-    action = next(d for d in result.diagnostics if d["code"] == "artifact_action_contract_invalid")
-    assert action["proposal_task_ids"] == ["build"]
+    assert result.ok, result.diagnostics
     assert result.generated_outputs == ()
     tasks[0]["verification_commands"][0]["argv"] = ["tsc", "--noEmit"]
     result = _validate(tasks)
-    action = next(d for d in result.diagnostics if d["code"] == "artifact_action_contract_invalid")
-    assert action.get("proposal_task_ids", []) == []
+    assert result.ok, result.diagnostics
+    assert result.generated_outputs == ()
 
 
 def test_artifact_public_boundary_and_dependencies_are_mirrored_in_catalog():

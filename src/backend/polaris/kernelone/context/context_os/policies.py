@@ -104,7 +104,9 @@ class InputValidationPolicy:
     """Policy for input validation limits."""
 
     max_messages: int = 1000  # Maximum messages per project() call
-    max_message_size: int = 100_000  # Maximum bytes per message content (100KB)
+    # Default to the aggregate ceiling: normal repair/source packs should reach
+    # context projection, where the actual model token window is enforced.
+    max_message_size: int = 10_000_000
     max_total_input_size: int = 10_000_000  # Maximum total input bytes (10MB)
 
 
@@ -137,8 +139,8 @@ class StateFirstContextOSPolicy:
     Input Validation Limits (P1 Security/Stability):
         max_messages: Maximum number of messages allowed per project() call (default: 1000).
             Exceeding this limit raises ValueError to prevent OOM from unbounded list growth.
-        max_message_size: Maximum size in bytes per message content (default: 100_000 = 100KB).
-            Exceeding this limit raises ValueError to prevent large content attacks.
+        max_message_size: Maximum size in bytes per message content (default: 10MB).
+            Defaults to the aggregate ceiling; a smaller per-message limit is explicit opt-in.
         max_total_input_size: Maximum total input size in bytes (default: 10_000_000 = 10MB).
             Exceeding this limit raises ValueError to prevent total memory exhaustion.
     """
@@ -359,7 +361,7 @@ class StateFirstContextOSPolicy:
             ),
             max_message_size=sub_policy_overrides["input_validation"].get(
                 "max_message_size",
-                100_000,  # Default value
+                10_000_000,  # Default value
             ),
             max_total_input_size=sub_policy_overrides["input_validation"].get(
                 "max_total_input_size",
@@ -571,7 +573,7 @@ class StateFirstContextOSPolicy:
             ),
             max_message_size=_safe_int(
                 input_validation_data.get("max_message_size"),
-                100_000,  # Default value
+                10_000_000,  # Default value
             ),
             max_total_input_size=_safe_int(
                 input_validation_data.get("max_total_input_size"),

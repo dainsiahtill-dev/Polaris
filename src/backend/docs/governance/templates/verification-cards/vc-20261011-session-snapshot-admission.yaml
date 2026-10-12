@@ -1,0 +1,57 @@
+id: vc-20261011-session-snapshot-admission
+issue: POL-100
+mode: implementation
+classification: pattern
+owner: PM/CE contract and blueprint engineer
+review_owner: Paperclip Root / independent reviewer
+cell: kernelone.core
+blueprint: docs/blueprints/POLARIS_SESSION_SNAPSHOT_ADMISSION_20261011.md
+allowed_files:
+  - src/backend/polaris/kernelone/context/session_continuity.py
+  - src/backend/polaris/kernelone/tests/test_session_snapshot_admission.py
+  - docs/blueprints/POLARIS_SESSION_SNAPSHOT_ADMISSION_20261011.md
+  - src/backend/docs/governance/templates/verification-cards/vc-20261011-session-snapshot-admission.yaml
+  - .superpowers/sdd/2026-10-11-session-snapshot-admission/implementation/**
+forbidden: all other source/tests/evidence/config/native state and target projects
+assumptions:
+  - absent key and None mean absence; non-Mapping values fail closed
+  - empty Mapping is a valid canonical empty state
+  - enabled empty normalized input preserves original persisted payload
+  - explicit disabled state keeps snapshot removal behavior
+  - turn_events retain precedence over messages
+  - changed reflects full persisted config comparison including pack changes
+failure_path:
+  validator: validate_context_os_persisted_projection
+  container_error: ContextOSInvariantViolationError
+  nested_error: canonical restoration errors propagate without catch
+  caller_mutation: forbidden
+pre_mortem:
+  - validation after filtering still conflates absence and corruption
+  - serializing restored no-op state can drop private exports or hints
+  - ignoring disabled state breaks reset behavior
+  - unconditional changed flags misrepresent pack presence as a write
+verification:
+  red: new real-consumer tests plus private dynamic F01/F02 probes before source edit
+  green: new tests and same private probes after source edit
+  regression:
+    - test_session_continuity_engine.py
+    - test_contextos_model_state_preservation.py
+    - test_contextos_reference_validation.py
+    - test_structured_protocol_content_preservation.py
+    - test_projection_purity.py
+  static: focused Ruff/check/format-check, strict mypy and scoped diff
+  scope: before/after hashes and preserved prior evidence manifest
+residuals:
+  - no old WorkingState merge on message-driven projection (F03)
+  - archive availability, observer, adaptive and hashless reference contracts (F04-F07)
+  - no live Provider/UI/Factory/RunLedger/QA/Bench or native qualification
+observed_results:
+  corrected_red_before_source_edit: 41 failed / 12 passed
+  final_frozen_preimage: 44 failed / 15 passed
+  current_consumer: 59 passed
+  model_and_reference: 84 passed
+  continuity_protocol_purity: 119 passed / 10 existing skips
+  ruff_and_format: passed
+  strict_mypy_new_tests: passed
+  strict_mypy_consumer: four unchanged baseline unreachable signatures; exit 1
+status: implemented_awaiting_independent_review

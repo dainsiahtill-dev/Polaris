@@ -247,6 +247,9 @@ export interface ContextOSModel {
   serverToolUseCount: number;
   providerUsageTokens: number;
   usageSourceLabel: string;
+  /** Latest audited provider request size, separate from cumulative usage. */
+  contextBudgetTokens: number | null;
+  contextBudgetSourceLabel: string;
   /** token 是否来自实时遥测（journal `llm` 通道）。false = 退回用量统计通道（非实时）或无数据。 */
   tokensRealtime: boolean;
   calls: number;
@@ -254,6 +257,7 @@ export interface ContextOSModel {
   /** 估算的单次上下文窗口占用比例 0..1 */
   windowOccupancy: number;
   windowOccupancyTokens: number;
+  windowOccupancyLabel: string;
   /** 用于全部视角的窗口分母：优先取已绑定角色窗口的最小值，无数据为 null（不冒充 128k）。 */
   contextWindowTokens: number | null;
   contextWindowLabel: string;

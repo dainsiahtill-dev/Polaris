@@ -148,6 +148,52 @@ def test_factory_retry_refuses_changed_ce_binding(tmp_path: Path) -> None:
     assert service.list_observable_task_rows() == before
 
 
+def test_factory_retry_rebuilds_cleaned_owner_from_same_run_ce_review(tmp_path: Path) -> None:
+    service, old, plan_task = _failed_ce_owner(tmp_path)
+    executor = OrchestrationStageExecutor(tmp_path)
+    executor._write_json_artifact(
+        "runtime/state/blueprints/factory-one.review.json",
+        {
+            "factory_run_id": "factory-one",
+            "blueprints": [{"task_id": "WORK-A", "blueprint_id": old["metadata"]["blueprint_id"]}],
+        },
+    )
+    assert service.reset_records(keep_plan=True, factory_run_id="factory-one")["ok"] is True
+    assert service.resolve_factory_task_row(external_task_id="WORK-A", factory_run_id="factory-one") is None
+
+    result = executor._materialize_pm_plan_taskboard(
+        [plan_task],
+        run_id="factory-one",
+        source_stage="director_dispatch",
+        run_metadata={"retry_from_status": "failed", "retry_execution_stage": "director_dispatch"},
+    )
+
+    assert result["binding_failures"] == []
+    restored = TaskRuntimeService(str(tmp_path)).resolve_factory_task_row(
+        external_task_id="WORK-A", factory_run_id="factory-one"
+    )
+    assert restored is not None
+    assert restored["status"] == "pending"
+    assert restored["metadata"]["blueprint_id"] == old["metadata"]["blueprint_id"]
+    assert restored["metadata"]["task_completion_projection"] == old["metadata"]["task_completion_projection"]
+    assert restored["metadata"]["job_token"]["factory_run_id"] == "factory-one"
+
+
+def test_factory_retry_cannot_rebuild_cleaned_owner_without_ce_review(tmp_path: Path) -> None:
+    service, _old, plan_task = _failed_ce_owner(tmp_path)
+    assert service.reset_records(keep_plan=True, factory_run_id="factory-one")["ok"] is True
+
+    with pytest.raises(RuntimeError):
+        OrchestrationStageExecutor(tmp_path)._materialize_pm_plan_taskboard(
+            [plan_task],
+            run_id="factory-one",
+            source_stage="director_dispatch",
+            run_metadata={"retry_from_status": "failed", "retry_execution_stage": "director_dispatch"},
+        )
+
+    assert service.resolve_factory_task_row(external_task_id="WORK-A", factory_run_id="factory-one") is None
+
+
 def test_quality_repair_refuses_competing_rows_for_one_logical_owner(tmp_path: Path) -> None:
     service, old, _plan_task = _failed_ce_owner(tmp_path)
     service.create_task_row(subject="Legacy competing row", metadata=dict(old["metadata"]))

@@ -65,8 +65,9 @@ def test_build_decision_messages_injects_implementing_hard_gate() -> None:
     assert any("HARD GATE (Implementing Phase)" in text for text in system_messages)
     # Forbidden broad-exploration wording present
     assert any("Broad exploration tools (glob, repo_rg, repo_tree) are FORBIDDEN" in text for text in system_messages)
-    # Allowed targeted-read wording present
-    assert any("ALLOWED: You may call read_file or repo_read_head" in text for text in system_messages)
+    # Targeted inspection must refer only to tools offered by this request.
+    assert any("Only callable targeted read tools" in text for text in system_messages)
+    assert all("repo_read_head" not in text for text in system_messages)
     # The constraint carries the dedicated control-plane kind marker.
     assert any(
         m.get("metadata", {}).get("kind") == "execution_constraint" for m in messages if m.get("role") == "system"
@@ -108,7 +109,7 @@ def test_build_decision_messages_materialize_strips_negative_task_contract_lines
     positive_text = "\n".join(positive_blocks)
     assert "TEMPLATE [General-Mutation]" in positive_text
     assert "call write_file immediately with the complete file body" in positive_text
-    assert "edit_blocks/edit_file/search_replace/repo_apply_diff" in positive_text
+    assert all(name not in positive_text for name in ("edit_blocks", "edit_file", "search_replace", "repo_apply_diff"))
     assert "read/list/execute-only batch is invalid" not in positive_text
 
 
@@ -126,7 +127,8 @@ def test_build_decision_messages_materialize_guard_is_write_first_for_create_tas
 
     system_text = "\n".join(str(m.get("content") or "") for m in messages if m.get("role") == "system")
     assert "search → read → write" not in system_text
-    assert "emit write_file/edit_file in this batch" in system_text
+    assert "emit callable write/edit tools in this batch" in system_text
+    assert "emit write_file/edit_file in this batch" not in system_text
     assert "Targeted reads are allowed only when exact existing content is required" in system_text
 
 

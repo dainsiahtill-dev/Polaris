@@ -832,7 +832,11 @@ def _has_executable_or_file_acceptance_anchor(acceptance_items: list[str]) -> bo
     return False
 
 
-def _has_placeholder_or_manifest_only_acceptance(acceptance_items: list[str]) -> bool:
+def _has_placeholder_or_manifest_only_acceptance(
+    acceptance_items: list[str],
+    *,
+    explicit_permission_only: bool = False,
+) -> bool:
     """Check each weak-gate match in its local clause, including its polarity.
 
     A prohibition or cleanup only governs the nearby match. It must not exempt
@@ -858,15 +862,43 @@ def _has_placeholder_or_manifest_only_acceptance(acceptance_items: list[str]) ->
                 local_start = previous_subjects[-1].end() if previous_subjects else 0
                 prefix = prefix[local_start:]
                 prohibited = re.search(
-                    r"(?:非|无|不|不再)\s*$"
+                    r"(?:非|无|不|不再|不是|并非)\s*$"
+                    r"|(?:未|没有)(?:发现|检测到|检出|观察到)(?:\s|任何|纯|仅|的)*$"
                     r"|(?:禁止|不得|不能|不要|不可|不允许|不可以)"
                     r"(?:\s|使用|采用|包含|提供|产生|执行|允许|接受|输出|生成|任何|形式|的|仅|只)*$"
                     r"|\b(?:no|non[-\s]|not|never|without)\s*(?:(?:allow|permit|use|using|accept|the|a|any)\s+)*$",
                     prefix,
                     re.IGNORECASE,
                 )
+                prohibited_enumeration = re.search(
+                    r"(?:不存在|禁止|不得|不能|不要|不可|不允许|非)"
+                    r"(?:\s|echo(?:-only)?|cat|true|manifest(?:-only)?|placeholder|stub|dummy|字符串|占位|脚本|输出|检查|测试|[/`|、-]|或|以及)*$",
+                    clause[:start],
+                    re.IGNORECASE,
+                )
                 cleanup = _PM_PLACEHOLDER_CLEANUP_ACCEPTANCE_RE.search(clause[local_start : match.end()])
-                if not prohibited and not cleanup:
+                if not prohibited and not prohibited_enumeration and not cleanup:
+                    if explicit_permission_only:
+                        explicit_permission = re.search(
+                            r"(?:允许|可以|可|\b(?:allow\w*|permit\w*|use))"
+                            r"(?:\s|使用|采用|提供|输出|执行|接受|为|是|空|最小|纯|或|仅|只|the|a|an|any|using|use)*$",
+                            clause[:start],
+                            re.IGNORECASE,
+                        )
+                        explicit_sufficiency = re.search(
+                            r"即可|就行|足够|\bis\s+(?:ok|sufficient|acceptable)\b|\b(?:suffices?|passes)\b",
+                            clause[start:],
+                            re.IGNORECASE,
+                        )
+                        only_acceptance = re.search(
+                            r"^\s*(?:(?:验收|验证|测试|acceptance)\s*[:：]?\s*)?"
+                            r"(?:(?:npm\s+test|scripts?\.test|the\s+tests?)\s+)?"
+                            r"(?:只|仅|only\s+|just\s+|merely\s+)(?:checks?|parses?|reads?|检查|验证)",
+                            clause,
+                            re.IGNORECASE,
+                        )
+                        if not explicit_permission and not explicit_sufficiency and not only_acceptance:
+                            continue
                     return True
     return False
 

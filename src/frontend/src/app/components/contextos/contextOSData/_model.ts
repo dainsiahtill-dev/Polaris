@@ -11,6 +11,7 @@ import { meaningfulContextOSEvents } from '../contextOSEventVisibility';
 import {
   EMPTY_TELEMETRY,
   contextOSObservedTokens,
+  contextOSAccountingEvents,
   filterEventsForRole,
   telemetryRoleEvents,
   telemetryRoleHasUsageChannel,
@@ -314,6 +315,7 @@ function summarizeBindingBudget(
 ): RoleBindingBudget {
   if (events.length === 0) return template;
   const orderedEvents = [...events].sort((a, b) => (b.epoch - a.epoch) || (b.seq - a.seq));
+  const accountingEvents = contextOSAccountingEvents(orderedEvents);
 
   let totalTokens = 0;
   let promptTokens = 0;
@@ -329,7 +331,7 @@ function summarizeBindingBudget(
   let estimatedTokens = 0;
   let calls = 0;
 
-  for (const event of orderedEvents) {
+  for (const event of accountingEvents) {
     const observedTokens = contextOSObservedTokens(event);
     totalTokens += observedTokens;
     promptTokens += event.promptTokens;
@@ -352,13 +354,13 @@ function summarizeBindingBudget(
   const contextTokensLatest = latestContextSize
     ? (latestContextSize.finalRequestTokenEstimate ?? latestContextSize.contextTokens)
     : null;
-  const usageCalls = orderedEvents.filter((event) => event.hasUsage).length;
+  const usageCalls = accountingEvents.filter((event) => event.hasUsage).length;
   const promptAverage = usageCalls > 0 && promptTokens > 0 ? Math.round(promptTokens / usageCalls) : null;
   const windowOccupancyTokens = contextTokensLatest !== null && contextTokensLatest > 0
     ? contextTokensLatest
     : promptAverage;
   const windowOccupancyLabel = contextTokensLatest !== null && contextTokensLatest > 0
-    ? '最新最终请求 (实测)'
+    ? latestContextSize?.finalRequestTokenEstimate != null ? '最新最终请求 (估算)' : '最新上下文 (估算)'
     : promptAverage !== null
       ? usageSource === 'matched' ? '匹配事件 prompt 均值' : '角色聚合 prompt 均值'
       : '无 usage';
@@ -562,8 +564,9 @@ function telemetryDecisionKind(event: ContextOSEvent): string {
   return safeText(event.kind, 'observation');
 }
 
-function deriveTelemetryDecisions(telemetry: ContextOSTelemetry, limit = 12): DecisionRow[] {
-  return meaningfulContextOSEvents(telemetry.events).slice(0, limit).map((event) => ({
+export function deriveTelemetryDecisions(telemetry: ContextOSTelemetry, limit = 12, roleId: string | null = null): DecisionRow[] {
+  const events = roleId ? filterEventsForRole(telemetry.events, roleId) : telemetry.events;
+  return meaningfulContextOSEvents(events).slice(0, limit).map((event) => ({
     id: event.id,
     time: formatClock(event.ts) || '--:--:--',
     actor: safeText(event.actor),
@@ -603,7 +606,26 @@ export function buildContextOSModel(input: {
   const telemetry = input.telemetry ?? EMPTY_TELEMETRY;
   const telemetryActive = telemetry.hasData;
 
-  const running = pmRunning || directorRunning;
+  const inflightCalls = new Map<string, { group: string; event: ContextOSEvent }>();
+  const terminalEvents = new Set(contextOSAccountingEvents(telemetry.events));
+  for (const event of [...telemetry.events].sort((a, b) => (a.epoch - b.epoch) || (a.seq - b.seq))) {
+    if (!event.callId) continue;
+    const group = JSON.stringify([event.callId, event.workerId]);
+    const key = JSON.stringify([group, event.contextSnapshotRef]);
+    if (terminalEvents.has(event)) {
+      if (inflightCalls.has(key)) inflightCalls.delete(key);
+      else {
+        // Preparation and final request snapshots can differ. Pair the oldest
+        // unresolved start only within this observed call/worker group.
+        const oldest = [...inflightCalls].find(([, call]) => call.group === group);
+        if (oldest) inflightCalls.delete(oldest[0]);
+      }
+    } else if (/^(?:llm_call_start|call_start|invoke_start|llm_waiting)$/.test(event.sourceEventType ?? '')) {
+      if (!inflightCalls.has(key)) inflightCalls.set(key, { group, event });
+    }
+  }
+  const inflightEvents = [...inflightCalls.values()].map((call) => call.event);
+  const running = pmRunning || directorRunning || inflightEvents.length > 0;
 
   // 真实快照派生：任务看板规模 + PM 迭代轮次。
   const snapshotTasks = Array.isArray(snapshot?.tasks)
@@ -686,6 +708,9 @@ export function buildContextOSModel(input: {
     : 'LLM status 未提供窗口字段，显示未知';
 
   const contextTokensLatest = telemetryActive ? telemetry.contextTokensLatest : null;
+  const latestFinalRequest = telemetry.events.find((event) => event.finalRequestTokenEstimate !== null);
+  const contextBudgetTokens = latestFinalRequest?.finalRequestTokenEstimate ?? null;
+  const contextBudgetSourceLabel = contextBudgetTokens !== null ? '最新最终请求 (估算)' : '最终请求未观测';
   // 窗口压力分子：优先最终 provider request token；缺失时才退回平均 prompt 估算。
   const avgPromptPerCall = calls > 0 ? promptTokens / calls : 0;
   const totalContextTokens = contextTokensLatest ?? promptTokens;  // 当前可观测上下文 token
@@ -693,6 +718,11 @@ export function buildContextOSModel(input: {
     ? contextTokensLatest
     : Math.round(avgPromptPerCall);
   const windowOccupancy = contextWindowTokens !== null ? Math.max(0, Math.min(1, windowOccupancyTokens / contextWindowTokens)) : 0;
+  const windowOccupancyLabel = contextTokensLatest !== null
+    ? latestFinalRequest && contextTokensLatest === latestFinalRequest.finalRequestTokenEstimate
+      ? '最新最终请求 (估算)'
+      : '最新上下文 (估算)'
+    : windowOccupancyTokens > 0 ? '平均提示 (估算)' : '未观测';
 
   const blockedRoles = new Set(llmRuntimeState.blockedRoles.map((role) => role.toLowerCase()));
   const llmBlocked = llmRuntimeState.state === 'BLOCKED';
@@ -707,7 +737,7 @@ export function buildContextOSModel(input: {
           ? 'llm'
           : 'working_mem'
       : null;
-  const activeStageId = phaseToActiveStage(currentPhase, running) ?? impliedStage;
+  const activeStageId = running ? phaseToActiveStage(currentPhase, running) ?? impliedStage : null;
   const stateFor = (id: string): PipelineState => {
     if (llmBlocked && (id === 'llm' || id === 'prompt')) return 'blocked';
     if (id === 'role_signal' && blockedRoles.size > 0) return 'blocked';
@@ -728,7 +758,7 @@ export function buildContextOSModel(input: {
     : Math.min(Math.max(eventCount, telemetry.events.length), 32);
 
   // 观测到活动 = PM/Director 运行中 或 真实遥测有数据（如一次角色对话）。
-  const observed = running || telemetryActive;
+  const observed = running;
 
   const errorCount = telemetryActive
     ? telemetry.errorCount
@@ -889,8 +919,7 @@ export function buildContextOSModel(input: {
     if (blockedRoles.has(roleKey)) return 'blocked';
     if (roleKey === 'pm' && pmRunning) return 'active';
     if (roleKey === 'director' && directorRunning) return 'active';
-    // 真实遥测里该角色产生过事件 → 活动（如一次角色对话）。
-    if (telemetryActive && telemetryRoleEvents(telemetry, roleKey) > 0) return 'active';
+    if (inflightEvents.some((event) => event.roleHints.includes(roleKey))) return 'active';
     return 'idle';
   };
 
@@ -979,7 +1008,7 @@ export function buildContextOSModel(input: {
       ? contextTokensLatest
       : promptAverage;
     const windowOccupancyLabel = contextTokensLatest !== null && contextTokensLatest > 0
-      ? '最新最终请求 (实测)'
+      ? lastContextSize?.finalRequestTokenEstimate != null ? '最新最终请求 (估算)' : '最新上下文 (估算)'
       : promptAverage !== null
         ? '平均提示 (估算)'
         : '无 usage';
@@ -1222,6 +1251,9 @@ export function buildContextOSModel(input: {
     avgPerCall,
     windowOccupancy,
     windowOccupancyTokens,
+    windowOccupancyLabel,
+    contextBudgetTokens,
+    contextBudgetSourceLabel,
     contextWindowTokens,
     contextWindowLabel,
     contextWindowDetail,

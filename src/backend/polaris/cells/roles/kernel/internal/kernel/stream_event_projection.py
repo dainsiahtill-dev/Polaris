@@ -182,21 +182,65 @@ class StreamEventProjector:
             monitoring=event.monitoring if isinstance(event.monitoring, dict) else None,
         )
         _lift_completion_audit_evidence(metadata, event.monitoring)
+        metadata["transaction_kind"] = event.turn_kind
         if event.commit_receipt:
             metadata["turn_commit_receipt"] = dict(event.commit_receipt)
         if event.turn_outcome:
             metadata["turn_outcome"] = dict(event.turn_outcome)
 
+        is_observation = event.turn_kind == "continue_multi_turn"
+        if is_observation:
+            metadata["transaction_kind"] = event.turn_kind
+            metadata["needs_followup_workflow"] = True
+            metadata["workflow_reason"] = "observation"
+
+        def failed_event(
+            error: str, error_type: str, *, structured_output: dict[str, Any] | None = None
+        ) -> dict[str, Any]:
+            history, events = _build_turn_history_and_events(
+                turn_id=event.turn_id,
+                request=self.request,
+                visible_content=final_content,
+                thinking=final_thinking,
+                tool_results=tool_results,
+            )
+            result = role_turn_completion_result(
+                content=final_content,
+                thinking=final_thinking,
+                structured_output=structured_output,
+                tool_calls=tool_calls,
+                tool_results=tool_results,
+                batch_receipt=batch_receipt,
+                profile=self.profile,
+                fingerprint=self.fingerprint,
+                error=error,
+                is_complete=False,
+                execution_stats={
+                    "duration_ms": event.duration_ms,
+                    "llm_calls": event.llm_calls,
+                    "tool_calls": event.tool_calls,
+                },
+                turn_history=history,
+                turn_events_metadata=events,
+                metadata=metadata,
+            )
+            return {
+                "type": "error",
+                "error": error,
+                "error_type": error_type,
+                "turn_id": event.turn_id,
+                "metadata": dict(metadata),
+                "result": result,
+                "batch_receipt": batch_receipt,
+            }
+
         if event.status in ("failed", "suspended"):
+            metadata["transaction_kind"] = "tool_failure"
+            metadata["needs_followup_workflow"] = False
+            metadata.pop("workflow_reason", None)
             self._record_projection_outcome(success=False, reason="stream failure")
             return await self._publish_result(
-                {
-                    "type": "error",
-                    "error": event.error or "execution_failed",
-                    "error_type": "stream_execution_failed",
-                    "turn_id": event.turn_id,
-                    "metadata": dict(metadata),
-                },
+                failed_event(event.error or "execution_failed", "stream_execution_failed"),
                 should_stop=True,
             )
 
@@ -213,18 +257,22 @@ class StreamEventProjector:
         if event.monitoring:
             event_dict["monitoring"] = dict(event.monitoring)
 
-        lifecycle_receipt = record_missing_dispatch_lifecycle_receipt(
-            role=self.role,
-            request=self.request,
-            kernel=self.kernel,
-            turn_id=event.turn_id,
-            metadata=metadata,
-            ledger=None,
-            tool_results=tool_results,
-            batch_receipt=batch_receipt,
+        lifecycle_receipt = (
+            None
+            if is_observation
+            else record_missing_dispatch_lifecycle_receipt(
+                role=self.role,
+                request=self.request,
+                kernel=self.kernel,
+                turn_id=event.turn_id,
+                metadata=metadata,
+                ledger=None,
+                tool_results=tool_results,
+                batch_receipt=batch_receipt,
+            )
         )
         structured_output: dict[str, Any] | None = None
-        if lifecycle_receipt is None and self.request.validate_output:
+        if not is_observation and lifecycle_receipt is None and self.request.validate_output:
             quality_result, _ = validate_turn_output(
                 kernel=self.kernel,
                 profile=self.profile,
@@ -254,13 +302,10 @@ class StreamEventProjector:
                 self._record_projection_outcome(success=False, reason="stream output validation failed")
                 validation_error = "; ".join(str(item) for item in quality_result.errors)
                 return await self._publish_result(
-                    {
-                        "type": "error",
-                        "error": f"Output validation failed: {validation_error or 'unknown validation error'}",
-                        "error_type": "output_validation_failed",
-                        "turn_id": event.turn_id,
-                        "metadata": dict(metadata),
-                    },
+                    failed_event(
+                        f"Output validation failed: {validation_error or 'unknown validation error'}",
+                        "output_validation_failed",
+                    ),
                     should_stop=True,
                 )
             if isinstance(quality_result.data, dict):
@@ -276,13 +321,7 @@ class StreamEventProjector:
         if control_plane_error:
             self._record_projection_outcome(success=False, reason="stream control-plane failure")
             return await self._publish_result(
-                {
-                    "type": "error",
-                    "error": control_plane_error,
-                    "error_type": "control_plane_failure",
-                    "turn_id": event.turn_id,
-                    "metadata": dict(metadata),
-                },
+                failed_event(control_plane_error, "control_plane_failure", structured_output=structured_output),
                 should_stop=True,
             )
         if lifecycle_receipt is not None:
@@ -290,17 +329,59 @@ class StreamEventProjector:
             # the missing materialization is a symptom of the dropped dispatch.
             self._record_projection_outcome(success=False, reason="stream tool dispatch dropped")
             return await self._publish_result(
-                {
-                    "type": "error",
-                    "error": MISSING_DISPATCH_COMPLETION_ERROR,
-                    "error_type": "tool_dispatch_dropped",
-                    "turn_id": event.turn_id,
-                    "metadata": dict(metadata),
-                },
+                failed_event(
+                    MISSING_DISPATCH_COMPLETION_ERROR, "tool_dispatch_dropped", structured_output=structured_output
+                ),
                 should_stop=True,
             )
         if task_boundary_error:
             self._record_projection_outcome(success=False, reason="stream task boundary failure")
+            repairable = (
+                isinstance(self.request.context_override, dict)
+                and isinstance(self.request.context_override.get("continuous_execution"), dict)
+                and self.request.context_override["continuous_execution"].get("enabled") is True
+                and bool(batch_receipt and batch_receipt.get("results"))
+                and isinstance(task_boundary_verdict, dict)
+                and task_boundary_verdict.get("failure_class")
+                in {
+                    "INCOMPLETE_MATERIALIZATION",
+                    "MISSING_ENTRYPOINT_TARGET",
+                    "UNRESOLVED_LOCAL_IMPORT",
+                    "COMPILER_OR_TEST_FAILURE",
+                    "IMPLEMENTATION_DEFECT",
+                }
+            )
+            if repairable:
+                metadata["transaction_kind"] = "continue_multi_turn"
+                metadata["needs_followup_workflow"] = True
+                metadata["workflow_reason"] = "verification_failed"
+            turn_history, turn_events_metadata = _build_turn_history_and_events(
+                turn_id=event.turn_id,
+                request=self.request,
+                visible_content=final_content,
+                thinking=final_thinking,
+                tool_results=tool_results,
+            )
+            failed_result = role_turn_completion_result(
+                content=final_content,
+                thinking=final_thinking,
+                structured_output=structured_output,
+                tool_calls=tool_calls,
+                tool_results=tool_results,
+                batch_receipt=batch_receipt,
+                profile=self.profile,
+                fingerprint=self.fingerprint,
+                error=task_boundary_error,
+                is_complete=False,
+                execution_stats={
+                    "duration_ms": event.duration_ms,
+                    "llm_calls": event.llm_calls,
+                    "tool_calls": event.tool_calls,
+                },
+                turn_history=turn_history,
+                turn_events_metadata=turn_events_metadata,
+                metadata=metadata,
+            )
             return await self._publish_result(
                 {
                     "type": "error",
@@ -308,8 +389,10 @@ class StreamEventProjector:
                     "error_type": "task_boundary_failed",
                     "turn_id": event.turn_id,
                     "metadata": dict(metadata),
+                    "result": failed_result,
+                    "batch_receipt": batch_receipt,
                 },
-                should_stop=True,
+                should_stop=not repairable,
             )
         if "context_os_audit" in metadata:
             event_dict["metadata"] = dict(metadata)
@@ -339,7 +422,7 @@ class StreamEventProjector:
             profile=self.profile,
             fingerprint=self.fingerprint,
             error=None,
-            is_complete=True,
+            is_complete=not is_observation,
             execution_stats={
                 "duration_ms": event.duration_ms,
                 "llm_calls": event.llm_calls,
@@ -381,7 +464,7 @@ class StreamEventProjector:
                 context_override=getattr(self.request, "context_override", None),
                 tool_results=tool_results,
                 tool_dispatch=tool_dispatch,
-                needs_followup_workflow=False,
+                needs_followup_workflow=bool(metadata.get("needs_followup_workflow")),
                 evidence_refs=task_boundary_evidence_refs_from_metadata(metadata),
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:

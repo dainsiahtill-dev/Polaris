@@ -994,9 +994,24 @@ class ProjectCompletionOwnerObservationAdapter:
         gates = tuple(_mapping(gate, "run_ledger.gate") for gate in gates_raw)
         for gate in gates:
             gate_token_id = str(gate.get("job_token_id") or "").strip()
-            if (
-                not str(gate.get("content_id") or gate.get("append_id") or "").strip()
-                or gate_token_id not in job_token_ids
+            owner_task_id = str(gate.get("task_id") or "").strip()
+            qa_boundary_raw = latest_by_task.get(owner_task_id)
+            qa_boundary = qa_boundary_raw if isinstance(qa_boundary_raw, Mapping) else {}
+            # QA report/verdict commits observe canonical evidence; they do
+            # not authorize workspace commands or writes. Their committed
+            # task lineage is sufficient, while execution gates still need
+            # the original JobToken and physical receipts remain mandatory.
+            qa_observation = (
+                not gate_token_id
+                and gate.get("name") in {"qa_role_evidence", "qa_verdict"}
+                and owner_task_id in rows_by_id
+                and _task_boundary_has_durable_identity(qa_boundary, owner_task_id=owner_task_id)
+                and str(gate.get("run_id") or "").strip() == str(qa_boundary.get("run_id") or "").strip()
+                and gate.get("capability_ok") is True
+                and not gate.get("capability_issues")
+            )
+            if not str(gate.get("content_id") or gate.get("append_id") or "").strip() or (
+                gate_token_id not in job_token_ids and not qa_observation
             ):
                 raise _fail(
                     "project_completion_run_ledger_gate_uncommitted",

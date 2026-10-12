@@ -28,6 +28,129 @@ class _Publisher:
         self.events.append(dict(kwargs))
 
 
+def test_stream_observation_is_pending_and_keeps_read_receipt(tmp_path: Path, monkeypatch: Any) -> None:
+    publisher = _Publisher()
+    projector = _make_stream_completion_projector(tmp_path, publisher)
+
+    def unexpected_missing_dispatch(**kwargs: Any) -> Any:
+        raise AssertionError("An observation did not promise a write in this turn")
+
+    def pending_boundary(**kwargs: Any) -> None:
+        assert kwargs["needs_followup_workflow"] is True
+
+    monkeypatch.setattr(projection, "record_missing_dispatch_lifecycle_receipt", unexpected_missing_dispatch)
+    monkeypatch.setattr(projection, "append_role_turn_task_boundary_verdict", pending_boundary)
+    event = CompletionEvent(
+        turn_id="read-turn",
+        status="success",
+        turn_kind="continue_multi_turn",
+        batch_receipt={
+            "results": [
+                {
+                    "tool_name": "read_file",
+                    "call_id": "read-1",
+                    "status": "success",
+                    "result": {"file": "input.py", "content": "VALUE = 42\n"},
+                }
+            ]
+        },
+    )
+    result = asyncio.run(projector.project(event))
+    assert result is not None
+    assert result.event["type"] == "complete"
+    turn = result.event["result"]
+    assert turn.is_complete is False
+    assert turn.error is None
+    assert turn.metadata["needs_followup_workflow"] is True
+    assert turn.tool_results[0]["result"]["content"] == "VALUE = 42\n"
+
+
+def test_failed_task_boundary_keeps_committed_turn_for_local_repair(tmp_path: Path, monkeypatch: Any) -> None:
+    projector = _make_stream_completion_projector(tmp_path, _Publisher())
+    projector.request = RoleTurnRequest(
+        workspace=str(tmp_path),
+        message="implement",
+        run_id="run-1",
+        task_id="TASK-1",
+        validate_output=False,
+        context_override={"continuous_execution": {"enabled": True}},
+    )
+    verdict = {
+        "schema_version": "polaris.task_boundary_verdict.v1",
+        "status": "incomplete_materialization",
+        "ok": False,
+        "failure_class": "INCOMPLETE_MATERIALIZATION",
+        "reason": "Another authored target is missing",
+    }
+    monkeypatch.setattr(projection, "append_role_turn_task_boundary_verdict", lambda **_: verdict)
+    monkeypatch.setattr(projection, "record_missing_dispatch_lifecycle_receipt", lambda **_: None)
+    receipt = {
+        "results": [
+            {"tool_name": "write_file", "call_id": "write-1", "status": "success", "result": {"file": "first.py"}}
+        ]
+    }
+    commit = {"transition_id": "turn-1", "fact_stream_receipt_ref": "committed-turn-1"}
+    result = asyncio.run(
+        projector.project(
+            CompletionEvent(
+                turn_id="turn-1",
+                status="success",
+                turn_kind="tool_batch_with_receipt",
+                batch_receipt=receipt,
+                commit_receipt=commit,
+            )
+        )
+    )
+    assert result is not None
+    assert result.event["type"] == "error"
+    turn = result.event["result"]
+    assert turn.is_complete is False
+    assert turn.error and "Another authored target is missing" in turn.error
+    assert turn.batch_receipt == receipt
+    assert turn.metadata["turn_commit_receipt"] == commit
+    assert turn.metadata["task_boundary_verdict"] == verdict
+    assert turn.metadata["needs_followup_workflow"] is True
+
+
+@pytest.mark.parametrize("failure", ["ledger_append", "failed_completion", "progress_failed_completion"])
+def test_fatal_stream_completion_retains_committed_receipts(tmp_path: Path, monkeypatch: Any, failure: str) -> None:
+    projector = _make_stream_completion_projector(tmp_path, _Publisher())
+    monkeypatch.setattr(projection, "record_missing_dispatch_lifecycle_receipt", lambda **_: None)
+
+    def failed_boundary(**kwargs: Any) -> None:
+        raise OSError("ledger storage unavailable")
+
+    monkeypatch.setattr(projection, "append_role_turn_task_boundary_verdict", failed_boundary)
+    receipt = {
+        "results": [
+            {"tool_name": "write_file", "call_id": "write-1", "status": "success", "result": {"file": "first.py"}}
+        ]
+    }
+    commit = {"transition_id": "turn-1", "fact_stream_receipt_ref": "committed-turn-1"}
+    result = asyncio.run(
+        projector.project(
+            CompletionEvent(
+                turn_id="turn-1",
+                status="failed" if failure != "ledger_append" else "success",
+                error="execution authority revoked" if failure != "ledger_append" else None,
+                turn_kind="continue_multi_turn"
+                if failure == "progress_failed_completion"
+                else "tool_batch_with_receipt",
+                batch_receipt=receipt,
+                commit_receipt=commit,
+            )
+        )
+    )
+    assert result is not None
+    assert result.event["type"] == "error"
+    assert result.should_stop is True
+    turn = result.event["result"]
+    assert turn.error and turn.is_complete is False
+    assert turn.batch_receipt == receipt
+    assert turn.metadata["turn_commit_receipt"] == commit
+    assert not turn.metadata.get("needs_followup_workflow")
+
+
 def _make_stream_completion_projector(
     tmp_path: Path,
     publisher: _Publisher,
@@ -685,7 +808,8 @@ def test_stream_completion_fails_closed_when_task_boundary_ledger_append_raises(
     assert result.event["error"] == (
         "control_plane_failure:run_ledger_append_failed: TaskBoundary verdict could not be committed to the Run Ledger"
     )
-    assert "result" not in result.event
+    assert result.event["result"].is_complete is False
+    assert result.event["result"].error == result.event["error"]
     metadata = result.event["metadata"]
     verdict = metadata["task_boundary_verdict"]
     assert verdict["failure_class"] == "RUN_LEDGER_APPEND_FAILED"

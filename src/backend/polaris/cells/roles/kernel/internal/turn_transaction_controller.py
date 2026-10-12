@@ -745,7 +745,7 @@ class TurnTransactionController:
     @staticmethod
     def _completion_status_from_result(result: Mapping[str, Any]) -> str:
         kind = str(result.get("kind") or "").strip()
-        if kind in {"inline_patch_escape_blocked", "mutation_bypass_blocked"}:
+        if kind in {"inline_patch_escape_blocked", "mutation_bypass_blocked", "recon_bypass_blocked", "tool_failure"}:
             return "failed"
         return "success"
 
@@ -1351,6 +1351,14 @@ class TurnTransactionController:
         remains on the controller because it is injected as a callback into
         ``StreamOrchestrator`` and is monkeypatched by tests.
         """
+        if self.config.continuous_execution:
+            return _build_decision_messages_impl(
+                context,
+                tool_definitions,
+                ledger,
+                tool_choice_override=tool_choice_override,
+                continuous_execution=True,
+            )
         if tool_choice_override is not None:
             return _build_decision_messages_impl(
                 context, tool_definitions, ledger, tool_choice_override=tool_choice_override

@@ -949,6 +949,11 @@ def contains_factory_role_evidence_runtime_authority(value: object) -> bool:
 
     def contains(candidate: object, seen: set[int], *, depth: int) -> bool:
         nonlocal visited_nodes
+        # Exact immutable scalar types cannot hold a runtime capability. Count
+        # structural/object nodes so large diagnostic text is not a leak signal.
+        # Subclasses still go through descriptor/attribute inspection below.
+        if candidate is None or type(candidate) in {str, bool, int, float, bytes}:
+            return False
         if type(candidate) is FactoryRoleEvidenceAuthorityBindingV1:
             return True
         if isinstance(candidate, FactoryRoleEvidenceCutoffPort):

@@ -18,6 +18,35 @@ from .normalization import _PM_VERIFICATION_MODALITY_ORDER
 from .pm_text_utils import _ACTION_MARKERS
 from .revision import PMRevisionBase, canonical_json
 
+_PM_ARTIFACT_OUTPUT_GUIDANCE = (
+    "产物声明契约：target_files 是 Director 直接编写的源码、配置、测试、数据或报告文件。"
+    "共享文件的分步修改按任务依赖协调；CE 完成合同确定交付归属，执行工具按 JobToken 的写入授权工作。"
+    "其他任务需要读取该产物时使用 context_files；规划文档中的后续源码清单不是规划任务的写入产物。"
+    "遇到语言或 scope 诊断时，替换或移除不合格路径；不要保留错误 target_files 后再追加正确语言文件。"
+    "同步修改该路径在 goal/steps/acceptance/验证命令中的引用。scope_paths 可以包含只读上下文，"
+    "读取文件不要求把它加入写入 target_files；保留原任务 ID 和产品行为要求。"
+    "generated_outputs 只声明构建命令产生的派生文件（例如由 src/module.ts 编译出的 dist/module.js）；"
+    "其 path 必须与所有任务的 target_files 不重叠，每个派生路径只能有一个生产任务。"
+    "inputs 绑定本任务或依赖祖先的已声明手写文件，build 的 argv/cwd 必须完整等于本任务 modality=build 的验证命令。"
+    "没有需要声明的派生文件时，可省略 generated_outputs 或使用 generated_outputs=[]，保留原 target_files。"
+    "lint/test 命令仅在同时显式声明为同一任务的 build verifier 时才能作为 build 绑定。"
+    "这些说明不扩展 revision manifest 权限，也不代表文件已写入或构建已通过。"
+)
+
+
+_PM_VERIFICATION_REPAIR_GUIDANCE = (
+    "验证命令修正：版本/帮助/环境探测仅说明工具可用，不是交付 proof-of-work；"
+    "不能把它们的 stdout 或版本号写成验收证明。"
+    "纯规划/文档任务没有应执行的产物验证义务时，可移除不适用的探测行；"
+    "若移除后没有验证命令，使用 verification_commands=[]。"
+    "类型化修订仅在 edit_manifest 允许该字段时使用 set.verification_commands=[]；"
+    "这是完整数组替换，不是删除任务，也不扩展编辑权限。"
+    "若该任务还承担实际安装、build/test/lint/entrypoint 或 QA 验证，"
+    "只移除诊断指出的探测行，完整保留其它实质命令；不得仅因 doc_only 或 planning 就清空验证。"
+    "实现和 QA 的真实测试、构建及入口不得删除或改成版本探测；"
+    "项目整体仍须保留真实 environment_prep、至少一个 build/test/lint 与适用入口，并通过原质量门禁。"
+)
+
 
 def _pm_task_output_example(projection_hint: dict[str, Any] | None) -> str:
     """One existing task-field contract for initial and full-JSON revision."""
@@ -200,6 +229,8 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                 "可选 generated_outputs=[{path,inputs:[{task_id,path}],build:{argv,cwd}}]；owner 为所在任务；输入是自己或依赖祖先的 authored targets；build 按完整值绑定本任务 build verifier。生成声明不授予直接写权限、不代表构建已完成。",
                 "项目整体必须声明真实 environment_prep、至少一个 build/test/lint、以及应用入口命令；library 可由 CE 显式判定 entrypoint N/A。",
                 "verification_commands 只能使用 argv 数组与相对 cwd；禁止 shell command string、echo-only 或 shell -c 包装。",
+                _PM_ARTIFACT_OUTPUT_GUIDANCE,
+                _PM_VERIFICATION_REPAIR_GUIDANCE,
             ]
         )
         return "\n".join(lines)
@@ -226,7 +257,9 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                 if not isinstance(diagnostic, dict):
                     continue
                 shared = {
-                    key: diagnostic[key] for key in ("code", "task_id", "message", "provenance") if key in diagnostic
+                    key: diagnostic[key]
+                    for key in ("code", "task_id", "message", "provenance", "evidence")
+                    if key in diagnostic
                 }
                 group = grouped.setdefault(canonical_json(shared), {**shared, "paths": []})
                 group["paths"].append(diagnostic.get("path"))
@@ -247,17 +280,23 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                     "Return one bare pm.task_revision.v1 JSON object; not a replacement plan.",
                     "Exact keys: schema_version,base_hash,updates,add_tasks,remove_task_ids.",
                     "updates: [{task_id,set:{field:complete_value},append:{steps:[new_step],acceptance:[new_criterion]}}].",
+                    "同一字段只能选择 set 或 append：替换完整验收列表用 set.acceptance，追加新验收项用 append.acceptance；"
+                    "不得在同一 update 中同时操作同名字段。未使用的操作使用空对象或省略。",
                     "Only manifest fields permit edits; display grants none. "
                     "absent_fields means no original value; hidden fields remain intact. append preserves all old elements.",
                     "Existing id/assigned_to/execution_backend/projection/metadata are immutable. "
                     "No task removal. New tasks require full contracts, unique IDs and code_edit; "
                     "no projection override or reused ID.",
+                    "每个 set/append 字段必须出现在该任务 edit_manifest 的对应字段表中；"
+                    "phase 等不在 edit_manifest 中的字段保持原值，不能因看到它们而修改。",
                     "Merged plan must pass original quality/verifier/coverage/dependency gates. JSON only.",
                     "verification_commands rows: exact modality/argv/cwd; modality="
                     + "|".join(_PM_VERIFICATION_MODALITY_ORDER)
                     + "; argv array only; no shell -c. New tasks need id/title/goal/scope_paths/target_files/steps/acceptance/verification_commands.",
                     "target_files own writes; context_files are read-only. Verification code_edit must own a useful test/report; pure milestones use native QA/dependency/acceptance orchestration. "
                     "Optional generated_outputs=[{path,inputs:[{task_id,path}],build:{argv,cwd}}], exact keys. Owner is containing task; inputs bind self/ancestor authored targets; build equals its typed build verifier by value. No direct write grant or completed-build evidence.",
+                    _PM_ARTIFACT_OUTPUT_GUIDANCE,
+                    _PM_VERIFICATION_REPAIR_GUIDANCE,
                     "Original requirement (complete):",
                     directive,
                     "Quality evidence (not execution authority):",
@@ -322,6 +361,8 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                 "- verification command 必须是 argv 数组，禁止 shell command string 或 shell -c",
                 "- target_files 只含拥有的写入产物；context_files 只读；code_edit 验证必须拥有有用测试/报告。",
                 "- generated_outputs 可选，严格为 [{path,inputs:[{task_id,path}],build:{argv,cwd}}]；绑定自己/祖先源文件及本任务 typed build 完整值；不授予写权限或执行成功。",
+                _PM_ARTIFACT_OUTPUT_GUIDANCE,
+                _PM_VERIFICATION_REPAIR_GUIDANCE,
                 "- 必须有依赖关系（depends_on）",
                 "- 只能输出 JSON 对象，禁止任何额外文字与代码块",
             ]
@@ -335,6 +376,7 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                         f"- {diagnostic.get('path')}: {diagnostic.get('code')}: {diagnostic.get('message')}"
                         f"; task_id={diagnostic.get('task_id')}; provenance={canonical_json(diagnostic.get('provenance', {}))}"
                         f"; allowed={diagnostic.get('allowed', [])}"
+                        f"; evidence={canonical_json(diagnostic.get('evidence', {}))}"
                     )
         if projection_hint:
             _raw_proj = projection_hint.get("projection") if isinstance(projection_hint, dict) else None

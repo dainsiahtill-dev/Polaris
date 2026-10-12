@@ -557,7 +557,8 @@ _FRAMEWORK_PATTERNS: dict[str, str] = {
     "gin": r"\bgin\b",
     "next": r"\bnext(?:\.js|js)?\b",
     "pytest": r"\bpytest\b",
-    "react": r"\breact\b|\btsx\b",
+    # ``tsx`` is a general TypeScript runtime, not evidence of React usage.
+    "react": r"\breact\b",
     "spring": r"\bspring(?:\s+boot)?\b",
     "vue": r"\bvue\b",
 }

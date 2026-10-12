@@ -19,9 +19,6 @@ import asyncio
 import json
 from typing import Any, cast
 
-from polaris.cells.roles.adapters.internal.pm.synthesis import (
-    _extract_deterministic_checks_from_directive,
-)
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
 
 # ---------------------------------------------------------------------------
@@ -455,8 +452,10 @@ class TestListBoardTaskRows:
             *,
             projection_hint: dict[str, Any] | None = None,
             directive_analysis: dict[str, Any] | None = None,
+            output_budget_tokens: int | None = None,
         ) -> str:
             captured["tasks"] = tasks
+            captured["output_budget_tokens"] = output_budget_tokens
             return "message"
 
         def fake_synthesize(
@@ -498,6 +497,7 @@ class TestListBoardTaskRows:
         ]
         assert result["success"] is False
         assert result["tasks_created"] == 0
+        assert captured["output_budget_tokens"] == 60000
 
 
 class TestCreateBoardTasksRows:

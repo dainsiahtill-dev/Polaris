@@ -89,6 +89,28 @@ def _resolver(rows: dict[str, dict[str, Any]]):
     return resolve
 
 
+def test_snapshot_keeps_live_build_configuration_ahead_of_document_drafts(tmp_path: Path) -> None:
+    config = '{"compilerOptions":{"rootDir":".","outDir":"dist"}}\n'
+    draft = 'Architecture draft: rootDir="src", outDir="dist".\n'
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/design.md").write_text(draft, encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(config, encoding="utf-8")
+    snapshot = build_director_dependency_artifact_snapshot(
+        workspace=str(tmp_path),
+        child_task=_child_task([1]),
+        get_task=_resolver({"1": _parent_row(paths=("docs/design.md", "tsconfig.json"))}),
+    )
+    assert snapshot is not None
+    message = "\n".join(snapshot.message_lines())
+    assert message.index(config) < message.index(draft)
+    assert "DOCUMENT REFERENCE" in message
+    assert "current executable files and build configuration" in message
+    assert {row["path"]: row["body"] for row in snapshot.payload()["modules"]} == {
+        "docs/design.md": draft,
+        "tsconfig.json": config,
+    }
+
+
 def test_snapshot_is_bound_to_parent_task_effect_receipt_and_exact_body(tmp_path: Path) -> None:
     source = tmp_path / "src" / "models" / "flavor.rs"
     source.parent.mkdir(parents=True)
@@ -961,6 +983,50 @@ def test_incomplete_quality_repair_parent_receipts_do_not_shadow_ce_handoff(
     # Incomplete live receipts must not be returned as the parent authority.
     # CE handoff may still be unavailable in this isolated fixture.
     assert resolved is not live_parent
+
+
+def test_preflight_parent_rehydration_preserves_declared_ancestor_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _core as adapter_core
+
+    run_id = "factory-parent-dependencies"
+    live_parent = {
+        "id": 4,
+        "status": "completed",
+        "metadata": {
+            "external_task_id": "DOCS",
+            "factory_run_id": run_id,
+            "depends_on": ["SOURCE"],
+            "adapter_result": {
+                "materialization_mode": "preflight_verified_existing_workspace_scope",
+                "write_tool_evidence": False,
+            },
+        },
+    }
+    child = {"id": 5, "metadata": {"external_task_id": "TESTS", "factory_run_id": run_id}}
+    monkeypatch.setattr(
+        adapter_core,
+        "get_blueprint_status",
+        lambda _query: SimpleNamespace(ok=True, blueprint_id="ce-docs"),
+    )
+    monkeypatch.setattr(
+        adapter_core,
+        "validate_director_handoff_from_payload",
+        lambda *_args, **_kwargs: {
+            "allowed": True,
+            "task_completion_projection": {"run_id": run_id},
+        },
+    )
+    adapter = DirectorAdapter(str(tmp_path))
+    adapter._get_task = lambda _task_id: live_parent  # type: ignore[method-assign]
+
+    resolved = adapter._resolve_dependency_parent_task("DOCS", child_task=child, context={"factory_run_id": run_id})
+
+    assert resolved is not None
+    assert resolved["metadata"]["depends_on"] == ["SOURCE"]
+    assert evidence_module._dependency_task_ids(resolved) == ["SOURCE"]
+    assert "adapter_result" not in resolved["metadata"]
 
 
 def test_rebind_restores_drained_parent_from_strict_ce_projection_and_project_receipt(

@@ -11,6 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from polaris.kernelone.quality.verification_commands import (
+    normalize_verification_command_modality,
+    require_verification_command_proof,
+)
+
 _LANGUAGE_SOURCE_EXTENSIONS: dict[str, frozenset[str]] = {
     "javascript": frozenset({".js", ".mjs", ".cjs", ".jsx"}),
     "typescript": frozenset({".ts", ".tsx", ".mts", ".cts"}),
@@ -360,6 +365,12 @@ def _validate_pm_verification_commands(
                     "cwd must stay within the workspace as a normalized relative directory",
                 )
                 continue
+        try:
+            require_verification_command_proof(tuple(argv))
+        except ValueError as exc:
+            reject(f"{row_path}.argv", "verification_command_proof_missing", str(exc))
+            continue
+        modality = normalize_verification_command_modality(modality, tuple(argv))
         normalized.append({"modality": modality, "argv": argv, "cwd": cwd_value})
     return ([] if diagnostics else normalized), diagnostics
 
@@ -531,10 +542,19 @@ def validate_pm_artifact_contracts(
     ancestors: dict[str, set[str]] = {}
     authored = tuple(dict.fromkeys(p for t in tasks for p in t.get("target_files", []) if isinstance(p, str)))
     authored_set = set(authored)
+    authored_owners: dict[str, list[str]] = {}
+    for task_index, task in enumerate(tasks):
+        task_identity = str(task.get("id") or f"TASK-{task_index + 1}")
+        for target in task.get("target_files", []):
+            authored_owners.setdefault(target, []).append(task_identity)
     records: list[dict[str, Any]] = []
+    record_positions: list[tuple[int, int]] = []
     owners: dict[str, str] = {}
 
-    def reject(index: int, field: str, code: str, message: str, *, fields: tuple[str, ...] = ()) -> None:
+    def reject(
+        index: int, field: str, code: str, message: str, *,
+        fields: tuple[str, ...] = (), evidence: dict[str, Any] | None = None,
+    ) -> None:
         task = tasks[index]
         metadata = task.get("metadata", {})
         origin = metadata.get("pm_artifact_source_path") if isinstance(metadata, dict) else None
@@ -545,6 +565,7 @@ def validate_pm_artifact_contracts(
                 "task_id": str(task.get("id") or f"TASK-{index + 1}"),
                 "message": message,
                 **({"repair_fields": list(fields)} if fields else {}),
+                **({"evidence": deepcopy(evidence)} if evidence is not None else {}),
             }
         )
 
@@ -587,17 +608,25 @@ def validate_pm_artifact_contracts(
             for error in errors:
                 field = error["path"].split(f"$.tasks[{index}].", 1)[-1]
                 reject(index, field, error["code"], error["message"])
-            for row in rows:
+            for output_index, row in enumerate(rows):
                 output = row["path"]
                 if output in owners or output in authored_set:
                     reject(
                         index,
-                        "generated_outputs",
+                        f"generated_outputs[{output_index}]",
                         "generated_output_ownership_invalid",
                         "Generated output must have one owner and no authored-write collision",
+                        evidence={
+                            "generated_output_path": output,
+                            "authored_owner_task_ids": list(dict.fromkeys(authored_owners.get(output, []))),
+                            "generated_owner_task_ids": list(dict.fromkeys(
+                                [*([owners[output]] if output in owners else []), identity]
+                            )),
+                        },
                     )
                 owners[output] = identity
                 records.append({"task_id": identity, **row})
+                record_positions.append((index, output_index))
         targets = task.get("target_files", [])
         contexts = task.get("context_files", [])
         if isinstance(contexts, list) and {p for p in contexts if isinstance(p, str)} & set(targets):
@@ -638,9 +667,8 @@ def validate_pm_artifact_contracts(
             )
 
     has_sources = bool(extensions) and any(_pm_primary_source_targets(t, extensions) for t in tasks)
-    for record in records:
+    for record, (index, output_index) in zip(records, record_positions, strict=True):
         identity = record["task_id"]
-        index = next(i for i, t in enumerate(tasks) if str(t.get("id") or f"TASK-{i + 1}") == identity)
         task = tasks[index]
         sources: set[str] = set()
         for item in record["inputs"]:
@@ -667,9 +695,14 @@ def validate_pm_artifact_contracts(
         ):
             reject(
                 index,
-                "generated_outputs",
+                f"generated_outputs[{output_index}]",
                 "generated_output_build_invalid",
                 "Build must equal a same-task typed build verifier",
+                evidence={
+                    "generated_output_path": record["path"],
+                    "declared_output_build": build,
+                    "task_build_verifiers": [r for r in rows if r["modality"] == "build"],
+                },
             )
         argv = build["argv"]
         explicit_tsc = argv[0] == "tsc" or argv[:2] == ["npx", "tsc"] or argv[:3] == ["npx", "--no-install", "tsc"]
@@ -706,6 +739,18 @@ def validate_pm_artifact_contracts(
         auxiliaries = (
             _pm_declared_auxiliary_targets(task, language, has_product_sources=has_sources) if extensions else set()
         )
+        if has_sources:
+            auxiliaries.update(
+                path for path in task.get("target_files", [])
+                if str(path).replace("\\", "/").lower().startswith(("tests/", "test/", "__tests__/", "scripts/", "qa/"))
+            )
+        # TypeScript runs on the JavaScript toolchain. Authored JS helpers are
+        # valid interoperability, not declarations of compiler-generated output.
+        if language == "typescript":
+            auxiliaries.update(
+                path for path in task.get("target_files", [])
+                if str(path).lower().endswith((".js", ".jsx", ".mjs", ".cjs"))
+            )
         wrong: list[str] = []
         for path in task.get("target_files", []):
             if not isinstance(path, str) or not extensions:
@@ -721,8 +766,25 @@ def validate_pm_artifact_contracts(
             if ext not in extensions and canonical not in auxiliaries:
                 wrong.append(path)
         if wrong:
+            scopes = task.get("scope_paths", [])
+            scope_paths = scopes if isinstance(scopes, list) else []
+            foreign_scope_owners = {
+                path: list(dict.fromkeys(authored_owners[path]))
+                for path in scope_paths if isinstance(path, str)
+                and path in authored_owners and identity not in authored_owners[path]
+            }
             reject(
-                index, "target_files", "pm_plan_language_mismatch", f"Wrong primary-language authored targets: {wrong}"
+                index, "target_files", "pm_plan_language_mismatch", f"Wrong primary-language authored targets: {wrong}",
+                fields=(
+                    "target_files", "context_files", "scope_paths", "goal", "description",
+                    "steps", "acceptance", "verification_commands",
+                ),
+                evidence={
+                    "primary_language": language,
+                    "wrong_authored_targets": wrong,
+                    "allowed_source_suffixes": sorted(extensions),
+                    "foreign_scope_file_owners": foreign_scope_owners,
+                },
             )
             if task.get("phase") == "verification":
                 for path in wrong:

@@ -43,6 +43,7 @@ from .pm_text_utils import (
     _pm_root_workspace_target_files_from_context,
     _pm_should_drop_generic_product_test_for_documentation_contract,
     _pm_split_concrete_targets_and_scopes,
+    _pm_target_files_include_tests,
     _pm_title_fragment,
 )
 
@@ -102,27 +103,20 @@ def _pm_declared_relative_files(contract: dict[str, Any]) -> set[str]:
 
 
 def _pm_task_declares_html_entrypoint(contract: dict[str, Any]) -> bool:
-    """Recognize a conventional root or a declared HTML/script entrypoint task.
+    """Recognize declared HTML entrypoints without prescribing CE topology.
 
-    Equivalent layouts need a same-directory script target and a valid explicit
-    entrypoint verifier in that task. Prose, directory scopes and basenames alone
-    do not supply entrypoint semantics; CE still owns the executable topology.
+    Nested HTML needs an explicit entrypoint verifier, but scripts may live
+    elsewhere or be inline. Runtime verification checks the executable wiring.
     """
     files = _pm_declared_relative_files(contract)
+    if str(contract.get("phase") or "").strip().lower() in {"requirements", "documentation", "docs", "blueprint"}:
+        return False
     if "index.html" in files:
         return True
     rows, diagnostics = _validate_pm_verification_commands(contract.get("verification_commands", []))
     if diagnostics or not any(row["modality"] == "entrypoint" for row in rows):
         return False
-    script_parents = {
-        PurePosixPath(path).parent
-        for path in files
-        if PurePosixPath(path).suffix.lower() in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
-    }
-    return any(
-        PurePosixPath(path).suffix.lower() in {".html", ".htm"} and PurePosixPath(path).parent in script_parents
-        for path in files
-    )
+    return any(PurePosixPath(path).suffix.lower() in {".html", ".htm"} for path in files)
 
 
 def _pm_contract_declares_html_entrypoint(contracts: list[dict[str, Any]]) -> bool:
@@ -158,8 +152,8 @@ def _pm_typescript_factory_contract_missing(contracts: list[dict[str, Any]], dir
     )
     if not ce_owns_topology and not any(target.endswith((".ts", ".tsx")) for target in targets):
         missing.append("*.ts")
-    if not any(target.endswith((".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx")) for target in targets):
-        missing.append("*.test.ts")
+    if not _pm_target_files_include_tests(targets):
+        missing.append("executable_test_target")
     return missing
 
 
@@ -397,13 +391,9 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             scope_items = self._infer_scope_from_title(title)
         scope_text = ", ".join(scope_items[:4]) if scope_items else "src/"
         if scope_items:
-            # ``scope_paths`` becomes the Director/DEO write capability.  The
-            # compact scope limit may bound supplementary directory/context
-            # entries, but it must never remove a concrete mutation target:
-            # doing so leaves a task that commands a write while withholding
-            # the matching JobToken authority.  Keep least privilege by
-            # retaining only task-local targets plus as many supplementary
-            # scopes as fit inside the original compact budget.
+            # Scope paths include read/search context. Concrete writes are
+            # authorized by JobToken target_files; retain those paths in the
+            # readable scope while bounding supplementary context entries.
             declared_target_scope = list(dict.fromkeys(target_files))
             declared_target_set = set(declared_target_scope)
             supplementary_scope = [item for item in scope_items if item not in declared_target_set]

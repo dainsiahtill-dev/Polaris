@@ -52,6 +52,23 @@ async def _running_service(tmp_path: Path) -> tuple[FactoryRunService, FactoryRu
     return service, run
 
 
+@pytest.mark.asyncio
+async def test_released_failed_run_budget_can_be_restored_without_live_transport(tmp_path: Path) -> None:
+    owner, run = await _running_service(tmp_path)
+    failed = await owner.complete_run(run.id, success=False)
+    assert failed.status is FactoryRunStatus.FAILED
+
+    cold_service = FactoryRunService(tmp_path)
+    restored = await cold_service.update_run_metadata(run.id, {"factory_run_timeout_seconds": 5400.0})
+
+    assert restored.status is FactoryRunStatus.FAILED
+    assert restored.metadata["factory_run_timeout_seconds"] == 5400.0
+    events = await cold_service.store.get_authoritative_events(run.id)
+    assert events[-1]["type"] == "metadata_updated"
+    assert events[-1]["metadata_keys"] == ["factory_run_timeout_seconds"]
+    assert not any(event["type"] == "retry_requested" for event in events)
+
+
 def _claim_is_preserved(service: FactoryRunService, run_id: str) -> bool:
     lease = service._admission.current()
     return lease is not None and lease.run_id == run_id and lease.stage_execution_claim is not None

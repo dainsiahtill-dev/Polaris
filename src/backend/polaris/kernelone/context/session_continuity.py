@@ -499,21 +499,21 @@ class SessionContinuityEngine:
             messages = _iter_normalized_messages(request.messages)
         recent_window = self.resolve_history_window(request.history_limit)
         recent_messages = tuple(dict(item) for item in messages[-recent_window:] if recent_window)
-        persisted_context_config = _copy_mapping(request.session_context_config)
+        original_context_config = _copy_mapping(request.session_context_config)
+        persisted_context_config = dict(original_context_config)
         prompt_context = self.build_prompt_context(
             session_context_config=request.session_context_config,
             incoming_context=request.incoming_context,
         )
-        changed = False
         persisted_turn_events = (
             persisted_context_config.get("session_turn_events")
             if isinstance(persisted_context_config.get("session_turn_events"), Sequence)
             else None
         )
         existing_context_os_payload = rehydrate_persisted_context_os_payload(
-            persisted_context_config.get(_CONTEXT_OS_KEY)
-            if isinstance(persisted_context_config.get(_CONTEXT_OS_KEY), Mapping)
-            else None,
+            # None is canonical absence; other supplied containers must not
+            # become an empty successful projection before restoration.
+            validate_context_os_persisted_projection(persisted_context_config.get(_CONTEXT_OS_KEY)),
             session_turn_events=[dict(item) for item in (persisted_turn_events or ()) if isinstance(item, Mapping)],
         )
         context_os_enabled = resolve_context_os_enabled(
@@ -539,10 +539,8 @@ class SessionContinuityEngine:
             context_os_persisted_payload = self._build_context_os_persisted_payload(context_os_projection)
             if context_os_persisted_payload != existing_context_os_payload:
                 persisted_context_config[_CONTEXT_OS_KEY] = context_os_persisted_payload
-                changed = True
-        elif existing_context_os_payload is not None:
+        elif not context_os_enabled and existing_context_os_payload is not None:
             persisted_context_config.pop(_CONTEXT_OS_KEY, None)
-            changed = True
         if not context_os_enabled:
             prompt_context.pop(_CONTEXT_OS_KEY, None)
 
@@ -563,7 +561,7 @@ class SessionContinuityEngine:
                     persisted_context_config=persisted_context_config,
                     continuity_pack=existing_pack,
                     context_os_projection=context_os_projection,
-                    changed=True,
+                    changed=persisted_context_config != original_context_config,
                 )
             # Try to build continuity from recent_messages if no valid existing pack
             if recent_messages:
@@ -593,7 +591,7 @@ class SessionContinuityEngine:
                         persisted_context_config=persisted_context_config,
                         continuity_pack=pack,
                         context_os_projection=context_os_projection,
-                        changed=True,
+                        changed=persisted_context_config != original_context_config,
                     )
             # Cannot build continuity: return with no pack
             return SessionContinuityProjection(
@@ -602,7 +600,7 @@ class SessionContinuityEngine:
                 persisted_context_config=persisted_context_config,
                 continuity_pack=None,
                 context_os_projection=context_os_projection,
-                changed=changed,
+                changed=persisted_context_config != original_context_config,
             )
 
         older_max_seq = max((item["sequence"] for item in older_messages), default=0)
@@ -658,11 +656,9 @@ class SessionContinuityEngine:
             prompt_context["session_continuity"] = pack.to_dict()
             if pack != existing_pack:
                 persisted_context_config["session_continuity"] = pack.to_dict()
-                changed = True
         elif existing_pack is not None:
             persisted_context_config.pop("session_continuity", None)
             prompt_context.pop("session_continuity", None)
-            changed = True
 
         return SessionContinuityProjection(
             recent_messages=recent_messages,
@@ -670,7 +666,7 @@ class SessionContinuityEngine:
             persisted_context_config=persisted_context_config,
             continuity_pack=pack,
             context_os_projection=context_os_projection,
-            changed=changed,
+            changed=persisted_context_config != original_context_config,
         )
 
     def _build_context_os(self, *, domain: str | None = None) -> StateFirstContextOS:

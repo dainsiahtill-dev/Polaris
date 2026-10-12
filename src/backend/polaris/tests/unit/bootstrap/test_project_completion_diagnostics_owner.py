@@ -737,6 +737,80 @@ def test_bootstrap_adapter_rejects_cross_identity_ce_contract(
     assert exc_info.value.error_code == "project_completion_contract_identity_mismatch"
 
 
+@pytest.mark.parametrize("gate_name", ["qa_role_evidence", "qa_verdict"])
+def test_qa_observation_needs_committed_lineage_without_execution_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate_name: str
+) -> None:
+    contract = _patch_owners(monkeypatch, tmp_path)
+    ledger = _ledger(contract)
+    ledger.projection["run_projection"]["gates"].append(
+        {
+            "name": gate_name,
+            "content_id": "e" * 64,
+            "append_id": "f" * 64,
+            "job_token_id": "",
+            "task_id": "task-2",
+            "run_id": "workflow-task-2",
+            "capability_ok": True,
+            "capability_issues": [],
+            "ok": True,
+        }
+    )
+    monkeypatch.setattr(adapter_module, "read_run_ledger_projection", lambda query: ledger)
+
+    observation = adapter_module.PROJECT_COMPLETION_OWNER_OBSERVATION_ADAPTER.observe_project_completion(
+        workspace=str(tmp_path),
+        project_id=contract.project_id,
+        run_id=contract.run_id,
+        completion_contract_hash=contract.contract_hash,
+    )
+
+    # Reading a QA verdict cannot invent missing build/test/entrypoint receipts.
+    assert observation.evidence == ()
+
+
+@pytest.mark.parametrize(
+    "override,value",
+    [
+        ("name", "workspace_validation"),
+        ("job_token_id", "uncommitted-token"),
+        ("content_id", ""),
+        ("task_id", "foreign-task"),
+        ("run_id", "foreign-run"),
+        ("capability_ok", False),
+        ("capability_issues", ["scope_mismatch"]),
+    ],
+)
+def test_qa_observation_does_not_bypass_execution_or_lineage_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: str, value: object
+) -> None:
+    contract = _patch_owners(monkeypatch, tmp_path)
+    ledger = _ledger(contract)
+    gate = {
+        "name": "qa_verdict",
+        "content_id": "e" * 64,
+        "job_token_id": "",
+        "task_id": "task-2",
+        "run_id": "workflow-task-2",
+        "capability_ok": True,
+        "capability_issues": [],
+        "ok": True,
+        override: value,
+    }
+    ledger.projection["run_projection"]["gates"].append(gate)
+    monkeypatch.setattr(adapter_module, "read_run_ledger_projection", lambda query: ledger)
+
+    with pytest.raises(ProjectCompletionOwnerObservationV1Error) as exc_info:
+        adapter_module.PROJECT_COMPLETION_OWNER_OBSERVATION_ADAPTER.observe_project_completion(
+            workspace=str(tmp_path),
+            project_id=contract.project_id,
+            run_id=contract.run_id,
+            completion_contract_hash=contract.contract_hash,
+        )
+
+    assert exc_info.value.error_code == "project_completion_run_ledger_gate_uncommitted"
+
+
 def _ledger_with_claimed_verifier_metadata(
     contract: ProjectCompletionContractV1,
     *,

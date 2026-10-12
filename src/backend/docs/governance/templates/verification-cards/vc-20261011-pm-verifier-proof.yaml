@@ -1,0 +1,25 @@
+id: vc-20261011-pm-verifier-proof
+classification: structural
+status: proposed
+objective: Reject known non-proof verifier commands before PM task commitment.
+evidence:
+  factory_run_id: factory_8c6b73a85e95
+  first_failing_stage: chief_engineer_review
+  pm_physical_request_ref: 3107d43f2aacf1a2bcc58c2b
+  ce_physical_request: absent_before_dispatch
+assumptions:
+  - PM public verifier diagnostics reach the existing bounded revision.
+  - CE proof rejection can be reused as a pure KernelOne helper without a new Cell edge.
+  - Genuine build/test commands keep their argv and cwd unchanged.
+pre_mortem:
+  - Invalid rows must produce diagnostics rather than be silently dropped.
+  - No parser shall execute inline verifier code during admission.
+  - Shared proof rejection must not replace command/hash ownership or real verification.
+verification:
+  - New PM admission tests must fail on the two captured command classes before implementation.
+  - PM adapter quality and retry feedback must name the exact argv diagnostic.
+  - Existing CE authority and PM artifact/revision tests must retain their assertions.
+  - Fresh isolated L1-01 must show actual stages, receipts and real entrypoint execution.
+remaining_risks:
+  - This is conservative rejection of known no-op commands, not proof that arbitrary commands are valid.
+  - Full L1-L12 qualification remains unproven.

@@ -11,6 +11,7 @@ from pathlib import PurePosixPath
 
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
 from ._shared import (
+    _compiled_typescript_output_path,
     _normalize_base_files,
 )
 from .constants import (
@@ -26,7 +27,7 @@ def build_typescript_local_js_import_plan(
     diagnostics: Sequence[RepairDiagnostic],
     mode: str = "commit",
 ) -> RepairPlan | None:
-    """Repair local ``.js`` imports for proven TypeScript source-runtime contracts."""
+    """Repair relative imports for proven TypeScript source-runtime contracts."""
 
     normalized_base = _normalize_base_files(base_files)
     matched_diagnostics = tuple(
@@ -48,18 +49,40 @@ def build_typescript_local_js_import_plan(
         direct_node_source_runtime = path in direct_node_importers
         if not commonjs_source_runtime and not direct_node_source_runtime:
             continue
-        for match in _LOCAL_JS_IMPORT_SPECIFIER_RE.finditer(text):
+        import_pattern = (
+            re.compile(
+                r"(?P<prefix>\b(?:from|import)\s*(?:\(\s*)?['\"])(?P<specifier>\.{1,2}/[^'\"]+)(?P<suffix>['\"])"
+            )
+            if direct_node_source_runtime
+            else _LOCAL_JS_IMPORT_SPECIFIER_RE
+        )
+        for match in import_pattern.finditer(text):
             specifier = match.group("specifier")
+            if specifier.endswith((".ts", ".tsx", ".json", ".mjs", ".cjs")):
+                continue
+            source_specifier = specifier[:-3] if specifier.endswith(".js") else specifier
             target_extension = _local_typescript_import_target_extension(
                 importer_path=path,
-                specifier_without_js=specifier[:-3],
+                specifier_without_js=source_specifier,
                 base_files=normalized_base,
             )
             if target_extension is None:
                 continue
             if direct_node_source_runtime and not target_extension:
                 continue
-            repaired_specifier = f"{specifier[:-3]}{target_extension}" if direct_node_source_runtime else specifier[:-3]
+            compiled_specifier = (
+                _compiled_module_for_external_importer(
+                    importer_path=path,
+                    source_specifier=source_specifier,
+                    target_extension=target_extension,
+                    base_files=normalized_base,
+                )
+                if direct_node_source_runtime
+                else None
+            )
+            repaired_specifier = compiled_specifier or (
+                f"{source_specifier}{target_extension}" if direct_node_source_runtime else source_specifier
+            )
             operations.append(
                 RepairOperation(
                     kind="text_replace",
@@ -103,6 +126,44 @@ def build_typescript_local_js_import_plan(
             ),
         },
     )
+
+
+def _compiled_module_for_external_importer(
+    *, importer_path: str, source_specifier: str, target_extension: str, base_files: Mapping[str, str]
+) -> str | None:
+    """Test harnesses outside the emit root consume the same built modules as CLI."""
+
+    try:
+        config = json.loads(base_files.get("tsconfig.json", "{}"))
+        package = json.loads(base_files.get("package.json", "{}"))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(config, dict) or not isinstance(package, dict) or config.get("extends"):
+        return None
+    options = config.get("compilerOptions") or {}
+    if not isinstance(options, dict) or options.get("noEmit") is True or options.get("outFile"):
+        return None
+    root, out = options.get("rootDir"), options.get("outDir")
+    if not isinstance(root, str) or not isinstance(out, str) or not root or not out:
+        return None
+    root = posixpath.normpath(root)
+    if root == "." or any(PurePosixPath(p).is_absolute() or ".." in PurePosixPath(p).parts for p in (root, out)):
+        return None
+    source = posixpath.normpath(
+        (PurePosixPath(importer_path).parent / f"{source_specifier}{target_extension}").as_posix()
+    )
+    if importer_path.startswith(root + "/") or not source.startswith(root + "/"):
+        return None
+    scripts = package.get("scripts") or {}
+    try:
+        build = shlex.split(str(scripts.get("build", ""))) if isinstance(scripts, dict) else []
+    except ValueError:
+        return None
+    if not build or not (build[0] == "tsc" or build[:2] == ["npx", "tsc"]):
+        return None
+    compiled = _compiled_typescript_output_path(base_files, source)
+    relative = posixpath.relpath(compiled, PurePosixPath(importer_path).parent.as_posix())
+    return relative if relative.startswith(".") else "./" + relative
 
 
 def _is_local_js_import_runtime_diagnostic(diagnostic: RepairDiagnostic) -> bool:

@@ -1540,6 +1540,116 @@ def test_behavior_repair_context_includes_allowed_completion_verification_ids(tm
     ]
 
 
+def _candidate_with_invalid_behavior_refs(tmp_path) -> ChiefEngineerSemanticRepairCandidateV1:
+    seed = _candidate(tmp_path)
+    payload = json.loads(json.dumps(seed.candidate, ensure_ascii=False))
+    payload["construction_plan"]["shared_behavior_contract"]["invariants"] = [
+        {
+            "invariant_id": invariant_id,
+            "statement": "Production output preserves the declared behavior.",
+            "owner_task_id": "TASK-1",
+            "consumer_task_ids": ["TASK-2"],
+            "covered_obligation_ids": refs,
+            "verification_examples": [{"given": "valid input", "when": "run", "then": "valid output"}],
+        }
+        for invariant_id, refs in (
+            ("behavior-first", ["artifact-main", "unknown-first"]),
+            ("behavior-second", ["unknown-second"]),
+            ("behavior-valid", ["artifact-main"]),
+        )
+    ]
+    return ChiefEngineerSemanticRepairCandidateV1(
+        workspace=seed.workspace,
+        project_id=seed.project_id,
+        run_id=seed.run_id,
+        pm_contract_hash=seed.pm_contract_hash,
+        task_ids=seed.task_ids,
+        task_set_hash=seed.task_set_hash,
+        candidate=payload,
+    )
+
+
+def test_behavior_repair_context_localizes_every_invalid_existing_invariant(tmp_path) -> None:
+    candidate = _candidate_with_invalid_behavior_refs(tmp_path)
+    original_hash = candidate.candidate_hash
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=original_hash,
+        diagnostic_codes=("chief_engineer.shared_behavior_contract.invalid",),
+        allowed_operations=("behavior_invariant_upsert", "task_behavior_ref_replace"),
+    )
+
+    projected = project_chief_engineer_semantic_repair_provider_context(candidate, diagnosis, tasks=_tasks())
+
+    assert projected["invalid_behavior_obligation_references"] == [
+        {"invariant_id": "behavior-first", "unknown_completion_obligation_ids": ["unknown-first"]},
+        {"invariant_id": "behavior-second", "unknown_completion_obligation_ids": ["unknown-second"]},
+    ]
+    assert "same invariant_id" in projected["behavior_obligation_reference_repair_policy"]
+    assert candidate.candidate_hash == original_hash
+    assert candidate.candidate["construction_plan"]["shared_behavior_contract"]["invariants"][0][
+        "covered_obligation_ids"
+    ] == ["artifact-main", "unknown-first"]
+
+
+def test_partial_behavior_patch_reports_residual_invariant_and_unknown_ids(tmp_path) -> None:
+    candidate = _candidate_with_invalid_behavior_refs(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.shared_behavior_contract.invalid",),
+        allowed_operations=("behavior_invariant_upsert",),
+    )
+    corrected = ChiefEngineerBehaviorInvariantV1(
+        invariant_id="behavior-first",
+        statement="Production output preserves the declared behavior.",
+        owner_task_id="TASK-1",
+        consumer_task_ids=("TASK-2",),
+        covered_obligation_ids=("artifact-main",),
+        verification_examples=(ChiefEngineerBehaviorExampleV1(given="valid input", when="run", then="valid output"),),
+    )
+    patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        behavior_invariant_upserts=(corrected,),
+    )
+
+    with pytest.raises(ValueError, match="behavior invariant references unknown completion obligations") as error:
+        compose_chief_engineer_semantic_repair(candidate, diagnosis, patch, tasks=_tasks())
+
+    detail = json.loads(str(error.value).split(": ", 1)[1])
+    assert detail == [{"invariant_id": "behavior-second", "unknown_completion_obligation_ids": ["unknown-second"]}]
+    complete_patch = ChiefEngineerSemanticRepairPatchV1(
+        base_candidate_hash=candidate.candidate_hash,
+        diagnosis_hash=diagnosis.diagnosis_hash,
+        behavior_invariant_upserts=(
+            corrected,
+            ChiefEngineerBehaviorInvariantV1(
+                invariant_id="behavior-second",
+                statement=corrected.statement,
+                owner_task_id=corrected.owner_task_id,
+                consumer_task_ids=corrected.consumer_task_ids,
+                covered_obligation_ids=corrected.covered_obligation_ids,
+                verification_examples=corrected.verification_examples,
+            ),
+        ),
+    )
+    repaired, receipt = compose_chief_engineer_semantic_repair(candidate, diagnosis, complete_patch, tasks=_tasks())
+    assert receipt.changed_semantic_ids == ("behavior-first", "behavior-second")
+    assert repaired.candidate["risk_flags"] == candidate.candidate["risk_flags"]
+
+
+def test_nonbehavior_repair_does_not_project_unrelated_behavior_diagnostics(tmp_path) -> None:
+    candidate = _candidate_with_invalid_behavior_refs(tmp_path)
+    diagnosis = ChiefEngineerSemanticRepairDiagnosisV1(
+        candidate_hash=candidate.candidate_hash,
+        diagnostic_codes=("chief_engineer.delivery_depth.prod_files_below_minimum",),
+        allowed_operations=("artifact_upsert",),
+    )
+
+    projected = project_chief_engineer_semantic_repair_provider_context(candidate, diagnosis, tasks=_tasks())
+
+    assert "invalid_behavior_obligation_references" not in projected
+
+
 def test_provider_context_rejects_depth_patch_when_pm_authority_has_no_unused_or_expandable_path(tmp_path) -> None:
     candidate = _candidate(tmp_path)
     payload = json.loads(json.dumps(candidate.candidate, ensure_ascii=False))

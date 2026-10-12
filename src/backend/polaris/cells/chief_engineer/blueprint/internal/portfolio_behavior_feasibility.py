@@ -21,7 +21,7 @@ def validate_portfolio_behavior_feasibility(
     task_bindings: Mapping[str, Sequence[str]],
     completion_contract: Any,
 ) -> None:
-    """Require reference closure and source/test cross-owner behavior linkage."""
+    """Validate reference closure; runtime verification establishes behavioral coverage."""
 
     known_tasks = set(task_ids)
     if set(task_bindings) != known_tasks:
@@ -79,53 +79,6 @@ def validate_portfolio_behavior_feasibility(
             details={"invariant_ids": unknown_binding_refs},
         )
 
-    required_sources: dict[str, set[str]] = {}
-    required_tests: dict[str, set[str]] = {}
-    for artifact in completion_contract.obligations.artifacts:
-        if artifact.applicability != "required" or not artifact.owner_task_id:
-            continue
-        if artifact.semantic_role in {"source", "entrypoint"}:
-            required_sources.setdefault(artifact.owner_task_id, set()).add(artifact.obligation_id)
-        elif artifact.semantic_role == "test":
-            required_tests.setdefault(artifact.owner_task_id, set()).add(artifact.obligation_id)
-
-    required_test_coverage_by_verifier = {
-        verifier.obligation_id: set(verifier.covers_obligation_ids)
-        for verifier in completion_contract.obligations.verification
-        if verifier.applicability == "required" and verifier.modality == "test"
-    }
-
-    for test_owner, test_obligations in required_tests.items():
-        source_owners = set(required_sources) - {test_owner}
-        if not source_owners:
-            continue
-        linked = False
-        for invariant in invariants:
-            owner = str(invariant.get("owner_task_id") or "")
-            consumers = {str(item) for item in invariant.get("consumer_task_ids") or ()}
-            covered = {str(item) for item in invariant.get("covered_obligation_ids") or ()}
-            expanded_covered = covered | set().union(
-                *(required_test_coverage_by_verifier.get(obligation_id, set()) for obligation_id in covered)
-            )
-            if (
-                owner in source_owners
-                and test_owner in consumers
-                and bool(expanded_covered & required_sources[owner])
-                and bool(expanded_covered & test_obligations)
-            ):
-                linked = True
-                break
-        if not linked:
-            raise PortfolioBehaviorFeasibilityError(
-                "cross-task test ownership lacks a shared production behavior invariant",
-                details={
-                    "task_ids": sorted({test_owner, *source_owners}),
-                    "obligation_ids": sorted(
-                        test_obligations | set().union(*(required_sources[o] for o in source_owners))
-                    ),
-                    "invariant_ids": sorted(by_id),
-                },
-            )
 
 
 __all__ = ["PortfolioBehaviorFeasibilityError", "validate_portfolio_behavior_feasibility"]

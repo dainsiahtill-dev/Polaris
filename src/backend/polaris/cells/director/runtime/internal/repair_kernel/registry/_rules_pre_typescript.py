@@ -879,7 +879,8 @@ def pre_typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             archetype=RepairArchetype.WRONG_IMPORT_PATH,
             priority=1,
             diagnostic_codes=("javascript_module_error",),
-            message_terms=("cannot find module", ".js"),
+            message_terms=("cannot find module",),
+            message_any_terms=(".js", "imported from"),
             risk_level="low",
             description=(
                 "Repairs TypeScript source files whose local .js import specifiers break "
@@ -935,6 +936,19 @@ def pre_typescript_repair_rules() -> tuple[RepairRuleDefinition, ...]:
             raw_terms=("references missing local entrypoint",),
             risk_level="low",
             description="Repairs package.json script contracts from bench package-script diagnostics.",
+            runtime_plan_available=True,
+        ),
+        RepairRuleDefinition(
+            rule_id="javascript.npm_missing_compiled_entrypoint",
+            source_tool=NPM_SCRIPT_CONTRACT_SOURCE_TOOL,
+            language="javascript",
+            phase="runtime_smoke",
+            archetype=RepairArchetype.MISSING_DEPENDENCY,
+            priority=1,
+            diagnostic_codes=("javascript_module_error",),
+            metadata_terms={"script_issue": "missing_compiled_entrypoint"},
+            risk_level="low",
+            description="Repairs package scripts whose declared Node main differs from the TypeScript emitted path.",
             runtime_plan_available=True,
         ),
         RepairRuleDefinition(

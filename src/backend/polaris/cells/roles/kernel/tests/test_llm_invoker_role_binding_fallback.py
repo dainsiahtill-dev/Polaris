@@ -453,6 +453,74 @@ async def test_pm_rate_limit_falls_back_to_next_same_role_binding(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("raises", [True, False])
+async def test_pm_overload_retries_same_binding_with_fresh_preparation(
+    monkeypatch: pytest.MonkeyPatch, role_slots: None, raises: bool
+) -> None:
+    preparations: list[str] = []
+
+    async def prepare(self: LLMRequestPreparer, **kwargs: Any) -> PreparedLLMRequest:
+        profile = cast(RoleProfile, kwargs["profile"])
+        preparations.append(profile.provider_id)
+        return _prepared(profile)
+
+    monkeypatch.setattr(LLMRequestPreparer, "_prepare_llm_request", prepare)
+    executor = (_RaisingThenOkExecutor if raises else _Executor)("529 Server Error: overloaded_error")
+    invoker = LLMInvoker(workspace=".", enable_cache=False, executor=executor)
+    response = await invoker.call(
+        profile=_profile(),
+        system_prompt="system",
+        context=cast(Any, SimpleNamespace(task_id=None, context_override=None)),
+        run_id="overload-same-binding",
+    )
+    assert response.error is None
+    assert executor.calls == [("minimax-primary", "MiniMax-M3"), ("minimax-primary", "MiniMax-M3")]
+    assert preparations == ["minimax-primary", "minimax-primary"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget,expected_calls", [(0, 1), (1, 2)])
+async def test_single_binding_overload_respects_retry_budget(
+    monkeypatch: pytest.MonkeyPatch, role_slots: None, budget: int, expected_calls: int
+) -> None:
+    set_runtime_config_manager(
+        cast(
+            Any,
+            _RuntimeConfig(
+                (
+                    RoleBindingSlot(
+                        role_id="pm", provider_id="minimax-primary", model="MiniMax-M3", binding_id="pm-only"
+                    ),
+                )
+            ),
+        )
+    )
+
+    async def prepare(self: LLMRequestPreparer, **kwargs: Any) -> PreparedLLMRequest:
+        return _prepared(cast(RoleProfile, kwargs["profile"]))
+
+    class Overloaded:
+        calls = 0
+
+        async def invoke(self, _request: AIRequest, **_kwargs: Any) -> AIResponse:
+            self.calls += 1
+            raise RuntimeError("529 Server Error: overloaded_error")
+
+    monkeypatch.setattr(LLMRequestPreparer, "_prepare_llm_request", prepare)
+    executor = Overloaded()
+    response = await LLMInvoker(workspace=".", enable_cache=False, executor=executor).call(
+        profile=_profile(),
+        system_prompt="system",
+        context=cast(Any, SimpleNamespace(task_id=None, context_override=None)),
+        run_id="single-binding-overload",
+        platform_retry_max=budget,
+    )
+    assert executor.calls == expected_calls
+    assert response.error and "overloaded_error" in response.error
+    assert response.error_category == "network"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "provider_error",
     [

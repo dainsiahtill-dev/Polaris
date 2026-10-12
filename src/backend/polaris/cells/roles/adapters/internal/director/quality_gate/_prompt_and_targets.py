@@ -12,6 +12,7 @@ import contextlib
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shlex
 import time
@@ -25,14 +26,20 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptIdentityV1,
 )
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.fs.guarded_regular_file_snapshot import (
+    GuardedRegularFileSnapshotError,
+    read_guarded_regular_file_snapshot,
+)
 from polaris.kernelone.quality import (
     artifact_quality_issue_raw,
     artifact_quality_issues_for_errors,
     artifact_quality_issues_from_errors,
     build_scope_authority_decision,
+    build_symbol_index_snapshot,
     partition_paths_by_declared_scope,
     scope_authority_decision_summary,
 )
+from polaris.kernelone.quality.interface_ledger import WorkspaceTextReadSnapshot
 
 from .. import execute_method as _em
 from ..artifact_quality_diagnostics import (
@@ -1565,7 +1572,7 @@ def _cpp_included_header_api_block(
 
 
 _TS_TSC_SITE_RE = re.compile(
-    r"(?m)^(?P<path>(?:src|tests|lib|app)/[^\s:()]+?\.(?:ts|tsx|mts|cts))\((?P<line>\d+),\d+\):\s+error\s+TS(?P<code>\d+)",
+    r"(?m)^(?P<path>[^\s:()]+?\.(?:ts|tsx|mts|cts))\((?P<line>\d+),\d+\):\s+error\s+TS(?P<code>\d+)",
     re.IGNORECASE,
 )
 _TS_CALL_IDENT_RE = re.compile(r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(")
@@ -1676,47 +1683,141 @@ def _typescript_export_function_refs(
     return found
 
 
+_TS_CURRENT_API_MAX_FILES = 8
+_TS_CURRENT_API_MAX_FILE_BYTES = 64 * 1024
+_TS_CURRENT_API_MAX_TOTAL_BYTES = 128 * 1024
+_TS_RELATIVE_MODULE_RE = re.compile(r"(?m)^\s*(?:import|export)\b[^;]*?\bfrom\s*['\"](?P<specifier>\.\.?/[^'\"]+)['\"]")
+
+
+class _TypeScriptApiReadSnapshot:
+    """Bound existing static parsing to exact, no-follow UTF-8 source bytes."""
+
+    def __init__(self, workspace: Path) -> None:
+        self.root = workspace.resolve()
+        self._api_reads: dict[str, WorkspaceTextReadSnapshot] = {}
+        self._api_bytes = 0
+        self._api_files = 0
+
+    def raw_read(self, path: Path) -> WorkspaceTextReadSnapshot:
+        key = str(path)
+        if key in self._api_reads:
+            return self._api_reads[key]
+        try:
+            rel = path.relative_to(self.root).as_posix()
+            if self._api_files >= _TS_CURRENT_API_MAX_FILES:
+                raise ValueError("current_api_file_budget_exhausted")
+            remaining = _TS_CURRENT_API_MAX_TOTAL_BYTES - self._api_bytes
+            snapshot = read_guarded_regular_file_snapshot(
+                self.root, rel, min(_TS_CURRENT_API_MAX_FILE_BYTES, remaining)
+            )
+            text = snapshot.content.decode("utf-8", errors="strict")
+            self._api_bytes += snapshot.size
+            self._api_files += 1
+            result = WorkspaceTextReadSnapshot(
+                path=key,
+                status="readable",
+                text=text,
+                content_sha256=hashlib.sha256(snapshot.content).hexdigest(),
+            )
+        except (GuardedRegularFileSnapshotError, OSError, UnicodeDecodeError, ValueError) as exc:
+            result = WorkspaceTextReadSnapshot(path=key, status="unreadable", detail=str(exc))
+        self._api_reads[key] = result
+        return result
+
+    def read(self, path: Path) -> WorkspaceTextReadSnapshot:
+        raw = self.raw_read(path)
+        # The existing interface scanner omits whole type-only imports for
+        # runtime coherence. This read-only parse projection retains those edges
+        # for API context; rendered bodies and hashes always remain the raw bytes.
+        text = re.sub(r"\bimport\s+type\s+(?=\{)", "import ", raw.text)
+        return WorkspaceTextReadSnapshot(
+            path=raw.path,
+            status=raw.status,
+            detail=raw.detail,
+            text=text,
+            content_sha256=raw.content_sha256,
+        )
+
+
+def _typescript_relative_api_source(
+    workspace: Path, importer: str, specifier: str, reader: _TypeScriptApiReadSnapshot
+) -> str:
+    rel = posixpath.normpath(posixpath.join(posixpath.dirname(importer), specifier))
+    if (
+        rel.startswith(("../", "/"))
+        or "\\" in rel
+        or any(part in {"node_modules", "dist", "build", ".polaris", ".git"} for part in rel.split("/"))
+    ):
+        return ""
+    suffix = Path(rel).suffix.lower()
+    if suffix in {".js", ".mjs", ".cjs"}:
+        stem = rel[: -len(suffix)]
+        candidates = [stem + ".ts", stem + ".tsx", rel]
+    elif suffix in {".ts", ".tsx"}:
+        candidates = [rel]
+    elif not suffix:
+        candidates = [rel + ".ts", rel + ".tsx", rel + "/index.ts", rel + "/index.tsx"]
+    else:
+        return ""
+    return next((path for path in candidates if reader.raw_read(workspace / path).status == "readable"), "")
+
+
 def _typescript_callee_definition_refs(
     *,
     workspace: Path,
     artifact_quality_errors: Sequence[str],
     repair_targets: set[str],
+    reader: _TypeScriptApiReadSnapshot | None = None,
 ) -> list[tuple[str, int]]:
-    """Map tsc TS2554/TS2345/TS2322 use-sites onto existing exported callees.
+    """Follow bounded compiler-consumer relative imports, including types/barrels.
 
-    Live L2-17 remint-4: eight TASK-2 rounds saw ``restock(inventory, Item, …)``
-    and ``DomainResult<Inventory>`` assigned into ``Inventory`` without the
-    existing ``export function restock(…, itemId: ItemId, …)`` / ``isOk``
-    signatures. rustc/g++ already project definition homes; tsc does not.
+    Complete current module bodies supply constructors, methods and returned-type
+    fields. Parent document snapshots remain auxiliary; no source root is assumed.
     """
-
-    names: list[str] = []
-    for error in artifact_quality_errors:
-        for match in _TS_TSC_SITE_RE.finditer(str(error or "")):
-            rel = _normalize_declared_task_path(match.group("path"))
-            if not rel:
-                continue
-            try:
-                line_number = max(1, int(match.group("line")))
-                source = (workspace / rel).resolve()
-                source.relative_to(workspace)
-                if not source.is_file():
-                    continue
-                lines = source.read_text(encoding="utf-8").splitlines()
-            except (OSError, RuntimeError, TypeError, UnicodeDecodeError, ValueError):
-                continue
-            for name in _typescript_call_names_near_line(lines, line_number):
-                if name not in names:
-                    names.append(name)
-    if _typescript_residuals_need_result_unwrap(artifact_quality_errors):
-        for name in ("isOk", "ok", "err"):
-            if name not in names:
-                names.append(name)
-    return _typescript_export_function_refs(
-        workspace=workspace,
-        names=names,
-        repair_targets=repair_targets,
-    )
+    workspace = workspace.resolve()
+    reader = reader or _TypeScriptApiReadSnapshot(workspace)
+    consumers = list(
+        dict.fromkeys(
+            rel
+            for error in artifact_quality_errors
+            for match in _TS_TSC_SITE_RE.finditer(str(error or ""))
+            if (rel := _normalize_declared_task_path(match.group("path")))
+        )
+    )[:_TS_CURRENT_API_MAX_FILES]
+    pending = list(consumers)
+    source_paths: list[str] = []
+    while pending and len(source_paths) < _TS_CURRENT_API_MAX_FILES:
+        rel = pending.pop(0)
+        if rel in source_paths:
+            continue
+        text = reader.raw_read(workspace / rel)
+        if text.status != "readable":
+            continue
+        source_paths.append(rel)
+        for match in list(_TS_RELATIVE_MODULE_RE.finditer(text.text))[:_TS_CURRENT_API_MAX_FILES]:
+            owner = _typescript_relative_api_source(workspace, rel, match["specifier"], reader)
+            if owner and owner not in source_paths and owner not in pending:
+                pending.append(owner)
+    if not source_paths:
+        return []
+    index = build_symbol_index_snapshot(workspace, source_paths=source_paths, reader=reader)
+    reachable = list(consumers)
+    visited: set[str] = set()
+    refs: list[tuple[str, int]] = []
+    while reachable and len(visited) < _TS_CURRENT_API_MAX_FILES:
+        rel = reachable.pop(0)
+        if rel in visited:
+            continue
+        visited.add(rel)
+        if rel not in repair_targets and index.physical_exports.get(rel):
+            refs.append((rel, 1))
+        for edge in index.imports:
+            if edge.importer_path == rel and edge.resolved_owner_path:
+                reachable.append(edge.resolved_owner_path)
+        for symbol in index.namespace_exports.get(rel, ()):
+            if symbol.reexported_from:
+                reachable.append(symbol.reexported_from)
+    return refs[:_TS_CURRENT_API_MAX_FILES]
 
 
 def _javascript_tap_residuals_need_callee_contract(errors: Sequence[str]) -> bool:
@@ -2056,13 +2157,16 @@ def _diagnostic_referenced_definition_context_block(
     ):
         if ref not in refs:
             refs.append(ref)
-    for ref in _typescript_callee_definition_refs(
+    api_reader = _TypeScriptApiReadSnapshot(workspace)
+    typescript_api_refs = _typescript_callee_definition_refs(
         workspace=workspace,
         artifact_quality_errors=artifact_quality_errors,
         repair_targets=repair_targets,
-    ):
-        if ref not in refs:
-            refs.append(ref)
+        reader=api_reader,
+    )
+    # Prioritize current consumer-imported API over advisory/other definition
+    # hints while sharing the original eight-ref / 16000-character budget.
+    refs = [*typescript_api_refs, *(ref for ref in refs if ref not in typescript_api_refs)]
     for ref in _javascript_callee_definition_refs(
         workspace=workspace,
         artifact_quality_errors=artifact_quality_errors,
@@ -2076,23 +2180,37 @@ def _diagnostic_referenced_definition_context_block(
     used = 0
     for rel, line_number in refs[:8]:
         try:
-            source_path = (workspace / rel).resolve()
-            source_path.relative_to(workspace)
-            lines = source_path.read_text(encoding="utf-8").splitlines()
-        except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+            if (rel, line_number) in typescript_api_refs:
+                current = api_reader.raw_read(workspace / rel)
+                if current.status != "readable":
+                    continue
+                lines = current.text.splitlines()
+            else:
+                source_path = (workspace / rel).resolve()
+                source_path.relative_to(workspace)
+                lines = source_path.read_text(encoding="utf-8").splitlines()
+        except (GuardedRegularFileSnapshotError, OSError, RuntimeError, UnicodeDecodeError, ValueError):
             continue
         # Include the impl method list after a struct/enum, not just the
         # header. Live Budget ``pub struct`` at L74 hid ``spendable`` at L107
         # behind a 24-line window.
-        start = max(0, line_number - 8)
-        end = min(len(lines), line_number + 80)
+        start = 0 if (rel, line_number) in typescript_api_refs else max(0, line_number - 8)
+        end = len(lines) if (rel, line_number) in typescript_api_refs else min(len(lines), line_number + 80)
         excerpt = "\n".join(f"{index + 1}: {lines[index]}" for index in range(start, end))
         remaining = max(0, total_budget - used)
         if remaining <= 0:
             break
+        if (rel, line_number) in typescript_api_refs and len(excerpt) > remaining:
+            blocks.append(f"--- {rel} CURRENT API OMITTED: exact body exceeds remaining context budget ---")
+            continue
         excerpt = excerpt[:remaining]
         used += len(excerpt)
-        blocks.append(f"--- {rel} around line {line_number} (READ-ONLY DEFINITION) ---\n```text\n{excerpt}\n```")
+        identity = ""
+        if (rel, line_number) in typescript_api_refs:
+            identity = f" CURRENT UTF-8 API sha256={api_reader.raw_read(workspace / rel).content_sha256}"
+        blocks.append(
+            f"--- {rel} around line {line_number} (READ-ONLY DEFINITION){identity} ---\n```text\n{excerpt}\n```"
+        )
     blocks.extend(
         _go_same_package_definition_context_blocks(
             workspace=workspace,
@@ -2128,7 +2246,8 @@ def _diagnostic_referenced_definition_context_block(
     ):
         typescript_result_note = (
             "If tsc TS2554/TS2345 names a call, use the existing exported "
-            "function signature below. Change the call-site arguments to match; "
+            "function or class API below, including constructor parameters, method return types and their fields. "
+            "Current UTF-8 source definitions supersede document examples. Change the call-site arguments to match; "
             "never invent a new overload or domain helper. If tsc TS2322/TS2352 "
             "says DomainResult<T> or DomainOk<U> is not assignable to T, unwrap "
             "with the workspace isOk/ok helpers already exported. Never assign a "
@@ -2214,7 +2333,7 @@ def _resolve_quality_error_module_target(
             return ""
         target_rel = target.relative_to(root).as_posix()
         if Path(target_rel).suffix.lower() in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES:
-            return target_rel
+            return str(target_rel)
         return ""
 
     module_path = module.replace(".", "/")
@@ -2561,7 +2680,7 @@ def _manifest_causal_quality_repair_targets(
     artifact_quality_errors: list[str],
     workspace_full: str,
 ) -> tuple[list[str], list[str]]:
-    """Identify an existing Node test manifest whose TS peer is not emitted.
+    """Identify a manifest-owned missing Node output or test emission defect.
 
     This discovery is read-only and deliberately narrow: an actual missing
     Node test reference, the exact package script, and a source-only compiler
@@ -2584,6 +2703,18 @@ def _manifest_causal_quality_repair_targets(
         options = tsconfig.get("compilerOptions")
         if not isinstance(scripts, dict) or not isinstance(options, dict):
             return [], []
+        for issue in artifact_quality_issues_from_errors(tuple(artifact_quality_errors)):
+            metadata = issue.get("metadata") or {}
+            if metadata.get("script_issue") != "missing_compiled_entrypoint":
+                continue
+            script_name = str(metadata.get("script_name") or "")
+            entrypoint = str(metadata.get("entrypoint") or "")
+            command = scripts.get(script_name)
+            if not entrypoint or not isinstance(command, str):
+                continue
+            tokens = shlex.split(command)
+            if entrypoint in tokens and "node" in tokens:
+                return ["package.json"], [entrypoint]
         script = scripts.get("test")
         root_dir = options.get("rootDir")
         include = tsconfig.get("include")
@@ -3134,8 +3265,7 @@ def _build_materialization_quality_repair_message(
             "EXISTING FAILED TARGET FILES — repair these exact paths NOW. Prefer edit_file search/replace "
             "for the minimal lines needed to satisfy the quality errors; use write_file only when you emit "
             "a complete corrected file body that preserves unrelated existing code. Use the CURRENT UTF-8 "
-            "CONTENT block below to choose exact edit_file SEARCH strings; if the tool policy requires a "
-            "fresh read before edit_file, read the target file first and then apply the edit:\n"
+            "CONTENT block below to choose exact edit_file SEARCH strings. Use the tools supplied for this turn:\n"
             f"{repair_lines}\n"
         )
         if len(existing_repair_target_files) == 1:
@@ -3147,8 +3277,7 @@ def _build_materialization_quality_repair_message(
                 "- For edit_file, use an exact SEARCH string copied from the CURRENT UTF-8 CONTENT block below.\n"
                 "- If edit_file is not enough, write_file must contain the complete corrected UTF-8 file body, "
                 "not a shortened replacement.\n"
-                "- If using edit_file, call read_file for this target first when required by tool policy. "
-                "Do not list directories. Do not explore. Do not explain.\n"
+                "- The current target content is supplied below; use the callable edit tool for this turn.\n"
             )
     prompt_repair_target_files = [*(missing_target_files or []), *existing_repair_target_files]
     authorized_tool_path_block = ""
@@ -3473,13 +3602,12 @@ def _build_materialization_quality_repair_message(
     npm_manifest_block = ""
     if "npm package manifest" in runtime_smoke_text or "npm default failing test script" in runtime_smoke_text:
         npm_manifest_block = (
-            "NPM PACKAGE MANIFEST REPAIR: if package.json is the repair target, emit one complete "
-            "strict JSON file body. JSON keys and string values must use double quotes; do not output "
-            "JavaScript object syntax or comments. If there is no real test/spec file in the workspace, "
-            "do not use jest, vitest, mocha, or ava in the test script. Make `npm test` run a concrete "
-            "local check that exists now, such as a node-based package/runtime check or an existing "
-            "verification script. The test script must not be placeholder-only and must exit non-zero "
-            "when the checked rule fails.\n"
+            "NPM PACKAGE MANIFEST REPAIR: repair only the fields and scripts named in Quality errors. "
+            "Preserve unrelated scripts and dependencies. Prefer an exact edit_file change using CURRENT "
+            "UTF-8 CONTENT; if write_file is offered and needed, emit the complete strict JSON file body. "
+            "For a missing script entrypoint, use existing or declared deliverables, not an invented helper "
+            "file. An extra script may be removed only if the task contract does not require it. "
+            "Keep required verification commands substantive and runnable.\n"
         )
     forbidden_marker_block = ""
     if (

@@ -1772,7 +1772,7 @@ def test_npm_script_contract_uses_typed_typescript_source_loader_metadata() -> N
     assert plan.operations[0].value == "npm run build && node dist/index.js"
 
 
-def test_npm_script_contract_repairs_strip_types_test_runner_to_compiled_verifier() -> None:
+def test_npm_script_contract_repairs_strip_types_runner_to_compiled_authored_test() -> None:
     package_text = json.dumps(
         {
             "name": "sample",
@@ -1797,7 +1797,7 @@ def test_npm_script_contract_repairs_strip_types_test_runner_to_compiled_verifie
     diagnostics = normalize_artifact_quality_errors([raw_error])
     base_files = {
         "package.json": package_text,
-        "tsconfig.json": "{}\n",
+        "tsconfig.json": '{"compilerOptions":{"rootDir":".","outDir":"dist"}}\n',
         "src/index.ts": "export {};\n",
         "src/verify.ts": "export {};\n",
         "tests/verify.test.ts": "export {};\n",
@@ -1821,11 +1821,11 @@ def test_npm_script_contract_repairs_strip_types_test_runner_to_compiled_verifie
     assert plan.source_tool == "deterministic_npm_script_contract_repair"
     assert [operation.kind for operation in plan.operations] == ["json_set"]
     assert plan.operations[0].json_path == ("scripts", "test")
-    assert plan.operations[0].value == "npm run build && node dist/verify.js"
+    assert plan.operations[0].value == "npm run build && node --test dist/tests/verify.test.js"
     composition = PatchComposer().compose(base_files, plan.operations)
     assert composition.ok
     repaired = json.loads(composition.patches[0].content_after)
-    assert repaired["scripts"]["test"] == "npm run build && node dist/verify.js"
+    assert repaired["scripts"]["test"] == "npm run build && node --test dist/tests/verify.test.js"
 
 
 def test_npm_script_contract_public_run_records_receipt_revalidation_evidence(tmp_path: Path) -> None:

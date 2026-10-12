@@ -149,6 +149,19 @@ def _compiled_typescript_entrypoint_for_missing(
     for candidate in candidates:
         if candidate in base_files:
             return _compiled_typescript_output_path(base_files, candidate)
+    out_dir = _normalize_repair_path(_typescript_compiler_option(base_files, "outDir") or "dist")
+    try:
+        relative_missing = missing_path.relative_to(out_dir)
+    except ValueError:
+        relative_missing = missing_path
+    suffixes = tuple(relative_missing.with_suffix(suffix).as_posix() for suffix in (".ts", ".tsx"))
+    nested_candidates = [
+        path for path in base_files if any(path == suffix or path.endswith("/" + suffix) for suffix in suffixes)
+    ]
+    if len(nested_candidates) == 1:
+        return _compiled_typescript_output_path(base_files, nested_candidates[0])
+    if len(nested_candidates) > 1:
+        return ""
     return _compiled_typescript_entrypoint(base_files, package_payload)
 
 
@@ -163,7 +176,7 @@ def _compiled_typescript_output_path(base_files: Mapping[str, str], source_entry
         prefix = f"{normalized_root.rstrip('/')}/"
         if source_path.startswith(prefix):
             relative_source = source_path.removeprefix(prefix)
-    elif not normalized_root and source_path.startswith("src/"):
+    elif not root_dir and source_path.startswith("src/"):
         relative_source = source_path.removeprefix("src/")
     return f"{normalized_out.rstrip('/')}/{PurePosixPath(relative_source).with_suffix('.js').as_posix()}"
 

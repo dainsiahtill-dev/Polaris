@@ -228,8 +228,7 @@ def validate_tool_write_policy(
                 if (
                     scripts_diff is not None
                     and scripts_diff.removed
-                    and not scripts_diff.added
-                    and not scripts_diff.changed
+                    and not _dict_section(_parse_json_object(package_after).get("scripts"))
                 ):
                     reasons.append("package.json writes may not remove all existing scripts")
                 # First create of package.json may declare future helper scripts.

@@ -38,6 +38,36 @@ async def test_session_runs_shared_group_from_real_owner_baseline(tmp_path: Path
         session.close()
 
 
+@pytest.mark.asyncio
+async def test_each_command_result_keeps_its_own_record_without_repeating_group_history(
+    tmp_path: Path, authored: tuple
+) -> None:
+    _, contract, _ = authored
+    session = NativeValidationSession(
+        workspace=tmp_path,
+        project_id=contract.project_id,
+        run_id=contract.run_id,
+        completion_contract_hash=contract.contract_hash,
+    )
+    try:
+        results = [
+            await session.run_command(["/bin/cat", "src/a.py"], 3),
+            await session.run_command(["/bin/sh", "-c", "printf second"], 3),
+            await session.run_command(["/bin/false"], 3),
+        ]
+        assert [row["exit_code"] for row in results] == [0, 0, 1]
+        assert [row["passed"] for row in results] == [True, True, False]
+        assert [row["stdout_tail"] for row in results] == ["before\n", "second", ""]
+        assert [len(row["verification_group"]["commands"]) for row in results] == [1, 1, 1]
+        assert [row["verification_group"]["commands"][0]["exit_code"] for row in results] == [0, 0, 1]
+        group_history = session.group.effects_summary()["commands"]
+        assert len(group_history) == 3
+        assert [row["verification_group"]["commands"][0] for row in results] == group_history
+        assert all(row["verification_group"]["drain_status"] == "owner_terminal" for row in results)
+    finally:
+        session.close()
+
+
 def test_session_never_copies_unknown_compiler_files(tmp_path: Path, authored: tuple) -> None:
     _, contract, fs = authored
     fs.workspace_write_text("tests/unknown.js", "not authored", encoding="utf-8")

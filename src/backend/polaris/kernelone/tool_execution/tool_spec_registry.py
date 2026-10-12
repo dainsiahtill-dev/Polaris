@@ -1497,7 +1497,7 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
     },
     "edit_file": {
         "category": "write",
-        "description": "Edit a file using one of three modes: 1) Line range mode (start_line+end_line+content), 2) Search-and-replace mode (search+replace), 3) SEARCH/REPLACE block mode (blocks). Block mode is recommended for complex edits.",
+        "description": "Edit a file using one of three modes: 1) Line range mode (start_line+end_line+content), 2) Search-and-replace mode (search+replace), 3) SEARCH/REPLACE block mode (blocks). Block mode is recommended for complex edits. search is the exact old text; replace is the new text. Paired oldText/newText aliases are accepted, with replace='all' as an all-occurrences selector only when both old and new operands are supplied. With no search operand, replace=<exact old text> plus newCode=<new text> is a literal old/new pair. Conflicting operands are rejected. replace_all=true replaces all exact matching occurrences.",
         "aliases": ["file_edit", "modify_file", "update_file", "patch_file"],
         "arg_aliases": {
             "filepath": "file",
@@ -1548,6 +1548,7 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
                 "description": "SEARCH/REPLACE block format for complex edits",
             },
             {"name": "regex", "type": "boolean", "required": False, "default": False},
+            {"name": "replace_all", "type": "boolean", "required": False, "default": False},
         ],
         "response_format_hint": "Edit confirmation with lines changed or blocks applied",
         # Provider-facing contract: ``file`` alone is not a mutation.  At least

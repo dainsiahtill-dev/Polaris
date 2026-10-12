@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
+from polaris.kernelone.quality.verification_commands import require_verification_command_proof
+
 _PROVENANCE_MAX_IDENTITY_BYTES = 256
 _PROVENANCE_MAX_PATH_BYTES = 1024
 _PROVENANCE_MAX_TARGET_FILES = 512
@@ -154,83 +156,9 @@ def _project_kind_authority_hash(
     return hashlib.sha256(encoded).hexdigest()
 
 
-_NON_PROOF_EXECUTABLES = frozenset(
-    {
-        ":",
-        "echo",
-        "false",
-        "noop",
-        "no-op",
-        "printf",
-        "true",
-        "pwd",
-        "which",
-        "where",
-        "whereis",
-    }
-)
-_INTROSPECTION_ARGUMENTS = frozenset({"--help", "-h", "help", "--version", "-V", "version"})
-_INTROSPECTION_TOOL_EXECUTABLES = frozenset(
-    {
-        "bun",
-        "cargo",
-        "cmake",
-        "deno",
-        "dotnet",
-        "go",
-        "java",
-        "javac",
-        "mvn",
-        "node",
-        "npm",
-        "npx",
-        "php",
-        "pip",
-        "pip3",
-        "pnpm",
-        "pytest",
-        "python",
-        "python3",
-        "ruby",
-        "ruff",
-        "rustc",
-        "tsc",
-        "yarn",
-    }
-)
-_SHORT_VERSION_EXECUTABLES = frozenset(
-    {"bun", "deno", "go", "java", "node", "npm", "php", "python", "python3", "ruby", "rustc"}
-)
-_INLINE_INTERPRETER_FLAGS = frozenset({"-c", "-e", "--eval"})
-_NOOP_INLINE_PROGRAMS = frozenset(
-    {
-        "0",
-        "pass",
-        "print('ok')",
-        'print("ok")',
-        "exit(0)",
-        "sys.exit(0)",
-        "console.log('ok')",
-        'console.log("ok")',
-    }
-)
-
-
 def _require_verification_command_proof(argv: tuple[str, ...]) -> None:
-    """Reject commands that can succeed without proving any delivery work."""
-
-    executable = PurePosixPath(argv[0].replace("\\", "/")).name.casefold()
-    if executable in _NON_PROOF_EXECUTABLES:
-        raise ValueError("verification command must provide proof-of-work, not a no-op")
-    introspection_requested = any(argument in _INTROSPECTION_ARGUMENTS for argument in argv[1:])
-    if introspection_requested and (len(argv) == 2 or executable in _INTROSPECTION_TOOL_EXECUTABLES):
-        raise ValueError("verification command must provide proof-of-work, not help/version introspection")
-    if len(argv) == 2 and argv[1] == "-v" and executable in _SHORT_VERSION_EXECUTABLES:
-        raise ValueError("verification command must provide proof-of-work, not version introspection")
-    if len(argv) >= 3 and argv[1] in _INLINE_INTERPRETER_FLAGS:
-        inline_program = " ".join(argv[2:]).strip().casefold().rstrip(";")
-        if inline_program in _NOOP_INLINE_PROGRAMS:
-            raise ValueError("verification command must provide proof-of-work, not an inline no-op")
+    """Delegate proof rejection while retaining CE command authority."""
+    require_verification_command_proof(argv)
 
 
 def _require_provenance_text(name: str, value: object, *, max_utf8_bytes: int) -> str:

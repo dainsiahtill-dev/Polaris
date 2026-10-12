@@ -8,17 +8,26 @@ from difflib import SequenceMatcher
 from pathlib import PurePosixPath
 from typing import Any
 
+from polaris.kernelone.quality.artifact_quality import _ts_js_code_mask
+
 from ..contracts import RepairDiagnostic, RepairOperation, RepairPlan, sha256_text
 from ..javascript_syntax import repair_javascript_export_contract_placeholders
 from ..path_files import normalize_base_files_strict, normalize_repair_path_strict
-from .constants import *  # noqa: F403
 from .common import *  # noqa: F403
-from .common.misc_ops import _typescript_identifier_used_outside_span, _typescript_import_pairs_from_clause
+from .common.import_text_ops import _parse_named_import_symbols
+from .common.misc_ops import (
+    _resolve_relative_ts_module_path,
+    _typescript_identifier_used_outside_span,
+    _typescript_import_pairs_from_clause,
+)
 from .common.path_ops import _normalize_repair_path
 from .common.plan_ops import _text_replace_operations_from_repair
+from .constants import *  # noqa: F403
+from .constants import _TS_NAMED_REEXPORT_RE
 from .module_binding_proof import ModuleBindingFacts, parse_module_binding_facts
 
 """TypeScript syntax repair module: imports_exports."""
+
 
 def _build_typescript_import_specifier_keyword_plan(
     *,
@@ -56,6 +65,7 @@ def _build_typescript_import_specifier_keyword_plan(
         mode=mode,
         metadata={"files": repaired_files},
     )
+
 
 def _build_typescript_missing_export_plan(
     *,
@@ -99,6 +109,7 @@ def _build_typescript_missing_export_plan(
         mode=mode,
         metadata={"exports": exports},
     )
+
 
 def _build_typescript_reexport_plan(
     *,
@@ -161,6 +172,7 @@ def _build_typescript_reexport_plan(
         mode=mode,
         metadata={"reexports": reexports},
     )
+
 
 def _build_typescript_export_ambiguity_plan(
     *,
@@ -250,6 +262,7 @@ def _build_typescript_export_ambiguity_plan(
         metadata={"explicit_reexports": repaired},
     )
 
+
 def _build_typescript_reexported_type_binding_plan(
     *,
     base_files: Mapping[str, str],
@@ -303,6 +316,7 @@ def _build_typescript_reexported_type_binding_plan(
         metadata={"imports": imports},
     )
 
+
 def _build_typescript_relative_import_case_plan(
     *,
     base_files: Mapping[str, str],
@@ -317,6 +331,7 @@ def _build_typescript_relative_import_case_plan(
         rule_id="typescript.relative_import_case",
         mode_filter="case",
     )
+
 
 def _build_typescript_unique_export_import_plan(
     *,
@@ -350,6 +365,7 @@ def _build_typescript_unique_export_import_plan(
         mode_filter="unique_export",
     )
 
+
 def _import_type_value_conflict_symbols(
     diagnostics: Sequence[RepairDiagnostic],
 ) -> dict[str, set[str]]:
@@ -377,6 +393,7 @@ def _import_type_value_conflict_symbols(
         if path and _TS_IDENTIFIER_RE.fullmatch(symbol):
             targets.setdefault(path, set()).add(symbol)
     return targets
+
 
 def _rewrite_import_type_value_conflict_content(
     *,
@@ -511,6 +528,7 @@ def _rewrite_import_type_value_conflict_content(
         i += 1
     return "".join(lines), rewrites
 
+
 def _build_typescript_import_type_value_conflict_plan(
     *,
     base_files: Mapping[str, str],
@@ -567,6 +585,7 @@ def _build_typescript_import_type_value_conflict_plan(
         metadata={"import_type_value_conflicts": rewrites},
     )
 
+
 def _build_typescript_duplicate_export_import_binding_plan(
     *,
     base_files: Mapping[str, str],
@@ -608,6 +627,7 @@ def _build_typescript_duplicate_export_import_binding_plan(
         metadata={"duplicate_export_import_bindings": repaired},
     )
 
+
 def _build_typescript_unused_import_plan(
     *,
     base_files: Mapping[str, str],
@@ -642,6 +662,7 @@ def _build_typescript_unused_import_plan(
         mode=mode,
         metadata={"imports": import_repairs, "parameters": parameter_repairs},
     )
+
 
 def _repair_typescript_embedded_import_type_declarations(
     original: str,
@@ -714,6 +735,7 @@ def _repair_typescript_embedded_import_type_declarations(
         return str(original or ""), ()
     return "".join(output), tuple(replacements)
 
+
 def _repair_typescript_import_specifier_keywords(original: str) -> tuple[str, tuple[dict[str, str], ...]]:
     text, embedded_replacements = _repair_typescript_embedded_import_type_declarations(str(original or ""))
     replacements: list[dict[str, str]] = []
@@ -740,6 +762,7 @@ def _repair_typescript_import_specifier_keywords(original: str) -> tuple[str, tu
         return text, tuple(replacements)
     pieces.append(text[cursor:])
     return "".join(pieces), tuple(replacements)
+
 
 def _typescript_remove_named_import_binding_anywhere(
     *,
@@ -795,6 +818,7 @@ def _typescript_remove_named_import_binding_anywhere(
         )
     return None
 
+
 def _parse_typescript_missing_export_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     for diagnostic in diagnostics:
@@ -810,9 +834,7 @@ def _parse_typescript_missing_export_errors(diagnostics: Sequence[RepairDiagnost
                 groups = match.groupdict()
                 parsed.append(
                     {
-                        "file": _normalize_repair_path(
-                            str(groups.get("path") or groups.get("file") or "")
-                        ),
+                        "file": _normalize_repair_path(str(groups.get("path") or groups.get("file") or "")),
                         "module": module,
                         "symbol": str(match.group("symbol") or "").strip(),
                         "suggestion": str(groups.get("suggestion") or "").strip(),
@@ -820,6 +842,7 @@ def _parse_typescript_missing_export_errors(diagnostics: Sequence[RepairDiagnost
                     }
                 )
     return [item for item in parsed if item["file"] and item["module"] and item["symbol"]]
+
 
 def _missing_export_operation(
     *,
@@ -833,12 +856,37 @@ def _missing_export_operation(
     if not exporter or not _TS_IDENTIFIER_RE.fullmatch(symbol):
         return None, {}
     original = str(base_files.get(exporter) or "")
-    if _typescript_module_exports_symbol(original, symbol):
+    current_exports = parse_module_binding_facts(original)
+    if (current_exports is not None and symbol in current_exports.runtime_exports) or _typescript_module_exports_symbol(
+        original, symbol
+    ):
         return None, {}
     importer_text = str(base_files.get(importer) or "")
+    current_imports = parse_module_binding_facts(importer_text)
+    current_edge = current_imports is not None and any(
+        statement.supported
+        and _resolve_relative_ts_module_path(importer, statement.specifier, base_files) == exporter
+        and any(binding.imported == symbol for binding in statement.bindings)
+        for statement in current_imports.imports
+    )
+    if current_imports is not None and not current_edge:
+        code_mask = _ts_js_code_mask(importer_text)
+        current_edge = any(
+            code_mask[match.start()]
+            and _resolve_relative_ts_module_path(importer, str(match.group("module") or ""), base_files) == exporter
+            and any(
+                imported == symbol
+                for imported, _local in _typescript_import_pairs_from_clause(
+                    "{" + str(match.group("symbols") or "") + "}"
+                )
+            )
+            for match in _TS_NAMED_REEXPORT_RE.finditer(importer_text)
+        )
+    if not current_edge:
+        return None, {"file": importer, "symbol": symbol, "kind": "stale_import_diagnostic"}
     suggestion = str(item.get("suggestion") or "").strip()
-    if not suggestion:
-        suggestion = _find_typescript_similar_runtime_declaration(original, symbol)
+    # Prefix resemblance is not proof of an API contract. In particular,
+    # an error factory must never be exported as a domain object factory.
     # R176/M10: unused_local mis-prefixed import (`_HumidityBand`) → TS2724 with
     # suggestion `HumidityBand` that already exports. Remove phantom import binding
     # on the importer instead of forging a underscore export alias.
@@ -952,6 +1000,7 @@ def _missing_export_operation(
     )
     return (ops[0], {"file": exporter, "symbol": symbol, "kind": declaration_kind}) if len(ops) == 1 else (None, {})
 
+
 def _build_typescript_missing_export_declaration(
     *,
     symbol: str,
@@ -968,6 +1017,7 @@ def _build_typescript_missing_export_declaration(
     # task perform an evidence-backed edit.
     del importer_text, base_files
     return "", ""
+
 
 def _build_typescript_suggested_export_alias_declaration(
     *,
@@ -994,6 +1044,7 @@ def _build_typescript_suggested_export_alias_declaration(
     if suggestion_kind in {"const", "let", "var", "function"}:
         return "runtime_alias", f"export {{ {suggestion} as {symbol} }};"
     return "", ""
+
 
 def _build_typescript_missing_export_class_declaration(
     *,
@@ -1030,6 +1081,7 @@ def _build_typescript_missing_export_class_declaration(
     lines.append("}")
     return "\n".join(lines)
 
+
 def _reexport_imported_typescript_symbol(text: str, symbol: str) -> tuple[str, str]:
     if not _TS_IDENTIFIER_RE.fullmatch(symbol):
         return text, "interface_contract_required"
@@ -1052,6 +1104,7 @@ def _reexport_imported_typescript_symbol(text: str, symbol: str) -> tuple[str, s
         return f"{text[:insert_at]}{separator}{declaration}{text[insert_at:]}", declaration_kind
     return text, "interface_contract_required"
 
+
 def _typescript_import_specifiers(raw: str) -> dict[str, str]:
     specifiers: dict[str, str] = {}
     for item in str(raw or "").replace("\n", " ").split(","):
@@ -1066,6 +1119,7 @@ def _typescript_import_specifiers(raw: str) -> dict[str, str]:
         if _TS_IDENTIFIER_RE.fullmatch(imported):
             specifiers[imported] = kind
     return specifiers
+
 
 def _append_typescript_missing_export_declaration_operation(
     *,
@@ -1107,6 +1161,7 @@ def _append_typescript_missing_export_declaration_operation(
         },
     )
 
+
 def _typescript_export_ambiguity_targets(diagnostics: Sequence[RepairDiagnostic]) -> tuple[dict[str, object], ...]:
     targets: list[dict[str, object]] = []
     for diagnostic in diagnostics:
@@ -1124,6 +1179,7 @@ def _typescript_export_ambiguity_targets(diagnostics: Sequence[RepairDiagnostic]
             continue
         targets.append({"path": path, "module": module, "symbol": symbol, "diagnostic": diagnostic})
     return tuple(targets)
+
 
 def _typescript_duplicate_export_import_operations(
     *,
@@ -1241,6 +1297,7 @@ def _typescript_duplicate_export_import_operations(
         )
     return tuple(operations)
 
+
 def _typescript_named_imports_by_module(content: str) -> dict[str, set[str]]:
     imported: dict[str, set[str]] = {}
     for match in _TS_NAMED_IMPORT_RE.finditer(content):
@@ -1249,6 +1306,7 @@ def _typescript_named_imports_by_module(content: str) -> dict[str, set[str]]:
         if module and symbols:
             imported.setdefault(module, set()).update(symbols)
     return imported
+
 
 def _typescript_named_reexports_by_module(content: str, *, type_only: bool) -> dict[str, set[str]]:
     exported: dict[str, set[str]] = {}
@@ -1271,17 +1329,20 @@ def _typescript_named_reexports_by_module(content: str, *, type_only: bool) -> d
             exported.setdefault(module, set()).update(names)
     return exported
 
+
 def _typescript_local_named_export_names(content: str) -> set[str]:
     names: set[str] = set()
     for match in _TS_LOCAL_NAMED_EXPORT_RE.finditer(content):
         names.update(_typescript_named_value_specifier_names(str(match.group("symbols") or "")))
     return names
 
+
 def _typescript_local_type_named_export_names(content: str) -> set[str]:
     names: set[str] = set()
     for match in _TS_LOCAL_TYPE_NAMED_EXPORT_RE.finditer(content):
         names.update(_typescript_named_export_specifier_names(str(match.group("symbols") or "")))
     return names
+
 
 def _typescript_named_export_specifier_names(symbols: str) -> set[str]:
     names: set[str] = set()
@@ -1290,6 +1351,7 @@ def _typescript_named_export_specifier_names(symbols: str) -> set[str]:
         if name:
             names.add(name)
     return names
+
 
 def _remove_typescript_named_export_symbols(symbols: str, removable: set[str]) -> tuple[str, set[str]]:
     parts = [part.strip() for part in str(symbols or "").split(",")]
@@ -1310,14 +1372,17 @@ def _remove_typescript_named_export_symbols(symbols: str, removable: set[str]) -
     indent = _typescript_named_specifier_indent(symbols)
     return "".join(f"{part},\n{indent}" for part in kept).removesuffix(indent), removed
 
+
 def _typescript_exported_symbol_is_type_only(module_text: str, symbol: str) -> bool:
     escaped = re.escape(symbol)
     return bool(re.search(rf"\bexport\s+(?:interface|type)\s+{escaped}\b", module_text))
+
 
 def _typescript_file_has_named_reexport(content: str, *, module: str, symbol: str) -> bool:
     value_reexports = _typescript_named_reexports_by_module(content, type_only=False)
     type_reexports = _typescript_named_reexports_by_module(content, type_only=True)
     return symbol in value_reexports.get(module, set()) or symbol in type_reexports.get(module, set())
+
 
 def _find_unique_runtime_export_source(base_files: Mapping[str, str], module_path: str, symbol: str) -> str:
     matches = [
@@ -1326,6 +1391,7 @@ def _find_unique_runtime_export_source(base_files: Mapping[str, str], module_pat
         if path != module_path and path.endswith((".ts", ".tsx")) and _typescript_module_exports_symbol(text, symbol)
     ]
     return matches[0] if len(matches) == 1 else ""
+
 
 def _typescript_reexport_would_cycle(
     module_path: str,
@@ -1341,12 +1407,13 @@ def _typescript_reexport_would_cycle(
     source_dir = posixpath.dirname(source_path)
     # Compare normalized relative refs both directions.
     try:
-        rel_from_source = posixpath.relpath(
-            module_path.removesuffix(".ts").removesuffix(".tsx"), source_dir or "."
-        )
+        rel_from_source = posixpath.relpath(module_path.removesuffix(".ts").removesuffix(".tsx"), source_dir or ".")
     except ValueError:
         rel_from_source = ""
-    candidates = {rel_from_source, f"./{rel_from_source}" if rel_from_source and not rel_from_source.startswith(".") else rel_from_source}
+    candidates = {
+        rel_from_source,
+        f"./{rel_from_source}" if rel_from_source and not rel_from_source.startswith(".") else rel_from_source,
+    }
     candidates = {c for c in candidates if c}
     for match in re.finditer(
         r"""(?:export|import)\s+(?:\*\s+from\s+|\{[^}]*\}\s+from\s+)?['"](?P<mod>[^'"]+)['"]""",
@@ -1365,6 +1432,7 @@ def _typescript_reexport_would_cycle(
     _ = module_dir  # reserved for future relative-path hardening
     return False
 
+
 def _build_typescript_reexport_line(
     *,
     module_path: str,
@@ -1379,9 +1447,12 @@ def _build_typescript_reexport_line(
     prefix = "export type" if _typescript_exported_symbol_is_type_only(source_text, symbol) else "export"
     return f"{prefix} {{ {symbol} }} from '{rel}';"
 
+
 def _looks_like_typescript_reexport_signal(diagnostics: Sequence[RepairDiagnostic]) -> bool:
     text = _diagnostic_text(diagnostics).lower()
-    if not any(hint in text for hint in ("typescript", ".ts", ".tsx", "vitest", "npm test", "ts2305", "ts2459", "ts2724")):
+    if not any(
+        hint in text for hint in ("typescript", ".ts", ".tsx", "vitest", "npm test", "ts2305", "ts2459", "ts2724")
+    ):
         # Still accept pure tsc diagnostics that already carry path+.ts markers.
         if not any(token in text for token in (".ts(", ".tsx(", "error ts")):
             return False
@@ -1406,6 +1477,7 @@ def _looks_like_typescript_reexport_signal(diagnostics: Sequence[RepairDiagnosti
         )
     )
 
+
 def _add_typescript_reexported_type_binding(text: str, *, missing_symbol: str) -> tuple[str, dict[str, str]]:
     symbol = str(missing_symbol or "").strip()
     if not _TS_IDENTIFIER_RE.fullmatch(symbol):
@@ -1428,6 +1500,7 @@ def _add_typescript_reexported_type_binding(text: str, *, missing_symbol: str) -
     if import_line in source:
         return text, {}
     return import_line + source, {"symbol": symbol, "module": module}
+
 
 def _build_relative_import_plan(
     *,
@@ -1564,6 +1637,7 @@ def _build_relative_import_plan(
         metadata={"imports": repairs},
     )
 
+
 def _parse_unresolved_relative_import_errors(diagnostics: Sequence[RepairDiagnostic]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -1592,6 +1666,7 @@ def _parse_unresolved_relative_import_errors(diagnostics: Sequence[RepairDiagnos
                 parsed.append(item)
     return parsed
 
+
 def _resolve_relative_import_target(
     *,
     base_files: Mapping[str, str],
@@ -1607,6 +1682,7 @@ def _resolve_relative_import_target(
             if case_variant:
                 return case_variant
     return ""
+
 
 def _relative_import_repair_target_candidates(*, importer_rel: str, specifier: str) -> list[str]:
     base_dir = posixpath.dirname(importer_rel)
@@ -1627,6 +1703,7 @@ def _relative_import_repair_target_candidates(*, importer_rel: str, specifier: s
         posixpath.join(raw, "index.js"),
         posixpath.join(raw, "index.jsx"),
     ]
+
 
 def _replace_import_specifier_operation(
     *,
@@ -1650,17 +1727,20 @@ def _replace_import_specifier_operation(
         metadata=dict(metadata),
     )
 
+
 def _typescript_import_statement_for_specifier(content: str, specifier: str) -> re.Match[str] | None:
     # A clause may span lines, but must not consume another statement.
     template = _TS_IMPORT_FROM_SPECIFIER_TEMPLATE.replace("(?P<clause>.*?)", "(?P<clause>[^;]*?)")
     pattern = re.compile(template.format(specifier=re.escape(specifier)), re.DOTALL)
     return pattern.search(content)
 
+
 def _typescript_import_pairs_for_specifier(content: str, specifier: str) -> list[tuple[str, str]]:
     match = _typescript_import_statement_for_specifier(content, specifier)
     if match is None:
         return []
     return _typescript_import_pairs_from_clause(str(match.group("clause") or ""))
+
 
 def _remove_unused_typescript_import_operation(
     *,
@@ -1690,6 +1770,7 @@ def _remove_unused_typescript_import_operation(
         before_hash=sha256_text(content),
         metadata={"repair_kind": "typescript_unused_import", "specifier": specifier},
     )
+
 
 def _find_unique_typescript_export_for_import(
     *,
@@ -1763,6 +1844,7 @@ def _replace_proven_typescript_import_specifiers_operation(
         metadata=dict(metadata),
     )
 
+
 def _export_existing_typescript_declaration(text: str, symbol: str) -> str:
     escaped = re.escape(symbol)
     declaration_re = re.compile(
@@ -1773,6 +1855,7 @@ def _export_existing_typescript_declaration(text: str, symbol: str) -> str:
         return f"{match.group('indent')}export {match.group('declare') or ''}{match.group('kind')} {symbol}"
 
     return declaration_re.sub(replace, text, count=1)
+
 
 __all__ = (
     "_build_typescript_import_specifier_keyword_plan",

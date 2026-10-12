@@ -140,11 +140,13 @@ def _resolve_executable_identity(
     if not realpath.is_file():
         return "", "", "", "trusted_verifier_executable_missing"
     in_workspace = _is_within(selected, workspace) or _is_within(realpath, workspace)
-    ephemeral = any(
-        _is_within(selected, root) or _is_within(realpath, root) for root in _EPHEMERAL_EXECUTABLE_ROOTS
-    )
+    ephemeral = any(_is_within(selected, root) or _is_within(realpath, root) for root in _EPHEMERAL_EXECUTABLE_ROOTS)
     custom_workspace_executable = custom_script and explicit and len(query.argv) == 1
-    if ephemeral or (custom_workspace_executable and not in_workspace) or (not custom_workspace_executable and in_workspace):
+    if (
+        ephemeral
+        or (custom_workspace_executable and not in_workspace)
+        or (not custom_workspace_executable and in_workspace)
+    ):
         return "", "", "", "untrusted_verifier_executable"
     if (
         explicit
@@ -173,8 +175,8 @@ def _node_script_name(argv: tuple[str, ...]) -> str:
 def _node_script_content_evidence(query: EvaluateVerifierCommandPolicyQueryV1) -> tuple[str, str]:
     """Bind package-script authority to current manifest/runner bytes.
 
-    A package script may invoke one direct Node program for an entrypoint or a
-    self-contained test harness. That target remains target-controlled, so its
+    A package script may prepare a build before running tests, or invoke a
+    direct Node entrypoint with application arguments. The target remains target-controlled, so its
     current bytes are part of the policy decision hash and are re-evaluated by
     ExecutionBroker before launch. Shell wrappers, eval, missing files and
     escaping paths remain rejected.
@@ -196,17 +198,26 @@ def _node_script_content_evidence(query: EvaluateVerifierCommandPolicyQueryV1) -
     normalized = " ".join(script.casefold().split())
     no_op_prefixes = ("echo ", "true", "exit 0", ":", "printf ")
     no_op_tokens = ("--collect-only", "--watch", "--watchall", "--fix")
-    if normalized in {"echo", "true", "exit 0", ":"} or normalized.startswith(no_op_prefixes) or any(
-        token in normalized for token in no_op_tokens
+    if (
+        normalized in {"echo", "true", "exit 0", ":"}
+        or normalized.startswith(no_op_prefixes)
+        or any(token in normalized for token in no_op_tokens)
     ):
         return "", "non_proving_package_script"
     try:
-        tokens = tuple(shlex.split(script, posix=True))
+        lexer = shlex.shlex(script, posix=True, punctuation_chars=";&|")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = tuple(lexer)
     except ValueError:
         return "", "non_proving_package_script"
     direct_node_script_hash = ""
-    if tokens and Path(tokens[0].replace("\\", "/")).name.casefold() == "node":
-        if query.modality not in {"test", "entrypoint"} or len(tokens) != 2 or tokens[1].startswith("-"):
+    if (
+        tokens
+        and Path(tokens[0].replace("\\", "/")).name.casefold() == "node"
+        and not (query.modality == "test" and len(tokens) >= 2 and tokens[1] == "--test")
+    ):
+        if query.modality not in {"test", "entrypoint"} or len(tokens) < 2 or tokens[1].startswith("-"):
             return "", "non_proving_package_script"
         raw_target = tokens[1].replace("\\", "/")
         target = Path(raw_target)
@@ -233,24 +244,37 @@ def _node_script_content_evidence(query: EvaluateVerifierCommandPolicyQueryV1) -
 
 
 def _node_script_matches_proof_runner(modality: str, tokens: tuple[str, ...]) -> bool:
-    """Allow one direct, proof-producing runner; reject shell/program wrappers."""
+    """Recognize proof runners and success-dependent preparation commands."""
 
-    if not tokens or any(token in {";", "&&", "||", "|", "&"} for token in tokens):
+    if not tokens or any(token in {";", "||", "|", "&"} for token in tokens):
         return False
+    if "&&" in tokens:
+        separator = tokens.index("&&")
+        preparation, remainder = tokens[:separator], tokens[separator + 1 :]
+        return (
+            bool(preparation and remainder)
+            and (
+                _node_script_matches_proof_runner("build", preparation)
+                or _node_script_matches_proof_runner("lint", preparation)
+            )
+            and _node_script_matches_proof_runner(modality, remainder)
+        )
     executable = Path(tokens[0].replace("\\", "/")).name.casefold()
     arguments = tuple(item.casefold() for item in tokens[1:])
-    if executable == "node":
-        return (
-            modality in {"test", "entrypoint"}
-            and len(arguments) == 1
-            and not arguments[0].startswith("-")
-            and arguments[0].endswith((".js", ".mjs", ".cjs"))
-        )
     option_names = {item.split("=", 1)[0] for item in arguments if item.startswith("-")}
     if option_names.intersection(
         {"--collect-only", "--watch", "--watchall", "--fix", "--fix-dry-run", "--unsafe-fixes", "--no-run"}
     ):
         return False
+    if executable == "node":
+        if modality == "test" and arguments and arguments[0] == "--test":
+            return True
+        return (
+            modality in {"test", "entrypoint"}
+            and len(arguments) >= 1
+            and not arguments[0].startswith("-")
+            and arguments[0].endswith((".js", ".mjs", ".cjs"))
+        )
     allowed: dict[str, dict[str, frozenset[str]]] = {
         "test": {
             "pytest": frozenset(),

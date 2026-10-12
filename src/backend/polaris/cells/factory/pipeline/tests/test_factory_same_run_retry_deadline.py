@@ -305,3 +305,42 @@ def test_same_run_retry_extends_missing_deadline_for_owner_repair() -> None:
     remaining = float(result["factory_run_deadline_epoch_seconds"]) - now
     assert remaining >= 180.0
     assert result["factory_run_deadline_source"] == "same_run_retry_epoch"
+
+
+def test_same_run_retry_preserves_budget_in_stored_start_request() -> None:
+    now = 2_000_000.0
+    metadata = {
+        "factory_start_request": {
+            "metadata": {
+                "factory_run_timeout_seconds": 5400.0,
+                "factory_run_deadline_epoch_seconds": now - 10.0,
+                "factory_run_deadline_safety_seconds": 30.0,
+            }
+        }
+    }
+
+    result = extend_factory_run_deadline_for_same_run_retry(
+        now_epoch=now, metadata=metadata, retry_stage="director_dispatch"
+    )
+
+    assert result is not None
+    assert result["factory_run_timeout_seconds"] == 5400.0
+    assert result["factory_run_deadline_epoch_seconds"] == now + 5370.0
+    assert result["factory_run_original_deadline_epoch_seconds"] == now - 10.0
+    assert metadata["factory_start_request"]["metadata"]["factory_run_timeout_seconds"] == 5400.0
+
+
+def test_same_run_retry_current_budget_overrides_stored_start_request() -> None:
+    now = 2_000_000.0
+    result = extend_factory_run_deadline_for_same_run_retry(
+        now_epoch=now,
+        metadata={
+            "factory_run_timeout_seconds": 3600.0,
+            "factory_run_deadline_epoch_seconds": now - 10.0,
+            "factory_start_request": {"metadata": {"factory_run_timeout_seconds": 5400.0}},
+        },
+        retry_stage="director_dispatch",
+    )
+
+    assert result is not None
+    assert result["factory_run_timeout_seconds"] == 3600.0

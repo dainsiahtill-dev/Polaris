@@ -15,9 +15,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from polaris.cells.factory.pipeline.internal import factory_store as factory_store_module
+from polaris.cells.factory.pipeline.internal import (
+    factory_event_chain as factory_event_chain_module,
+    factory_store as factory_store_module,
+)
 from polaris.cells.factory.pipeline.internal.factory_event_chain import (
-    FACTORY_EVENT_CHAIN_MAX_BYTES,
     FACTORY_EVENT_CHAIN_MAX_RECORDS,
     FACTORY_EVENT_CHAIN_SCHEMA,
     FACTORY_EVENT_CHAIN_ZERO_HASH,
@@ -411,19 +413,24 @@ def test_record_bound_is_inclusive_at_4096_and_rejects_4097() -> None:
 
 
 @pytest.mark.asyncio
-async def test_byte_bound_is_inclusive_and_overflow_does_not_mutate(tmp_path: Path) -> None:
+async def test_byte_bound_is_inclusive_and_overflow_does_not_mutate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    byte_limit = 3 * 1024 * 1024
+    monkeypatch.setattr(factory_event_chain_module, "FACTORY_EVENT_CHAIN_MAX_BYTES", byte_limit)
+    monkeypatch.setattr(factory_store_module, "FACTORY_EVENT_CHAIN_MAX_BYTES", byte_limit)
     store = FactoryStore(tmp_path / "factory")
     run_id = "byte-bounded-run"
     base_event = {**_admission_event(run_id=run_id), "padding": ""}
     base_record = build_next_factory_event_record((), run_id=run_id, event=base_event)
-    padding_size = FACTORY_EVENT_CHAIN_MAX_BYTES - len(encode_factory_event_record(base_record))
+    padding_size = byte_limit - len(encode_factory_event_record(base_record))
     assert padding_size > 2 * 1024 * 1024
     exact_event = {**base_event, "padding": "x" * padding_size}
 
     committed = await store.append_authoritative_event(run_id, exact_event)
     event_file = store.get_run_dir(run_id) / "events" / "events.jsonl"
     before = event_file.read_bytes()
-    assert len(before) == FACTORY_EVENT_CHAIN_MAX_BYTES
+    assert len(before) == byte_limit
     assert decode_factory_event_chain(before, run_id=run_id) == (committed,)
 
     with pytest.raises(FactoryEventChainError) as exc_info:
@@ -459,6 +466,41 @@ async def test_multi_mebibyte_stage_payload_is_authoritatively_chained(tmp_path:
     records = await store.get_authoritative_events(run_id, require_run_snapshot=False)
     assert records[-1] == stage
     assert records[-1]["chain_sequence"] == 2
+
+
+@pytest.mark.asyncio
+async def test_repeated_large_stage_results_remain_durable_and_hash_verified(tmp_path: Path) -> None:
+    store = FactoryStore(tmp_path / "factory")
+    run_id = "repeated-large-stage-run"
+    await store.append_authoritative_event(run_id, _admission_event(run_id=run_id))
+    for attempt in range(3):
+        event = {
+            "type": "stage_completed",
+            "run_id": run_id,
+            "event_id": f"evt-stage-{attempt}",
+            "timestamp": "2026-07-18T00:00:02+00:00",
+            "result": {
+                "stage": "director_dispatch",
+                "metadata": {"diagnostics": "x" * (3 * 1024 * 1024)},
+            },
+        }
+        (preview,) = await store.preflight_authoritative_events(run_id, (event,))
+        committed = await store.append_authoritative_event(run_id, event)
+        assert committed == preview
+
+    event_file = store.get_run_dir(run_id) / "events" / "events.jsonl"
+    raw = event_file.read_bytes()
+    assert len(raw) > 9 * 1024 * 1024
+    records = await store.get_authoritative_events(run_id, require_run_snapshot=False)
+    assert len(records) == 4
+    assert records[-1]["event_id"] == "evt-stage-2"
+    assert records[-1]["chain_sequence"] == 4
+    assert records[-1]["chain_previous_hash"] == records[-2]["chain_event_hash"]
+    assert len(records[-1]["result"]["metadata"]["diagnostics"]) == 3 * 1024 * 1024
+    with pytest.raises(FactoryEventChainError) as exc_info:
+        decode_factory_event_chain(raw.replace(b'"diagnostics":"x', b'"diagnostics":"y', 1), run_id=run_id)
+    assert exc_info.value.code == "factory_event_chain_hash_mismatch"
+    assert event_file.read_bytes() == raw
 
 
 @pytest.mark.parametrize(

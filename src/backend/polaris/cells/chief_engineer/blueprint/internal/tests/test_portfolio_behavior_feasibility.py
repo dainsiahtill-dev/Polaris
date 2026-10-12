@@ -74,7 +74,7 @@ def test_cross_task_behavior_may_cover_test_artifact_through_required_verifier()
     )
 
 
-def test_non_test_verifier_does_not_substitute_for_test_artifact_coverage() -> None:
+def test_invariant_can_describe_build_without_binding_a_separate_test_owner() -> None:
     contract = _completion_contract()
     contract.obligations.verification = (
         SimpleNamespace(
@@ -88,26 +88,21 @@ def test_non_test_verifier_does_not_substitute_for_test_artifact_coverage() -> N
     invariant = _invariant()
     invariant["covered_obligation_ids"] = ["artifact-source", "verify-build"]
 
-    with pytest.raises(
-        PortfolioBehaviorFeasibilityError,
-        match="lacks a shared production behavior invariant",
-    ):
-        validate_portfolio_behavior_feasibility(
-            task_ids=("TASK-1", "TASK-2"),
-            invariants=(invariant,),
-            task_bindings={"TASK-1": ("INV-1",), "TASK-2": ("INV-1",)},
-            completion_contract=contract,
-        )
+    validate_portfolio_behavior_feasibility(
+        task_ids=("TASK-1", "TASK-2"),
+        invariants=(invariant,),
+        task_bindings={"TASK-1": ("INV-1",), "TASK-2": ("INV-1",)},
+        completion_contract=contract,
+    )
 
 
-def test_cross_task_test_without_shared_behavior_fails_before_freeze() -> None:
-    with pytest.raises(PortfolioBehaviorFeasibilityError, match="lacks a shared production behavior invariant"):
-        validate_portfolio_behavior_feasibility(
-            task_ids=("TASK-1", "TASK-2"),
-            invariants=(),
-            task_bindings={"TASK-1": (), "TASK-2": ()},
-            completion_contract=_completion_contract(),
-        )
+def test_separate_source_and_test_tasks_do_not_need_synthetic_behavior_links() -> None:
+    validate_portfolio_behavior_feasibility(
+        task_ids=("TASK-1", "TASK-2"),
+        invariants=(),
+        task_bindings={"TASK-1": (), "TASK-2": ()},
+        completion_contract=_completion_contract(),
+    )
 
 
 def test_behavior_authority_rejects_unknown_task_and_obligation() -> None:

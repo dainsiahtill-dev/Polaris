@@ -178,11 +178,11 @@ def test_workspace_validation_multiline_python_command_does_not_become_repair_di
         "Artifact quality scan failed: workspace validation command failed "
         "(/usr/bin/python -c import pathlib\n"
         "import re\n"
-        "root = pathlib.Path(\".\")\n"
-        "for path in root.rglob(\"*\"):\n"
+        'root = pathlib.Path(".")\n'
+        'for path in root.rglob("*"):\n'
         "    if path.is_file():\n"
         "        continue\n"
-        "print(\"CMake build passed\")): CMake Error at CMakeLists.txt:50 (add_executable):\n"
+        'print("CMake build passed")): CMake Error at CMakeLists.txt:50 (add_executable):\n'
         "  Cannot find source file:\n\n"
         "    tests/test_cipher_engine.cpp\n\n"
         "  No SOURCES given to target: invisible_diary_selftest\n"
@@ -866,7 +866,7 @@ def test_typescript_missing_export_uses_ts2724_suggestion_alias() -> None:
     assert "export type IHumidityState = any;" not in repaired
 
 
-def test_typescript_missing_export_aliases_similar_function_from_unresolved_symbol() -> None:
+def test_typescript_missing_export_does_not_guess_alias_from_function_name() -> None:
     diagnostics = (
         "Artifact quality scan failed: unresolved import symbol 'runAllChecks' "
         "from '../src/verify' in tests/verify.test.ts (sibling module does not define it)",
@@ -885,10 +885,9 @@ def test_typescript_missing_export_aliases_similar_function_from_unresolved_symb
         )
     ).to_dict()
 
-    assert planning["ok"] is True
-    assert planning["planned"] is True
-    repaired = planning["composition_summary"]["patches"][0]["content_after"]
-    assert "export { runAll as runAllChecks };" in repaired
+    assert planning["ok"] is False
+    assert planning["planned"] is False
+    assert planning["composition_summary"]["patch_count"] == 0
 
 
 def test_typescript_missing_export_does_not_alias_constructed_symbol_to_enum() -> None:

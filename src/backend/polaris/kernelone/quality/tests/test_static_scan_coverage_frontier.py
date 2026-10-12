@@ -195,6 +195,26 @@ def test_positional_script_does_not_invent_eval_intent(
     assert not any(check.check_id == "node_eval_parser" for check in evidence.deferred_checks)
 
 
+@pytest.mark.parametrize("pattern", ["tests/*.test.js", "tests/??.test.js", "tests/[ab]*.test.js"])
+@pytest.mark.parametrize("compiler", ["tsc", "tsc --noEmit", "tsc -p tsconfig.json"])
+def test_node_test_file_glob_does_not_make_static_command_coverage_unknown(pattern: str, compiler: str) -> None:
+    from polaris.kernelone.quality.artifact_quality._scan_package import _static_shell_node_sources
+
+    sources, unknown = _static_shell_node_sources(f"{compiler} && node --test {pattern}")
+
+    assert sources == ()
+    assert unknown == []
+
+
+@pytest.mark.parametrize("script", ["echo *.js", "node *.js --test", "node --test --import loaders/*.js tests/*.test.js"])
+def test_glob_outside_recognized_node_test_sources_remains_unknown(script: str) -> None:
+    from polaris.kernelone.quality.artifact_quality._scan_package import _static_shell_node_sources
+
+    _sources, unknown = _static_shell_node_sources(script)
+
+    assert "shell_glob_expansion" in unknown
+
+
 def test_nested_ledger_scope_and_task_remain_exact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write(
         tmp_path,

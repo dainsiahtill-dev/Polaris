@@ -65,7 +65,7 @@ from .pm import (
     PMPlanArtifactMixin,
     PMPromptBuildingMixin,
 )
-from .pm.parsing import _PMContractError
+from .pm.parsing import _decode_complete_pm_payload, _PMContractError
 
 # ---------------------------------------------------------------------------
 # Re-export frozen constants and pure helpers from the leaf module so the
@@ -135,6 +135,7 @@ from .pm.revision import (
     content_hash,
     make_revision_base,
     revision_derivation,
+    revision_progress_state,
 )
 from .runtime_dialogue import invoke_role_runtime_first
 
@@ -354,6 +355,7 @@ class PMAdapter(
         context: dict[str, Any],
     ) -> dict[str, Any]:
         """运行 PM 阶段."""
+        planning_started_epoch = time.time()
         self._update_task_progress(task_id, "planning")
         quality_signals: list[dict[str, Any]] = []
         dedup_cancelled_rows = self._deduplicate_existing_board_tasks()
@@ -557,7 +559,7 @@ class PMAdapter(
                     {
                         "code": "pm.contracts.quality_revision",
                         "severity": "warning",
-                        "detail": "PM first attempt requires the existing bounded quality revision",
+                        "detail": "PM candidate requires diagnostic revision within the admitted stage budget",
                         "score": int(quality.get("score") or 0),
                         "critical_issues": [str(item) for item in first_critical[:8]]
                         if isinstance(first_critical, list)
@@ -598,7 +600,7 @@ class PMAdapter(
                         {
                             "code": "pm.contracts.revision_base",
                             "severity": "info",
-                            "detail": "Immutable original candidate retained before the one correction request; no execution authority.",
+                            "detail": "Immutable original candidate retained across local correction requests; no execution authority.",
                             "base_hash": revision_base.base_hash,
                             "artifact_hash": content_hash(base_text),
                             "artifact_path": str(base_path),
@@ -606,120 +608,189 @@ class PMAdapter(
                             "original_response_hash": base_evidence["original_response_hash"],
                         }
                     )
-                retry_prompt = self._build_pm_retry_message(
-                    directive=directive,
-                    quality=quality,
-                    previous_output=raw_output,
-                    validated_candidate=bool(contracts),
-                    projection_hint=projection_hint,
-                    revision_base=revision_base,
-                    output_budget_tokens=output_budget_tokens,
-                    generation_diagnostic=generation_diagnostic,
-                    directive_analysis=directive_analysis,
+                retained_original_output = raw_output
+                last_revision_output: str | None = None
+                seen_revision_states: set[tuple[str, str]] = (
+                    {revision_progress_state({"tasks": revision_base.tasks}, quality)}
+                    if revision_base is not None
+                    else set()
                 )
-                response = await self._call_role_llm(retry_prompt, context=dispatch_context("pm_task_contract_retry"))
-                retry_output = self._response_text(response)
-                self._record_pm_generation_outcome(response, retry_output, planning_context, quality_signals)
-                contract_diagnostics = []
-                raw_merged_candidate: dict[str, Any] | None = None
-                candidate_output = retry_output
-                if revision_base is not None:
-                    try:
-                        raw_merged_candidate = apply_revision(revision_base, retry_output)
-                        candidate_output = canonical_json(raw_merged_candidate)
-                    except (_PMContractError, ValueError) as exc:
-                        contract_diagnostics.append(
-                            exc.diagnostic
-                            if isinstance(exc, _PMContractError)
-                            else {
-                                "code": "pm_revision_invalid",
-                                "path": "$",
-                                "message": str(exc),
+                if revision_base is not None and pm_deadline is None:
+                    stage_seconds, _ = resolve_pm_planning_time_budget(output_budget_tokens, planning_context)
+                    pm_deadline = planning_started_epoch + stage_seconds
+                while True:
+                    retry_prompt = self._build_pm_retry_message(
+                        directive=directive,
+                        quality=quality,
+                        previous_output=retained_original_output,
+                        validated_candidate=bool(contracts),
+                        projection_hint=projection_hint,
+                        revision_base=revision_base,
+                        output_budget_tokens=output_budget_tokens,
+                        generation_diagnostic=generation_diagnostic,
+                        directive_analysis=directive_analysis,
+                    )
+                    if last_revision_output is not None:
+                        retry_prompt += (
+                            "\n\nLatest rejected local proposal (retained raw; no part admitted):\n"
+                            + last_revision_output
+                        )
+                        retry_prompt += "\nLatest localized diagnostics (no execution authority):\n" + canonical_json(
+                            {
+                                "critical_issues": quality.get("critical_issues", []),
+                                "contract_diagnostics": quality.get("contract_diagnostics", []),
                             }
                         )
-                        candidate_output = ""
-                contracts = (
-                    self._extract_task_contracts(
-                        candidate_output,
-                        directive=directive,
-                        projection_hint=projection_hint,
-                        diagnostics=contract_diagnostics,
+                        retry_prompt += (
+                            "\nCorrect only the diagnosed proposal operations inside the unchanged original manifest. "
+                            "Return the complete pm.task_revision.v1 envelope with the SAME original base_hash. "
+                            "Retain unaffected proposal edits; explicitly retract or replace invalid operations. "
+                            "Do not return a partial patch; the server never assembles fragments or admits a valid prefix."
+                        )
+                    response = await self._call_role_llm(
+                        retry_prompt, context=dispatch_context("pm_task_contract_retry")
                     )
-                    if candidate_output
-                    else []
-                )
-                if contracts:
-                    normalized_contracts, quality = self._evaluate_contract_quality(
-                        contracts,
-                        directive=directive,
-                        context=context,
-                    )
+                    retry_output = self._response_text(response)
+                    self._record_pm_generation_outcome(response, retry_output, planning_context, quality_signals)
+                    contract_diagnostics = []
+                    raw_merged_candidate: dict[str, Any] | None = None
+                    candidate_output = retry_output
                     if revision_base is not None:
-                        dependency_result = self._validate_task_contracts(normalized_contracts)
-                        if not dependency_result.is_valid:
-                            quality = {
-                                **quality,
-                                "ok": False,
-                                "score": 0,
-                                "critical_issues": [
-                                    *quality.get("critical_issues", []),
-                                    "pm_revision_dependencies_invalid",
-                                ],
+                        try:
+                            raw_merged_candidate = apply_revision(revision_base, retry_output)
+                            candidate_output = canonical_json(raw_merged_candidate)
+                        except (_PMContractError, ValueError) as exc:
+                            contract_diagnostics.append(
+                                exc.diagnostic
+                                if isinstance(exc, _PMContractError)
+                                else {
+                                    "code": "pm_revision_invalid",
+                                    "path": "$",
+                                    "message": str(exc),
+                                }
+                            )
+                            candidate_output = ""
+                    contracts = (
+                        self._extract_task_contracts(
+                            candidate_output,
+                            directive=directive,
+                            projection_hint=projection_hint,
+                            diagnostics=contract_diagnostics,
+                        )
+                        if candidate_output
+                        else []
+                    )
+                    if contracts:
+                        normalized_contracts, quality = self._evaluate_contract_quality(
+                            contracts,
+                            directive=directive,
+                            context=context,
+                        )
+                        if revision_base is not None:
+                            dependency_result = self._validate_task_contracts(normalized_contracts)
+                            if not dependency_result.is_valid:
+                                quality = {
+                                    **quality,
+                                    "ok": False,
+                                    "score": 0,
+                                    "critical_issues": [
+                                        *quality.get("critical_issues", []),
+                                        "pm_revision_dependencies_invalid",
+                                    ],
+                                }
+                    else:
+                        quality_signals.append(
+                            {
+                                "code": "pm.contracts.unparseable_after_retry",
+                                "severity": "error",
+                                "detail": "PM retry still returned no parseable task contracts",
+                                "contract_diagnostics": contract_diagnostics,
                             }
-                else:
-                    quality_signals.append(
-                        {
-                            "code": "pm.contracts.unparseable_after_retry",
-                            "severity": "error",
-                            "detail": "PM retry still returned no parseable task contracts",
+                        )
+                        normalized_contracts = []
+                        quality = {
+                            "ok": False,
+                            "score": 0,
+                            "critical_issues": [str(item["code"]) for item in contract_diagnostics]
+                            or ["pm_contracts_unparseable_after_retry"],
+                            "warnings": [],
+                            "summary": "; ".join(str(item["message"]) for item in contract_diagnostics)
+                            or "pm_contracts_unparseable_after_retry",
                             "contract_diagnostics": contract_diagnostics,
                         }
-                    )
-                    normalized_contracts = []
-                    quality = {
-                        "ok": False,
-                        "score": 0,
-                        "critical_issues": [str(item["code"]) for item in contract_diagnostics]
-                        or ["pm_contracts_unparseable_after_retry"],
-                        "warnings": [],
-                        "summary": "; ".join(str(item["message"]) for item in contract_diagnostics)
-                        or "pm_contracts_unparseable_after_retry",
-                        "contract_diagnostics": contract_diagnostics,
-                    }
-                if revision_base is not None:
-                    derivation = revision_derivation(
-                        revision_base,
-                        retry_output,
-                        raw_merged_candidate=raw_merged_candidate,
-                        normalized_plan=normalized_contracts,
-                        quality=quality,
-                    )
-                    derivation_text = canonical_json(derivation)
-                    derivation_hash = content_hash(derivation_text)
-                    derivation_path = Path(
-                        resolve_runtime_path(
-                            self.workspace,
-                            f"runtime/signals/pm_revision/{derivation_hash}.json",
+                    if revision_base is not None:
+                        derivation = revision_derivation(
+                            revision_base,
+                            retry_output,
+                            raw_merged_candidate=raw_merged_candidate,
+                            normalized_plan=normalized_contracts,
+                            quality=quality,
                         )
-                    )
-                    write_text_atomic(derivation_path, derivation_text, encoding="utf-8")
-                    quality_signals.append(
-                        {
-                            "code": "pm.contracts.revision_derivation",
-                            "severity": "info",
-                            "detail": "Retained model base plus explicit typed edits; raw merge and normalization are separate.",
-                            "artifact_path": str(derivation_path),
-                            "artifact_hash": derivation_hash,
-                            "base_hash": revision_base.base_hash,
-                            "original_response_hash": derivation["original_response_hash"],
-                            "revision_response_hash": derivation["revision_response_hash"],
-                            "raw_merged_candidate_hash": derivation["raw_merged_candidate_hash"],
-                            "normalized_plan_hash": derivation["normalized_plan_hash"],
-                            "identity": revision_base.identity,
-                            "merged_candidate_is_original_provider_response": False,
-                        }
-                    )
-                raw_output = f"{raw_output}\n\n[retry]\n{retry_output}"
+                        derivation_text = canonical_json(derivation)
+                        derivation_hash = content_hash(derivation_text)
+                        derivation_path = Path(
+                            resolve_runtime_path(
+                                self.workspace,
+                                f"runtime/signals/pm_revision/{derivation_hash}.json",
+                            )
+                        )
+                        write_text_atomic(derivation_path, derivation_text, encoding="utf-8")
+                        quality_signals.append(
+                            {
+                                "code": "pm.contracts.revision_derivation",
+                                "severity": "info",
+                                "detail": "Retained model base plus explicit typed edits; raw merge and normalization are separate.",
+                                "artifact_path": str(derivation_path),
+                                "artifact_hash": derivation_hash,
+                                "base_hash": revision_base.base_hash,
+                                "original_response_hash": derivation["original_response_hash"],
+                                "revision_response_hash": derivation["revision_response_hash"],
+                                "raw_merged_candidate_hash": derivation["raw_merged_candidate_hash"],
+                                "normalized_plan_hash": derivation["normalized_plan_hash"],
+                                "identity": revision_base.identity,
+                                "merged_candidate_is_original_provider_response": False,
+                            }
+                        )
+                    raw_output = f"{raw_output}\n\n[retry]\n{retry_output}"
+
+                    if revision_base is None or (
+                        normalized_contracts
+                        and quality.get("ok") is True
+                        and not quality.get("critical_issues")
+                        and int(quality.get("score") or 0) >= 80
+                    ):
+                        break
+                    diagnostics = quality.get("contract_diagnostics", [])
+                    if any(isinstance(item, dict) and item.get("repairable") is False for item in diagnostics):
+                        quality_signals.append(
+                            {
+                                "code": "pm.contracts.revision_terminal",
+                                "severity": "error",
+                                "detail": "Local proposal crosses an immutable identity, manifest or workspace boundary.",
+                                "contract_diagnostics": diagnostics,
+                            }
+                        )
+                        break
+                    try:
+                        proposal_hash = content_hash(canonical_json(_decode_complete_pm_payload(retry_output)))
+                    except (_PMContractError, ValueError, TypeError):
+                        proposal_hash = content_hash(retry_output)
+                    state = revision_progress_state(raw_merged_candidate, quality)
+                    progress_hash, diagnostic_hash = state
+                    if state in seen_revision_states:
+                        quality_signals.append(
+                            {
+                                "code": "pm.contracts.revision_no_progress",
+                                "severity": "error",
+                                "detail": "Repeated local candidate state and diagnostics; no additional provider call admitted.",
+                                "proposal_hash": proposal_hash,
+                                "diagnosed_operands_hash": progress_hash,
+                                "diagnostic_hash": diagnostic_hash,
+                            }
+                        )
+                        break
+                    seen_revision_states.add(state)
+                    last_revision_output = retry_output
 
             score = int(quality.get("score") or 0)
             _raw_critical = quality.get("critical_issues") if isinstance(quality, dict) else None
@@ -984,7 +1055,7 @@ class PMAdapter(
         LLM turn must enter roles.runtime so Context OS and cognitive receipts
         are exercised in production workflows.
         """
-        return await invoke_role_runtime_first(
+        result = await invoke_role_runtime_first(
             workspace=self.workspace,
             role=self.role_id,
             message=message,
@@ -992,6 +1063,10 @@ class PMAdapter(
             validate_output=False,
             max_retries=1,
         )
+        error = result.get("error") if isinstance(result, dict) else None
+        if error:
+            raise RuntimeError(str(error))
+        return result
 
     @staticmethod
     def _pm_route_audit_probe_enabled(

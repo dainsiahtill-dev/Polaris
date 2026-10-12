@@ -15,6 +15,7 @@ import json
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any, Final
 
 from polaris.kernelone.fs.guarded_regular_file_snapshot import (
@@ -726,11 +727,22 @@ def build_director_dependency_artifact_snapshot(
         "已提交父任务的真实依赖产物 / Committed parent-task dependency artifacts:",
         (
             f"{_SCHEMA_VERSION} snapshot_sha256={payload['snapshot_sha256']} "
-            "(effect-receipt bound; exact bodies below are authoritative)"
+            "(effect-receipt bound; exact bodies below preserve their source identity)"
         ),
         ("消费这些文件时必须使用下列真实定义；不得用 planned_exports、tentative_exports 或猜测符号覆盖物理事实。"),
+        (
+            "For module paths, imports and emitted outputs, use current executable files and build configuration. "
+            "Document examples are reference material and cannot override that configuration. "
+            "Keep the task's behavioral requirements."
+        ),
     ]
-    for module in modules:
+    for module in sorted(
+        modules, key=lambda item: PurePosixPath(item["path"]).suffix.lower() in {".md", ".txt", ".rst"}
+    ):
+        if PurePosixPath(module["path"]).suffix.lower() in {".md", ".txt", ".rst"}:
+            message_lines.append(
+                "DOCUMENT REFERENCE (requirements retained; build examples are not executable configuration):"
+            )
         message_lines.extend(
             [
                 (

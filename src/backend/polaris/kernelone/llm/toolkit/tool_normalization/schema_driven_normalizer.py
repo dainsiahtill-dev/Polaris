@@ -121,6 +121,61 @@ def _is_path_key(key: str) -> bool:
     return key.lower() in _PATH_CANONICAL_KEYS
 
 
+def _normalize_edit_file_dialect(spec: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """Disambiguate paired native edit operands before alias cleanup.
+
+    Aliases come only from the captured registry. No file read, synthesized
+    body or authority is introduced; physical matching and write policy remain
+    downstream. A lone new body still has no executable edit mode.
+    """
+    aliases = spec.get("arg_aliases")
+    if not isinstance(aliases, dict):
+        return args
+
+    def operands(canonical: str, *, include_canonical: bool = True) -> list[Any]:
+        keys = ([canonical] if include_canonical else []) + [
+            alias for alias, target in aliases.items() if target == canonical and alias != canonical
+        ]
+        return [args[key] for key in keys if key in args]
+
+    def one(values: list[Any]) -> Any:
+        if any(value != values[0] for value in values[1:]):
+            raise ValueError("conflicting_edit_argument")
+        return values[0]
+
+    old_values = operands("search")
+    new_values = operands("replace", include_canonical=False)
+    old = one(old_values) if old_values else None
+    if not new_values:
+        return args
+    new = one(new_values)
+    if not isinstance(new, str):
+        return args  # Preserve type validation; never stringify a code body.
+    if "replace" in args:
+        replacement = args["replace"]
+        if old_values:
+            if replacement == new:
+                pass  # Equal synonyms preserve canonical content and occurrence intent.
+            elif replacement == "all":
+                if "replace_all" in args and args["replace_all"] not in (True, "true"):
+                    raise ValueError("conflicting_edit_argument")
+                args["replace_all"] = True
+            else:
+                raise ValueError("conflicting_edit_argument")
+        elif isinstance(replacement, str) and replacement and replacement != "all":
+            # Native `replace=<old bytes>, newCode=<new bytes>` dialect. Only
+            # literal matching may infer this shape; a regex has different intent.
+            if args.get("regex", False) not in (False, "false"):
+                raise ValueError("ambiguous_edit_argument")
+            old = replacement
+        else:
+            raise ValueError("ambiguous_edit_argument")
+    if old is not None:
+        args["search"] = old
+    args["replace"] = new
+    return args
+
+
 class SchemaDrivenNormalizer:
     """基于 contracts.py schema 的运行时归一化器。
 
@@ -154,6 +209,8 @@ class SchemaDrivenNormalizer:
         canonical_tool = tool_name
         spec = self.specs.get(canonical_tool, {})
         arg_aliases = spec.get("arg_aliases", {})
+        if canonical_tool == "edit_file":
+            normalized = _normalize_edit_file_dialect(spec, normalized)
 
         if not arg_aliases:
             return self._coerce_argument_types(spec, normalized)  # 无别名，仅做类型纠偏

@@ -890,23 +890,44 @@ class _Mixin00:
         created_count = 0
         bound_count = 0
         binding_failures: list[dict[str, str]] = []
+        recovery_review_rows: list[Mapping[str, Any]] | None = None
         for index, task in enumerate(tasks, start=1):
             task_id = self._task_id(task, index)
             if not task_id:
                 continue
             existing = service.get_task(task_id)
+            recovered_handoff_metadata: dict[str, Any] = {}
             if same_run_recovery:
                 from polaris.cells.chief_engineer.blueprint.public import validate_director_handoff_from_payload
 
                 existing = service.resolve_factory_task_row(external_task_id=task_id, factory_run_id=run_id)
                 if existing is None:
-                    raise RuntimeError("factory_task_recovery_owner_missing")
-                existing_state = str(existing.get("execution_state") or existing.get("status") or "").lower()
+                    # Terminal cleanup removes physical rows. The frozen CE
+                    # review remains the authority for rebuilding their logical
+                    # owners through the normal materialize-and-bind path.
+                    if recovery_review_rows is None:
+                        review = self._load_chief_engineer_review_payload(run_id=run_id)
+                        raw_rows = review.get("blueprints")
+                        recovery_review_rows = (
+                            [row for row in raw_rows if isinstance(row, Mapping)]
+                            if isinstance(raw_rows, list)
+                            else []
+                        )
+                    matches = [row for row in recovery_review_rows if str(row.get("task_id") or "") == task_id]
+                    if len(matches) != 1:
+                        raise RuntimeError("factory_task_recovery_owner_missing")
+                    owner_metadata: Mapping[str, Any] = matches[0]
+                else:
+                    owner_metadata_raw = existing.get("metadata")
+                    owner_metadata = owner_metadata_raw if isinstance(owner_metadata_raw, Mapping) else {}
+                existing_state = (
+                    str(existing.get("execution_state") or existing.get("status") or "").lower()
+                    if existing is not None
+                    else ""
+                )
                 if existing_state in {"cancelled", "canceled", "in_progress", "running"}:
                     raise RuntimeError("factory_task_recovery_owner_not_recoverable")
-                if existing_state == "failed":
-                    owner_metadata = existing.get("metadata")
-                    owner_metadata = owner_metadata if isinstance(owner_metadata, Mapping) else {}
+                if existing is None or existing_state == "failed":
                     blueprint_id = str(
                         owner_metadata.get("blueprint_id") or owner_metadata.get("chief_engineer_blueprint_id") or ""
                     ).strip()
@@ -921,14 +942,23 @@ class _Mixin00:
                         or projection.get("run_id") != run_id
                     ):
                         raise RuntimeError("factory_task_recovery_ce_handoff_invalid")
-                    existing = service.prepare_factory_task_recovery(
-                        external_task_id=task_id,
-                        factory_run_id=run_id,
-                        project_contract_hash=str(projection.get("project_contract_hash") or ""),
-                        projection_hash=str(projection.get("projection_hash") or ""),
-                    )
+                    if existing is None:
+                        recovered_handoff_metadata = {
+                            "blueprint_id": handoff["blueprint_id"],
+                            "task_completion_projection": dict(projection),
+                            "job_token": handoff["job_token"],
+                            "capability_token": handoff["capability_token"],
+                        }
+                    else:
+                        existing = service.prepare_factory_task_recovery(
+                            external_task_id=task_id,
+                            factory_run_id=run_id,
+                            project_contract_hash=str(projection.get("project_contract_hash") or ""),
+                            projection_hash=str(projection.get("projection_hash") or ""),
+                        )
             metadata_raw = task.get("metadata")
             metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+            metadata.update(recovered_handoff_metadata)
             metadata.pop(_FACTORY_WORKSPACE_RUN_LEASE_METADATA_KEY, None)
             metadata.update(
                 {

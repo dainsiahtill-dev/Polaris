@@ -80,13 +80,14 @@ def _edit_file_invalid_reason(value: Any) -> str:
     if arguments is None:
         return "invalid_arguments"
 
-    aliases = ToolSpecRegistry.get_all_specs().get("edit_file", {}).get("arg_aliases", {})
-    if isinstance(aliases, Mapping):
-        for raw_alias, raw_canonical in aliases.items():
-            alias = str(raw_alias or "")
-            canonical = str(raw_canonical or "")
-            if canonical and canonical not in arguments and alias in arguments:
-                arguments[canonical] = arguments[alias]
+    from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
+
+    try:
+        arguments = dict(normalize_tool_arguments_from_snapshot(
+            ToolSpecRegistry.capture_effective_spec("edit_file"), arguments,
+        ))
+    except (TypeError, ValueError) as exc:
+        return str(exc) or "invalid_arguments"
 
     blocks = arguments.get("blocks")
     if isinstance(blocks, str) and blocks.strip():

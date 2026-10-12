@@ -1105,7 +1105,24 @@ def _workspace_quality_repair_errors(executor, results: list[dict[str, Any]]) ->
         try:
             from polaris.cells.director.runtime.public import normalize_director_repair_diagnostics
 
+            # The normalizer consumes the wrapper without creating another
+            # diagnostic, and retains npm loader provenance for owner routing.
             diagnostics = normalize_director_repair_diagnostics((output,))
+            if (
+                isinstance(command, list)
+                and command
+                and command[0] == "npm"
+                and any(diagnostic.code == "javascript_module_error" for diagnostic in diagnostics)
+            ):
+                contextual_diagnostics = normalize_director_repair_diagnostics(
+                    (f"workspace validation command failed ({command_text}):\n{output}",)
+                )
+                if any(
+                    diagnostic.metadata.get("script_issue")
+                    in {"missing_compiled_entrypoint", "typescript_source_loader_require_cycle"}
+                    for diagnostic in contextual_diagnostics
+                ):
+                    diagnostics = contextual_diagnostics
         except (ImportError, RuntimeError, TypeError, ValueError):
             diagnostics = ()
         actionable = [
@@ -2237,6 +2254,7 @@ def _workspace_quality_primary_claim_target_files(
 
 
 _TEST_HARNESS_EXCEPTION_MARKERS = (
+    "err_module_not_found",
     "filenotfounderror:",
     "unicodedecodeerror:",
     "modulenotfounderror:",
@@ -2270,12 +2288,12 @@ def _workspace_quality_direct_test_exception_targets(
     return []
 
 
-def _workspace_quality_direct_cpp_compiler_target_files(
+def _workspace_quality_direct_compiler_target_files(
     executor,
     *,
     artifact_quality_errors: list[str],
 ) -> list[str]:
-    """Return exact workspace-local C/C++ paths named by compiler diagnostics.
+    """Return exact workspace-local source paths named by compiler diagnostics.
 
     A compiler location is physical mutation evidence.  It must stay distinct
     from broader causal/runtime/depth candidates, including when the authored
@@ -2295,19 +2313,25 @@ def _workspace_quality_direct_cpp_compiler_target_files(
     workspace = Path(executor.workspace).resolve()
     targets: list[str] = []
     for diagnostic in diagnostics:
-        if str(diagnostic.source or "").strip().casefold() not in {"compiler", "typecheck", "syntax"}:
+        compiler_code = str(diagnostic.code or "").casefold()
+        typed_tsc = compiler_code.startswith("typescript_ts") and compiler_code.removeprefix("typescript_ts").isdigit()
+        if str(diagnostic.source or "").strip().casefold() not in {"compiler", "typecheck", "syntax"} and not typed_tsc:
             continue
         raw_path = str(diagnostic.path or "").strip()
         if not raw_path:
             continue
-        candidate = Path(raw_path)
-        if candidate.is_absolute():
+        candidate = Path(raw_path.removeprefix("file://"))
+        if candidate.is_absolute() and str(candidate).startswith("/workspace/"):
+            if ".." in candidate.parts:
+                continue
+            candidate = candidate.relative_to("/workspace")
+        elif candidate.is_absolute():
             try:
                 candidate = candidate.resolve().relative_to(workspace)
             except (OSError, ValueError):
                 continue
-        rel = candidate.as_posix().lstrip("./")
-        if not rel or Path(rel).suffix.casefold() not in _CPP_REPAIR_SOURCE_SUFFIXES:
+        rel = candidate.as_posix().removeprefix("./")
+        if not rel or ".." in candidate.parts or not _dedupe_workspace_repair_paths([rel]):
             continue
         if (workspace / rel).is_file():
             targets.append(rel)
@@ -2329,7 +2353,7 @@ def _workspace_quality_causal_repair_target_files(
     from polaris.cells.roles.adapters.public import resolve_director_causal_quality_repair_target_files
 
     direct_targets = executor._workspace_quality_repair_diagnostic_target_files(artifact_quality_errors)
-    direct_cpp_compiler_targets = _workspace_quality_direct_cpp_compiler_target_files(
+    direct_cpp_compiler_targets = _workspace_quality_direct_compiler_target_files(
         executor,
         artifact_quality_errors=artifact_quality_errors,
     )
@@ -2685,7 +2709,7 @@ async def _apply_workspace_quality_llm_repairs(
         artifact_quality_errors=artifact_quality_errors,
     )
     diagnostic_blob = "\n".join(str(item or "") for item in artifact_quality_errors)
-    compiler_diagnostic_target_files = _workspace_quality_direct_cpp_compiler_target_files(
+    compiler_diagnostic_target_files = _workspace_quality_direct_compiler_target_files(
         executor,
         artifact_quality_errors=artifact_quality_errors,
     )

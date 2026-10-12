@@ -21,7 +21,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any
 
 from polaris.kernelone.context.text_normalization import normalize_quoted_text
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 if TYPE_CHECKING:
     pass
@@ -650,7 +650,7 @@ class ContextOSSnapshotV2(BaseModel):
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any] | None) -> ContextOSSnapshotV2 | None:
-        """Deserialize from dict, restoring content from receipt refs if present."""
+        """Restore receipt content and propagate invalid event/reference errors."""
         if not isinstance(payload, dict):
             return None
 
@@ -658,7 +658,9 @@ class ContextOSSnapshotV2(BaseModel):
 
         def _restore_receipt(event_data: dict[str, Any]) -> dict[str, Any]:
             content_ref = event_data.get("content_ref")
-            if isinstance(content_ref, dict):
+            if "content_ref" in event_data:
+                if not isinstance(content_ref, dict):
+                    raise ValueError("transcript content_ref must be a mapping")
                 event_data = dict(event_data)
                 for key, field_name in (
                     ("hash", "content_ref_hash"),
@@ -680,25 +682,8 @@ class ContextOSSnapshotV2(BaseModel):
         transcript_log_raw = payload.get("transcript_log", [])
         transcript_log_data = [_restore_receipt(v) for v in transcript_log_raw]
 
-        # Parse transcript_log
-        transcript_log: list[TranscriptEventV2] = []
-        for v in transcript_log_data:
-            try:
-                transcript_log.append(TranscriptEventV2.model_validate(v))
-            except ValidationError:
-                # Fallback: construct from raw fields
-                evt = TranscriptEventV2(
-                    event_id=str(v.get("event_id", "")),
-                    sequence=int(v.get("sequence", 0)),
-                    role=str(v.get("role", "")),
-                    kind=str(v.get("kind", "")),
-                    route=str(v.get("route", "")),
-                    content=str(v.get("content", "")),
-                    source_turns=tuple(v.get("source_turns", [])),
-                    artifact_id=v.get("artifact_id"),
-                    created_at=str(v.get("created_at", "")),
-                )
-                transcript_log.append(evt)
+        # Canonical validation must not turn supplied invalid evidence into defaults.
+        transcript_log = [TranscriptEventV2.model_validate(v) for v in transcript_log_data]
 
         # Use the complete canonical working-state restoration contract.
         working_state = WorkingStateV2.from_mapping(payload.get("working_state"))

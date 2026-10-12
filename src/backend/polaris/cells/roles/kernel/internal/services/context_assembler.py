@@ -99,20 +99,6 @@ _UNICODE_CONFUSION_MAP = {
 
 
 # Base64 编码模式 - 更精确的检测，避免误报UUID和哈希
-# 模式说明：
-# 1. 必须包含至少一个 Base64 填充字符 (+/) 或明确的 base64: 前缀
-# 2. 长度至少 20 个字符（过滤掉短随机字符串）
-# 3. 可选的 = 填充
-_BASE64_EXPLICIT_PATTERN = re.compile(r"(?:base64:|BASE64:)[A-Za-z0-9+/]{20,}={0,2}", re.IGNORECASE)
-
-# 更严格的 Base64 内容检测 - 要求包含 + 或 / 且长度足够
-# 这个模式匹配看起来像 Base64 编码的内容（包含 + 或 /）
-_BASE64_CONTENT_PATTERN = re.compile(
-    r"[A-Za-z0-9+/]{40,}={0,2}",  # 至少40字符，减少误报
-    re.IGNORECASE,
-)
-
-
 def _normalize_confusable(text: str) -> str:
     """将可混淆字符标准化为 ASCII"""
     result = []
@@ -122,46 +108,10 @@ def _normalize_confusable(text: str) -> str:
 
 
 def _is_likely_base64_payload(text: str) -> bool:
-    """判断文本是否可能是 Base64 编码的 payload。
+    """Use the same encoded-instruction detector as the current gateway."""
+    from polaris.cells.roles.kernel.internal.context_gateway.constants import is_likely_base64_payload
 
-    通过检查是否包含 Base64 特有的字符（+ 或 /）且长度足够，
-    同时排除常见的 UUID 和十六进制哈希格式。
-
-    Args:
-        text: 要检查的文本
-
-    Returns:
-        如果是可能的 Base64 payload 返回 True，否则返回 False
-    """
-    # 首先检查是否有明确的 base64: 前缀
-    if _BASE64_EXPLICIT_PATTERN.search(text):
-        return True
-
-    # 查找潜在的 Base64 内容
-    for match in _BASE64_CONTENT_PATTERN.finditer(text):
-        content = match.group()
-
-        # 排除 UUID 格式 (8-4-4-4-12)
-        if re.match(
-            r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-            content,
-        ):
-            continue
-
-        # 排除纯十六进制（不含 +/）
-        if not re.search(r"[+/]", content):
-            continue
-
-        # 排除看起来像 Git commit hash 的格式（40位十六进制）
-        if re.match(r"^[0-9a-fA-F]{40}$", content):
-            continue
-
-        # 检查 Base64 特征：包含 + 或 / 且长度合理
-        # 真正的 Base64 编码通常包含这些字符
-        if "+" in content or "/" in content:
-            return True
-
-    return False
+    return is_likely_base64_payload(text)
 
 
 # =============================================================================

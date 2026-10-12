@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import py_compile
@@ -19,6 +20,54 @@ from polaris.kernelone.quality import (
     scan_workspace_artifact_quality_evidence,
 )
 from polaris.kernelone.quality.artifact_quality import _scan
+
+
+@pytest.mark.parametrize("source_suffix", [".ts", ".tsx"])
+def test_static_html_scan_reports_javascript_appended_to_typescript_source_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_suffix: str
+) -> None:
+    _write(
+        tmp_path,
+        {
+            "src/web" + source_suffix: "export const start = () => {};\n",
+            "tsconfig.json": '{"compilerOptions":{"outDir":"dist","rootDir":"src"}}',
+            "index.html": (
+                '<html><body><script type="module" src="./src/web' + source_suffix + '.js"></script></body></html>'
+            ),
+        },
+    )
+
+    evidence = _pure(tmp_path, monkeypatch, relative_paths=["index.html"])
+
+    assert evidence.scan_complete is True
+    assert len(evidence.issues) == 1
+    issue = evidence.issues[0]
+    assert issue.code == "html_module_script_compiled_javascript_missing"
+    assert issue.path == "index.html"
+    assert issue.metadata["typescript_source"] == "src/web" + source_suffix
+    assert issue.metadata["emitted_script_src"] == "./dist/web.js"
+    assert len(evidence.errors) == 1
+
+
+def test_static_html_scan_resolves_compiled_script_relative_to_nested_html(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(
+        tmp_path,
+        {
+            "src/pages/web.ts": "export const start = () => {};\n",
+            "tsconfig.json": '{"compilerOptions":{"outDir":"./dist","rootDir":"./src"}}',
+            "src/pages/index.html": ('<html><body><script type="module" src="./web.ts.js"></script></body></html>'),
+        },
+    )
+
+    evidence = _pure(tmp_path, monkeypatch, relative_paths=["src/pages/index.html"])
+
+    assert len(evidence.issues) == 1
+    metadata = evidence.issues[0].metadata
+    assert metadata["compiled_script_src"] == "./web.ts.js"
+    assert metadata["typescript_source"] == "src/pages/web.ts"
+    assert metadata["emitted_script_src"] == "../../dist/pages/web.js"
 
 
 def _write(root: Path, files: dict[str, str]) -> None:
@@ -113,7 +162,9 @@ def _pure(root: Path, monkeypatch: pytest.MonkeyPatch, **kwargs) -> ArtifactQual
 def test_legacy_public_scan_creates_python_bytecode(tmp_path: Path) -> None:
     _write(tmp_path, {"main.py": "value = 1\n"})
     scan_workspace_artifact_quality_evidence(str(tmp_path), relative_paths=["main.py"])
-    assert list(tmp_path.rglob("*.pyc"))
+    # Respect the interpreter's configured cache prefix; the legacy scan still
+    # has to produce bytecode, wherever Python is configured to store it.
+    assert Path(importlib.util.cache_from_source(str(tmp_path / "main.py"))).is_file()
 
 
 def test_legacy_public_scan_reaches_node_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

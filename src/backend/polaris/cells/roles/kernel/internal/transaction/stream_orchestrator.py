@@ -1531,7 +1531,8 @@ class StreamOrchestrator:
         _finalization = result.get("finalization") or {}
         completion_status: Literal["success", "failed", "handoff", "suspended"] = (
             "failed"
-            if _kind in {"mutation_bypass_blocked", "inline_patch_escape_blocked", "recon_bypass_blocked"}
+            if _kind
+            in {"mutation_bypass_blocked", "inline_patch_escape_blocked", "recon_bypass_blocked", "tool_failure"}
             else "handoff"
             if _kind == "handoff_workflow"
             else "suspended"

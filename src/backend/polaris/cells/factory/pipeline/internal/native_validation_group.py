@@ -62,9 +62,11 @@ def _relative(raw: str, *, allow_dot: bool = False) -> str:
 
 def _root(raw: Path) -> Path:
     path = Path(raw).absolute()
+    operator_root = Path.home() / ".polaris"
     if (
         path == Path("/")
-        or any(part in _BLOCKED_PARTS for part in path.parts)
+        or path == operator_root
+        or any(ancestor.name in _BLOCKED_PARTS and ancestor != operator_root for ancestor in (path, *path.parents))
         or any(item.is_symlink() for item in (path, *path.parents))
     ):
         raise NativeValidationSandboxError("verification_root_unsafe")
@@ -474,6 +476,17 @@ class VerificationGroup:
         self._backing_witnesses: dict[str, tuple[int, ...]] = {}
         try:
             self._root_fs.workspace_write_bytes("home/.keep", b"")
+            # Offline namespaces still need local name resolution for test
+            # runners and loopback services. Keep it independent of host DNS.
+            for name, content in {
+                "hosts": "127.0.0.1 localhost\n",
+                "nsswitch.conf": "hosts: files\n",
+            }.items():
+                relative = "system/" + name
+                self._root_fs.workspace_write_bytes(relative, content.encode("utf-8"))
+                configuration = self._stage_root / relative
+                data, witness = _read(KernelFileSystem(str(configuration.parent), get_default_adapter()), name)
+                self._configuration_witnesses[configuration] = (_hash(data), witness)
             if self._rust_policy:
                 self._root_fs.workspace_write_bytes("cargo-home/.keep", b"")
             for path, data in payloads.items():
@@ -561,8 +574,13 @@ class VerificationGroup:
         executable = invocation.resolve(strict=True)
         mounted = (*[Path(path).resolve() for path in _SYSTEM_ROOTS if Path(path).is_dir()], *self._tools)
         invocation_mounts = (*[Path(path) for path in _SYSTEM_ROOTS if Path(path).is_dir()], *self._tools)
-        if not any(executable.is_relative_to(root) for root in mounted) or not any(
-            invocation.is_relative_to(root) for root in invocation_mounts
+        if not any(executable.is_relative_to(root) for root in mounted):
+            raise NativeValidationSandboxError("verification_toolchain_unmounted")
+        bind_invocation_alias = not any(invocation.is_relative_to(root) for root in invocation_mounts)
+        if bind_invocation_alias and (
+            invocation == executable
+            or invocation.is_relative_to(Path("/workspace"))
+            or invocation.is_relative_to(Path("/sandbox-home"))
         ):
             raise NativeValidationSandboxError("verification_toolchain_unmounted")
         executable_data, executable_witness = _read(
@@ -584,6 +602,8 @@ class VerificationGroup:
         ]
         for path in _SYSTEM_ROOTS:
             _append_optional_ro_bind(arguments, Path(path), path)
+        for name in ("hosts", "nsswitch.conf"):
+            arguments.extend(["--ro-bind", str(self._stage_root / "system" / name), "/etc/" + name])
         arguments.extend(
             [
                 "--proc",
@@ -604,6 +624,11 @@ class VerificationGroup:
             arguments.extend(["--ro-bind", str(root), str(root)])
         for runtime_file in self._tool_file_witnesses:
             arguments.extend(["--ro-bind", str(runtime_file), str(runtime_file)])
+        if bind_invocation_alias:
+            # Preserve symlink resolution for script-relative modules and
+            # multicall dispatch. The target is already in a readonly tool root;
+            # create only this alias, without mounting its host directory.
+            arguments.extend(["--dir", str(invocation.parent), "--symlink", str(executable), str(invocation)])
         if self._rust_policy:
             arguments.extend(
                 [

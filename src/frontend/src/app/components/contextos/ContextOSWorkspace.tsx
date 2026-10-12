@@ -68,8 +68,9 @@ import {
   type RoleInternalContext,
   type WorkerCard,
 } from './contextOSData';
-import { buildTelemetryFromStream, type ContextOSEvent } from './contextOSTelemetry';
+import { buildTelemetryFromStream, contextOSAccountingEvents, type ContextOSEvent } from './contextOSTelemetry';
 import { meaningfulContextOSEvents } from './contextOSEventVisibility';
+import { deriveTelemetryDecisions } from './contextOSData/_model';
 import { ContextViewerModal } from './ContextViewerModal';
 import { ContextStoreStatsPanel } from './ContextStoreStatsPanel';
 
@@ -684,7 +685,7 @@ function PipelineDetailModal({
   const style = STATE_STYLES[stage.state];
   const recentEvents = meaningfulContextOSEvents(telemetry.events).slice(0, 6);
   const projectionEvents = telemetry.events.filter((event) => event.isProjection).slice(0, 6);
-  const callEvents = telemetry.events.filter((event) => event.isCall || event.hasUsage).slice(0, 6);
+  const callEvents = contextOSAccountingEvents(telemetry.events).slice(0, 6);
   const receiptEvents = telemetry.events.filter((event) => event.contextSnapshotRef || event.contextSnapshotDegraded || event.contextHash).slice(0, 6);
   const errorEvents = telemetry.events.filter((event) => event.category === 'error' || event.contextSnapshotDegraded).slice(0, 6);
   const activeRoles = model.roles.filter((role) => role.state === 'active').length;
@@ -1345,27 +1346,27 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
   const grouped = useMemo(() => groupEventsByEntity(ctx.events), [ctx.events]);
 
   const pipeline: PipelineStage[] = [
-    { id: 'truthlog', label: 'TruthLog', component: '事件真值流', hint: '角色专属事件流', state: ctx.eventCount > 0 ? 'active' : 'idle', metric: `${ctx.eventCount} 事件` },
+    { id: 'truthlog', label: 'TruthLog', component: '事件真值流', hint: '角色专属事件流', state: ctx.state === 'active' && ctx.eventCount > 0 ? 'active' : 'idle', metric: `${ctx.eventCount} 事件` },
     {
       id: 'working_mem',
       label: 'WorkingMem',
       component: '活动窗口',
       hint: ctx.workingMemoryEstimated ? '实时观测窗口' : '在窗上下文项',
-      state: (ctx.workingMemoryItems ?? 0) > 0 ? 'active' : 'idle',
+      state: ctx.state === 'active' && (ctx.workingMemoryItems ?? 0) > 0 ? 'active' : 'idle',
       metric: ctx.workingMemoryItems !== null
         ? `${ctx.workingMemoryEstimated ? '~' : ''}${ctx.workingMemoryItems} 项${ctx.workingMemoryEstimated ? ' 估算' : ''}`
         : '—',
     },
-    { id: 'projection', label: 'ProjectionEngine', component: '投影装配', hint: '上下文装配次数', state: ctx.projectionCount > 0 ? 'active' : 'idle', metric: `${ctx.projectionCount} 投影` },
-    { id: 'receipt', label: 'ReceiptStore', component: '快照回执', hint: '落盘回执数', state: ctx.receiptCount > 0 ? 'active' : 'idle', metric: `${ctx.receiptCount} 回执` },
+    { id: 'projection', label: 'ProjectionEngine', component: '投影装配', hint: '上下文装配次数', state: ctx.state === 'active' && ctx.projectionCount > 0 ? 'active' : 'idle', metric: `${ctx.projectionCount} 投影` },
+    { id: 'receipt', label: 'ReceiptStore', component: '快照回执', hint: '落盘回执数', state: ctx.state === 'active' && ctx.receiptCount > 0 ? 'active' : 'idle', metric: `${ctx.receiptCount} 回执` },
   ];
 
   const displayedEvents = ctx.events.length;
   const hasTruncation = ctx.eventCount > displayedEvents;
 
   // Collect LLM calls with context_snapshot_ref or explicit snapshot degradation evidence from events.
-  const llmCalls = ctx.events
-    .filter((event) => (event.contextSnapshotRef || event.contextSnapshotDegraded) && (event.isCall || event.hasUsage))
+  const llmCalls = contextOSAccountingEvents(ctx.events)
+    .filter((event) => event.contextSnapshotRef || event.contextSnapshotDegraded)
     .slice(0, 5);
 
   return (
@@ -1481,7 +1482,7 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
             <span>最近 LLM 调用</span>
             <span className="font-mono normal-case text-text-dim">{llmCalls.length} 条</span>
           </div>
-          <div className="space-y-1">
+          <div className="space-y-1" data-testid="contextos-recent-role-calls">
             {llmCalls.map((event) => (
               <div
                 key={event.id}
@@ -2068,8 +2069,7 @@ export function ContextOSWorkspace({
   const ledgerGatePassed = controlPlaneGatePassed(controlPlaneProjection);
   const gatePassed = ledgerGatePassed ?? qualityGate?.passed;
   const gateSource = ledgerGatePassed === undefined ? 'quality gate' : 'Run Ledger';
-  // 观测到活动 = PM/Director 运行中 或 真实遥测有内容。
-  const observed = model.running || model.telemetryActive;
+  const observed = model.running;
   // 「真正有数据」= 真实遥测有内容；此时不再视为空闲水印。
   const idle = !model.telemetryActive && (model.dataIdle || (!live && !model.running));
   const pipelineLive = observed && live;
@@ -2089,8 +2089,10 @@ export function ContextOSWorkspace({
   }, [telemetry.events]);
 
   const filteredDecisions = useMemo(
-    () => model.decisions.filter((row) => decisionMatchesRole(row.actor, activeRole)),
-    [model.decisions, activeRole],
+    () => model.telemetryActive && activeRole
+      ? deriveTelemetryDecisions(telemetry, 12, activeRole)
+      : model.decisions.filter((row) => decisionMatchesRole(row.actor, activeRole)),
+    [model.decisions, model.telemetryActive, telemetry, activeRole],
   );
   const selectedRole = activeRole ? model.roles.find((role) => role.id === activeRole) ?? null : null;
   const budgetWindowTokens = selectedRole?.contextWindowTokens ?? model.contextWindowTokens;
@@ -2105,7 +2107,7 @@ export function ContextOSWorkspace({
     : globalWindowOccupancyTokens;
   const budgetWindowOccupancyLabel = selectedRole
     ? selectedRole.internalContext.windowOccupancyLabel
-    : globalWindowOccupancyTokens !== null ? '平均提示 (估算)' : '无 usage';
+    : model.windowOccupancyLabel;
   const budgetWindowOccupancyDetail = selectedRole
     ? `${selectedRole.internalContext.windowOccupancyDetail} · ${budgetWindowDetail}`
     : globalWindowOccupancyTokens !== null ? budgetWindowDetail : `尚无全局 usage 观测 · ${budgetWindowDetail}`;
@@ -2125,7 +2127,7 @@ export function ContextOSWorkspace({
     // Historical error events are immutable telemetry, not current gate state.
     state: model.currentErrorUnrecovered
       ? 'blocked'
-      : model.receiptCount > 0 || model.calls > 0
+      : model.running && (model.receiptCount > 0 || model.calls > 0)
         ? 'active'
         : 'idle',
     metric: model.errorCount > 0
@@ -2183,7 +2185,7 @@ export function ContextOSWorkspace({
 
           <div
             className="flex items-center gap-1.5 rounded-lg border border-accent-secondary/20 bg-black/30 px-2.5 py-1"
-            title="实时 LLM 活动：调用次数 · token 总量 · 最近时延"
+            title="全部角色的观测窗口：调用次数 · 累计用量 · 最近时延"
             data-testid="contextos-resource-chip"
           >
             <Activity className="h-3.5 w-3.5 text-accent-secondary" />
@@ -2450,7 +2452,7 @@ export function ContextOSWorkspace({
                     data-testid="contextos-telemetry-source"
                     title="决策流来自 ContextOS 实时遥测（WebSocket /v2/ws/runtime 推送）"
                   >
-                    REAL · {model.calls} 调用 · {model.projectionCount} 投影
+                    REAL · {selectedRole?.internalContext.calls ?? model.calls} 调用 · {selectedRole?.internalContext.projectionCount ?? model.projectionCount} 投影
                     {model.telemetryWindowed ? ' · 最近窗口' : ''}
                   </span>
                 ) : undefined
@@ -2465,10 +2467,20 @@ export function ContextOSWorkspace({
             <SectionCard title="上下文预算" subtitle="Context Budget" icon={Coins}>
               <div className="space-y-4">
                 <div>
-                  <div className="flex flex-wrap items-baseline gap-2">
+                  <div className="flex flex-wrap items-baseline gap-2" data-testid="contextos-context-budget-primary">
+                    {model.contextBudgetTokens !== null ? (
+                      <>
+                        <span className="font-heading text-3xl font-bold text-text-main">{model.contextBudgetTokens.toLocaleString()}</span>
+                        <span className="text-[11px] text-text-dim">{model.contextBudgetSourceLabel}</span>
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-text-dim">{model.contextBudgetSourceLabel}</span>
+                    )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-baseline gap-2">
                     {model.totalTokens > 0 ? (
                       <>
-                        <span className="font-heading text-3xl font-bold text-text-main">{model.totalTokens.toLocaleString()}</span>
+                        <span className="text-sm font-bold text-text-main" data-testid="contextos-cumulative-usage">{model.totalTokens.toLocaleString()} · {model.telemetryActive ? '观测窗口累计' : '累计'}用量</span>
                         <span className="text-[11px] text-text-dim">
                           {model.usageSourceLabel}
                         </span>
@@ -2489,7 +2501,7 @@ export function ContextOSWorkspace({
                   >
                     <Coins className="h-5 w-5 text-text-dim/30" />
                     <div className="text-[11px] text-text-dim">
-                      <span className="font-medium">等待首次 LLM 调用</span>
+                       <span className="font-medium">尚无 provider 用量</span>
                     </div>
                     <div className="text-[10px] text-text-dim/60">
                       实时 token 随 journal 流到达
@@ -2528,14 +2540,14 @@ export function ContextOSWorkspace({
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="flex min-w-0 items-center gap-1 text-text-muted">
                       <Gauge className="h-3 w-3 shrink-0" />
-                      <span className="truncate">上下文窗口占用</span>
+                       <span className="truncate">上下文窗口占用</span>
                       <span
                         className={cn(
                           'shrink-0 rounded px-1 text-[9px]',
                           hasBudgetWindowUsage ? 'bg-white/5 text-text-dim' : 'bg-status-warning/10 text-status-warning',
                         )}
                       >
-                        {hasBudgetWindowUsage ? budgetWindowOccupancyLabel : '未观测'}
+                        <span data-testid="contextos-window-occupancy-source">{hasBudgetWindowUsage ? budgetWindowOccupancyLabel : '未观测'}</span>
                       </span>
                     </span>
                     <span className="font-mono text-text-main">{hasBudgetWindowUsage ? `${Math.round(budgetWindowOccupancy * 100)}%` : '—'}</span>

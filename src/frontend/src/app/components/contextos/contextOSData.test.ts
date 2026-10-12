@@ -376,11 +376,11 @@ describe('buildContextOSModel with real WS telemetry', () => {
     const pm = model.roles.find((r) => r.id === 'pm');
     const director = model.roles.find((r) => r.id === 'director');
     const qa = model.roles.find((r) => r.id === 'qa');
-    expect(pm?.state).toBe('active'); // produced WS events (llm_completed + prompt_context)
+    expect(pm?.state).toBe('idle'); // produced WS events (llm_completed + prompt_context)
     expect(pm?.tokensReal).toBe(true); // journal llm channel carries real usage
     expect(pm?.tokens).toBe(3386);
     expect(pm?.detail).toBe('3.4k tok');
-    expect(director?.state).toBe('active');
+    expect(director?.state).toBe('idle');
     expect(director?.tokensReal).toBe(true);
     expect(director?.tokens).toBe(1000);
     expect(qa?.state).toBe('idle');
@@ -510,7 +510,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
     const director = model.roles.find((r) => r.id === 'director');
     const row = director?.internalContext.bindingBudgets.find((item) => item.providerId === 'qwen-a');
 
-    expect(model.totalTokens).toBe(1800);
+    expect(model.totalTokens).toBe(1600);
     expect(model.providerUsageTokens).toBe(1600);
     expect(model.cacheReadTokens).toBe(500);
     expect(model.cachedTokens).toBe(500);
@@ -521,7 +521,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(row).toMatchObject({
       providerId: 'qwen-a',
       model: 'qwen3.6-27b-gpu0',
-      totalTokens: 1800,
+      totalTokens: 1600,
       promptTokens: 1500,
       completionTokens: 100,
       cacheReadTokens: 500,
@@ -639,7 +639,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(model.windowOccupancyTokens).toBe(4096);
     expect(model.windowOccupancy).toBeCloseTo(4096 / 32_768, 5);
     expect(pm?.internalContext.windowOccupancyTokens).toBe(4096);
-    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新最终请求 (实测)');
+    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新上下文 (估算)');
   });
 
   it('flags windowed when a WS stream reaches its ring-buffer cap', () => {
@@ -760,7 +760,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(pm?.internalContext.totalTokens).toBe(3386);
     expect(pm?.internalContext.promptTokens).toBe(1932);
     expect(pm?.internalContext.completionTokens).toBe(1454);
-    expect(pm?.internalContext.state).toBe('active');
+    expect(pm?.internalContext.state).toBe('idle');
     expect(pm?.internalContext.events).toHaveLength(2);
     expect(pm?.internalContext.lastEventAt).toBeGreaterThan(0);
     expect(pm?.internalContext.currentTaskId).toBeNull();
@@ -832,9 +832,9 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(director?.internalContext.workingMemoryEstimated).toBe(true);
     expect(qa?.internalContext.eventCount).toBe(1);
     expect(qa?.internalContext.events[0].id).toBe('bench-qa');
-    expect(chief?.state).toBe('active');
-    expect(director?.state).toBe('active');
-    expect(qa?.state).toBe('active');
+    expect(chief?.state).toBe('idle');
+    expect(director?.state).toBe('idle');
+    expect(qa?.state).toBe('idle');
   });
 
   it('keeps RoleInternalContext.state consistent with RoleCard.state when a role is running but has no events', () => {
@@ -870,7 +870,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(pm?.internalContext.workingMemoryEstimated).toBe(false);
     expect(pm?.internalContext.contextTokensLatest).toBe(3200);
     expect(pm?.internalContext.windowOccupancyTokens).toBe(3200);
-    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新最终请求 (实测)');
+    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新上下文 (估算)');
   });
 
   it('keeps per-role context occupancy isolated when multiple roles publish context.build events', () => {

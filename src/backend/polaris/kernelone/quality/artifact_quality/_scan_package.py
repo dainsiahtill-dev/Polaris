@@ -864,6 +864,7 @@ def _static_shell_node_sources(
     )
     words: list[tuple[str, bool]] = []
     unknown: list[str] = []
+    glob_word_positions: set[int] = set()
     cursor = 0
     for match in lexical.finditer(script):
         if match.start() < cursor:
@@ -890,7 +891,7 @@ def _static_shell_node_sources(
             if re.search(r"[<> {}]", unquoted):
                 unknown.append("unsupported_shell_form")
             if re.search(r"(?<!\\)[*?\[]", unquoted):
-                unknown.append("shell_glob_expansion")
+                glob_word_positions.add(len(words) - 1)
         cursor = match.end()
     if script[cursor:].strip():
         raise ValueError("unsupported shell lexical syntax")
@@ -933,6 +934,7 @@ def _static_shell_node_sources(
         if (
             has_node_test
             and executable == "tsc"
+            and args
             and (
                 args != ["--noEmit"]
                 and not (len(args) == 2 and args[0] in {"-p", "--project"} and Path(args[1]).suffix.lower() == ".json")
@@ -973,10 +975,18 @@ def _static_shell_node_sources(
             index += 1
             continue
         tokens = [value for value, _ in words[index:end]]
+        test_unknown: list[str] = []
+        if _static_node_test_invocation(args, test_unknown) and not test_unknown:
+            # The finite Node test grammar identifies these as source-file
+            # selectors. Runtime owns expansion and actual execution; ordinary
+            # test globs do not make the executable identity unknown.
+            glob_word_positions.difference_update(range(index + 1, end))
         sources.extend(_iter_node_eval_sources(tokens, incomplete_reasons=unknown))
         index = end
     if has_node_test and command_position:
         unknown.append("node_test_shell_clause_missing")
+    if glob_word_positions:
+        unknown.append("shell_glob_expansion")
     return tuple(sources), unknown
 
 

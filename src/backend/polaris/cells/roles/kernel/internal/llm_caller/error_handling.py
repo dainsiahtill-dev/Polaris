@@ -43,6 +43,9 @@ def classify_error(error_str: str) -> str:
     """
     error_lower = str(error_str or "").lower()
 
+    if "final provider request evidence coverage failed" in error_lower:
+        return ERROR_CATEGORY_VALIDATION
+
     if "timeout" in error_lower or "timed out" in error_lower:
         return ERROR_CATEGORY_TIMEOUT
 
@@ -74,6 +77,8 @@ def classify_error(error_str: str) -> str:
         or "502" in error_lower
         or "503" in error_lower
         or "504" in error_lower
+        or "529 server error" in error_lower
+        or "overloaded_error" in error_lower
         or "bad gateway" in error_lower
         or "gateway timeout" in error_lower
     ):

@@ -109,7 +109,7 @@ class TestStateFirstContextOSPolicySubPolicies:
         assert policy.token_budget.p95_tool_result_tokens == 2048
         assert policy.token_budget.planned_retrieval_tokens == 1536
         assert policy.input_validation.max_messages == 1000
-        assert policy.input_validation.max_message_size == 100_000
+        assert policy.input_validation.max_message_size == 10_000_000
         assert policy.input_validation.max_total_input_size == 10_000_000
         assert policy.attention_runtime.enable_dialog_act is True
         assert policy.attention_runtime.prevent_seal_on_pending is True
