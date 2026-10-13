@@ -30,6 +30,7 @@ from ..factory_physical_attempt_coordinator import (
 )
 from ..factory_physical_attempt_replay import (
     FactoryPhysicalAttemptReplayError,
+    build_factory_physical_attempt_replay_candidate,
 )
 from ..factory_run_models import (
     TERMINAL_RUN_STATUSES,
@@ -99,6 +100,10 @@ class _FactoryRunServiceLifecycleMixin:
                     },
                 )
 
+        failed_evidence_incomplete = bool(
+            target_run.status in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}
+            and self._settlement_barrier_query(self.workspace, target_run.id).missing_required_modalities
+        )
         coordinator = self._physical_attempt_coordinators.get(target_run.id)
         if coordinator is None:
             # After Launcher-restart the process-local coordinator is gone.
@@ -108,6 +113,75 @@ class _FactoryRunServiceLifecycleMixin:
             existing_map = existing_drain if isinstance(existing_drain, Mapping) else {}
             if target_run.status not in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}:
                 raise FactoryPhysicalAttemptControlError("factory_physical_attempt_replay_required")
+            if failed_evidence_incomplete:
+                try:
+                    claim = lease.lifecycle_operation_claim
+                    if claim is None or existing_map.get("factory_run_id") != target_run.id:
+                        raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
+                    with self._admission.hold_active_lifecycle_operation_claim(
+                        target_run.id,
+                        fencing_token=lease.fencing_token,
+                        operation=claim.operation,
+                        sequence=claim.sequence,
+                        nonce=claim.nonce,
+                        allow_expired_owner=claim.operation == "recover_stale_workspace_owner",
+                    ) as revalidate:
+                        held = revalidate()
+                        fence = self._capture_physical_attempt_replay_fence(factory_run_id=target_run.id, lease=held)
+                        role_evidence, lifecycle = self._capture_physical_attempt_replay_views(target_run.id)
+                        candidate = build_factory_physical_attempt_replay_candidate(
+                            fence=fence,
+                            role_evidence=role_evidence,
+                            lifecycle=lifecycle,
+                        )
+                        states = existing_map.get("by_authority")
+                        if not candidate.records or any(record.terminal is None for record in candidate.records):
+                            raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
+                        if (
+                            not isinstance(states, list)
+                            or not states
+                            or not all(isinstance(state, Mapping) for state in states)
+                            or existing_map.get("settled") is not True
+                        ):
+                            raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
+                        authority_hashes = {record.start.execution_authority_hash for record in candidate.records}
+                        if {str(state.get("execution_authority_hash")) for state in states} != authority_hashes:
+                            raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
+                        for state in states:
+                            if (
+                                state.get("factory_run_id") != target_run.id
+                                or any(
+                                    state.get(key) is not True for key in ("registered", "revoked", "closed", "settled")
+                                )
+                                or any(
+                                    state.get(key) != 0
+                                    for key in (
+                                        "reserved_count",
+                                        "start_persisting_count",
+                                        "ambiguous_count",
+                                        "inflight_count",
+                                    )
+                                )
+                            ):
+                                raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
+                        verified_role, verified_lifecycle = self._capture_physical_attempt_replay_views(target_run.id)
+                        if (
+                            verified_role != role_evidence
+                            or verified_lifecycle != lifecycle
+                            or self._capture_physical_attempt_replay_fence(
+                                factory_run_id=target_run.id, lease=revalidate()
+                            )
+                            != fence
+                        ):
+                            raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    return await self._record_drain_conflict(
+                        target_run,
+                        lease,
+                        code="factory_physical_attempt_replay_required",
+                        message="Factory failed closeout requires stable canonical physical attempt closure",
+                        details={"error_type": type(exc).__name__, "error_message": str(exc)[:300]},
+                    )
             if existing_map.get("settled") is True:
                 physical_drain_evidence = {
                     "factory_run_id": target_run.id,
@@ -152,10 +226,15 @@ class _FactoryRunServiceLifecycleMixin:
         # pin child-session settlement forever. On FAILED/CANCELLED factory drain,
         # force-fail those owned active sessions (not foreign ones) so lease release
         # can complete. Live success paths never take this branch.
-        if settlement.get("settled") is not True and target_run.status in {
-            FactoryRunStatus.FAILED,
-            FactoryRunStatus.CANCELLED,
-        }:
+        if (
+            not failed_evidence_incomplete
+            and settlement.get("settled") is not True
+            and target_run.status
+            in {
+                FactoryRunStatus.FAILED,
+                FactoryRunStatus.CANCELLED,
+            }
+        ):
             abort_summary = TaskRuntimeService(str(self.workspace)).terminalize_open_tasks_for_factory_abort(
                 factory_run_id=target_run.id,
                 reason=f"factory_{target_run.status.value}",
@@ -258,6 +337,8 @@ class _FactoryRunServiceLifecycleMixin:
                     # Failed acceptance stays failed; it must not prevent
                     # aborting never-dispatched owners during failure closeout.
                     "run_ledger_gate_failed",
+                    "required_evidence_missing",
+                    "required_evidence_failed",
                 }
                 non_abortable = blocking - abortable_blockers
                 if not non_abortable and (

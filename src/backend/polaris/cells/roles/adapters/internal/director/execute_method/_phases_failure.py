@@ -108,6 +108,34 @@ def _primary_llm_provider_failure_payload(primary_llm_summary: dict[str, Any] | 
     if not isinstance(primary_llm_summary, dict) or bool(primary_llm_summary.get("success")):
         return None
 
+    metadata = primary_llm_summary.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    continuous = metadata.get("continuous_execution")
+    authority_error = "verification_command_authority_rows_missing_or_mismatched"
+    if (
+        primary_llm_summary.get("error") == authority_error
+        and type(primary_llm_summary.get("llm_calls")) is int
+        and primary_llm_summary["llm_calls"] == 0
+        and metadata.get("role_runtime_entrypoint") == "roles.runtime.execute_role_session"
+        and isinstance(continuous, dict)
+        and continuous.get("enabled") is True
+        and type(continuous.get("turns_executed")) is int
+        and continuous["turns_executed"] == 0
+        and continuous.get("stop_reason") == authority_error
+        and metadata.get("session_turn_commit_receipts") == []
+        and metadata.get("tool_results") == []
+    ):
+        return {
+            "error": authority_error,
+            "error_code": authority_error,
+            "failure_class": FailureClassV1.BLUEPRINT_VERIFY_INVALID.value,
+            "responsible_layer": "execution_control_plane",
+            "materialization_mode": "preflight_blocked",
+            "failure_stage": "director_context_preflight",
+            "root_cause_hint": authority_error,
+            "detail": "Director command authority was rejected before any provider turn or tool dispatch.",
+        }
+
     error_text = _primary_llm_summary_text(primary_llm_summary)
     lowered = error_text.lower()
     error_category = str(primary_llm_summary.get("error_category") or "").strip().lower()
@@ -611,7 +639,7 @@ def _phase_no_materialized_changes(
             completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
         # R137: claimed materialization with no tool lifecycle must seal blocked
         # evidence before finalize; otherwise Run Ledger projects TOOL_LIFECYCLE_MISSING.
-        if not tool_results and not write_tool_evidence:
+        if not tool_results and not write_tool_evidence and failure_stage != "director_context_preflight":
             sealed_lifecycle = _seal_claimed_materialization_without_tool_lifecycle(
                 workspace=str(getattr(adapter, "workspace", "") or ""),
                 run_id=str(run_id or ""),

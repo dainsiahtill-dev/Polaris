@@ -266,6 +266,72 @@ def _promoted_task_contract_payload(sources: list[dict[str, Any]]) -> dict[str, 
     return payload
 
 
+def _project_completion_command_authority(context: dict[str, Any]) -> None:
+    """Expose CE's task-local rows to the existing token-bound command guard.
+
+    This is a lossless consumer projection, not an authorization decision.
+    The kernel still recomputes every argv/cwd/task/modality hash against the
+    immutable JobToken. Existing explicit rows must remain visible, including
+    malformed rows; a valid nested projection cannot conceal their mismatch.
+    """
+    metadata_raw = context.get("metadata")
+    metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    sources = (context, metadata)
+    for source in sources:
+        completion = source.get("project_completion_contract")
+        if "verification_command_authority" in source or (
+            isinstance(completion, dict) and "verification_command_authority" in completion
+        ):
+            return
+    projection = metadata.get("task_completion_projection", context.get("task_completion_projection"))
+    if not isinstance(projection, dict) or projection.get("schema_version") != "polaris.task_completion_projection.v1":
+        return
+    token = next(
+        (
+            value
+            for source in sources
+            for key in ("control_plane_job_token", "job_token", "capability_token")
+            if isinstance(value := source.get(key), dict)
+        ),
+        {},
+    )
+    policy = token.get("gate_policy")
+    owner = _first_contract_value(list(sources), "pm_task_id") or _first_contract_value(
+        list(sources), "external_task_id"
+    )
+    # Director's child workflow id is independent of the Factory authority.
+    # Join the CE projection to the immutable token's Factory id, preserving
+    # the caller's role run id for TaskRuntime/RoleRuntime execution identity.
+    run_id = token.get("factory_run_id") or token.get("run_id")
+    explicit_factory_runs = [source["factory_run_id"] for source in sources if source.get("factory_run_id")]
+    if (
+        not isinstance(policy, dict)
+        or "command_authority_hashes" not in policy
+        or not owner
+        or projection.get("task_id") != owner
+        or not run_id
+        or projection.get("run_id") != run_id
+        or token.get("run_id") != run_id
+        or any(value != run_id for value in explicit_factory_runs)
+        or projection.get("project_contract_hash") != policy.get("project_completion_contract_hash")
+    ):
+        return
+    rows = projection.get("verification_command_authority")
+    if not isinstance(rows, list):
+        return
+    context["verification_command_authority"] = deepcopy(rows)
+    metadata["verification_command_authority"] = deepcopy(rows)
+    # The execution projection retains recipe order; command-authority rows
+    # are hash-sorted and must not accidentally reorder environment preparation.
+    recipes = projection.get("verification_execution_authority")
+    if isinstance(recipes, list) and all(isinstance(row, dict) and isinstance(row.get("command"), str) for row in recipes):
+        commands = [row["command"] for row in recipes]
+        context["verification_commands"] = commands
+        metadata["verification_commands"] = list(commands)
+        metadata["verification_authority"] = "chief_engineer"
+    context["metadata"] = metadata
+
+
 def _normalize_contract_task_token(value: Any) -> str:
     token = str(value or "").strip().lower()
     token = re.sub(r"^(task[-_])+", "", token)

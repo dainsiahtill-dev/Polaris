@@ -6,12 +6,15 @@ import hashlib
 import json
 import re
 import shlex
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, cast
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
+from polaris.cells.orchestration.pm_planning.public.artifact_contracts import GeneratedOutputV1
+from polaris.cells.orchestration.pm_planning.public.task_intent import is_pm_task_intent
 
 from ...internal.blueprint_persistence import BlueprintPersistence
 from ...internal.portfolio_behavior_feasibility import (
@@ -43,7 +46,13 @@ from ..contracts._blueprint_dtos import (
     _portfolio_authority_receipt_hash,
     _verify_chief_engineer_portfolio_authority_carrier,
 )
-from ..contracts._helpers import project_completion_catalog_snapshot_hash
+from ..contracts._helpers import (
+    _PROJECT_COMPLETION_MAX_ARTIFACTS,
+    _PROJECT_COMPLETION_MAX_ENTRYPOINTS,
+    _PROJECT_COMPLETION_MAX_VERIFICATIONS,
+    _require_completion_token,
+    project_completion_catalog_snapshot_hash,
+)
 from ._delegated_recipes import is_task_intent, prepare_delegated_recipes
 from ._helpers import (
     _BLUEPRINT_FILE_CONTAINER_KEYS,
@@ -112,10 +121,13 @@ def project_chief_engineer_portfolio_delivery_depth_feasibility(
             )
         ):
             continue
+        if is_task_intent(owner) and owner.scope_paths and not _task_authorizes_completion_path(task=owner, path=path):
+            continue
         if not (
             _task_authorizes_completion_path(task=owner, path=path)
             or _ce_topology_authorizes_artifact(
                 topology_authority=owner.topology_authority,
+                planning_contract_version=owner.planning_contract_version,
                 required_source_kinds=owner.required_source_kinds,
                 allowed_source_suffixes=owner.allowed_source_suffixes,
                 semantic_role=role,
@@ -231,13 +243,23 @@ def project_chief_engineer_delivery_depth_feasibility_from_pm_tasks(
             "chief_engineer" if raw_authority == "chief_engineer" else "pm"
         )
         raw_depth = task.get("delivery_depth_contract") or metadata.get("delivery_depth_contract")
-        primary_language = str(task.get("language") or "").strip().lower()
+        depth = dict(raw_depth) if isinstance(raw_depth, Mapping) else {}
+        primary_language = str(task.get("language") or depth.get("language") or "").strip().lower()
         allowed_source_suffixes = chief_engineer_source_suffixes_for_language(primary_language)
+        semantic_intent = is_pm_task_intent(task)
+        raw_verification_authority = str(metadata.get("verification_authority") or "pm").strip()
+        if raw_verification_authority not in {"pm", "chief_engineer"}:
+            raise ValueError(f"PM task {index} has invalid verification_authority={raw_verification_authority!r}")
+        verification_authority: Literal["pm", "chief_engineer"] = (
+            "chief_engineer" if raw_verification_authority == "chief_engineer" else "pm"
+        )
         tasks.append(
             ChiefEngineerPortfolioTaskV1(
                 task_id=str(task.get("id") or task.get("task_id") or f"TASK-{index}").strip(),
                 objective=str(task.get("goal") or task.get("objective") or task.get("description") or "").strip(),
                 target_files=target_files,
+                context_files=tuple(_string_list(task.get("context_files"))),
+                generated_outputs=tuple(GeneratedOutputV1.from_dict(row) for row in task.get("generated_outputs", [])),
                 scope_paths=tuple(_string_list(task.get("scope_paths"))) or target_files,
                 dependencies=tuple(_string_list(task.get("depends_on") or task.get("dependencies"))),
                 entrypoint_targets=tuple(
@@ -249,7 +271,15 @@ def project_chief_engineer_delivery_depth_feasibility_from_pm_tasks(
                 required_source_kinds=tuple(_string_list(metadata.get("required_source_kinds"))),
                 primary_language=primary_language,
                 allowed_source_suffixes=allowed_source_suffixes,
-                delivery_depth_contract=dict(raw_depth) if isinstance(raw_depth, Mapping) else {},
+                delivery_depth_contract=depth,
+                planning_contract_version="pm.task_intent.v1" if semantic_intent else "",
+                verification_authority=verification_authority,
+                observable_acceptance=tuple(
+                    _string_list(
+                        task.get("observable_acceptance") or task.get("acceptance_criteria") or task.get("acceptance")
+                    )
+                ),
+                explicit_constraints=tuple(_string_list(task.get("explicit_constraints"))),
             )
         )
     return project_chief_engineer_portfolio_delivery_depth_feasibility(payload, tasks=tuple(tasks))
@@ -1469,6 +1499,50 @@ def _project_portfolio_artifact_rows(
     )
 
 
+def _project_normalization_blocked_obligation_ids(
+    raw_rows: Mapping[str, tuple[dict[str, Any], ...]],
+    *,
+    artifact_projection: _PortfolioArtifactProjection,
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+) -> list[str]:
+    """Observe bounded declared identity; never project executable authority."""
+
+    limits = {
+        "artifacts": _PROJECT_COMPLETION_MAX_ARTIFACTS,
+        "entrypoints": _PROJECT_COMPLETION_MAX_ENTRYPOINTS,
+        "verification": _PROJECT_COMPLETION_MAX_VERIFICATIONS,
+    }
+    if any(len(raw_rows[name]) > limit for name, limit in limits.items()):
+        return []
+    identities: Counter[str] = Counter()
+    for rows in raw_rows.values():
+        for row in rows:
+            try:
+                identity = _require_completion_token("obligation_id", row.get("obligation_id"))
+            except ValueError:
+                continue
+            identities[identity] += 1
+    task_ids = {task.task_id for task in tasks}
+    blocked: set[str] = set()
+    for collection in ("entrypoints", "verification"):
+        for row in raw_rows[collection]:
+            declared_identity = row.get("obligation_id")
+            owner = row.get("owner_task_id")
+            if (
+                not isinstance(declared_identity, str)
+                or identities[declared_identity] != 1
+                or not isinstance(owner, str)
+                or owner not in task_ids
+            ):
+                continue
+            if collection == "entrypoints":
+                path = row.get("source_path")
+                if not isinstance(path, str) or owner not in artifact_projection.owners_for_path(path):
+                    continue
+            blocked.add(declared_identity)
+    return sorted(blocked)
+
+
 def project_chief_engineer_effective_obligation_view(
     payload: Mapping[str, Any],
     *,
@@ -1515,6 +1589,7 @@ def project_chief_engineer_effective_obligation_view(
     normalization_findings: list[dict[str, Any]] = []
     artifact_owner_corrections: list[dict[str, Any]] = []
     complete = False
+    normalization_blocked_ids: list[str] = []
     if carrier is not None:
         command = BuildChiefEngineerBlueprintPortfolioCommandV1(
             workspace=carrier.workspace,
@@ -1534,14 +1609,18 @@ def project_chief_engineer_effective_obligation_view(
             errors.append(str(exc))
             if isinstance(exc, ChiefEngineerBlueprintErrorV1):
                 artifact_owner_corrections = [dict(row) for row in exc.details.get("artifact_owner_corrections", [])]
-            normalization_findings.append(
-                {
-                    "code": "invalid_project_completion_contract",
-                    "repair_operation": (
-                        exc.details.get("repair_operation") if isinstance(exc, ChiefEngineerBlueprintErrorV1) else None
-                    ),
-                    "detail": str(exc),
-                }
+            finding = {
+                "code": "invalid_project_completion_contract",
+                "repair_operation": (
+                    exc.details.get("repair_operation") if isinstance(exc, ChiefEngineerBlueprintErrorV1) else None
+                ),
+                "detail": str(exc),
+            }
+            if isinstance(exc, ChiefEngineerBlueprintErrorV1) and "verification_recipe_diagnostics" in exc.details:
+                finding["verification_recipe_diagnostics"] = exc.details["verification_recipe_diagnostics"]
+            normalization_findings.append(finding)
+            normalization_blocked_ids = _project_normalization_blocked_obligation_ids(
+                raw_rows, artifact_projection=artifact_projection, tasks=tasks
             )
             # With committed evidence present, raw non-artifact rows must not
             # masquerade as the failed final command-normalized roster.
@@ -1583,6 +1662,7 @@ def project_chief_engineer_effective_obligation_view(
         "missing_authority_evidence": [] if carrier is not None else ["authenticated_portfolio_authority_carrier"],
         "normalization_errors": errors,
         "normalization_findings": normalization_findings,
+        "normalization_blocked_completion_obligation_ids": normalization_blocked_ids,
         "artifact_owner_corrections": artifact_owner_corrections,
         "obligations": effective,
         "retained_completion_obligation_ids": sorted(effective_ids),
@@ -3037,8 +3117,11 @@ def _project_interface_seed(
         else "pm_authoritative_tasks",
         "interface_declaration_authority": "chief_engineer_advisory_only",
         "authoritative": False,
-        **({"task_read_context": {task_id: list(paths) for task_id, paths in task_read_context.items()}}
-           if task_read_context else {}),
+        **(
+            {"task_read_context": {task_id: list(paths) for task_id, paths in task_read_context.items()}}
+            if task_read_context
+            else {}
+        ),
     }
     return seed, task_file_ownership, file_task_ownership
 
@@ -3051,8 +3134,9 @@ def _portfolio_task_read_context(
     if completion is None:
         return {}
     by_task = {task.task_id: task for task in tasks}
-    artifacts = {item.obligation_id: item for item in completion.obligations.artifacts
-                 if item.applicability != "not_applicable"}
+    artifacts = {
+        item.obligation_id: item for item in completion.obligations.artifacts if item.applicability != "not_applicable"
+    }
     by_path = {item.path: item for item in artifacts.values()}
     result: dict[str, tuple[str, ...]] = {}
     for task in tasks:
@@ -3068,19 +3152,30 @@ def _portfolio_task_read_context(
                 raise _portfolio_contract_error("readonly context requires valid dependency ownership")
             ancestors.add(owner)
             pending.extend(by_task[owner].dependencies)
-        verifiers = [item for item in completion.obligations.verification
-                     if item.owner_task_id == task.task_id and item.applicability == "required"]
+        verifiers = [
+            item
+            for item in completion.obligations.verification
+            if item.owner_task_id == task.task_id and item.applicability == "required"
+        ]
         paths = list(task.context_files)
-        paths.extend(artifacts[covered].path for item in verifiers for covered in item.covers_obligation_ids
-                     if covered in artifacts)
+        paths.extend(
+            artifacts[covered].path
+            for item in verifiers
+            for covered in item.covers_obligation_ids
+            if covered in artifacts
+        )
         closure = tuple(dict.fromkeys(path for path in paths if path not in task.target_files))
         for path in closure:
             artifact = by_path.get(path)
             if artifact is None or artifact.owner_task_id not in ancestors | {task.task_id}:
-                raise _portfolio_contract_error("readonly context path is outside exact dependency artifact scope",
-                                                details={"task_id": task.task_id, "path": path})
+                raise _portfolio_contract_error(
+                    "readonly context path is outside exact dependency artifact scope",
+                    details={"task_id": task.task_id, "path": path},
+                )
         if not task.target_files and (not closure or not verifiers):
-            raise _portfolio_contract_error("readonly task requires dependency read context and required verifier recipe")
+            raise _portfolio_contract_error(
+                "readonly task requires dependency read context and required verifier recipe"
+            )
         if closure:
             result[task.task_id] = closure
     return result
@@ -3444,8 +3539,10 @@ def build_chief_engineer_blueprint_portfolio(
                         "verification_commands": [
                             item.command
                             for item in project_completion_contract.verification_command_authority
-                            if item.task_id == task.task_id and item.modality != "entrypoint"
-                            and item.authority_hash in {
+                            if item.task_id == task.task_id
+                            and item.modality != "entrypoint"
+                            and item.authority_hash
+                            in {
                                 obligation.command_authority_hash
                                 for obligation in project_completion_contract.obligations.verification
                                 if obligation.owner_task_id == task.task_id and obligation.applicability == "required"

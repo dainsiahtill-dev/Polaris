@@ -157,7 +157,9 @@ def commit_turn_result(
                 correlation_id=str(ledger.turn_id),
                 provenance=provenance,
                 idempotency_key=idempotency_key,
-                strict_integrity=bool(session_id),
+                # Every role appends to the same authoritative outcome stream.
+                # Sessionless planning must not leave history unreadable by task sessions.
+                strict_integrity=True,
                 durability="fsync" if session_id else "buffered",
             )
         )

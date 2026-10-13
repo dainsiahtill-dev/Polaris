@@ -7,6 +7,7 @@ operates on CE provider results, LLM events, and portfolio payloads.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -314,6 +315,7 @@ def chief_engineer_portfolio_output_errors(
     task_ids: tuple[str, ...],
     authorized_artifact_obligation_ids: frozenset[str] | None = None,
     effective_completion_obligation_ids: frozenset[str] | None = None,
+    normalization_blocked_completion_obligation_ids: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Validate the nested project-level CE output contract."""
 
@@ -443,6 +445,7 @@ def chief_engineer_portfolio_output_errors(
             errors.append("project_completion_contract.obligations must be an object")
         else:
             completion_obligation_ids: set[str] = set()
+            declared_nonartifact_ids: set[str] = set()
             completion_cross_refs_valid = True
             for field in ("artifacts", "entrypoints", "verification"):
                 rows = obligations.get(field)
@@ -459,11 +462,29 @@ def chief_engineer_portfolio_output_errors(
                         completion_cross_refs_valid = False
                         continue
                     completion_obligation_ids.add(obligation_id)
+                    if field != "artifacts":
+                        declared_nonartifact_ids.add(obligation_id)
             if completion_cross_refs_valid and effective_completion_obligation_ids is not None:
                 completion_obligation_ids = set(effective_completion_obligation_ids)
             if completion_cross_refs_valid:
+                blocked_ids = normalization_blocked_completion_obligation_ids.intersection(declared_nonartifact_ids)
                 for index, covered_ids in behavior_obligation_refs:
-                    unknown_ids = sorted(set(covered_ids) - completion_obligation_ids)
+                    blocked_refs = sorted(set(covered_ids).intersection(blocked_ids) - completion_obligation_ids)
+                    if blocked_refs:
+                        errors.append(
+                            "chief_engineer.completion_reference_normalization_blocked:"
+                            + json.dumps(
+                                {
+                                    "invariant_index": index,
+                                    "obligation_ids": blocked_refs,
+                                    "execution_authority": False,
+                                },
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            )
+                        )
+                    unknown_ids = sorted(set(covered_ids) - completion_obligation_ids - blocked_ids)
                     if unknown_ids:
                         errors.append(
                             "shared_behavior_contract.invariants"

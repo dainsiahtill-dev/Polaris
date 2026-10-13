@@ -8,7 +8,7 @@ import shlex
 from collections.abc import Mapping
 from typing import Any
 
-from polaris.cells.control_plane.verifier_policy.public import classify_verifier_command_profile
+from polaris.cells.control_plane.verifier_policy.public import get_verifier_command_profile_feedback
 
 from ..contracts import ChiefEngineerBlueprintErrorV1, VerificationCommandAuthorityV1
 
@@ -29,19 +29,42 @@ def prepare_delegated_recipes(
     authorities = {item.authority_hash: item for item in carrier.verification_command_authority}
     normalized_rows = []
     declared_hashes = set()
+    recipe_diagnostics: list[dict[str, Any]] = []
+    active_recipe: dict[str, Any] = {}
 
     def recipe(owner: Any, modality: Any, argv: Any, cwd: Any) -> VerificationCommandAuthorityV1:
         task = tasks.get(owner)
         if task is None or not is_task_intent(task) or task.verification_authority != "chief_engineer":
             raise ValueError("CE recipe owner lacks authenticated verification delegation")
         authority = VerificationCommandAuthorityV1(task_id=owner, modality=modality, argv=argv, cwd=cwd)
-        profile_id, error_code = classify_verifier_command_profile(
+        feedback = get_verifier_command_profile_feedback(
             workspace=command.workspace,
             modality=authority.modality,
             argv=authority.argv,
             cwd=authority.cwd,
         )
+        profile_id, error_code = feedback["profile_id"], feedback["error_code"]
         if not profile_id or error_code:
+            allowed_modalities = [
+                candidate_modality
+                for candidate_modality in ("environment_prep", "build", "test", "lint", "entrypoint")
+                if get_verifier_command_profile_feedback(
+                    workspace=command.workspace,
+                    modality=candidate_modality,
+                    argv=authority.argv,
+                    cwd=authority.cwd,
+                )["profile_id"]
+            ]
+            recipe_diagnostics.append(
+                {
+                    **active_recipe,
+                    "modality": authority.modality,
+                    "argv": list(authority.argv),
+                    "cwd": authority.cwd,
+                    "profile_feedback": feedback,
+                    "allowed_recipe_modalities": allowed_modalities,
+                }
+            )
             raise ValueError(f"CE recipe fails verifier proof profile: {error_code or 'untrusted_verifier_command'}")
         authorities[authority.authority_hash] = authority
         declared_hashes.add(authority.authority_hash)
@@ -53,6 +76,12 @@ def prepare_delegated_recipes(
                 normalized_rows.append(raw)
                 continue
             row = dict(raw)
+            active_recipe = {
+                "collection": "verification",
+                "obligation_id": row.get("obligation_id"),
+                "owner_task_id": row.get("owner_task_id"),
+                "command_authority_hash": row.get("command_authority_hash"),
+            }
             has_recipe = row.get("argv") not in (None, [])
             if "argv" in row or "cwd" in row:
                 argv = row.pop("argv", None)
@@ -63,6 +92,20 @@ def prepare_delegated_recipes(
                     authority = recipe(row.get("owner_task_id"), row.get("modality"), argv, cwd)
                     claimed_hash = row.get("command_authority_hash")
                     if claimed_hash not in (None, authority.authority_hash):
+                        recipe_diagnostics.append(
+                            {
+                                **active_recipe,
+                                "modality": authority.modality,
+                                "argv": list(authority.argv),
+                                "cwd": authority.cwd,
+                                "profile_feedback": {
+                                    "error_code": "command_authority_hash_mismatch",
+                                    "guidance_only": True,
+                                    "execution_authority": False,
+                                },
+                                "allowed_recipe_modalities": [authority.modality],
+                            }
+                        )
                         raise ValueError("CE recipe command_authority_hash does not bind exact argv/cwd")
                     row["command_authority_hash"] = authority.authority_hash
             known_hash = row.get("command_authority_hash")
@@ -87,6 +130,12 @@ def prepare_delegated_recipes(
                 continue
             owner = tasks.get(row.get("owner_task_id"))
             if owner is not None and is_task_intent(owner):
+                active_recipe = {
+                    "collection": "entrypoints",
+                    "obligation_id": row.get("obligation_id"),
+                    "owner_task_id": row.get("owner_task_id"),
+                    "command": row.get("command"),
+                }
                 authority = recipe(owner.task_id, "entrypoint", shlex.split(str(row.get("command") or "")), ".")
                 if row.get("applicability") != "required":
                     declared_hashes.discard(authority.authority_hash)
@@ -100,7 +149,11 @@ def prepare_delegated_recipes(
         raise ChiefEngineerBlueprintErrorV1(
             message=str(exc),
             code="invalid_chief_engineer_verification_recipe",
-            details={"repair_operation": "verification_recipe_upsert", "requires_contract_correction": True},
+            details={
+                "repair_operation": "verification_recipe_upsert",
+                "requires_contract_correction": True,
+                "verification_recipe_diagnostics": recipe_diagnostics,
+            },
         ) from exc
     prepared = dict(requirements)
     prepared["obligations"] = {**dict(obligations), "verification": normalized_rows}

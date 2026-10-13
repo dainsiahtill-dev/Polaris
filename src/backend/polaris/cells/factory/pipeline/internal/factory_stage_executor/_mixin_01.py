@@ -1632,6 +1632,11 @@ class _Mixin01:
             authorized_artifact_obligation_ids=(
                 frozenset(feasibility["authorized_artifact_obligation_ids"]) if feasibility is not None else None
             ),
+            normalization_blocked_completion_obligation_ids=(
+                frozenset(effective_view["normalization_blocked_completion_obligation_ids"])
+                if effective_view is not None
+                else frozenset()
+            ),
         )
         errors.extend(projection_errors)
         errors.extend(project_chief_engineer_completion_contract_semantic_errors(payload))

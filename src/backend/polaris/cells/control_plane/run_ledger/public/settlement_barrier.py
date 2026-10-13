@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public.ledger import stable_hash
+from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 FACTORY_SETTLEMENT_BARRIER_SCHEMA_V1 = "run_ledger.factory_settlement_barrier.v1"
 
@@ -217,9 +218,7 @@ def _lifecycle_counts(
     open_task_count = sum(state not in _TERMINAL_TASK_STATES for state in task_states.values())
     active_task_count = sum(state in _ACTIVE_LIFECYCLE_STATES for state in task_states.values())
     failed_task_count = sum(state in _FAILED_TASK_STATES for state in task_states.values())
-    terminal_task_ids = {
-        task_id for task_id, state in task_states.items() if state in _TERMINAL_TASK_STATES
-    }
+    terminal_task_ids = {task_id for task_id, state in task_states.items() if state in _TERMINAL_TASK_STATES}
 
     lifecycle = _mapping(run_projection.get("tool_lifecycle"))
     latest_tool_lifecycles = _mapping(lifecycle.get("latest_by_task"))
@@ -334,6 +333,92 @@ def _blocking_reasons(
     return tuple(dict.fromkeys(reasons))
 
 
+def _terminal_failure_has_closed_dispatches(
+    task_runtime_facts: Sequence[Mapping[str, Any]],
+    run_projection: Mapping[str, Any],
+    ledger_facts: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Prove failed closeout from canonical batch outcomes, never caller flags.
+
+    Read denials have no effect receipt because policy prevented execution.
+    Match every declared dispatch to a settled canonical batch and classify its
+    tools through KernelOne's registry. Missing or ambiguous batch/effect facts
+    remain open; acceptance evidence is neither created nor waived.
+    """
+
+    states = [_task_state(fact) for fact in _latest_task_facts(task_runtime_facts).values()]
+    if not states or any(state not in _TERMINAL_TASK_STATES for state in states):
+        return False
+    if not any(state in _FAILED_TASK_STATES for state in states):
+        return False
+    lifecycle = _mapping(run_projection.get("tool_lifecycle"))
+    events = lifecycle.get("events")
+    if not isinstance(events, Sequence) or isinstance(events, (str, bytes, bytearray)) or not events:
+        return False
+    batches: dict[str, list[Mapping[str, Any]]] = {}
+    for fact in ledger_facts:
+        batch = _mapping(_mapping(fact.get("physical_evidence")).get("batch_receipt"))
+        turn_id = _clean_string(batch.get("turn_id"))
+        if turn_id:
+            batches.setdefault(turn_id, []).append(batch)
+    for raw_event in events:
+        event = _mapping(raw_event)
+        receipt = _mapping(event.get("receipt"))
+        dispatched = _non_negative_int(event.get("dispatched_tool_calls_count"))
+        if not receipt or _clean_string(event.get("status")).lower() in _ACTIVE_LIFECYCLE_STATES:
+            return False
+        if dispatched == 0:
+            if receipt.get("ok") is not False or receipt.get("dispatch_status") not in {"failed", "dropped"}:
+                return False
+            continue
+        candidates = batches.get(_clean_string(receipt.get("turn_id")), [])
+        if len(candidates) != 1:
+            return False
+        batch = candidates[0]
+        refs = receipt.get("batch_receipt_refs")
+        if not isinstance(refs, Sequence) or not any(
+            _clean_string(_mapping(ref).get("batch_id")) == _clean_string(batch.get("batch_id")) for ref in refs
+        ):
+            return False
+        results = batch.get("results")
+        if not isinstance(results, list) or len(results) != dispatched or batch.get("raw_results") != results:
+            return False
+        if batch.get("pending_async_count") != 0 or batch.get("has_pending_async") is not False:
+            return False
+        if batch.get("success_count") != 0 or batch.get("failure_count") != dispatched:
+            return False
+        call_ids: set[str] = set()
+        for raw_result in results:
+            result = _mapping(raw_result)
+            call_id = _clean_string(result.get("call_id"))
+            spec = ToolSpecRegistry.get(ToolSpecRegistry.get_canonical(_clean_string(result.get("tool_name"))))
+            if not call_id or call_id in call_ids or result.get("status") not in {"error", "failed", "cancelled"}:
+                return False
+            call_ids.add(call_id)
+            if spec is None or not spec.is_read_tool() or spec.is_write_tool() or spec.is_exec_tool():
+                return False
+            if any(
+                result.get(key) is not None
+                for key in (
+                    "effect_receipt",
+                    "effect_receipt_commit",
+                    "directed_effect_claim_status",
+                    "directed_effect_mutation_status",
+                )
+            ):
+                return False
+        if batch.get("effect_receipts") != []:
+            return False
+        envelopes = receipt.get("native_tool_call_envelope_refs")
+        if (
+            isinstance(envelopes, Sequence)
+            and envelopes
+            and {_clean_string(_mapping(item).get("call_id")) for item in envelopes} != call_ids
+        ):
+            return False
+    return True
+
+
 def project_factory_settlement_barrier(
     *,
     workspace: str,
@@ -386,7 +471,13 @@ def project_factory_settlement_barrier(
     # open_effect_count stays in blocking_reasons for diagnostics, but must not
     # pin release once every TaskRuntime lifecycle is terminal (R57 residual
     # effect_receipts_open after Director materialization + stage fail).
-    closed = bool(scope_found and counts.open_count == 0 and not missing_required_modalities)
+    terminal_failure_closed = bool(
+        missing_required_modalities
+        and _terminal_failure_has_closed_dispatches(task_runtime_facts, run_projection, ledger_facts)
+    )
+    closed = bool(
+        scope_found and counts.open_count == 0 and (not missing_required_modalities or terminal_failure_closed)
+    )
     passed = bool(closed and bool(run_projection.get("ok")) and counts.failed_count == 0)
     hash_payload = {
         "schema_version": FACTORY_SETTLEMENT_BARRIER_SCHEMA_V1,

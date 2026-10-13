@@ -83,6 +83,7 @@ from ._task_contract import (
     _load_ce_blueprint_contract_payload,
     _merge_ce_blueprint_contract_payload,
     _merge_contract_lists,
+    _project_completion_command_authority,
     _promoted_task_contract_payload,
     _set_structured_task_contract_slot,
     _task_contract_sources,
@@ -439,6 +440,7 @@ class DirectorAdapter(BaseRoleAdapter):
                 else None
             ),
         )
+        _project_completion_command_authority(context_payload)
         self._ensure_director_verification_commands(
             message=message,
             context=context_payload,
@@ -830,6 +832,7 @@ class DirectorAdapter(BaseRoleAdapter):
             task_metadata["task_contract"] = dict(contract_payload)
         task["metadata"] = task_metadata
         context["metadata"] = metadata
+        _project_completion_command_authority(context)
 
     @staticmethod
     def _ensure_director_verification_commands(*, message: str, context: dict[str, Any]) -> list[str]:

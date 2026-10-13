@@ -657,6 +657,83 @@ async def _execute_director_binding_fanout(
     )
 
 
+def _canonical_director_preflight_failure(
+    rows: list[dict[str, Any]],
+    *,
+    factory_run_id: str,
+    pm_tasks: list[dict[str, Any]],
+    attempts: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Project a failed owner fact; this cannot authorize execution or success."""
+    owned_ids = {str(task.get("id") or task.get("task_id") or "") for task in pm_tasks}
+    attempted_runs = {
+        str(attempt.get("run_id") or "") for attempt in attempts
+        if isinstance(attempt.get("metadata"), dict)
+        and attempt["metadata"].get("canonical_authoritative") is True
+        and attempt["metadata"].get("terminal_source") == "task_runtime.execution_fact"
+    }
+    code = "verification_command_authority_rows_missing_or_mismatched"
+    failures: list[dict[str, Any]] = []
+    no_effects = True
+    for row in rows:
+        metadata = row.get("metadata")
+        if not isinstance(metadata, dict) or metadata.get("factory_run_id") != factory_run_id:
+            continue
+        task_id = str(metadata.get("external_task_id") or metadata.get("task_id") or "")
+        run_id = str(row.get("workflow_run_id") or metadata.get("workflow_run_id") or "")
+        if task_id not in owned_ids or run_id not in attempted_runs or row.get("status") != "failed":
+            continue
+        adapter_result = metadata.get("adapter_result")
+        if not isinstance(adapter_result, dict):
+            continue
+        primary = adapter_result.get("primary_llm")
+        primary_metadata = primary.get("metadata") if isinstance(primary, dict) else None
+        continuous = primary_metadata.get("continuous_execution") if isinstance(primary_metadata, dict) else None
+        if not (
+            isinstance(primary, dict) and primary.get("success") is False and primary.get("error") == code
+            and type(primary.get("llm_calls")) is int and primary["llm_calls"] == 0
+            and isinstance(primary_metadata, dict)
+            and primary_metadata.get("role_runtime_entrypoint") == "roles.runtime.execute_role_session"
+            and isinstance(continuous, dict) and continuous.get("enabled") is True
+            and type(continuous.get("turns_executed")) is int and continuous["turns_executed"] == 0
+            and continuous.get("stop_reason") == code
+            and primary_metadata.get("session_turn_commit_receipts") == []
+            and primary_metadata.get("tool_results") == []
+            and adapter_result.get("materialization_error_code") == code
+            and adapter_result.get("failure_class") == FailureClassV1.BLUEPRINT_VERIFY_INVALID.value
+            and adapter_result.get("responsible_layer") == "execution_control_plane"
+        ):
+            continue
+        failures.append({"task_id": task_id, "run_id": run_id})
+        no_effects = no_effects and (
+            adapter_result.get("write_tool_evidence") is False
+            and adapter_result.get("new_file_count") == 0
+            and adapter_result.get("modified_file_count") == 0
+            and not adapter_result.get("out_of_scope_files")
+        )
+    if not failures:
+        return None
+    # Any other owned task, prior attempt, or workspace delta requires genuine
+    # quality settlement. Terminal failure alone never skips that work.
+    no_execution_or_effects = (
+        no_effects and {item["task_id"] for item in failures} == owned_ids
+        and {item["run_id"] for item in failures} == {str(item.get("run_id") or "") for item in attempts}
+        and len(attempts) == len({item["run_id"] for item in failures})
+        and all(isinstance(item.get("workspace_delta"), dict)
+                and item["workspace_delta"].get("delta_file_count") == 0 for item in attempts)
+        and all(not item.get("metadata", {}).get("inflight_run_continues") for item in attempts)
+    )
+    return {
+        "code": code, "severity": "error",
+        "failure_class": FailureClassV1.BLUEPRINT_VERIFY_INVALID.value,
+        "responsible_layer": "execution_control_plane",
+        "root_cause_hint": code,
+        "detail": "Director command authority was rejected before provider execution.",
+        "authority_source": "task_runtime.execution_fact", "failed_tasks": failures,
+        "no_execution_or_effects": no_execution_or_effects,
+    }
+
+
 async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[str, Any]) -> StageResult:
     logger.info("Executing Director dispatch for run %s", run.id)
     abort_checker = executor._resolve_abort_checker(context)
@@ -1509,6 +1586,15 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
                 )
                 break
 
+    failed_rows, failed_row_projection_error = executor._query_observable_task_rows(factory_run_id=run.id)
+    preflight_failure = (
+        _canonical_director_preflight_failure(
+            failed_rows, factory_run_id=run.id, pm_tasks=pm_tasks, attempts=attempts,
+        ) if failed_row_projection_error is None else None
+    )
+    if preflight_failure is not None:
+        stage_signals.insert(0, preflight_failure)
+
     final_stats = executor._read_taskboard_stats()
     converged = executor._is_taskboard_converged(final_stats)
     final_authority = helpers.evaluate_canonical_factory_authority(executor._canonical_factory_projection(run, context))
@@ -1696,17 +1782,32 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
         "inflight_run_continues": inflight_run_continues,
         "settlement_source": "director_dispatch_settlement_barrier",
     }
+    if preflight_failure is not None and stage_status == "failed":
+        settlement_metadata.update(
+            error_code=preflight_failure["code"],
+            failure_class=preflight_failure["failure_class"],
+            responsible_layer=preflight_failure["responsible_layer"],
+            root_cause_hint=preflight_failure["root_cause_hint"],
+        )
     # R165/M06: multi-task Director often times out with partial files on disk
     # (package.json + src) while quality_gate never runs because the stage
     # failed. Run materialization-quality schedule once before leaving
     # director_dispatch so smoke tests and covered tsc repairs still land.
     if stage_status != "cancelled":
-        materialization_settle = await executor._run_director_stage_materialization_quality_settle(
-            run=run,
-            stage_status=stage_status,
-            error_code=error_code,
-            context=context,
-        )
+        materialization_settle: dict[str, Any] | None
+        if preflight_failure is not None and preflight_failure["no_execution_or_effects"]:
+            materialization_settle = {
+                "ok": False, "reason": "settle_not_applicable",
+                "not_applicable_reason": "preflight_blocked_without_execution_or_effects",
+                "detail": "No provider turn, tool dispatch, or workspace effect preceded the preflight block.",
+            }
+        else:
+            materialization_settle = await executor._run_director_stage_materialization_quality_settle(
+                run=run,
+                stage_status=stage_status,
+                error_code=error_code,
+                context=context,
+            )
         if materialization_settle:
             settlement_metadata["director_stage_materialization_quality_settle"] = materialization_settle
             stage_signals.append(
@@ -1725,9 +1826,12 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
         # TOOL_LIFECYCLE_MISSING. Seal blocked incomplete receipts for missing
         # required tasks after settle so ledger integrity distinguishes incomplete
         # work from true missing evidence.
-        lifecycle_seal = executor._seal_director_stage_missing_tool_lifecycles(
-            run=run,
-            incomplete_task_ids=list(final_authority.incomplete_task_ids),
+        lifecycle_seal = (
+            {} if preflight_failure is not None and preflight_failure["no_execution_or_effects"]
+            else executor._seal_director_stage_missing_tool_lifecycles(
+                run=run,
+                incomplete_task_ids=list(final_authority.incomplete_task_ids),
+            )
         )
         if lifecycle_seal:
             settlement_metadata["director_stage_missing_tool_lifecycle_seal"] = lifecycle_seal
@@ -1771,12 +1875,13 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
                     "detail": str(materialization_settle.get("detail") or verification_hint),
                 }
                 stage_signals.append(failure_signal)
-                settlement_metadata.update(
-                    error_code=verification_code,
-                    failure_class="materialization_verification",
-                    root_cause_hint=verification_hint,
-                )
-        elif materialization_settle or lifecycle_seal:
+                if preflight_failure is None:
+                    settlement_metadata.update(
+                        error_code=verification_code,
+                        failure_class="materialization_verification",
+                        root_cause_hint=verification_hint,
+                    )
+        elif preflight_failure is None and (materialization_settle or lifecycle_seal):
             # R181/M06: settle can complete on-disk delivery after authority was
             # evaluated. Reconcile boundary against workspace + re-evaluate so
             # false task_runtime_not_converged / canonical_task_boundary_missing
