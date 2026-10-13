@@ -1,0 +1,30 @@
+id: vc-20261013-director-denial-continuation
+classification: pattern
+cell: roles.kernel
+design: docs/ROLE_DELIVERY_CONVERGENCE.md
+problem: An authenticated denied invocation terminated the Director task before same-task feedback.
+assumptions:
+  - Ordinary command, path, or tool restrictions must reject the invocation without effects.
+  - Continuation requires an exact live TaskRuntime identity and persisted validation.
+  - Invalid token, authority drift, replay, and unknown authority errors remain fatal.
+  - A failed observation is not a completed task or an effect receipt.
+evidence:
+  run: factory_5c9aa008995a
+  command: pwd && ls -la
+  denial: deo_command_scope_denied
+  outcome: Strict committed failure with no dispatched effect; namespace released.
+pre_mortem:
+  - Do not broaden commands or infer a missing grant from a model request.
+  - Do not place unsupported fields in canonical batch result records.
+  - Preserve ordinary continuous observation handling instead of premature TaskBoundary completion.
+  - Keep child execution identity separate from Factory project identity.
+verification:
+  - test_deo_authorization_denial_continuation.py: ordinary denial, foreign/invalid owner, typed verdict, mixed hard error.
+  - test_director_persistent_execution_http.py: native command denied, same task writes, verifier fails, edit, verifier passes.
+  - test_tool_batch_executor_decision_tree.py: existing batch protocols remain compatible.
+  - test_directed_effect_policy_guard.py: existing scope and authority gates remain strict.
+scope:
+  public_contract_changed: false
+  new_state_owner: false
+  execution_authority_expanded: false
+  native_qualification: pending

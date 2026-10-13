@@ -11,6 +11,7 @@ import json
 import re
 import uuid
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -1376,9 +1377,7 @@ class LLMRequestPreparer:
                 # flattened input so OpenAI-compatible providers can preserve real
                 # chat-template role anchoring (weak local models lose system/user
                 # structure when the whole transcript rides in one user message).
-                "chat_messages": [
-                    {"role": str(m.get("role", "")), "content": str(m.get("content", ""))} for m in messages
-                ],
+                "chat_messages": deepcopy(messages),
             },
         )
         frozen_factory_request: FactoryRoleFrozenSemanticRequestV1 | None = None

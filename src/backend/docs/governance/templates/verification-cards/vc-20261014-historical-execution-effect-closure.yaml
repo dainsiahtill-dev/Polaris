@@ -1,0 +1,28 @@
+id: vc-20261014-historical-execution-effect-closure
+classification: pattern
+cell: runtime.task_runtime
+design: docs/blueprints/HISTORICAL_EXECUTION_EFFECT_CLOSURE_20261014.md
+problem: Later no-effect attempts hid settled historical writes in operational closure discovery.
+assumptions:
+  - TaskRuntime and its immutable FactStream remain the execution authority.
+  - Query identities and caller facts grant no execution or terminal authority.
+  - Current session guards and strict DEO reducers remain mandatory.
+pre_mortem:
+  - A caller terminal row or self-consistent receipt hash is insufficient.
+  - Missing enrollment does not prove a physical stream is absent.
+  - Unknown or active effects block release even when delivery already failed.
+  - Operational release cannot become QA approval or delivery qualification.
+verification:
+  - test_historical_execution_effect_closure.py: two real mutation attempts and latest no-effect preflight retain exact receipts and readonly closure.
+  - test_historical_execution_effect_closure.py: all unique attempts discovered and forged identity or lease denied.
+  - test_historical_execution_effect_closure.py: owner source, identity, intent, transition, proof and digest tampering denied.
+  - test_historical_execution_effect_closure.py: operation corruption, missing parent close, claim binding damage, physically present unenrolled registry and active successor denied.
+  - test_execution_effect_closure.py: current active, foreign, forged terminal, missing session and corrupted operation guards retained.
+  - test_execution_attempt_settlement.py: owner intent replay and terminal preflight remain unchanged.
+scope:
+  public_contract_changed: false
+  new_state_owner: false
+  execution_authority_expanded: false
+  writes_in_observer: false
+  native18_delivery_qualified: false
+  fresh_native_qualification: pending

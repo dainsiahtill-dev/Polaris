@@ -66,6 +66,27 @@ def _is_deo_abort_error(message: str) -> bool:
 
 _RECOVERABLE_DEO_NORMALIZATION_CODES = frozenset({"deo_tool_normalization_failed"})
 
+_RECOVERABLE_DEO_ADMISSION_CODES = _RECOVERABLE_DEO_NORMALIZATION_CODES | {
+    "deo_command_scope_denied",
+    "deo_path_scope_denied",
+    "deo_tool_not_allowed",
+}
+
+
+class _RecoverableDirectedEffectDenialError(RuntimeError):
+    """A rejected invocation batch whose current execution owner was validated.
+
+    This carries failed observations only: no mutation inventory was admitted
+    and no effect receipt exists. It never widens the original capability.
+    """
+
+    def __init__(
+        self, denied_members: tuple[tuple[str, str, str], ...], invocations: tuple[ToolInvocation, ...]
+    ) -> None:
+        self.denied_members = denied_members
+        self.invocations = invocations
+        super().__init__(next(row[2] for row in denied_members if row[2] != "deo_same_path_superseded_by_later_write"))
+
 
 def _is_recoverable_deo_normalization_abort(message: str) -> bool:
     """Return True when DEO denied only an arg-shape / normalization miss.
@@ -1239,7 +1260,7 @@ def _normalize_capability_token(value: dict[str, Any]) -> dict[str, Any]:
     )
     raw_scope = [raw_scope_value] if isinstance(raw_scope_value, str) else list(raw_scope_value or [])
     allowed_scope = [str(item).replace("\\", "/").strip("/") for item in raw_scope if str(item).strip()]
-    return {
+    normalized = {
         "source": str(value.get("source") or "control_plane.job_token"),
         "token_id": token_id,
         "run_id": str(value.get("run_id") or ""),
@@ -1254,6 +1275,9 @@ def _normalize_capability_token(value: dict[str, Any]) -> dict[str, Any]:
         "gate_policy": deepcopy(_mapping_value(value.get("gate_policy"))),
         "allowed_scope": list(dict.fromkeys(item for item in allowed_scope if item)),
     }
+    if "verification_command_scope" in value:
+        normalized["verification_command_scope"] = deepcopy(value["verification_command_scope"])
+    return normalized
 
 
 def _execution_envelope_hash_from_metadata(metadata: Mapping[str, Any]) -> str:

@@ -21,6 +21,7 @@ from polaris.cells.roles.kernel.internal.transaction.deferred_repair_followup im
     DeferredCommandEffectSynthesizer,
     build_deferred_repair_followup,
 )
+from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
     ToolBatchExecutor,
     _executor_core as executor_core_module,
@@ -366,7 +367,7 @@ async def test_executor_followup_is_visible_distinct_and_uses_normal_prepare_the
     executor._prepare_directed_effect_dispatch = MethodType(_prepare, executor)
     executor._check_effect_policy = MethodType(_check, executor)
     executor._build_tool_batch_runtime = MethodType(_build, executor)
-    ledger = SimpleNamespace(tool_batch_count=1, state_history=[])
+    ledger = TurnLedger(turn_id="turn-followup", tool_batch_count=1)
 
     followup_receipts = await executor._execute_deferred_repair_followup(
         receipts_as_dicts=receipts,
@@ -437,9 +438,7 @@ async def test_executor_followup_reconciles_policy_prepared_repair_pair_subset(
     selected_rollback, selected_forward = followup.rollback_activation_by_call_id[0]
     selected_ids = (selected_forward, selected_rollback)
     dropped_ids = tuple(
-        call_id
-        for call_id in (*followup.forward_call_ids, *followup.rollback_call_ids)
-        if call_id not in selected_ids
+        call_id for call_id in (*followup.forward_call_ids, *followup.rollback_call_ids) if call_id not in selected_ids
     )
     prepared_batch = SimpleNamespace(
         prepared_members=tuple(
@@ -477,16 +476,14 @@ async def test_executor_followup_reconciles_policy_prepared_repair_pair_subset(
         assert {call_id for call_id, _binding in kwargs["directed_effect_repair_bindings_by_call_id"]} == set(
             selected_ids
         )
-        assert kwargs["directed_effect_rollback_activation_by_call_id"] == (
-            (selected_rollback, selected_forward),
-        )
+        assert kwargs["directed_effect_rollback_activation_by_call_id"] == ((selected_rollback, selected_forward),)
         return _Runtime()
 
     monkeypatch.setattr(executor_core_module, "build_deferred_repair_followup", lambda *_args, **_kwargs: followup)
     executor._prepare_directed_effect_dispatch = MethodType(_prepare, executor)
     executor._check_effect_policy = MethodType(_check, executor)
     executor._build_tool_batch_runtime = MethodType(_build, executor)
-    ledger = SimpleNamespace(tool_batch_count=0, state_history=[], run_id="run-policy-subset")
+    ledger = TurnLedger(turn_id="turn-policy-subset")
 
     await executor._execute_deferred_repair_followup(
         receipts_as_dicts=[],

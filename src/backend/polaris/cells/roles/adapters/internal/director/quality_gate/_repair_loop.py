@@ -33,6 +33,7 @@ from polaris.kernelone.quality import (
     artifact_quality_issues_for_errors,
     artifact_quality_issues_from_errors,
     build_scope_authority_decision,
+    normalize_file_ownership_target,
     partition_paths_by_declared_scope,
     scope_authority_decision_summary,
 )
@@ -417,6 +418,44 @@ def _quality_repair_zero_artifact_sibling_snapshot(task: Mapping[str, Any]) -> A
             "do not invent sibling APIs. Official javac already compiled them.",
         ),
     )
+
+
+def _quality_repair_observation_context(
+    task: Mapping[str, Any], errors: list[str], context_files: list[str]
+) -> dict[str, Any]:
+    """Project full immutable declarations, including not-yet-created outputs."""
+    raw_paths: list[str] = []
+    for record in (task, task.get("metadata")):
+        if not isinstance(record, Mapping):
+            continue
+        for field in ("target_files", "target_file", "targets"):
+            value = record.get(field)
+            if isinstance(value, str):
+                raw_paths.append(value)
+            elif isinstance(value, list | tuple):
+                raw_paths.extend(path for path in value if isinstance(path, str))
+    declared = _dedupe_preserve_order([path for raw in raw_paths if (path := normalize_file_ownership_target(raw))])
+    return {
+        "artifact_quality_issues": _quality_repair_issue_observations(errors, declared),
+        "declared_target_files": declared,
+        "scan_relative_paths": _dedupe_preserve_order([*declared, *context_files]),
+    }
+
+
+def _quality_repair_issue_observations(errors: list[str], declared_paths: list[str]) -> list[dict[str, Any]]:
+    """Keep exact target-owner facts when a legacy display path is unavailable."""
+    owners = {
+        f"Artifact quality scan failed: declared target file missing '{path}'": path
+        for raw in declared_paths
+        if (path := normalize_file_ownership_target(raw))
+    }
+    rows = list(artifact_quality_issues_from_errors(errors))
+    for row in rows:
+        target = owners.get(artifact_quality_issue_raw(row))
+        if target and row.get("code") == "declared_target_missing":
+            row["path"] = target
+            row["metadata"] = {**dict(row.get("metadata") or {}), "target_file": target}
+    return rows
 
 
 async def _run_materialization_quality_repair_retry(
@@ -1365,11 +1404,18 @@ async def _run_materialization_quality_repair_retry(
         # without relying on a non-serializable trusted token from the first turn.
         "task": dict(task) if isinstance(task, dict) else task,
         "delivery_mode": "materialize_changes",
+        # The immutable objective excludes the mutable quality prompt.
+        "task_objective": original_message,
         "failed_gate_evidence": failed_gate_evidence,
         "failure_evidence": failed_gate_evidence,
         "workspace_quality_evidence": workspace_quality_evidence,
         "director_quality_repair": {
             "artifact_quality_errors": prompt_safe_artifact_quality_errors,
+            **_quality_repair_observation_context(
+                task,
+                prompt_artifact_quality_errors,
+                [path for path in context.get("context_files", []) if isinstance(path, str)],
+            ),
             "changed_files": changed_files[:40],
             "missing_target_files": missing_target_files[:20],
             "runtime_smoke_target_files": runtime_smoke_target_files[:20],

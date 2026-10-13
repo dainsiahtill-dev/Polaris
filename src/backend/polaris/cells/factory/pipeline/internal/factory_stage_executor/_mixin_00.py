@@ -982,9 +982,9 @@ class _Mixin00:
                     if existing is not None
                     else ""
                 )
-                if existing_state in {"cancelled", "canceled", "in_progress", "running"}:
+                if existing_state in {"in_progress", "running"}:
                     raise RuntimeError("factory_task_recovery_owner_not_recoverable")
-                if existing is None or existing_state == "failed":
+                if existing is None or existing_state in {"failed", "cancelled", "canceled"}:
                     blueprint_id = str(
                         owner_metadata.get("blueprint_id") or owner_metadata.get("chief_engineer_blueprint_id") or ""
                     ).strip()
@@ -999,6 +999,16 @@ class _Mixin00:
                         or projection.get("run_id") != run_id
                     ):
                         raise RuntimeError("factory_task_recovery_ce_handoff_invalid")
+                    try:
+                        existing = service.prepare_factory_task_recovery(
+                            external_task_id=task_id,
+                            factory_run_id=run_id,
+                            project_contract_hash=str(projection.get("project_contract_hash") or ""),
+                            projection_hash=str(projection.get("projection_hash") or ""),
+                        )
+                    except RuntimeError as exc:
+                        if existing is not None or str(exc) != "factory_task_recovery_owner_missing":
+                            raise
                     if existing is None:
                         recovered_handoff_metadata = {
                             "blueprint_id": handoff["blueprint_id"],
@@ -1006,13 +1016,6 @@ class _Mixin00:
                             "job_token": handoff["job_token"],
                             "capability_token": handoff["capability_token"],
                         }
-                    else:
-                        existing = service.prepare_factory_task_recovery(
-                            external_task_id=task_id,
-                            factory_run_id=run_id,
-                            project_contract_hash=str(projection.get("project_contract_hash") or ""),
-                            projection_hash=str(projection.get("projection_hash") or ""),
-                        )
             metadata_raw = task.get("metadata")
             metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
             metadata.update(recovered_handoff_metadata)

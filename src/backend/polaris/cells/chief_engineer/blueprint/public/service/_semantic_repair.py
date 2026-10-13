@@ -1147,7 +1147,9 @@ def _replace_by_id(
     indexed = {str(row[id_field]): deepcopy(row) for row in current}
     for value in upserts:
         indexed[str(getattr(value, id_field))] = value.to_dict()
-    return [indexed[key] for key in sorted(indexed)]
+    # Existing row order is part of the frozen draft. New identities append in
+    # patch order; an unrelated repair must not rewrite valid sibling arrays.
+    return list(indexed.values())
 
 
 def _introduces_duplicate_value(
@@ -1247,6 +1249,139 @@ def _invalid_behavior_obligation_references(
                 }
             )
     return findings
+
+
+def _invalid_behavior_task_references(
+    invariants: list[dict[str, Any]], task_ids: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """Name task identities separately from interface consumer kinds."""
+    known = set(task_ids)
+    return [
+        {
+            "invariant_id": row["invariant_id"],
+            "unknown_owner_task_id": row["owner_task_id"] if row["owner_task_id"] not in known else None,
+            "unknown_consumer_task_ids": sorted(set(row["consumer_task_ids"]) - known),
+            "known_task_ids": list(task_ids),
+        }
+        for row in invariants
+        if row["owner_task_id"] not in known or set(row["consumer_task_ids"]) - known
+    ]
+
+
+def _diagnosed_recipe_rows(
+    candidate: Mapping[str, Any], diagnosis: ChiefEngineerSemanticRepairDiagnosisV1
+) -> dict[tuple[str, str], Mapping[str, Any]]:
+    """Bind owner-issued failure paths to the exact frozen collection and identity."""
+    sections = _semantic_sections(candidate)
+    diagnosed: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for finding in diagnosis.verification_recipe_diagnostics:
+        path = finding["source_path"]
+        if len(path) == 2:
+            continue  # Missing recipes are checked against the owner-issued finding below.
+        collection = finding["collection"]
+        rows = _rows(str(collection), sections[str(collection)])
+        index = path[2]
+        if index >= len(rows):
+            raise ValueError("verification recipe diagnostic path is outside frozen candidate")
+        row = rows[index]
+        if not row.get("obligation_id") or row["obligation_id"] != finding.get("obligation_id"):
+            raise ValueError("verification recipe diagnostic identity does not match frozen candidate")
+        if row.get("owner_task_id") != finding.get("owner_task_id"):
+            raise ValueError("verification recipe diagnostic owner does not match frozen candidate")
+        diagnosed[(str(collection), str(row["obligation_id"]))] = finding
+    return diagnosed
+
+
+def _compose_verification_recipe_rows(
+    baseline: list[dict[str, Any]],
+    patch: ChiefEngineerSemanticRepairPatchV1,
+    diagnosis: ChiefEngineerSemanticRepairDiagnosisV1,
+    *,
+    candidate: ChiefEngineerSemanticRepairCandidateV1,
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    authority_carrier: object | None,
+) -> list[dict[str, Any]]:
+    """Change only diagnosed recipe content; preservation is checked before server compilation."""
+    diagnosed = _diagnosed_recipe_rows(candidate.candidate, diagnosis)
+    by_id = {row.get("obligation_id"): row for row in baseline}
+    tasks_by_id = {task.task_id: task for task in tasks}
+    rows = deepcopy(baseline)
+    seen: set[str] = set()
+    for proposal in patch.verification_recipe_upserts:
+        row = deepcopy(dict(proposal))
+        obligation_id = row["obligation_id"]
+        if obligation_id in seen:
+            raise ValueError("verification recipe patch contains duplicate obligation ids")
+        seen.add(obligation_id)
+        owner = tasks_by_id.get(row["owner_task_id"])
+        if (
+            owner is None
+            or owner.planning_contract_version != "pm.task_intent.v1"
+            or owner.verification_authority != "chief_engineer"
+        ):
+            raise ValueError("verification recipe repair owner lacks immutable CE delegation")
+        previous = by_id.get(obligation_id)
+        finding = diagnosed.get(("verification", obligation_id))
+        if previous is not None:
+            if finding is None:
+                raise ValueError("verification recipe patch identity is not diagnosed")
+            for field in ("owner_task_id", "applicability", "covers_obligation_ids"):
+                if row[field] != previous.get(field):
+                    raise ValueError(f"verification recipe patch changes immutable {field}")
+            # The finding classifies the OLD argv. A new argv may correctly
+            # implement the original requested modality (native17: replace
+            # build+npx tsc --noEmit with build+npm run build). Full canonical
+            # revalidation below still checks the NEW argv's actual profile.
+            allowed_modalities = {previous.get("modality"), *(finding.get("allowed_recipe_modalities") or [])}
+            if row["modality"] not in allowed_modalities:
+                raise ValueError("verification recipe patch modality is outside diagnosed policy feedback")
+            for authority in getattr(authority_carrier, "verification_command_authority", ()):
+                if previous.get("command_authority_hash") == authority.authority_hash and (
+                    row["owner_task_id"],
+                    row["modality"],
+                    tuple(row["argv"]),
+                    row["cwd"],
+                ) != (authority.task_id, authority.modality, authority.argv, authority.cwd):
+                    raise ValueError("verification recipe patch changes authenticated explicit PM command")
+        else:
+            missing_findings = [
+                item
+                for item in diagnosis.verification_recipe_diagnostics
+                if item["collection"] == "verification"
+                and len(item["source_path"]) == 2
+                and item.get("modality") == row["modality"]
+                and row["owner_task_id"] in (item.get("delegated_owner_task_ids") or [item.get("owner_task_id")])
+            ]
+            if not missing_findings or row["applicability"] != "required":
+                raise ValueError("new verification recipe is not a diagnosed required recipe")
+            for missing in missing_findings:
+                if "argv" in missing and (row["argv"], row["cwd"]) != (missing["argv"], missing["cwd"]):
+                    raise ValueError("new verification recipe changes authenticated explicit PM command")
+                artifact_ids = {item["obligation_id"] for item in missing.get("required_artifacts", ())}
+                if artifact_ids and (
+                    not row["covers_obligation_ids"] or not set(row["covers_obligation_ids"]).issubset(artifact_ids)
+                ):
+                    raise ValueError("new verification recipe coverage is outside diagnosed required artifacts")
+        row["command_authority_hash"] = None
+        if previous is None:
+            rows.append(row)
+        else:
+            rows = [row if existing.get("obligation_id") == obligation_id else existing for existing in rows]
+    return rows
+
+
+def _project_recipe_repair_diagnostics(diagnosis: ChiefEngineerSemanticRepairDiagnosisV1) -> list[dict[str, Any]]:
+    """Explain new-argv alternatives without rewriting hash-bound old-argv facts."""
+    diagnostics = deepcopy([dict(row) for row in diagnosis.verification_recipe_diagnostics])
+    for row in diagnostics:
+        previous_modalities = list(row.get("allowed_recipe_modalities") or [])
+        requested = row.get("expected_modality") or row.get("modality")
+        feedback = row.get("profile_feedback") or {}
+        candidates = feedback.get("candidate_profiles") or []
+        if any(item.get("expected_modality") == requested and item.get("argv_examples") for item in candidates):
+            row["current_argv_allowed_recipe_modalities"] = previous_modalities
+            row["allowed_recipe_modalities"] = list(dict.fromkeys([*previous_modalities, requested]))
+    return diagnostics
 
 
 def project_chief_engineer_semantic_repair_provider_context(
@@ -1414,6 +1549,25 @@ def project_chief_engineer_semantic_repair_provider_context(
     current = cast(dict[str, Any], projection["current"])
     identity_policy = cast(dict[str, Any], projection["upsert_identity_policy"])
     allowed = set(diagnosis.allowed_operations)
+    if "verification_recipe_upsert" in allowed:
+        diagnosed = _diagnosed_recipe_rows(candidate.candidate, diagnosis)
+        current["verification"] = [
+            deepcopy(row)
+            for row in _rows("verification", sections["verification"])
+            if ("verification", str(row.get("obligation_id"))) in diagnosed
+        ]
+        projection["verification_recipe_diagnostics"] = _project_recipe_repair_diagnostics(diagnosis)
+        projection["verification_recipe_repair_policy"] = (
+            "Upsert only diagnosed verification obligation IDs. Preserve owner_task_id, applicability and "
+            "covers_obligation_ids exactly. Correct full argv (argv[0] is the executable), cwd and only "
+            "the original requested modality when the new argv matches its existing policy profile, or a "
+            "policy-diagnosed modality. current_argv_allowed_recipe_modalities describes only the old argv; "
+            "the requested modality's advertised new argv alternatives remain valid repair proposals. "
+            "Omit command_authority_hash: the server binds it. Never remove an "
+            "environment preparation recipe or an authenticated explicit PM command. Add a new required "
+            "recipe only for a missing_required_verification_recipe finding and its delegated owner/artifacts. "
+            "A composed draft grants no execution authority; complete schema and canonical gates still apply."
+        )
     if "artifact_upsert" in allowed:
         current["artifacts"] = deepcopy(sections["artifacts"])
         owner_corrections = deepcopy(effective_view.get("artifact_owner_corrections", []))
@@ -1474,6 +1628,19 @@ def project_chief_engineer_semantic_repair_provider_context(
             "obligation_id in entrypoint_remove_obligation_ids and include one same-owner same-kind "
             "entrypoint_upsert. Unknown ids and removals without a replacement fail closed."
         )
+        if diagnosis.verification_recipe_diagnostics:
+            diagnosed = _diagnosed_recipe_rows(candidate.candidate, diagnosis)
+            current["entrypoints"] = [
+                deepcopy(row)
+                for row in current_entrypoints
+                if ("entrypoints", str(row.get("obligation_id"))) in diagnosed
+            ]
+            projection["removable_entrypoint_obligation_ids"] = []
+            projection["entrypoint_replacement_rule"] = (
+                "For diagnosed command recipe failures, preserve obligation_id, owner, kind, source/runtime "
+                "paths and applicability. Correct only command through entrypoint_upserts; no removal is allowed."
+            )
+            projection["verification_recipe_diagnostics"] = _project_recipe_repair_diagnostics(diagnosis)
     if "behavior_invariant_upsert" in allowed:
         current["artifacts"] = deepcopy(sections["artifacts"])
         current["entrypoints"] = deepcopy(sections["entrypoints"])
@@ -1483,6 +1650,16 @@ def project_chief_engineer_semantic_repair_provider_context(
         projection["invalid_behavior_obligation_references"] = _invalid_behavior_obligation_references(
             _rows("behavior_invariants", sections["behavior_invariants"]),
             effective_view["retained_completion_obligation_ids"],
+        )
+        projection["invalid_behavior_task_references"] = _invalid_behavior_task_references(
+            _rows("behavior_invariants", sections["behavior_invariants"]), candidate.task_ids
+        )
+        projection["behavior_task_reference_repair_policy"] = (
+            "owner_task_id and consumer_task_ids reference only the known PM task IDs. Consumer kinds such as "
+            "test_runner, cli_entrypoint and web_entrypoint belong to interface consumer declarations, not this "
+            "field. A task-local invariant may have consumer_task_ids=[]. When only consumer task references "
+            "are invalid, upsert the same invariant_id and preserve statement, owner, covered obligations and "
+            "verification_examples; correct only consumer_task_ids. Do not delete valid artifact obligations."
         )
         projection["behavior_obligation_reference_repair_policy"] = (
             "Correct every invariant listed in invalid_behavior_obligation_references by upserting the "
@@ -1528,6 +1705,7 @@ def bind_chief_engineer_semantic_repair_provider_patch(
         entrypoint_remove_obligation_ids=provider_patch.entrypoint_remove_obligation_ids,
         behavior_invariant_upserts=provider_patch.behavior_invariant_upserts,
         task_behavior_ref_replacements=provider_patch.task_behavior_ref_replacements,
+        verification_recipe_upserts=provider_patch.verification_recipe_upserts,
     )
     binding = {
         "schema_version": "chief_engineer.semantic_repair_provider_binding.v1",
@@ -1589,10 +1767,26 @@ def compose_chief_engineer_semantic_repair(
         task_behavior_ref_replacements=(
             patch.task_behavior_ref_replacements if "task_behavior_ref_replace" in allowed_operations else {}
         ),
+        verification_recipe_upserts=(
+            patch.verification_recipe_upserts if "verification_recipe_upsert" in allowed_operations else ()
+        ),
     )
 
     payload = deepcopy(dict(candidate.candidate))
-    artifact_group_remap, normalized_artifact_ids = _normalize_shared_artifact_obligation_groups(payload)
+    consumer_identity_repair = bool(
+        not patch.artifact_upserts
+        and _invalid_behavior_task_references(
+            _rows("behavior_invariants", _semantic_sections(payload)["behavior_invariants"]), candidate.task_ids
+        )
+    )
+    artifact_group_remap: dict[str, tuple[str, ...]]
+    normalized_artifact_ids: tuple[str, ...]
+    if diagnosis.verification_recipe_diagnostics or consumer_identity_repair:
+        # A command-content repair must not reorder or regroup valid sibling
+        # artifacts; the complete compiler remains the canonicalization owner.
+        artifact_group_remap, normalized_artifact_ids = {}, ()
+    else:
+        artifact_group_remap, normalized_artifact_ids = _normalize_shared_artifact_obligation_groups(payload)
     ambiguous_artifact_patch_ids = {
         artifact.obligation_id for artifact in patch.artifact_upserts if artifact.obligation_id in artifact_group_remap
     }
@@ -1612,6 +1806,23 @@ def compose_chief_engineer_semantic_repair(
     artifact_baseline_rows = _rows("artifacts", obligations.get("artifacts"))
     entrypoint_baseline_rows = _rows("entrypoints", obligations.get("entrypoints"))
     verification_rows = _rows("verification", obligations.get("verification"))
+    verification_baseline_rows = deepcopy(verification_rows)
+    diagnosed_recipes = _diagnosed_recipe_rows(candidate.candidate, diagnosis)
+    if diagnosis.verification_recipe_diagnostics:
+        if patch.entrypoint_remove_obligation_ids:
+            raise ValueError("diagnosed entrypoint recipe repair cannot remove obligations")
+        by_id = {row["obligation_id"]: row for row in entrypoint_baseline_rows}
+        for entrypoint in patch.entrypoint_upserts:
+            if ("entrypoints", entrypoint.obligation_id) not in diagnosed_recipes:
+                raise ValueError("entrypoint recipe patch identity is not diagnosed")
+            previous = by_id[entrypoint.obligation_id]
+            for field, value in entrypoint.to_dict().items():
+                if field != "command" and previous.get(field) != value:
+                    raise ValueError(f"entrypoint recipe patch changes immutable {field}")
+    if patch.verification_recipe_upserts:
+        verification_rows = _compose_verification_recipe_rows(
+            verification_rows, patch, diagnosis, candidate=candidate, tasks=tasks, authority_carrier=authority_carrier
+        )
     baseline_artifact_ids = {str(row.get("obligation_id") or "") for row in artifact_baseline_rows}
     baseline_artifact_paths = {str(row.get("path") or "") for row in artifact_baseline_rows}
     depth_diagnostics = {
@@ -1661,6 +1872,7 @@ def compose_chief_engineer_semantic_repair(
                 entrypoint_remove_obligation_ids=patch.entrypoint_remove_obligation_ids,
                 behavior_invariant_upserts=patch.behavior_invariant_upserts,
                 task_behavior_ref_replacements=patch.task_behavior_ref_replacements,
+                verification_recipe_upserts=patch.verification_recipe_upserts,
             )
     depth_split_remap: dict[str, tuple[str, ...]] = {}
     depth_split_minted_ids: tuple[str, ...] = ()
@@ -1684,6 +1896,7 @@ def compose_chief_engineer_semantic_repair(
                 entrypoint_remove_obligation_ids=patch.entrypoint_remove_obligation_ids,
                 behavior_invariant_upserts=patch.behavior_invariant_upserts,
                 task_behavior_ref_replacements=patch.task_behavior_ref_replacements,
+                verification_recipe_upserts=patch.verification_recipe_upserts,
             )
     artifact_upsert_ids = {artifact.obligation_id for artifact in patch.artifact_upserts}
     artifact_identity_baseline_rows = [
@@ -1770,12 +1983,18 @@ def compose_chief_engineer_semantic_repair(
             raise ValueError(f"entrypoint owner_task_id is outside candidate task set: {entrypoint.owner_task_id}")
     for entrypoint in patch.entrypoint_upserts:
         owner = tasks_by_id.get(str(entrypoint.owner_task_id or ""))
-        if owner is None or not owner.entrypoint_kind_authority:
+        delegated_same_kind = bool(
+            owner is not None
+            and owner.planning_contract_version == "pm.task_intent.v1"
+            and owner.verification_authority == "chief_engineer"
+            and ("entrypoints", entrypoint.obligation_id) in diagnosed_recipes
+        )
+        if owner is None or (not owner.entrypoint_kind_authority and not delegated_same_kind):
             raise ValueError(
                 "semantic repair entrypoint lacks immutable PM kind authority: "
                 f"owner_task_id={entrypoint.owner_task_id!r}"
             )
-        if entrypoint.kind != owner.entrypoint_kind_authority:
+        if owner.entrypoint_kind_authority and entrypoint.kind != owner.entrypoint_kind_authority:
             raise ValueError(
                 "semantic repair entrypoint kind conflicts with immutable PM authority: "
                 f"expected={owner.entrypoint_kind_authority!r}:actual={entrypoint.kind!r}"
@@ -1785,6 +2004,14 @@ def compose_chief_engineer_semantic_repair(
             and entrypoint.source_path is not None
             and (
                 _task_authorizes_completion_path(task=owner, path=entrypoint.source_path)
+                or (
+                    delegated_same_kind
+                    and _task_delegates_artifact(task=owner, semantic_role="entrypoint", path=entrypoint.source_path)
+                    and (
+                        not owner.scope_paths
+                        or _task_authorizes_completion_path(task=owner, path=entrypoint.source_path)
+                    )
+                )
                 or (
                     "entrypoint" in _delegated_artifact_roles(owner)
                     and _is_ce_production_source_path(
@@ -1834,7 +2061,7 @@ def compose_chief_engineer_semantic_repair(
     # make an unrelated incremental repair fail on a pre-existing legal link.
     all_obligation_rows = [*artifact_rows, *entrypoint_rows, *verification_rows]
     if _introduces_duplicate_value(
-        [*artifact_baseline_rows, *entrypoint_baseline_rows, *verification_rows],
+        [*artifact_baseline_rows, *entrypoint_baseline_rows, *verification_baseline_rows],
         all_obligation_rows,
         field="obligation_id",
     ):
@@ -1869,6 +2096,21 @@ def compose_chief_engineer_semantic_repair(
         "shared_behavior_contract.invariants",
         behavior.get("invariants"),
     )
+    invalid_task_refs = _invalid_behavior_task_references(existing_invariants, candidate.task_ids)
+    consumer_only_ids = {
+        row["invariant_id"]
+        for row in invalid_task_refs
+        if row["unknown_owner_task_id"] is None and row["unknown_consumer_task_ids"]
+    }
+    if consumer_only_ids:
+        by_invariant_id = {row["invariant_id"]: row for row in existing_invariants}
+        for invariant in patch.behavior_invariant_upserts:
+            if invariant.invariant_id not in consumer_only_ids:
+                raise ValueError("behavior task reference patch identity is not diagnosed")
+            previous = by_invariant_id[invariant.invariant_id]
+            for field, value in invariant.to_dict().items():
+                if field != "consumer_task_ids" and previous.get(field) != value:
+                    raise ValueError(f"behavior task reference patch changes immutable {field}")
     invariants = _replace_by_id(
         existing_invariants,
         patch.behavior_invariant_upserts,
@@ -1906,6 +2148,15 @@ def compose_chief_engineer_semantic_repair(
         if task_id not in task_plans:
             raise ValueError(f"task behavior replacement has no candidate task plan: {task_id}")
         task_plan = _mapping(f"construction_plan.task_plans[{task_id!r}]", task_plans[task_id])
+        previous_refs = task_plan.get("behavior_invariant_refs") or []
+        if consumer_only_ids and list(refs) != previous_refs:
+            required_refs = {
+                row["invariant_id"]
+                for row in invariants
+                if task_id == row["owner_task_id"] or task_id in row["consumer_task_ids"]
+            }
+            if set(previous_refs).issubset(known_invariant_ids) and required_refs.issubset(previous_refs):
+                raise ValueError("consumer identity repair cannot change valid task behavior references")
         task_plan["behavior_invariant_refs"] = list(refs)
         task_plans[task_id] = task_plan
     construction["task_plans"] = task_plans
@@ -1932,6 +2183,7 @@ def compose_chief_engineer_semantic_repair(
             {
                 *(item.obligation_id for item in artifact_upserts),
                 *(item.obligation_id for item in patch.entrypoint_upserts),
+                *(str(item["obligation_id"]) for item in patch.verification_recipe_upserts),
                 *patch.entrypoint_remove_obligation_ids,
                 *(item.invariant_id for item in patch.behavior_invariant_upserts),
                 *patch.task_behavior_ref_replacements.keys(),
@@ -1975,6 +2227,7 @@ def load_chief_engineer_semantic_repair_candidate(
 def build_chief_engineer_semantic_repair_patch_schema(
     *,
     allowed_operations: tuple[ChiefEngineerSemanticRepairOperationV1, ...] | None = None,
+    diagnosis: ChiefEngineerSemanticRepairDiagnosisV1 | None = None,
 ) -> dict[str, Any]:
     """Return diagnosis-scoped provider schema for typed semantic repair.
 
@@ -1983,6 +2236,10 @@ def build_chief_engineer_semantic_repair_patch_schema(
     their strict schemas. Unscoped callers keep the legacy complete envelope.
     """
 
+    if diagnosis is not None:
+        if allowed_operations is not None and set(allowed_operations) != set(diagnosis.allowed_operations):
+            raise ValueError("semantic repair schema operations do not match active diagnosis")
+        allowed_operations = diagnosis.allowed_operations
     enabled_operations = frozenset(
         allowed_operations
         if allowed_operations is not None
@@ -1991,6 +2248,7 @@ def build_chief_engineer_semantic_repair_patch_schema(
             "entrypoint_upsert",
             "behavior_invariant_upsert",
             "task_behavior_ref_replace",
+            "verification_recipe_upsert",
         )
     )
 
@@ -2116,6 +2374,34 @@ def build_chief_engineer_semantic_repair_patch_schema(
                     else {}
                 ),
             },
+            "verification_recipe_upserts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "obligation_id": {"type": "string", "minLength": 1},
+                        "modality": {
+                            "type": "string",
+                            "enum": ["environment_prep", "build", "test", "lint", "entrypoint"],
+                        },
+                        "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                        "cwd": {"type": "string", "minLength": 1},
+                        "owner_task_id": {"type": "string", "minLength": 1},
+                        "applicability": {"type": "string", "enum": ["required", "optional"]},
+                        "covers_obligation_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                    },
+                    "required": [
+                        "obligation_id",
+                        "modality",
+                        "argv",
+                        "cwd",
+                        "owner_task_id",
+                        "applicability",
+                        "covers_obligation_ids",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
         },
         "required": [
             "base_candidate_hash",
@@ -2135,11 +2421,22 @@ def build_chief_engineer_semantic_repair_patch_schema(
             ("entrypoint_upsert", ("entrypoint_upserts", "entrypoint_remove_obligation_ids")),
             ("behavior_invariant_upsert", ("behavior_invariant_upserts",)),
             ("task_behavior_ref_replace", ("task_behavior_ref_replacements",)),
+            ("verification_recipe_upsert", ("verification_recipe_upserts",)),
         ):
             if operation not in enabled_operations:
                 for field in fields:
                     properties.pop(field)
         schema["required"] = ["base_candidate_hash", "diagnosis_hash"]
+    if diagnosis is not None:
+        schema["properties"]["base_candidate_hash"] = {"const": diagnosis.candidate_hash}
+        schema["properties"]["diagnosis_hash"] = {"const": diagnosis.diagnosis_hash}
+        recipes = schema["properties"].get("verification_recipe_upserts")
+        findings = [row for row in diagnosis.verification_recipe_diagnostics if row["collection"] == "verification"]
+        if recipes is not None and findings and all(len(row["source_path"]) == 3 for row in findings):
+            recipes["items"]["properties"]["obligation_id"] = {
+                "type": "string",
+                "enum": sorted({row["obligation_id"] for row in findings}),
+            }
     return schema
 
 

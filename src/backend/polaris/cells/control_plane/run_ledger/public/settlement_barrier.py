@@ -12,7 +12,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public.committed_turn_receipts import CommittedTurnReceiptObservationV1
+from polaris.cells.control_plane.run_ledger.public.directed_effect_receipt_validation import (
+    directed_effect_receipt_v2_errors,
+)
 from polaris.cells.control_plane.run_ledger.public.ledger import stable_hash
+from polaris.cells.runtime.task_runtime.public.execution_effect_closure import ExecutionEffectClosureObservationV1
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 FACTORY_SETTLEMENT_BARRIER_SCHEMA_V1 = "run_ledger.factory_settlement_barrier.v1"
@@ -333,23 +338,166 @@ def _blocking_reasons(
     return tuple(dict.fromkeys(reasons))
 
 
+def _closed_tool_result_identity(row: dict[str, Any], *, committed_readonly: bool = False) -> dict[str, Any]:
+    """Compare authority content across raw and typed result projections."""
+    optional_empty_fields = {"error", "effect_receipt"}
+    if committed_readonly:
+        optional_empty_fields.update(
+            {"effect_receipt_commit", "directed_effect_claim_status", "directed_effect_mutation_status"}
+        )
+    return {
+        key: value
+        for key, value in row.items()
+        if key != "execution_time_ms" and not (key in optional_empty_fields and value is None)
+    }
+
+
+def _observed_readonly_batch(
+    receipt: Mapping[str, Any],
+    observations: Sequence[CommittedTurnReceiptObservationV1],
+    *,
+    workspace: str,
+) -> Mapping[str, Any] | None:
+    """Bind a missing batch to its immutable owner's exact read-only witness."""
+    matching = [
+        observed
+        for observed in observations
+        if observed.status == "observed"
+        and observed.workspace == workspace
+        and (observed.run_id, observed.task_id, observed.turn_id)
+        == (receipt.get("run_id"), receipt.get("task_id"), receipt.get("turn_id"))
+    ]
+    if len(matching) != 1:
+        return None
+    observed = matching[0]
+    refs = receipt.get("batch_receipt_refs")
+    if not isinstance(refs, list | tuple) or not refs:
+        return None
+    identities = tuple((_mapping(ref).get("batch_id"), _mapping(ref).get("receipt_hash")) for ref in refs)
+    if identities != observed.batch_receipt_refs:
+        return None
+    try:
+        batch = observed.batch_receipt
+        batch_hash = stable_hash(batch)
+    except (TypeError, ValueError):
+        return None
+    if (
+        observed.effect_class != "readonly"
+        or not observed.fact_event_id
+        or observed.fact_event_seq <= 0
+        or len(observed.outcome_hash) != 64
+        or batch.get("batch_id") != observed.batch_id
+        or batch.get("turn_id") != observed.turn_id
+        or batch_hash != observed.batch_receipt_hash
+        or batch.get("pending_async_count") != 0
+        or batch.get("has_pending_async") is not False
+        or batch.get("effect_receipts") != []
+    ):
+        return None
+    rows = batch.get("results")
+    if not isinstance(rows, list) or not rows:
+        return None
+    if tuple(_mapping(row).get("call_id") for row in rows) != observed.native_call_ids:
+        return None
+    for raw_row in rows:
+        row = _mapping(raw_row)
+        spec = ToolSpecRegistry.get(ToolSpecRegistry.get_canonical(_clean_string(row.get("tool_name"))))
+        if spec is None or not spec.is_read_tool() or spec.is_write_tool() or spec.is_exec_tool():
+            return None
+        if any(
+            row.get(key) is not None
+            for key in (
+                "effect_receipt",
+                "effect_receipt_commit",
+                "directed_effect_claim_status",
+                "directed_effect_mutation_status",
+            )
+        ):
+            return None
+    return batch
+
+
+def _closed_artifact_receipt_reuse(
+    receipt: Mapping[str, Any], effect_closures: Sequence[ExecutionEffectClosureObservationV1], *, workspace: str
+) -> bool:
+    """Recognize a terminal read-only snapshot observation, never a new effect."""
+    if (
+        receipt.get("schema_version") != "tool_call_lifecycle_receipt.v1"
+        or receipt.get("compatibility_mode") != "receipt_reuse"
+        or receipt.get("dispatch_status") != "verified_existing_artifacts"
+        or receipt.get("ok") is not True
+        or any(
+            receipt.get(key) != 0
+            for key in (
+                "native_tool_calls_count",
+                "decoded_tool_calls_count",
+                "dispatched_tool_calls_count",
+                "tool_result_count",
+            )
+        )
+        or receipt.get("batch_receipt_refs") != []
+        or receipt.get("native_tool_call_envelope_refs") != []
+        or receipt.get("dropped_tool_calls") != []
+        or receipt.get("batch_receipt_hash") != ""
+        or receipt.get("provider_response_hash") != ""
+        or receipt.get("pending_async_count") not in (None, 0)
+        or receipt.get("has_pending_async") not in (None, False)
+    ):
+        return False
+    refs = receipt.get("effect_receipt_refs")
+    if not isinstance(refs, list) or not refs or receipt.get("effect_receipt_count") != len(refs):
+        return False
+    prefix = "execution-broker://project-verification/artifact/"
+    seen: set[str] = set()
+    for raw_ref in refs:
+        ref = _mapping(raw_ref)
+        value = _clean_string(ref.get("receipt_ref"))
+        suffix = value.removeprefix(prefix)
+        if (
+            ref.get("source") != "runtime.execution_broker.project_artifact_receipt.v1"
+            or ref.get("receipt_outcome") != "success"
+            or not value.startswith(prefix)
+            or len(suffix) != 64
+            or any(character not in "0123456789abcdef" for character in suffix)
+            or value in seen
+        ):
+            return False
+        seen.add(value)
+    matching = [
+        closure
+        for closure in effect_closures
+        if closure.status == "closed"
+        and closure.execution_attempt.workspace == workspace
+        and closure.execution_attempt.run_id == receipt.get("run_id")
+        and closure.execution_attempt.external_task_id == receipt.get("task_id")
+    ]
+    return len(matching) == 1 and not matching[0].receipts
+
+
 def _terminal_failure_has_closed_dispatches(
     task_runtime_facts: Sequence[Mapping[str, Any]],
     run_projection: Mapping[str, Any],
     ledger_facts: Sequence[Mapping[str, Any]],
+    effect_closures: Sequence[ExecutionEffectClosureObservationV1] = (),
+    *,
+    committed_turn_receipts: Sequence[CommittedTurnReceiptObservationV1] = (),
+    workspace: str = "",
 ) -> bool:
     """Prove failed closeout from canonical batch outcomes, never caller flags.
 
     Read denials have no effect receipt because policy prevented execution.
-    Match every declared dispatch to a settled canonical batch and classify its
-    tools through KernelOne's registry. Missing or ambiguous batch/effect facts
-    remain open; acceptance evidence is neither created nor waived.
+    Mutations require an exact persisted terminal TaskRuntime commit observation.
+    Match every declared dispatch to its canonical result; classify tools through
+    KernelOne's registry. Missing or ambiguous effect facts remain open;
+    acceptance evidence is neither created nor waived.
     """
 
     states = [_task_state(fact) for fact in _latest_task_facts(task_runtime_facts).values()]
     if not states or any(state not in _TERMINAL_TASK_STATES for state in states):
         return False
-    if not any(state in _FAILED_TASK_STATES for state in states):
+    if not any(state in _FAILED_TASK_STATES for state in states) and not (
+        run_projection.get("failed_gates") and any(closure.status == "closed" for closure in effect_closures)
+    ):
         return False
     lifecycle = _mapping(run_projection.get("tool_lifecycle"))
     events = lifecycle.get("events")
@@ -361,6 +509,8 @@ def _terminal_failure_has_closed_dispatches(
         turn_id = _clean_string(batch.get("turn_id"))
         if turn_id:
             batches.setdefault(turn_id, []).append(batch)
+    mutation_observed = False
+    read_success_observed = False
     for raw_event in events:
         event = _mapping(raw_event)
         receipt = _mapping(event.get("receipt"))
@@ -368,10 +518,18 @@ def _terminal_failure_has_closed_dispatches(
         if not receipt or _clean_string(event.get("status")).lower() in _ACTIVE_LIFECYCLE_STATES:
             return False
         if dispatched == 0:
+            if workspace and _closed_artifact_receipt_reuse(receipt, effect_closures, workspace=workspace):
+                continue
             if receipt.get("ok") is not False or receipt.get("dispatch_status") not in {"failed", "dropped"}:
                 return False
             continue
         candidates = batches.get(_clean_string(receipt.get("turn_id")), [])
+        committed_readonly = False
+        if not candidates and workspace:
+            observed_batch = _observed_readonly_batch(receipt, committed_turn_receipts, workspace=workspace)
+            if observed_batch is not None:
+                candidates = [observed_batch]
+                committed_readonly = True
         if len(candidates) != 1:
             return False
         batch = candidates[0]
@@ -381,22 +539,89 @@ def _terminal_failure_has_closed_dispatches(
         ):
             return False
         results = batch.get("results")
-        if not isinstance(results, list) or len(results) != dispatched or batch.get("raw_results") != results:
+        raw_results = batch.get("raw_results")
+        if (
+            not isinstance(results, list)
+            or len(results) != dispatched
+            or not isinstance(raw_results, list)
+            or len(raw_results) != len(results)
+            or any(type(row) is not dict for row in (*results, *raw_results))
+        ):
+            return False
+        # Typed read results add optional error/effect_receipt=None where raw
+        # results omit them. Only those empty top-level fields and duration are
+        # projection details. Non-null errors/effects, unknown fields and every
+        # nested value remain exact; mutations still require authentic commits.
+        try:
+            if stable_hash(
+                [_closed_tool_result_identity(row, committed_readonly=committed_readonly) for row in results]
+            ) != stable_hash(
+                [_closed_tool_result_identity(row, committed_readonly=committed_readonly) for row in raw_results]
+            ):
+                return False
+        except (TypeError, ValueError):
             return False
         if batch.get("pending_async_count") != 0 or batch.get("has_pending_async") is not False:
             return False
-        if batch.get("success_count") != 0 or batch.get("failure_count") != dispatched:
+        successes = sum(_mapping(item).get("status") == "success" for item in results)
+        if batch.get("success_count") != successes or batch.get("failure_count") != dispatched - successes:
             return False
         call_ids: set[str] = set()
         for raw_result in results:
             result = _mapping(raw_result)
             call_id = _clean_string(result.get("call_id"))
             spec = ToolSpecRegistry.get(ToolSpecRegistry.get_canonical(_clean_string(result.get("tool_name"))))
-            if not call_id or call_id in call_ids or result.get("status") not in {"error", "failed", "cancelled"}:
+            if (
+                not call_id
+                or call_id in call_ids
+                or result.get("status") not in {"success", "error", "failed", "cancelled"}
+            ):
                 return False
             call_ids.add(call_id)
-            if spec is None or not spec.is_read_tool() or spec.is_write_tool() or spec.is_exec_tool():
+            if spec is None:
                 return False
+            if spec.is_write_tool() or spec.is_exec_tool():
+                effect = _mapping(result.get("effect_receipt"))
+                commit = _mapping(result.get("effect_receipt_commit"))
+                if directed_effect_receipt_v2_errors(effect, commit, prefix="closure") != ():
+                    return False
+                # Legacy transport batches can wrap several DEO parent batches.
+                # Operational closure binds the immutable owner receipt below;
+                # transport/invocation mismatches remain delivery failures.
+                if (effect.get("tool_call_id"), effect.get("normalized_tool_name")) != (
+                    call_id,
+                    spec.canonical_name,
+                ):
+                    return False
+                matching = [
+                    observed
+                    for closure in effect_closures
+                    if closure.status == "closed"
+                    and closure.execution_attempt.run_id == receipt.get("run_id")
+                    and closure.execution_attempt.external_task_id == receipt.get("task_id")
+                    for observed in closure.receipts
+                    if observed.operation_id == effect.get("operation_id")
+                    and (observed.batch_id, observed.tool_call_id, observed.normalized_tool_name)
+                    == (effect.get("batch_id"), call_id, effect.get("normalized_tool_name"))
+                    and all(
+                        getattr(observed, field) == commit.get(key)
+                        for field, key in (
+                            ("receipt_ref", "receipt_ref"),
+                            ("receipt_hash", "receipt_hash"),
+                            ("receipt_binding_hash", "receipt_binding_hash"),
+                            ("receipt_outcome", "receipt_outcome"),
+                            ("commit_event_id", "event_id"),
+                            ("commit_version", "version"),
+                        )
+                    )
+                ]
+                if len(matching) != 1:
+                    return False
+                mutation_observed = True
+                continue
+            if not spec.is_read_tool():
+                return False
+            read_success_observed |= result.get("status") == "success"
             if any(
                 result.get(key) is not None
                 for key in (
@@ -407,7 +632,7 @@ def _terminal_failure_has_closed_dispatches(
                 )
             ):
                 return False
-        if batch.get("effect_receipts") != []:
+        if batch.get("effect_receipts") != [item["effect_receipt"] for item in results if item.get("effect_receipt")]:
             return False
         envelopes = receipt.get("native_tool_call_envelope_refs")
         if (
@@ -416,7 +641,7 @@ def _terminal_failure_has_closed_dispatches(
             and {_clean_string(_mapping(item).get("call_id")) for item in envelopes} != call_ids
         ):
             return False
-    return True
+    return not read_success_observed or mutation_observed
 
 
 def project_factory_settlement_barrier(
@@ -427,6 +652,8 @@ def project_factory_settlement_barrier(
     task_runtime_facts: Sequence[Mapping[str, Any]],
     ledger_facts: Sequence[Mapping[str, Any]],
     consumed_run_ids: Sequence[str],
+    effect_closures: Sequence[ExecutionEffectClosureObservationV1] = (),
+    committed_turn_receipts: Sequence[CommittedTurnReceiptObservationV1] = (),
 ) -> FactorySettlementBarrierResultV1:
     """Project one deterministic settlement result from canonical facts.
 
@@ -453,6 +680,19 @@ def project_factory_settlement_barrier(
     )
     normalized_run_ids = _string_tuple(consumed_run_ids)
     evidence_refs = _evidence_references(run_projection, task_runtime_facts, ledger_facts)
+    evidence_refs = tuple(
+        sorted(
+            {
+                *evidence_refs,
+                *(
+                    ref
+                    for observed in committed_turn_receipts
+                    if observed.workspace == query.workspace
+                    for ref in observed.evidence_refs
+                ),
+            }
+        )
+    )
     # Factory-scoped settlement: matching task_runtime.execution facts under
     # factory_run_id prove the run was observed. Director/workflow run_ids are
     # optional until dispatch — early CE/provider abort after PM creates rows
@@ -473,12 +713,25 @@ def project_factory_settlement_barrier(
     # effect_receipts_open after Director materialization + stage fail).
     terminal_failure_closed = bool(
         missing_required_modalities
-        and _terminal_failure_has_closed_dispatches(task_runtime_facts, run_projection, ledger_facts)
+        and _terminal_failure_has_closed_dispatches(
+            task_runtime_facts,
+            run_projection,
+            ledger_facts,
+            effect_closures,
+            committed_turn_receipts=committed_turn_receipts,
+            workspace=query.workspace,
+        )
     )
     closed = bool(
         scope_found and counts.open_count == 0 and (not missing_required_modalities or terminal_failure_closed)
     )
-    passed = bool(closed and bool(run_projection.get("ok")) and counts.failed_count == 0)
+    passed = bool(
+        closed
+        and bool(run_projection.get("ok"))
+        and counts.failed_count == 0
+        and not missing_required_modalities
+        and not failed_required_modalities
+    )
     hash_payload = {
         "schema_version": FACTORY_SETTLEMENT_BARRIER_SCHEMA_V1,
         "workspace": query.workspace,

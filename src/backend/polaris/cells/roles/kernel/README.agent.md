@@ -104,9 +104,17 @@ typed semantic final-request evidence cutoff shared with Factory role flows.
   from authorized `target_files`. Explicit empty CE write obligations permit a
   verification-only task; absent/None retains legacy behavior. Neither projection
   grants tool, command or path permission.
+- The turn ledger captures prepared invocation batches before dispatch, including
+  bootstrap reads, denied members, superseded writes and deferred repairs.
+  Decision replacement cannot erase earlier invocation inputs. Durable execution
+  joins each actual receipt to that inventory by its original call ID and records
+  the original batch inventory for typed rehydration. Native arguments remain
+  observations; normalized arguments alone enter permission and effect dispatch.
 - Native history obtains arguments from the exact sealed invocation joined to
   its receipt by batch/call/tool/status. Missing arguments and receipt drift
-  fail closed. Physical command failures retain bounded diagnostic feedback and
+  fail closed. Duplicate IDs, omitted committed rows and result/effect drift also
+  fail closed; started events never replace the full committed call inventory.
+  Physical command failures retain bounded diagnostic feedback and
   their original failed status.
 
 ## Typical Change Surface

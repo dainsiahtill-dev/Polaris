@@ -75,12 +75,14 @@ from ._helpers import (
     _capability_token_from_metadata,
     _effect_receipts_from_batch_receipts,
     _execution_envelope_hash_from_metadata,
+    _invocation_arguments,
     _is_deo_abort_error,
     _is_mutation_for_speculative_routing,
     _is_recoverable_deo_normalization_abort,
     _merge_batch_receipts,
     _normalize_file_reference_path,
     _recent_edit_failure_in_context,
+    _RecoverableDirectedEffectDenialError,
     _resolve_existing_workspace_file,
     _resolve_tool_batch_execution_identity,
     _seal_deo_abort_tool_lifecycle,
@@ -303,6 +305,7 @@ class _ToolBatchExecuteMixin:
             invocations,
             target_files=tuple(structured_target_candidates or single_target_candidates),
         )
+        invocations_before_duplicate_split = invocations
         invocations, duplicate_write_rejections = split_write_file_duplicate_content_rejections(invocations)
         if duplicate_write_rejections:
             rejected_call_ids = [str(item.get("call_id") or "") for item in duplicate_write_rejections]
@@ -787,6 +790,13 @@ class _ToolBatchExecuteMixin:
             turn_id,
         )
 
+        undispatched_ids = {str(row.get("call_id") or "") for row in duplicate_write_rejections}
+        undispatched_invocations = [
+            item for item in invocations_before_duplicate_split if str(item.get("call_id") or "") in undispatched_ids
+        ]
+        undispatched_invocations.extend(phase_blocked_invocations)
+        undispatched_canonical = self._canonicalize_directed_effect_invocations(undispatched_invocations)
+
         # Classify every final invocation and prepare the complete mutation
         # inventory before any read, speculative adoption, or physical effect.
         try:
@@ -815,26 +825,60 @@ class _ToolBatchExecuteMixin:
                         (metadata or {}).get("provider_response_hash") if isinstance(metadata, Mapping) else ""
                     ),
                 )
-            if _is_recoverable_deo_normalization_abort(error_token):
+            if isinstance(deo_exc, _RecoverableDirectedEffectDenialError) or _is_recoverable_deo_normalization_abort(
+                error_token
+            ):
                 # Live L2-12 TASK-2 / M03: native edit_file denied as
                 # deo_tool_normalization_failed must surface as a tool error
                 # receipt so the model can retry. Re-raising aborted the
                 # Director turn and Factory projected
                 # director_no_materialized_changes with no write receipt.
                 normalization_failed_results: list[dict[str, Any]] = []
-                for invocation in invocations:
+                denied_by_call = {call_id: code for call_id, _name, code in getattr(deo_exc, "denied_members", ())}
+                rejected_invocations = (
+                    deo_exc.invocations if isinstance(deo_exc, _RecoverableDirectedEffectDenialError) else invocations
+                )
+                ledger.record_invocation_batch(
+                    str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
+                    [*rejected_invocations, *undispatched_canonical],
+                )
+                for invocation in rejected_invocations:
                     tool_name = extract_invocation_tool_name(invocation) or "unknown_tool"
+                    call_id = str(invocation.get("call_id", "") if isinstance(invocation, dict) else invocation.call_id)
+                    member_error = (
+                        denied_by_call.get(call_id, "deo_batch_mutation_admission_rejected")
+                        if isinstance(deo_exc, _RecoverableDirectedEffectDenialError)
+                        else error_token
+                    )
+                    if member_error == "deo_same_path_superseded_by_later_write":
+                        superseded = _project_directed_effect_dropped_member_receipt(
+                            dropped_member_rows=[(call_id, tool_name, member_error)],
+                            batch_id=str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
+                            turn_id=turn_id,
+                        )["results"][0]
+                        normalization_failed_results.append(superseded)
+                        continue
+                    failure_payload: dict[str, Any] = {
+                        "ok": False,
+                        "error": member_error,
+                        "error_type": member_error,
+                        "arguments": dict(_invocation_arguments(invocation) or {}),
+                    }
+                    if isinstance(deo_exc, _RecoverableDirectedEffectDenialError):
+                        failure_payload["approved_command_scope"] = [
+                            {"command": row["command"], "cwd": row["cwd"]}
+                            for row in self._capability_token.get("verification_command_scope", ())
+                            if isinstance(row, dict)
+                            and isinstance(row.get("command"), str)
+                            and isinstance(row.get("cwd"), str)
+                        ]
                     normalization_failed_results.append(
                         {
-                            "call_id": str(getattr(invocation, "call_id", "") or ""),
+                            "call_id": call_id,
                             "tool_name": tool_name,
                             "status": "error",
-                            "result": {
-                                "ok": False,
-                                "error": error_token,
-                                "error_type": "deo_tool_normalization_failed",
-                            },
-                            "error": error_token,
+                            "result": failure_payload,
+                            "error": member_error,
                             "effect_receipt": None,
                             "directed_effect_claim_status": "not_claimed",
                         }
@@ -845,8 +889,8 @@ class _ToolBatchExecuteMixin:
                         "turn_id": turn_id,
                         "results": normalization_failed_results,
                         "raw_results": [dict(item) for item in normalization_failed_results],
-                        "success_count": 0,
-                        "failure_count": len(normalization_failed_results),
+                        "success_count": sum(row["status"] == "success" for row in normalization_failed_results),
+                        "failure_count": sum(row["status"] == "error" for row in normalization_failed_results),
                         "pending_async_count": 0,
                         "has_pending_async": False,
                     }
@@ -855,6 +899,16 @@ class _ToolBatchExecuteMixin:
                 if state_machine.current_state != TurnState.TOOL_BATCH_EXECUTING:
                     state_machine.transition_to(TurnState.TOOL_BATCH_EXECUTING)
                 state_machine.transition_to(TurnState.TOOL_BATCH_EXECUTED)
+                if continuous_execution and _is_materialize:
+                    return {
+                        "kind": "continue_multi_turn",
+                        "batch_receipt": _merge_batch_receipts(normalization_failed_receipts),
+                        "visible_content": "",
+                        "finalization": {
+                            "needs_followup_workflow": True,
+                            "workflow_reason": "tool_failure",
+                        },
+                    }
                 from polaris.cells.roles.kernel.internal.transaction.finalization import (
                     FinalizationHandler,
                 )
@@ -867,6 +921,10 @@ class _ToolBatchExecuteMixin:
                     self.emit_event,
                 )
             raise
+
+        ledger.record_invocation_batch(
+            str(tool_batch.get("batch_id") or f"{turn_id}_batch"), [*invocations, *undispatched_canonical]
+        )
 
         # Effect policy enforcement gate
         self._check_effect_policy(invocations, turn_id)

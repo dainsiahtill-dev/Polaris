@@ -1,0 +1,11 @@
+# PM and Chief Engineer input handoff convergence
+
+PM owns product intent, observable acceptance, explicit user constraints and genuine dependencies. CE compiles technical work packages, artifact ownership and exact validation recipes through the existing portfolio and handoff owners. Hashes, Job Tokens and receipt bindings remain server owned. No second execution engine or authority source is introduced.
+
+A CE verifier can imply reads of dependency-owned artifacts even when PM names no paths. `ChiefEngineerProjectInterfaceContractV1.task_read_context` is the persisted hash-bound closure; `construction_plan.context_files` must project that exact closure. It cannot remain a stale copy of optional PM input hints. The existing `_control_plane_job_token` compiler keeps these inputs in `allowed_read_paths` and out of `allowed_write_paths`. Public handoff revalidates the persisted portfolio, so rehashing a forged context still fails.
+
+Inline product requirements do not imply an on-disk requirements file. A new artifact need not exist or be successfully read before creation. Read prerequisites remain exact authorized inputs or existing targets. The CE objective and task overlay now state this distinction and preserve implementation flexibility within authorized scope while user constraints and acceptance stay fixed. No file authority is inferred from a model path, an arbitrary file found in the workspace, or the historical Bench project name.
+
+Filtered ancestor enumeration is a separate tool-consumer concern: derive it only from existing committed read paths and filter results. Never add `.` as recursive file-read or write authority. Root integration owns this change. Original request780d created all eight intended targets despite rejected read attempts; the read mismatch is not evidence that those denials alone caused final delivery failure.
+
+Validation: two public owner regressions and one initial CE objective regression failed before edits and passed afterwards. Focused CE public, PM contract/advisory and Factory handoff tests cover immutable acceptance, explicit recipe constraints, unknown input paths, dependency ownership and forged immutable portfolio bindings. Ruff, formatting and mypy run on changed files. Native isolated delivery and root KernelOne release gates remain root integration evidence.

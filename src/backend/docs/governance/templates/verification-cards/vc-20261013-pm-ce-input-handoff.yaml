@@ -1,0 +1,29 @@
+version: 1
+id: vc-20261013-pm-ce-input-handoff
+classification: pattern
+owners: [chief_engineer.blueprint, factory.pipeline]
+assumptions:
+  - statement: CE task overlay read inputs match canonical interface closure
+    evidence: _portfolio_task_read_context and _control_plane_job_token
+    result: false_before_fix
+  - statement: Inline product requirements grant no inferred file authority
+    evidence: PM task intent contract and exact interface read binding
+    result: preserved
+  - statement: New artifact creation requires no existing artifact read
+    evidence: public generate_task_blueprint succeeds in private blank workspace
+    result: clarified_in_ce_prompt_and_overlay
+premortem:
+  - Inferred requirements files would widen authority without intake provenance
+  - Adding an ancestor directory to allowed_read_paths would grant recursive reads
+  - Copying PM context hints would omit verifier-inferred dependency inputs
+verification:
+  red: two public owner assertions and initial CE objective assertion
+  green: public projection and persisted handoff retain exact readonly closure
+  tests:
+    - polaris/cells/chief_engineer/blueprint/public/tests/test_task_input_handoff_convergence.py
+    - polaris/cells/factory/pipeline/tests/test_ce_input_prompt_convergence.py
+  required_checks: [ruff_check, ruff_format, mypy, focused_pytest]
+residual_risks:
+  - Native isolated delivery pending root integration
+  - Filtered ancestor enumeration belongs to tool consumer owner
+  - Explicit readonly requirement file intake has no existing authoritative provenance; no new schema added

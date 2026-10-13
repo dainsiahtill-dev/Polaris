@@ -991,7 +991,14 @@ class _Mixin01:
             "Produce one coherent Chief Engineer project blueprint portfolio for the validated PM task graph. "
             "Define the artifacts and verification needed for Director to begin. Add cross-task interfaces only "
             "where coupling requires them. Preserve PM observable acceptance and explicit constraints; resolve "
-            "CE-delegated topology and command recipes before execution.\n\n"
+            "CE-delegated topology and command recipes before execution. "
+            "Product requirements, observable acceptance and explicit constraints are already included in the "
+            "attached PM contracts; they do not imply an additional requirements file. Bind only declared "
+            "authorized context_files or existing target files as read prerequisites. A new artifact does not "
+            "require a successful read before creation. Do not invent prerequisite input files. "
+            "Implementation choices may evolve within the authorized work scope while explicit user constraints "
+            "and acceptance stay unchanged. The server compiles hashes, capability tokens and receipt bindings; "
+            "provide technical plans and validator recipes rather than invented machine authority.\n\n"
             "Validated PM tasks:\n" + "\n".join(task_lines) + depth_clause + _CE_BLUEPRINT_OUTPUT_CONTRACT
         )
 
@@ -1348,7 +1355,6 @@ class _Mixin01:
                                 "required": [
                                     "obligation_id",
                                     "modality",
-                                    "command_authority_hash",
                                     "applicability",
                                     "owner_task_id",
                                     "covers_obligation_ids",
@@ -1410,6 +1416,12 @@ class _Mixin01:
                                                 "owner_task_id": {"type": "string", "minLength": 1},
                                                 "consumer_task_ids": {
                                                     "type": "array",
+                                                    "description": (
+                                                        "PM task identities, never consumer_kind labels such as "
+                                                        "test_runner or web_entrypoint. Known PM task IDs: "
+                                                        + ", ".join(portfolio_task_ids)
+                                                        + ". Use an empty array for a task-local invariant."
+                                                    ),
                                                     "items": {"type": "string", "minLength": 1},
                                                 },
                                                 "covered_obligation_ids": {

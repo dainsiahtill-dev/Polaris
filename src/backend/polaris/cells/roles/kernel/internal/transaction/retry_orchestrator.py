@@ -346,6 +346,7 @@ class RetryOrchestrator:
                 inv for inv in normalized_invocations if inv.execution_mode == ToolExecutionMode.ASYNC_RECEIPT
             ],
         )
+        ledger.record_invocation_batch(str(batch_id), normalized_invocations)
         receipts = await self._build_tool_batch_runtime(workspace).execute_batch(
             bootstrap_batch,
             TurnId(turn_id),

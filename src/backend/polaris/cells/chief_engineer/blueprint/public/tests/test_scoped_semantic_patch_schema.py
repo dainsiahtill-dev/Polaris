@@ -49,6 +49,7 @@ def _legacy_payload() -> dict[str, Any]:
         ("entrypoint_upsert", {"entrypoint_upserts", "entrypoint_remove_obligation_ids"}),
         ("behavior_invariant_upsert", {"behavior_invariant_upserts"}),
         ("task_behavior_ref_replace", {"task_behavior_ref_replacements"}),
+        ("verification_recipe_upsert", {"verification_recipe_upserts"}),
     ],
 )
 def test_scoped_wire_advertises_only_anchors_and_authorized_groups(

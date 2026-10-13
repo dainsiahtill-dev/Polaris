@@ -448,43 +448,19 @@ class RoleToolGateway:
         malformed scopes fail closed before filesystem/search dispatch. Operands
         and defaults come from the same captured ToolSpec used for aliases.
         """
-        if "allowed_read_paths" not in self._capability_token:
-            return True
+        from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+        from polaris.kernelone.llm.toolkit.executor.read_scope import registered_read_scope_permits
+
         spec = frozen_node_to_value(tool_snapshot.canonical_effective_spec)
         if not isinstance(spec, dict):
             return False
-        path_fields = {"file", "path", "paths", "root", "directory", "dir", "target", "source"}
-        operands: list[str] = []
-        for parameter in spec.get("arguments", []):
-            if not isinstance(parameter, dict) or parameter.get("name") not in path_fields:
-                continue
-            name = str(parameter["name"])
-            # Unspecified repository search/list roots execute over workspace.
-            value = arguments.get(name, parameter.get("default", "."))
-            values = value if isinstance(value, (list, tuple)) else [value]
-            if not values or any(not isinstance(item, str) or not item.strip() for item in values):
-                return False
-            operands.extend(str(item) for item in values)
-        if tool_name == "repo_diff":
-            operands.append(".")
-        if not operands:
-            return True
-        scope = self._capability_token["allowed_read_paths"]
-        if not isinstance(scope, (list, tuple)) or not scope or any(not isinstance(item, str) for item in scope):
-            return False
-        from polaris.kernelone.exceptions import PathSecurityError
-        from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
-
-        filesystem = KernelFileSystem(self.workspace or ".", get_default_adapter())
-        try:
-            authorized = [filesystem.resolve_workspace_path(item) for item in scope]
-            for operand in operands:
-                target = filesystem.resolve_workspace_path(operand)
-                if not any(target == path or (path.is_dir() and target.is_relative_to(path)) for path in authorized):
-                    return False
-        except (OSError, ValueError, PathSecurityError):
-            return False
-        return True
+        return registered_read_scope_permits(
+            KernelFileSystem(self.workspace or ".", get_default_adapter()),
+            self._capability_token,
+            tool_name,
+            arguments,
+            spec,
+        )
 
     @staticmethod
     def _snapshot_matches_bound_tool(

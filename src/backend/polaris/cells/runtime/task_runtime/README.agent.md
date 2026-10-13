@@ -54,6 +54,17 @@ repository architecture fence are also closed.
 
 ## Invariants
 
+- `public.execution_effect_closure.query_execution_effect_closure` observes one
+  exact execution attempt and reuses the strict DEO registry and operation
+  reducers. Historical terminal attempts require canonical owner terminal-intent
+  proof with matching identity; a newer preflight cannot replace that proof.
+  It returns closed, active, or unknown plus persisted commit identities.
+  Observation grants no execution, writes no state, and cannot settle a parent.
+  Active getters continue requiring live authority. Run Ledger uses this
+  observation for failed resource cleanup while missing/failed delivery evidence
+  remains unchanged. A legacy transport batch mismatch is not rewritten or
+  accepted as native delivery evidence.
+
 - task status writes must flow through one runtime service entry
 - task execution must be claim-first and lease-backed before Director starts work
 - interrupted work must surface as resumable runtime state instead of silently disappearing

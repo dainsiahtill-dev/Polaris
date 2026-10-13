@@ -53,12 +53,24 @@ def validate_portfolio_behavior_feasibility(
         unknown_tasks = sorted(({owner} | consumers) - known_tasks)
         unknown_obligations = sorted(covered - known_obligations)
         if unknown_tasks or unknown_obligations:
+            unknown_consumers = sorted(consumers - known_tasks)
+            unknown_owner = owner if owner not in known_tasks else None
             raise PortfolioBehaviorFeasibilityError(
-                "shared behavior invariant references unknown authority identities",
+                "shared_behavior_contract invariant references unknown authority identities: "
+                f"invariant_id={invariant_id!r}, unknown_consumer_task_ids={unknown_consumers!r}, "
+                f"unknown_owner_task_id={unknown_owner!r}, unknown_obligation_ids={unknown_obligations!r}, "
+                f"known_task_ids={sorted(known_tasks)!r}. consumer_task_ids must contain PM task IDs, "
+                "not interface consumer_kind values; use [] for a task-local invariant.",
                 details={
                     "invariant_ids": [invariant_id],
                     "task_ids": unknown_tasks,
                     "obligation_ids": unknown_obligations,
+                    "known_task_ids": sorted(known_tasks),
+                    "unknown_consumer_task_ids": unknown_consumers,
+                    "unknown_owner_task_id": unknown_owner,
+                    "unknown_obligation_ids": unknown_obligations,
+                    "repair_hint": "consumer_task_ids must contain known PM task IDs, not consumer_kind values. "
+                    "For a task-local invariant use []; preserve valid owner and covered obligation IDs.",
                 },
             )
         missing_refs = sorted(
@@ -78,7 +90,6 @@ def validate_portfolio_behavior_feasibility(
             "task behavior bindings reference unknown invariants",
             details={"invariant_ids": unknown_binding_refs},
         )
-
 
 
 __all__ = ["PortfolioBehaviorFeasibilityError", "validate_portfolio_behavior_feasibility"]

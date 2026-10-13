@@ -465,6 +465,26 @@ def resolve_callable_tool_names(tool_definitions: list[dict], tool_choice_overri
     raise ValueError("tool_choice_unsupported")
 
 
+def readonly_planning_role(context: list[dict]) -> str:
+    """Read the platform system identity, never downstream task or user quotes."""
+    roles = {"pm", "architect", "chief_engineer"}
+    for message in context:
+        if not isinstance(message, Mapping) or message.get("role") != "system":
+            continue
+        metadata = message.get("metadata")
+        if isinstance(metadata, Mapping):
+            for key in ("role_id", "expected_role_id", "role", "actor"):
+                role = str(metadata.get(key) or "").strip().lower().replace(" ", "_")
+                if role in roles or role in {"director", "qa", "scout"}:
+                    return role if role in roles else ""
+        content = str(message.get("content") or "").lower()
+        for role in ("pm", "architect", "chief_engineer", "director", "qa", "scout"):
+            name = role.replace("_", " ")
+            if f"polaris 体系中的 **{name}**" in content:
+                return role if role in roles else ""
+    return ""
+
+
 def validate_required_tool_surface(context: list[dict], callable_tools: list[str]) -> None:
     """Explicit requirements survive guidance pruning; absent capabilities block."""
     contract = extract_platform_tool_contract(context)
@@ -517,11 +537,13 @@ def build_single_batch_task_contract_hint(
     latest_user = extract_latest_user_message(context)
     if not latest_user:
         return "", {}
+    available_tools = resolve_callable_tool_names(tool_definitions, tool_choice_override)
+    validate_required_tool_surface(context, available_tools)
+    if readonly_planning_role(context):
+        return "", {}
     if any(marker in latest_user for marker in _SUPER_READONLY_STAGE_MARKERS):
         return "", {}
     platform_tool_contract = extract_platform_tool_contract(context)
-    available_tools = resolve_callable_tool_names(tool_definitions, tool_choice_override)
-    validate_required_tool_surface(context, available_tools)
     if single_batch is None:
         single_batch = platform_tool_contract_is_single_batch(context)
     mixed_read_write_batch_allowed = platform_tool_contract_bypasses_read_write_barrier(context)

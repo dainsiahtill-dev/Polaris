@@ -804,6 +804,32 @@ def get_verifier_command_profile_feedback(
     }
     if error_code:
         feedback.update(describe_builtin_command_profile(modality, normalize_verifier_command_argv(argv)))
+        candidates = []
+        for candidate in feedback.get("candidate_profiles", []):
+            examples = [
+                example
+                for example in candidate["argv_examples"]
+                if classify_verifier_command_profile(
+                    workspace=workspace, modality=candidate["expected_modality"], argv=example, cwd=cwd
+                )
+                == (candidate["candidate_profile_id"], "")
+            ]
+            if examples:
+                candidates.append({**candidate, "argv_examples": examples})
+        feedback["candidate_profiles"] = candidates
+        primary = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate["candidate_profile_id"] == feedback.get("candidate_profile_id")
+            ),
+            candidates[0] if candidates else None,
+        )
+        if primary is not None:
+            feedback.update(primary)
+        else:
+            for name in ("candidate_profile_id", "expected_modality", "accepted_shape", "argv_examples"):
+                feedback.pop(name, None)
     return feedback
 
 

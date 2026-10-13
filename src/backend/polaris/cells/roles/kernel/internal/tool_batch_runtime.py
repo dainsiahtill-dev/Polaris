@@ -238,7 +238,11 @@ class ToolBatchRuntime:
         directed_effect_abort_call_ids: tuple[str, ...] = (),
         directed_effect_repair_bindings_by_call_id: tuple[tuple[str, DeferredDirectorRepairEffectBindingV1], ...] = (),
         directed_effect_rollback_activation_by_call_id: tuple[tuple[str, str], ...] = (),
+        directed_effect_invocation_observer: Callable[[ToolInvocation], None] | None = None,
     ) -> None:
+        if directed_effect_invocation_observer is not None and not callable(directed_effect_invocation_observer):
+            raise TypeError("directed_effect_invocation_observer must be callable")
+        self._directed_effect_invocation_observer = directed_effect_invocation_observer
         self.executor = executor
         self.context = context or ToolExecutionContext()
         if (
@@ -578,6 +582,17 @@ class ToolBatchRuntime:
             arguments={key: self._thaw_directed_effect_value(value) for key, value in binding.effect.arguments},
         )
 
+    def _observe_directed_effect_invocation(self, tool: ToolInvocation) -> None:
+        observer = self._directed_effect_invocation_observer
+        if observer is not None:
+            # A detached input observation precedes claim, effect or explicit
+            # aborted-result accounting. Observer failure prevents dispatch.
+            observer(tool.model_copy(deep=True))
+
+    async def _execute_observed_directed_effect(self, tool: ToolInvocation) -> ToolResult:
+        self._observe_directed_effect_invocation(tool)
+        return await self._execute_directed_effect(tool)
+
     async def _execute_directed_effect(
         self,
         tool: ToolInvocation,
@@ -805,7 +820,7 @@ class ToolBatchRuntime:
                             error="directed_effect_prepared_inventory_mismatch",
                         )
                     else:
-                        result = await self._execute_directed_effect(mutation_tool)
+                        result = await self._execute_observed_directed_effect(mutation_tool)
                     receipts.append(self._result_to_receipt([result], turn_id))
                     if result.status is not ToolExecutionStatus.SUCCESS:
                         all_dispatched_succeeded = False
@@ -875,6 +890,9 @@ class ToolBatchRuntime:
                         ]
                         for call_id in inventory_ids[cleanup_start:]:
                             if call_id in ordered_call_ids:
+                                selected_forward = mutation_by_call_id.get(call_id)
+                                if selected_forward is not None:
+                                    self._observe_directed_effect_invocation(selected_forward)
                                 lifecycle.abort_unclaimed_members(
                                     prepared_batch=prepared,
                                     execution_attempt_authority=authority,
@@ -894,7 +912,7 @@ class ToolBatchRuntime:
                                 )
                                 break
                             if activating_forward in activated_forward_ids:
-                                rollback_result = await self._execute_directed_effect(
+                                rollback_result = await self._execute_observed_directed_effect(
                                     self._deferred_repair_invocation(call_id)
                                 )
                                 receipts.append(self._result_to_receipt([rollback_result], turn_id))
@@ -907,6 +925,11 @@ class ToolBatchRuntime:
                                     break
                                 executed_rollback_ids.append(call_id)
                                 continue
+                            # This failure-cleanup branch already emits a real
+                            # ABORTED tool result. Capture its selected input
+                            # before the owner abort, without creating an effect.
+                            if self._directed_effect_invocation_observer is not None:
+                                self._observe_directed_effect_invocation(self._deferred_repair_invocation(call_id))
                             lifecycle.abort_unclaimed_members(
                                 prepared_batch=prepared,
                                 execution_attempt_authority=authority,

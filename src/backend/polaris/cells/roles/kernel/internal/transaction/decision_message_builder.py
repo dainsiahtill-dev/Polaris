@@ -32,6 +32,7 @@ from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     build_single_batch_task_contract_hint,
     platform_tool_contract_is_single_batch,
+    readonly_planning_role,
     resolve_callable_tool_names,
     validate_required_tool_surface,
 )
@@ -398,6 +399,7 @@ def build_decision_messages(
             break
     _is_platform_contract_single_batch = platform_tool_contract_is_single_batch(context)
     _is_super_readonly_stage = "[SUPER_MODE_READONLY_STAGE]" in _latest_user_for_guard
+    _readonly_planning_role = readonly_planning_role(context)
     _latest_user_for_guard_lower = _latest_user_for_guard.lower()
     _is_quality_repair = _is_materialization_quality_repair(_latest_user_for_guard)
     _is_toolless_proposal_stage = (
@@ -428,7 +430,17 @@ def build_decision_messages(
         messages.append({"role": "system", "content": qa_guard, "metadata": {"plane": "control"}})
         return messages
 
-    if _is_super_readonly_stage:
+    if _readonly_planning_role:
+        single_batch_guard = (
+            "SYSTEM CONSTRAINT (Readonly Planning): This "
+            + _readonly_planning_role
+            + " turn produces planning or analysis for downstream execution roles. "
+            "Use only the current callable read/exploration tools when needed. "
+            "Project target files and verification obligations describe downstream delivery; "
+            "they do not require workspace mutation or command execution in this planning turn. "
+            "Return the requested role result without claiming downstream effects or completed verification."
+        )
+    elif _is_super_readonly_stage:
         single_batch_guard = (
             "SYSTEM CONSTRAINT (Execution): This is a SUPER readonly planning stage. "
             "Your role is read-only for this stage. Use only read/exploration tools exposed to your current role. "
@@ -496,6 +508,8 @@ def build_decision_messages(
                 "metadata": {"plane": "control", "kind": "physical_tool_schema_truth"},
             }
         )
+    if _readonly_planning_role:
+        return messages
     if _is_quality_repair:
         messages.append(
             {

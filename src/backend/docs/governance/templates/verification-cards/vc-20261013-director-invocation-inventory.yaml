@@ -1,0 +1,29 @@
+id: vc-20261013-director-invocation-inventory
+classification: structural
+owner_cell: roles.kernel
+blueprint: docs/blueprints/DIRECTOR_COMMITTED_INVOCATION_INVENTORY_20261013.md
+assumptions:
+  - id: final_decision_contains_all_executed_calls
+    verdict: disproven
+    evidence: immutable factory_780d3983bf14 repair fact has five bootstrap read receipts absent from final write invocations
+  - id: started_events_cover_every_committed_member
+    verdict: disproven
+    evidence: dispatched started events omit denied and superseded no-effect members
+  - id: typed_inventory_can_reconstruct_exact_history
+    verdict: verified_by_component_regression
+    evidence: persisted TurnOutcome rehydration and reordered receipt projection
+premortem:
+  - risk: capture receipt output as native arguments
+    defense: capture invocation inputs before dispatch and reject unknown call IDs
+  - risk: forget a producer path
+    defense: record normal denied bootstrap and deferred preparation and run neighbor regressions
+  - risk: turn a failed or absent effect into success
+    defense: exact receipt result error effect and membership checks plus forged counterexamples
+verification:
+  commands:
+    - rtk proxy ruff check assigned Director paths --fix
+    - rtk proxy ruff format assigned Director paths
+    - rtk proxy mypy --follow-imports=silent assigned Director source paths
+    - rtk proxy python -m pytest bounded Director kernel runtime decoder outcome and native HTTP regressions -q
+  fresh_native_acceptance: pending_root_integration
+  kernelone_release_all: pending_root_integration

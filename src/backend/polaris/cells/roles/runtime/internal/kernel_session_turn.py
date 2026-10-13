@@ -10,9 +10,11 @@ import asyncio
 import hashlib
 import json
 import math
+import re
 import time
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from polaris.cells.roles.kernel.public.llm_caller_contracts import (
@@ -31,7 +33,26 @@ from polaris.cells.roles.kernel.public.turn_events import (
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.internal.session_orchestrator import RoleSessionOrchestrator
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
-from polaris.kernelone.context.prompt_safety import format_tool_failure_summary
+from polaris.kernelone.audit.context_os_prompt import (
+    CONTROL_PLANE_PROMPT_KEYS,
+    find_control_plane_prompt_content_hits,
+    normalize_control_plane_prompt_key,
+)
+from polaris.kernelone.context.prompt_safety import (
+    format_tool_failure_summary,
+    parse_tool_failure_summary,
+    prompt_safe_tool_failure_summary,
+)
+from polaris.kernelone.quality import (
+    ArtifactQualityEvidence,
+    artifact_quality_issue_raw,
+    artifact_quality_issue_structural_key,
+    artifact_quality_issues_from_errors,
+    normalize_file_ownership_target,
+    partition_paths_by_declared_scope,
+    scan_workspace_artifact_quality_evidence,
+)
+from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
 
 
 def _transcript_data_plane(value: Any) -> Any:
@@ -54,6 +75,99 @@ def _transcript_data_plane(value: Any) -> Any:
         }
         return {str(key): item for key, item in value.items() if str(key) not in excluded}
     return value
+
+
+def _feedback_text_is_private(value: str) -> bool:
+    authority_keys = CONTROL_PLANE_PROMPT_KEYS | {
+        "actor_id",
+        "call_id",
+        "turn_id",
+        "fencing_token",
+        "receipt_hash",
+        "request_hash",
+        "execution_authority_hash",
+    }
+    return bool(find_control_plane_prompt_content_hits(value)) or any(
+        normalize_control_plane_prompt_key(key) in authority_keys
+        for key in re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*['\"]?\s*[:=]", value)
+    )
+
+
+def _failure_argument_observations(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Bound rejected operands; source/code and nested authority stay private."""
+    observations: dict[str, Any] = {}
+    for key, value in list(arguments.items())[:32]:
+        name = str(key)
+        if _feedback_text_is_private(name + ":"):
+            continue
+        if isinstance(value, str):
+            bulk = name.lower() in {"content", "text", "body", "source", "code"}
+            if not bulk and len(value) <= 1000 and not _feedback_text_is_private(value):
+                observations[name] = value
+            else:
+                observations[name] = {"type": "str", "chars": len(value)}
+        elif value is None or isinstance(value, bool | int | float):
+            observations[name] = value
+        else:
+            observations[name] = {
+                "type": type(value).__name__,
+                **({"items": len(value)} if isinstance(value, Mapping | list | tuple) else {}),
+            }
+    return observations
+
+
+def _native_failure_observation(name: str, observation: Mapping[str, Any], arguments: Mapping[str, Any]) -> str:
+    """Reuse the ContextOS failure projection for native correlated tool slots."""
+    safe = prompt_safe_tool_failure_summary("tool", json.dumps(dict(observation), ensure_ascii=False))
+    summary = parse_tool_failure_summary(safe) if safe else None
+    if summary is None:
+        summary = {"reason": "tool execution failed", "error_type": "tool_failure"}
+    for field in ("reason", "error_type", "scope"):
+        value = summary.get(field)
+        if isinstance(value, str) and _feedback_text_is_private(value):
+            if field == "scope":
+                summary.pop(field, None)
+            else:
+                summary[field] = "tool execution failed" if field == "reason" else "tool_failure"
+    summary.update(
+        tool=name,
+        schema_version="tool_failure_summary.v1",
+        prompt_safe=True,
+        observation_only=True,
+        non_deliverable=True,
+    )
+    payload = observation.get("result")
+    payload = payload if isinstance(payload, Mapping) else {}
+    rejected = payload.get("arguments")
+    summary["arguments"] = _failure_argument_observations(rejected if isinstance(rejected, Mapping) else arguments)
+    diagnostics: dict[str, Any] = {}
+    for field in ("stderr", "stdout", "exit_code", "returncode", "physical_error", "error_code", "file", "path"):
+        value = payload.get(field)
+        if isinstance(value, str) and not _feedback_text_is_private(value):
+            diagnostics[field] = value[:2400]
+        elif isinstance(value, int) and not isinstance(value, bool):
+            diagnostics[field] = value
+    if diagnostics:
+        summary["diagnostics"] = diagnostics
+    approved = payload.get("approved_command_scope")
+    if isinstance(approved, list):
+        rows = []
+        for item in approved[:16]:
+            if not isinstance(item, Mapping):
+                continue
+            command, cwd = item.get("command"), item.get("cwd")
+            if (
+                isinstance(command, str)
+                and isinstance(cwd, str)
+                and len(command) <= 2000
+                and len(cwd) <= 500
+                and not _feedback_text_is_private(command + " " + cwd)
+            ):
+                rows.append({"command": command, "cwd": cwd})
+        summary["approved_command_scope"] = rows
+        if len(rows) != len(approved):
+            summary["omitted_approved_command_count"] = len(approved) - len(rows)
+    return str(format_tool_failure_summary(summary))
 
 
 def _committed_transcript_messages(results: list[RoleTurnResult]) -> list[dict[str, Any]]:
@@ -84,7 +198,12 @@ def _committed_transcript_messages(results: list[RoleTurnResult]) -> list[dict[s
                     "type": "function",
                     "function": {
                         "name": name,
-                        "arguments": json.dumps(dict(call["args"]), ensure_ascii=False),
+                        "arguments": json.dumps(
+                            dict(call["args"])
+                            if row.get("status") == "success"
+                            else _failure_argument_observations(call["args"]),
+                            ensure_ascii=False,
+                        ),
                     },
                 }
             )
@@ -96,7 +215,11 @@ def _committed_transcript_messages(results: list[RoleTurnResult]) -> list[dict[s
                     "role": "tool",
                     "name": name,
                     "tool_call_id": call_id,
-                    "content": json.dumps(observation, ensure_ascii=False),
+                    "content": (
+                        json.dumps(observation, ensure_ascii=False)
+                        if row.get("status") == "success"
+                        else _native_failure_observation(name, observation, call["args"])
+                    ),
                     "is_error": row.get("status") != "success",
                 }
             )
@@ -153,6 +276,293 @@ def _failed_batch_feedback_summary(batch_receipt: Mapping[str, Any] | None) -> s
     return "\n".join(summaries)[:1800]
 
 
+def _current_quality_repair_projection(
+    command: ExecuteRoleSessionCommandV1,
+    context: dict[str, Any],
+    previous: RoleTurnResult | None,
+    previous_static_evidence: tuple[ArtifactQualityEvidence, ...] = (),
+) -> tuple[dict[str, Any], str | None, ArtifactQualityEvidence | None]:
+    """Refresh read-only observations; the task and tool authority never change."""
+    quality = context.get("director_quality_repair")
+    objective = context.get("task_objective")
+    if (
+        command.role != "director"
+        or not isinstance(quality, Mapping)
+        or not isinstance(objective, str)
+        or not objective
+    ):
+        return context, None, None
+    raw_paths = quality.get("scan_relative_paths")
+    if not isinstance(raw_paths, list | tuple) or not raw_paths:
+        return context, None, None
+    paths = tuple(dict.fromkeys(str(path) for path in raw_paths))
+    if any(Path(path).is_absolute() or ".." in Path(path).parts or path in {"", "."} for path in paths):
+        raise RuntimeError("quality_continuation_invalid_read_scope")
+    context_metadata = context.get("metadata")
+    context_metadata = context_metadata if isinstance(context_metadata, Mapping) else {}
+    if "execution_envelope" in context:
+        source = context["execution_envelope"]
+    elif "control_plane_job_token" in context_metadata:
+        source = context_metadata["control_plane_job_token"]
+    else:
+        raise RuntimeError("quality_continuation_read_scope_authority_missing")
+    if not isinstance(source, Mapping):
+        raise RuntimeError("quality_continuation_read_scope_authority_malformed")
+    declared_reads = source.get("allowed_read_paths")
+    if not isinstance(declared_reads, list | tuple) or not all(isinstance(path, str) for path in declared_reads):
+        raise RuntimeError("quality_continuation_read_scope_malformed")
+    read_scope = list(declared_reads)
+    if not read_scope or partition_paths_by_declared_scope(paths, read_scope)[1]:
+        raise RuntimeError("quality_continuation_read_scope_mismatch")
+    root = Path(command.workspace)
+
+    def inputs() -> dict[str, tuple[str, str]]:
+        reader = WorkspaceReadSnapshot(root)
+        return {path: (read.status, read.content_sha256) for path in paths for read in (reader.read(root / path),)}
+
+    before = inputs()
+    evidence = scan_workspace_artifact_quality_evidence(
+        command.workspace, relative_paths=paths, scan_mode="pure_static", task_id=str(command.task_id or "")
+    )
+    after = inputs()
+    if before != after:
+        raise RuntimeError("quality_continuation_source_snapshot_changed")
+    input_hash = hashlib.sha256(json.dumps(after, sort_keys=True).encode("utf-8")).hexdigest()
+    covered = set(evidence.scanned_relative_paths)
+    # Script coverage may be unknown while the static import surface is known.
+    # Any source/read/ledger uncertainty prevents retiring an old diagnostic.
+    static_known = all(status == "readable" for status, _hash in after.values()) and all(
+        reason.startswith("script_invocation_unknown:") for reason in evidence.incomplete_reasons
+    )
+    prior_slots = [
+        quality,
+        *[context.get(key) for key in ("workspace_quality_evidence", "failed_gate_evidence", "failure_evidence")],
+    ]
+    old_errors = list(
+        dict.fromkeys(
+            error
+            for slot in prior_slots
+            if isinstance(slot, Mapping)
+            for field in ("artifact_quality_errors", "quality_errors")
+            for error in slot.get(field, ())
+            if isinstance(error, str) and error.strip()
+        )
+    )
+    old_issues = artifact_quality_issues_from_errors(old_errors)
+    current_keys = {artifact_quality_issue_structural_key(issue.to_dict()) for issue in evidence.issues}
+
+    # Only this bridge's actual prior query object admits generic static
+    # predicates. Public context maps/hashes cannot forge query provenance.
+    prior_static = {
+        artifact_quality_issue_raw(issue): issue.to_dict()
+        for query in previous_static_evidence
+        if query.scan_mode == "pure_static"
+        for issue in query.issues
+        if issue.severity == "error" and artifact_quality_issue_raw(issue) in query.errors
+    }
+    task = context.get("task")
+    task = task if isinstance(task, Mapping) else {}
+    raw_targets = quality.get("declared_target_files", task.get("target_files", ()))
+    targets = [normalize_file_ownership_target(path) for path in raw_targets if isinstance(path, str)]
+    missing_identities = {
+        f"Artifact quality scan failed: declared target file missing '{path}'": path
+        for path in targets
+        if path and path in paths
+    }
+    empty_hash = hashlib.sha256(b"").hexdigest()
+
+    def observed_static_predicate(issue: Mapping[str, Any]) -> bool:
+        raw = artifact_quality_issue_raw(issue)
+        canonical = artifact_quality_issues_from_errors((raw,))
+        if not canonical:
+            return False
+        # Existence is independent of compiler/parser/sibling coverage.
+        owner_target = missing_identities.get(raw)
+        if owner_target and canonical[0].get("code") == "declared_target_missing":
+            status, digest = after[owner_target]
+            return status == "readable" and digest != empty_hash
+        admitted = prior_static.get(raw)
+        if admitted is not None:
+            owner_metadata = admitted.get("metadata")
+            if isinstance(owner_metadata, Mapping) and owner_metadata.get("importer_path") and not static_known:
+                return False
+            path = str(admitted.get("path") or "")
+            if not path:
+                return evidence.scan_complete and all(status == "readable" for status, _digest in after.values())
+            if path not in covered or after.get(path, ("unknown", ""))[0] != "readable":
+                return False
+            # Skipped/truncated/unreadable input cannot establish a new
+            # predicate result. An unrelated missing target does not block it.
+            blockers = (
+                f"file_checks_skipped:{path}",
+                f"file_truncated:{path}",
+                f"file_unreadable:{path}",
+                f"unsupported_source:{path}",
+                f"scope_symlink_unvisited:{path}",
+            )
+            return not any(
+                reason.startswith(blockers) or reason in {"error_limit", "scan_exception"}
+                for reason in evidence.incomplete_reasons
+            )
+        # Preserve the existing public typed import compatibility proof. Other
+        # legacy families without real query provenance stay unknown.
+        metadata = canonical[0].get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        importer = str(metadata.get("importer_path") or canonical[0].get("path") or "")
+        key = artifact_quality_issue_structural_key(canonical[0])
+        return bool(
+            static_known
+            and key
+            and key[0] in {"unresolved_import_symbol", "unresolved_relative_import"}
+            and importer in covered
+            and metadata.get("module", metadata.get("specifier"))
+        )
+
+    retained = [
+        error for error, issue in zip(old_errors, old_issues, strict=True) if not observed_static_predicate(issue)
+    ]
+    retired_keys = [
+        artifact_quality_issue_structural_key(issue)
+        for issue in old_issues
+        if observed_static_predicate(issue) and artifact_quality_issue_structural_key(issue) not in current_keys
+    ]
+    retained_structured = [
+        dict(issue)
+        for slot in prior_slots
+        if isinstance(slot, Mapping)
+        for field in ("issues", "artifact_quality_issues")
+        for issue in slot.get(field, ())
+        if isinstance(issue, Mapping) and not observed_static_predicate(issue)
+    ]
+    errors = list(dict.fromkeys([*retained, *evidence.errors]))
+    missing = [path for path, (status, _hash) in after.items() if status == "missing"]
+    errors.extend(f"Missing authorized target/input file: {path}" for path in missing)
+    owned_previous_reasons = {reason for query in previous_static_evidence for reason in query.incomplete_reasons}
+    resolved_read_reasons = {
+        f"{kind}:{path}"
+        for path in paths
+        if after[path][0] == "readable" and after[path][1] != empty_hash
+        for kind in ("scope_missing", "file_unreadable", "file_checks_skipped", "file_truncated")
+        if f"{kind}:{path}" in owned_previous_reasons
+        and f"{kind}:{path}" not in evidence.incomplete_reasons
+        and path in covered
+    }
+    pending_checks = [check.to_dict() for check in evidence.deferred_checks]
+    incomplete_reasons = list(evidence.incomplete_reasons)
+
+    for slot in prior_slots:
+        if not isinstance(slot, Mapping):
+            continue
+        checks = slot.get("deferred_checks")
+        if isinstance(checks, list | tuple):
+            pending_checks.extend(dict(check) for check in checks if isinstance(check, Mapping))
+        reasons = slot.get("incomplete_reasons")
+        if isinstance(reasons, list | tuple):
+            incomplete_reasons.extend(str(reason) for reason in reasons if str(reason) not in resolved_read_reasons)
+    pending_checks = list({json.dumps(check, sort_keys=True): check for check in pending_checks}.values())
+    incomplete_reasons = list(dict.fromkeys(incomplete_reasons))
+    coverage_complete = (
+        evidence.checks_complete
+        and not pending_checks
+        and not incomplete_reasons
+        and all(slot.get("checks_complete") is not False for slot in prior_slots if isinstance(slot, Mapping))
+    )
+    all_issues = [*artifact_quality_issues_from_errors(errors), *retained_structured]
+    all_issues = list({json.dumps(issue, sort_keys=True): issue for issue in all_issues}.values())
+    refreshed = {
+        **dict(quality),
+        "artifact_quality_errors": errors,
+        "artifact_quality_issues": all_issues,
+        "current_static_evidence": evidence.to_dict(),
+        "input_hash": input_hash,
+        "retired_static_issue_keys": retired_keys,
+        "missing_target_files": missing,
+    }
+    result = dict(context)
+    result["director_quality_repair"] = refreshed
+    # Replace mutable projections rather than keeping the first failed scan as
+    # current truth. Original failures remain in the committed private history.
+    for key in ("workspace_quality_evidence", "failed_gate_evidence", "failure_evidence"):
+        original = context.get(key)
+        result[key] = {
+            **(dict(original) if isinstance(original, Mapping) else {}),
+            "artifact_quality_errors": errors,
+            "quality_errors": errors,
+            "missing_target_files": missing,
+            "issues": refreshed["artifact_quality_issues"],
+            "deferred_checks": pending_checks,
+            "incomplete_reasons": incomplete_reasons,
+            "checks_complete": coverage_complete,
+        }
+        if key in refreshed:
+            refreshed[key] = dict(result[key])
+    safe_errors = [error for error in errors if not _feedback_text_is_private(error)]
+    feedback = {
+        "errors": safe_errors,
+        "issues": [
+            {
+                key: value
+                for key, value in issue.items()
+                if key in {"code", "message", "path", "severity", "source", "line", "column"}
+                and not (isinstance(value, str) and _feedback_text_is_private(value))
+            }
+            for issue in retained_structured
+        ],
+        "deferred_checks": [
+            {
+                key: value
+                for key, value in check.items()
+                if key
+                in {
+                    "check_id",
+                    "relative_paths",
+                    "reason",
+                    "script_name",
+                    "project_relative_path",
+                    "required",
+                    "status",
+                    "command",
+                    "cwd",
+                }
+                and not (isinstance(value, str) and _feedback_text_is_private(value))
+            }
+            for check in pending_checks
+        ],
+        "incomplete_reasons": [reason for reason in incomplete_reasons if not _feedback_text_is_private(reason)],
+        "checks_complete": coverage_complete,
+    }
+    commands = [*context.get("allowed_commands", ()), *context.get("verification_commands", ())]
+    commands = list(dict.fromkeys(value for value in commands if isinstance(value, str)))
+    approved = [str(value) for value in commands if isinstance(value, str) and not _feedback_text_is_private(value)]
+    failure = _failed_batch_feedback_summary(previous.batch_receipt) if previous else ""
+    if previous:
+        observations = []
+        for row in (previous.batch_receipt or {}).get("results", []):
+            if isinstance(row, Mapping) and row.get("status") in {"error", "failed", "timeout", "aborted", "cancelled"}:
+                args = row.get("arguments")
+                observations.append(
+                    _native_failure_observation(
+                        str(row.get("tool_name") or "tool"), row, args if isinstance(args, Mapping) else {}
+                    )
+                )
+        failure = "\n".join(observations) or failure
+    targets = [str(path) for path in context.get("target_files", ()) if isinstance(path, str)]
+    prompt = (
+        f"{objective}\n\nCURRENT QUALITY OBSERVATIONS (read-only; no completion verdict):\n"
+        f"{json.dumps(feedback, ensure_ascii=False)}\n"
+        f"Authorized task outputs (existing scope): {json.dumps(targets, ensure_ascii=False)}\n"
+        "Repair only current failures within the existing authorized task scope. Read current UTF-8 content before "
+        "an exact edit; copy SEARCH literally. Create missing authorized outputs without reading nonexistent files. "
+        "Preserve unrelated content. When static residuals are empty, execute the approved environment preparation "
+        "and remaining build/test/lint/product-entry verification; deferred or unknown checks are still required. "
+        "Already materialized outputs do not require another write on every turn. Repair actual failed verification "
+        "and rerun it; never declare success from an empty static error list.\n"
+        f"Approved verification recipes: {json.dumps(approved, ensure_ascii=False)}\n"
+        f"Current failed tool observations: {failure}"
+    )
+    return result, prompt, evidence
+
+
 def kernel_session_continuation_enabled(command: ExecuteRoleSessionCommandV1) -> bool:
     policy = command.context.get("continuous_execution")
     if isinstance(policy, Mapping) and "enabled" in policy:
@@ -177,6 +587,7 @@ class KernelSessionTurnBridge:
         self.context["continuous_execution"] = {**dict(self.context.get("continuous_execution") or {}), "enabled": True}
         self.results: list[RoleTurnResult] = []
         self.first_error: str | None = None
+        self._static_quality_evidence: tuple[ArtifactQualityEvidence, ...] = ()
         enclosing = [
             float(value)
             for key in ("request_timeout_seconds", "timeout_seconds")
@@ -232,6 +643,13 @@ class KernelSessionTurnBridge:
             previous_result=self.results[-1] if self.results else None,
             prior_results=tuple(self.results),
         )
+        context, quality_prompt, static_evidence = _current_quality_repair_projection(
+            self.command, context, self.results[-1] if self.results else None, self._static_quality_evidence
+        )
+        if static_evidence is not None:
+            self._static_quality_evidence = (*self._static_quality_evidence, static_evidence)
+        if quality_prompt is not None:
+            message = quality_prompt
         # The kernel assembly reconstructs current authority messages. The
         # session's prior native observations have one producer below.
         context.pop("_transaction_kernel_prebuilt_messages", None)
@@ -288,7 +706,6 @@ class KernelSessionTurnBridge:
                 kernel = self.runtime._get_kernel(command.workspace)
                 final_result = None
                 error_result_received = False
-                actual_calls: dict[str, dict[str, Any]] = {}
                 async for event in kernel.run_stream(command.role, request):
                     event_type = str(event.get("type") or "")
                     if event_type in {"content_chunk", "thinking_chunk"}:
@@ -332,33 +749,12 @@ class KernelSessionTurnBridge:
                         if not error_result_received:
                             final_result = event["result"]
                     elif event_type in {"tool_call", "tool_result"}:
-                        if (
-                            event_type == "tool_call"
-                            and event.get("status") == "started"
-                            and isinstance(event.get("args"), Mapping)
-                        ):
-                            call_id = str(event.get("call_id") or "")
-                            if call_id:
-                                actual_calls[call_id] = {
-                                    "tool": event.get("tool"),
-                                    "args": dict(event["args"]),
-                                    "call_id": call_id,
-                                    "turn_id": event.get("turn_id"),
-                                }
                         yield dict(event)
                 if final_result is None:
                     raise RuntimeError("role_stream_incomplete")
-                commit = final_result.metadata.get("turn_commit_receipt")
-                if isinstance(commit, Mapping) and commit.get("turn_id") and actual_calls:
-                    committed_calls = [
-                        {key: call[key] for key in ("tool", "args", "call_id")}
-                        for row in (final_result.batch_receipt or {}).get("results", [])
-                        if isinstance(row, Mapping)
-                        and (call := actual_calls.get(str(row.get("call_id") or ""))) is not None
-                        and call["turn_id"] == commit["turn_id"]
-                        and call["tool"] == row.get("tool_name")
-                    ]
-                    final_result = replace(final_result, tool_calls=committed_calls)
+                # The kernel projects every committed invocation from its typed
+                # ledger inventory. Started events cover dispatch only and omit
+                # denied/superseded members, so they cannot author native history.
                 self.results.append(final_result)
                 await self.runtime._persist_session_turn_state(
                     command,

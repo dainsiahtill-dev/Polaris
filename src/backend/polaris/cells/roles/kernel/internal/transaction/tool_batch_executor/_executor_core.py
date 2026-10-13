@@ -67,13 +67,18 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 )
 from polaris.cells.roles.kernel.public.turn_events import ErrorEvent, TurnEvent, TurnPhaseEvent
 from polaris.cells.runtime.task_runtime.public import (
+    TaskRuntimeExecutionAttemptAuthoritySnapshotV1,
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionAttemptValidationVerdictV1,
+    ValidateTaskRuntimeExecutionAttemptQueryV1,
+    validate_task_runtime_execution_attempt,
 )
 
 from ._helpers import (
     _DEO_PREPARE_LOCK_RETRY_ATTEMPTS,
     _DEO_PREPARE_LOCK_RETRY_BASE_SECONDS,
+    _RECOVERABLE_DEO_ADMISSION_CODES,
     _collapse_last_write_wins_mutations,
     _deo_prepare_upstream_code,
     _is_deo_abort_error,
@@ -83,6 +88,7 @@ from ._helpers import (
     _merge_batch_receipts,
     _normalize_capability_token,
     _PreparedDirectedEffectDispatchV1,
+    _RecoverableDirectedEffectDenialError,
     _seal_deo_abort_tool_lifecycle,
     logger,
 )
@@ -246,6 +252,29 @@ class _ToolBatchExecutorCore:
 
         canonical: list[ToolInvocation] = []
         for invocation in invocations:
+            if isinstance(invocation, ToolInvocation):
+                classification = invocation.classification
+                if (
+                    classification is None
+                    or invocation.effect_type is not classification.effect_type
+                    or invocation.execution_mode is not classification.execution_mode
+                    or invocation.tool_name != classification.canonical_tool_name
+                ):
+                    raise RuntimeError("directed_effect_batch_classification_failed")
+                try:
+                    captured = ToolInvocation._from_captured_classification(
+                        call_id=invocation.call_id,
+                        raw_tool_name=str(invocation.raw_tool_name),
+                        arguments=dict(invocation.arguments),
+                        classification=classification,
+                        native_arguments=(
+                            dict(invocation.native_arguments) if invocation.native_arguments is not None else None
+                        ),
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError("directed_effect_batch_classification_failed") from exc
+                canonical.append(captured.model_copy(deep=True))
+                continue
             raw_tool_name = str(invocation.get("raw_tool_name") or invocation.get("tool_name") or "")
             arguments = invocation.get("arguments", {})
             if not isinstance(arguments, dict):
@@ -257,6 +286,7 @@ class _ToolBatchExecutorCore:
                         "raw_tool_name": raw_tool_name,
                         "tool_name": raw_tool_name,
                         "arguments": dict(arguments),
+                        "native_arguments": invocation.get("native_arguments"),
                     }
                 )
             )
@@ -344,6 +374,12 @@ class _ToolBatchExecutorCore:
                 or verdict.current_job_token_restriction_evidence is None
             ):
                 error_code = str(getattr(verdict, "error_code", None) or "directed_effect_policy_denied")
+                if error_code in {
+                    "deo_job_token_invalid",
+                    "deo_authorization_hash_drift",
+                    "deo_context_replayed",
+                }:
+                    raise RuntimeError(error_code)
                 dropped_members.append(
                     (
                         str(invocation.call_id),
@@ -368,6 +404,13 @@ class _ToolBatchExecutorCore:
 
         if not candidates:
             first_error = dropped_members[0][2] if dropped_members else "directed_effect_policy_denied"
+            denied_members = [row for row in dropped_members if row[2] != "deo_same_path_superseded_by_later_write"]
+            fatal_members = [row for row in denied_members if row[2] not in _RECOVERABLE_DEO_ADMISSION_CODES]
+            if fatal_members:
+                raise RuntimeError(fatal_members[0][2])
+            if denied_members and all(row[2] in _RECOVERABLE_DEO_ADMISSION_CODES for row in denied_members):
+                self._validate_directed_effect_feedback_attempt(workspace)
+                raise _RecoverableDirectedEffectDenialError(tuple(dropped_members), tuple(canonical))
             raise RuntimeError(first_error)
 
         # Resolve via package module so tests that monkeypatch
@@ -421,6 +464,61 @@ class _ToolBatchExecutorCore:
             dropped_members=tuple(dropped_members),
         )
 
+    def _validate_directed_effect_feedback_attempt(self, workspace: str) -> None:
+        """Require the same live owner before continuing a no-effect denial.
+
+        A process-local snapshot is only a capability view. Persisted
+        TaskRuntime facts still decide whether this attempt may continue.
+        Lease renewal can update its expiry without changing its identity.
+        """
+        authority = self.directed_effect_execution_attempt_authority
+        expected = self.directed_effect_execution_attempt
+        if authority is None or expected is None:
+            raise RuntimeError("deo_execution_attempt_invalid")
+        try:
+            snapshot = authority.snapshot(lock_timeout_seconds=5.0)
+            if (
+                type(snapshot) is not TaskRuntimeExecutionAttemptAuthoritySnapshotV1
+                or not snapshot.success
+                or snapshot.closed
+                or type(snapshot.identity) is not TaskRuntimeExecutionAttemptIdentityV1
+            ):
+                raise ValueError("execution attempt authority is unavailable")
+            identity = snapshot.identity
+            if identity is None:
+                raise ValueError("execution attempt identity is unavailable")
+            fields = (
+                "workspace",
+                "task_id",
+                "external_task_id",
+                "session_id",
+                "attempt",
+                "role_id",
+                "worker_id",
+                "run_id",
+            )
+            if any(getattr(identity, key) != getattr(expected, key) for key in fields):
+                raise ValueError("execution attempt identity drift")
+            if (
+                workspace != identity.workspace
+                or str(self.config.role_id) != identity.role_id
+                or (self.config.task_id and str(self.config.task_id) != identity.external_task_id)
+                or (self.config.run_id and str(self.config.run_id) != identity.run_id)
+            ):
+                raise ValueError("execution frame identity drift")
+            verdict = validate_task_runtime_execution_attempt(
+                ValidateTaskRuntimeExecutionAttemptQueryV1(workspace=workspace, identity=identity)
+            )
+            if (
+                type(verdict) is not TaskRuntimeExecutionAttemptValidationVerdictV1
+                or not verdict.valid
+                or verdict.identity != identity
+                or verdict.workspace != workspace
+            ):
+                raise ValueError("persisted execution attempt validation failed")
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise RuntimeError("deo_execution_attempt_invalid") from exc
+
     def _build_tool_batch_runtime(
         self,
         workspace: str = ".",
@@ -434,6 +532,7 @@ class _ToolBatchExecutorCore:
         directed_effect_abort_call_ids: tuple[str, ...] = (),
         directed_effect_repair_bindings_by_call_id: tuple[tuple[str, DeferredDirectorRepairEffectBindingV1], ...] = (),
         directed_effect_rollback_activation_by_call_id: tuple[tuple[str, str], ...] = (),
+        directed_effect_invocation_observer: Callable[[ToolInvocation], None] | None = None,
     ) -> ToolBatchRuntime:
         return ToolBatchRuntime(
             executor=self.tool_runtime,
@@ -459,6 +558,7 @@ class _ToolBatchExecutorCore:
             directed_effect_abort_call_ids=directed_effect_abort_call_ids,
             directed_effect_repair_bindings_by_call_id=directed_effect_repair_bindings_by_call_id,
             directed_effect_rollback_activation_by_call_id=(directed_effect_rollback_activation_by_call_id),
+            directed_effect_invocation_observer=directed_effect_invocation_observer,
         )
 
     async def _reset_tool_runtime_turn_boundary(self, turn_id: str) -> None:
@@ -644,9 +744,7 @@ class _ToolBatchExecutorCore:
             raise
         if followup_prepared is None:
             raise RuntimeError("deo_deferred_repair_followup_not_prepared")
-        prepared_call_ids = tuple(
-            member.member.tool_call_id for member in followup_prepared.batch.prepared_members
-        )
+        prepared_call_ids = tuple(member.member.tool_call_id for member in followup_prepared.batch.prepared_members)
         prepared_call_id_set = set(prepared_call_ids)
         followup_call_id_set = {
             *followup.forward_call_ids,
@@ -721,9 +819,7 @@ class _ToolBatchExecutorCore:
             if call_id in prepared_call_id_set
         )
         prepared_invocations = [
-            invocation
-            for invocation in inventory_invocations
-            if str(invocation.call_id) in prepared_call_id_set
+            invocation for invocation in inventory_invocations if str(invocation.call_id) in prepared_call_id_set
         ]
         prepared_dispatch_invocations = [
             invocation
@@ -738,6 +834,26 @@ class _ToolBatchExecutorCore:
             serial_writes=list(prepared_dispatch_invocations),
             async_receipts=[],
         )
+
+        # Prepared rollback contingencies are not selected tool invocations.
+        # Keep the selected forwards before dispatch and capture a rollback
+        # only when the runtime selects it from the sealed effect binding.
+        ledger.record_invocation_batch(followup.batch_id, prepared_dispatch_invocations)
+        captured_forward_ids = {str(item.call_id) for item in prepared_dispatch_invocations}
+        inventory_by_call = {str(item.call_id): item for item in inventory_invocations}
+
+        def record_selected_invocation(invocation: ToolInvocation) -> None:
+            call_id = str(invocation.call_id)
+            expected = inventory_by_call.get(call_id)
+            if (
+                expected is None
+                or expected.tool_name != invocation.tool_name
+                or expected.arguments != invocation.arguments
+            ):
+                raise RuntimeError("committed_tool_receipt_invocation_mismatch")
+            if call_id not in captured_forward_ids:
+                ledger.record_invocation_batch(followup.batch_id, [expected])
+                captured_forward_ids.add(call_id)
 
         self._check_effect_policy(prepared_invocations, turn_id)
         ledger.tool_batch_count += 1
@@ -766,6 +882,7 @@ class _ToolBatchExecutorCore:
             directed_effect_abort_call_ids=prepared_rollback_call_ids,
             directed_effect_repair_bindings_by_call_id=prepared_effect_bindings,
             directed_effect_rollback_activation_by_call_id=tuple(prepared_activation),
+            directed_effect_invocation_observer=record_selected_invocation,
         ).execute_batch(
             prepared_dispatch_batch,
             TurnId(turn_id),

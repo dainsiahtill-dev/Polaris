@@ -31,14 +31,14 @@ class _TestFileSystemAdapter(KernelFileSystemAdapter):
             handle.write(content)
         return len(content.encode(encoding))
 
-    def exists(self, path: Path) -> bool:
-        return path.exists()
+    def exists(self, path: str | Path) -> bool:
+        return Path(path).exists()
 
-    def is_file(self, path: Path) -> bool:
-        return path.is_file()
+    def is_file(self, path: str | Path) -> bool:
+        return Path(path).is_file()
 
-    def is_dir(self, path: Path) -> bool:
-        return path.is_dir()
+    def is_dir(self, path: str | Path) -> bool:
+        return Path(path).is_dir()
 
     def remove(self, path: Path, *, missing_ok: bool = True) -> bool:
         try:

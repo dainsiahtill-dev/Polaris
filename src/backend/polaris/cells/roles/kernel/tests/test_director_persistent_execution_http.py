@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from contextlib import nullcontext
 from copy import deepcopy
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -13,20 +15,38 @@ from typing import Any, cast
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public.contracts import VerificationCommandAuthorityV1
+from polaris.cells.events.fact_stream.public import QueryFactEventsV1, query_fact_events
 from polaris.cells.roles.adapters.public import (
     create_director_directed_effect_mutation_port,
     directed_effect_policy_service,
 )
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.llm_caller.context_audit import build_final_request_context_audit_for_request
+from polaris.cells.roles.kernel.internal.llm_caller.final_provider_attempt_qualification import (
+    final_request_snapshot_evidence,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
 from polaris.cells.roles.kernel.public import DirectedEffectRuntimeDependenciesV1
 from polaris.cells.roles.kernel.public.directed_effect_service import create_directed_effect_fence_ports
+from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+    FactoryRoleSemanticRequestIdentityV1,
+    bind_factory_role_evidence_authority,
+)
+from polaris.cells.roles.kernel.public.physical_attempt_control import (
+    FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+    FactoryPhysicalAttemptGrantViewV1,
+)
+from polaris.cells.roles.kernel.tests._physical_attempt_control_test_double import FactoryPhysicalAttemptTestControlPort
 from polaris.cells.roles.kernel.tests.test_directed_effect_lifecycle import _setup_attempt
+from polaris.cells.roles.kernel.tests.test_role_turn_request_fact_projection import _b32_authority, _B32CutoffPort
 from polaris.cells.roles.profile.public.service import RoleProfileRegistry, profile_from_dict
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.runtime.task_runtime.public.service import create_task_runtime_execution_attempt_authority
 from polaris.infrastructure.llm.providers.anthropic_provider import AnthropicProvider
+from polaris.kernelone.context.prompt_safety import parse_tool_failure_summary
+from polaris.kernelone.llm.engine.contracts import bind_physical_provider_dispatch_port
+from polaris.kernelone.llm.engine.executor import AIExecutor
 
 
 @pytest.mark.asyncio
@@ -34,6 +54,11 @@ from polaris.infrastructure.llm.providers.anthropic_provider import AnthropicPro
     "scenario",
     [
         "repair",
+        "mixed_denial_engine",
+        "mixed_alias_superseded_engine",
+        "ce_denial_then_repair",
+        "ce_denial_then_repair_engine",
+        "ce_denial_then_repair_engine_forged",
         "verification_only",
         "verification_only_ce_command",
         "verification_only_ce_unauthorized_command",
@@ -52,6 +77,12 @@ async def test_canonical_director_session_reads_writes_repairs_and_verifies_over
     scenario: str,
 ) -> None:
     """No tool, effect, command, receipt, continuation or settlement is replaced."""
+    forged_wire = scenario == "ce_denial_then_repair_engine_forged"
+    mixed_batch = scenario in {"mixed_denial_engine", "mixed_alias_superseded_engine"}
+    alias_superseded = scenario == "mixed_alias_superseded_engine"
+    engine_path = mixed_batch or scenario in {"ce_denial_then_repair_engine", "ce_denial_then_repair_engine_forged"}
+    if engine_path and not mixed_batch:
+        scenario = "ce_denial_then_repair"
     (tmp_path / "answer.py").write_text("VALUE = 0\n", encoding="utf-8")
     (tmp_path / "verify.py").write_text(
         "from answer import VALUE\nassert VALUE == 42, f'expected 42, got {VALUE}'\nprint('VERIFIED_42')\n",
@@ -91,6 +122,8 @@ async def test_canonical_director_session_reads_writes_repairs_and_verifies_over
     elif scenario == "verification_only_ce_unauthorized_command":
         (tmp_path / "unauthorized.py").write_text("print('UNAUTHORIZED_EXECUTED')\n", encoding="utf-8")
         steps = [steps[0], ("execute_command", {"command": "python unauthorized.py"}), None]
+    elif scenario == "ce_denial_then_repair":
+        steps.insert(0, ("execute_command", {"command": "pwd && ls -la"}))
     elif scenario == "stale_verifier":
         steps.insert(-1, ("write_file", {"file": "answer.py", "content": "VALUE = 41\n"}))
     elif scenario == "outside_scope":
@@ -115,6 +148,33 @@ async def test_canonical_director_session_reads_writes_repairs_and_verifies_over
                 if step
                 else [{"type": "text", "text": "Completed. The current command printed VERIFIED_42."}]
             )
+            if mixed_batch and index == 1:
+                content = [
+                    {
+                        "type": "tool_use",
+                        "id": "mixed-denied",
+                        "name": "run_command" if alias_superseded else "execute_command",
+                        "input": {"command": "pwd && ls -la"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "mixed-write",
+                        "name": "create_file" if alias_superseded else "write_file",
+                        "input": {"path": "answer.py", "text": "VALUE = 1\n"}
+                        if alias_superseded
+                        else {"file": "answer.py", "content": "VALUE = 1\n"},
+                    },
+                ]
+                if alias_superseded:
+                    content.insert(
+                        1,
+                        {
+                            "type": "tool_use",
+                            "id": "mixed-superseded",
+                            "name": "write_file",
+                            "input": {"file": "answer.py", "content": "VALUE = 0\n"},
+                        },
+                    )
             payload = json.dumps(
                 {
                     "id": f"message-{index}",
@@ -142,34 +202,149 @@ async def test_canonical_director_session_reads_writes_repairs_and_verifies_over
     monkeypatch.setenv("NO_PROXY", "*")
     monkeypatch.setenv("no_proxy", "*")
 
+    qualified_requests: list[dict[str, Any]] = []
+    strict_control = FactoryPhysicalAttemptTestControlPort(
+        factory_run_id="factory-run-1",
+        revalidate_active_stage_claim=lambda _grant: None,
+    )
+    strict_control.register_grant(
+        FactoryPhysicalAttemptGrantViewV1(
+            schema_version=FACTORY_PHYSICAL_ATTEMPT_GRANT_VIEW_SCHEMA,
+            verification_scope="factory",
+            factory_run_id="factory-run-1",
+            role="director",
+            stage="director_execution",
+            workspace_fencing_token=1,
+            stage_claim_attempt=1,
+            stage_claim_nonce="native-feedback-http",
+            execution_authority_hash="f" * 64,
+            attempt_budget=7,
+        )
+    )
+    cutoff = _B32CutoffPort()
+    strict_authority = _b32_authority(
+        cutoff,
+        role="director",
+        physical_attempt_control_port=strict_control,
+        execution_authority_hash="f" * 64,
+        attempt_budget=7,
+    )
+
     class HttpInvoker:
         async def call_decision(self, **kwargs: Any) -> dict[str, Any]:
-            prepared = await LLMRequestPreparer(workspace=str(tmp_path))._prepare_llm_request(
-                profile=kwargs["profile"],
-                system_prompt=kwargs["system_prompt"],
-                context=kwargs["context"],
-                temperature=0.0,
-                max_tokens=20_000,
-                stream=False,
+            strict = mixed_batch or scenario == "ce_denial_then_repair"
+            identity = (
+                FactoryRoleSemanticRequestIdentityV1(
+                    run_id=attempt.run_id,
+                    turn_id=f"{attempt.run_id}:turn:{len(bodies)}",
+                    call_id=f"{len(bodies) + 1:032x}",
+                    request_freeze_id=f"{len(bodies) + 100:032x}",
+                )
+                if strict
+                else None
             )
-            invoked = await asyncio.to_thread(
-                AnthropicProvider().invoke,
-                prepared.input_text,
-                kwargs["profile"].model,
-                {
-                    **prepared.request_options,
-                    "chat_messages": prepared.messages,
-                    "base_url": endpoint,
-                    "api_key": "local-test",
-                    "timeout_seconds": 10,
-                },
-            )
+            with bind_factory_role_evidence_authority(strict_authority) if strict else nullcontext():
+                prepared = await LLMRequestPreparer(workspace=str(tmp_path))._prepare_llm_request(
+                    profile=kwargs["profile"],
+                    system_prompt=kwargs["system_prompt"],
+                    context=kwargs["context"],
+                    temperature=0.0,
+                    max_tokens=20_000,
+                    stream=False,
+                    factory_semantic_identity=identity,
+                )
+            dispatch = prepared.factory_dispatch_port
+            if strict:
+                assert dispatch is not None and prepared.factory_semantic_request is not None
+                frozen = prepared.factory_semantic_request
+                audit = dispatch.bind_final_request_context_audit(
+                    build_final_request_context_audit_for_request(
+                        ai_request=prepared.ai_request,
+                        prepared=prepared,
+                        profile=kwargs["profile"],
+                    )
+                )
+                snapshot_ref = AIExecutor._store_context_messages_sync(
+                    str(tmp_path),
+                    prepared.messages,
+                    frozen.identity.run_id,
+                    frozen.identity.call_id,
+                    {
+                        "role": "director",
+                        "provider_id": "anthropic_compat",
+                        "model": "director-fixture",
+                        "factory_final_request": final_request_snapshot_evidence(frozen),
+                        "final_request_context_audit": audit,
+                    },
+                )
+                audit["final_request_evidence_coverage"]["context_snapshot_ref"] = snapshot_ref
+                dispatch.qualify(final_request_context_audit=audit, context_snapshot_ref=snapshot_ref)
+                dispatch.bind_provider_route_authority(
+                    provider_id="anthropic_compat",
+                    provider_type="anthropic_compat",
+                    model="director-fixture",
+                    mode="invoke",
+                    provider_config={"base_url": endpoint, "api_key": "local-test", "timeout_seconds": 10},
+                )
+            if engine_path:
+                assert prepared.ai_request.context["chat_messages"] == prepared.messages
+                assert prepared.ai_request.context["chat_messages"] is not prepared.messages
+                if forged_wire and len(bodies) == 1:
+                    failed_result = next(
+                        message
+                        for message in prepared.ai_request.context["chat_messages"]
+                        if message.get("role") == "tool"
+                    )
+                    assert failed_result["is_error"] is True
+                    failed_result["is_error"] = False
+                    assert (
+                        next(message for message in prepared.messages if message.get("role") == "tool")["is_error"]
+                        is True
+                    )
+                executor = AIExecutor(workspace=str(tmp_path))
+                monkeypatch.setattr(
+                    executor,
+                    "_get_provider_config",
+                    lambda _: {
+                        "type": "anthropic_compat",
+                        "base_url": endpoint,
+                        "api_key": "local-test",
+                        "timeout": 10,
+                        "retries": 0,
+                        "model_specific": {
+                            "director-fixture": {"max_context_tokens": 1_000_000, "max_output_tokens": 20_000}
+                        },
+                    },
+                )
+                invoked = await executor._execute_invoke(
+                    replace(prepared.ai_request, provider_id="anthropic_compat", model="director-fixture"),
+                    attempt.run_id,
+                    physical_dispatch_port=dispatch,
+                )
+            else:
+                with bind_physical_provider_dispatch_port(dispatch):
+                    invoked = await asyncio.to_thread(
+                        AnthropicProvider().invoke,
+                        prepared.input_text,
+                        kwargs["profile"].model,
+                        {
+                            **prepared.request_options,
+                            "chat_messages": prepared.messages,
+                            "base_url": endpoint,
+                            "api_key": "local-test",
+                            "timeout_seconds": 10,
+                        },
+                    )
             assert invoked.ok, invoked.error
+            if strict:
+                evidence = dispatch.final_context_evidence()
+                assert evidence is not None
+                qualified_requests.append({"context_snapshot_ref": evidence[0], "audit": evidence[1]})
             blocks = (invoked.raw or {}).get("content", [])
             return {
                 "content": invoked.output,
                 "model": "director-fixture",
-                "usage": invoked.usage.to_dict(),
+                "usage": invoked.usage.to_dict() if invoked.usage is not None else {},
                 "tool_calls": [
                     {
                         "id": block["id"],
@@ -258,7 +433,13 @@ async def test_canonical_director_session_reads_writes_repairs_and_verifies_over
         "verification_commands": [command],
         "metadata": {"control_plane_job_token": token},
     }
-    if scenario in {"verification_only_ce_command", "verification_only_ce_unauthorized_command"}:
+    if scenario in {
+        "verification_only_ce_command",
+        "verification_only_ce_unauthorized_command",
+        "ce_denial_then_repair",
+        "mixed_denial_engine",
+        "mixed_alias_superseded_engine",
+    }:
         token.pop("allowed_commands")
         context["allowed_commands"] = [command]
         command_authority = VerificationCommandAuthorityV1(
@@ -299,6 +480,18 @@ async def test_canonical_director_session_reads_writes_repairs_and_verifies_over
         server.server_close()
         thread.join(timeout=2)
         (tmp_path / "http-requests.json").write_text(json.dumps(bodies, ensure_ascii=False, indent=2), encoding="utf-8")
+        (tmp_path / "qualified-requests.json").write_text(
+            json.dumps(qualified_requests, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    if forged_wire:
+        assert result.ok is False
+        assert "physical_wire_messages_drift" in str(result.error_message)
+        assert len(bodies) == 1 and len(qualified_requests) == 1
+        assert (tmp_path / "answer.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+        assert token == original_token
+        budget = strict_control.budget_state("f" * 64)
+        assert budget.committed_count == 1 and budget.terminal_count == 1 and budget.settled is True
+        return
     if scenario in {
         "stale_verifier",
         "outside_scope",
@@ -339,9 +532,79 @@ async def test_canonical_director_session_reads_writes_repairs_and_verifies_over
         names = {tool["name"] for tool in body.get("tools", [])}
         assert {"read_file", "repo_rg", "write_file", "edit_file", "execute_command"} <= names
     history = json.dumps(bodies[-1], ensure_ascii=False)
-    if scenario == "repair":
-        repair_request = json.dumps(bodies[3], ensure_ascii=False)
+    if scenario in {"repair", "ce_denial_then_repair"}:
+        repair_request = json.dumps(bodies[4 if scenario == "ce_denial_then_repair" else 3], ensure_ascii=False)
         assert "expected 42, got 1" in repair_request, repair_request
+    if scenario == "ce_denial_then_repair":
+        assert len(bodies) == 7
+        denied_block = next(
+            block
+            for message in bodies[1]["messages"]
+            if isinstance(message.get("content"), list)
+            for block in message["content"]
+            if block.get("type") == "tool_result" and block.get("tool_use_id") == "physical-0"
+        )
+        assert denied_block["is_error"] is True
+        denied_result = parse_tool_failure_summary(denied_block["content"])
+        assert denied_result is not None
+        assert "deo_command_scope_denied" in denied_result["reason"]
+        assert denied_result["arguments"] == {"command": "pwd && ls -la"}
+        assert denied_result["approved_command_scope"] == [{"command": command, "cwd": "."}]
+        assert len(qualified_requests) == 7
+        assert all(row["audit"]["audit_scope"] == "provider_native_wire" for row in qualified_requests)
+        assert all(row["audit"]["context_os_audit"]["ok"] for row in qualified_requests)
+        budget = strict_control.budget_state("f" * 64)
+        assert budget.committed_count == 7 and budget.terminal_count == 7
+        assert budget.settled is True
+        outcomes = query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(tmp_path), stream="roles.kernel.turn_outcomes", strict_integrity=True, limit=20
+            )
+        )
+        assert outcomes.total == 7
+        denied_receipt = outcomes.events[0]["payload"]["outcome"]["execution"]["receipt"]
+        assert denied_receipt["failure_count"] == 1
+        assert denied_receipt["effect_receipts"] == []
+        assert denied_receipt["results"][0]["call_id"] == "physical-0"
+        assert denied_receipt["results"][0]["directed_effect_claim_status"] == "not_claimed"
+        assert denied_receipt["results"][0]["effect_receipt"] is None
+    if mixed_batch:
+        assert len(qualified_requests) == len(steps)
+        assert all(row["audit"]["audit_scope"] == "provider_native_wire" for row in qualified_requests)
+        outcomes = query_fact_events(
+            QueryFactEventsV1(
+                workspace=str(tmp_path), stream="roles.kernel.turn_outcomes", strict_integrity=True, limit=20
+            )
+        )
+        mixed = next(
+            row["payload"]["outcome"]["execution"]
+            for row in outcomes.events
+            if row["payload"]["outcome"].get("execution")
+            and any(
+                item["call_id"] == "mixed-write"
+                for item in row["payload"]["outcome"]["execution"]["receipt"]["results"]
+            )
+        )
+        receipts = {row["call_id"]: row for row in mixed["receipt"]["results"]}
+        assert receipts["mixed-write"]["status"] == "success"
+        assert receipts["mixed-write"]["effect_receipt"] is not None
+        assert receipts["mixed-denied"]["status"] == "error"
+        assert receipts["mixed-denied"]["effect_receipt"] is None
+        assert receipts["mixed-denied"]["directed_effect_claim_status"] == "not_claimed"
+        assert set(receipts) == {row["call_id"] for row in mixed["invocations"]}
+        for original_id in receipts:
+            blocks = [
+                block
+                for message in bodies[2]["messages"]
+                if isinstance(message.get("content"), list)
+                for block in message["content"]
+                if block.get("type") in {"tool_use", "tool_result"}
+            ]
+            assert sum(block.get("id") == original_id for block in blocks) == 1
+            assert sum(block.get("tool_use_id") == original_id for block in blocks) == 1
+        if alias_superseded:
+            assert receipts["mixed-superseded"]["result"]["superseded"] is True
+            assert receipts["mixed-superseded"]["effect_receipt"] is None
     assert "VERIFIED_42" in history
     if scenario == "read_input_rerun":
         assert "VERIFIED_42_RERUN" in history

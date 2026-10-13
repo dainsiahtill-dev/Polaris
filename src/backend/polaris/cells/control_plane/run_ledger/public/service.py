@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.control_plane.run_ledger.public.committed_turn_receipts import query_committed_turn_receipts
 from polaris.cells.control_plane.run_ledger.public.contracts import (
     AppendRunLedgerEventCommandV1,
     AppendToolCallLifecycleEventCommandV1,
@@ -1431,13 +1432,14 @@ def query_factory_settlement_barrier(
 ) -> FactorySettlementBarrierResultV1:
     """Return the current settlement barrier for one exact Factory run.
 
-    The query reads only canonical ``task_runtime.execution`` and
-    ``execution.control_plane`` FactStream projections.  It never consults
+    The query reads canonical TaskRuntime and control-plane projections, plus
+    immutable role-owner outcomes for missing readonly batch receipts. It never consults
     migration ledgers, waits for future events, or writes derived state.
 
     Complexity:
-        O(T + C) FactStream reads and O(T + C) projection work for ``T``
-        TaskRuntime facts and ``C`` control-plane facts in the selected run.
+        O(T + C) projection work plus one strict owner-history and directed-
+        effect observation per unique execution attempt. For ``A`` attempts,
+        owner-history validation costs O(A * T); every observation is read-only.
     """
 
     query = FactorySettlementBarrierQueryV1(
@@ -1456,6 +1458,30 @@ def query_factory_settlement_barrier(
     )
     lifecycle_requirements = _tool_lifecycle_requirement_events_from_task_runtime(task_runtime_facts)
     run_projection = build_run_ledger_projection([*ledger_facts, *lifecycle_requirements])
+    effect_closures = _terminal_execution_effect_observations(resolved_workspace, task_runtime_facts)
+    # Successful readonly dispatches historically publish a lifecycle but skip
+    # physical batch ledger rows. Observe the immutable role owner's receipt;
+    # never backfill the ledger or replace an existing conflicting candidate.
+    recorded_batch_turns = {
+        str(batch.get("turn_id") or "")
+        for fact in ledger_facts
+        if isinstance(physical := fact.get("physical_evidence"), dict)
+        and isinstance(batch := physical.get("batch_receipt"), dict)
+    }
+    lifecycle = run_projection.get("tool_lifecycle")
+    lifecycle_events = lifecycle.get("events", []) if isinstance(lifecycle, dict) else []
+    missing_batch_lifecycles = [
+        receipt
+        for event in lifecycle_events
+        if isinstance(event, dict)
+        and isinstance(receipt := event.get("receipt"), dict)
+        and type(receipt.get("dispatched_tool_calls_count")) is int
+        and receipt["dispatched_tool_calls_count"] > 0
+        and receipt.get("turn_id") not in recorded_batch_turns
+    ]
+    committed_turn_receipts = query_committed_turn_receipts(
+        resolved_workspace, lifecycle_receipts=missing_batch_lifecycles
+    )
     return project_factory_settlement_barrier(
         workspace=str(resolved_workspace),
         factory_run_id=query.factory_run_id,
@@ -1463,6 +1489,62 @@ def query_factory_settlement_barrier(
         task_runtime_facts=task_runtime_facts,
         ledger_facts=ledger_facts,
         consumed_run_ids=consumed_run_ids,
+        effect_closures=effect_closures,
+        committed_turn_receipts=committed_turn_receipts,
+    )
+
+
+def _terminal_execution_effect_observations(workspace: Path, facts: list[dict[str, Any]]) -> tuple[Any, ...]:
+    """Compile observer query identities only from canonical TaskRuntime facts."""
+    from polaris.cells.runtime.task_runtime.public.contracts import TaskRuntimeExecutionAttemptIdentityV1
+    from polaris.cells.runtime.task_runtime.public.execution_effect_closure import (
+        QueryExecutionEffectClosureV1,
+        query_execution_effect_closure,
+    )
+
+    # A later claim replaces the task-row session, not the effects of earlier
+    # attempts. Keep the newest snapshot for every stable owner identity.
+    attempts: dict[tuple[Any, ...], TaskRuntimeExecutionAttemptIdentityV1] = {}
+    for fact in sorted(facts, key=lambda item: int(item.get("fact_event_seq") or 0)):
+        if fact.get("fact_stream") != TASK_RUNTIME_EXECUTION_STREAM_V1:
+            continue
+        row = fact.get("task_row_snapshot")
+        metadata = row.get("metadata") if isinstance(row, dict) else None
+        session = metadata.get("runtime_execution") if isinstance(metadata, dict) else None
+        if not isinstance(session, dict) or not isinstance(row, dict):
+            continue
+        try:
+            attempt = TaskRuntimeExecutionAttemptIdentityV1.from_record(
+                {
+                    "schema_version": "task-runtime.execution-attempt-identity/1",
+                    "workspace": str(workspace),
+                    **{
+                        key: session[key]
+                        for key in (
+                            "task_id",
+                            "external_task_id",
+                            "session_id",
+                            "attempt",
+                            "role_id",
+                            "worker_id",
+                            "run_id",
+                            "lease_expires_at",
+                        )
+                    },
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if attempt.run_id != fact.get("run_id") or str(attempt.task_id) != str(row.get("id")):
+            continue
+        key = (
+            attempt.task_id, attempt.external_task_id, attempt.session_id, attempt.attempt,
+            attempt.role_id, attempt.worker_id, attempt.run_id,
+        )
+        attempts[key] = attempt
+    return tuple(
+        query_execution_effect_closure(QueryExecutionEffectClosureV1(str(workspace), attempt))
+        for attempt in attempts.values()
     )
 
 

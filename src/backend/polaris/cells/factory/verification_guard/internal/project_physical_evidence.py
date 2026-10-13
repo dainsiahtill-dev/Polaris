@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from posixpath import join as join_posix_path, normpath
 from threading import Lock
 
 from polaris.cells.factory.verification_guard.internal.project_completion_authority import (
@@ -26,9 +27,7 @@ from polaris.cells.factory.verification_guard.public.contracts import (
 
 _PROJECT_COMPLETION_PHYSICAL_INTENT_SEAL = object()
 _VERIFIER_TIMEOUT_SECONDS = 300.0
-_INPUT_ARTIFACT_ROLES = frozenset(
-    {"source", "manifest", "test", "entrypoint", "config", "docs", "assets"}
-)
+_INPUT_ARTIFACT_ROLES = frozenset({"source", "manifest", "test", "entrypoint", "config", "docs", "assets"})
 
 _project_completion_physical_evidence_port: ProjectCompletionPhysicalEvidencePortV1 | None = None
 _physical_port_lock = Lock()
@@ -131,10 +130,18 @@ def _add_input(
 def _command_inputs(
     contract: ProjectCompletionContractObservationV1,
     verifier: ProjectVerificationObligationObservationV1,
+    *,
+    workspace: str,
 ) -> tuple[ProjectCompletionPhysicalArtifactInputV1, ...]:
     artifacts = {item.obligation_id: item for item in contract.obligations.artifacts}
     entrypoints = {item.obligation_id: item for item in contract.obligations.entrypoints}
     inputs: dict[str, ProjectCompletionPhysicalArtifactInputV1] = {}
+    authority = _command_authority(contract, verifier)
+    command_paths = {
+        normpath(join_posix_path(workspace, authority.cwd, argument))
+        for argument in authority.argv
+        if not argument.startswith("-")
+    }
     for obligation_id in verifier.covers_obligation_ids:
         artifact = artifacts.get(obligation_id)
         if artifact is not None and artifact.applicability != "not_applicable":
@@ -142,6 +149,16 @@ def _command_inputs(
             continue
         entrypoint = entrypoints.get(obligation_id)
         if entrypoint is not None and entrypoint.applicability != "not_applicable":
+            _add_input(inputs, obligation_id=f"{entrypoint.obligation_id}.source", path=entrypoint.source_path)
+    # Covering an entrypoint proves a result, not that its future build output
+    # is already a command input. Bind runtime bytes only for the entrypoint
+    # probe or an exact canonical command reference; never filter by existence.
+    for entrypoint in contract.obligations.entrypoints:
+        if entrypoint.applicability == "not_applicable" or entrypoint.runtime_path is None:
+            continue
+        if (
+            verifier.modality == "entrypoint" and entrypoint.obligation_id in verifier.covers_obligation_ids
+        ) or normpath(join_posix_path(workspace, entrypoint.runtime_path)) in command_paths:
             _add_input(inputs, obligation_id=f"{entrypoint.obligation_id}.source", path=entrypoint.source_path)
             _add_input(inputs, obligation_id=f"{entrypoint.obligation_id}.runtime", path=entrypoint.runtime_path)
     # Every verifier is bound to the whole contract-authoritative input closure,
@@ -151,10 +168,7 @@ def _command_inputs(
     # That closure includes launchers, assets/fixtures, configuration, and docs:
     # any of them can alter a command's observed proof or the delivered project.
     for artifact in contract.obligations.artifacts:
-        if (
-            artifact.applicability != "not_applicable"
-            and artifact.semantic_role in _INPUT_ARTIFACT_ROLES
-        ):
+        if artifact.applicability != "not_applicable" and artifact.semantic_role in _INPUT_ARTIFACT_ROLES:
             _add_input(inputs, obligation_id=artifact.obligation_id, path=artifact.path)
     if not inputs:
         raise ProjectCompletionOwnerObservationV1Error(
@@ -255,7 +269,7 @@ def build_project_completion_physical_evidence_intent(
         argv=authority.argv,
         cwd=authority.cwd,
         command_authority_hash=authority.authority_hash,
-        input_artifacts=_command_inputs(contract, verifier),
+        input_artifacts=_command_inputs(contract, verifier, workspace=canonical_workspace),
         timeout_seconds=_VERIFIER_TIMEOUT_SECONDS,
         _authority_token=_PROJECT_COMPLETION_PHYSICAL_INTENT_SEAL,
     )

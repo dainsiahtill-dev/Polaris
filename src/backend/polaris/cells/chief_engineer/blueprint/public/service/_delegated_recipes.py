@@ -18,7 +18,9 @@ def is_task_intent(task: Any) -> bool:
 
 
 def prepare_delegated_recipes(
-    command: Any, requirements: Mapping[str, Any], carrier: Any,
+    command: Any,
+    requirements: Mapping[str, Any],
+    carrier: Any,
 ) -> tuple[Mapping[str, Any], tuple[VerificationCommandAuthorityV1, ...]]:
     obligations = requirements.get("obligations", {})
     verification = obligations.get("verification", []) if isinstance(obligations, Mapping) else []
@@ -31,6 +33,22 @@ def prepare_delegated_recipes(
     declared_hashes = set()
     recipe_diagnostics: list[dict[str, Any]] = []
     active_recipe: dict[str, Any] = {}
+    recipe_errors: list[str] = []
+
+    def record_failure(exc: Exception, diagnostic_count: int) -> None:
+        recipe_errors.append(str(exc))
+        if len(recipe_diagnostics) == diagnostic_count:
+            recipe_diagnostics.append(
+                {
+                    **active_recipe,
+                    "profile_feedback": {
+                        "error_code": "invalid_verification_recipe",
+                        "detail": str(exc),
+                        "guidance_only": True,
+                        "execution_authority": False,
+                    },
+                }
+            )
 
     def recipe(owner: Any, modality: Any, argv: Any, cwd: Any) -> VerificationCommandAuthorityV1:
         task = tasks.get(owner)
@@ -62,7 +80,13 @@ def prepare_delegated_recipes(
                     "argv": list(authority.argv),
                     "cwd": authority.cwd,
                     "profile_feedback": feedback,
+                    "expected_modality": authority.modality,
                     "allowed_recipe_modalities": allowed_modalities,
+                    "allowed_recipe_collections": (
+                        ["verification"] + (["entrypoints"] if "entrypoint" in allowed_modalities else [])
+                        if allowed_modalities
+                        else []
+                    ),
                 }
             )
             raise ValueError(f"CE recipe fails verifier proof profile: {error_code or 'untrusted_verifier_command'}")
@@ -70,17 +94,27 @@ def prepare_delegated_recipes(
         declared_hashes.add(authority.authority_hash)
         return authority
 
-    try:
-        for raw in verification:
+    for index, raw in enumerate(verification):
+        diagnostic_count = len(recipe_diagnostics)
+        try:
             if not isinstance(raw, Mapping):
                 normalized_rows.append(raw)
                 continue
             row = dict(raw)
+            if any(is_task_intent(task) for task in command.tasks):
+                # The model proposes semantic recipes, including N/A rows with
+                # no argv. Machine hash presence is supplied before strict DTO
+                # canonicalization; a supplied forged claim is still rejected.
+                row.setdefault("command_authority_hash", None)
             active_recipe = {
                 "collection": "verification",
+                "source_path": ["obligations", "verification", index],
                 "obligation_id": row.get("obligation_id"),
                 "owner_task_id": row.get("owner_task_id"),
                 "command_authority_hash": row.get("command_authority_hash"),
+                "modality": row.get("modality"),
+                "argv": row.get("argv"),
+                "cwd": row.get("cwd", "."),
             }
             has_recipe = row.get("argv") not in (None, [])
             if "argv" in row or "cwd" in row:
@@ -124,14 +158,19 @@ def prepare_delegated_recipes(
             if isinstance(known_hash, str) and known_hash in authorities and row.get("applicability") == "required":
                 declared_hashes.add(known_hash)
             normalized_rows.append(row)
+        except (TypeError, ValueError) as exc:
+            record_failure(exc, diagnostic_count)
 
-        for row in entrypoints:
+    for index, row in enumerate(entrypoints):
+        diagnostic_count = len(recipe_diagnostics)
+        try:
             if not isinstance(row, Mapping) or row.get("applicability") == "not_applicable":
                 continue
             owner = tasks.get(row.get("owner_task_id"))
             if owner is not None and is_task_intent(owner):
                 active_recipe = {
                     "collection": "entrypoints",
+                    "source_path": ["obligations", "entrypoints", index],
                     "obligation_id": row.get("obligation_id"),
                     "owner_task_id": row.get("owner_task_id"),
                     "command": row.get("command"),
@@ -139,22 +178,40 @@ def prepare_delegated_recipes(
                 authority = recipe(owner.task_id, "entrypoint", shlex.split(str(row.get("command") or "")), ".")
                 if row.get("applicability") != "required":
                     declared_hashes.discard(authority.authority_hash)
+        except (TypeError, ValueError) as exc:
+            record_failure(exc, diagnostic_count)
 
-        for authority in carrier.verification_command_authority:
-            if is_task_intent(tasks[authority.task_id]) and authority.authority_hash not in declared_hashes:
-                raise ValueError(
+    for authority in carrier.verification_command_authority:
+        task = tasks.get(authority.task_id)
+        if task is not None and is_task_intent(task) and authority.authority_hash not in declared_hashes:
+            active_recipe = {
+                "collection": "verification",
+                "source_path": ["obligations", "verification"],
+                "owner_task_id": authority.task_id,
+                "modality": authority.modality,
+                "argv": list(authority.argv),
+                "cwd": authority.cwd,
+                "command_authority_hash": authority.authority_hash,
+            }
+            record_failure(
+                ValueError(
                     f"explicit user command constraint is missing from CE required recipes: {authority.command}"
-                )
-    except (TypeError, ValueError) as exc:
+                ),
+                len(recipe_diagnostics),
+            )
+    if recipe_errors:
+        collections = {row.get("collection") for row in recipe_diagnostics}
         raise ChiefEngineerBlueprintErrorV1(
-            message=str(exc),
+            message="; ".join(recipe_errors),
             code="invalid_chief_engineer_verification_recipe",
             details={
-                "repair_operation": "verification_recipe_upsert",
+                "repair_operation": "entrypoint_upsert"
+                if collections == {"entrypoints"}
+                else "verification_recipe_upsert",
                 "requires_contract_correction": True,
                 "verification_recipe_diagnostics": recipe_diagnostics,
             },
-        ) from exc
+        )
     prepared = dict(requirements)
     prepared["obligations"] = {**dict(obligations), "verification": normalized_rows}
     return prepared, tuple(authorities.values())

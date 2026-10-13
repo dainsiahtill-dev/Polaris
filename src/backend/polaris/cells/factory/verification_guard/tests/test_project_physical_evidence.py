@@ -12,17 +12,9 @@ from polaris.cells.factory.verification_guard.internal import (
     project_completion_authority,
     project_physical_evidence,
 )
-from polaris.cells.factory.verification_guard.public import (
-    ProjectCompletionOwnerObservationV1,
-    ProjectCompletionOwnerObservationV1Error,
-    RunProjectCompletionEvidenceBatchCommandV1,
-    RunProjectCompletionEvidenceCommandV1,
+from polaris.cells.factory.verification_guard.public.bootstrap import (
     bind_project_completion_owner_observation_port,
     bind_project_completion_physical_evidence_port,
-    run_project_completion_evidence,
-    run_project_completion_evidence_batch,
-)
-from polaris.cells.factory.verification_guard.public.bootstrap import (
     build_project_completion_contract_observation,
     build_project_completion_physical_evidence_intent,
 )
@@ -30,13 +22,24 @@ from polaris.cells.factory.verification_guard.public.contracts import (
     ProjectArtifactObligationObservationV1,
     ProjectCompletionContractObservationV1,
     ProjectCompletionObligationsObservationV1,
+    ProjectCompletionOwnerObservationV1,
+    ProjectCompletionOwnerObservationV1Error,
     ProjectCompletionPhysicalEvidenceEffectV1,
     ProjectCompletionPhysicalEvidenceIntentV1,
     ProjectEntrypointObligationObservationV1,
     ProjectKindAuthorityObservationV1,
     ProjectVerificationCommandAuthorityObservationV1,
+    ProjectVerificationModalityObservationV1,
     ProjectVerificationObligationObservationV1,
+    RunProjectCompletionEvidenceBatchCommandV1,
+    RunProjectCompletionEvidenceCommandV1,
 )
+from polaris.cells.factory.verification_guard.public.service import (
+    run_project_completion_evidence,
+    run_project_completion_evidence_batch,
+)
+from polaris.cells.runtime.execution_broker.internal import project_verification_authority as broker_authority
+from polaris.cells.runtime.execution_broker.public.project_verification import ProjectVerificationArtifactInputV1
 
 
 def _authority_hash(*, task_id: str, modality: str, argv: tuple[str, ...], cwd: str = ".") -> str:
@@ -80,10 +83,15 @@ def _contract(
     include_entrypoint_verifier: bool = True,
     include_cross_task_test: bool = False,
     include_auxiliary_inputs: bool = False,
+    runtime_path: str | None = None,
+    covering_modality: ProjectVerificationModalityObservationV1 | None = None,
+    covering_argv: tuple[str, ...] = ("python", "-m", "compileall", "src"),
+    covering_cwd: str = ".",
+    covering_obligation_ids: tuple[str, ...] = ("entrypoint.cli",),
 ) -> ProjectCompletionContractObservationV1:
     kind_authority = _kind_authority()
     test_argv = ("python", "-m", "pytest", "-q")
-    entry_argv = ("python", "src/main.py")
+    entry_argv = ("python", runtime_path or "src/main.py")
     test_owner_task_id = "task-2" if include_cross_task_test else "task-1"
     test_coverage = ("artifact.test",) if include_cross_task_test else ("artifact.main",)
     authorities = [
@@ -107,13 +115,37 @@ def _contract(
             command_authority_hash=authorities[0].authority_hash,
         )
     ]
+    if covering_modality is not None:
+        covering_command = " ".join(covering_argv)
+        covering_authority = ProjectVerificationCommandAuthorityObservationV1(
+            task_id="task-1",
+            modality=covering_modality,
+            argv=covering_argv,
+            cwd=covering_cwd,
+            command=covering_command,
+            authority_hash=_authority_hash(
+                task_id="task-1", modality=covering_modality, argv=covering_argv, cwd=covering_cwd
+            ),
+        )
+        authorities.append(covering_authority)
+        verification.append(
+            ProjectVerificationObligationObservationV1(
+                obligation_id="verify.covering",
+                modality=covering_modality,
+                command=covering_command,
+                applicability="required",
+                covers_obligation_ids=covering_obligation_ids,
+                owner_task_id="task-1",
+                command_authority_hash=covering_authority.authority_hash,
+            )
+        )
     if include_entrypoint_verifier:
         entry_authority = ProjectVerificationCommandAuthorityObservationV1(
             task_id="task-1",
             modality="entrypoint",
             argv=entry_argv,
             cwd=".",
-            command="python src/main.py",
+            command=" ".join(entry_argv),
             authority_hash=_authority_hash(task_id="task-1", modality="entrypoint", argv=entry_argv),
         )
         authorities.append(entry_authority)
@@ -121,7 +153,7 @@ def _contract(
             ProjectVerificationObligationObservationV1(
                 obligation_id="verify.entrypoint",
                 modality="entrypoint",
-                command="python src/main.py",
+                command=" ".join(entry_argv),
                 applicability="required",
                 covers_obligation_ids=("entrypoint.cli",),
                 owner_task_id="task-1",
@@ -132,11 +164,11 @@ def _contract(
         artifacts=tuple(
             [
                 ProjectArtifactObligationObservationV1(
-                obligation_id="artifact.main",
-                path="src/main.py",
-                semantic_role="source",
-                applicability="required",
-                owner_task_id="task-1",
+                    obligation_id="artifact.main",
+                    path="src/main.py",
+                    semantic_role="source",
+                    applicability="required",
+                    owner_task_id="task-1",
                 )
             ]
             + (
@@ -180,7 +212,8 @@ def _contract(
                 applicability="required",
                 owner_task_id="task-1",
                 source_path="src/main.py",
-                command="python src/main.py",
+                runtime_path=runtime_path,
+                command=" ".join(entry_argv),
             ),
         ),
         verification=tuple(verification),
@@ -431,3 +464,116 @@ def test_physical_intent_direct_construction_and_retag_are_rejected() -> None:
         ProjectCompletionPhysicalEvidenceIntentV1(**kwargs)
     with pytest.raises(ProjectCompletionOwnerObservationV1Error, match="sealed"):
         replace(intent, obligation_id="verify.other")
+
+
+def _snapshot_intent_inputs(intent: ProjectCompletionPhysicalEvidenceIntentV1):
+    return broker_authority._snapshot_inputs(
+        intent.workspace,
+        tuple(
+            ProjectVerificationArtifactInputV1(obligation_id=item.obligation_id, path=item.path)
+            for item in intent.input_artifacts
+        ),
+    )
+
+
+@pytest.mark.parametrize("modality", ["build", "lint", "test", "environment_prep"])
+def test_source_verifiers_covering_entrypoint_do_not_require_future_runtime(
+    tmp_path: Path, modality: ProjectVerificationModalityObservationV1
+) -> None:
+    """Coverage of a build result must not make its future output a pre-spawn input."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/main.py").write_text("print('source')\n", encoding="utf-8")
+    contract = _contract(runtime_path="dist/main.py", covering_modality=modality)
+    intent = build_project_completion_physical_evidence_intent(contract, "verify.covering", workspace=str(tmp_path))
+
+    snapshots, input_hash = _snapshot_intent_inputs(intent)
+
+    assert {item.path for item in snapshots} == {"src/main.py"}
+    assert len(input_hash) == 64
+    assert not (tmp_path / "dist").exists()
+
+
+@pytest.mark.parametrize(
+    ("argv", "cwd"),
+    [(("python", "dist/main.py"), "."), (("python", "../dist/main.py"), "src")],
+)
+def test_non_entrypoint_command_reading_runtime_still_pins_actual_file(
+    tmp_path: Path, argv: tuple[str, ...], cwd: str
+) -> None:
+    contract = _contract(runtime_path="dist/main.py", covering_modality="test", covering_argv=argv, covering_cwd=cwd)
+    intent = build_project_completion_physical_evidence_intent(contract, "verify.covering", workspace=str(tmp_path))
+    assert {item.path for item in intent.input_artifacts} == {"src/main.py", "dist/main.py"}
+
+
+@pytest.mark.parametrize("obligation_id", ["entrypoint.cli", "verify.entrypoint"])
+def test_entrypoint_requires_generated_runtime_at_its_own_admission(tmp_path: Path, obligation_id: str) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/main.py").write_text("print('source')\n", encoding="utf-8")
+    contract = _contract(runtime_path="dist/main.py")
+    intent = build_project_completion_physical_evidence_intent(contract, obligation_id, workspace=str(tmp_path))
+    with pytest.raises(FileNotFoundError):
+        _snapshot_intent_inputs(intent)
+    assert not (tmp_path / "dist").exists()
+
+
+def test_entrypoint_runtime_bytes_remain_in_receipt_input_hash(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "src/main.py").write_text("print('source')\n", encoding="utf-8")
+    runtime = tmp_path / "dist/main.py"
+    runtime.write_text("print('first')\n", encoding="utf-8")
+    contract = _contract(runtime_path="dist/main.py")
+    intent = build_project_completion_physical_evidence_intent(contract, "entrypoint.cli", workspace=str(tmp_path))
+    before, before_hash = _snapshot_intent_inputs(intent)
+    runtime.write_text("print('changed')\n", encoding="utf-8")
+    after, after_hash = _snapshot_intent_inputs(intent)
+    assert before_hash != after_hash
+    assert next(item.artifact_hash for item in before if item.path == "dist/main.py") != next(
+        item.artifact_hash for item in after if item.path == "dist/main.py"
+    )
+
+
+def test_build_future_output_exclusion_does_not_allow_missing_source(tmp_path: Path) -> None:
+    contract = _contract(runtime_path="dist/main.py", covering_modality="build")
+    intent = build_project_completion_physical_evidence_intent(contract, "verify.covering", workspace=str(tmp_path))
+    with pytest.raises(FileNotFoundError):
+        _snapshot_intent_inputs(intent)
+
+
+@pytest.mark.parametrize("path_kind", ["source_parent", "runtime_parent"])
+def test_verifier_input_closure_keeps_parent_symlink_rejection(tmp_path: Path, path_kind: str) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "main.py").write_text("print('foreign')\n", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/main.py").write_text("print('source')\n", encoding="utf-8")
+    if path_kind == "source_parent":
+        (tmp_path / "src/main.py").unlink()
+        (tmp_path / "src").rmdir()
+        (tmp_path / "src").symlink_to(outside, target_is_directory=True)
+        obligation_id = "verify.covering"
+    else:
+        (tmp_path / "dist").symlink_to(outside, target_is_directory=True)
+        obligation_id = "entrypoint.cli"
+    contract = _contract(runtime_path="dist/main.py", covering_modality="build")
+    intent = build_project_completion_physical_evidence_intent(contract, obligation_id, workspace=str(tmp_path))
+    with pytest.raises(ValueError, match="symlinks"):
+        _snapshot_intent_inputs(intent)
+
+
+def test_entrypoint_runtime_foreign_path_remains_rejected(tmp_path: Path) -> None:
+    contract = _contract(runtime_path="../foreign/main.py")
+    intent = build_project_completion_physical_evidence_intent(contract, "entrypoint.cli", workspace=str(tmp_path))
+    with pytest.raises(ValueError):
+        _snapshot_intent_inputs(intent)
+
+
+def test_non_entrypoint_absolute_runtime_reference_remains_an_input(tmp_path: Path) -> None:
+    contract = _contract(
+        runtime_path="dist/main.py",
+        covering_modality="test",
+        covering_argv=("python", str(tmp_path / "dist/main.py")),
+        covering_obligation_ids=("artifact.main",),
+    )
+    intent = build_project_completion_physical_evidence_intent(contract, "verify.covering", workspace=str(tmp_path))
+    assert {item.path for item in intent.input_artifacts} == {"src/main.py", "dist/main.py"}

@@ -42,19 +42,23 @@ def _handle_repo_tree(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
 
     List directory tree within the workspace.
     """
+    from polaris.kernelone.exceptions import PathSecurityError
     from polaris.kernelone.llm.toolkit.executor.handlers.navigation import _handle_list_directory
+    from polaris.kernelone.llm.toolkit.executor.read_scope import resolve_committed_read_paths
 
-    # Map repo_tree args to list_directory args
     path = kwargs.get("path", kwargs.get("root", kwargs.get("dir", ".")))
-    depth = kwargs.get("depth")
-    max_entries = kwargs.get("max_entries", depth or 100)
-
+    try:
+        authorized = resolve_committed_read_paths(self._kernel_fs, self._capability_token)
+    except (OSError, ValueError, PathSecurityError):
+        return {"ok": False, "error": "Missing or invalid committed read scope"}
     return _handle_list_directory(
         self,
         path=path,
         recursive=True,
-        max_entries=max_entries,
+        max_entries=kwargs.get("max_entries", 100),
+        depth=kwargs.get("depth"),
         include_hidden=False,
+        authorized_read_paths=authorized,
     )
 
 

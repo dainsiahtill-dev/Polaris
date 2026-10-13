@@ -1,0 +1,22 @@
+id: vc-20261013-verifier-recipe-feedback
+classification: pattern
+status: component_verified_delivery_pending
+assumptions:
+  - Existing verifier classification and runtime authorization remain authoritative.
+  - Guidance never grants execution or creates package scripts and dependencies.
+  - Every advertised example contains executable and reclassifies as its advertised profile.
+evidence:
+  - Initial RED reproduced 14 missing-candidate failures with 5 existing passes.
+  - Modality RED reproduced 3 misleading-primary failures with 19 existing passes.
+  - All 163 verifier-policy Cell tests passed with planning and runtime denial assertions.
+pre_mortem:
+  - A separate profile catalog could drift from actual matching grammar.
+  - Omitting executable or assigning requested modality to mismatched argv misleads CE repair.
+  - Planning examples cannot prove materialized inputs or physical verifier success.
+verification:
+  - Run all control_plane.verifier_policy tests with temporary data and caches under ~/.polaris.
+  - Run Ruff check and format check on the three owned Python files.
+  - Run strict mypy on the three owned Python files.
+remaining:
+  - Coordinator must run final architecture/release gates after writer stop.
+  - Fresh isolated L1 environment/build/test/entrypoint, independent QA and settlement remain pending.

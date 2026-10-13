@@ -1,0 +1,20 @@
+id: vc-20261013-ce-collection-recipe-feedback
+classification: pattern
+status: proposed
+assumptions:
+  - Profile rejection remains authoritative and language agnostic.
+  - Required flags in an unaccepted model draft do not authenticate requirements.
+  - Original PM/user requirements, accepted CE obligations and explicit command bindings remain immutable.
+evidence:
+  - factory_3e0b5a53fd92 native final requests retain build/test commands in entrypoints across CE corrections.
+  - prepare_delegated_recipes labels entrypoint profile failures verification_recipe_upsert.
+  - All five repair builders append shared trusted recipe guidance.
+pre_mortem:
+  - Treating draft required flags as authoritative perpetuates invalid collection rows.
+  - Weakening command profiles or explicit binding guards would incorrectly accept verifier commands as apps.
+verification:
+  - pytest collection feedback, recipe convergence and task intent handoff tests.
+  - Local HTTP PM admission and two typed CE requests; original PM hash, exact physical wire, sealed identities and settled attempts.
+  - Ruff and mypy on bounded production/test paths.
+remaining:
+  - Local HTTP fixtures do not qualify a native model or fresh L1 delivery.

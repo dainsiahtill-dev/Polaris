@@ -30,6 +30,9 @@ from polaris.cells.roles.kernel.internal.tool_batch_runtime import (
     ToolExecutionContext,
     ToolExecutionMode,
 )
+from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.outcome_commit import _execution_from_result
+from polaris.cells.roles.kernel.internal.transaction.receipt_utils import merge_batch_receipts
 from polaris.cells.roles.kernel.public import (
     DirectedEffectContextClaimResultV1,
     DirectedEffectExecutionContextV1,
@@ -48,6 +51,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolCallId,
     ToolEffectType,
     ToolInvocation,
+    TurnDecision,
     TurnId,
 )
 from polaris.cells.roles.kernel.tests.test_directed_effect_contracts import (
@@ -545,9 +549,17 @@ async def test_deferred_repair_dispatch_executes_forward_and_aborts_unused_rollb
                 error_code=None,
             )
 
+    observed: list[ToolInvocation] = []
+    selected_ledger = TurnLedger(turn_id="turn-selected-deferred")
+
+    def capture_selected(invocation: ToolInvocation) -> None:
+        selected_ledger.record_invocation_batch("batch-selected-deferred", [invocation])
+        observed.append(invocation)
+
     policy_port = _NoEffectPolicyPort()
     runtime = ToolBatchRuntime(
         executor=AsyncMock(),
+        directed_effect_invocation_observer=capture_selected,
         directed_effect_runtime=DirectedEffectRuntimeDependenciesV1(
             policy_snapshot_port=policy_port,
             fence_admin_port=_FenceAdmin(),
@@ -579,8 +591,10 @@ async def test_deferred_repair_dispatch_executes_forward_and_aborts_unused_rollb
 
     assert claimed == [forward_member.member.tool_call_id]
     assert aborted == [((rollback_member.member.tool_call_id,), "contingency_not_activated")]
+    assert [str(item.call_id) for item in observed] == [forward_member.member.tool_call_id]
     assert len(receipts) == 1
     assert receipts[0]["success_count"] == 1
+    _assert_selected_deferred_commit(selected_ledger, receipts)
 
 
 @pytest.mark.asyncio
@@ -633,9 +647,17 @@ async def test_deferred_repair_failure_preserves_only_activated_rollbacks(
                 error_code=None,
             )
 
+    observed: list[ToolInvocation] = []
+    selected_ledger = TurnLedger(turn_id="turn-selected-deferred")
+
+    def capture_selected(invocation: ToolInvocation) -> None:
+        selected_ledger.record_invocation_batch("batch-selected-deferred", [invocation])
+        observed.append(invocation)
+
     policy_port = _NoEffectPolicyPort()
     runtime = ToolBatchRuntime(
         executor=AsyncMock(),
+        directed_effect_invocation_observer=capture_selected,
         directed_effect_runtime=DirectedEffectRuntimeDependenciesV1(
             policy_snapshot_port=policy_port,
             fence_admin_port=_FenceAdmin(),
@@ -705,6 +727,9 @@ async def test_deferred_repair_failure_preserves_only_activated_rollbacks(
         TurnId("turn-deferred-failure"),
     )
 
+    assert {str(item.call_id) for item in observed} == {row.call_id for receipt in receipts for row in receipt.results}
+    assert set(calls) <= {str(item.call_id) for item in observed}
+    _assert_selected_deferred_commit(selected_ledger, receipts)
     if partial_success:
         assert calls == [*forward_ids, rollback_ids[0]]
         assert aborted == [((rollback_ids[1],), "deferred_repair_forward_failed")]
@@ -720,9 +745,7 @@ async def test_deferred_repair_failure_preserves_only_activated_rollbacks(
             ((rollback_ids[1],), "deferred_repair_forward_failed"),
         ]
         summary_receipt = next(
-            receipt
-            for receipt in receipts
-            if "directed_effect_activated_rollback_call_ids" in receipt.raw_results[0]
+            receipt for receipt in receipts if "directed_effect_activated_rollback_call_ids" in receipt.raw_results[0]
         )
         assert summary_receipt.raw_results[0]["directed_effect_activated_rollback_call_ids"] == []
         assert summary_receipt.raw_results[0]["directed_effect_aborted_call_ids"] == [
@@ -1807,3 +1830,56 @@ class TestMixedBatch:
         receipts = await runtime.execute_batch(batch, TurnId("turn_ok_false"))
         assert receipts[0]["failure_count"] == 1
         assert receipts[0]["results"][0]["status"] == "error"
+
+
+def _assert_selected_deferred_commit(ledger: TurnLedger, receipts: list[Any]) -> None:
+    ledger.record_decision(
+        TurnDecision.model_validate(
+            {
+                "turn_id": ledger.turn_id,
+                "kind": "tool_batch",
+                "tool_batch": {"batch_id": "batch-selected-deferred", "invocations": []},
+                "visible_message": "",
+                "finalize_mode": "none",
+                "domain": "code",
+            }
+        )
+    )
+    receipt = merge_batch_receipts(receipts)
+    execution = _execution_from_result(ledger=ledger, result={"batch_receipt": receipt})
+    assert execution is not None and execution.receipt is not None
+    assert {str(item.call_id) for item in execution.invocations} == {
+        str(row.call_id) for row in execution.receipt.results
+    }
+    assert execution.side_effect_class == "local_write"
+    # Persisted typed reconstruction preserves selected native IDs and input
+    # snapshots; inactive contingency has no invented tool execution.
+    from polaris.cells.roles.kernel.public.turn_contracts import ToolBatchExecution
+
+    reconstructed = ToolBatchExecution.model_validate(execution.model_dump(mode="json"))
+    assert [item.call_id for item in reconstructed.invocations] == [item.call_id for item in execution.invocations]
+    assert [item.arguments for item in reconstructed.invocations] == [item.arguments for item in execution.invocations]
+
+
+@pytest.mark.asyncio
+async def test_directed_invocation_observer_failure_prevents_dispatch() -> None:
+    dispatched: list[ToolInvocation] = []
+
+    def refuse(invocation: ToolInvocation) -> None:
+        raise RuntimeError("input_capture_refused")
+
+    runtime = ToolBatchRuntime(executor=AsyncMock(), directed_effect_invocation_observer=refuse)
+
+    async def execute(tool: ToolInvocation) -> Any:
+        dispatched.append(tool)
+
+    runtime._execute_directed_effect = execute
+    with pytest.raises(RuntimeError, match="input_capture_refused"):
+        await runtime._execute_observed_directed_effect(
+            ToolInvocation(
+                call_id="capture-refused",
+                tool_name="write_file",
+                arguments={"file": "answer.py", "content": "original"},
+            )
+        )
+    assert dispatched == []

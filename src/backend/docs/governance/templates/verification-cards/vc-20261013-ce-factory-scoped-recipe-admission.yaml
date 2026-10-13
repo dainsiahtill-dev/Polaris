@@ -1,0 +1,18 @@
+id: vc-20261013-ce-factory-scoped-recipe-admission
+classification: structural
+scope: factory.pipeline existing CE admission and repair
+assumptions:
+  - Existing CE compiler owns command authority and immutable PM acceptance.
+  - Local recipe diagnostics can bind exact candidate rows without granting effects.
+  - A patch is unaccepted until the original complete candidate passes all gates.
+pre_mortem:
+  - Treating arbitrary diagnostic text as authority could widen patch subjects.
+  - Dropping hash validation from canonical input could accept forged legacy authority.
+verification:
+  - RED omitted provider hash required by schema, then GREEN existing server binding.
+  - RED recipe finding returns no diagnosis, then GREEN typed local operation.
+  - Reject malformed diagnostic rows, forged identities and no-op or invalid composition.
+  - Confirm actual native HTTP final schema/context and whole-candidate validation.
+  - RED unknown consumer task identity terminal outside loop, then GREEN existing owner compiler scoped correction.
+  - Independent RED missing final-request audit persisted handoff, then gate rejects before compiler.
+  - Reject unknown provider, prior stage error and non-repairable owner exception before admission.

@@ -383,6 +383,7 @@ class ToolInvocation(_FrozenMappingModel):
     tool_name: str
     raw_tool_name: str | None = None
     arguments: dict[str, Any] = Field(default_factory=dict)
+    native_arguments: dict[str, Any] | None = None
     effect_type: ToolEffectType | None = None
     execution_mode: ToolExecutionMode | None = None
     classification: ToolClassificationV1 | None = None
@@ -395,6 +396,7 @@ class ToolInvocation(_FrozenMappingModel):
         raw_tool_name: str,
         arguments: dict[str, object],
         classification: ToolClassificationV1,
+        native_arguments: dict[str, object] | None = None,
     ) -> ToolInvocation:
         """Internal decoder factory preserving its single captured classification."""
         return cls.model_validate(
@@ -403,10 +405,19 @@ class ToolInvocation(_FrozenMappingModel):
                 "raw_tool_name": raw_tool_name,
                 "tool_name": classification.canonical_tool_name,
                 "arguments": arguments,
+                "native_arguments": native_arguments,
                 "classification": classification,
             },
             context={"tool_invocation_factory_capability": _TOOL_INVOCATION_FACTORY_CAPABILITY},
         )
+
+    @model_serializer(mode="wrap")
+    def _serialize_native_observation(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Raw native arguments are observations; only arguments authorize dispatch."""
+        payload: dict[str, Any] = handler(self)
+        if self.native_arguments is None:
+            payload.pop("native_arguments", None)
+        return payload
 
     @model_validator(mode="before")
     @classmethod
@@ -716,6 +727,7 @@ class ToolBatchExecution(_FrozenMappingModel):
     batch_id: BatchId
     invocations: list[ToolInvocation] = Field(default_factory=list)
     receipt: BatchReceipt | None = None
+    invocation_batches: list[ToolBatch] = Field(default_factory=list)
     side_effect_class: Literal["readonly", "local_write", "external_write"] = "readonly"
 
 

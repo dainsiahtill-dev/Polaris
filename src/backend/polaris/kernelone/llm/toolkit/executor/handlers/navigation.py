@@ -151,95 +151,116 @@ def _handle_list_directory(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     recursive = kwargs.get("recursive", False)
     include_hidden = kwargs.get("include_hidden", False)
     max_entries = kwargs.get("max_entries", 200)
+    depth = kwargs.get("depth")
+    authorized = kwargs.get("authorized_read_paths")
 
+    from polaris.kernelone.exceptions import PathSecurityError
+    from polaris.kernelone.llm.toolkit.executor.read_scope import read_scope_permits
     from polaris.kernelone.llm.toolkit.executor.utils import resolve_workspace_path
 
     try:
         dir_path = resolve_workspace_path(self._kernel_fs, path)
-    except ValueError as e:
+        if authorized is not None and not read_scope_permits(
+            self._kernel_fs, self._capability_token, [path], allow_filtered_ancestors=True
+        ):
+            return {"ok": False, "error": "Path outside committed read scope"}
+        if not self._kernel_fs.workspace_exists(str(dir_path)):
+            return {"ok": False, "error": f"Directory not found: {path}"}
+        if not self._kernel_fs.workspace_is_dir(str(dir_path)):
+            return {"ok": False, "error": f"Path is not a directory: {path}"}
+        safe_max_entries = max(1, min(int(max_entries), 500))
+        safe_depth = max(0, int(depth)) if depth is not None else None
+    except (OSError, ValueError, TypeError, PathSecurityError) as e:
         return {"ok": False, "error": str(e)}
 
-    if not dir_path.exists():
-        return {"ok": False, "error": f"Directory not found: {path}"}
-    if not dir_path.is_dir():
-        return {"ok": False, "error": f"Path is not a directory: {path}"}
-
-    safe_max_entries = max(1, min(int(max_entries), 500))
     entries: list[dict[str, Any]] = []
+    candidates: set[Path] = set()
+
+    def visible(item: Path) -> bool:
+        relative = item.relative_to(dir_path)
+        return (include_hidden or all(not part.startswith(".") for part in relative.parts)) and (
+            safe_depth is None or len(relative.parts) <= safe_depth
+        )
+
+    def add_subtree(root: Path) -> None:
+        for current, dirs, files in os.walk(root, followlinks=False):
+            if len(candidates) >= safe_max_entries:
+                break
+            current_dir = Path(current)
+            # Resolve every discovered path through KFS before metadata or traversal.
+            safe_dirs: list[str] = []
+            for name in sorted(dirs):
+                if len(candidates) >= safe_max_entries:
+                    break
+                item = current_dir / name
+                try:
+                    resolved = resolve_workspace_path(self._kernel_fs, str(item))
+                    if not visible(resolved):
+                        continue
+                except (OSError, ValueError, PathSecurityError):
+                    continue
+                candidates.add(resolved)
+                if recursive and (safe_depth is None or len(resolved.relative_to(dir_path).parts) < safe_depth):
+                    safe_dirs.append(name)
+            dirs[:] = safe_dirs
+            for name in sorted(files):
+                if len(candidates) >= safe_max_entries:
+                    break
+                item = current_dir / name
+                try:
+                    resolved = resolve_workspace_path(self._kernel_fs, str(item))
+                    if visible(resolved):
+                        candidates.add(resolved)
+                except (OSError, ValueError, PathSecurityError):
+                    continue
+            if not recursive:
+                break
 
     try:
-        if recursive:
-            for root, dirs, files in os.walk(dir_path):
-                # Skip hidden directories
-                if not include_hidden:
-                    dirs[:] = [d for d in dirs if not d.startswith(".")]
-
-                current_dir = Path(root)
-
-                for name in dirs:
-                    if not include_hidden and name.startswith("."):
-                        continue
-                    full_path = current_dir / name
-                    rel_path = full_path.relative_to(dir_path).as_posix()
-                    entries.append(
-                        {
-                            "name": name,
-                            "path": rel_path,
-                            "type": "dir",
-                        }
-                    )
-                    if len(entries) >= safe_max_entries:
-                        break
-
-                for name in files:
-                    if not include_hidden and name.startswith("."):
-                        continue
-                    full_path = current_dir / name
-                    rel_path = full_path.relative_to(dir_path).as_posix()
-                    try:
-                        size = full_path.stat().st_size
-                    except OSError:
-                        size = 0
-                    entries.append(
-                        {
-                            "name": name,
-                            "path": rel_path,
-                            "type": "file",
-                            "size": size,
-                        }
-                    )
-                    if len(entries) >= safe_max_entries:
-                        break
-
-                if len(entries) >= safe_max_entries:
-                    break
+        if authorized is None:
+            add_subtree(dir_path)
         else:
-            for item in sorted(dir_path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-                if not include_hidden and item.name.startswith("."):
-                    continue
-                rel_path = item.relative_to(dir_path).as_posix()
-                entry: dict[str, Any] = {
-                    "name": item.name,
-                    "path": rel_path,
-                    "type": "dir" if item.is_dir() else "file",
-                }
-                if item.is_file():
-                    try:
-                        entry["size"] = item.stat().st_size
-                    except OSError:
-                        entry["size"] = 0
-                entries.append(entry)
-                if len(entries) >= safe_max_entries:
-                    break
-    except OSError as e:
+            # Exact files reveal only existing authorized paths and their ancestors.
+            # Directory scopes permit their subtree, never unrelated root siblings.
+            for allowed in authorized:
+                if allowed.is_relative_to(dir_path):
+                    for candidate in (allowed, *allowed.parents):
+                        if candidate == dir_path:
+                            break
+                        if visible(candidate) and self._kernel_fs.workspace_exists(str(candidate)):
+                            candidates.add(candidate)
+                    if self._kernel_fs.workspace_is_dir(str(allowed)) and visible(allowed):
+                        add_subtree(allowed)
+                elif dir_path.is_relative_to(allowed) and self._kernel_fs.workspace_is_dir(str(allowed)):
+                    add_subtree(dir_path)
+        for item in sorted(candidates, key=lambda candidate: candidate.relative_to(dir_path).as_posix()):
+            # Revalidate at materialization; disappeared or replaced symlinks stay hidden.
+            item = resolve_workspace_path(self._kernel_fs, str(item))
+            if not self._kernel_fs.workspace_exists(str(item)):
+                continue
+            is_dir = self._kernel_fs.workspace_is_dir(str(item))
+            entry: dict[str, Any] = {
+                "name": item.name,
+                "path": item.relative_to(dir_path).as_posix(),
+                "type": "dir" if is_dir else "file",
+            }
+            if not is_dir and self._kernel_fs.workspace_is_file(str(item)):
+                entry["size"] = item.stat().st_size
+            entries.append(entry)
+            if len(entries) >= safe_max_entries:
+                break
+    except (OSError, ValueError, PathSecurityError) as e:
         return {"ok": False, "error": f"Directory listing failed: {e}"}
 
-    return {
+    result: dict[str, Any] = {
         "ok": True,
         "path": path,
         "total_entries": len(entries),
         "entries": entries,
     }
+    if authorized is not None:
+        result["scope_filtered"] = True
+    return result
 
 
 def _handle_file_exists(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:

@@ -188,9 +188,11 @@ def test_recipe_diagnostics_survive_projection_without_false_behavior_repair(tmp
     errors = OrchestrationStageExecutor._chief_engineer_portfolio_output_errors(
         payload, tasks=command.tasks, authority_carrier=command.authority_carrier
     )
-    # Recipes use the existing complete-draft correction route. A blocked graph
-    # reference must not invent behavior/entrypoint patch authority.
-    assert (
-        OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(candidate=candidate, output_errors=errors)
-        is None
+    # A blocked graph reference does not invent behavior/entrypoint authority;
+    # exact owner recipe diagnostics can authorize the existing local composer.
+    diagnosis = OrchestrationStageExecutor._chief_engineer_semantic_repair_diagnosis(
+        candidate=candidate, output_errors=errors
     )
+    assert diagnosis is not None
+    assert diagnosis.allowed_operations == ("verification_recipe_upsert",)
+    assert list(diagnosis.verification_recipe_diagnostics) == diagnostics

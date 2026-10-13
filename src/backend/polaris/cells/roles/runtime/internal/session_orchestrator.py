@@ -715,7 +715,8 @@ class RoleSessionOrchestrator:
         context: dict[str, Any] | None = None,
     ) -> AsyncIterator[TurnEvent]:
         """流式执行多 Turn 会话编排。"""
-        del context
+        objective = (context or {}).get("task_objective") if self._canonical_role_kernel else None
+        stable_objective = objective if isinstance(objective, str) and objective else None
 
         session_span_id = f"session_{uuid4().hex}"
 
@@ -734,6 +735,10 @@ class RoleSessionOrchestrator:
             span_id=session_span_id,
         )
         first_prompt = prompt
+        if stable_objective is not None and self.state.turn_count == 0:
+            self.state.goal = stable_objective
+            if not self.state.original_goal:
+                self.state.original_goal = stable_objective
         envelope: TurnOutcomeEnvelope | None = None
         completion_event: CompletionEvent | None = None
         session_terminal_event: SessionWaitingHumanEvent | None = None
@@ -766,9 +771,9 @@ class RoleSessionOrchestrator:
                     first_prompt[:60],
                 )
             else:
-                self.state.goal = first_prompt
+                self.state.goal = stable_objective or first_prompt
                 if not self.state.original_goal:
-                    self.state.original_goal = first_prompt
+                    self.state.original_goal = stable_objective or first_prompt
                     logger.debug("original_goal_set: %s", first_prompt[:60])
                 else:
                     logger.debug("original_goal_preserved: %s", self.state.original_goal[:60])

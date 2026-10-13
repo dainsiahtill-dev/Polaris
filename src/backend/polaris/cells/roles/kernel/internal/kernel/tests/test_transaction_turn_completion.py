@@ -28,6 +28,7 @@ class _Request:
     task_id: str = "task-1"
     run_id: str = "run-1"
     context_override: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

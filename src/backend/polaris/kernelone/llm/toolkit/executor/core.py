@@ -400,6 +400,15 @@ class AgentAccelToolExecutor:
                 "error": f"Parameter validation failed: {validation_error}",
             }
 
+        # Enforce the committed read scope even when called without a role gateway.
+        if spec.get("category") == "read":
+            from polaris.kernelone.llm.toolkit.executor.read_scope import registered_read_scope_permits
+
+            if not registered_read_scope_permits(
+                self._kernel_fs, self._capability_token, canonical_tool_name, normalized_arguments, spec
+            ):
+                return {"ok": False, "error": "Path outside committed read scope or invalid read scope"}
+
         # Load handler modules if not already loaded
         self._load_handler_modules()
 

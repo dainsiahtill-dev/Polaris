@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from polaris.cells.control_plane.run_ledger.tests.test_terminal_failure_cleanup import _failed_read_batch
+from polaris.cells.control_plane.run_ledger.tests.test_terminal_failure_cleanup import (
+    _append_real_terminal_mutation,
+    _failed_read_batch,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryConfig,
     FactoryRunService,
@@ -68,3 +71,19 @@ async def test_failed_missing_qa_does_not_force_fail_live_child_session(tmp_path
     assert any(
         str(row["id"]) == str(task_id) and row["status"] == "in_progress" for row in runtime.list_observable_task_rows()
     )
+
+
+@pytest.mark.asyncio
+async def test_write_bearing_failed_delivery_releases_real_lease_without_qualification(tmp_path: Path) -> None:
+    service = FactoryRunService(tmp_path, executor=_SuccessfulStageExecutor())
+    run = await service.create_run(FactoryConfig(name="failed-write-cleanup", stages=["director_dispatch"]))
+    await service.start_run(run.id)
+    await _append_real_terminal_mutation(tmp_path, factory_run_id=run.id, transport_wrapper=True)
+    terminal = await service.complete_run(run.id, success=False)
+    assert terminal.status == FactoryRunStatus.FAILED
+    assert terminal.metadata["factory_workspace_run_lease"]["state"] == "released"
+    barrier = terminal.metadata["factory_run_ledger_settlement_barrier"]
+    assert barrier["closed"] is True
+    assert barrier["passed"] is False
+    assert "required_evidence_missing" in barrier["blocking_reasons"]
+    assert (tmp_path / "src/a.py").read_text(encoding="utf-8") == "after\n"

@@ -174,7 +174,7 @@ def test_plan_transaction_tool_surface_uses_mode_specific_pin_targets(monkeypatc
     assert observed_targets == [("turn.py",), ("stream.py",)]
 
 
-def test_plan_transaction_tool_surface_forces_write_for_multi_missing_materialization_targets(
+def test_explicit_single_batch_plan_transaction_tool_surface_forces_write_for_multi_missing_materialization_targets(
     monkeypatch: Any,
     tmp_path: Any,
 ) -> None:
@@ -202,6 +202,7 @@ def test_plan_transaction_tool_surface_forces_write_for_multi_missing_materializ
     monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
 
     context_override: dict[str, Any] = {
+        "single_batch_execution": True,
         "delivery_mode": "materialize_changes",
         "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
     }
@@ -254,7 +255,7 @@ def test_plan_transaction_tool_surface_forces_write_for_multi_missing_materializ
     assert plan.tool_filter_audit["filter_reason"] == "declared_scope_missing_write_targets"
 
 
-def test_plan_transaction_tool_surface_forces_write_for_declared_missing_targets_without_mode_marker(
+def test_explicit_single_batch_plan_transaction_tool_surface_forces_write_for_declared_missing_targets_without_mode_marker(
     monkeypatch: Any,
     tmp_path: Any,
 ) -> None:
@@ -282,6 +283,7 @@ def test_plan_transaction_tool_surface_forces_write_for_declared_missing_targets
     monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
 
     context_override: dict[str, Any] = {
+        "single_batch_execution": True,
         "target_files": ["src/engine/rules.js", "src/engine/runner.js"],
     }
     request = RoleTurnRequest(
@@ -312,7 +314,7 @@ def test_plan_transaction_tool_surface_forces_write_for_declared_missing_targets
     assert plan.tool_filter_audit["filter_reason"] == "declared_scope_missing_write_targets"
 
 
-def test_plan_transaction_tool_surface_forces_tool_and_preserves_existing_quality_repair_edit(
+def test_explicit_single_batch_plan_transaction_tool_surface_forces_tool_and_preserves_existing_quality_repair_edit(
     monkeypatch: Any,
     tmp_path: Any,
 ) -> None:
@@ -334,6 +336,7 @@ def test_plan_transaction_tool_surface_forces_tool_and_preserves_existing_qualit
         workspace=str(tmp_path),
         message="[mode:materialize] repair current verifier failure",
         context_override={
+            "single_batch_execution": True,
             "_transaction_kernel_forced_tool_choice": "required",
             "director_quality_repair": {
                 "repair_target_files": ["src/lib.rs"],
@@ -358,7 +361,7 @@ def test_plan_transaction_tool_surface_forces_tool_and_preserves_existing_qualit
     assert plan.tool_filter_audit["filter_reason"] == "repair_preserve_edit_target"
 
 
-def test_plan_transaction_tool_surface_caps_first_turn_write_output_budget(
+def test_explicit_single_batch_plan_transaction_tool_surface_caps_first_turn_write_output_budget(
     monkeypatch: Any,
     tmp_path: Any,
 ) -> None:
@@ -384,6 +387,7 @@ def test_plan_transaction_tool_surface_caps_first_turn_write_output_budget(
     monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
 
     context_override: dict[str, Any] = {
+        "single_batch_execution": True,
         "delivery_mode": "materialize_changes",
         "target_files": ["src/index.js"],
         "llm_max_tokens": 128_000,
@@ -538,7 +542,7 @@ def test_plan_transaction_tool_surface_projects_required_tool_choice(monkeypatch
     assert plan.tool_choice_override == "required"
 
 
-def test_forced_write_plan_does_not_contaminate_same_turn_finalization_context(
+def test_explicit_single_batch_forced_write_plan_does_not_contaminate_same_turn_finalization_context(
     monkeypatch: Any,
     tmp_path: Any,
 ) -> None:
@@ -576,6 +580,7 @@ def test_forced_write_plan_does_not_contaminate_same_turn_finalization_context(
     monkeypatch.setattr(tool_surface, "should_use_weak_director_slim_tool_schema", lambda **_kwargs: False)
 
     context_override: dict[str, Any] = {
+        "single_batch_execution": True,
         "delivery_mode": "materialize_changes",
         "target_files": ["src/index.js"],
     }

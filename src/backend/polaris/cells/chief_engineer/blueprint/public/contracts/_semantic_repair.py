@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from ._behavior import ChiefEngineerBehaviorExampleV1, ChiefEngineerBehaviorInvariantV1
-from ._completion import ArtifactObligationV1, EntrypointObligationV1
+from ._completion import ArtifactObligationV1, EntrypointObligationV1, VerificationCommandAuthorityV1
 from ._helpers import (
     _require_completion_token,
     _require_non_empty,
@@ -24,6 +24,7 @@ ChiefEngineerSemanticRepairOperationV1 = Literal[
     "entrypoint_upsert",
     "behavior_invariant_upsert",
     "task_behavior_ref_replace",
+    "verification_recipe_upsert",
 ]
 
 _ALLOWED_OPERATIONS = frozenset(
@@ -32,6 +33,7 @@ _ALLOWED_OPERATIONS = frozenset(
         "entrypoint_upsert",
         "behavior_invariant_upsert",
         "task_behavior_ref_replace",
+        "verification_recipe_upsert",
     }
 )
 
@@ -213,6 +215,7 @@ class ChiefEngineerSemanticRepairDiagnosisV1:
     candidate_hash: str
     diagnostic_codes: tuple[str, ...]
     allowed_operations: tuple[ChiefEngineerSemanticRepairOperationV1, ...]
+    verification_recipe_diagnostics: tuple[Mapping[str, Any], ...] = ()
     diagnosis_hash: str = field(init=False)
     schema_version: Literal["chief_engineer.semantic_repair_diagnosis.v1"] = (
         "chief_engineer.semantic_repair_diagnosis.v1"
@@ -227,15 +230,31 @@ class ChiefEngineerSemanticRepairDiagnosisV1:
         unknown = set(allowed_operations) - _ALLOWED_OPERATIONS
         if unknown:
             raise ValueError(f"unsupported semantic repair operations: {sorted(unknown)}")
-        seed = {
+        if not isinstance(self.verification_recipe_diagnostics, (list, tuple)):
+            raise TypeError("verification_recipe_diagnostics must contain mappings")
+        diagnostics = tuple(
+            _exact_mapping("verification_recipe_diagnostic", item) for item in self.verification_recipe_diagnostics
+        )
+        for item in diagnostics:
+            if item.get("collection") not in {"verification", "entrypoints"}:
+                raise ValueError("verification_recipe_diagnostic collection is invalid")
+            path = item.get("source_path")
+            if not isinstance(path, list) or path[:2] != ["obligations", item["collection"]]:
+                raise ValueError("verification_recipe_diagnostic source_path is invalid")
+            if len(path) not in {2, 3} or (len(path) == 3 and (type(path[2]) is not int or path[2] < 0)):
+                raise ValueError("verification_recipe_diagnostic source_path is invalid")
+        seed: dict[str, Any] = {
             "schema_version": self.schema_version,
             "candidate_hash": candidate_hash,
             "diagnostic_codes": list(diagnostic_codes),
             "allowed_operations": list(allowed_operations),
         }
+        if diagnostics:
+            seed["verification_recipe_diagnostics"] = list(diagnostics)
         object.__setattr__(self, "candidate_hash", candidate_hash)
         object.__setattr__(self, "diagnostic_codes", diagnostic_codes)
         object.__setattr__(self, "allowed_operations", allowed_operations)
+        object.__setattr__(self, "verification_recipe_diagnostics", diagnostics)
         object.__setattr__(self, "diagnosis_hash", _canonical_payload_hash(seed))
 
     def to_dict(self) -> dict[str, Any]:
@@ -245,7 +264,37 @@ class ChiefEngineerSemanticRepairDiagnosisV1:
             "diagnostic_codes": list(self.diagnostic_codes),
             "allowed_operations": list(self.allowed_operations),
             "diagnosis_hash": self.diagnosis_hash,
+            **(
+                {"verification_recipe_diagnostics": deepcopy(list(self.verification_recipe_diagnostics))}
+                if self.verification_recipe_diagnostics
+                else {}
+            ),
         }
+
+
+def _normalize_verification_recipe_upsert(value: object) -> dict[str, Any]:
+    """Validate semantic recipe content; command hashes are exclusively server-owned."""
+
+    row = _exact_mapping("verification_recipe_upsert", value)
+    fields = {"obligation_id", "modality", "argv", "cwd", "owner_task_id", "applicability", "covers_obligation_ids"}
+    if set(row) != fields:
+        raise ValueError("verification_recipe_upsert fields are invalid")
+    obligation_id = _require_completion_token("obligation_id", row["obligation_id"])
+    if row["applicability"] not in {"required", "optional"}:
+        raise ValueError("verification_recipe_upsert applicability is invalid")
+    authority = VerificationCommandAuthorityV1(
+        task_id=row["owner_task_id"], modality=row["modality"], argv=row["argv"], cwd=row["cwd"]
+    )
+    covered = _strict_unique_string_tuple("covers_obligation_ids", row["covers_obligation_ids"])
+    return {
+        "obligation_id": obligation_id,
+        "modality": authority.modality,
+        "argv": list(authority.argv),
+        "cwd": authority.cwd,
+        "owner_task_id": authority.task_id,
+        "applicability": row["applicability"],
+        "covers_obligation_ids": list(covered),
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +308,7 @@ class ChiefEngineerSemanticRepairPatchV1:
     entrypoint_remove_obligation_ids: tuple[str, ...] = ()
     behavior_invariant_upserts: tuple[ChiefEngineerBehaviorInvariantV1, ...] = ()
     task_behavior_ref_replacements: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    verification_recipe_upserts: tuple[Mapping[str, Any], ...] = ()
     operations: tuple[ChiefEngineerSemanticRepairOperationV1, ...] = field(init=False)
     patch_hash: str = field(init=False)
     schema_version: Literal["chief_engineer.semantic_repair_patch.v1"] = "chief_engineer.semantic_repair_patch.v1"
@@ -284,6 +334,7 @@ class ChiefEngineerSemanticRepairPatchV1:
             "entrypoint_remove_obligation_ids",
             self.entrypoint_remove_obligation_ids,
         )
+        recipes = tuple(_normalize_verification_recipe_upsert(row) for row in self.verification_recipe_upserts)
         operations: list[ChiefEngineerSemanticRepairOperationV1] = []
         if self.artifact_upserts:
             operations.append("artifact_upsert")
@@ -293,6 +344,8 @@ class ChiefEngineerSemanticRepairPatchV1:
             operations.append("behavior_invariant_upsert")
         if refs:
             operations.append("task_behavior_ref_replace")
+        if recipes:
+            operations.append("verification_recipe_upsert")
         if not operations:
             raise ValueError("semantic repair patch must contain at least one operation")
         seed = {
@@ -306,6 +359,8 @@ class ChiefEngineerSemanticRepairPatchV1:
             "task_behavior_ref_replacements": {key: list(value) for key, value in sorted(refs.items())},
             "operations": operations,
         }
+        if recipes:
+            seed["verification_recipe_upserts"] = list(recipes)
         object.__setattr__(self, "base_candidate_hash", base_hash)
         object.__setattr__(self, "diagnosis_hash", diagnosis_hash)
         object.__setattr__(self, "artifact_upserts", tuple(self.artifact_upserts))
@@ -313,6 +368,7 @@ class ChiefEngineerSemanticRepairPatchV1:
         object.__setattr__(self, "entrypoint_remove_obligation_ids", entrypoint_removals)
         object.__setattr__(self, "behavior_invariant_upserts", tuple(self.behavior_invariant_upserts))
         object.__setattr__(self, "task_behavior_ref_replacements", refs)
+        object.__setattr__(self, "verification_recipe_upserts", recipes)
         object.__setattr__(self, "operations", tuple(operations))
         object.__setattr__(self, "patch_hash", _canonical_payload_hash(seed))
 
@@ -330,6 +386,11 @@ class ChiefEngineerSemanticRepairPatchV1:
             },
             "operations": list(self.operations),
             "patch_hash": self.patch_hash,
+            **(
+                {"verification_recipe_upserts": deepcopy(list(self.verification_recipe_upserts))}
+                if self.verification_recipe_upserts
+                else {}
+            ),
         }
 
     @classmethod
@@ -349,7 +410,7 @@ class ChiefEngineerSemanticRepairPatchV1:
             "behavior_invariant_upserts",
             "task_behavior_ref_replacements",
         }
-        optional_fields = {"entrypoint_remove_obligation_ids"}
+        optional_fields = {"entrypoint_remove_obligation_ids", "verification_recipe_upserts"}
         required_fields = expected_fields if allowed_operations is None else {"base_candidate_hash", "diagnosis_hash"}
         if not required_fields.issubset(payload) or set(payload) - expected_fields - optional_fields:
             raise ValueError("semantic repair provider patch fields are invalid")
@@ -359,6 +420,7 @@ class ChiefEngineerSemanticRepairPatchV1:
                 "entrypoint_upsert",
                 "behavior_invariant_upsert",
                 "task_behavior_ref_replace",
+                "verification_recipe_upsert",
             }
         )
         enabled_operations = all_operations if allowed_operations is None else frozenset(allowed_operations)
@@ -384,6 +446,7 @@ class ChiefEngineerSemanticRepairPatchV1:
         ):
             raise TypeError("entrypoint_remove_obligation_ids must contain strings")
         behavior_rows = rows("behavior_invariant_upserts") if "behavior_invariant_upsert" in enabled_operations else ()
+        recipe_rows = rows("verification_recipe_upserts") if "verification_recipe_upsert" in enabled_operations else ()
         refs: Mapping[Any, Any]
         if "task_behavior_ref_replace" in enabled_operations:
             raw_refs = payload.get("task_behavior_ref_replacements", {})
@@ -496,6 +559,7 @@ class ChiefEngineerSemanticRepairPatchV1:
             entrypoint_remove_obligation_ids=tuple(raw_entrypoint_removals),
             behavior_invariant_upserts=tuple(behaviors),
             task_behavior_ref_replacements={str(key): tuple(value) for key, value in refs.items()},
+            verification_recipe_upserts=recipe_rows,
         )
 
 

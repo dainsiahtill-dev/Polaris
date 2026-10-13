@@ -94,6 +94,15 @@ _NODE_TEST_PROFILE_ID = "node.test_runner"
 _NODE_TEST_FLAG = "--test"
 _NODE_TEST_REPORTER_FORMS = (("--test-reporter=tap",), ("--test-reporter", "tap"))
 _NODE_TEST_PATH_SUFFIXES = frozenset({".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"})
+_NODE_PACKAGE_MANAGERS = ("npm", "pnpm", "yarn", "bun")
+_NODE_INSTALL_SUBCOMMANDS = ("ci", "install", "i")
+_NODE_SCRIPT_NAMES = {
+    "build": frozenset({"build", "compile", "typecheck", "type-check"}),
+    "test": frozenset({"test", "test:ci", "check:test"}),
+    "lint": frozenset({"lint", "check", "format:check"}),
+    "entrypoint": frozenset({"start", "dev", "serve"}),
+}
+_BUILTIN_COMMAND_MODALITIES = ("environment_prep", "build", "test", "lint", "entrypoint")
 
 
 def _is_node_test_runner_argv(argv: tuple[str, ...]) -> bool:
@@ -124,8 +133,106 @@ def _node_test_argument_rejection(argv: tuple[str, ...]) -> tuple[int | None, st
     return None, ""
 
 
+def _node_test_accepted_shape() -> str:
+    forms = " | ".join(" ".join(form) for form in _NODE_TEST_REPORTER_FORMS)
+    return (
+        f"node {_NODE_TEST_FLAG} [{forms}] [workspace-relative test file/glob ...]; "
+        f"suffixes: {', '.join(sorted(_NODE_TEST_PATH_SUFFIXES))}"
+    )
+
+
+def _node_profile_candidates(modality: str) -> list[dict[str, object]]:
+    """Project examples from existing Node grammar; resolver remains authoritative."""
+    shapes: list[tuple[str, list[tuple[str, ...]]]] = []
+    if modality == "environment_prep":
+        shapes.append(
+            (
+                f"{' | '.join(_NODE_PACKAGE_MANAGERS)} <{' | '.join(_NODE_INSTALL_SUBCOMMANDS)}>",
+                [(manager, action) for manager in _NODE_PACKAGE_MANAGERS for action in _NODE_INSTALL_SUBCOMMANDS],
+            )
+        )
+    scripts = _NODE_SCRIPT_NAMES.get(modality, frozenset())
+    if scripts:
+        shapes.append(
+            (
+                f"{' | '.join(_NODE_PACKAGE_MANAGERS)} <run | run-script> <{' | '.join(sorted(scripts))}>",
+                [
+                    (manager, action, script)
+                    for manager in _NODE_PACKAGE_MANAGERS
+                    for action in ("run", "run-script")
+                    for script in sorted(scripts)
+                ]
+                + [(manager, script) for manager in _NODE_PACKAGE_MANAGERS for script in sorted(scripts)],
+            )
+        )
+    if modality == "test":
+        shapes.append(
+            (
+                _node_test_accepted_shape(),
+                [("node", _NODE_TEST_FLAG)]
+                + [("node", _NODE_TEST_FLAG, *form, "tests/example.test.js") for form in _NODE_TEST_REPORTER_FORMS],
+            )
+        )
+    if modality in {"build", "lint"}:
+        compiler_flags = ("--noEmit",) if modality == "lint" else ()
+        shapes.append(
+            (
+                "npx tsc --noEmit [-p workspace-relative tsconfig]"
+                if modality == "lint"
+                else "npx tsc [-p workspace-relative tsconfig]; without --noEmit",
+                [("npx", "tsc", *compiler_flags), ("npx", "tsc", *compiler_flags, "-p", "tsconfig.json")],
+            )
+        )
+    if modality == "entrypoint":
+        shapes.append(
+            (
+                "node <workspace-relative .js | .mjs | .cjs file> [application arguments ...]",
+                [("node", f"src/cli{suffix}") for suffix in (".js", ".mjs", ".cjs")],
+            )
+        )
+    candidates: list[dict[str, object]] = []
+    for shape, examples in shapes:
+        profile_id, _error = resolve_builtin_profile(modality, examples[0])
+        accepted_examples = [
+            list(example) for example in examples if resolve_builtin_profile(modality, example) == (profile_id, "")
+        ]
+        if profile_id and accepted_examples:
+            candidates.append(
+                {
+                    "candidate_profile_id": profile_id,
+                    "expected_modality": modality,
+                    "accepted_shape": shape,
+                    "argv_examples": accepted_examples,
+                }
+            )
+    return candidates
+
+
 def describe_builtin_command_profile(modality: str, argv: tuple[str, ...]) -> dict[str, object]:
-    """Describe current syntax; never propose changed argv or grant permission."""
+    """Describe existing alternatives; never rewrite a proposal or grant permission."""
+    candidates = _node_profile_candidates(modality)
+    for expected_modality in _BUILTIN_COMMAND_MODALITIES:
+        if expected_modality == modality:
+            continue
+        profile_id, _error = resolve_builtin_profile(expected_modality, argv)
+        if profile_id:
+            candidates.insert(
+                0,
+                {
+                    "candidate_profile_id": profile_id,
+                    "expected_modality": expected_modality,
+                    "accepted_shape": " ".join(argv),
+                    "argv_examples": [list(argv)],
+                },
+            )
+            break
+    feedback: dict[str, object] = {"candidate_profiles": candidates}
+    if candidates:
+        feedback.update(candidates[0])
+        feedback["materialization_note"] = (
+            "Examples describe planning syntax only. Declare and materialize the selected workspace files, "
+            "package scripts and dependencies; runtime still validates their contents, identity and proof."
+        )
     if not _is_node_test_runner_argv(argv) and not (
         modality == "test"
         and _exe(argv) == "node"
@@ -133,13 +240,12 @@ def describe_builtin_command_profile(modality: str, argv: tuple[str, ...]) -> di
         and argv[1].startswith("-")
         and _NODE_TEST_FLAG in argv[2:]
     ):
-        return {}
-    forms = " | ".join(" ".join(form) for form in _NODE_TEST_REPORTER_FORMS)
-    feedback: dict[str, object] = {
-        "candidate_profile_id": _NODE_TEST_PROFILE_ID,
-        "accepted_shape": f"node {_NODE_TEST_FLAG} [{forms}] [workspace-relative test file/glob ...]; "
-        f"suffixes: {', '.join(sorted(_NODE_TEST_PATH_SUFFIXES))}",
-    }
+        return feedback
+    if modality != "test":
+        candidates.extend(_node_profile_candidates("test"))
+    feedback.update(
+        next(candidate for candidate in candidates if candidate["candidate_profile_id"] == _NODE_TEST_PROFILE_ID)
+    )
     index, reason_code = _node_test_argument_rejection(argv)
     if index is not None:
         feedback.update(
@@ -178,19 +284,13 @@ def _node_profile(modality: str, argv: tuple[str, ...]) -> str:
             return "node.typescript_check"
         if modality == "build" and "--noemit" not in compiler_options:
             return "node.typescript_build"
-    if executable not in {"npm", "pnpm", "yarn", "bun"}:
+    if executable not in _NODE_PACKAGE_MANAGERS:
         return ""
     subcommand = _subcommand(argv)
-    if modality == "environment_prep" and subcommand in {"ci", "install", "i"}:
+    if modality == "environment_prep" and subcommand in _NODE_INSTALL_SUBCOMMANDS:
         return "node.package_install"
     script = _script_name(argv).casefold()
-    allowed = {
-        "build": {"build", "compile", "typecheck", "type-check"},
-        "test": {"test", "test:ci", "check:test"},
-        "lint": {"lint", "check", "format:check"},
-        "entrypoint": {"start", "dev", "serve"},
-    }
-    return f"node.script_{modality}" if script in allowed.get(modality, set()) else ""
+    return f"node.script_{modality}" if script in _NODE_SCRIPT_NAMES.get(modality, frozenset()) else ""
 
 
 def _python_profile(modality: str, argv: tuple[str, ...]) -> str:
@@ -427,7 +527,7 @@ def resolve_builtin_profile(modality: str, argv: tuple[str, ...]) -> tuple[str, 
         profile_id = resolver(modality, argv)
         if profile_id:
             return profile_id, ""
-    for other_modality in ("environment_prep", "build", "test", "lint", "entrypoint"):
+    for other_modality in _BUILTIN_COMMAND_MODALITIES:
         if other_modality == modality:
             continue
         if any(resolver(other_modality, argv) for resolver in resolvers):

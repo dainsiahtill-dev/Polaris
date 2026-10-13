@@ -1408,6 +1408,265 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             raise RuntimeError("factory_task_binding_ambiguous")
         return matches[0] if matches else None
 
+    def _factory_abort_recovery_checkpoint(
+        self, *, external_task_id: str, factory_run_id: str
+    ) -> tuple[dict[str, Any], dict[str, Any], TaskExecutionSession] | None:
+        """Read an authenticated failure-drain checkpoint, never a caller flag.
+
+        A cleanup tombstone may hide the original row/session. Its immediate
+        task predecessor must be our failure-drain cancellation, backed by the
+        same attempt's durable terminal fact. The old session is evidence only.
+        """
+        from ..execution_effect_closure import _read_owner_events
+
+        events = _read_owner_events(self.workspace)
+        matching: dict[str, list[dict[str, Any]]] = {}
+        for event in events:
+            payload = event.get("payload")
+            snapshot = payload.get("task_row_snapshot") if isinstance(payload, dict) else None
+            metadata = snapshot.get("metadata") if isinstance(snapshot, dict) else None
+            if not isinstance(metadata, dict) or not self._metadata_matches_external_task_id(
+                metadata, external_task_id
+            ):
+                continue
+            if metadata.get("factory_run_id") != factory_run_id:
+                continue
+            if not isinstance(payload, dict) or not isinstance(snapshot, dict):
+                raise RuntimeError("factory_task_recovery_fact_binding_invalid")
+            if (
+                event.get("source") != "runtime.task_runtime"
+                or payload.get("workspace") != self.workspace
+                or payload.get("factory_run_id") != factory_run_id
+                or str(event.get("aggregate_id")) != str(snapshot.get("id"))
+                or str(payload.get("task_id")) != str(snapshot.get("id"))
+                or self._same_task_external_aliases(snapshot) != {external_task_id}
+            ):
+                raise RuntimeError("factory_task_recovery_fact_binding_invalid")
+            matching.setdefault(str(snapshot["id"]), []).append(dict(event))
+        if not matching:
+            return None
+        if len(matching) != 1:
+            raise RuntimeError("factory_task_binding_ambiguous")
+        history = next(iter(matching.values()))
+        latest = history[-1]
+        if latest.get("event_type") == "runtime_reset_removed":
+            details = latest["payload"].get("details", {})
+            if details.get("previous_status") != "cancelled":
+                return None
+            if details.get("reset_factory_run_id") != factory_run_id or len(history) < 2:
+                raise RuntimeError("factory_task_recovery_owner_not_failed")
+            cancelled = history[-2]
+        elif latest.get("event_type") == "cancelled":
+            cancelled = latest
+        else:
+            return None
+        payload = cancelled["payload"]
+        details = payload.get("details", {})
+        if (
+            cancelled.get("event_type") != "cancelled"
+            or payload.get("execution_state") != "cancelled"
+            or details.get("factory_abort") is not True
+            or details.get("factory_run_id") != factory_run_id
+            or details.get("source") != "factory_terminal_drain"
+            or details.get("reason") != "factory_failed"
+        ):
+            raise RuntimeError("factory_task_recovery_owner_not_failed")
+        terminal = [
+            event
+            for event in history
+            if (
+                event.get("seq", 0) < cancelled.get("seq", 0)
+                and event.get("event_type") in {"completed", "failed"}
+                and event["payload"].get("session_id") == payload.get("session_id")
+                and event["payload"].get("attempt") == payload.get("attempt")
+                and event["payload"].get("run_id") == payload.get("run_id")
+            )
+        ]
+        if len(terminal) != 1:
+            raise RuntimeError("factory_task_recovery_terminal_fact_missing")
+        terminal_payload = terminal[0]["payload"]
+        terminal_metadata = terminal_payload["task_row_snapshot"]["metadata"]
+        checkpoint_metadata = latest["payload"]["task_row_snapshot"]["metadata"]
+        for key in (
+            "factory_run_id",
+            "external_task_id",
+            "pm_task_id",
+            "source_task_id",
+            "blueprint_id",
+            "task_completion_projection",
+            "job_token",
+            "capability_token",
+            "scope",
+            "target_files",
+            "task_contract",
+        ):
+            if checkpoint_metadata.get(key) != terminal_metadata.get(key):
+                raise RuntimeError("factory_task_recovery_contract_mismatch")
+        runtime = terminal_payload["task_row_snapshot"]["metadata"].get("runtime_execution")
+        if not isinstance(runtime, dict):
+            raise RuntimeError("factory_task_recovery_terminal_proof_missing")
+        session = TaskExecutionSession.from_dict(runtime)
+        from polaris.cells.runtime.task_runtime.public.contracts import DirectedEffectParentRegistryIdentityV1
+
+        from ..execution_effect_closure import _owner_terminal_session
+
+        attempt = self._execution_attempt_identity_from_session(session)
+        authenticated = _owner_terminal_session(
+            events, DirectedEffectParentRegistryIdentityV1.from_execution_attempt(attempt), attempt
+        )
+        if (
+            authenticated is None
+            or authenticated[1] != terminal[0]
+            or session.status != terminal[0]["event_type"]
+            or session.session_id != payload.get("session_id")
+            or session.task_id != int(payload["task_id"])
+            or session.attempt != payload.get("attempt")
+            or session.run_id != payload.get("run_id")
+            or session.external_task_id != external_task_id
+            or session.role_id != "director"
+            or not self._has_pending_terminal_intent(session)
+        ):
+            raise RuntimeError("factory_task_recovery_terminal_binding_invalid")
+        row = self._project_execution_fact_event_row(latest)
+        if row is None:
+            raise RuntimeError("factory_task_recovery_fact_binding_invalid")
+        return row, latest, session
+
+    def _prepare_factory_abort_recovery(
+        self,
+        checkpoint: tuple[dict[str, Any], dict[str, Any], TaskExecutionSession],
+        *,
+        expected_projection: tuple[str, str, str, str],
+    ) -> dict[str, Any]:
+        """Reopen/rehydrate one exact owner under existing namespace and session fences."""
+        row, event, old_session = checkpoint
+        row_id = int(row["id"])
+        with (
+            self._get_session_lock(row_id),
+            self._board._file_lock(self._session_file_lock_path(row_id)),
+            self._board.transaction(),
+            self._board._mutation_guard() as guard,
+        ):
+            current_checkpoint = self._factory_abort_recovery_checkpoint(
+                external_task_id=expected_projection[0], factory_run_id=expected_projection[1]
+            )
+            if current_checkpoint is None or current_checkpoint[1] != event:
+                raise RuntimeError("factory_task_recovery_compare_and_set_failed")
+            metadata = row.get("metadata", {})
+            projection = metadata.get("task_completion_projection")
+            if (
+                not isinstance(projection, Mapping)
+                or tuple(
+                    projection.get(key) for key in ("task_id", "run_id", "project_contract_hash", "projection_hash")
+                )
+                != expected_projection
+            ):
+                raise RuntimeError("factory_task_recovery_contract_mismatch")
+            snapshot = self._board._load_task_snapshot_from_disk(row_id)
+            current, before_hash = snapshot if snapshot else (None, "")
+            removed = event["event_type"] == "runtime_reset_removed"
+            if (removed and current is not None) or (
+                not removed and (current is None or current.status != TaskStatus.CANCELLED)
+            ):
+                raise RuntimeError("factory_task_recovery_compare_and_set_failed")
+            if current is not None:
+                canonical_metadata = event["payload"]["task_row_snapshot"]["metadata"]
+                for key in (
+                    "factory_run_id",
+                    "external_task_id",
+                    "pm_task_id",
+                    "source_task_id",
+                    "blueprint_id",
+                    "task_completion_projection",
+                    "job_token",
+                    "capability_token",
+                    "scope",
+                    "target_files",
+                    "task_contract",
+                ):
+                    if current.metadata.get(key) != canonical_metadata.get(key):
+                        raise RuntimeError("factory_task_recovery_compare_and_set_failed")
+            for path in self._board.tasks_dir.glob("task_*.json"):
+                if path.name.endswith(".session.json"):
+                    continue
+                token = path.stem.removeprefix("task_")
+                if not token.isdigit():
+                    raise RuntimeError("factory_task_recovery_namespace_invalid")
+                candidate = self._board._load_task_snapshot_from_disk(int(token))
+                if candidate is None:
+                    raise RuntimeError("factory_task_recovery_namespace_unreadable")
+                if candidate[0].id != row_id and self._metadata_matches_external_task_id(
+                    candidate[0].metadata, expected_projection[0]
+                ):
+                    raise RuntimeError("factory_task_binding_ambiguous")
+            session = self._read_session_locked(row_id)
+            if session is not None and session.to_dict() != old_session.to_dict():
+                raise RuntimeError("factory_task_recovery_session_changed")
+            if removed and session is not None:
+                raise RuntimeError("factory_task_recovery_session_changed")
+            barrier = self._directed_effect_inactive_pre_barrier_locked(old_session)
+            if not barrier.allowed:
+                raise RuntimeError("factory_task_recovery_terminal_effects_unsettled")
+            from polaris.cells.runtime.task_runtime.public.contracts import (
+                DirectedEffectOperationResultV1,
+                DirectedEffectParentRegistryIdentityV1,
+            )
+
+            from ..directed_effect_operation import DirectedEffectOperationRepository
+            from ..execution_effect_closure import _registry_absent
+
+            identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(
+                self._execution_attempt_identity_from_session(old_session)
+            )
+            registry = DirectedEffectOperationRepository()._load_registry(self.workspace, identity)
+            if isinstance(registry, DirectedEffectOperationResultV1) and not _registry_absent(
+                registry, self.workspace, identity
+            ):
+                raise RuntimeError("factory_task_recovery_terminal_effects_unsettled")
+            recovery_metadata = {
+                "factory_recovery_checkpoint_event_id": event["event_id"],
+                "claim_attempt": old_session.attempt + 1,
+            }
+            if removed:
+                payload = self._task_row_payload_for_reexecution(row)
+                payload["metadata"].update(recovery_metadata)
+                task = Task.from_dict(payload)
+                self._board._save_task(task, expected_before_hash="", _mutation_guard=guard)
+            else:
+                assert session is not None
+                task = self._board.reopen(
+                    row_id,
+                    reason="factory_same_logical_task_recovery",
+                    metadata=self._build_runtime_metadata(
+                        session=session,
+                        effective_status="pending",
+                        resume_state="",
+                        extra_metadata=recovery_metadata,
+                    ),
+                    allow_terminal_reopen=True,
+                    expected_before_hash=before_hash,
+                    _mutation_guard=guard,
+                    _defer_ready_notification=True,
+                )
+            if task is None:
+                raise RuntimeError("factory_task_recovery_compare_and_set_failed")
+            # The session file lock is already held. Augmentation rereads it
+            # through a non-reentrant process lock; build this owner fact from
+            # the committed row and the already authenticated session instead.
+            reopened = task.to_dict()
+            recovery_event = self._append_execution_event(
+                "reopened",
+                task_row=reopened,
+                session=session,
+                details={
+                    "reason": "factory_same_logical_task_recovery",
+                    "checkpoint_event_id": event["event_id"],
+                    "rehydrated": removed,
+                },
+            )
+        self._board.notify_ready_tasks()
+        return project_task_row_execution_event(reopened, recovery_event, execution_events=(recovery_event,))
+
     def prepare_factory_task_recovery(
         self,
         *,
@@ -1427,6 +1686,13 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
                 raise ValueError("factory_task_recovery_contract_identity_required")
         row = self.resolve_factory_task_row(external_task_id=external_task_id, factory_run_id=factory_run_id)
+        expected_projection = (external_task_id, factory_run_id, project_contract_hash, projection_hash)
+        if row is None or str(row.get("execution_state") or row.get("status") or "").lower() == "cancelled":
+            checkpoint = self._factory_abort_recovery_checkpoint(
+                external_task_id=external_task_id, factory_run_id=factory_run_id
+            )
+            if checkpoint is not None:
+                return self._prepare_factory_abort_recovery(checkpoint, expected_projection=expected_projection)
         if row is None:
             raise RuntimeError("factory_task_recovery_owner_missing")
         row_id = self.normalize_task_id(row.get("id"))
@@ -1437,7 +1703,6 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         metadata = row.get("metadata")
         metadata = metadata if isinstance(metadata, Mapping) else {}
         projection = metadata.get("task_completion_projection")
-        expected_projection = (external_task_id, factory_run_id, project_contract_hash, projection_hash)
         if (
             not isinstance(projection, Mapping)
             or tuple(projection.get(key) for key in ("task_id", "run_id", "project_contract_hash", "projection_hash"))

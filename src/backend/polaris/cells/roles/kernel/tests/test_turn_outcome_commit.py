@@ -254,7 +254,15 @@ def test_commit_tool_batch_preserves_top_level_effect_receipts(tmp_path: Path) -
             "batch_receipt": {
                 "batch_id": "batch-write",
                 "turn_id": str(turn_id),
-                "results": [],
+                "results": [
+                    {
+                        "call_id": "call-write",
+                        "tool_name": "write_file",
+                        "status": "success",
+                        "result": {"ok": True},
+                        "effect_receipt": effect_receipt,
+                    }
+                ],
                 "raw_results": [],
                 "effect_receipts": [effect_receipt],
                 "success_count": 1,

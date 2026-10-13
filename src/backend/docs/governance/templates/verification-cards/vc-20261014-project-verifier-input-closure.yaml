@@ -1,0 +1,34 @@
+id: vc-20261014-project-verifier-input-closure
+classification: pattern
+owner_cell: factory.verification_guard
+status: component_verified_native_pending
+design: ../../docs/blueprints/PROJECT_VERIFIER_INPUT_CLOSURE_20261014.md
+assumptions:
+  - Verifier coverage is not a declaration that generated runtime output already exists.
+  - Entrypoint and explicit command runtime inputs must remain strict byte-bound inputs.
+  - Existing full source and declared artifact closure constrains reads, not action authority.
+evidence:
+  - Native18 contract 202aa465c90badd8ff9d14b03b35b891bab339325e04f5077bfc422e7ca93d5a.
+  - VER-BUILD covers ENT-CLI-RUN source src/cli/run.ts and future runtime dist/cli/run.js.
+  - RED four source modalities reject missing dist before broker reservation or spawn.
+pre_mortem:
+  - Removing every runtime path could weaken actual entrypoint or compiled test inputs.
+  - Existence-based filtering could hide missing source, symlink or foreign-path failures.
+  - Local component receipts could be misreported as fresh Bench completion.
+defenses:
+  - Separate coverage/source closure from modality and exact canonical argv runtime consumption.
+  - Keep all existing artifact dependencies and strict broker checks unchanged.
+  - Preserve actual build, test and entrypoint errors and distinguish evidence scopes.
+validation:
+  - RED 4 failed, 9 passed, 8 deselected; missing dist parent in strict broker snapshot.
+  - Final owner/bootstrap/broker/sandbox regression collection 151 passed in 27.15 seconds.
+  - Ruff check and format-check clean; Mypy no issues in two source files.
+  - Additional absolute runtime-reference RED failed before workspace lexical normalization.
+  - Real private broker BUILD and ENTRY both spawned, sealed exit 0 and proof satisfied.
+remaining:
+  - Fresh isolated L1-01 and protected terminal namespace release are coordinator-owned.
+  - Indirect runtime reads need explicit contract artifact dependencies.
+  - Conservative exact argv pins may still reject explicit output operands.
+boundary_change: false
+new_execution_authority: false
+kernelone_changed: false

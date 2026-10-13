@@ -205,7 +205,25 @@ def _execution_from_result(
         return None
     raw_receipt = result.get("batch_receipt")
     receipt = BatchReceipt.model_validate(raw_receipt) if isinstance(raw_receipt, Mapping) and raw_receipt else None
-    invocations = list(decision.tool_batch.invocations)
+    batches = list(ledger.invocation_batches)
+    captured = (
+        [item for batch in batches for item in batch.invocations] if batches else list(decision.tool_batch.invocations)
+    )
+    by_call = {str(item.call_id): item for item in captured}
+    if len(by_call) != len(captured):
+        raise TurnOutcomeCommitError("committed_tool_invocation_identity_collision")
+    # Missing evidence cannot erase attempted mutations or call inputs.
+    invocations = list(captured) if receipt is None else []
+    seen: set[str] = set()
+    for row in receipt.results if receipt is not None else []:
+        call_id = str(row.call_id)
+        invocation = by_call.get(call_id)
+        if not call_id or call_id in seen or invocation is None or invocation.tool_name != row.tool_name:
+            raise TurnOutcomeCommitError("committed_tool_receipt_invocation_mismatch")
+        seen.add(call_id)
+        invocations.append(invocation)
+    if receipt is not None and seen != set(by_call):
+        raise TurnOutcomeCommitError("committed_tool_receipt_invocation_mismatch")
     effect_types = {invocation.effect_type for invocation in invocations}
     side_effect_class: Literal["readonly", "local_write", "external_write"]
     if ToolEffectType.ASYNC in effect_types:
@@ -215,9 +233,10 @@ def _execution_from_result(
     else:
         side_effect_class = "readonly"
     return ToolBatchExecution(
-        batch_id=decision.tool_batch.batch_id,
+        batch_id=receipt.batch_id if receipt is not None else decision.tool_batch.batch_id,
         invocations=invocations,
         receipt=receipt,
+        invocation_batches=batches,
         side_effect_class=side_effect_class,
     )
 

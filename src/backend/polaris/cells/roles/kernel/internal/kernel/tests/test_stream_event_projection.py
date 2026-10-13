@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -18,6 +19,28 @@ from polaris.cells.roles.kernel.public.structured_output_contracts import (
 )
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, ErrorEvent
 from polaris.cells.roles.profile.public.service import RoleTurnRequest
+
+
+def _completion_with_invocations(**kwargs: Any) -> CompletionEvent:
+    """Author fixture call inputs independently of tool-result observations."""
+    inputs = {
+        "read-1": {"file": "input.py"},
+        "write-1": {"file": "first.py", "content": "VALUE = 42\n"},
+        "call-raw-1": {"path": "app.py", "content": "print('ok')\n"},
+    }
+    receipt = kwargs.get("batch_receipt") or {}
+    rows = receipt.get("results") or receipt.get("raw_results") or []
+    if rows:
+        kwargs["turn_outcome"] = {
+            "execution": {
+                "invocations": [
+                    {"call_id": row["call_id"], "tool_name": row["tool_name"], "arguments": inputs[row["call_id"]]}
+                    for row in rows
+                ],
+                "receipt": {**deepcopy(receipt), "results": deepcopy(rows)},
+            }
+        }
+    return CompletionEvent(**kwargs)
 
 
 class _Publisher:
@@ -40,7 +63,7 @@ def test_stream_observation_is_pending_and_keeps_read_receipt(tmp_path: Path, mo
 
     monkeypatch.setattr(projection, "record_missing_dispatch_lifecycle_receipt", unexpected_missing_dispatch)
     monkeypatch.setattr(projection, "append_role_turn_task_boundary_verdict", pending_boundary)
-    event = CompletionEvent(
+    event = _completion_with_invocations(
         turn_id="read-turn",
         status="success",
         turn_kind="continue_multi_turn",
@@ -92,7 +115,7 @@ def test_failed_task_boundary_keeps_committed_turn_for_local_repair(tmp_path: Pa
     commit = {"transition_id": "turn-1", "fact_stream_receipt_ref": "committed-turn-1"}
     result = asyncio.run(
         projector.project(
-            CompletionEvent(
+            _completion_with_invocations(
                 turn_id="turn-1",
                 status="success",
                 turn_kind="tool_batch_with_receipt",
@@ -129,7 +152,7 @@ def test_fatal_stream_completion_retains_committed_receipts(tmp_path: Path, monk
     commit = {"transition_id": "turn-1", "fact_stream_receipt_ref": "committed-turn-1"}
     result = asyncio.run(
         projector.project(
-            CompletionEvent(
+            _completion_with_invocations(
                 turn_id="turn-1",
                 status="failed" if failure != "ledger_append" else "success",
                 error="execution authority revoked" if failure != "ledger_append" else None,
@@ -489,7 +512,7 @@ def test_stream_completion_fails_closed_on_required_write_without_dispatch(
 
     result = asyncio.run(
         projector.project(
-            CompletionEvent(
+            _completion_with_invocations(
                 turn_id="turn-1",
                 status="success",
                 duration_ms=7,
@@ -581,7 +604,7 @@ def test_stream_completion_validates_before_task_boundary(
 
     result = asyncio.run(
         projector.project(
-            CompletionEvent(
+            _completion_with_invocations(
                 turn_id="turn-invalid-output",
                 status="success",
                 duration_ms=7,
@@ -655,7 +678,7 @@ def test_stream_completion_projects_validated_structured_output(
 
     result = asyncio.run(
         projector.project(
-            CompletionEvent(
+            _completion_with_invocations(
                 turn_id="turn-valid-output",
                 status="success",
                 duration_ms=7,
@@ -748,7 +771,7 @@ def test_stream_completion_uses_caller_structured_contract_before_role_shape(
 
     result = asyncio.run(
         projector.project(
-            CompletionEvent(
+            _completion_with_invocations(
                 turn_id="turn-ce-semantic-patch",
                 status="success",
                 duration_ms=7,
@@ -790,7 +813,7 @@ def test_stream_completion_fails_closed_when_task_boundary_ledger_append_raises(
     projector = _make_stream_completion_projector(tmp_path, publisher)
     result = asyncio.run(
         projector.project(
-            CompletionEvent(
+            _completion_with_invocations(
                 turn_id="turn-ledger-failure",
                 status="success",
                 duration_ms=7,
@@ -894,7 +917,7 @@ def test_stream_completion_does_not_report_dropped_dispatch_when_batch_has_evide
 
     result = asyncio.run(
         projector.project(
-            CompletionEvent(
+            _completion_with_invocations(
                 turn_id="turn-1",
                 status="success",
                 duration_ms=7,

@@ -14,8 +14,10 @@ Architecture note:
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import TYPE_CHECKING, cast
+from copy import deepcopy
+from typing import TYPE_CHECKING, Any, cast
 
 from .contracts import CompressionResult, ModelSpec, TokenBudgetDecision
 from .token_estimator import TokenEstimator
@@ -632,7 +634,7 @@ def compress_chat_messages_to_budget(
     allowed_prompt_tokens: int,
     *,
     content_type: str = "general",
-) -> list[dict[str, str]] | None:
+) -> list[dict[str, Any]] | None:
     """Compress the W1.5 structured message array to the prompt budget.
 
     Before this existed, budget compression rewrote only the FLATTENED input and
@@ -653,20 +655,59 @@ def compress_chat_messages_to_budget(
     """
     if allowed_prompt_tokens <= 0 or not isinstance(chat_messages, list):
         return None
-    normalized: list[dict[str, str]] = []
+    normalized: list[dict[str, Any]] = []
+    has_native_history = False
     for item in chat_messages:
         if not isinstance(item, dict):
             continue
-        content = str(item.get("content") or "")
-        if not content.strip():
-            continue
         role = str(item.get("role") or "").strip().lower() or "user"
-        normalized.append({"role": role, "content": content})
+        content = item.get("content")
+        if content is None:
+            content = ""
+        tool_calls = item.get("tool_calls")
+        native_tool_envelope = bool(tool_calls) or (role == "tool" and bool(item.get("tool_call_id")))
+        if not content and not native_tool_envelope:
+            continue
+        if isinstance(content, str) and not content.strip() and not native_tool_envelope:
+            continue
+        message = deepcopy(item)
+        message.update(role=role, content=deepcopy(content))
+        normalized.append(message)
+        has_native_history = (
+            has_native_history
+            or bool(tool_calls)
+            or role == "tool"
+            or (
+                isinstance(content, list)
+                and any(
+                    isinstance(block, dict) and block.get("type") in {"tool_use", "tool_result"} for block in content
+                )
+            )
+        )
     if not normalized:
         return None
-    total_tokens = sum(_estimate_message_tokens(message["content"], content_type) for message in normalized)
+    total_tokens = sum(
+        _estimate_message_tokens(
+            message["content"]
+            if isinstance(message["content"], str)
+            else json.dumps(message["content"], ensure_ascii=False),
+            content_type,
+        )
+        + (
+            TokenEstimator.estimate(json.dumps(message["tool_calls"], ensure_ascii=False), content_type=content_type)
+            if message.get("tool_calls")
+            else 0
+        )
+        for message in normalized
+    )
     if total_tokens <= int(allowed_prompt_tokens):
         return normalized
+    # Tool calls/results form an indivisible executable protocol. Text trimming
+    # must never erase IDs, error status, arguments or one half of a pair.
+    if has_native_history:
+        raise ValueError("native_tool_history_budget_exceeded")
+    if any(not isinstance(message["content"], str) for message in normalized):
+        raise ValueError("structured_message_content_budget_exceeded")
 
     lead_end = 0
     while lead_end < len(normalized) and normalized[lead_end]["role"] == "system":
@@ -694,27 +735,27 @@ def compress_chat_messages_to_budget(
     if remaining <= 0:
         return None
 
-    final_tokens = _estimate_message_tokens(final["content"], content_type)
+    final_tokens = _estimate_message_tokens(str(final["content"]), content_type)
     if final_tokens > remaining:
         trimmed_final = _trim_content_to_tokens(final["content"], max(1, remaining - _MESSAGE_TOKEN_OVERHEAD))
         if not trimmed_final:
             return None
-        final = {"role": final["role"], "content": trimmed_final}
+        final = {**final, "content": trimmed_final}
         final_tokens = _estimate_message_tokens(trimmed_final, content_type)
         if final_tokens > remaining:
             return None
 
     fill = remaining - final_tokens
-    kept_reversed: list[dict[str, str]] = []
+    kept_reversed: list[dict[str, Any]] = []
     for message in reversed(middle):
-        message_tokens = _estimate_message_tokens(message["content"], content_type)
+        message_tokens = _estimate_message_tokens(str(message["content"]), content_type)
         if message_tokens > fill:
             break
         kept_reversed.append(message)
         fill -= message_tokens
     dropped = len(middle) - len(kept_reversed)
 
-    result: list[dict[str, str]] = [*lead]
+    result: list[dict[str, Any]] = [*lead]
     if dropped > 0:
         result.append(
             {

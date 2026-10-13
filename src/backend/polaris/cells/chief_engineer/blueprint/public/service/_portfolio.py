@@ -2528,7 +2528,56 @@ def _normalize_portfolio_completion_contract(
 
         if project_kind_authority.project_kind == "application":
             if not environment_candidates:
-                raise ValueError("application has no PM-authorized environment_prep command for a required artifact")
+                required_artifacts = [
+                    {
+                        "obligation_id": str(row["obligation_id"]),
+                        "path": str(row["path"]),
+                        "owner_task_id": str(row["owner_task_id"]),
+                    }
+                    for row in artifact_rows
+                    if row["applicability"] == "required"
+                    and row["owner_task_id"] is not None
+                    and str(row["owner_task_id"]) in owners_for_path(str(row["path"]))
+                ]
+                required_owners = sorted({row["owner_task_id"] for row in required_artifacts})
+                delegated_owners = sorted(set(required_owners) & delegated_task_ids)
+                repair_hint = (
+                    "Add a required environment_prep recipe in obligations.verification for a required artifact "
+                    "and its authorized owner_task_id. "
+                    + (
+                        "For a PM-delegated owner, submit a CE-authored profile-validated recipe with concrete "
+                        "argv, workspace-relative cwd and command_authority_hash=null for server binding. "
+                        if delegated_owners
+                        else "For an owner without PM delegation, retain exact committed PM command authority; "
+                        "a CE proposal cannot create missing authorization. "
+                    )
+                    + "Retain explicit PM constraints and all other required verification and entrypoint rows. "
+                    "Do not guess a command or hash. Revise only the unaccepted draft using the current result schema."
+                )
+                raise _portfolio_contract_error(
+                    "application is missing a required environment_prep verification recipe for a required artifact",
+                    code="invalid_project_completion_contract",
+                    details={
+                        "repair_operation": "verification_recipe_upsert" if delegated_owners else None,
+                        "verification_recipe_diagnostics": [
+                            {
+                                "error_code": "missing_required_verification_recipe",
+                                "collection": "verification",
+                                "source_path": ["obligations", "verification"],
+                                "modality": "environment_prep",
+                                "expected_modality": "environment_prep",
+                                "applicability": "required",
+                                "owner_task_ids": required_owners,
+                                "delegated_owner_task_ids": delegated_owners,
+                                "required_artifacts": required_artifacts,
+                                "allowed_recipe_collections": ["verification"],
+                                "repair_hint": repair_hint,
+                                "guidance_only": True,
+                                "execution_authority": False,
+                            }
+                        ],
+                    },
+                )
             _, environment_artifact_id, environment_authority, environment_owner = sorted(
                 environment_candidates,
                 key=lambda item: (item[0], item[1], item[2].authority_hash),
@@ -3535,6 +3584,14 @@ def build_chief_engineer_blueprint_portfolio(
                     {
                         "target_files": list(task.target_files),
                         "scope_paths": list(task.scope_paths),
+                        "context_files": list(task_read_context.get(task.task_id, ())),
+                        "input_guidance": (
+                            "Product requirements and explicit constraints are already supplied in the PM task contract. "
+                            "Read only authorized existing target files or the exact context_files; a new artifact "
+                            "does not require a successful read before creation. Do not invent prerequisite input files. "
+                            "Implementation choices may evolve within authorized scope while observable acceptance "
+                            "and explicit constraints remain unchanged."
+                        ),
                         "entrypoint_targets": list(task.entrypoint_targets),
                         "verification_commands": [
                             item.command

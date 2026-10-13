@@ -30,7 +30,9 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     FinalizationRecord,
     OutcomeStatus,
     ResolutionCode,
+    ToolBatch,
     ToolBatchExecution,
+    ToolInvocation,
     TurnDecision,
     TurnFailureClass,
     TurnId,
@@ -167,6 +169,7 @@ class TurnLedger:
 
     # 工具执行记录
     tool_executions: list[dict] = field(default_factory=list)
+    invocation_batches: list[ToolBatch] = field(default_factory=list)
 
     # 决策记录
     decisions: list[dict] = field(default_factory=list)
@@ -241,6 +244,21 @@ class TurnLedger:
         if metadata:
             entry["metadata"] = dict(metadata)
         self.llm_calls.append(entry)
+
+    def record_invocation_batch(self, batch_id: str, invocations: list[ToolInvocation]) -> None:
+        """Capture prepared calls before dispatch, including denied/no-effect members.
+
+        Decision replacement cannot erase already executed bootstrap batches.
+        This inventory is an input record, never reconstructed from tool output.
+        """
+        captured = ToolBatch(batch_id=batch_id, invocations=invocations).model_copy(deep=True)
+        existing = {str(item.call_id): item for batch in self.invocation_batches for item in batch.invocations}
+        for invocation in captured.invocations:
+            call_id = str(invocation.call_id)
+            if not call_id or call_id in existing:
+                raise RuntimeError("committed_tool_invocation_identity_collision")
+            existing[call_id] = invocation
+        self.invocation_batches.append(captured)
 
     def record_tool_execution(self, tool_name: str, call_id: str, status: str, duration_ms: int) -> None:
         """记录工具执行"""

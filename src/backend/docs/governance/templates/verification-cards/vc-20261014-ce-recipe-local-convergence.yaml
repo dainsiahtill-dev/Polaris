@@ -1,0 +1,32 @@
+id: vc-20261014-ce-recipe-local-convergence
+classification: pattern
+owner_cell: chief_engineer.blueprint
+status: component_verified_native_pending
+design: polaris/cells/chief_engineer/blueprint/README.ce-recipe-convergence.md
+assumptions:
+  - Full immutable completion and command hash compilation already belong to CE.
+  - Recipe failure is independent by row until complete canonical revalidation.
+  - Consumer kinds are not PM task identities.
+evidence:
+  - native16 final requests c06a9aa13fd81658e12dd7ef and 66dc63e427e25f79655a367d
+  - Final native16 consumer identities remained invalid with valid obligation refs.
+  - RED first recipe only; typed recipe operation absent; valid siblings reordered.
+pre_mortem:
+  - Batch checking could accidentally return partial authority.
+  - Local edits could change owner, required status, coverage or signed PM commands.
+  - A schema-scoped operation could advertise more than its active diagnosis.
+defenses:
+  - Raise once after all independent failures; no partial normalized return.
+  - Existing candidate and diagnosis hashes bind exact diagnosed identities.
+  - Preserve valid sibling bytes/order and immutable recipe fields before full gates.
+  - Model recipe fields exclude machine command hashes; server compilation remains required.
+validation:
+  - Whole CE public/internal/tests collection: 871 passed.
+  - Ruff check and format of all affected Python files.
+  - Mypy: no issues in four affected production files.
+remaining:
+  - Factory full HTTP/provider physical request integration is coordinator-owned.
+  - Fresh native actual environment/build/test/entry/QA and verified terminal/release.
+boundary_change: false
+new_execution_authority: false
+kernelone_changed: false

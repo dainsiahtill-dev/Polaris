@@ -1,0 +1,27 @@
+id: vc-20261013-qa-control-failed-effect-closure
+classification: pattern
+cell: control_plane.run_ledger
+design: docs/blueprints/QA_CONTROL_FAILED_EFFECT_CLOSURE_20261013.md
+problem: Failed write-bearing delivery pinned operational resources behind future QA and verifier evidence.
+assumptions:
+  - TaskRuntime remains the only execution and directed-effect authority.
+  - Terminal observation reuses strict current parent and operation reducers.
+  - Physical provider drain and child settlement remain Factory prerequisites.
+pre_mortem:
+  - Self-consistent embedded hashes do not prove persisted receipt commitment.
+  - Unknown or active mutation must remain blocked even after an outer task fails.
+  - Operational release cannot turn missing or failed evidence into PASS.
+  - Legacy native transport corruption remains delivery failure evidence.
+verification:
+  - test_operational_cleanup_mirrors_ignore_only_declared_top_level_timing: real commit timing variant closes; status/error/result/effect/commit/tool/ID/nested/extra drift fails closed.
+  - test_execution_effect_closure.py: real commit, terminal read immutability, foreign/active/corrupt/open negatives.
+  - test_terminal_failure_cleanup.py: real mutation, transport wrapper, missing verifiers and real failed lease release.
+  - test_factory_settlement_barrier.py: lifecycle, missing vs failed and scoped release guards.
+  - test_qa_exact_owner_recovery.py: fresh QA runtime identity and stale verdict negatives.
+  - test_qa_recovery_physical.py: real owned effect and affected verifier, cancellation and foreign owner.
+scope:
+  public_contract_changed: true
+  new_state_owner: false
+  execution_authority_expanded: false
+  original_780d_qualified: false
+  fresh_native_qualification: pending

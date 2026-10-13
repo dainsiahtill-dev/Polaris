@@ -12,6 +12,7 @@ import json
 import logging
 import uuid
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -384,6 +385,7 @@ class TurnDecisionDecoder:
             raw_tool_name=tool_name,
             arguments=normalized_arguments,
             classification=classification,
+            native_arguments=deepcopy(parsed_arguments),
         )
 
     @staticmethod
