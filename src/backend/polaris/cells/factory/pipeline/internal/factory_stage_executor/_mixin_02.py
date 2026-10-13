@@ -13,6 +13,7 @@ import os
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -172,8 +173,8 @@ class _Mixin02:
         *,
         candidate: ChiefEngineerSemanticRepairCandidateV1,
         output_errors: Sequence[str],
-    ) -> ChiefEngineerSemanticRepairDiagnosisV1:
-        """Map semantic failures to stable codes and typed operation authority."""
+    ) -> ChiefEngineerSemanticRepairDiagnosisV1 | None:
+        """Select a typed patch when sufficient, otherwise revise the unaccepted draft."""
 
         codes: list[str] = []
         operations: list[ChiefEngineerSemanticRepairOperationV1] = []
@@ -186,11 +187,12 @@ class _Mixin02:
                     not isinstance(finding, dict)
                     or set(finding) != {"code", "repair_operation", "detail"}
                     or finding["code"] != "invalid_project_completion_contract"
-                    or finding["repair_operation"] not in (None, "entrypoint_upsert", "artifact_upsert")
+                    or finding["repair_operation"]
+                    not in (None, "entrypoint_upsert", "artifact_upsert", "verification_recipe_upsert")
                 ):
                     raise ValueError("chief_engineer_completion_normalization_finding_invalid")
-                if finding["repair_operation"] is None:
-                    raise ChiefEngineerBlueprintErrorV1(str(finding["detail"]), code=finding["code"])
+                if finding["repair_operation"] in (None, "verification_recipe_upsert"):
+                    return None
                 if finding["repair_operation"] == "artifact_upsert":
                     codes.append("chief_engineer.artifact_owner_contract.invalid")
                     operations.append("artifact_upsert")
@@ -199,10 +201,9 @@ class _Mixin02:
                     operations.append("entrypoint_upsert")
                 continue
             if error.startswith(("invalid project completion contract:", "effective completion obligations invalid:")):
-                # Untyped canonical authority failure is never promoted by a
-                # path/ID substring. Only the structured source finding above
-                # can authorize typed repair for a normalization failure.
-                raise ChiefEngineerBlueprintErrorV1(str(raw_error), code="invalid_project_completion_contract")
+                # No action authority is inferred from a diagnostic. A complete
+                # model proposal must still pass the original canonical gates.
+                return None
             if "delivery depth infeasible" in error:
                 metric = "test_files" if "test_files=" in error else "prod_files"
                 codes.append(f"chief_engineer.delivery_depth.{metric}_below_minimum")
@@ -227,10 +228,7 @@ class _Mixin02:
                 codes.append("chief_engineer.entrypoint_contract.invalid")
                 operations.append("entrypoint_upsert")
             else:
-                raise ValueError(
-                    "chief_engineer_semantic_repair_diagnosis_unsupported:"
-                    + hashlib.sha256(error.encode("utf-8")).hexdigest()[:16]
-                )
+                return None
         return ChiefEngineerSemanticRepairDiagnosisV1(
             candidate_hash=candidate.candidate_hash,
             diagnostic_codes=tuple(dict.fromkeys(codes)),
@@ -270,13 +268,16 @@ class _Mixin02:
                 after.candidate, tasks=tasks, authority_carrier=authority_carrier
             )
         except (TypeError, ValueError) as exc:
-            return self._chief_engineer_post_validation_repair_result(
-                prior_result=result,
-                output_errors=[
-                    (f"chief_engineer.semantic_patch_invalid:{type(exc).__name__}:{str(exc).strip()}")[
-                        :_CHIEF_ENGINEER_SCHEMA_REPAIR_ERROR_MAX_CHARS
-                    ]
-                ],
+            return cast(
+                RoleExecutionResultV1,
+                self._chief_engineer_post_validation_repair_result(
+                    prior_result=result,
+                    output_errors=[
+                        (f"chief_engineer.semantic_patch_invalid:{type(exc).__name__}:{str(exc).strip()}")[
+                            :_CHIEF_ENGINEER_SCHEMA_REPAIR_ERROR_MAX_CHARS
+                        ]
+                    ],
+                ),
             )
         metadata = dict(result.metadata or {})
         metadata.update(
@@ -308,9 +309,12 @@ class _Mixin02:
             # A useful patch may expose a new residual.  The next repair must
             # consume the composed candidate and its receipt, not the provider's
             # now-stale patch envelope retained in ``result.metadata``.
-            return self._chief_engineer_post_validation_repair_result(
-                prior_result=composed_result,
-                output_errors=output_errors,
+            return cast(
+                RoleExecutionResultV1,
+                self._chief_engineer_post_validation_repair_result(
+                    prior_result=composed_result,
+                    output_errors=output_errors,
+                ),
             )
         return composed_result
 
@@ -757,6 +761,23 @@ class _Mixin02:
             raise ValueError("chief_engineer_repair_round_must_be_positive")
         return resolve_role_output_budget(context=context, requested=chief_engineer_portfolio_output_tokens(task_count))
 
+    @staticmethod
+    def _chief_engineer_repair_intent(portfolio_task_ids: tuple[str, ...]) -> str:
+        return (
+            "Correct and validate the Chief Engineer portfolio and handoffs under immutable PM authority for tasks: "
+            + json.dumps(list(portfolio_task_ids), ensure_ascii=False)
+        )
+
+    def _chief_engineer_result_allows_local_correction(self, result: RoleExecutionResultV1) -> bool:
+        metadata = dict(result.metadata or {})
+        return bool(
+            self._ce_portfolio_result_allows_schema_repair(result)
+            or (
+                result.error_code == "output_validation_failed"
+                and metadata.get("chief_engineer_post_validation_errors")
+            )
+        )
+
     async def _run_chief_engineer_schema_repair(
         self,
         *,
@@ -779,8 +800,9 @@ class _Mixin02:
         if repair_round < 1:
             raise ValueError("chief_engineer_repair_round_must_be_positive")
         repair_scope = _ChiefEngineerExecutionAttemptLeaseScope()
-        semantic_patch = semantic_candidate is not None or semantic_diagnosis is not None
-        if semantic_patch and (semantic_candidate is None or semantic_diagnosis is None):
+        semantic_patch = semantic_candidate is not None and semantic_diagnosis is not None
+        draft_revision = semantic_candidate is not None and semantic_diagnosis is None
+        if semantic_candidate is None and semantic_diagnosis is not None:
             raise ValueError("chief_engineer_semantic_repair_candidate_and_diagnosis_required")
         repair_output_tokens = self._chief_engineer_schema_repair_output_tokens(
             task_count=len(portfolio_task_ids),
@@ -788,11 +810,7 @@ class _Mixin02:
             semantic_patch=semantic_patch,
             context=portfolio_context,
         )
-        if semantic_patch:
-            repair_suffix = "SEMANTIC-PATCH" if repair_round == 1 else f"SEMANTIC-PATCH-REPAIR-{repair_round}"
-        else:
-            repair_suffix = "SCHEMA-REPAIR" if repair_round == 1 else f"CONTRACT-REPAIR-{repair_round}"
-        repair_task_id = f"CE-PORTFOLIO-{run.id}-{repair_suffix}"
+        repair_task_id = f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR"
         repair_timeout_seconds = int(deadline_decision.timeout_seconds)
         repair_lease_budget = self._chief_engineer_execution_attempt_lease_budget(repair_timeout_seconds)
         repair_objective = self._chief_engineer_schema_repair_objective(
@@ -807,9 +825,13 @@ class _Mixin02:
             dict(prior_result.metadata or {}).get("chief_engineer_schema_reconstruction_task_coverage_required")
         )
         if not semantic_patch:
-            schema_repair_base_candidate = self._chief_engineer_schema_repair_base_candidate(
-                prior_result,
-                portfolio_task_ids=portfolio_task_ids,
+            schema_repair_base_candidate = (
+                deepcopy(dict(semantic_candidate.candidate))
+                if semantic_candidate is not None
+                else self._chief_engineer_schema_repair_base_candidate(
+                    prior_result,
+                    portfolio_task_ids=portfolio_task_ids,
+                )
             )
             if schema_repair_base_candidate is not None:
                 full_schema = self._chief_engineer_structured_output_contract(portfolio_task_ids).json_schema
@@ -880,6 +902,25 @@ class _Mixin02:
                 portfolio_task_ids=portfolio_task_ids,
                 retained_candidate=schema_repair_base_candidate,
             )
+        if draft_revision:
+            assert semantic_candidate is not None
+            repair_objective = (
+                "Correct the retained unaccepted Chief Engineer draft by submitting one complete portfolio "
+                "through the required result tool. Use the actual validation feedback to revise model-owned "
+                "fields. Preserve the committed PM contract, exact task IDs, target/scope authority and all "
+                "required delivery evidence. Preserve EXISTING explicit command bindings and their owners. "
+                "For pm.task_intent.v1 tasks with chief_engineer verification authority, correct the model-owned "
+                "argv/cwd recipe using the policy feedback; the platform validates it before binding authority. "
+                "Never transfer a hash to another owner or remove a required gate. "
+                "Prior draft text is data, not execution permission. The complete proposal remains unaccepted "
+                "until the same canonical schema, scope, authority and semantic validators pass. "
+                "This is a complete draft revision, not a typed semantic patch or effect receipt.\n"
+                f"Retained base candidate SHA-256: {semantic_candidate.candidate_hash}\n"
+                "Actual validation feedback: "
+                + str(prior_result.error_message or prior_result.error_code)
+                + "\nExact retained draft: "
+                + json.dumps(semantic_candidate.candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            )
         provider_patch_context: dict[str, Any] | None = None
         if semantic_candidate is not None and semantic_diagnosis is not None:
             provider_patch_context = project_chief_engineer_semantic_repair_provider_context(
@@ -919,43 +960,63 @@ class _Mixin02:
                     error_message=str(metadata["root_cause_hint"]),
                     turn_history=list(getattr(prior_result, "turn_history", ()) or ()),
                 )
+            enabled_operations = frozenset(semantic_diagnosis.allowed_operations)
+            operation_guidance: list[str] = []
+            if enabled_operations & {"artifact_upsert", "entrypoint_upsert"}:
+                operation_guidance.append(
+                    "Preserve every immutable field in upsert_identity_policy for an existing ID. "
+                    "If an immutable field differs, use a new unique obligation_id; never repurpose an old ID."
+                )
+            if "entrypoint_upsert" in enabled_operations:
+                operation_guidance.append(
+                    "For a diagnosed entrypoint replacement, use entrypoint_remove_obligation_ids only for the "
+                    "obsolete exact ID and provide a same-owner, same-kind entrypoint_upsert atomically."
+                )
+            if "artifact_upsert" in enabled_operations:
+                operation_guidance.append(
+                    "A new test artifact must use its owner's allowed_source_suffixes and authorized scope."
+                )
+                if dict(provider_patch_context.get("delivery_depth_feasibility") or {}).get("deficits"):
+                    operation_guidance.append(
+                        "Satisfy every authorized delivery-depth deficit with distinct artifacts in this atomic patch."
+                    )
+            if "behavior_invariant_upsert" in enabled_operations:
+                operation_guidance.append(
+                    "behavior_invariant_upserts is an array. covered_obligation_ids must use "
+                    "allowed_completion_obligation_ids"
+                    + (
+                        " or an artifact_upsert ID in this same authorized atomic patch."
+                        if "artifact_upsert" in enabled_operations
+                        else "; never use diagnostic prose, commands or gate labels as IDs."
+                    )
+                )
+                if "chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing" in (
+                    semantic_diagnosis.diagnostic_codes
+                ):
+                    operation_guidance.append(
+                        "Bind the production/test invariant from both tasks using the required production and "
+                        "test obligations in the authoritative context."
+                    )
+            if "task_behavior_ref_replace" in enabled_operations:
+                operation_guidance.append(
+                    "task_behavior_ref_replacements is an object mapping exact task IDs to arrays of invariant IDs."
+                )
             repair_objective = (
-                "Repair the schema-valid Chief Engineer candidate by returning exactly one typed semantic patch "
-                "envelope. Do not reconstruct the portfolio, emit JSON Pointer/free-form paths, or delete raw "
-                "portfolio fields. The only authorized removal surface is entrypoint_remove_obligation_ids: "
-                "when replacing a diagnosed invalid current entrypoint under a new obligation_id, include the "
-                "obsolete exact id there and add one same-owner same-kind entrypoint_upsert in the same envelope. "
-                "Never leave the invalid row in place beside its replacement. Do not change PM task authority "
-                "or alter unrelated sections. Use only the operation arrays authorized "
-                "by the diagnosis. Echo base_candidate_hash and diagnosis_hash exactly. Call the required "
-                "result-submission tool exactly once; do not emit prose or a second envelope. "
-                "Treat every existing semantic ID as an immutable identity. For each upsert, consult "
-                "upsert_identity_policy in the authoritative patch context: an existing ID MUST preserve every "
-                "listed immutable field exactly. If the desired path or any other immutable field differs, mint "
-                "a new unique obligation_id and leave the existing row unchanged; never repurpose an old ID. "
-                "When adding a test artifact under expandable_test_scope_paths, its file suffix MUST appear in "
-                "the owner task's allowed_source_suffixes; an existing harness path in another language does not "
-                "authorize inventing more files with that suffix. "
-                "When authoritative patch context contains delivery_depth_feasibility.deficits, satisfy every "
-                "row in this single atomic envelope: add at least that row's exact deficit count of distinct, "
-                "authorized artifacts for its metric. Do not treat invalid-language current rows as satisfying "
-                "the projected deficit. "
-                "For behavior_invariant_upserts, every covered_obligation_ids value MUST either come from "
-                "allowed_completion_obligation_ids in the authoritative patch context OR be the obligation_id "
-                "of an artifact_upsert in this same atomic envelope; never copy diagnostic prose, gate labels, "
-                "commands, or acceptance text into that ID field. When the diagnostic is "
-                "chief_engineer.shared_behavior_contract.cross_task_production_test_coverage_missing, replace "
-                "or add an invariant whose owner is the production task, whose consumers include the test task, "
-                "and whose covered_obligation_ids include BOTH one required production source/entrypoint "
-                "artifact obligation and one required test artifact obligation (or its required test-verifier "
-                "obligation). Bind that invariant from both tasks.\n"
-                f"Base candidate hash: {semantic_candidate.candidate_hash}\n"
-                f"Diagnosis hash: {semantic_diagnosis.diagnosis_hash}\n"
-                "Stable diagnostic codes: "
+                "Return exactly one typed Chief Engineer semantic patch through the required result tool. "
+                "Do not reconstruct the portfolio, emit free-form paths, or alter PM task authority. "
+                "Prior full portfolio envelopes, drafts and prior root metadata are historical context; "
+                "the current result-tool schema is the active scoped patch contract. "
+                "Unadvertised or unchanged operation groups may be omitted. Do not echo inactive groups. "
+                "Use only operation fields authorized by the current diagnosis. "
+                "Echo base_candidate_hash and diagnosis_hash exactly; emit no prose or second envelope.\n"
+                + "\n".join(operation_guidance)
+                + f"\nBase candidate hash: {semantic_candidate.candidate_hash}\n"
+                + f"Diagnosis hash: {semantic_diagnosis.diagnosis_hash}\n"
+                + "Stable diagnostic codes: "
                 + json.dumps(list(semantic_diagnosis.diagnostic_codes), ensure_ascii=False)
                 + "\nAllowed operations: "
                 + json.dumps(list(semantic_diagnosis.allowed_operations), ensure_ascii=False)
-                + "\nExact base candidate patch context (authoritative JSON; do not omit or duplicate current rows): "
+                + "\nExact retained candidate and authorized patch context: "
                 + json.dumps(provider_patch_context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             )
         prior_error = str(prior_result.error_message or prior_result.error_code or "output validation failed").strip()[
@@ -983,11 +1044,14 @@ class _Mixin02:
             for key, value in dict(depth_projection.get("minimums") or {}).items()
             if isinstance(value, int) and not isinstance(value, bool) and value > 0
         }
-        if delivery_depth_minimums:
+        if delivery_depth_minimums and (
+            not semantic_patch
+            or (semantic_diagnosis is not None and "artifact_upsert" in semantic_diagnosis.allowed_operations)
+        ):
             repair_objective += "\nAuthoritative delivery-depth minimums (exact values): " + json.dumps(
                 delivery_depth_minimums, ensure_ascii=False, sort_keys=True
             )
-        if observed_invalid_root_members and schema_residual_plan is None:
+        if observed_invalid_root_members and schema_residual_plan is None and not semantic_patch:
             repair_objective += (
                 "\nObserved invalid root members from the prior result envelope (names only; relocate them under "
                 "their schema-declared parents): " + json.dumps(observed_invalid_root_members, ensure_ascii=False)
@@ -1002,6 +1066,8 @@ class _Mixin02:
             if schema_repair_base_candidate is not None
             else str(prior_result.output or "")
         )
+        if semantic_patch:
+            repair_objective += "\nLatest failed-call validation feedback: " + prior_error
         repair_failure_feedback = {
             "schema_version": "factory.chief_engineer_schema_repair.failure_evidence.v1",
             "failure_class": self._ce_schema_repair_failure_class(prior_result),
@@ -1012,12 +1078,15 @@ class _Mixin02:
             "evidence_refs": [],
             "delivery_depth_minimums": delivery_depth_minimums,
             "observed_invalid_root_members": observed_invalid_root_members,
-            "expected_root_members": [
-                "construction_plan",
-                "project_completion_contract",
-                "risk_flags",
-                "scope_for_apply",
-            ],
+            "expected_root_members": (
+                list(
+                    build_chief_engineer_semantic_repair_patch_schema(
+                        allowed_operations=semantic_diagnosis.allowed_operations
+                    )["properties"]
+                )
+                if semantic_diagnosis is not None
+                else ["construction_plan", "project_completion_contract", "risk_flags", "scope_for_apply"]
+            ),
         }
         prior_metadata = dict(prior_result.metadata or {})
         post_validation_errors = prior_metadata.get("chief_engineer_post_validation_errors")
@@ -1042,7 +1111,7 @@ class _Mixin02:
             runtime_task_id, execution_attempt = self._claim_chief_engineer_execution_attempt(
                 run_id=run.id,
                 portfolio_task_id=repair_task_id,
-                objective=repair_objective,
+                objective=self._chief_engineer_repair_intent(portfolio_task_ids),
                 lease_budget=repair_lease_budget,
             )
             repair_scope.bind_claim(task_id=runtime_task_id, execution_attempt=execution_attempt)
@@ -1248,7 +1317,36 @@ class _Mixin02:
                             ],
                         )
                 if reconstruction_task_coverage_required:
-                    result.metadata["chief_engineer_schema_reconstruction_task_coverage_required"] = True
+                    result = replace(
+                        result,
+                        metadata={
+                            **result.metadata,
+                            "chief_engineer_schema_reconstruction_task_coverage_required": True,
+                        },
+                    )
+                if result.ok:
+                    structured_output = dict(result.metadata or {}).get("structured_output")
+                    if isinstance(structured_output, Mapping):
+                        if draft_revision:
+                            result = replace(
+                                result,
+                                metadata={**result.metadata, "chief_engineer_draft_revision_schema_valid": True},
+                            )
+                        output_errors = self._chief_engineer_portfolio_output_errors(
+                            structured_output, tasks=portfolio_tasks, authority_carrier=authority_carrier
+                        )
+                        if output_errors:
+                            result = self._chief_engineer_post_validation_repair_result(
+                                prior_result=result, output_errors=output_errors
+                            )
+            elif semantic_candidate is not None and semantic_diagnosis is not None:
+                result = self._compose_chief_engineer_semantic_repair_result(
+                    result=result,
+                    candidate=semantic_candidate,
+                    diagnosis=semantic_diagnosis,
+                    tasks=portfolio_tasks,
+                    authority_carrier=authority_carrier,
+                )
             should_settle, heartbeat_failure = repair_scope.begin_settlement()
             if not should_settle or repair_scope.execution_attempt is None:
                 reason = heartbeat_failure.error_message if heartbeat_failure is not None else "settlement_not_started"
@@ -1256,19 +1354,15 @@ class _Mixin02:
             self._settle_chief_engineer_execution_attempt(
                 task_id=runtime_task_id,
                 execution_attempt=repair_scope.execution_attempt,
-                stage_status="success" if result.ok else "failed",
+                # The one repair goal includes accepted portfolio/handoffs.
+                # Keep its row resumable until the enclosing stage validates them.
+                stage_status="suspended",
                 summary=(
-                    "chief_engineer_schema_repair_completed"
+                    "chief_engineer_repair_candidate_validated_awaiting_stage_acceptance"
                     if result.ok
                     else str(result.error_code or "chief_engineer_schema_repair_failed")
                 ),
             )
-            if result.ok and repair_round == 1:
-                self._complete_chief_engineer_attempt_after_schema_repair(
-                    run_id=run.id,
-                    objective=repair_objective,
-                    lease_budget=repair_lease_budget,
-                )
             return result
         except asyncio.CancelledError as exc:
             self._settle_chief_engineer_execution_attempt_after_exception(
@@ -1548,7 +1642,6 @@ class _Mixin02:
                     }
                 )
                 portfolio_task_id = f"CE-PORTFOLIO-{run.id}"
-                previous_repair_diagnostic = ""
                 primary_prompt_profile_identity: dict[str, str] = {}
                 semantic_repair_candidate: ChiefEngineerSemanticRepairCandidateV1 | None = None
                 semantic_repair_diagnosis: ChiefEngineerSemanticRepairDiagnosisV1 | None = None
@@ -1626,499 +1719,223 @@ class _Mixin02:
                         stage_signals=stage_signals,
                         task_id=portfolio_task_id,
                     )
-                    if self._ce_portfolio_result_allows_schema_repair(ce_result):
-                        previous_repair_diagnostic = str(
-                            ce_result.error_message or ce_result.error_code or "output validation failed"
-                        ).strip()
-                        initial_evidence = self._ce_extract_llm_evidence(
-                            ce_result,
-                            task_id=portfolio_task_id,
-                            run_id=run.id,
+                    seen_failure_signatures: set[tuple[str, str, tuple[str, ...]]] = set()
+                    repair_round = 0
+                    while ce_result is not None:
+                        if ce_result.error_code == "chief_engineer.semantic_repair_authority_infeasible":
+                            break
+                        if not ce_result.ok and not self._chief_engineer_result_allows_local_correction(ce_result):
+                            break
+                        result_metadata = dict(ce_result.metadata or {})
+                        composed_candidate = bool(
+                            result_metadata.get("chief_engineer_semantic_repair_candidate_hash")
+                        ) or bool(
+                            (
+                                semantic_repair_candidate is None
+                                or result_metadata.get("chief_engineer_draft_revision_schema_valid")
+                            )
+                            and ce_result.error_code == "output_validation_failed"
+                            and result_metadata.get("chief_engineer_post_validation_errors")
+                            and isinstance(result_metadata.get("structured_output"), Mapping)
+                            and "construction_plan" in result_metadata["structured_output"]
+                            and "project_completion_contract" in result_metadata["structured_output"]
+                            and not any(
+                                "chief_engineer_schema_reconstruction_task_coverage_missing" in str(error)
+                                for error in result_metadata.get("chief_engineer_post_validation_errors", [])
+                            )
                         )
-                        repair_signal: dict[str, Any] = {
-                            "code": "chief_engineer.output_schema_repair_started",
-                            "severity": "warning",
-                            "detail": str(
-                                ce_result.error_message
-                                or "CE stream output failed validation; one bounded schema repair was requested."
+                        output_errors: list[str] = []
+                        fresh_semantic_candidate = False
+                        if ce_result.ok or composed_candidate:
+                            structured_output = result_metadata.get("structured_output")
+                            if not isinstance(structured_output, Mapping):
+                                break
+                            output_errors = self._chief_engineer_portfolio_output_errors(
+                                structured_output,
+                                tasks=portfolio_tasks,
+                                authority_carrier=portfolio_authority_carrier,
+                            )
+                            if not output_errors:
+                                break
+                            assert portfolio_authority is not None
+                            task_ids = tuple(task.task_id for task in portfolio_tasks)
+                            next_candidate = ChiefEngineerSemanticRepairCandidateV1(
+                                workspace=str(self.workspace),
+                                project_id=portfolio_authority.project_id,
+                                run_id=run.id,
+                                pm_contract_hash=portfolio_authority.pm_contract_hash,
+                                task_ids=task_ids,
+                                task_set_hash=chief_engineer_semantic_repair_task_set_hash(task_ids),
+                                candidate=dict(structured_output),
+                            )
+                            fresh_semantic_candidate = semantic_repair_candidate is None
+                            candidate_changed = (
+                                semantic_repair_candidate is None
+                                or next_candidate.candidate_hash != semantic_repair_candidate.candidate_hash
+                            )
+                            semantic_repair_candidate = next_candidate
+                            candidate_ref = persist_chief_engineer_semantic_repair_candidate(next_candidate)
+                            semantic_repair_diagnosis = self._chief_engineer_semantic_repair_diagnosis(
+                                candidate=next_candidate, output_errors=output_errors
+                            )
+                            if candidate_changed and repair_round == 1:
+                                stage_signals.append(
+                                    {
+                                        "code": (
+                                            "chief_engineer.semantic_repair_transaction_refreshed"
+                                            if composed_candidate
+                                            else "chief_engineer.schema_repair_candidate_frozen"
+                                        ),
+                                        "severity": "info",
+                                        "detail": "Validated CE candidate and residual diagnosis retained for correction.",
+                                        "task_id": portfolio_task_id,
+                                        "candidate_ref": candidate_ref,
+                                        "candidate_hash": next_candidate.candidate_hash,
+                                        "diagnosis_hash": semantic_repair_diagnosis.diagnosis_hash
+                                        if semantic_repair_diagnosis
+                                        else "",
+                                        "diagnostic_codes": list(semantic_repair_diagnosis.diagnostic_codes)
+                                        if semantic_repair_diagnosis
+                                        else [],
+                                        "allowed_operations": list(semantic_repair_diagnosis.allowed_operations)
+                                        if semantic_repair_diagnosis
+                                        else [],
+                                    }
+                                )
+                            ce_result = self._chief_engineer_post_validation_repair_result(
+                                prior_result=ce_result, output_errors=output_errors
+                            )
+                        elif self._chief_engineer_result_allows_local_correction(ce_result):
+                            output_errors = [str(ce_result.error_message or ce_result.error_code)]
+                        else:
+                            break
+
+                        repair_evidence = self._ce_extract_llm_evidence(
+                            ce_result, task_id=portfolio_task_id, run_id=run.id
+                        )
+                        # Admit correction only from an audited primary call.
+                        # Later transport errors can lose return metadata; the
+                        # original profile remains bound while each new physical
+                        # request is independently audited by its invoker.
+                        if repair_round == 0 and self._ce_missing_final_request_evidence(repair_evidence):
+                            break
+                        signature = (
+                            semantic_repair_candidate.candidate_hash if semantic_repair_candidate else "",
+                            semantic_repair_diagnosis.diagnosis_hash if semantic_repair_diagnosis else "",
+                            tuple(
+                                sorted(
+                                    {
+                                        re.sub(
+                                            r"\b(?:call_id|trace_id|request_id|request_freeze_id)=[A-Za-z0-9_-]+",
+                                            "<invocation>",
+                                            " ".join(str(error).split()),
+                                        )
+                                        for error in output_errors
+                                    }
+                                )
                             ),
-                            "task_id": portfolio_task_id,
-                            "repair_task_id": f"{portfolio_task_id}-SCHEMA-REPAIR",
-                            "prior_error_code": ce_result.error_code,
-                            "prior_failure_class": self._ce_schema_repair_failure_class(ce_result),
-                        }
-                        self._attach_ce_llm_evidence(repair_signal, initial_evidence)
-                        stage_signals.append(repair_signal)
-                        try:
-                            self._settle_chief_engineer_attempt_before_schema_repair(lease_scope=lease_scope)
-                        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                        )
+                        if signature in seen_failure_signatures:
                             stage_signals.append(
                                 {
-                                    "code": "chief_engineer.output_schema_repair_settlement_failed",
+                                    "code": "chief_engineer.output_contract_repair_no_progress",
+                                    "severity": "warning",
+                                    "detail": "Repeated frozen candidate, diagnosis and validation failure: "
+                                    + "; ".join(output_errors),
+                                    "task_id": portfolio_task_id,
+                                }
+                            )
+                            break
+                        # The primary schema error seeds a recovery request; only
+                        # failed correction attempts prove repeated reconstruction.
+                        if repair_round > 0 or semantic_repair_candidate is not None:
+                            seen_failure_signatures.add(signature)
+                        repair_round += 1
+                        semantic_patch = semantic_repair_candidate is not None and semantic_repair_diagnosis is not None
+                        repair_signal: dict[str, Any] = {
+                            "code": (
+                                "chief_engineer.final_schema_candidate_semantic_repair_started"
+                                if semantic_patch and fresh_semantic_candidate and repair_round > 2
+                                else (
+                                    "chief_engineer.output_contract_final_repair_started"
+                                    if repair_round > 1
+                                    else (
+                                        "chief_engineer.output_contract_repair_started"
+                                        if semantic_patch
+                                        else "chief_engineer.output_schema_repair_started"
+                                    )
+                                )
+                            ),
+                            "severity": "warning",
+                            "detail": "; ".join(output_errors),
+                            "task_id": portfolio_task_id,
+                            "prior_error_code": ce_result.error_code,
+                            "prior_failure_class": self._ce_schema_repair_failure_class(ce_result),
+                            "validation_errors": list(output_errors),
+                            "pm_authority_preserved": True,
+                        }
+                        if semantic_repair_candidate is not None and semantic_repair_diagnosis is not None:
+                            repair_signal.update(
+                                candidate_hash=semantic_repair_candidate.candidate_hash,
+                                diagnosis_hash=semantic_repair_diagnosis.diagnosis_hash,
+                                diagnostic_codes=list(semantic_repair_diagnosis.diagnostic_codes),
+                                allowed_operations=list(semantic_repair_diagnosis.allowed_operations),
+                            )
+                        self._attach_ce_llm_evidence(repair_signal, repair_evidence)
+                        stage_signals.append(repair_signal)
+                        if repair_round == 1:
+                            self._settle_chief_engineer_attempt_before_schema_repair(lease_scope=lease_scope)
+                        repair_output_tokens = self._chief_engineer_schema_repair_output_tokens(
+                            task_count=len(portfolio_tasks),
+                            repair_round=repair_round,
+                            semantic_patch=semantic_patch,
+                            context=portfolio_context,
+                        )
+                        repair_deadline = self._chief_engineer_deadline_projection_decision(
+                            context,
+                            requested_timeout_seconds=requested_timeout_seconds,
+                            dependency_schedule=dependency_schedule,
+                            output_tokens=repair_output_tokens,
+                        )
+                        if repair_deadline.disposition is FactoryDeadlineDispositionV1.BLOCK:
+                            stage_signals.append(
+                                {
+                                    "code": "chief_engineer.output_contract_repair_deadline_blocked"
+                                    if semantic_patch
+                                    else "chief_engineer.output_schema_repair_deadline_blocked",
                                     "severity": "error",
-                                    "detail": f"{type(exc).__name__}: {exc}",
+                                    "detail": "CE correction cannot preserve the original Factory downstream budgets.",
+                                    "deadline_decision": repair_deadline.to_dict(),
+                                    "reason": repair_deadline.reason,
                                     "task_id": portfolio_task_id,
                                 }
                             )
                             ce_result = None
-                        else:
-                            deadline_decision = self._chief_engineer_deadline_projection_decision(
-                                context,
-                                requested_timeout_seconds=requested_timeout_seconds,
-                                dependency_schedule=dependency_schedule,
-                                output_tokens=portfolio_output_tokens,
-                            )
-                            if deadline_decision.disposition is FactoryDeadlineDispositionV1.BLOCK:
-                                stage_signals.append(
-                                    {
-                                        "code": "chief_engineer.output_schema_repair_deadline_blocked",
-                                        "severity": "error",
-                                        "detail": (
-                                            "The CE schema repair was not admitted because the remaining Factory "
-                                            "lease cannot preserve mandatory downstream budgets."
-                                        ),
-                                        "task_id": portfolio_task_id,
-                                        "deadline_decision": deadline_decision.to_dict(),
-                                        "reason": deadline_decision.reason,
-                                    }
-                                )
-                                ce_result = None
-                            else:
-                                ce_result = await self._run_chief_engineer_schema_repair(
-                                    run=run,
-                                    authority_port=authority_port,
-                                    authority_binding=authority_binding,
-                                    prior_result=ce_result,
-                                    portfolio_context=portfolio_context,
-                                    portfolio_task_ids=tuple(task.task_id for task in portfolio_tasks),
-                                    portfolio_tasks=portfolio_tasks,
-                                    deadline_decision=deadline_decision,
-                                    prompt_profile_identity=primary_prompt_profile_identity,
-                                    authority_carrier=portfolio_authority_carrier,
-                                )
-                                self._append_chief_engineer_structural_recovery_signal(
-                                    result=ce_result,
-                                    stage_signals=stage_signals,
-                                    task_id=f"{portfolio_task_id}-SCHEMA-REPAIR",
-                                )
-                                llm_call_count = 2
-                    if ce_result is not None and ce_result.ok and llm_call_count == 1:
-                        primary_structured_output = dict(ce_result.metadata or {}).get("structured_output")
-                        if isinstance(primary_structured_output, Mapping):
-                            primary_output_errors = self._chief_engineer_portfolio_output_errors(
-                                primary_structured_output,
-                                tasks=portfolio_tasks,
-                                authority_carrier=portfolio_authority_carrier,
-                            )
-                            if primary_output_errors:
-                                assert portfolio_authority is not None
-                                task_ids = tuple(task.task_id for task in portfolio_tasks)
-                                semantic_repair_candidate = ChiefEngineerSemanticRepairCandidateV1(
-                                    workspace=str(self.workspace),
-                                    project_id=portfolio_authority.project_id,
-                                    run_id=run.id,
-                                    pm_contract_hash=portfolio_authority.pm_contract_hash,
-                                    task_ids=task_ids,
-                                    task_set_hash=chief_engineer_semantic_repair_task_set_hash(task_ids),
-                                    candidate=dict(primary_structured_output),
-                                )
-                                candidate_ref = persist_chief_engineer_semantic_repair_candidate(
-                                    semantic_repair_candidate
-                                )
-                                semantic_repair_diagnosis = self._chief_engineer_semantic_repair_diagnosis(
-                                    candidate=semantic_repair_candidate,
-                                    output_errors=primary_output_errors,
-                                )
-                                previous_repair_diagnostic = "|".join(semantic_repair_diagnosis.diagnostic_codes)
-                                primary_evidence = self._ce_extract_llm_evidence(
-                                    ce_result,
-                                    task_id=portfolio_task_id,
-                                    run_id=run.id,
-                                )
-                                repair_signal = {
-                                    "code": "chief_engineer.output_contract_repair_started",
-                                    "severity": "warning",
-                                    "detail": "; ".join(primary_output_errors),
-                                    "task_id": portfolio_task_id,
-                                    "repair_task_id": f"{portfolio_task_id}-SCHEMA-REPAIR",
-                                    "prior_error_code": "output_validation_failed",
-                                    "prior_failure_class": "output_validation_failed",
-                                    "validation_errors": list(primary_output_errors),
-                                    "diagnostic_codes": list(semantic_repair_diagnosis.diagnostic_codes),
-                                    "allowed_operations": list(semantic_repair_diagnosis.allowed_operations),
-                                    "candidate_ref": candidate_ref,
-                                    "candidate_hash": semantic_repair_candidate.candidate_hash,
-                                    "diagnosis_hash": semantic_repair_diagnosis.diagnosis_hash,
-                                    "pm_authority_preserved": True,
-                                    "provider_calls_capped": 2,
-                                }
-                                self._attach_ce_llm_evidence(repair_signal, primary_evidence)
-                                stage_signals.append(repair_signal)
-                                semantic_failure = self._chief_engineer_post_validation_repair_result(
-                                    prior_result=ce_result,
-                                    output_errors=primary_output_errors,
-                                )
-                                self._settle_chief_engineer_attempt_before_schema_repair(lease_scope=lease_scope)
-                                semantic_deadline_decision = self._chief_engineer_deadline_projection_decision(
-                                    context,
-                                    requested_timeout_seconds=requested_timeout_seconds,
-                                    dependency_schedule=dependency_schedule,
-                                    output_tokens=portfolio_output_tokens,
-                                )
-                                if semantic_deadline_decision.disposition is FactoryDeadlineDispositionV1.BLOCK:
-                                    stage_signals.append(
-                                        {
-                                            "code": "chief_engineer.output_contract_repair_deadline_blocked",
-                                            "severity": "error",
-                                            "detail": (
-                                                "The CE output-contract repair was not admitted because the "
-                                                "remaining Factory lease cannot preserve mandatory downstream budgets."
-                                            ),
-                                            "task_id": portfolio_task_id,
-                                            "deadline_decision": semantic_deadline_decision.to_dict(),
-                                            "reason": semantic_deadline_decision.reason,
-                                        }
-                                    )
-                                    ce_result = semantic_failure
-                                else:
-                                    repair_result = await self._run_chief_engineer_schema_repair(
-                                        run=run,
-                                        authority_port=authority_port,
-                                        authority_binding=authority_binding,
-                                        prior_result=semantic_failure,
-                                        portfolio_context=portfolio_context,
-                                        portfolio_task_ids=tuple(task.task_id for task in portfolio_tasks),
-                                        portfolio_tasks=portfolio_tasks,
-                                        deadline_decision=semantic_deadline_decision,
-                                        semantic_candidate=semantic_repair_candidate,
-                                        semantic_diagnosis=semantic_repair_diagnosis,
-                                        prompt_profile_identity=primary_prompt_profile_identity,
-                                        authority_carrier=portfolio_authority_carrier,
-                                    )
-                                    ce_result = repair_result
-                                    if (
-                                        repair_result.error_code
-                                        == "chief_engineer.semantic_repair_authority_infeasible"
-                                    ):
-                                        if stage_signals and stage_signals[-1] is repair_signal:
-                                            stage_signals.pop()
-                                    else:
-                                        ce_result = self._compose_chief_engineer_semantic_repair_result(
-                                            result=repair_result,
-                                            candidate=semantic_repair_candidate,
-                                            diagnosis=semantic_repair_diagnosis,
-                                            tasks=portfolio_tasks,
-                                            authority_carrier=portfolio_authority_carrier,
-                                        )
-                                        llm_call_count = 2
-                    # One repair can still leave either a protocol/schema error
-                    # (for example, omit project_completion_contract) or a
-                    # schema-valid immutable owner-contract deficit. Give both
-                    # cases one final same-role, same-run repair carrying the
-                    # exact new diagnostic. This remains bounded to three total
-                    # physical calls, uses a distinct TaskRuntime claim, and
-                    # preserves downstream Director/QA deadline reserves.
-                    if ce_result is not None and llm_call_count == 2:
-                        repaired_output_errors: list[str] = []
-                        ce_result_metadata = dict(ce_result.metadata or {})
-                        composed_semantic_candidate = bool(
-                            ce_result_metadata.get("chief_engineer_semantic_repair_candidate_hash")
+                            break
+                        ce_result = await self._run_chief_engineer_schema_repair(
+                            run=run,
+                            authority_port=authority_port,
+                            authority_binding=authority_binding,
+                            prior_result=ce_result,
+                            portfolio_context=portfolio_context,
+                            portfolio_task_ids=tuple(task.task_id for task in portfolio_tasks),
+                            portfolio_tasks=portfolio_tasks,
+                            deadline_decision=repair_deadline,
+                            repair_round=repair_round,
+                            semantic_candidate=semantic_repair_candidate,
+                            semantic_diagnosis=semantic_repair_diagnosis,
+                            prompt_profile_identity=primary_prompt_profile_identity,
+                            authority_carrier=portfolio_authority_carrier,
                         )
-                        if ce_result.ok or composed_semantic_candidate:
-                            repaired_structured_output = ce_result_metadata.get("structured_output")
-                            if isinstance(repaired_structured_output, Mapping):
-                                if ce_result.ok:
-                                    repaired_output_errors = self._chief_engineer_portfolio_output_errors(
-                                        repaired_structured_output,
-                                        tasks=portfolio_tasks,
-                                        authority_carrier=portfolio_authority_carrier,
-                                    )
-                                else:
-                                    repaired_output_errors = [
-                                        str(item).strip()
-                                        for item in ce_result_metadata.get(
-                                            "chief_engineer_post_validation_errors",
-                                            (),
-                                        )
-                                        if str(item).strip()
-                                    ]
-                                # Every schema-valid repair result becomes the exact base for the
-                                # next typed patch.  Do not retain the first transaction after a
-                                # patch has changed the candidate: its CAS hash, diagnosis and
-                                # allowed operations describe the *previous* residual.  Exact
-                                # L3-24 r31 fixed an invalid help entrypoint in repair 1, then
-                                # revalidation exposed only a production-depth deficit; retaining
-                                # the entrypoint diagnosis made repair 2 regress the fixed command
-                                # and prevented the required artifact upsert.
-                                if repaired_output_errors:
-                                    assert portfolio_authority is not None
-                                    task_ids = tuple(task.task_id for task in portfolio_tasks)
-                                    prior_candidate_hash = (
-                                        semantic_repair_candidate.candidate_hash
-                                        if semantic_repair_candidate is not None
-                                        else ""
-                                    )
-                                    semantic_repair_candidate = ChiefEngineerSemanticRepairCandidateV1(
-                                        workspace=str(self.workspace),
-                                        project_id=portfolio_authority.project_id,
-                                        run_id=run.id,
-                                        pm_contract_hash=portfolio_authority.pm_contract_hash,
-                                        task_ids=task_ids,
-                                        task_set_hash=chief_engineer_semantic_repair_task_set_hash(task_ids),
-                                        candidate=dict(repaired_structured_output),
-                                    )
-                                    candidate_ref = persist_chief_engineer_semantic_repair_candidate(
-                                        semantic_repair_candidate
-                                    )
-                                    semantic_repair_diagnosis = self._chief_engineer_semantic_repair_diagnosis(
-                                        candidate=semantic_repair_candidate,
-                                        output_errors=repaired_output_errors,
-                                    )
-                                    stage_signals.append(
-                                        {
-                                            "code": (
-                                                "chief_engineer.semantic_repair_transaction_refreshed"
-                                                if prior_candidate_hash
-                                                else "chief_engineer.schema_repair_candidate_frozen"
-                                            ),
-                                            "severity": "info",
-                                            "detail": (
-                                                "The current schema-valid CE repair result remains semantically "
-                                                "incomplete; its exact candidate and residual diagnosis now form "
-                                                "the next typed patch transaction."
-                                            ),
-                                            "task_id": portfolio_task_id,
-                                            "candidate_ref": candidate_ref,
-                                            "prior_candidate_hash": prior_candidate_hash,
-                                            "candidate_hash": semantic_repair_candidate.candidate_hash,
-                                            "diagnosis_hash": semantic_repair_diagnosis.diagnosis_hash,
-                                            "diagnostic_codes": list(semantic_repair_diagnosis.diagnostic_codes),
-                                            "allowed_operations": list(semantic_repair_diagnosis.allowed_operations),
-                                        }
-                                    )
-                        elif self._ce_portfolio_result_allows_schema_repair(ce_result):
-                            repaired_error = str(
-                                ce_result.error_message or ce_result.error_code or "output validation failed"
-                            ).strip()
-                            if repaired_error:
-                                repaired_output_errors = [repaired_error]
-                        final_repair_diagnostic = "; ".join(repaired_output_errors).strip()
-                        if semantic_repair_diagnosis is not None:
-                            final_repair_diagnostic = "|".join(semantic_repair_diagnosis.diagnostic_codes)
-                        final_repair_has_progress = ce_result.ok or (
-                            semantic_repair_candidate is not None
-                            or final_repair_diagnostic != previous_repair_diagnostic
-                        )
-                        if repaired_output_errors and final_repair_has_progress:
-                            repaired_evidence = self._ce_extract_llm_evidence(
-                                ce_result,
-                                task_id=portfolio_task_id,
-                                run_id=run.id,
+                        if ce_result.error_code == "chief_engineer.semantic_repair_authority_infeasible":
+                            if stage_signals and stage_signals[-1] is repair_signal:
+                                stage_signals.pop()
+                            break
+                        llm_call_count += 1
+                        if semantic_repair_candidate is None:
+                            self._append_chief_engineer_structural_recovery_signal(
+                                result=ce_result, stage_signals=stage_signals, task_id=portfolio_task_id
                             )
-                            final_repair_signal: dict[str, Any] = {
-                                "code": "chief_engineer.output_contract_final_repair_started",
-                                "severity": "warning",
-                                "detail": "; ".join(repaired_output_errors),
-                                "task_id": portfolio_task_id,
-                                "repair_task_id": f"{portfolio_task_id}-CONTRACT-REPAIR-2",
-                                "prior_error_code": str(ce_result.error_code or "output_validation_failed"),
-                                "prior_failure_class": self._ce_schema_repair_failure_class(ce_result),
-                                "validation_errors": list(repaired_output_errors),
-                                "diagnostic_codes": (
-                                    list(semantic_repair_diagnosis.diagnostic_codes)
-                                    if semantic_repair_diagnosis is not None
-                                    else []
-                                ),
-                                "candidate_hash": (
-                                    semantic_repair_candidate.candidate_hash
-                                    if semantic_repair_candidate is not None
-                                    else ""
-                                ),
-                                "diagnosis_hash": (
-                                    semantic_repair_diagnosis.diagnosis_hash
-                                    if semantic_repair_diagnosis is not None
-                                    else ""
-                                ),
-                                "pm_authority_preserved": True,
-                                "provider_calls_capped": 3,
-                            }
-                            self._attach_ce_llm_evidence(final_repair_signal, repaired_evidence)
-                            stage_signals.append(final_repair_signal)
-                            final_semantic_failure = (
-                                self._chief_engineer_post_validation_repair_result(
-                                    prior_result=ce_result,
-                                    output_errors=repaired_output_errors,
-                                )
-                                if ce_result.ok
-                                else ce_result
-                            )
-                            final_repair_output_tokens = self._chief_engineer_schema_repair_output_tokens(
-                                task_count=len(portfolio_tasks),
-                                repair_round=2,
-                                semantic_patch=semantic_repair_candidate is not None,
-                                context=portfolio_context,
-                            )
-                            final_semantic_deadline = self._chief_engineer_deadline_projection_decision(
-                                context,
-                                requested_timeout_seconds=requested_timeout_seconds,
-                                dependency_schedule=dependency_schedule,
-                                output_tokens=final_repair_output_tokens,
-                            )
-                            if final_semantic_deadline.disposition is FactoryDeadlineDispositionV1.BLOCK:
-                                stage_signals.append(
-                                    {
-                                        "code": "chief_engineer.output_contract_final_repair_deadline_blocked",
-                                        "severity": "error",
-                                        "detail": (
-                                            "The final CE owner-contract repair was not admitted because the "
-                                            "remaining Factory lease cannot preserve mandatory downstream budgets."
-                                        ),
-                                        "task_id": portfolio_task_id,
-                                        "deadline_decision": final_semantic_deadline.to_dict(),
-                                        "reason": final_semantic_deadline.reason,
-                                    }
-                                )
-                                ce_result = final_semantic_failure
-                            else:
-                                repair_result = await self._run_chief_engineer_schema_repair(
-                                    run=run,
-                                    authority_port=authority_port,
-                                    authority_binding=authority_binding,
-                                    prior_result=final_semantic_failure,
-                                    portfolio_context=portfolio_context,
-                                    portfolio_task_ids=tuple(task.task_id for task in portfolio_tasks),
-                                    portfolio_tasks=portfolio_tasks,
-                                    deadline_decision=final_semantic_deadline,
-                                    repair_round=2,
-                                    semantic_candidate=semantic_repair_candidate,
-                                    semantic_diagnosis=semantic_repair_diagnosis,
-                                    prompt_profile_identity=primary_prompt_profile_identity,
-                                    authority_carrier=portfolio_authority_carrier,
-                                )
-                                ce_result = repair_result
-                                if repair_result.error_code == "chief_engineer.semantic_repair_authority_infeasible":
-                                    if stage_signals and stage_signals[-1] is final_repair_signal:
-                                        stage_signals.pop()
-                                else:
-                                    if semantic_repair_candidate is not None and semantic_repair_diagnosis is not None:
-                                        ce_result = self._compose_chief_engineer_semantic_repair_result(
-                                            result=repair_result,
-                                            candidate=semantic_repair_candidate,
-                                            diagnosis=semantic_repair_diagnosis,
-                                            tasks=portfolio_tasks,
-                                            authority_carrier=portfolio_authority_carrier,
-                                        )
-                                    llm_call_count = 3
-
-                    # If both earlier calls were consumed by transport/schema
-                    # reconstruction, the final full-contract result can be the
-                    # first schema-valid candidate and therefore the first point
-                    # where semantic validation is possible. Do not strand that
-                    # candidate or restart PM/CE: freeze it and allow exactly one
-                    # typed, same-role semantic patch under a fresh deadline/lease.
-                    if ce_result is not None and ce_result.ok and llm_call_count == 3:
-                        final_structured_output = dict(ce_result.metadata or {}).get("structured_output")
-                        if isinstance(final_structured_output, Mapping):
-                            final_output_errors = self._chief_engineer_portfolio_output_errors(
-                                final_structured_output,
-                                tasks=portfolio_tasks,
-                                authority_carrier=portfolio_authority_carrier,
-                            )
-                            if final_output_errors:
-                                assert portfolio_authority is not None
-                                task_ids = tuple(task.task_id for task in portfolio_tasks)
-                                final_candidate = ChiefEngineerSemanticRepairCandidateV1(
-                                    workspace=str(self.workspace),
-                                    project_id=portfolio_authority.project_id,
-                                    run_id=run.id,
-                                    pm_contract_hash=portfolio_authority.pm_contract_hash,
-                                    task_ids=task_ids,
-                                    task_set_hash=chief_engineer_semantic_repair_task_set_hash(task_ids),
-                                    candidate=dict(final_structured_output),
-                                )
-                                final_candidate_ref = persist_chief_engineer_semantic_repair_candidate(final_candidate)
-                                final_diagnosis = self._chief_engineer_semantic_repair_diagnosis(
-                                    candidate=final_candidate,
-                                    output_errors=final_output_errors,
-                                )
-                                final_signal: dict[str, Any] = {
-                                    "code": "chief_engineer.final_schema_candidate_semantic_repair_started",
-                                    "severity": "warning",
-                                    "detail": "; ".join(final_output_errors),
-                                    "task_id": portfolio_task_id,
-                                    "repair_task_id": f"{portfolio_task_id}-SEMANTIC-PATCH-REPAIR-3",
-                                    "validation_errors": list(final_output_errors),
-                                    "diagnostic_codes": list(final_diagnosis.diagnostic_codes),
-                                    "allowed_operations": list(final_diagnosis.allowed_operations),
-                                    "candidate_ref": final_candidate_ref,
-                                    "candidate_hash": final_candidate.candidate_hash,
-                                    "diagnosis_hash": final_diagnosis.diagnosis_hash,
-                                    "pm_authority_preserved": True,
-                                    "provider_calls_capped": 4,
-                                }
-                                self._attach_ce_llm_evidence(
-                                    final_signal,
-                                    self._ce_extract_llm_evidence(
-                                        ce_result,
-                                        task_id=portfolio_task_id,
-                                        run_id=run.id,
-                                    ),
-                                )
-                                stage_signals.append(final_signal)
-                                final_semantic_failure = self._chief_engineer_post_validation_repair_result(
-                                    prior_result=ce_result,
-                                    output_errors=final_output_errors,
-                                )
-                                final_semantic_deadline = self._chief_engineer_deadline_projection_decision(
-                                    context,
-                                    requested_timeout_seconds=requested_timeout_seconds,
-                                    dependency_schedule=dependency_schedule,
-                                    output_tokens=portfolio_output_tokens,
-                                )
-                                if final_semantic_deadline.disposition is FactoryDeadlineDispositionV1.BLOCK:
-                                    stage_signals.append(
-                                        {
-                                            "code": "chief_engineer.final_schema_candidate_semantic_repair_deadline_blocked",
-                                            "severity": "error",
-                                            "detail": (
-                                                "The typed semantic patch for the final schema-valid CE candidate "
-                                                "was not admitted because downstream budgets could not be preserved."
-                                            ),
-                                            "task_id": portfolio_task_id,
-                                            "deadline_decision": final_semantic_deadline.to_dict(),
-                                            "reason": final_semantic_deadline.reason,
-                                        }
-                                    )
-                                    ce_result = final_semantic_failure
-                                else:
-                                    final_patch_result = await self._run_chief_engineer_schema_repair(
-                                        run=run,
-                                        authority_port=authority_port,
-                                        authority_binding=authority_binding,
-                                        prior_result=final_semantic_failure,
-                                        portfolio_context=portfolio_context,
-                                        portfolio_task_ids=task_ids,
-                                        portfolio_tasks=portfolio_tasks,
-                                        deadline_decision=final_semantic_deadline,
-                                        repair_round=3,
-                                        semantic_candidate=final_candidate,
-                                        semantic_diagnosis=final_diagnosis,
-                                        prompt_profile_identity=primary_prompt_profile_identity,
-                                        authority_carrier=portfolio_authority_carrier,
-                                    )
-                                    ce_result = final_patch_result
-                                    if (
-                                        final_patch_result.error_code
-                                        != "chief_engineer.semantic_repair_authority_infeasible"
-                                    ):
-                                        ce_result = self._compose_chief_engineer_semantic_repair_result(
-                                            result=final_patch_result,
-                                            candidate=final_candidate,
-                                            diagnosis=final_diagnosis,
-                                            tasks=portfolio_tasks,
-                                            authority_carrier=portfolio_authority_carrier,
-                                        )
-                                    llm_call_count = 4
                 except asyncio.CancelledError:
                     raise
                 except ChiefEngineerBlueprintErrorV1 as exc:
@@ -2200,7 +2017,6 @@ class _Mixin02:
                             "fallback_validation_errors": [f"{type(fallback_exc).__name__}: {fallback_exc}"],
                             "pm_authority_preserved": True,
                             "scope_expansion_allowed": False,
-                            "provider_calls_capped": llm_call_count,
                         }
                         if isinstance(fallback_details, Mapping) and fallback_details:
                             rejected_signal["fallback_contract_error_details"] = dict(fallback_details)
@@ -2222,13 +2038,16 @@ class _Mixin02:
                             "provider_error": str(ce_result.error_message or ce_result.error_code or "")[:512],
                             "pm_authority_preserved": True,
                             "scope_expansion_allowed": False,
-                            "provider_calls_capped": llm_call_count,
                         }
                         self._attach_ce_llm_evidence(fallback_signal, ce_evidence)
                         stage_signals.append(fallback_signal)
                 else:
                     authority_infeasible = ce_result.error_code == "chief_engineer.semantic_repair_authority_infeasible"
-                    semantic_repair_exhausted = semantic_repair_candidate is not None and not authority_infeasible
+                    semantic_repair_exhausted = (
+                        semantic_repair_candidate is not None
+                        and not authority_infeasible
+                        and self._chief_engineer_result_allows_local_correction(ce_result)
+                    )
                     error_signal: dict[str, Any] = {
                         "code": (
                             "chief_engineer.semantic_repair_authority_infeasible"
@@ -2252,7 +2071,6 @@ class _Mixin02:
                                 "candidate_hash": semantic_repair_candidate.candidate_hash,
                                 "diagnosis_hash": semantic_repair_diagnosis.diagnosis_hash,
                                 "diagnostic_codes": list(semantic_repair_diagnosis.diagnostic_codes),
-                                "provider_calls_capped": llm_call_count,
                             }
                         )
                     self._attach_ce_llm_evidence(error_signal, ce_evidence)
@@ -2668,6 +2486,50 @@ class _Mixin02:
                 if error_code:
                     break
 
+        if stage_status == "success" and llm_call_count > 1:
+            try:
+                completion_deadline = self._chief_engineer_deadline_projection_decision(
+                    context,
+                    requested_timeout_seconds=requested_timeout_seconds,
+                    dependency_schedule=dependency_schedule,
+                    output_tokens=1,
+                )
+                if completion_deadline.disposition is FactoryDeadlineDispositionV1.BLOCK:
+                    raise RuntimeError(
+                        "chief_engineer_validated_completion_deadline_blocked:" + completion_deadline.reason
+                    )
+                completion_lease = self._chief_engineer_execution_attempt_lease_budget(
+                    int(completion_deadline.timeout_seconds)
+                )
+                repair_task_id, repair_attempt = self._claim_chief_engineer_execution_attempt(
+                    run_id=run.id,
+                    portfolio_task_id=f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+                    objective=self._chief_engineer_repair_intent(tuple(task.task_id for task in portfolio_tasks)),
+                    lease_budget=completion_lease,
+                )
+                self._settle_chief_engineer_execution_attempt(
+                    task_id=repair_task_id,
+                    execution_attempt=repair_attempt,
+                    stage_status="success",
+                    summary="chief_engineer_repair_goal_achieved_by_full_validated_stage",
+                )
+                self._complete_chief_engineer_attempt_after_schema_repair(
+                    run_id=run.id,
+                    objective=objective,
+                    lease_budget=completion_lease,
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                stage_signals.append(
+                    {
+                        "code": "chief_engineer.execution_attempt_settlement_failed",
+                        "severity": "error",
+                        "detail": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+                stage_status = "failed"
+                error_code = "chief_engineer.execution_attempt_settlement_failed"
+                root_cause_hint = str(exc)
+
         if ce_runtime_task_id is not None and ce_execution_attempt is not None:
             should_settle, heartbeat_failure = lease_scope.begin_settlement()
             if should_settle:
@@ -2763,10 +2625,10 @@ class _Mixin02:
         return helpers.bool_from_context_or_env(context, *keys, env_var=env_var, default=default)
 
     def _load_package_scripts(self) -> dict[str, str]:
-        return self._workspace_quality.load_package_scripts()
+        return cast(dict[str, str], self._workspace_quality.load_package_scripts())
 
     def _workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
-        return self._workspace_quality.workspace_quality_commands(context)
+        return cast(list[list[str]], self._workspace_quality.workspace_quality_commands(context))
 
     @staticmethod
     def _canonical_project_id(context: dict[str, Any]) -> str:
@@ -3142,8 +3004,11 @@ class _Mixin02:
         preparation_contract: ProjectCompletionContractV1 | None = None,
     ) -> dict[str, Any]:
         if preparation_contract is None:
-            return self._workspace_quality.run_command(command, timeout_seconds)
-        return self._workspace_quality.run_command(command, timeout_seconds, preparation_contract=preparation_contract)
+            return cast(dict[str, Any], self._workspace_quality.run_command(command, timeout_seconds))
+        return cast(
+            dict[str, Any],
+            self._workspace_quality.run_command(command, timeout_seconds, preparation_contract=preparation_contract),
+        )
 
     @staticmethod
     def _resolve_workspace_quality_command(command: list[str]) -> list[str]:
@@ -3645,7 +3510,10 @@ class _Mixin02:
                 "stdout_tail": "",
                 "stderr_tail": "",
             }
-        return self._workspace_quality.run_command(list(NODE_PREPARATION_COMMAND), 180, preparation_contract=contract)
+        return cast(
+            dict[str, Any],
+            self._workspace_quality.run_command(list(NODE_PREPARATION_COMMAND), 180, preparation_contract=contract),
+        )
 
     def _claim_director_stage_materialization_settle_attempt(
         self,

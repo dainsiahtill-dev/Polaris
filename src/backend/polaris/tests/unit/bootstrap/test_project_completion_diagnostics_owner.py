@@ -200,6 +200,7 @@ def _ledger(contract: ProjectCompletionContractV1) -> RunLedgerProjectionResultV
                         "latest_token_id": "job-token-1",
                         "stage": "pending_exec",
                         "task_id": task_id,
+                        "gate_policy": {"enabled_evidence_modalities": ["command"]},
                     }
                     for task_id in ("task-1", "task-2")
                 },

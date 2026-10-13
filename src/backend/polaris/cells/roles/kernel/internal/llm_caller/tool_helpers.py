@@ -26,6 +26,8 @@ from polaris.cells.roles.kernel.internal.tool_call_envelope import (
     native_tool_call_provider_from_metadata,
     native_tool_calls_from_response,
 )
+from polaris.cells.roles.kernel.public.turn_contracts import TurnContinuationMode
+from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.kernelone.audit.task_write_guidance import project_task_write_guidance
 from polaris.kernelone.llm.budget_policy import (
     BUDGET_STRATEGY_PAYLOAD_KEYS,
@@ -48,6 +50,207 @@ _FIRST_TURN_WRITE_DISABLED = {"off", "none", "disabled", "false", "0"}
 # budget_policy module docstring for the enumerated key differences.
 _OUTPUT_BUDGET_CONTEXT_KEYS = OUTPUT_BUDGET_CONTEXT_KEYS
 _EXECUTION_STRATEGY_CONTEXT_KEYS = BUDGET_STRATEGY_PAYLOAD_KEYS
+
+_SESSION_CONTINUATION_POLICY_KEY = "_roles_kernel_committed_session_continuation"
+_OWNED_ONE_CALL_POLICY_KEY = "_roles_kernel_owned_one_call_policy"
+
+
+def _stamp_director_one_call_tool_policy(context: dict[str, Any], *, bootstrap: bool) -> None:
+    # The enum identity cannot survive JSON. Bind the stamp to the exact policy
+    # objects minted by this producer so later caller overrides remain permanent.
+    context[_OWNED_ONE_CALL_POLICY_KEY] = (
+        TurnContinuationMode.AUTO_CONTINUE,
+        "bootstrap" if bootstrap else "adapter",
+        context.get("_transaction_kernel_forced_tool_definitions"),
+        context.get("_transaction_kernel_forced_tool_choice"),
+        context.get("_transaction_kernel_force_exact_tools"),
+        context.get("director_first_call_materialization_scope") if bootstrap else None,
+        context.get("director_first_call_output_budget") if bootstrap else None,
+    )
+
+
+def stamp_director_quality_repair_one_call_policy(context: dict[str, Any]) -> None:
+    """Bind the adapter's just-produced temporary tool policy, never a grant."""
+    _stamp_director_one_call_tool_policy(context, bootstrap=False)
+
+
+def director_uses_legacy_tool_slices(context: Any) -> bool:
+    """Require explicit controller opt-in before applying one-call heuristics.
+
+    These fields only reduce already authorized tools. They never grant tools,
+    paths, commands, or effects, and absence means normal persistent execution.
+    """
+    from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import tool_contract_requires_single_batch
+
+    if isinstance(context, Mapping):
+        continuous = context.get("continuous_execution")
+        if isinstance(continuous, Mapping) and continuous.get("enabled") is False:
+            return True
+        if str(context.get("director_execution_mode") or "").strip().lower() == "legacy_single_batch":
+            return True
+        if context.get("director_slim_tool_schema") is True or context.get("director_first_call_write_only") is True:
+            return True
+        if tool_contract_requires_single_batch(dict(context)):
+            return True
+    return os.environ.get("KERNELONE_FIRST_TURN_WRITE", "").strip().lower() in {"on", "true", "1", "yes"}
+
+
+def director_continuous_execution_enabled(role: str, context: Any) -> bool:
+    """Select the existing continuation mode without changing effect authority."""
+    if str(role or "").strip().lower() == "director":
+        from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import tool_contract_requires_single_batch
+
+        mapping = context if isinstance(context, Mapping) else {}
+        continuous = mapping.get("continuous_execution")
+        return not (
+            (isinstance(continuous, Mapping) and continuous.get("enabled") is False)
+            or str(mapping.get("director_execution_mode") or "").strip().lower() == "legacy_single_batch"
+            or tool_contract_requires_single_batch(dict(mapping))
+        )
+    continuous = context.get("continuous_execution") if isinstance(context, Mapping) else None
+    return isinstance(continuous, Mapping) and continuous.get("enabled") is True
+
+
+def is_committed_role_session_continuation(context: Any) -> bool:
+    """Recognize the in-process lifecycle value, never a model JSON flag."""
+    return (
+        isinstance(context, dict)
+        and context.get(_SESSION_CONTINUATION_POLICY_KEY) is TurnContinuationMode.AUTO_CONTINUE
+    )
+
+
+def prepare_role_session_continuation_policy(
+    context: dict[str, Any],
+    metadata: dict[str, Any],
+    *,
+    role: str,
+    host_kind: str | None,
+    previous_result: RoleTurnResult | None,
+    prior_results: tuple[RoleTurnResult, ...] = (),
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Retire known one-call slices; this does not grant tools, paths or effects."""
+    metadata = dict(metadata)
+    metadata.pop("_kernel_task_continuation_evidence", None)
+    if role == "director" and prior_results and metadata.get("role_session_id"):
+        from polaris.cells.roles.kernel.internal.transaction.continuation_evidence import (
+            CONTINUATION_EVIDENCE_KEY,
+            ContinuationReceiptReferences,
+        )
+
+        receipts = [item.metadata.get("turn_commit_receipt") for item in prior_results]
+        if all(
+            isinstance(receipt, Mapping)
+            and receipt.get("validation_passed") is True
+            and receipt.get("fact_stream") == "roles.kernel.turn_outcomes"
+            for receipt in receipts
+        ):
+            metadata[CONTINUATION_EVIDENCE_KEY] = ContinuationReceiptReferences.from_receipts(
+                str(metadata["role_session_id"]),
+                tuple(receipts),
+            )
+    result = dict(context)
+    for key in _EXECUTION_STRATEGY_CONTEXT_KEYS:
+        strategy = result.get(key)
+        if isinstance(strategy, dict):
+            strategy = dict(strategy)
+            for nested in STRATEGY_NESTED_CONTAINER_KEYS:
+                if isinstance(strategy.get(nested), dict):
+                    strategy[nested] = dict(strategy[nested])
+            result[key] = strategy
+    result.pop(_SESSION_CONTINUATION_POLICY_KEY, None)
+    previous = previous_result.metadata if previous_result is not None else {}
+    if (
+        role != "director"
+        or previous.get("transaction_kind") != "continue_multi_turn"
+        or previous.get("needs_followup_workflow") is not True
+        or not isinstance(previous.get("turn_commit_receipt"), Mapping)
+        or not previous["turn_commit_receipt"]
+    ):
+        return result, metadata
+    from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import tool_contract_requires_single_batch
+
+    # A controller's explicit single-call rule is not the bootstrap heuristic.
+    if tool_contract_requires_single_batch(result) or tool_contract_requires_single_batch({"metadata": metadata}):
+        return result, metadata
+    result[_SESSION_CONTINUATION_POLICY_KEY] = TurnContinuationMode.AUTO_CONTINUE
+    context_metadata = result.get("metadata")
+    context_metadata = dict(context_metadata) if isinstance(context_metadata, dict) else {}
+    owned = result.get(_OWNED_ONE_CALL_POLICY_KEY)
+    if (
+        not isinstance(owned, tuple)
+        or len(owned) != 7
+        or owned[0] is not TurnContinuationMode.AUTO_CONTINUE
+        or owned[2] is not result.get("_transaction_kernel_forced_tool_definitions")
+        or owned[3] is not result.get("_transaction_kernel_forced_tool_choice")
+        or owned[4] is not result.get("_transaction_kernel_force_exact_tools")
+    ):
+        return result, metadata
+    bootstrap = owned[1] == "bootstrap" and owned[5] is result.get("director_first_call_materialization_scope")
+    adapter_repair = owned[1] == "adapter" and host_kind == "director_adapter"
+    if not bootstrap and not adapter_repair:
+        return result, metadata
+    for key in (
+        "_transaction_kernel_forced_tool_definitions",
+        "_transaction_kernel_forced_tool_choice",
+        "_transaction_kernel_force_exact_tools",
+        "director_first_call_materialization_scope",
+        "director_first_call_write_only",
+        _OWNED_ONE_CALL_POLICY_KEY,
+    ):
+        result.pop(key, None)
+    restored_metadata = dict(metadata)
+    if adapter_repair:
+        for container in (result, context_metadata, restored_metadata):
+            contract = container.get("tool_contract")
+            if not isinstance(contract, dict) or contract.get("mutation_reason") not in {
+                "existing_file_quality_repair",
+                "verifier_test_failure",
+                "mixed_create_modify_quality_repair",
+            }:
+                continue
+            contract = dict(contract)
+            contract.pop("mutation_required", None)
+            contract.pop("mutation_reason", None)
+            required = contract.get("required_tools")
+            if isinstance(required, list):
+                contract["required_tools"] = [name for name in required if name not in {"write_file", "edit_file"}]
+            container["tool_contract"] = contract
+        result["metadata"] = context_metadata
+    budget = result.get("director_first_call_output_budget")
+    if bootstrap and isinstance(budget, dict) and owned[6] is budget:
+        previous_values = budget.get("previous_budget_values")
+        if isinstance(previous_values, dict):
+            cap = budget.get("max_tokens")
+            for key in _OUTPUT_BUDGET_CONTEXT_KEYS:
+                if result.get(key) != cap:
+                    continue
+                if key in previous_values:
+                    result[key] = previous_values[key]
+                else:
+                    result.pop(key, None)
+            for key in _EXECUTION_STRATEGY_CONTEXT_KEYS:
+                strategy = result.get(key)
+                if not isinstance(strategy, dict):
+                    continue
+                strategy = dict(strategy)
+                old = previous_values.get(key)
+                old = old if isinstance(old, dict) else {}
+                for field, value in _strategy_budget_values(strategy).items():
+                    if value != cap:
+                        continue
+                    parts = field.split(".", 1)
+                    target = strategy
+                    if len(parts) == 2:
+                        target = dict(strategy[parts[0]])
+                        strategy[parts[0]] = target
+                    if field in old:
+                        target[parts[-1]] = old[field]
+                    else:
+                        target.pop(parts[-1], None)
+                result[key] = strategy
+        result.pop("director_first_call_output_budget", None)
+    return result, restored_metadata
+
 
 # I3-r28 (R7, repair-preserving edit): on a repair/bounce turn whose target file
 # already exists, force an ANCHORED edit and forbid the whole-file rewrite verb so
@@ -318,6 +521,11 @@ def _apply_director_first_call_output_budget(
     for strategy_key in _EXECUTION_STRATEGY_CONTEXT_KEYS:
         strategy = context_override.get(strategy_key)
         if isinstance(strategy, dict):
+            strategy = dict(strategy)
+            for nested_key in STRATEGY_NESTED_CONTAINER_KEYS:
+                if isinstance(strategy.get(nested_key), dict):
+                    strategy[nested_key] = dict(strategy[nested_key])
+            context_override[strategy_key] = strategy
             _apply_strategy_output_budget(strategy, output_tokens)
     context_override["director_first_call_output_budget"] = {
         "schema_version": "director.first_call_output_budget.v1",
@@ -1006,6 +1214,7 @@ def ensure_director_first_call_materialization_scope(
         "transaction_tools_disabled": False,
     }
     _apply_director_first_call_output_budget(context_override, targets=targets)
+    _stamp_director_one_call_tool_policy(context_override, bootstrap=True)
     # Copy-on-write required-tool projection: the turn context dict is shared by
     # every subsequent same-turn LLM call (transaction_factory copies it into each
     # per-call override), so the write_file requirement must NOT be written into

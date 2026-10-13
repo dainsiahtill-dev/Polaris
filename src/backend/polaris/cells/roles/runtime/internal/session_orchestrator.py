@@ -328,10 +328,9 @@ class SessionStateReducer:
             return "done"
         current = self._normalize_progress(self.state.task_progress)
         # A local repair is still part of the verification phase.
-        if (
-            self.state.structured_findings.get("_canonical_role_kernel") is True
-            and _PHASE_PROGRESS_PRIORITY.get(current, 0) > _PHASE_PROGRESS_PRIORITY.get(normalized, 0)
-        ):
+        if self.state.structured_findings.get("_canonical_role_kernel") is True and _PHASE_PROGRESS_PRIORITY.get(
+            current, 0
+        ) > _PHASE_PROGRESS_PRIORITY.get(normalized, 0):
             return current
         return normalized
 
@@ -403,7 +402,10 @@ class SessionStateReducer:
         marker = "EXPLORATION_STREAK_HARD_BLOCK"
         mandatory = str(self.state.structured_findings.get("mandatory_instruction", "") or "")
 
-        if not self._is_materialize_changes_mode() or self.state.structured_findings.get("_canonical_role_kernel") is True:
+        if (
+            not self._is_materialize_changes_mode()
+            or self.state.structured_findings.get("_canonical_role_kernel") is True
+        ):
             self.state.structured_findings.pop(key, None)
             if marker in mandatory:
                 cleaned = "\n".join(line for line in mandatory.splitlines() if marker not in line).strip()
@@ -506,7 +508,7 @@ class RoleSessionOrchestrator:
         kernel: Any,
         workspace: str,
         role: str = "director",
-        max_auto_turns: int = 10,
+        max_auto_turns: int | None = 10,
         shadow_engine: Any | None = None,
     ) -> None:
         self.session_id = session_id
@@ -815,8 +817,10 @@ class RoleSessionOrchestrator:
         try:
             while True:
                 is_first_turn = self.state.turn_count == 0
-                # Phase 3: HARD-GATE — 危险操作必须人类审批，不能自动继续
-                if is_first_turn and first_prompt:
+                # Explicit legacy interactive sessions retain their prompt preview.
+                # Canonical task effects are authorized by the kernel/tool policy;
+                # quoted or negated command text cannot replace that boundary.
+                if is_first_turn and first_prompt and not self._canonical_role_kernel:
                     hard_gate_check = self._check_hard_gate(first_prompt)
                     if hard_gate_check is not None:
                         logger.warning(
@@ -1647,7 +1651,7 @@ class RoleSessionOrchestrator:
         return TurnOutcomeEnvelope(
             turn_result=TurnResult(
                 turn_id="",  # type: ignore[arg-type]
-                kind="final_answer",  # type: ignore[arg-type]
+                kind="final_answer",
                 visible_content="",
                 decision={},
             ),
@@ -1879,7 +1883,7 @@ class RoleSessionOrchestrator:
     async def _yield_pre_warmed_events(_pre_warmed: dict[str, Any]) -> AsyncIterator[TurnEvent]:
         """产出 ShadowEngine 预热结果的事件流。骨架实现，待 ShadowEngine v2 扩展。"""
         return
-        yield  # type: ignore[unreachable]
+        yield
 
     @staticmethod
     def _predict_next_tools(envelope: TurnOutcomeEnvelope) -> list[dict[str, Any]]:
@@ -1934,8 +1938,8 @@ class RoleSessionOrchestrator:
     def _check_hard_gate(cls, prompt: str) -> str | None:
         """检测危险操作，返回操作类型字符串；若无需审批则返回 None。
 
-        HARD-GATE 协议（来自 Superpowers brainstorming skill）：
-        重大破坏性操作必须人类审批，不能自动执行。
+        Legacy interactive prompt preview; canonical task sessions do not use it.
+        Tool authorization remains owned by the kernel and ControlPlane.
 
         检测逻辑：prompt 全文匹配危险关键词列表。
         """

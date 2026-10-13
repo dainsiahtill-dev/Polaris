@@ -8,6 +8,7 @@ entry_cells:
   - delivery.api_gateway
   - docs.court_workflow
 cells:
+  - control_plane.verifier_policy
   - orchestration.pm_planning
   - orchestration.pm_dispatch
   - chief_engineer.blueprint
@@ -39,6 +40,10 @@ exit_cells:
   - runtime.projection
   - audit.evidence
 relations:
+  - from: orchestration.pm_planning
+    to: control_plane.verifier_policy
+    type: depends_on
+    contract: normalize_verifier_command_argv
   - from: delivery.api_gateway
     to: orchestration.pm_planning
     type: commands

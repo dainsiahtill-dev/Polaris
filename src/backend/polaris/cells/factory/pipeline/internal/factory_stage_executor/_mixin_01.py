@@ -18,12 +18,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from polaris.cells.orchestration.pm_planning.public.artifact_contracts import GeneratedOutputV1
+from polaris.cells.orchestration.pm_planning.public.task_intent import is_pm_task_intent
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 
 from polaris.cells.chief_engineer.blueprint.public import (
+    ChiefEngineerBlueprintErrorV1,
     ChiefEngineerPortfolioTaskV1,
     ProjectKindAuthorityV1,
     VerificationCommandAuthorityV1,
@@ -785,6 +787,7 @@ class _Mixin01:
             )
             raw_metadata = task.get("metadata")
             metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
+            semantic_intent = is_pm_task_intent(task)
             raw_topology_authority = str(metadata.get("topology_authority") or "pm").strip()
             if raw_topology_authority not in {"pm", "chief_engineer"}:
                 raise _ChiefEngineerPortfolioAuthorityError(
@@ -805,7 +808,7 @@ class _Mixin01:
                 str(task.get("language") or delivery_depth_contract.get("language") or "").strip().lower()
             )
             allowed_source_suffixes = chief_engineer_source_suffixes_for_language(primary_language)
-            if topology_authority == "chief_engineer" and not allowed_source_suffixes:
+            if topology_authority == "chief_engineer" and not allowed_source_suffixes and not semantic_intent:
                 raise _ChiefEngineerPortfolioAuthorityError(
                     "chief_engineer.topology_language_authority_missing",
                     f"committed PM task {self._task_id(task, index)!r} has no supported source suffix authority",
@@ -831,7 +834,7 @@ class _Mixin01:
                     or project_type.endswith(("_library", "_package", "_sdk", "_crate"))
                     else "application"
                 )
-                classification_path = entrypoint_targets[0] if entrypoint_targets else target_files[0]
+                classification_path = entrypoint_targets[0] if entrypoint_targets else next(iter(target_files), "")
                 entrypoint_kind_authority = classify_chief_engineer_pm_entrypoint_kind(
                     path=classification_path,
                     command=entrypoint_command,
@@ -856,6 +859,12 @@ class _Mixin01:
                     allowed_source_suffixes=allowed_source_suffixes,
                     entrypoint_kind_authority=entrypoint_kind_authority,
                     delivery_depth_contract=delivery_depth_contract,
+                    planning_contract_version="pm.task_intent.v1" if semantic_intent else "",
+                    verification_authority="chief_engineer" if semantic_intent else "pm",
+                    observable_acceptance=tuple(
+                        self._task_string_list(task, "observable_acceptance", "acceptance_criteria", "acceptance")
+                    ),
+                    explicit_constraints=tuple(self._task_string_list(task, "explicit_constraints")),
                 )
             )
         return tuple(portfolio_tasks)
@@ -899,6 +908,9 @@ class _Mixin01:
                     "task_id": self._task_id(task, index),
                     "title": self._task_string(task, "title", "subject", "goal"),
                     "objective": self._task_objective(task),
+                    "planning_contract_version": "pm.task_intent.v1" if is_pm_task_intent(task) else "",
+                    "verification_authority": "chief_engineer" if is_pm_task_intent(task) else "pm",
+                    "explicit_constraints": self._task_string_list(task, "explicit_constraints"),
                     "target_files": task_targets,
                     "scope_paths": task_scope,
                     "depends_on": self._task_string_list(task, "depends_on", "dependencies"),
@@ -977,8 +989,9 @@ class _Mixin01:
             )
         return (
             "Produce one coherent Chief Engineer project blueprint portfolio for the validated PM task graph. "
-            "Define shared module boundaries and cross-file interfaces before projecting concrete plans for every "
-            "task. Preserve PM target/scope authority and make each task independently executable by Director.\n\n"
+            "Define the artifacts and verification needed for Director to begin. Add cross-task interfaces only "
+            "where coupling requires them. Preserve PM observable acceptance and explicit constraints; resolve "
+            "CE-delegated topology and command recipes before execution.\n\n"
             "Validated PM tasks:\n" + "\n".join(task_lines) + depth_clause + _CE_BLUEPRINT_OUTPUT_CONTRACT
         )
 
@@ -1037,6 +1050,12 @@ class _Mixin01:
         not command authority.  Missing or malformed structured rows fail before any CE provider call.
         """
 
+        delegated = bool(committed_pm_tasks) and all(
+            is_pm_task_intent(task)
+            and isinstance(task.get("metadata"), Mapping)
+            and task["metadata"].get("verification_authority") == "chief_engineer"
+            for task in committed_pm_tasks
+        )
         authorities: list[VerificationCommandAuthorityV1] = []
         seen_hashes: set[str] = set()
         for index, task in enumerate(committed_pm_tasks, start=1):
@@ -1075,12 +1094,12 @@ class _Mixin01:
                     continue
                 seen_hashes.add(authority.authority_hash)
                 authorities.append(authority)
-        if not authorities:
+        if not authorities and not delegated:
             raise _ChiefEngineerPortfolioAuthorityError(
                 "chief_engineer.project_completion_verification_command_authority_missing",
                 "committed PM task set contains no structured verification command authority",
             )
-        if not any(authority.modality in {"build", "test", "lint"} for authority in authorities):
+        if not delegated and not any(authority.modality in {"build", "test", "lint"} for authority in authorities):
             raise _ChiefEngineerPortfolioAuthorityError(
                 "chief_engineer.project_completion_delivery_verifier_authority_missing",
                 "committed PM task set requires at least one build/test/lint command authority",
@@ -1222,7 +1241,6 @@ class _Mixin01:
                     "scope_for_apply": {"type": "array", "items": {}},
                     "risk_flags": {"type": "array", "items": {}},
                 },
-                "required": ["behavior_invariant_refs"],
                 "additionalProperties": True,
             }
             for task_id in portfolio_task_ids
@@ -1311,6 +1329,12 @@ class _Mixin01:
                                         "enum": ["environment_prep", "build", "test", "lint", "entrypoint"],
                                     },
                                     "command_authority_hash": nullable_string,
+                                    "argv": {
+                                        "type": "array",
+                                        "minItems": 1,
+                                        "items": {"type": "string", "minLength": 1},
+                                    },
+                                    "cwd": {"type": "string", "minLength": 1},
                                     "applicability": {
                                         "type": "string",
                                         "enum": ["required", "optional", "not_applicable"],
@@ -1593,6 +1617,10 @@ class _Mixin01:
                     + json.dumps(finding, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                     for finding in effective_view["normalization_findings"]
                 )
+            except ChiefEngineerBlueprintErrorV1 as exc:
+                if exc.code != "invalid_chief_engineer_verification_recipe":
+                    raise
+                projection_errors.append(f"effective completion obligations invalid: {exc.code}: {exc}")
             except (TypeError, ValueError) as exc:
                 projection_errors.append(f"effective completion obligations invalid: {exc}")
         errors = ce_evidence.chief_engineer_portfolio_output_errors(

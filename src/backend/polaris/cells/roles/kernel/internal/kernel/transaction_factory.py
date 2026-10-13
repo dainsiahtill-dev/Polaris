@@ -53,7 +53,11 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.helpers import resolve_context_output_budget_tokens
 from polaris.cells.roles.kernel.internal.llm_caller.request_facts import project_role_request_facts
-from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import native_tool_calls_from_response
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+    director_continuous_execution_enabled,
+    is_committed_role_session_continuation,
+    native_tool_calls_from_response,
+)
 from polaris.cells.roles.kernel.internal.structured_output_transport import (
     StructuredOutputStreamNormalizer,
     StructuredOutputTransportPlan,
@@ -342,9 +346,44 @@ def create_transaction_kernel(
             isinstance(tool_choice, str) and tool_choice.strip().lower() == "auto"
         )
         preserve_existing_forced_scope = existing_forced_scope and incoming_choice_is_default
-        override["_transaction_kernel_prebuilt_messages"] = [
-            dict(item) for item in prebuilt_messages if isinstance(item, dict)
-        ]
+        messages = [dict(item) for item in prebuilt_messages if isinstance(item, dict)]
+        prior = override.get("_transaction_kernel_prebuilt_messages")
+        if is_committed_role_session_continuation(override) and isinstance(prior, list):
+            history: list[dict[str, Any]] = []
+            candidates = [
+                dict(item) for item in prior if isinstance(item, dict) and item.get("role") in {"assistant", "tool"}
+            ]
+            index = 0
+            matched_occurrences: set[int] = set()
+            while index < len(candidates):
+                group = [candidates[index]]
+                index += 1
+                if group[0].get("role") == "assistant":
+                    while index < len(candidates) and candidates[index].get("role") == "tool":
+                        group.append(candidates[index])
+                        index += 1
+                # An ID may be reused by a later real invocation. Only an
+                # identical complete message group is a mirrored projection.
+                mirrored_start = next(
+                    (
+                        start
+                        for start in range(len(messages) - len(group) + 1)
+                        if start not in matched_occurrences and messages[start : start + len(group)] == group
+                    ),
+                    None,
+                )
+                if mirrored_start is None:
+                    history.extend(group)
+                else:
+                    matched_occurrences.add(mirrored_start)
+            if history:
+                # Current role/context authority stays owned by this assembly;
+                # native history contributes observations only, before the user.
+                user_index = next(
+                    (i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"), len(messages)
+                )
+                messages[user_index:user_index] = history
+        override["_transaction_kernel_prebuilt_messages"] = messages
         if incoming_choice_is_none:
             override["_transaction_kernel_forced_tool_definitions"] = []
             override["_transaction_kernel_forced_tool_choice"] = "none"
@@ -393,12 +432,12 @@ def create_transaction_kernel(
             return provider_profile
         if hasattr(provider_profile, "model_copy"):
             try:
-                return provider_profile.model_copy(update={"model": model_override})  # type: ignore[union-attr]
+                return provider_profile.model_copy(update={"model": model_override})
             except (AttributeError, TypeError, ValueError):
                 pass
         if dataclasses.is_dataclass(provider_profile) and not isinstance(provider_profile, type):
             try:
-                return dataclasses.replace(provider_profile, model=model_override)  # type: ignore[type-var]
+                return dataclasses.replace(provider_profile, model=model_override)
             except (TypeError, ValueError):
                 pass
         try:
@@ -653,6 +692,52 @@ def create_transaction_kernel(
     capability_token = derive_role_turn_capability_token(request, capability_scope)
     execution_envelope_hash = str(capability_token.get("execution_envelope_hash") or "").strip()
 
+    from polaris.cells.roles.kernel.internal.kernel.task_boundary import (
+        director_task_boundary_source_targets,
+        director_task_boundary_target_files,
+    )
+    from polaris.cells.roles.kernel.internal.transaction.continuation_evidence import (
+        CONTINUATION_EVIDENCE_KEY,
+        load_committed_continuation_rows,
+    )
+
+    request_metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+    session_id = str(request_metadata.get("role_session_id") or "")
+    source_targets = (
+        tuple(director_task_boundary_source_targets(request.context_override, workspace=durable_workspace))
+        if role == "director"
+        else ()
+    )
+    continuation_evidence = request_metadata.get(CONTINUATION_EVIDENCE_KEY)
+    continuation_rows = (
+        load_committed_continuation_rows(
+            continuation_evidence,
+            workspace=durable_workspace,
+            run_id=str(request.run_id or ""),
+            task_id=str(request.task_id or ""),
+            session_id=session_id,
+            source_targets=source_targets,
+        )
+        if continuation_evidence is not None
+        else []
+    )
+    context_records = (
+        [request.context_override, request.context_override.get("metadata", {})]
+        if isinstance(request.context_override, dict)
+        else []
+    )
+    ce_verification_only = (
+        role == "director"
+        and any(
+            isinstance(record, Mapping)
+            and record.get("verification_authority") == "chief_engineer"
+            and isinstance(record.get("required_write_targets"), (list, tuple))
+            and not record["required_write_targets"]
+            for record in context_records
+        )
+        and not director_task_boundary_target_files(request.context_override)
+    )
+
     return TransactionKernel(
         llm_provider=llm_provider,
         tool_runtime=tool_runtime,
@@ -661,15 +746,15 @@ def create_transaction_kernel(
             role_id=role,
             run_id=str(request.run_id or "").strip(),
             task_id=str(request.task_id or "").strip(),
+            session_id=session_id,
+            source_targets=source_targets,
+            continuation_rows=continuation_rows,
             transition_id=_resolve_turn_transition_id(request),
             durable_commit_required=durable_commit_required,
             workspace=durable_workspace,
             mutation_guard_mode="strict" if role == "director" else "warn",
-            continuous_execution=(
-                isinstance(request.context_override, Mapping)
-                and isinstance(request.context_override.get("continuous_execution"), Mapping)
-                and request.context_override["continuous_execution"].get("enabled") is True
-            ),
+            continuous_execution=director_continuous_execution_enabled(role, request.context_override),
+            materialization_required=not ce_verification_only,
             recon_required=resolve_recon_required(role, provider_profile),
         ),
         workflow_runtime=workflow_runtime,

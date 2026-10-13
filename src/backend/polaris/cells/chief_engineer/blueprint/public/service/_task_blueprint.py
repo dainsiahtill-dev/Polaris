@@ -18,6 +18,7 @@ from ...internal.architecture_decisions import (
 )
 from ...internal.blueprint_persistence import BlueprintPersistence
 from ...internal.ce_consumer import _control_plane_job_token
+from ...internal.readonly_handoff import is_verification_only_blueprint
 from ..contracts import (
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
@@ -43,6 +44,7 @@ from ._helpers import (
     _needs_workspace_interface_snapshot,
     _normalize_llm_blueprint_overlay,
     _safe_token,
+    _string_list,
     _target_files_from_context,
     _tuple_from_payload,
     _utc_now,
@@ -58,6 +60,7 @@ def _job_token_target_files(
     task_id: str,
     pm_target_files: list[str],
     portfolio_projection: Mapping[str, Any],
+    semantic_task: bool = False,
 ) -> list[str]:
     """Bind one JobToken to immutable task-owned artifact paths.
 
@@ -81,9 +84,11 @@ def _job_token_target_files(
         if path not in artifact_owner_by_path or artifact_owner_by_path[path] == task_id
     ]
     owned_paths = [
-        obligation.path for obligation in contract.obligations.artifacts if obligation.owner_task_id == task_id
+        obligation.path
+        for obligation in contract.obligations.artifacts
+        if obligation.owner_task_id == task_id and obligation.applicability != "not_applicable"
     ]
-    return _merge_string_lists(retained_pm_paths, owned_paths)
+    return list(dict.fromkeys(owned_paths)) if semantic_task else _merge_string_lists(retained_pm_paths, owned_paths)
 
 
 def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlueprintResultV1:
@@ -94,9 +99,13 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     context = dict(command.context)
     constraints = dict(command.constraints)
     contract_fields = _blueprint_contract_fields(context)
+    pm_task_metadata = _mapping(_mapping(contract_fields["task"]).get("metadata"))
+    light_intent = pm_task_metadata.get("planning_contract_version") == "pm.task_intent.v1"
     pm_target_files = _target_files_from_context(context)
     blueprint_portfolio_projection = _project_blueprint_portfolio_context(
         context,
+        workspace=command.workspace,
+        run_id=str(command.run_id or ""),
         task_id=command.task_id,
         target_files=pm_target_files,
     )
@@ -109,6 +118,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         task_id=command.task_id,
         pm_target_files=pm_target_files,
         portfolio_projection=blueprint_portfolio_projection,
+        semantic_task=light_intent,
     )
     title = str(context.get("task_title") or context.get("title") or command.objective).strip()
     summary = f"Chief Engineer blueprint for {command.task_id}: {command.objective}"
@@ -119,6 +129,48 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     delivery_plan_document = dict(contract_fields["delivery_plan_document"])
     delivery_depth_contract = dict(contract_fields["delivery_depth_contract"])
     llm_blueprint_overlay = _normalize_llm_blueprint_overlay(command.llm_blueprint)
+    required_write_targets = list(target_files)
+    validated_recipe_context: dict[str, Any] = {}
+    if light_intent:
+        raw_completion = blueprint_portfolio_projection.get("project_completion_contract")
+        if not isinstance(raw_completion, Mapping):
+            raise ValueError("semantic PM task requires validated Chief Engineer completion contract before handoff")
+        completion = ProjectCompletionContractV1.from_dict(raw_completion)
+        required_write_targets = [
+            item.path
+            for item in completion.obligations.artifacts
+            if item.owner_task_id == command.task_id and item.applicability == "required"
+        ]
+        recipes = tuple(item for item in completion.verification_command_authority if item.task_id == command.task_id)
+        if not recipes:
+            raise ValueError("semantic PM task requires exact CE verifier recipe ownership")
+        technical_plan = _mapping(_mapping(command.llm_blueprint).get("construction_plan"))
+        execution_checklist = _string_list(technical_plan.get("steps")) or _string_list(technical_plan.get("execution_checklist"))
+        scope_paths = list(target_files)
+        acceptance_criteria = _merge_string_lists(
+            acceptance_criteria,
+            _mapping(contract_fields["task"]).get("observable_acceptance"),
+        )
+        required_recipe_hashes = {
+            item.command_authority_hash
+            for item in completion.obligations.verification
+            if item.owner_task_id == command.task_id and item.applicability == "required"
+        }
+        validated_recipe_context = {
+            "planning_contract_version": "pm.task_intent.v1",
+            "verification_authority": "chief_engineer",
+            "allowed_commands": sorted({item.command for item in recipes}),
+            "verification_commands": sorted({
+                item.command
+                for item in recipes
+                if item.modality != "entrypoint" and item.authority_hash in required_recipe_hashes
+            }),
+            "context_files": _string_list(_mapping(
+                _mapping(blueprint_portfolio_projection.get("project_interface_contract")).get("task_read_context")
+            ).get(command.task_id)),
+        }
+        context.update(blueprint_portfolio_projection)
+        context.update(validated_recipe_context)
     llm_declared_target_files = _blueprint_declared_file_paths(_mapping(command.llm_blueprint).get("construction_plan"))
     if llm_declared_target_files:
         llm_blueprint_overlay["projected_target_files"] = llm_declared_target_files[:32]
@@ -134,6 +186,8 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         delivery_depth_contract=delivery_depth_contract,
         context=context,
     )
+    if not light_intent:
+        required_write_targets = list(target_files)
     inferred_decisions = infer_architecture_decisions(
         objective=command.objective,
         context=context,
@@ -165,6 +219,13 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         delivery_plan_document=delivery_plan_document,
         context=context,
     )
+    verification_only = is_verification_only_blueprint({
+        **blueprint_portfolio_projection, **validated_recipe_context,
+        "task_id": command.task_id, "run_id": command.run_id,
+        "target_files": target_files, "required_write_targets": required_write_targets,
+    })
+    if light_intent and not target_files and not verification_only:
+        raise ValueError("semantic readonly task requires exact CE read context and required verifier ownership")
     contract_completeness = _contract_completeness(
         objective=command.objective,
         title=title,
@@ -175,6 +236,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         delivery_depth_contract=delivery_depth_contract,
         delivery_plan_document=delivery_plan_document,
         llm_blueprint_overlay=llm_blueprint_overlay,
+        verification_only=verification_only,
     )
     interface_conflicts = list(module_interface_contract.get("interface_conflicts") or [])
     if interface_conflicts:
@@ -198,6 +260,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     context["acceptance_criteria"] = acceptance_criteria
     context["execution_checklist"] = execution_checklist
     context["target_files"] = target_files
+    context["required_write_targets"] = required_write_targets
     context["scope_paths"] = scope_paths
     context["dependencies"] = dependencies
     context["architecture_decisions"] = architecture_decision_payloads
@@ -229,6 +292,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "contract_hash": pm_contract_hash,
         "pm_contract_hash": pm_contract_hash,
         "target_files": target_files,
+        "required_write_targets": required_write_targets,
         "scope_paths": scope_paths,
         "acceptance_criteria": acceptance_criteria,
         "execution_checklist": execution_checklist,
@@ -256,6 +320,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "status": "generated",
         "source": "chief_engineer.generate_task_blueprint",
         "target_files": target_files,
+        "required_write_targets": required_write_targets,
         "scope_paths": scope_paths,
         "acceptance_criteria": acceptance_criteria,
         "execution_checklist": execution_checklist,
@@ -273,6 +338,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         "pm_contract_hash": pm_contract_hash,
         "contract_hash": pm_contract_hash,
         **blueprint_portfolio_projection,
+        **validated_recipe_context,
         "director_execution_profile": director_execution_profile,
         "task_execution_profile": director_execution_profile,
         "execution_profile_ref": execution_profile_ref,
@@ -317,6 +383,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
             task_id=command.task_id,
             payload={
                 **context,
+                **blueprint_portfolio_projection,
                 "run_id": command.run_id,
                 "factory_run_id": str(context.get("factory_run_id") or command.run_id).strip(),
                 "project_id": str(
@@ -352,6 +419,7 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
         recommendations=recommendations,
         risks=risks,
         target_files=tuple(target_files),
+        required_write_targets=tuple(required_write_targets),
         acceptance_criteria=tuple(acceptance_criteria),
         execution_checklist=tuple(execution_checklist),
         scope_paths=tuple(scope_paths),
@@ -398,6 +466,11 @@ def get_blueprint_status(query: GetBlueprintStatusQueryV1) -> TaskBlueprintResul
         risks=_tuple_from_payload(payload.get("risks")),
         # D-05: Rich blueprint fields for Director context injection
         target_files=_tuple_from_payload(payload.get("target_files")),
+        required_write_targets=(
+            _tuple_from_payload(payload["required_write_targets"])
+            if "required_write_targets" in payload
+            else None
+        ),
         acceptance_criteria=_tuple_from_payload(payload.get("acceptance_criteria")),
         execution_checklist=_tuple_from_payload(payload.get("execution_checklist")),
         scope_paths=_tuple_from_payload(payload.get("scope_paths")),

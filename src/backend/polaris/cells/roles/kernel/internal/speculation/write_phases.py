@@ -89,13 +89,23 @@ class WriteToolPhases:
         )
 
     @classmethod
-    def prepare_shadow_normalized_args(cls, arguments: Mapping[str, object]) -> dict[str, object]:
+    def prepare_shadow_normalized_args(
+        cls, arguments: Mapping[str, object], *, tool_name: str = "write_file"
+    ) -> dict[str, object]:
         """Build execution-local, real read-probe arguments outside the shadow key."""
         from polaris.cells.roles.kernel.internal.speculation.fingerprints import normalize_args
+        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
-        shadow_args: dict[str, object] = {}
-        if "path" in arguments:
-            shadow_args["path"] = arguments["path"]
+        source_spec = ToolSpecRegistry.capture_effective_spec(tool_name)
+        if not source_spec.registered or not cls.is_write_tool(source_spec.canonical_tool_name):
+            raise ValueError("write_prepare_source_tool_unsupported")
+        normalized = normalize_tool_arguments_from_snapshot(source_spec, arguments)
+        operands = [normalized[key] for key in ("file", "path") if key in normalized]
+        if len(operands) != 1 or not isinstance(operands[0], str) or not operands[0].strip():
+            raise ValueError("write_prepare_path_required")
+        read_spec = ToolSpecRegistry.capture_effective_spec(_PREPARE_SHADOW_EXECUTION_TOOL)
+        shadow_args = normalize_tool_arguments_from_snapshot(read_spec, {"path": operands[0]})
         return normalize_args(_PREPARE_SHADOW_EXECUTION_TOOL, shadow_args)
 
     @classmethod

@@ -909,9 +909,7 @@ class _Mixin00:
                         review = self._load_chief_engineer_review_payload(run_id=run_id)
                         raw_rows = review.get("blueprints")
                         recovery_review_rows = (
-                            [row for row in raw_rows if isinstance(row, Mapping)]
-                            if isinstance(raw_rows, list)
-                            else []
+                            [row for row in raw_rows if isinstance(row, Mapping)] if isinstance(raw_rows, list) else []
                         )
                     matches = [row for row in recovery_review_rows if str(row.get("task_id") or "") == task_id]
                     if len(matches) != 1:
@@ -1085,9 +1083,9 @@ class _Mixin00:
     def _build_pm_planning_directive(self, raw_directive: Any) -> str:
         user_directive = str(raw_directive or "")
         sections = [
-            "请基于 Architect 阶段产物生成 PM 执行任务合同。任务必须覆盖需求、实现、验证、QA 闭环；"
-            "每个任务必须包含 goal、steps、acceptance、depends_on 与真实 scope_paths/target_files；"
-            "保留独特约束，可省略重复 scope/description。先交 Chief Engineer 形成蓝图，再由 Director 执行。"
+            "基于用户需求生成 pm.task_intent.v1 产品任务合同：明确必需与可选需求、可观察验收、"
+            "任务目标及依赖。按真实耦合拆分，小项目可以只有一个实现任务。保留用户明确约束；"
+            "具体文件拓扑、生成产物和验证命令交给 Chief Engineer 设计，再由 Director 持续实现与验证。"
         ]
         for rel_path, label in (
             ("docs/plan.md", "Architect Plan"),

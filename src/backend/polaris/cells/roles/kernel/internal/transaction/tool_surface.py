@@ -16,9 +16,11 @@ from typing import Any, Literal
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     build_native_tool_schemas,
     build_tool_filter_audit,
+    director_uses_legacy_tool_slices,
     ensure_director_first_call_materialization_scope,
     extract_declared_step_target_files,
     extract_write_tool_pin_target_files,
+    is_committed_role_session_continuation,
     pin_write_tool_file_param_to_targets,
     resolve_from_scratch_write_target,
     resolve_missing_materialization_write_targets,
@@ -26,6 +28,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
     restrict_tool_definitions_to_edit,
     restrict_tool_definitions_to_write,
     should_use_weak_director_slim_tool_schema,
+    tool_definition_names,
 )
 from polaris.cells.roles.kernel.internal.structured_output_transport import (
     resolve_structured_output_transport,
@@ -42,7 +45,8 @@ def _apply_runtime_tool_policy(**kwargs: Any) -> tuple[list[dict[str, Any]], dic
         _apply_runtime_tool_policy as apply_runtime_tool_policy,
     )
 
-    return apply_runtime_tool_policy(**kwargs)
+    result: tuple[list[dict[str, Any]], dict[str, Any]] = apply_runtime_tool_policy(**kwargs)
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +123,11 @@ def plan_transaction_tool_surface(
         context_result=context_result,
         tool_definitions=tool_definitions,
     )
+    from polaris.cells.roles.kernel.internal.kernel.tool_policy import _normalize_tool_policy_name
+
+    permitted_tool_names = frozenset(
+        _normalize_tool_policy_name(name) for name in tool_definition_names(tool_definitions)
+    )
 
     pin_targets = (
         extract_declared_step_target_files(context_override)
@@ -138,14 +147,22 @@ def plan_transaction_tool_surface(
     context_or_text_materialize_requested = _context_requests_materialize_delivery(
         context_override
     ) or _text_requests_materialize_delivery(getattr(request, "message", None))
+    legacy_tool_slices = director_uses_legacy_tool_slices(context_override)
     declared_missing_targets = (
         resolve_missing_materialization_write_targets(context_override, workspace)
-        if str(role or "").strip().lower() == "director" and not transaction_tools_disabled
+        if str(role or "").strip().lower() == "director"
+        and legacy_tool_slices
+        and not transaction_tools_disabled
+        and not is_committed_role_session_continuation(context_override)
         else []
     )
     materialize_requested = context_or_text_materialize_requested or bool(declared_missing_targets)
     missing_materialization_targets = declared_missing_targets if materialize_requested else []
-    from_scratch_target = resolve_from_scratch_write_target(context_override, workspace)
+    from_scratch_target = (
+        None
+        if not legacy_tool_slices or is_committed_role_session_continuation(context_override)
+        else resolve_from_scratch_write_target(context_override, workspace)
+    )
     first_turn_write_targets = missing_materialization_targets or ([from_scratch_target] if from_scratch_target else [])
     if first_turn_write_targets:
         original_definitions = list(tool_definitions)
@@ -169,7 +186,7 @@ def plan_transaction_tool_surface(
             "first-turn minimal execution schema for missing materialization targets: targets=%s",
             first_turn_write_targets,
         )
-    else:
+    elif legacy_tool_slices and not is_committed_role_session_continuation(context_override):
         repair_target = resolve_repair_edit_target(context_override, workspace)
         if repair_target:
             original_definitions = list(tool_definitions)
@@ -195,6 +212,24 @@ def plan_transaction_tool_surface(
     from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
 
     tool_definitions = _apply_forced_transaction_tool_definitions(tool_definitions, context_override)
+    removed_policy_tools = sorted(
+        {
+            name
+            for name in tool_definition_names(tool_definitions)
+            if _normalize_tool_policy_name(name) not in permitted_tool_names
+        }
+    )
+    if removed_policy_tools:
+        tool_definitions = [
+            definition
+            for definition in tool_definitions
+            if all(
+                _normalize_tool_policy_name(name) in permitted_tool_names
+                for name in tool_definition_names([definition])
+            )
+        ]
+        runtime_tool_policy_audit = dict(runtime_tool_policy_audit)
+        runtime_tool_policy_audit["forced_tool_policy_removed_names"] = removed_policy_tools
 
     tool_filter_audit: dict[str, Any] | None = None
     conflict_error: str | None = None
@@ -210,6 +245,16 @@ def plan_transaction_tool_surface(
             conflict_error = f"Tool schema filter conflict: removed prompt-required tools: {removed_required}"
 
     tool_choice_override = resolve_transaction_tool_choice_override(context_override)
+    if isinstance(tool_choice_override, dict):
+        choice_name = str((tool_choice_override.get("function") or {}).get("name") or "")
+        if _normalize_tool_policy_name(choice_name) not in {
+            _normalize_tool_policy_name(name) for name in tool_definition_names(tool_definitions)
+        }:
+            conflict_error = conflict_error or f"Forced tool scope conflicts with role/runtime policy: {choice_name}"
+            tool_choice_override = None
+    elif tool_choice_override == "required" and not tool_definitions and removed_policy_tools:
+        conflict_error = conflict_error or "Forced tool scope conflicts with role/runtime policy: no permitted tools"
+        tool_choice_override = None
     structured_output_transport = resolve_structured_output_transport(context_override)
     if structured_output_transport is not None:
         if isinstance(context_override, dict) and (

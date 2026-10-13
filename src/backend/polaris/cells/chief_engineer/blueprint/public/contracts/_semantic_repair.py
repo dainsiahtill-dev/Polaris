@@ -350,7 +350,8 @@ class ChiefEngineerSemanticRepairPatchV1:
             "task_behavior_ref_replacements",
         }
         optional_fields = {"entrypoint_remove_obligation_ids"}
-        if not expected_fields.issubset(payload) or set(payload) - expected_fields - optional_fields:
+        required_fields = expected_fields if allowed_operations is None else {"base_candidate_hash", "diagnosis_hash"}
+        if not required_fields.issubset(payload) or set(payload) - expected_fields - optional_fields:
             raise ValueError("semantic repair provider patch fields are invalid")
         all_operations: frozenset[ChiefEngineerSemanticRepairOperationV1] = frozenset(
             {
@@ -366,7 +367,7 @@ class ChiefEngineerSemanticRepairPatchV1:
             raise ValueError(f"semantic repair allowed_operations are invalid: {sorted(unknown_operations)}")
 
         def rows(name: str) -> tuple[Mapping[str, Any], ...]:
-            value = payload.get(name)
+            value = payload.get(name, [])
             if not isinstance(value, list):
                 raise TypeError(f"{name} must be a list")
             if any(not isinstance(item, Mapping) for item in value):
@@ -376,20 +377,16 @@ class ChiefEngineerSemanticRepairPatchV1:
         artifact_rows = rows("artifact_upserts") if "artifact_upsert" in enabled_operations else ()
         entrypoint_rows = rows("entrypoint_upserts") if "entrypoint_upsert" in enabled_operations else ()
         raw_entrypoint_removals = (
-            payload.get("entrypoint_remove_obligation_ids", [])
-            if "entrypoint_upsert" in enabled_operations
-            else []
+            payload.get("entrypoint_remove_obligation_ids", []) if "entrypoint_upsert" in enabled_operations else []
         )
         if not isinstance(raw_entrypoint_removals, list) or any(
             not isinstance(value, str) for value in raw_entrypoint_removals
         ):
             raise TypeError("entrypoint_remove_obligation_ids must contain strings")
-        behavior_rows = (
-            rows("behavior_invariant_upserts") if "behavior_invariant_upsert" in enabled_operations else ()
-        )
+        behavior_rows = rows("behavior_invariant_upserts") if "behavior_invariant_upsert" in enabled_operations else ()
         refs: Mapping[Any, Any]
         if "task_behavior_ref_replace" in enabled_operations:
-            raw_refs = payload.get("task_behavior_ref_replacements")
+            raw_refs = payload.get("task_behavior_ref_replacements", {})
             if not isinstance(raw_refs, Mapping):
                 raise TypeError("task_behavior_ref_replacements must be a mapping")
             if any(not isinstance(value, list) for value in raw_refs.values()):
@@ -462,9 +459,7 @@ class ChiefEngineerSemanticRepairPatchV1:
                 and isinstance(raw_consumer_task_ids, list)
                 and owner_task_id in raw_consumer_task_ids
             ):
-                remaining_consumers = [
-                    task_id for task_id in raw_consumer_task_ids if task_id != owner_task_id
-                ]
+                remaining_consumers = [task_id for task_id in raw_consumer_task_ids if task_id != owner_task_id]
                 # Removing a redundant self-reference is mechanical. An empty
                 # result is valid for a task-local invariant in a one-task
                 # portfolio; inventing a sibling consumer is never allowed.

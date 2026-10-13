@@ -52,6 +52,7 @@ def _delegated_artifact_roles(task: ChiefEngineerPortfolioTaskV1) -> frozenset[s
 def _task_delegates_artifact(*, task: ChiefEngineerPortfolioTaskV1, semantic_role: str, path: str) -> bool:
     return _ce_topology_authorizes_artifact(
         topology_authority=task.topology_authority,
+        planning_contract_version=task.planning_contract_version,
         required_source_kinds=task.required_source_kinds,
         allowed_source_suffixes=task.allowed_source_suffixes,
         semantic_role=semantic_role,
@@ -64,6 +65,11 @@ def _task_authorizes_artifact(
     task: ChiefEngineerPortfolioTaskV1,
     artifact: ArtifactObligationV1,
 ) -> bool:
+    if task.planning_contract_version == "pm.task_intent.v1":
+        return bool(
+            _task_delegates_artifact(task=task, semantic_role=artifact.semantic_role, path=artifact.path)
+            and (not task.scope_paths or _task_authorizes_completion_path(task=task, path=artifact.path))
+        )
     return bool(
         _ce_artifact_role_matches_path(
             semantic_role=artifact.semantic_role,
@@ -1972,10 +1978,9 @@ def build_chief_engineer_semantic_repair_patch_schema(
 ) -> dict[str, Any]:
     """Return diagnosis-scoped provider schema for typed semantic repair.
 
-    Authorized operation groups keep their strict item schema. Disabled groups
-    retain only their required container shape because the authoritative patch
-    parser drops them before composition. This prevents irrelevant provider
-    noise from pre-empting the operation subset authorized by the diagnosis.
+    Diagnosis-scoped requests advertise only authorized groups and require
+    provenance anchors. Unchanged groups may be omitted; present items retain
+    their strict schemas. Unscoped callers keep the legacy complete envelope.
     """
 
     enabled_operations = frozenset(
@@ -2055,7 +2060,7 @@ def build_chief_engineer_semantic_repair_patch_schema(
         ],
         "additionalProperties": False,
     }
-    return {
+    schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "base_candidate_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -2122,6 +2127,20 @@ def build_chief_engineer_semantic_repair_patch_schema(
         ],
         "additionalProperties": False,
     }
+
+    if allowed_operations is not None:
+        properties = schema["properties"]
+        for operation, fields in (
+            ("artifact_upsert", ("artifact_upserts",)),
+            ("entrypoint_upsert", ("entrypoint_upserts", "entrypoint_remove_obligation_ids")),
+            ("behavior_invariant_upsert", ("behavior_invariant_upserts",)),
+            ("task_behavior_ref_replace", ("task_behavior_ref_replacements",)),
+        ):
+            if operation not in enabled_operations:
+                for field in fields:
+                    properties.pop(field)
+        schema["required"] = ["base_candidate_hash", "diagnosis_hash"]
+    return schema
 
 
 __all__ = [

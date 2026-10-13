@@ -348,12 +348,11 @@ class TestEvaluatePmTaskQualityHappyPath:
 
         report = evaluate_pm_task_quality(payload)
 
-        assert report["ok"] is False
+        assert report["ok"] is True
+        assert report["score"] == 100
         assert any(
-            "described scope paths missing from target_files/scope_paths" in issue
-            and "src/models" in issue
-            and "src/engine" in issue
-            for issue in report["critical_issues"]
+            "referenced paths outside declared task scope" in issue and "src/models" in issue and "src/engine" in issue
+            for issue in report["warnings"]
         )
 
     def test_file_scope_paths_must_be_targeted_when_target_files_present(self) -> None:
@@ -389,12 +388,11 @@ class TestEvaluatePmTaskQualityHappyPath:
 
         report = evaluate_pm_task_quality(payload)
 
-        assert report["ok"] is False
-        assert any(
-            "file-level scope_paths missing from target_files" in issue
-            and "src/models/moonphase.ts" in issue
-            and "src/models/garden.ts" in issue
-            for issue in report["critical_issues"]
+        # Additional declared scope may describe read context. It does not
+        # manufacture authored targets or replace runtime write authorization.
+        assert report["ok"] is True
+        assert not any(
+            "file-level scope_paths missing from target_files" in issue for issue in report["critical_issues"]
         )
 
     def test_first_product_delivery_task_cannot_be_documentation_only(self) -> None:

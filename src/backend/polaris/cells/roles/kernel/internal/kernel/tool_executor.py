@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.kernel.error_handler import (
@@ -254,7 +255,7 @@ def _execution_envelope_capability_token(mapping: dict[str, Any]) -> dict[str, A
         if not token_id:
             continue
         handoff_decision = _mapping_from_value(envelope.get("handoff_decision")) or {}
-        return {
+        token = {
             "source": "director.execution_envelope.authorization",
             "token_id": token_id,
             "run_id": str(envelope.get("run_id") or ""),
@@ -265,11 +266,13 @@ def _execution_envelope_capability_token(mapping: dict[str, Any]) -> dict[str, A
             "execution_envelope_hash": envelope_hash,
             "allowed_paths": authorization.get("allowed_read_paths") or authorization.get("target_files") or (),
             "allowed_write_paths": authorization.get("allowed_write_paths") or authorization.get("target_files") or (),
-            "allowed_read_paths": authorization.get("allowed_read_paths") or (),
             "target_files": authorization.get("target_files") or (),
             "allowed_commands": authorization.get("allowed_commands") or (),
             "capability_audit": {"ok": bool(handoff_decision.get("allowed"))},
         }
+        if "allowed_read_paths" in authorization:
+            token["allowed_read_paths"] = deepcopy(authorization["allowed_read_paths"])
+        return token
     return {}
 
 
@@ -292,10 +295,13 @@ def _job_token_evidence(value: dict[str, Any], scope: tuple[str, ...] | None) ->
         "execution_envelope_hash": str(value.get("execution_envelope_hash") or ""),
         "capability_audit_ok": bool(capability_audit_map.get("ok")),
         "allowed_scope": list(scope or ()),
+        "gate_policy": deepcopy(_mapping_from_value(value.get("gate_policy")) or {}),
     }
     allowed_commands = _command_items(value)
     if allowed_commands:
         evidence["allowed_commands"] = allowed_commands
+    if "allowed_read_paths" in value:
+        evidence["allowed_read_paths"] = deepcopy(value["allowed_read_paths"])
     return evidence
 
 
@@ -313,6 +319,18 @@ def derive_role_turn_capability_token(
         token = _explicit_capability_token_mapping(mapping)
         evidence = _job_token_evidence(token, capability_scope)
         if evidence:
+            from polaris.cells.roles.kernel.internal.kernel.verification_command_scope import (
+                derive_bound_verification_command_scope,
+            )
+
+            command_scope = derive_bound_verification_command_scope(
+                token=token,
+                task_id=str(request.task_id or ""),
+                authority_mappings=authority_mappings,
+            )
+            if command_scope is not None:
+                evidence["verification_command_scope"] = command_scope
+                evidence["allowed_commands"] = list(dict.fromkeys(row["command"] for row in command_scope))
             if not evidence.get("execution_envelope_hash"):
                 for envelope_mapping in authority_mappings:
                     envelope_hash = str(envelope_mapping.get("execution_envelope_hash") or "").strip()

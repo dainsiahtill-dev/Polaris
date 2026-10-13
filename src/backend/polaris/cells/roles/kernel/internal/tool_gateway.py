@@ -97,9 +97,7 @@ class DirectedEffectGatewayPolicyInputsV1:
             "allowed_command_hash",
         ):
             value = getattr(self, name)
-            if not isinstance(value, str) or len(value) != 64 or any(
-                char not in "0123456789abcdef" for char in value
-            ):
+            if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
                 raise ValueError(f"{name} must be a lowercase SHA-256 digest")
         if self.capability_scope != tuple(sorted(set(self.capability_scope))):
             raise ValueError("capability_scope must be sorted and unique")
@@ -245,9 +243,7 @@ class RoleToolGateway:
 
         capability_scope = tuple(sorted(set(self._capability_scope)))
         token_id = str(self._capability_token.get("token_id") or "").strip()
-        envelope_hash = str(
-            self._capability_token.get("execution_envelope_hash") or ""
-        ).strip()
+        envelope_hash = str(self._capability_token.get("execution_envelope_hash") or "").strip()
         capability_audit_ok = self._capability_token.get("capability_audit_ok")
         if (
             not token_id
@@ -261,15 +257,9 @@ class RoleToolGateway:
             raw_commands = (raw_commands,)
         if not isinstance(raw_commands, (list, tuple, set, frozenset)):
             raise ValueError("allowed_commands must be a sequence")
-        allowed_commands = tuple(
-            sorted({str(item).strip() for item in raw_commands if str(item).strip()})
-        )
-        allowed_commands_hash = hash_directed_effect_arguments(
-            (("allowed_commands", allowed_commands),)
-        )
-        allowed_paths_hash = hash_directed_effect_arguments(
-            (("allowed_paths", capability_scope),)
-        )
+        allowed_commands = tuple(sorted({str(item).strip() for item in raw_commands if str(item).strip()}))
+        allowed_commands_hash = hash_directed_effect_arguments((("allowed_commands", allowed_commands),))
+        allowed_paths_hash = hash_directed_effect_arguments((("allowed_paths", capability_scope),))
         token_hash = _directed_effect_hash_json(self._capability_token)
         restrictions: DirectedEffectImmutableItemsV1 = (
             ("allowed_commands", allowed_commands),
@@ -286,21 +276,15 @@ class RoleToolGateway:
                 "whitelist": tuple(getattr(self.policy, "whitelist", ()) or ()),
                 "blacklist": tuple(getattr(self.policy, "blacklist", ()) or ()),
                 "allow_code_write": bool(getattr(self.policy, "allow_code_write", False)),
-                "allow_command_execution": bool(
-                    getattr(self.policy, "allow_command_execution", False)
-                ),
-                "allow_file_delete": bool(
-                    getattr(self.policy, "allow_file_delete", False)
-                ),
+                "allow_command_execution": bool(getattr(self.policy, "allow_command_execution", False)),
+                "allow_file_delete": bool(getattr(self.policy, "allow_file_delete", False)),
             }
         )
         canonical_allow_list = tuple(sorted(self._canonical_tool_whitelist()))
         return DirectedEffectGatewayPolicyInputsV1(
             role_policy_id=self.policy_id,
             role_policy_hash=_directed_effect_hash_json(policy_payload),
-            canonical_allow_list_hash=hash_directed_effect_arguments(
-                (("canonical_allow_list", canonical_allow_list),)
-            ),
+            canonical_allow_list_hash=hash_directed_effect_arguments((("canonical_allow_list", canonical_allow_list),)),
             capability_scope=capability_scope,
             capability_scope_hash=allowed_paths_hash,
             job_token_id=token_id,
@@ -334,13 +318,10 @@ class RoleToolGateway:
         snapshot = classification.snapshot
         if not isinstance(snapshot, CapturedToolSpecSnapshotV1) or classification.error_code is not None:
             return False, self._format_refusal_message("工具规范化失败", raw_tool_name)
-        if classification.normalization_required:
-            try:
-                normalized_arguments = normalize_tool_arguments_from_snapshot(snapshot, raw_arguments)
-            except ValueError:
-                return False, self._format_refusal_message("工具规范化失败", raw_tool_name)
-        else:
-            normalized_arguments = raw_arguments
+        try:
+            normalized_arguments = normalize_tool_arguments_from_snapshot(snapshot, raw_arguments)
+        except ValueError:
+            return False, self._format_refusal_message("工具规范化失败", raw_tool_name)
         return self.check_tool_permission_from_snapshot(
             raw_tool_name=raw_tool_name,
             canonical_tool_name=classification.canonical_tool_name,
@@ -404,6 +385,8 @@ class RoleToolGateway:
                 return deny(f"角色无权执行命令 '{canonical_tool_name}'")
             if "command" in normalized_args and self._is_dangerous_command(str(normalized_args["command"])):
                 return deny("命令包含危险操作")
+            if not self._verification_command_scope_permits(normalized_args):
+                return deny("command/cwd is outside the token-bound verification authority")
 
         if snapshot_category == "delete" and not self.policy.allow_file_delete:
             return deny(f"角色无权删除文件 '{canonical_tool_name}'")
@@ -417,7 +400,91 @@ class RoleToolGateway:
                 if self._is_path_traversal(path):
                     return deny(f"路径 '{path}' 包含穿越序列")
 
+        if snapshot_category == "read" and not self._read_scope_permits(
+            canonical_tool_name, normalized_args, tool_snapshot
+        ):
+            return deny("路径不在 committed read scope 内或缺少明确授权的读取路径")
+
         return True, "授权通过"
+
+    def _verification_command_scope_permits(self, arguments: Mapping[str, object]) -> bool:
+        """Check exact command/cwd pairs reconstituted from token-pinned rows."""
+        if "verification_command_scope" not in self._capability_token:
+            return True
+        scope = self._capability_token["verification_command_scope"]
+        if not isinstance(scope, list) or not scope:
+            return False
+        command = arguments.get("command")
+        if not isinstance(command, str):
+            return False
+        from polaris.kernelone.exceptions import PathSecurityError
+        from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
+        filesystem = KernelFileSystem(self.workspace or ".", get_default_adapter())
+        working_dir = arguments.get("working_dir", arguments.get("cwd", "."))
+        if not isinstance(working_dir, str):
+            return False
+        try:
+            cwd = filesystem.to_workspace_relative_path(working_dir)
+            return any(
+                isinstance(row, Mapping)
+                and row.get("command") == command.strip()
+                and isinstance(row.get("cwd"), str)
+                and filesystem.to_workspace_relative_path(str(row["cwd"])) == cwd
+                for row in scope
+            )
+        except (OSError, ValueError, PathSecurityError):
+            return False
+
+    def _read_scope_permits(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        tool_snapshot: CapturedToolSpecSnapshotV1,
+    ) -> bool:
+        """Check declared filesystem operands against the committed read scope.
+
+        Undefined legacy scopes retain role-policy reads. Explicit empty or
+        malformed scopes fail closed before filesystem/search dispatch. Operands
+        and defaults come from the same captured ToolSpec used for aliases.
+        """
+        if "allowed_read_paths" not in self._capability_token:
+            return True
+        spec = frozen_node_to_value(tool_snapshot.canonical_effective_spec)
+        if not isinstance(spec, dict):
+            return False
+        path_fields = {"file", "path", "paths", "root", "directory", "dir", "target", "source"}
+        operands: list[str] = []
+        for parameter in spec.get("arguments", []):
+            if not isinstance(parameter, dict) or parameter.get("name") not in path_fields:
+                continue
+            name = str(parameter["name"])
+            # Unspecified repository search/list roots execute over workspace.
+            value = arguments.get(name, parameter.get("default", "."))
+            values = value if isinstance(value, (list, tuple)) else [value]
+            if not values or any(not isinstance(item, str) or not item.strip() for item in values):
+                return False
+            operands.extend(str(item) for item in values)
+        if tool_name == "repo_diff":
+            operands.append(".")
+        if not operands:
+            return True
+        scope = self._capability_token["allowed_read_paths"]
+        if not isinstance(scope, (list, tuple)) or not scope or any(not isinstance(item, str) for item in scope):
+            return False
+        from polaris.kernelone.exceptions import PathSecurityError
+        from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
+        filesystem = KernelFileSystem(self.workspace or ".", get_default_adapter())
+        try:
+            authorized = [filesystem.resolve_workspace_path(item) for item in scope]
+            for operand in operands:
+                target = filesystem.resolve_workspace_path(operand)
+                if not any(target == path or (path.is_dir() and target.is_relative_to(path)) for path in authorized):
+                    return False
+        except (OSError, ValueError, PathSecurityError):
+            return False
+        return True
 
     @staticmethod
     def _snapshot_matches_bound_tool(

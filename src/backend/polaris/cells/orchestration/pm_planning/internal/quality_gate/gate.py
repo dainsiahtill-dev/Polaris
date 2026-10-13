@@ -72,7 +72,15 @@ from polaris.cells.orchestration.pm_planning.internal.quality_gate.primitives im
     _title_is_too_short,
     _unknown_dependency_refs,
 )
+from polaris.cells.orchestration.pm_planning.internal.quality_gate.verification_readiness import (
+    verification_operand_readiness_diagnostics,
+)
 from polaris.cells.orchestration.pm_planning.public.artifact_contracts import validate_pm_artifact_contracts
+from polaris.cells.orchestration.pm_planning.public.task_intent import (
+    PM_TASK_INTENT_SCHEMA_VERSION,
+    PmTaskIntentError,
+    validate_pm_task_intent_tasks,
+)
 
 _PM_CONTRACT_GOVERNANCE_EXACT_MARKERS = (
     "补全文件级路径",
@@ -501,7 +509,8 @@ def _task_dependency_values(task: dict[str, Any]) -> list[str]:
     deps = task.get("depends_on")
     if not isinstance(deps, list):
         deps = task.get("dependencies")
-    return _normalize_dep_list(deps)
+    normalized: list[str] = _normalize_dep_list(deps)
+    return normalized
 
 
 def _set_task_dependencies(task: dict[str, Any], deps: list[str]) -> None:
@@ -805,6 +814,50 @@ def evaluate_pm_task_quality(
     """
     tasks_raw = normalized.get("tasks")
     tasks: list[Any] = tasks_raw if isinstance(tasks_raw, list) else []
+    if any(isinstance(task, dict) and (
+        task.get("schema_version") == PM_TASK_INTENT_SCHEMA_VERSION or
+        (isinstance(task.get("metadata"), dict) and task["metadata"].get("planning_contract_version") == PM_TASK_INTENT_SCHEMA_VERSION)
+    ) for task in tasks):
+        try:
+            validate_pm_task_intent_tasks(tasks)
+            errors: list[dict[str, Any]] = []
+            for task in tasks:
+                text = " ".join([task["product_goal"], task["title"], task["goal"], task.get("description", ""),
+                                 *task["required_requirements"], *task["optional_requirements"],
+                                 *task["explicit_constraints"], *task["product_acceptance"], *task["acceptance"]])
+                # Global product obligations may mention CE/Director scope coverage.
+                # Governance-task classification belongs to the task purpose;
+                # prompt-leakage markers still cover all required semantic text.
+                purpose = " ".join([task["title"], task["goal"], task.get("description", ""), *task["acceptance"]])
+                if _contains_prompt_leakage(text) or _contains_pm_contract_governance_task(purpose):
+                    errors.append({"code": "pm_task_intent_invalid", "path": "$.tasks", "message": "Product tasks contain role/prompt governance leakage"})
+        except PmTaskIntentError as exc:
+            errors = [exc.diagnostic]
+        advisory_diagnostics = [
+            {
+                "code": "pm_task_intent_advisory_not_authority",
+                "severity": "warning",
+                "path": f"$.tasks[{index}].metadata.planning_advisory",
+                "task_id": task.get("id"),
+                "message": "Declared planning advice is retained without write, verifier or depth-policy authority.",
+                "advisory_fields": sorted(task["metadata"]["planning_advisory"]),
+                "execution_authority": False,
+            }
+            for index, task in enumerate(tasks)
+            if isinstance(task, dict)
+            and isinstance(task.get("metadata"), dict)
+            and isinstance(task["metadata"].get("planning_advisory"), dict)
+            and task["metadata"]["planning_advisory"]
+        ]
+        return {
+            "ok": not errors,
+            "score": 0 if errors else 100,
+            "task_count": len(tasks),
+            "critical_issues": [error["code"] for error in errors],
+            "warnings": ["pm_task_intent_advisory_not_authority"] if advisory_diagnostics else [],
+            "contract_diagnostics": [*errors, *advisory_diagnostics],
+            "summary": f"semantic_tasks={len(tasks)}; critical={len(errors)}; technical_authority=chief_engineer",
+        }
     task_count = len(tasks)
     critical_issues: list[str] = []
     warnings: list[str] = []
@@ -902,14 +955,17 @@ def evaluate_pm_task_quality(
             critical_issues.append(
                 f"{task_id}: scope paths must stay inside workspace ({', '.join(invalid_scope_paths[:3])})"
             )
-        declared_scope_paths = _extract_declared_scope_paths_from_text(combined_text)
-        missing_declared_scope_paths = [
-            path for path in declared_scope_paths if not _task_paths_cover_declared_scope(path, task_paths)
+        referenced_scope_paths = _extract_declared_scope_paths_from_text(combined_text)
+        unlisted_reference_paths = [
+            path for path in referenced_scope_paths if not _task_paths_cover_declared_scope(path, task_paths)
         ]
-        if missing_declared_scope_paths:
-            critical_issues.append(
-                f"{task_id}: described scope paths missing from target_files/scope_paths "
-                f"({', '.join(missing_declared_scope_paths[:3])})"
+        if unlisted_reference_paths:
+            # Prose may discuss another task's artifacts. Only typed declarations
+            # and the execution owner determine write scope and required effects.
+            advisory_warning_count += 1
+            warnings.append(
+                f"{task_id}: referenced paths outside declared task scope "
+                f"({', '.join(unlisted_reference_paths[:3])}); prose does not authorize writes"
             )
 
         checklist = task.get("execution_checklist")
@@ -1010,6 +1066,13 @@ def evaluate_pm_task_quality(
         critical_issues.append("PM returned zero tasks")
     typed_tasks = [task for task in tasks if isinstance(task, dict)]
     critical_issues.extend(_duplicate_js_domain_source_path_issues(typed_tasks))
+    contract_diagnostics = verification_operand_readiness_diagnostics(typed_tasks, workspace=effective_workspace)
+    for diagnostic in contract_diagnostics:
+        if diagnostic["severity"] == "error":
+            critical_issues.append(diagnostic["code"])
+        else:
+            advisory_warning_count += 1
+            warnings.append(f"{diagnostic['task_id']}: {diagnostic['message']}")
     unique_ratio = len(seen_signatures) / float(task_count) if task_count > 0 else 1.0
     if task_count >= 2 and unique_ratio < 0.67:
         critical_issues.append(f"task list is overly repetitive (unique_signature_ratio={unique_ratio:.2f})")
@@ -1073,7 +1136,7 @@ def evaluate_pm_task_quality(
         f"checklist_tasks={checklist_task_count}; measurable_accept_tasks={measurable_acceptance_task_count}; "
         f"doc_section_tasks={docs_section_task_count}; backlog_trace_tasks={backlog_trace_task_count}; score={score}"
     )
-    return {
+    report: dict[str, Any] = {
         "ok": len(critical_issues) == 0,
         "score": score,
         "task_count": task_count,
@@ -1082,6 +1145,9 @@ def evaluate_pm_task_quality(
         "warnings": warnings,
         "summary": summary,
     }
+    if contract_diagnostics:
+        report["contract_diagnostics"] = contract_diagnostics
+    return report
 
 
 def autofix_pm_contract_for_quality(
@@ -1130,6 +1196,11 @@ def autofix_pm_contract_for_quality(
         "task_boundary_tasks_added": 0,
     }
     if not tasks:
+        return stats
+
+    if any(isinstance(task, dict) and task.get("schema_version") == PM_TASK_INTENT_SCHEMA_VERSION for task in tasks):
+        # Product intent never acquires paths, recipes, phase tasks or acceptance
+        # through deterministic PM enrichment. CE must supply technical evidence.
         return stats
 
     verify_command = detect_integration_verify_command(workspace_full)

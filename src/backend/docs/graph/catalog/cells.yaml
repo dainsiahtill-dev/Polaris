@@ -2535,12 +2535,14 @@ cells:
       Produce PM task contracts from project goals and docs, enforce planning
       quality gates, and publish governed planning artifacts.
     current_modules:
+      - polaris.cells.orchestration.pm_planning.public.task_intent
       - polaris.cells.orchestration.pm_planning.public.artifact_contracts
       - polaris.cells.orchestration.pm_planning.service
       - polaris.cells.orchestration.pm_planning.pipeline
       - polaris.cells.orchestration.pm_planning.internal.task_quality_gate
       - polaris.delivery.http.v2.pm
     owned_paths:
+      - polaris/cells/orchestration/pm_planning/public/task_intent.py
       - polaris/cells/orchestration/pm_planning/public/contracts.py
       - polaris/cells/orchestration/pm_planning/tests/test_planning_inputs.py
       - polaris/cells/orchestration/pm_planning/public/artifact_contracts.py
@@ -2549,6 +2551,7 @@ cells:
       - polaris/delivery/http/v2/pm.py
     public_contracts:
       modules:
+        - polaris.cells.orchestration.pm_planning.public.task_intent
         - polaris.cells.orchestration.pm_planning.public.contracts
         - polaris.cells.orchestration.pm_planning.public.artifact_contracts
       commands:
@@ -2558,11 +2561,13 @@ cells:
       events:
         - PmTaskContractGeneratedEventV1
       results:
+        - PmTaskIntentV1
         - PmProductPlanningInputV1
         - PmTaskContractResultV1
       errors:
         - PmPlanningErrorV1
     depends_on:
+      - control_plane.verifier_policy
       - context.engine
       - llm.control_plane
       - runtime.execution_broker

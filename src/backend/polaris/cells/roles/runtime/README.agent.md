@@ -92,6 +92,11 @@ Defined in `public/contracts.py`:
 - `RoleRuntimeErrorV1`
 
 ## Design Notes
+- Budgeted canonical Director sessions use their existing enclosing deadline;
+  an implicit ten-turn limit does not truncate them. Explicit turn limits remain
+  supported, and unbudgeted sessions keep the legacy ceiling.
+- Session continuation preserves role/task/run identity and consumes committed
+  kernel facts. Native transcript observations cannot create effect authority.
 - New code should depend on the public contracts only.
 - Guarded Director sessions validate the exact public TaskRuntime execution
   attempt before request preparation or kernel/controller construction; stream,

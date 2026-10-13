@@ -90,12 +90,84 @@ def _script_name(argv: tuple[str, ...]) -> str:
     return ""
 
 
+_NODE_TEST_PROFILE_ID = "node.test_runner"
+_NODE_TEST_FLAG = "--test"
+_NODE_TEST_REPORTER_FORMS = (("--test-reporter=tap",), ("--test-reporter", "tap"))
+_NODE_TEST_PATH_SUFFIXES = frozenset({".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"})
+
+
+def _is_node_test_runner_argv(argv: tuple[str, ...]) -> bool:
+    return _exe(argv) == "node" and len(argv) >= 2 and argv[1] == _NODE_TEST_FLAG
+
+
+def _node_test_argument_rejection(argv: tuple[str, ...]) -> tuple[int | None, str]:
+    """One existing grammar feeds both classification and readonly explanation."""
+    if not _is_node_test_runner_argv(argv):
+        if len(argv) > 1 and argv[1].startswith("-") and all(argv[1] != form[0] for form in _NODE_TEST_REPORTER_FORMS):
+            return 1, "unsupported_argument"
+        return 1, "test_flag_position"
+    index = 2
+    while index < len(argv):
+        matched = next((form for form in _NODE_TEST_REPORTER_FORMS if argv[index : index + len(form)] == form), None)
+        if matched is not None:
+            index += len(matched)
+            continue
+        operand = argv[index]
+        if operand.startswith("-"):
+            return index, "unsupported_argument"
+        test_path = PurePath(operand.replace("\\", "/"))
+        if test_path.is_absolute() or ".." in test_path.parts or any(character in operand for character in ":;$&|`\\"):
+            return index, "unsafe_test_path"
+        if test_path.suffix.casefold() not in _NODE_TEST_PATH_SUFFIXES:
+            return index, "unsupported_test_path_suffix"
+        index += 1
+    return None, ""
+
+
+def describe_builtin_command_profile(modality: str, argv: tuple[str, ...]) -> dict[str, object]:
+    """Describe current syntax; never propose changed argv or grant permission."""
+    if not _is_node_test_runner_argv(argv) and not (
+        modality == "test"
+        and _exe(argv) == "node"
+        and len(argv) >= 3
+        and argv[1].startswith("-")
+        and _NODE_TEST_FLAG in argv[2:]
+    ):
+        return {}
+    forms = " | ".join(" ".join(form) for form in _NODE_TEST_REPORTER_FORMS)
+    feedback: dict[str, object] = {
+        "candidate_profile_id": _NODE_TEST_PROFILE_ID,
+        "accepted_shape": f"node {_NODE_TEST_FLAG} [{forms}] [workspace-relative test file/glob ...]; "
+        f"suffixes: {', '.join(sorted(_NODE_TEST_PATH_SUFFIXES))}",
+    }
+    index, reason_code = _node_test_argument_rejection(argv)
+    if index is not None:
+        feedback.update(
+            {
+                "argument_index": index,
+                "rejected_argument": argv[index],
+                "reason_code": reason_code,
+                "reason": f"Argument {index} {argv[index]!r} is outside the current {_NODE_TEST_PROFILE_ID} grammar "
+                f"({reason_code}).",
+                "materialization_note": "If tests need transpilation, explicitly declare compilation and test artifacts "
+                "or authored JavaScript tests. Do not invent output paths; actual execution still validates inputs and proof.",
+            }
+        )
+    elif modality != "test":
+        feedback["reason"] = f"The declared runner is a test profile, not the requested {modality} modality."
+    return feedback
+
+
 def _node_profile(modality: str, argv: tuple[str, ...]) -> str:
     executable = _exe(argv)
+    if modality == "test" and _is_node_test_runner_argv(argv):
+        index, _reason = _node_test_argument_rejection(argv)
+        return _NODE_TEST_PROFILE_ID if index is None else ""
     if executable == "node" and modality == "entrypoint" and len(argv) >= 2:
         entrypoint_path = PurePath(argv[1].replace("\\", "/"))
         if (
-            not entrypoint_path.is_absolute()
+            not argv[1].startswith("-")
+            and not entrypoint_path.is_absolute()
             and ".." not in entrypoint_path.parts
             and entrypoint_path.suffix.casefold() in {".js", ".mjs", ".cjs"}
         ):
@@ -398,6 +470,18 @@ def evaluate_builtin_proof(
         # only an all-empty run; one successful package line proves that the
         # command exercised at least one package test suite.
         return bool(re.search(r"(?m)^ok\s+\S+", output))
+    if normalized_profile == "node.test_runner":
+        counts = {name: re.findall(rf"(?m)^# {name} (\d+)\s*$", output) for name in ("tests", "pass", "fail")}
+        return (
+            all(len(values) == 1 for values in counts.values())
+            and int(counts["tests"][0]) > 0
+            and int(counts["pass"][0]) > 0
+            and int(counts["fail"][0]) == 0
+            and bool(re.search(r"(?m)^TAP version 13\s*$", output))
+            and bool(re.search(r"(?m)^ok \d+ - \S", output))
+            and bool(re.search(r"(?m)^1\.\.[1-9]\d*\s*$", output))
+            and not bool(re.search(r"(?m)^not ok \d+", output))
+        )
     if normalized_profile == "node.script_test":
         patterns = (
             r"(?im)^\s*tests?\s*:?\s*(\d+)\s+passed",

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
 import time
 from collections.abc import AsyncGenerator, Mapping
@@ -16,7 +17,9 @@ from typing import Any
 
 from polaris.cells.roles.kernel.public.llm_caller_contracts import (
     clamp_role_execution_timeout_to_deadline,
+    prepare_role_session_continuation_policy,
 )
+from polaris.cells.roles.kernel.public.turn_contracts import TurnContinuationMode
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     ContentChunkEvent,
@@ -29,6 +32,78 @@ from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.internal.session_orchestrator import RoleSessionOrchestrator
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
 from polaris.kernelone.context.prompt_safety import format_tool_failure_summary
+
+
+def _transcript_data_plane(value: Any) -> Any:
+    """Keep tool observations while excluding execution and receipt authority."""
+    if isinstance(value, Mapping):
+        excluded = {
+            "effect_receipt",
+            "effect_receipt_commit",
+            "director_policy",
+            "authorization",
+            "execution_envelope",
+            "execution_attempt_authority",
+            "job_token",
+            "job_token_id",
+            "job_token_set",
+            "job_token_set_hash",
+            "claim_grant",
+            "claim_grant_hash",
+            "capability_token",
+        }
+        return {str(key): item for key, item in value.items() if str(key) not in excluded}
+    return value
+
+
+def _committed_transcript_messages(results: list[RoleTurnResult]) -> list[dict[str, Any]]:
+    """Derive native history from the same session's committed kernel results."""
+    messages: list[dict[str, Any]] = []
+    for result in results:
+        commit = result.metadata.get("turn_commit_receipt")
+        if not isinstance(commit, Mapping) or not commit.get("turn_id"):
+            continue
+        calls = {str(item.get("call_id") or ""): item for item in result.tool_calls if isinstance(item, Mapping)}
+        native_calls: list[dict[str, Any]] = []
+        tool_messages: list[dict[str, Any]] = []
+        for row in (result.batch_receipt or {}).get("results", []):
+            if not isinstance(row, Mapping):
+                continue
+            call_id = str(row.get("call_id") or "")
+            call = calls.get(call_id)
+            name = str(row.get("tool_name") or "")
+            if row.get("status") not in {"success", "error", "failed", "blocked", "timeout", "aborted", "cancelled"}:
+                continue
+            if not call_id:
+                continue
+            if call is None or call.get("tool") != name or not isinstance(call.get("args"), Mapping):
+                raise RuntimeError("committed_tool_transcript_missing_native_arguments:" + call_id)
+            native_calls.append(
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": json.dumps(dict(call["args"]), ensure_ascii=False),
+                    },
+                }
+            )
+            observation = {"status": row.get("status"), "result": _transcript_data_plane(row.get("result"))}
+            if row.get("error"):
+                observation["error"] = row["error"]
+            tool_messages.append(
+                {
+                    "role": "tool",
+                    "name": name,
+                    "tool_call_id": call_id,
+                    "content": json.dumps(observation, ensure_ascii=False),
+                    "is_error": row.get("status") != "success",
+                }
+            )
+        if native_calls:
+            messages.append({"role": "assistant", "content": "", "tool_calls": native_calls})
+            messages.extend(tool_messages)
+    return messages
 
 
 def _failed_batch_feedback_summary(batch_receipt: Mapping[str, Any] | None) -> str:
@@ -148,7 +223,22 @@ class KernelSessionTurnBridge:
         )
         metadata["transaction_invocation_id"] = "session-turn-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()
         metadata["continuous_execution_turn_id"] = turn_id
-        context = dict(self.context)
+        metadata["role_session_id"] = self.command.session_id
+        context, metadata = prepare_role_session_continuation_policy(
+            dict(self.context),
+            metadata,
+            role=self.command.role,
+            host_kind=self.command.host_kind,
+            previous_result=self.results[-1] if self.results else None,
+            prior_results=tuple(self.results),
+        )
+        # The kernel assembly reconstructs current authority messages. The
+        # session's prior native observations have one producer below.
+        context.pop("_transaction_kernel_prebuilt_messages", None)
+        if context.get("_roles_kernel_committed_session_continuation") is TurnContinuationMode.AUTO_CONTINUE:
+            transcript = _committed_transcript_messages(self.results)
+            if transcript:
+                context["_transaction_kernel_prebuilt_messages"] = transcript
         remaining_seconds = self.command.timeout_seconds
         if self.deadline is not None:
             remaining = self.deadline - time.monotonic()
@@ -198,6 +288,7 @@ class KernelSessionTurnBridge:
                 kernel = self.runtime._get_kernel(command.workspace)
                 final_result = None
                 error_result_received = False
+                actual_calls: dict[str, dict[str, Any]] = {}
                 async for event in kernel.run_stream(command.role, request):
                     event_type = str(event.get("type") or "")
                     if event_type in {"content_chunk", "thinking_chunk"}:
@@ -241,9 +332,33 @@ class KernelSessionTurnBridge:
                         if not error_result_received:
                             final_result = event["result"]
                     elif event_type in {"tool_call", "tool_result"}:
+                        if (
+                            event_type == "tool_call"
+                            and event.get("status") == "started"
+                            and isinstance(event.get("args"), Mapping)
+                        ):
+                            call_id = str(event.get("call_id") or "")
+                            if call_id:
+                                actual_calls[call_id] = {
+                                    "tool": event.get("tool"),
+                                    "args": dict(event["args"]),
+                                    "call_id": call_id,
+                                    "turn_id": event.get("turn_id"),
+                                }
                         yield dict(event)
                 if final_result is None:
                     raise RuntimeError("role_stream_incomplete")
+                commit = final_result.metadata.get("turn_commit_receipt")
+                if isinstance(commit, Mapping) and commit.get("turn_id") and actual_calls:
+                    committed_calls = [
+                        {key: call[key] for key in ("tool", "args", "call_id")}
+                        for row in (final_result.batch_receipt or {}).get("results", [])
+                        if isinstance(row, Mapping)
+                        and (call := actual_calls.get(str(row.get("call_id") or ""))) is not None
+                        and call["turn_id"] == commit["turn_id"]
+                        and call["tool"] == row.get("tool_name")
+                    ]
+                    final_result = replace(final_result, tool_calls=committed_calls)
                 self.results.append(final_result)
                 await self.runtime._persist_session_turn_state(
                     command,
@@ -321,7 +436,16 @@ async def stream_kernel_session(
     """Project the one existing orchestrator for both public session transports."""
     bridge = KernelSessionTurnBridge(runtime, command)
     policy = command.context.get("continuous_execution")
-    max_turns = int(policy.get("max_auto_turns", 10)) if isinstance(policy, Mapping) else 10
+    # A budgeted canonical task uses its existing irreversible deadline.
+    # Explicit caller turn limits remain enforceable; unbudgeted sessions
+    # retain the legacy ceiling rather than becoming unbounded.
+    max_turns = (
+        int(policy["max_auto_turns"])
+        if isinstance(policy, Mapping) and "max_auto_turns" in policy
+        else None
+        if bridge.deadline is not None
+        else 10
+    )
     orchestrator = RoleSessionOrchestrator(
         command.session_id, bridge, command.workspace, role=command.role, max_auto_turns=max_turns
     )

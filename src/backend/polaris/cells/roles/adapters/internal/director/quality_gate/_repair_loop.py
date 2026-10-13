@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
 
 from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
+from polaris.cells.roles.kernel.public.llm_caller_contracts import (
+    director_uses_legacy_tool_slices,
+    stamp_director_quality_repair_one_call_policy,
+)
 from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
@@ -1337,6 +1341,7 @@ async def _run_materialization_quality_repair_retry(
         regression_guard_errors=regression_guard_errors,
         candidate_rejection_errors=candidate_rejection_errors,
         causal_reanalysis_required=causal_reanalysis_required,
+        allow_observation_tools=not director_uses_legacy_tool_slices(context),
     )
     failed_gate_evidence = _build_materialization_quality_failure_evidence_context(
         artifact_quality_errors=prompt_artifact_quality_errors,
@@ -1400,7 +1405,7 @@ async def _run_materialization_quality_repair_retry(
         # Live L2-16 remint-23: _prepare admitted five receipt paths including
         # empty melodymodel.java (body=""). Coverage rejects empty bodies.
         if type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2:
-            trusted_snapshot = cast(TrustedDirectorDependencyArtifactSnapshotV2, snapshot)
+            trusted_snapshot = snapshot
             if not sibling_export_payload_is_coverage_ready(trusted_snapshot.payload()):
                 snapshot = None
         if type(snapshot) is not TrustedDirectorDependencyArtifactSnapshotV2:
@@ -1417,7 +1422,7 @@ async def _run_materialization_quality_repair_retry(
                 repair_context[DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY] = snapshot
                 project_director_dependency_artifact_snapshot(repair_context, snapshot)
         if type(snapshot) is TrustedDirectorDependencyArtifactSnapshotV2:
-            trusted_snapshot = cast(TrustedDirectorDependencyArtifactSnapshotV2, snapshot)
+            trusted_snapshot = snapshot
             sibling_block = "\n".join(trusted_snapshot.message_lines())
             if sibling_block.strip():
                 # Live L2-16 remint-17: quality-repair used a separate prompt
@@ -1478,7 +1483,7 @@ async def _run_materialization_quality_repair_retry(
         and _contains_verifier_test_failure(prompt_artifact_quality_errors)
     )
     mixed_create_modify_quality_repair = bool(existing_repair_target_files and missing_repair_target_files)
-    if repair_target_files:
+    if repair_target_files and director_uses_legacy_tool_slices(context):
         if (
             official_cmake_missing
             or official_java_missing_files
@@ -1590,6 +1595,7 @@ async def _run_materialization_quality_repair_retry(
                 "tool": "write_file",
                 "target_file": single_write_target,
             }
+        stamp_director_quality_repair_one_call_policy(repair_context)
     repair_context["director_quality_repair"]["deadline_decision"] = deadline_decision
     try:
         result = await adapter._invoke_role_dialogue_with_timeout(
@@ -2132,7 +2138,7 @@ def _materialization_interface_discrepancy_evidence(
         if director_retry_allowed
         else "task_interface_contract_missing",
     }
-    receipt = DirectorInterfaceDiscrepancyReceiptV1(
+    receipt: dict[str, Any] = DirectorInterfaceDiscrepancyReceiptV1(
         task_id=str(task.get("id") or task.get("task_id") or task.get("external_task_id") or "materialization-task"),
         source="roles.adapters.materialization_quality_gate",
         plan_probe_status=str(plan_probe.get("status") or ""),
@@ -2258,7 +2264,8 @@ def _resolve_quality_repair_timeout_seconds(primary_timeout_seconds: float) -> f
         primary = configured
     if primary <= 0:
         primary = configured
-    return max(0.1, min(primary, configured))
+    result: float = max(0.1, min(primary, configured))
+    return result
 
 
 def _select_materialization_quality_repair_target_batch(

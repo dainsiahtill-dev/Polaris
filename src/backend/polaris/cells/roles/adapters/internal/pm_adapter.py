@@ -551,7 +551,13 @@ class PMAdapter(
                         }
                     )
 
-            if not using_deterministic_contracts and (
+            # An unsafe explicit technical boundary is terminal. Ordinary
+            # product omissions still revise the same unqualified draft.
+            hard_contract_boundary = any(
+                isinstance(item, dict) and item.get("hard_boundary") is True
+                for item in quality.get("contract_diagnostics", [])
+            )
+            if not using_deterministic_contracts and not hard_contract_boundary and (
                 (not contracts) or (not quality.get("ok", False) or int(quality.get("score") or 0) < 80)
             ):
                 first_critical = quality.get("critical_issues")
@@ -595,7 +601,7 @@ class PMAdapter(
                             f"runtime/signals/pm_revision/{revision_base.base_hash}.base.json",
                         )
                     )
-                    write_text_atomic(base_path, base_text, encoding="utf-8")
+                    write_text_atomic(str(base_path), base_text, encoding="utf-8")
                     quality_signals.append(
                         {
                             "code": "pm.contracts.revision_base",
@@ -613,9 +619,9 @@ class PMAdapter(
                 seen_revision_states: set[tuple[str, str]] = (
                     {revision_progress_state({"tasks": revision_base.tasks}, quality)}
                     if revision_base is not None
-                    else set()
+                    else {(content_hash(raw_output), revision_progress_state(None, quality)[1])}
                 )
-                if revision_base is not None and pm_deadline is None:
+                if pm_deadline is None:
                     stage_seconds, _ = resolve_pm_planning_time_budget(output_budget_tokens, planning_context)
                     pm_deadline = planning_started_epoch + stage_seconds
                 while True:
@@ -631,22 +637,44 @@ class PMAdapter(
                         directive_analysis=directive_analysis,
                     )
                     if last_revision_output is not None:
-                        retry_prompt += (
-                            "\n\nLatest rejected local proposal (retained raw; no part admitted):\n"
-                            + last_revision_output
-                        )
+                        if revision_base is not None:
+                            retry_prompt += (
+                                "\n\nLatest rejected local proposal (retained raw; no part admitted):\n"
+                                + last_revision_output
+                            )
+                        else:
+                            # A syntax-invalid response cannot supply task
+                            # authority. Its full bytes remain in provider/stage
+                            # evidence; correction needs the exact diagnostics,
+                            # original directive and declared output schema.
+                            retry_prompt += (
+                                "\nLatest rejected full-draft evidence (not task authority):\n"
+                                + canonical_json(
+                                    {
+                                        "response_sha256": content_hash(last_revision_output),
+                                        "response_chars": len(last_revision_output),
+                                    }
+                                )
+                            )
                         retry_prompt += "\nLatest localized diagnostics (no execution authority):\n" + canonical_json(
                             {
                                 "critical_issues": quality.get("critical_issues", []),
                                 "contract_diagnostics": quality.get("contract_diagnostics", []),
                             }
                         )
-                        retry_prompt += (
-                            "\nCorrect only the diagnosed proposal operations inside the unchanged original manifest. "
-                            "Return the complete pm.task_revision.v1 envelope with the SAME original base_hash. "
-                            "Retain unaffected proposal edits; explicitly retract or replace invalid operations. "
-                            "Do not return a partial patch; the server never assembles fragments or admits a valid prefix."
-                        )
+                        if revision_base is not None:
+                            retry_prompt += (
+                                "\nCorrect only the diagnosed proposal operations inside the unchanged original manifest. "
+                                "Return the complete pm.task_revision.v1 envelope with the SAME original base_hash. "
+                                "Retain unaffected proposal edits; explicitly retract or replace invalid operations. "
+                                "Do not return a partial patch; the server never assembles fragments or admits a valid prefix."
+                            )
+                        else:
+                            retry_prompt += (
+                                "\nCorrect the latest complete-draft syntax/schema diagnostics. "
+                                "Return one complete replacement JSON under the SAME original requirement, role, workspace and stage budget. "
+                                "No revision base or partial task prefix is admitted. Each field must occur exactly once."
+                            )
                     response = await self._call_role_llm(
                         retry_prompt, context=dispatch_context("pm_task_contract_retry")
                     )
@@ -734,7 +762,7 @@ class PMAdapter(
                                 f"runtime/signals/pm_revision/{derivation_hash}.json",
                             )
                         )
-                        write_text_atomic(derivation_path, derivation_text, encoding="utf-8")
+                        write_text_atomic(str(derivation_path), derivation_text, encoding="utf-8")
                         quality_signals.append(
                             {
                                 "code": "pm.contracts.revision_derivation",
@@ -753,7 +781,7 @@ class PMAdapter(
                         )
                     raw_output = f"{raw_output}\n\n[retry]\n{retry_output}"
 
-                    if revision_base is None or (
+                    if (
                         normalized_contracts
                         and quality.get("ok") is True
                         and not quality.get("critical_issues")
@@ -761,7 +789,11 @@ class PMAdapter(
                     ):
                         break
                     diagnostics = quality.get("contract_diagnostics", [])
-                    if any(isinstance(item, dict) and item.get("repairable") is False for item in diagnostics):
+                    if any(
+                        isinstance(item, dict)
+                        and (item.get("repairable") is False or item.get("hard_boundary") is True)
+                        for item in diagnostics
+                    ):
                         quality_signals.append(
                             {
                                 "code": "pm.contracts.revision_terminal",
@@ -776,6 +808,11 @@ class PMAdapter(
                     except (_PMContractError, ValueError, TypeError):
                         proposal_hash = content_hash(retry_output)
                     state = revision_progress_state(raw_merged_candidate, quality)
+                    if revision_base is None:
+                        # Unparseable drafts have no authoritative operands. Track
+                        # their complete rejected bytes and diagnostics instead;
+                        # no prefix or duplicate-key value can become a base.
+                        state = (content_hash(retry_output), state[1])
                     progress_hash, diagnostic_hash = state
                     if state in seen_revision_states:
                         quality_signals.append(

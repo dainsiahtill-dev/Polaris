@@ -52,12 +52,18 @@ async def apply_mutation_contract_guard(
     build_stream_shadow_engine: Callable[..., StreamShadowEngine | None],
     resolve_shadow_workspace: Callable[[list[dict[str, Any]]], str],
     retry_tool_batch_after_contract_violation: Callable[..., Awaitable[dict[str, Any]]],
+    committed_tool_results: list[dict[str, Any]] | None = None,
+    materialization_required: bool = True,
 ) -> dict[str, Any] | None:
     """Reconcile mutation intent and enforce the non-tool mutation guard.
 
     Returns the blocking retry result when the guard fires in strict/force-block
     mode, otherwise ``None`` to signal passthrough to the normal dispatch.
     """
+    from polaris.cells.roles.kernel.internal.transaction.phase_manager import has_authoritative_write_receipt
+
+    if not materialization_required or has_authoritative_write_receipt({"results": committed_tool_results or []}):
+        return None
     latest_user_request = extract_task_instruction(context)
     # 统一 mutation 判断：delivery contract + intent hybrid 任一判定需要 mutation 即触发 guard
     requires_mutation_by_contract = ledger.delivery_contract.requires_mutation

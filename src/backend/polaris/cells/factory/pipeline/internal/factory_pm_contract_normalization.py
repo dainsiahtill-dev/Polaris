@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from polaris.cells.orchestration.pm_planning.public.contracts import parse_pm_product_planning_input
+from polaris.cells.orchestration.pm_planning.public.task_intent import is_pm_task_intent
 
 from .factory_stage_helpers import task_string, task_string_list
 
@@ -434,6 +435,11 @@ def normalize_pm_plan_validation_contracts(tasks: list[dict[str, Any]]) -> list[
 
     if not tasks:
         return []
+
+    # Semantic acceptance states product obligations. CE determines ownership
+    # and recipes later; a guessed downstream test path cannot delete intent.
+    if all(is_pm_task_intent(task) for task in tasks):
+        return deepcopy(tasks)
 
     task_ids = [
         task_string(task, "id", "task_id", "uid") or f"task-{index}" for index, task in enumerate(tasks, start=1)

@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from polaris.cells.orchestration.pm_planning.public.artifact_contracts import validate_generated_outputs
+from polaris.cells.orchestration.pm_planning.public.task_intent import is_pm_task_intent, pm_task_intent_payload
 
 from .normalization import _validate_pm_verification_commands
 from .parsing import _complete_pm_tasks, _decode_complete_pm_payload, _PMContractError
@@ -147,7 +148,10 @@ def make_revision_base(
     overview = []
     manifest_tasks = {}
     raw_diagnostics = quality.get("contract_diagnostics")
-    diagnostics = raw_diagnostics if isinstance(raw_diagnostics, list) else []
+    diagnostics = [
+        item for item in raw_diagnostics
+        if isinstance(item, dict) and item.get("severity", "error") == "error"
+    ] if isinstance(raw_diagnostics, list) else []
     semantic_fields = _semantic_revision_fields(tasks, paths, quality, diagnostics)
     if semantic_fields is None:
         return None
@@ -158,7 +162,7 @@ def make_revision_base(
     )
     diagnosed_fields: dict[str, set[str]] = {}
     for diagnostic in diagnostics:
-        if not isinstance(diagnostic, dict):
+        if not isinstance(diagnostic, dict) or diagnostic.get("severity", "error") != "error":
             continue
         for candidate in diagnostic.get("proposal_task_ids", []):
             if candidate in {task["id"] for task in tasks}:
@@ -194,6 +198,9 @@ def make_revision_base(
                     pending.append(dependency)
     for task, source_path in zip(tasks, paths, strict=True):
         set_fields = dict(_SET_TYPES)
+        if is_pm_task_intent(task):
+            set_fields = {"title": "nonempty_string", "goal": "nonempty_string", "depends_on": "string_array",
+                          "acceptance": "nonempty_string_array"}
         row = {field: task[field] for field in _OVERVIEW if field in task}
         for field, type_name in _DIAGNOSTIC_TYPES.items():
             if (
@@ -208,6 +215,8 @@ def make_revision_base(
                     for d in diagnostics
                 )
             ):
+                if is_pm_task_intent(task) and field not in {"title", "goal", "acceptance", "description", "depends_on"}:
+                    continue
                 set_fields[field] = type_name
                 if field in task:
                     row[field] = task[field]
@@ -244,6 +253,9 @@ def make_revision_base(
         )
     )
     view = {"base_hash": base_hash, "tasks": overview, "edit_manifest": manifest}
+    if all(is_pm_task_intent(task) for task in tasks):
+        product = pm_task_intent_payload(tasks)
+        view["product_contract_readonly"] = {key: value for key, value in product.items() if key != "tasks"}
     if isinstance(quality.get("task_fission"), dict):
         view["task_fission_readonly"] = quality["task_fission"]
     return PMRevisionBase(response, tasks_json, canonical_json(identity), canonical_json(view), base_hash)
@@ -310,12 +322,13 @@ def _semantic_revision_fields(
             # The existing general manifest explicitly permits source target
             # and scope edits for all originals, plus complete new tasks. It can
             # cover these exact structural omissions without guessing an owner.
-            # A narrowed output-graph manifest cannot. HTML entry topology also
-            # needs a full answer until the program supplies exact localization.
+            # A narrowed output-graph manifest cannot. The model chooses the
+            # owner of an HTML entrypoint within the unchanged general manifest.
             if (
                 artifact_mode
                 or not missing
-                or set(missing) - {"package.json", "tsconfig.json", "README.md", "*.ts", "*.test.ts", "task_count>=2"}
+                or set(missing)
+                - {"package.json", "tsconfig.json", "README.md", "index.html", "*.ts", "*.test.ts", "task_count>=2"}
             ):
                 return None
             for task in tasks:
@@ -375,7 +388,15 @@ def _validate_value(field: str, value: Any, type_name: str) -> None:
         raise _error("Dependencies must contain unique canonical IDs")
 
 
-def _validate_added_task(task: Any) -> None:
+def _validate_added_task(task: Any, *, semantic: bool = False) -> None:
+    if semantic:
+        allowed = {"id", "title", "goal", "acceptance", "depends_on", "description", "scope_paths", "target_files",
+                   "context_files", "verification_commands", "generated_outputs"}
+        if not isinstance(task, dict) or task.keys() - allowed or not _canonical_id(task.get("id")):
+            raise _error("New semantic task requires a unique ID and declared product fields")
+        for field in ("title", "goal", "acceptance"):
+            _validate_value(field, task.get(field), "nonempty_string_array" if field == "acceptance" else "nonempty_string")
+        return
     if not isinstance(task, dict) or task.keys() - _ADD_FIELDS:
         raise _error("New task must use the complete original task contract, with known fields")
     required = {"id", "title", "goal", "scope_paths", "target_files", "steps", "acceptance", "verification_commands"}
@@ -494,7 +515,15 @@ def apply_revision(base: PMRevisionBase, response: str) -> dict[str, Any]:
                         task_id=task_id,
                         field=field,
                         operation=kind,
-                        repairable=any(field in permission[other] for other in ("set", "append") if other != kind),
+                        # Known draft fields can be retracted in a later complete
+                        # proposal; this rejection never expands their manifest grant.
+                        repairable=(
+                            any(field in permission[other] for other in ("set", "append") if other != kind)
+                            or (
+                                field not in {"scope", "scope_paths", "target_files", "context_files"}
+                                and (field in _SET_TYPES or field in _DIAGNOSTIC_TYPES)
+                            )
+                        ),
                         authorized_operations=[other for other in ("set", "append") if field in permission[other]],
                     )
                 try:
@@ -518,7 +547,7 @@ def apply_revision(base: PMRevisionBase, response: str) -> dict[str, Any]:
         updates[task_id] = {"task_id": task_id, "set": normalized_sets, "append": normalized_appends}
     added_ids: set[str] = set()
     for task in patch["add_tasks"]:
-        _validate_added_task(task)
+        _validate_added_task(task, semantic=all(is_pm_task_intent(original) for original in originals))
         if task["id"] in by_id or task["id"] in added_ids:
             raise _error("New task ID conflicts with an original or new task (no ID recycling)")
         added_ids.add(task["id"])
@@ -534,6 +563,18 @@ def apply_revision(base: PMRevisionBase, response: str) -> dict[str, Any]:
             task[field] = [*task[field], *value]
         merged.append(task)
     merged.extend(patch["add_tasks"])
+    if all(is_pm_task_intent(task) for task in originals):
+        # Retain immutable global goals/requirements/constraints and omitted
+        # technical fields. Revision output stays in the original protocol.
+        envelope: dict[str, Any] = pm_task_intent_payload(originals)
+        for index, task in enumerate(merged):
+            if is_pm_task_intent(task):
+                envelope["tasks"][index] = pm_task_intent_payload([task])["tasks"][0]
+            else:
+                envelope["tasks"].append(task)
+        _complete_pm_tasks(envelope)
+        _validate_dependencies(envelope["tasks"])
+        return envelope
     _complete_pm_tasks({"tasks": merged})
     _validate_dependencies(merged)
     return {"tasks": merged}

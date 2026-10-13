@@ -162,7 +162,7 @@ def _snapshot_factory_authority(
 ) -> _FactoryAuthorityEntrySnapshot:
     if type(authority) is not FactoryRoleEvidenceAuthorityBindingV1:
         raise TypeError("factory_role_evidence_authority_binding_exact_type_required")
-    typed_authority = cast(FactoryRoleEvidenceAuthorityBindingV1, authority)
+    typed_authority = authority
     typed_authority.__post_init__()
     return _FactoryAuthorityEntrySnapshot(
         carrier=typed_authority,
@@ -183,7 +183,7 @@ def _revalidate_factory_authority_before_cutoff(
 ) -> None:
     if type(authority) is not FactoryRoleEvidenceAuthorityBindingV1:
         raise TypeError("factory_role_evidence_authority_binding_exact_type_required")
-    typed_authority = cast(FactoryRoleEvidenceAuthorityBindingV1, authority)
+    typed_authority = authority
     raw_projection = (
         typed_authority.schema_version,
         typed_authority.verification_scope,
@@ -319,6 +319,8 @@ def _ensure_current_user_message_final(
         role = str(message.get("role", "")).strip().lower()
         if role != "user":
             continue
+        if not isinstance(message.get("content"), str):
+            continue
         content_token = _normalize_user_message_for_dedupe(message.get("content", ""))
         if not content_token:
             continue
@@ -389,7 +391,7 @@ def _ensure_actual_sibling_exports_message_bound(
     exits without a canonical outcome (r149 residual).
     """
 
-    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit._payloads import (
         _actual_sibling_exports_message_bound,
         _looks_like_actual_sibling_exports,
     )
@@ -888,30 +890,36 @@ class LLMRequestPreparer:
         if not isinstance(raw_messages, list):
             return None
 
-        normalized_user_turns: list[tuple[str, str, str, str]] = []
+        normalized_user_turns: list[tuple[dict[str, Any], str]] = []
         for item in raw_messages:
             if not isinstance(item, dict):
                 continue
             role = str(item.get("role", "")).strip()
             if not role:
                 continue
-            content = str(item.get("content", ""))
+            content = item.get("content", "")
             name = str(item.get("name") or "").strip()
-            if role.lower() == "system" and is_empty_run_card_message(name=name, content=content):
+            if role.lower() == "system" and is_empty_run_card_message(name=name, content=str(content)):
                 continue
-            normalized_content = _normalize_user_message_for_dedupe(content) if role == "user" else ""
-            normalized_user_turns.append((role, content, normalized_content, name))
+            normalized_content = (
+                _normalize_user_message_for_dedupe(content) if role == "user" and isinstance(content, str) else ""
+            )
+            message = dict(item)
+            message["role"] = role
+            message["content"] = content
+            normalized_user_turns.append((message, normalized_content))
 
         current_user_token = _normalize_user_message_for_dedupe(getattr(context, "message", ""))
         last_current_user_index = -1
         if current_user_token:
-            for index, (role, _content, normalized_content, _name) in enumerate(normalized_user_turns):
-                if role == "user" and normalized_content == current_user_token:
+            for index, (message, normalized_content) in enumerate(normalized_user_turns):
+                if message["role"] == "user" and normalized_content == current_user_token:
                     last_current_user_index = index
 
         messages: list[dict[str, Any]] = []
         last_user_token: str | None = None
-        for index, (role, content, normalized_content, name) in enumerate(normalized_user_turns):
+        for index, (message, normalized_content) in enumerate(normalized_user_turns):
+            role = message["role"]
             if (
                 role == "user"
                 and current_user_token
@@ -920,18 +928,13 @@ class LLMRequestPreparer:
             ):
                 continue
             if role == "user":
-                if last_user_token is not None and normalized_content == last_user_token:
+                if normalized_content and last_user_token is not None and normalized_content == last_user_token:
                     continue
-                last_user_token = normalized_content
+                last_user_token = normalized_content or None
                 if current_user_token and normalized_content == current_user_token:
-                    content = current_user_token
+                    message["content"] = current_user_token
             else:
                 last_user_token = None
-            message = {"role": role, "content": content}
-            # Preserve gateway provenance in the prepared source projection.
-            # AIRequest.chat_messages and provider serialization still strip names.
-            if name:
-                message["name"] = name
             messages.append(message)
         return messages
 
@@ -1457,7 +1460,6 @@ class LLMRequestPreparer:
             raise RuntimeError("factory_role_evidence_authority_binding_role_mismatch")
         if type(frozen) is not FactoryRoleFrozenSemanticRequestV1:
             raise RuntimeError("factory_role_semantic_request_required_for_retry")
-        frozen = cast(FactoryRoleFrozenSemanticRequestV1, frozen)
         old_identity = frozen.identity
         retry_identity = FactoryRoleSemanticRequestIdentityV1(
             run_id=old_identity.run_id,

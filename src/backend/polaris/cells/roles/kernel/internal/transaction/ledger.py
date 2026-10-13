@@ -48,6 +48,9 @@ class TransactionConfig:
     role_id: str = ""
     run_id: str = ""
     task_id: str = ""
+    session_id: str = ""
+    source_targets: tuple[str, ...] = ()
+    continuation_rows: list[dict[str, Any]] = field(default_factory=list)
     transition_id: str = ""
     durable_commit_required: bool = False
     domain: Literal["document", "code"] = "document"
@@ -82,6 +85,9 @@ class TransactionConfig:
     # A runtime-owned session can consume observation batches in later turns.
     # This changes turn scheduling, never tool authorization or delivery gates.
     continuous_execution: bool = False
+    # CE may declare a verification-only task with no required write artifact.
+    # This affects completion obligations, never tool/effect authorization.
+    materialization_required: bool = True
 
     # === 结果截断配置 ===
     max_per_tool_result_chars: int = 3000

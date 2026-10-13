@@ -221,7 +221,7 @@ async def test_pm_local_continuation_cannot_extend_original_absolute_deadline(
     assert context["metadata"]["pm_planning_deadline_epoch_seconds"] == 11530.0
 
 
-async def test_real_r20_retained_proposal_replay_uses_second_authorized_model_revision(
+async def test_real_r20_retained_proposal_replay_preserves_verifier_rejection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from polaris.cells.roles.adapters.internal import pm_adapter as module
@@ -244,7 +244,14 @@ async def test_real_r20_retained_proposal_replay_uses_second_authorized_model_re
     qa_update = next(update for update in authorized_proposal["updates"] if update["task_id"] == "TASK-3")
     criteria = qa_update["set"].pop("acceptance")
     qa_update.setdefault("append", {})["acceptance"] = criteria
-    responses = [base.response, packet["revision_response"], revision.canonical_json(authorized_proposal)]
+    # The accepted-format proposal still contains two modality-mismatched
+    # verifiers under current policy. Repeating it must stop without success.
+    responses = [
+        base.response,
+        packet["revision_response"],
+        revision.canonical_json(authorized_proposal),
+        revision.canonical_json(authorized_proposal),
+    ]
     calls: list[str] = []
     adapter = PMAdapter(workspace=str(tmp_path))
     evaluate = adapter._evaluate_contract_quality
@@ -274,9 +281,13 @@ async def test_real_r20_retained_proposal_replay_uses_second_authorized_model_re
     context = _context()
     context["run_id"] = base.identity["run_id"]
     result = await adapter._run_pm_stage(base.identity["task_id"], "Create a TypeScript CLI", {}, context)
-    assert result["success"] is True
-    assert result["quality_gate"]["score"] >= 80
-    assert len(calls) == 3
+    assert result["success"] is False
+    assert result["quality_gate"]["score"] == 76
+    assert len(calls) == 4
+    assert result["tasks_created"] == 0
+    assert adapter.task_runtime.list_observable_task_rows() == []
+    assert "verification_command_profile_unsupported" in calls[3]
+    assert any(s["code"] == "pm.contracts.revision_no_progress" for s in result["quality_gate"]["signals"])
     assert packet["revision_response"] in calls[2]
     assert "$.updates[2].set.acceptance" in calls[2]
     evidence = [
@@ -284,17 +295,24 @@ async def test_real_r20_retained_proposal_replay_uses_second_authorized_model_re
         for path in (tmp_path / ".polaris/runtime/signals/pm_revision").glob("*.json")
     ]
     rows = [row for row in evidence if row["schema_version"] == "pm.task_revision_derivation.v1"]
+    # Repeating identical rejected bytes produces the same content-addressed
+    # derivation file, while each provider correction retains its own signal.
     assert len(rows) == 2
+    assert sum(s["code"] == "pm.contracts.revision_derivation" for s in result["quality_gate"]["signals"]) == 3
     assert all(row["base_hash"] == packet["base_hash"] for row in rows)
     assert all(row["original_response_hash"] == packet["original_response_hash"] for row in rows)
     assert any(
         row["revision_response_hash"] == packet["revision_response_hash"] and row["raw_merged_candidate"] is None
         for row in rows
     )
-    good = next(row for row in rows if row["quality"]["ok"] is True)
-    assert good["revision"] == authorized_proposal
-    assert good["merged_candidate_is_original_provider_response"] is False
-    for actual, original in zip(good["raw_merged_candidate"]["tasks"], base.tasks, strict=True):
+    rejected = next(row for row in rows if row["raw_merged_candidate"] is not None)
+    assert rejected["revision"] == authorized_proposal
+    assert rejected["merged_candidate_is_original_provider_response"] is False
+    assert rejected["quality"]["ok"] is False
+    assert {d["policy_error_code"] for d in rejected["quality"]["contract_diagnostics"]} == {
+        "verifier_modality_mismatch"
+    }
+    for actual, original in zip(rejected["raw_merged_candidate"]["tasks"], base.tasks, strict=True):
         assert actual["verification_commands"] == original["verification_commands"]
     assert base.tasks == retained["base"]["tasks"]
 

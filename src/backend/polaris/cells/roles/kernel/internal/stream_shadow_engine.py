@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Any
 
@@ -34,6 +35,8 @@ from polaris.cells.roles.kernel.internal.speculative_executor import (
     SpeculativeExecutor,
 )
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime
+
+logger = logging.getLogger(__name__)
 
 
 async def _task_group_proxy(future: asyncio.Task[Any]) -> Any:
@@ -189,7 +192,11 @@ class StreamShadowEngine:
                     source_call_id=call_id,
                     arguments=dict(arguments or {}),
                 )
-                prepare_args = WriteToolPhases.prepare_shadow_normalized_args(arguments or {})
+                try:
+                    prepare_args = WriteToolPhases.prepare_shadow_normalized_args(arguments or {}, tool_name=tool_name)
+                except (TypeError, ValueError) as exc:
+                    logger.warning("write_prepare_rejected tool=%s call_id=%s reason=%s", tool_name, call_id, exc)
+                    return {"enabled": True, "result": None, "error": f"write_tool_prepare_arguments_invalid:{exc}"}
                 env_fp = build_env_fingerprint()
                 prepare_spec_key = prepare_inv.shadow_key_hash
                 if not self._registry.exists_active(prepare_spec_key):

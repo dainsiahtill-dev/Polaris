@@ -35,6 +35,7 @@ from polaris.cells.roles.kernel.internal.kernel.transaction_turn_completion impo
     task_boundary_ledger_append_failure_error,
 )
 from polaris.cells.roles.kernel.internal.kernel.turn_output_validation import validate_turn_output
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import director_continuous_execution_enabled
 from polaris.cells.roles.kernel.internal.structured_output_transport import (
     resolve_structured_output_transport,
 )
@@ -173,8 +174,9 @@ class StreamEventProjector:
         final_content = "".join(self.accumulated_content)
         final_thinking = "".join(self.accumulated_thinking) or None
         batch_receipt = dict(event.batch_receipt) if isinstance(event.batch_receipt, dict) else None
-        tool_calls = tool_calls_from_batch_receipt(batch_receipt) or self.stream_tool_calls
-        tool_results = tool_results_from_batch_receipt(batch_receipt) or self.stream_tool_results
+        outcome = event.turn_outcome if isinstance(event.turn_outcome, dict) else None
+        tool_calls = tool_calls_from_batch_receipt(batch_receipt, turn_outcome=outcome) or self.stream_tool_calls
+        tool_results = tool_results_from_batch_receipt(batch_receipt, turn_outcome=outcome) or self.stream_tool_results
 
         metadata = role_result_metadata_from_profile(
             profile=self.profile,
@@ -337,9 +339,7 @@ class StreamEventProjector:
         if task_boundary_error:
             self._record_projection_outcome(success=False, reason="stream task boundary failure")
             repairable = (
-                isinstance(self.request.context_override, dict)
-                and isinstance(self.request.context_override.get("continuous_execution"), dict)
-                and self.request.context_override["continuous_execution"].get("enabled") is True
+                director_continuous_execution_enabled(self.role, self.request.context_override)
                 and bool(batch_receipt and batch_receipt.get("results"))
                 and isinstance(task_boundary_verdict, dict)
                 and task_boundary_verdict.get("failure_class")
@@ -455,6 +455,9 @@ class StreamEventProjector:
         *,
         tool_dispatch: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        from polaris.cells.roles.kernel.internal.kernel.task_boundary import committed_task_tool_results
+        if not metadata.get("needs_followup_workflow"):
+            tool_results = [*committed_task_tool_results(self.request, str(self.request.workspace or self.kernel.workspace or ".")), *tool_results]
         try:
             return append_role_turn_task_boundary_verdict(
                 role=self.role,

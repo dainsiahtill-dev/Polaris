@@ -731,6 +731,8 @@ class TurnTransactionController:
 
         if not self.config.durable_commit_required:
             return None
+        from polaris.cells.roles.kernel.internal.transaction.continuation_evidence import capture_task_source_state
+        source_state_after = capture_task_source_state(self.config.workspace, self.config.source_targets) if self.config.session_id else {}
         return commit_turn_result(
             workspace=self.config.workspace,
             run_id=self.config.run_id,
@@ -740,6 +742,9 @@ class TurnTransactionController:
             result=result,
             completion_status=completion_status,
             failure_reason=failure_reason,
+            session_id=self.config.session_id,
+            source_state_before=getattr(ledger, "source_state_before", {}),
+            source_state_after=source_state_after,
         )
 
     @staticmethod
@@ -1136,6 +1141,8 @@ class TurnTransactionController:
             state_machine=state_machine,
             ledger=ledger,
             guard_mode=guard_mode,
+            committed_tool_results=self.config.continuation_rows,
+            materialization_required=self.config.materialization_required,
             requires_mutation_intent_hybrid=self._requires_mutation_intent_hybrid,
             build_stream_shadow_engine=self._build_stream_shadow_engine,
             resolve_shadow_workspace=self._resolve_shadow_workspace,
@@ -1621,11 +1628,14 @@ class TurnTransactionController:
             turn_id=turn_id,
             visible_content=visible_content,
             ledger=ledger,
+            committed_tool_results=self.config.continuation_rows,
+            materialization_required=self.config.materialization_required,
         ) or evaluate_recon_required_gate(
             turn_id=turn_id,
             visible_content=visible_content,
             ledger=ledger,
             recon_required=self.config.recon_required,
+            committed_tool_results=self.config.continuation_rows,
         )
         if block is not None:
             state_machine.transition_to(TurnState.COMPLETED)

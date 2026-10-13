@@ -9,7 +9,11 @@ from collections.abc import Mapping
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
-from polaris.kernelone.quality.verification_commands import require_verification_command_proof
+from polaris.cells.control_plane.verifier_policy.public import normalize_verifier_command_argv
+from polaris.kernelone.quality.verification_commands import (
+    require_verification_command_proof,
+    verification_command_authority_hash,
+)
 
 _PROVENANCE_MAX_IDENTITY_BYTES = 256
 _PROVENANCE_MAX_PATH_BYTES = 1024
@@ -104,12 +108,7 @@ def _optional_completion_command(name: str, value: object) -> str | None:
 
 
 def _require_verifier_argv(value: object) -> tuple[str, ...]:
-    if not isinstance(value, (list, tuple)) or not value:
-        raise ValueError("verification command argv must be a non-empty list or tuple")
-    argv = tuple(_require_completion_token(f"argv[{index}]", item) for index, item in enumerate(value))
-    if len(argv) > 128:
-        raise ValueError("verification command argv must contain at most 128 items")
-    return argv
+    return normalize_verifier_command_argv(value)
 
 
 def _require_verifier_cwd(value: object) -> str:
@@ -119,19 +118,7 @@ def _require_verifier_cwd(value: object) -> str:
 
 
 def _verification_command_authority_hash(*, task_id: str, modality: str, argv: tuple[str, ...], cwd: str) -> str:
-    encoded = json.dumps(
-        {
-            "domain": "polaris.project_completion_verification_command_authority.v1",
-            "task_id": task_id,
-            "modality": modality,
-            "argv": list(argv),
-            "cwd": cwd,
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return verification_command_authority_hash(task_id=task_id, modality=modality, argv=argv, cwd=cwd)
 
 
 def _project_kind_authority_hash(

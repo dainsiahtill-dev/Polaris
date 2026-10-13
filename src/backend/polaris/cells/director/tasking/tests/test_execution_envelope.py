@@ -2,11 +2,30 @@ from __future__ import annotations
 
 import pytest
 from polaris.cells.director.tasking.internal.execution_contract import build_task_execution_contract
-from polaris.cells.director.tasking.internal.execution_envelope import build_execution_envelope
+from polaris.cells.director.tasking.internal.execution_envelope import build_execution_envelope, stable_hash
 from polaris.cells.director.tasking.public.contracts import (
     TaskExecutionProfileV1,
     TaskExecutionStrategyV1,
 )
+
+
+def test_serialized_execution_envelope_retains_all_hashed_contract_fields() -> None:
+    profile = TaskExecutionProfileV1(task_type="implement", target_files=("src/main.py",), scope_paths=("src",))
+    strategy = TaskExecutionStrategyV1(target_files=profile.target_files, scope_paths=profile.scope_paths)
+    contract = build_task_execution_contract(profile, strategy)
+    envelope = build_execution_envelope(
+        workspace="/workspace",
+        task_id="TASK-1",
+        run_id="run-1",
+        trace_id="trace-1",
+        profile=profile,
+        strategy=strategy,
+        contract=contract,
+    )
+    payload = envelope.to_dict()
+    assert payload["task_execution_contract_hash"] == stable_hash(contract.to_dict())
+    basis = {key: value for key, value in payload.items() if key not in {"envelope_id", "envelope_hash"}}
+    assert stable_hash(basis) == payload["envelope_hash"]
 
 
 @pytest.mark.parametrize(
@@ -31,6 +50,30 @@ def test_execution_envelope_does_not_replace_explicit_write_denial_with_inventor
     )
 
     assert envelope.to_dict()["authorization"]["allowed_write_paths"] == []
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"job_token": {"token_id": "deny", "allowed_read_paths": [], "allowed_write_paths": ["src/main.py"]}},
+        {"allowed_read_paths": [], "job_token": {"token_id": "narrow", "allowed_read_paths": ["src"]}},
+        {"allowed_read_paths": ["src"], "job_token": {"token_id": "deny", "allowed_read_paths": []}},
+    ],
+)
+def test_execution_envelope_preserves_explicit_read_denial(metadata: dict) -> None:
+    profile = TaskExecutionProfileV1(task_type="implement", target_files=("src/main.py",), scope_paths=("src",))
+    strategy = TaskExecutionStrategyV1(target_files=profile.target_files, scope_paths=profile.scope_paths)
+    envelope = build_execution_envelope(
+        workspace="/workspace",
+        task_id="TASK-1",
+        run_id="run-1",
+        trace_id="trace-1",
+        profile=profile,
+        strategy=strategy,
+        contract=build_task_execution_contract(profile, strategy),
+        metadata=metadata,
+    )
+    assert envelope.to_dict()["authorization"]["allowed_read_paths"] == []
 
 
 def test_build_execution_envelope_binds_contracts_and_capability() -> None:

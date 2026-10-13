@@ -28,6 +28,7 @@ from .service import (
     reset_pm_service,
     run_integration_verify_runner,
 )
+from .task_intent import PmTaskIntentV1, is_pm_task_intent, normalize_pm_task_intent
 
 __all__ = [
     "GeneratePmTaskContractCommandV1",
@@ -39,6 +40,7 @@ __all__ = [
     "PmStatePort",
     "PmTaskContractGeneratedEventV1",
     "PmTaskContractResultV1",
+    "PmTaskIntentV1",
     "ProcessHandle",
     "ProjectReport",
     "_should_promote_pm_quality_candidate",
@@ -47,6 +49,8 @@ __all__ = [
     "detect_integration_verify_command",
     "evaluate_pm_task_quality",
     "get_pm_service",
+    "is_pm_task_intent",
+    "normalize_pm_task_intent",
     "reset_pm_service",
     "run_integration_verify_runner",
     "run_pm_planning_iteration",

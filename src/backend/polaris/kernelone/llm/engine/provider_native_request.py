@@ -237,15 +237,54 @@ def _merge_same_role_messages(messages: list[dict[str, Any]]) -> list[dict[str, 
     merged: list[dict[str, Any]] = []
     for message in messages:
         role = str(message.get("role") or "").strip().lower()
-        content = str(message.get("content") or "")
-        if not content.strip():
-            continue
-        if role == "tool":
+        content = message.get("content")
+        if isinstance(content, list):
+            content = [dict(block) for block in content if isinstance(block, dict)]
+        else:
+            content = str(content or "")
+        if role == "assistant" and message.get("tool_calls"):
+            blocks = content if isinstance(content, list) else ([{"type": "text", "text": content}] if content else [])
+            for call in message["tool_calls"]:
+                function = call.get("function", {})
+                args = function.get("arguments", {})
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError as exc:
+                        raise FactoryProviderNativeRequestProjectionError(
+                            "native_tool_history_arguments_invalid"
+                        ) from exc
+                if not call.get("id") or not function.get("name") or not isinstance(args, dict):
+                    raise FactoryProviderNativeRequestProjectionError("native_tool_history_call_invalid")
+                native_call = {"type": "tool_use", "id": call["id"], "name": function["name"], "input": dict(args)}
+                existing = [
+                    block for block in blocks if block.get("type") == "tool_use" and block.get("id") == call["id"]
+                ]
+                if existing:
+                    if len(existing) != 1 or existing[0] != native_call:
+                        raise FactoryProviderNativeRequestProjectionError("native_tool_history_call_conflict")
+                else:
+                    blocks.append(native_call)
+            content = blocks
+        if role == "tool" and message.get("tool_call_id"):
+            result = {"type": "tool_result", "tool_use_id": message["tool_call_id"], "content": content}
+            if message.get("is_error") is True or message.get("status") in {"error", "blocked", "timeout"}:
+                result["is_error"] = True
+            role, content = "user", [result]
+        elif role == "tool":
             role, content = "user", f"【工具结果】\n{content}"
         elif role not in {"system", "user", "assistant"}:
             role = "user"
+        if not content:
+            continue
         if merged and merged[-1]["role"] == role:
-            merged[-1]["content"] = f"{merged[-1]['content']}\n\n{content}"
+            previous = merged[-1]["content"]
+            if isinstance(previous, list) or isinstance(content, list):
+                previous_blocks = previous if isinstance(previous, list) else [{"type": "text", "text": previous}]
+                current_blocks = content if isinstance(content, list) else [{"type": "text", "text": content}]
+                merged[-1]["content"] = [*previous_blocks, *current_blocks]
+            else:
+                merged[-1]["content"] = f"{previous}\n\n{content}"
         else:
             merged.append({"role": role, "content": content})
     return merged
@@ -255,7 +294,7 @@ def build_openai_native_messages(
     messages: object,
     *,
     fallback_prompt: str | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Normalize OpenAI messages once for both native authority and adapters.
 
     Convert each supplemental system/tool turn before adjacent-role merging;
@@ -266,12 +305,24 @@ def build_openai_native_messages(
 
     if type(messages) is not list:
         raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_messages_invalid")
-    normalized: list[dict[str, str]] = []
+    normalized: list[dict[str, Any]] = []
     seen_non_system = False
     for raw in messages:
         if not isinstance(raw, dict):
             continue
         role = str(raw.get("role") or "").strip().lower()
+        if role == "assistant" and raw.get("tool_calls"):
+            normalized.append(
+                {**{key: raw[key] for key in ("content", "tool_calls", "name") if key in raw}, "role": role}
+            )
+            seen_non_system = True
+            continue
+        if role == "tool" and raw.get("tool_call_id"):
+            normalized.append(
+                {**{key: raw[key] for key in ("content", "tool_call_id", "name") if key in raw}, "role": role}
+            )
+            seen_non_system = True
+            continue
         content = str(raw.get("content") or "")
         if not content.strip():
             continue
@@ -283,7 +334,7 @@ def build_openai_native_messages(
             role, content = "user", f"【系统提示】\n{content}"
         if role != "system":
             seen_non_system = True
-        if normalized and normalized[-1]["role"] == role:
+        if normalized and normalized[-1]["role"] == role and not normalized[-1].get("tool_calls"):
             normalized[-1]["content"] = f"{normalized[-1]['content']}\n\n{content}"
         else:
             normalized.append({"role": role, "content": content})
@@ -291,7 +342,7 @@ def build_openai_native_messages(
         raise FactoryProviderNativeRequestProjectionError("factory_provider_native_request_messages_empty")
     if not any(message["role"] == "user" for message in normalized):
         prompt_text = str(fallback_prompt or "").strip()
-        combined_len = sum(len(message["content"]) for message in normalized)
+        combined_len = sum(len(str(message.get("content") or "")) for message in normalized)
         user_content = "(continue)" if not prompt_text or len(prompt_text) <= combined_len * 0.9 else prompt_text
         normalized.append({"role": "user", "content": user_content})
     return normalized
@@ -310,16 +361,33 @@ def build_anthropic_native_messages(
     native_messages: list[dict[str, Any]] = []
     for message in _merge_same_role_messages(messages):
         role = str(message["role"])
-        content = str(message["content"])
+        content = message["content"]
         if role == "system":
-            system_parts.append(content)
+            system_parts.append(
+                content if isinstance(content, str) else "\n".join(str(block.get("text") or "") for block in content)
+            )
             continue
         if role not in {"user", "assistant"}:
             role = "user"
-        if native_messages and native_messages[-1]["role"] == role:
-            native_messages[-1]["content"] = f"{native_messages[-1]['content']}\n\n{content}"
-        else:
-            native_messages.append({"role": role, "content": content})
+        native_messages.append({"role": role, "content": content})
+    pending_calls: set[str] = set()
+    for message in native_messages:
+        blocks = message["content"] if isinstance(message["content"], list) else []
+        current_calls: set[str] = set()
+        for block in blocks:
+            if block.get("type") == "tool_use":
+                call_id = str(block.get("id") or "")
+                if call_id in current_calls or call_id in pending_calls:
+                    raise FactoryProviderNativeRequestProjectionError("native_tool_history_duplicate_call")
+                current_calls.add(call_id)
+                pending_calls.add(call_id)
+            elif block.get("type") == "tool_result":
+                call_id = str(block.get("tool_use_id") or "")
+                if call_id not in pending_calls:
+                    raise FactoryProviderNativeRequestProjectionError("native_tool_history_orphan_result")
+                pending_calls.remove(call_id)
+    if pending_calls:
+        raise FactoryProviderNativeRequestProjectionError("native_tool_history_result_missing")
     if not native_messages:
         prompt = str(fallback_prompt or "").strip()
         native_messages = [{"role": "user", "content": prompt or "(continue)"}]

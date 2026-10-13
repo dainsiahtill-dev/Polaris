@@ -141,7 +141,7 @@ def _build_anthropic_messages_from_transcript(
                 msg["tool_calls"] = tool_calls_out
             messages.append(msg)
 
-        elif item_type == "ToolCall":
+        elif item_type in {"ToolCall", "TranscriptToolCall"}:
             tc = item
             func_call: dict[str, Any] = {
                 "name": tc.tool_name or "",
@@ -184,7 +184,7 @@ def _build_anthropic_messages_from_transcript(
                 }
                 messages.append(msg)
 
-        elif item_type == "ToolResult":
+        elif item_type in {"ToolResult", "TranscriptToolResult"}:
             content_str = item.content or ""
             tool_msg: dict[str, Any] = {
                 "role": "user",
@@ -196,6 +196,8 @@ def _build_anthropic_messages_from_transcript(
                     }
                 ],
             }
+            if getattr(item, "status", "success") in {"error", "blocked", "timeout"}:
+                tool_msg["content"][0]["is_error"] = True
             messages.append(tool_msg)
 
         elif item_type == "ReasoningSummary":

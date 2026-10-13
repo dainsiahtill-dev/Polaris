@@ -5,6 +5,8 @@ This is admission policy, never an execution result or success verdict.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import PurePosixPath
 
 _NON_PROOF_EXECUTABLES = frozenset(
@@ -70,6 +72,23 @@ _NOOP_INLINE_PROGRAMS = frozenset(
 )
 
 
+def verification_command_authority_hash(*, task_id: str, modality: str, argv: tuple[str, ...], cwd: str) -> str:
+    """Hash an exact task/modality/argv/cwd recipe using the established schema."""
+    encoded = json.dumps(
+        {
+            "domain": "polaris.project_completion_verification_command_authority.v1",
+            "task_id": task_id,
+            "modality": modality,
+            "argv": list(argv),
+            "cwd": cwd,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def normalize_verification_command_modality(modality: str, argv: tuple[str, ...]) -> str:
     """A compiler typecheck is lint evidence even when called a test."""
 
@@ -102,4 +121,8 @@ def require_verification_command_proof(argv: tuple[str, ...]) -> None:
             raise ValueError("verification command must provide proof-of-work, not an inline no-op")
 
 
-__all__ = ["normalize_verification_command_modality", "require_verification_command_proof"]
+__all__ = [
+    "normalize_verification_command_modality",
+    "require_verification_command_proof",
+    "verification_command_authority_hash",
+]

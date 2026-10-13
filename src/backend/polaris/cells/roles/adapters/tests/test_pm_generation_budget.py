@@ -55,7 +55,9 @@ async def test_budget_resolves_before_render_and_reuses_policy_snapshot(tmp_path
         {"llm_max_tokens": 99999, "metadata": {"max_tokens": 99999, "generation_outcome": outcome()}},
         context,
     )
-    assert seen_render == [budget]
+    # A complete schema is rendered again for the ordinary full-draft retry.
+    # Both renders consume the original trusted policy, without re-resolving it.
+    assert seen_render == [budget, budget]
     assert len(captured) == 2
     policies = [{k: v for k, v in c.items() if k != "mode"} for _, c in captured]
     assert policies[0] == policies[1]
@@ -132,11 +134,24 @@ def test_initial_and_replacement_render_preserve_full_directive(tmp_path):
 
 def test_initial_and_replacement_share_optional_prose_rule(tmp_path):
     adapter = PMAdapter(workspace=str(tmp_path))
-    initial = adapter._build_pm_message([], "Implement model", output_budget_tokens=4000)
+    directive = "Implement model; preserve this unique constraint: original record identifiers."
+    initial = adapter._build_pm_message([], directive, output_budget_tokens=4000)
     retry = adapter._build_pm_retry_message(
-        directive="Implement model", quality={"score": 0}, previous_output="bad", output_budget_tokens=4000
+        directive=directive, quality={"score": 0}, previous_output="bad", output_budget_tokens=4000
     )
     for message in (initial, retry):
-        assert "scope_paths/target_files" in message
+        assert all(field not in message for field in ("scope_paths", "target_files", "verification_commands", "generated_outputs"))
         assert "每个任务必须含 goal/scope/steps/acceptance" not in message
-        assert "独特" in message
+        assert directive in message
+        assert "不猜路径、命令或生成产物" in message
+
+
+def test_semantic_initial_and_retry_disclose_same_prospective_output_allowance(tmp_path):
+    adapter = PMAdapter(workspace=str(tmp_path))
+    initial = adapter._build_pm_message([], "Implement record validation", output_budget_tokens=4096)
+    retry = adapter._build_pm_retry_message(
+        directive="Implement record validation", quality={"score": 0}, previous_output="bad", output_budget_tokens=4096
+    )
+    for message in (initial, retry):
+        assert message.count("Prospective output allowance: 4096 tokens") == 1
+        assert "canonical request policy, not observed completion" in message

@@ -59,28 +59,76 @@ def _result_items_from_batch_receipt(batch_receipt: dict[str, Any]) -> list[dict
     return []
 
 
-def tool_calls_from_batch_receipt(batch_receipt: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """Project RoleTurnResult.tool_calls from a TransactionKernel batch receipt."""
+def _receipt_rows_with_committed_arguments(
+    batch_receipt: dict[str, Any] | None, turn_outcome: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Join receipts to the exact sealed invocation; argument absence is not `{}`."""
     if not isinstance(batch_receipt, dict):
         return []
+    rows = _result_items_from_batch_receipt(batch_receipt)
+    if not rows:
+        return []
+    execution = turn_outcome.get("execution") if isinstance(turn_outcome, Mapping) else None
+    invocations: dict[str, Mapping[str, Any]] = {}
+    committed_rows: dict[str, Mapping[str, Any]] = {}
+    if isinstance(execution, Mapping):
+        for invocation in execution.get("invocations", []):
+            if not isinstance(invocation, Mapping):
+                raise RuntimeError("committed_tool_receipt_invocation_mismatch")
+            call_id = str(invocation.get("call_id") or "")
+            if not call_id or call_id in invocations:
+                raise RuntimeError("committed_tool_receipt_invocation_mismatch")
+            invocations[call_id] = invocation
+        committed_receipt = execution.get("receipt")
+        if not isinstance(committed_receipt, Mapping) or committed_receipt.get("batch_id") != batch_receipt.get("batch_id"):
+            raise RuntimeError("committed_tool_receipt_invocation_mismatch")
+        committed_rows = {str(row.get("call_id") or ""): row for row in committed_receipt.get("results", []) if isinstance(row, Mapping)}
+    projected: list[dict[str, Any]] = []
+    for row in rows:
+        arguments = row.get("arguments")
+        if turn_outcome is not None:
+            call_id = str(row.get("call_id") or "")
+            invocation = invocations.get(call_id)
+            committed = committed_rows.get(call_id)
+            if (invocation is None or committed is None or row.get("tool_name") != invocation.get("tool_name")
+                or row.get("tool_name") != committed.get("tool_name") or row.get("status") != committed.get("status")):
+                raise RuntimeError("committed_tool_receipt_invocation_mismatch")
+            sealed_arguments = invocation.get("arguments")
+            if not isinstance(sealed_arguments, Mapping) or (arguments is not None and arguments != sealed_arguments):
+                raise RuntimeError("committed_tool_receipt_invocation_mismatch")
+            arguments = dict(sealed_arguments)
+        if not isinstance(arguments, Mapping):
+            raise RuntimeError("committed_tool_receipt_arguments_missing")
+        projected.append({**row, "arguments": dict(arguments)})
+    return projected
+
+
+def tool_calls_from_batch_receipt(
+    batch_receipt: dict[str, Any] | None, *, turn_outcome: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Project native calls from exact committed invocations or explicit legacy args."""
     tool_calls: list[dict[str, Any]] = []
-    for result in _result_items_from_batch_receipt(batch_receipt):
+    for result in _receipt_rows_with_committed_arguments(batch_receipt, turn_outcome):
         tool_calls.append(
             {
                 "tool": result.get("tool_name", ""),
-                "args": result.get("arguments") or {},
+                "args": result["arguments"],
                 "call_id": result.get("call_id", ""),
             }
         )
     return tool_calls
 
 
-def tool_results_from_batch_receipt(batch_receipt: dict[str, Any] | None) -> list[dict[str, Any]]:
+def tool_results_from_batch_receipt(
+    batch_receipt: dict[str, Any] | None, *, turn_outcome: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Project RoleTurnResult.tool_results from a TransactionKernel batch receipt."""
     if not isinstance(batch_receipt, dict):
         return []
     tool_results: list[dict[str, Any]] = []
-    for result in _result_items_from_batch_receipt(batch_receipt):
+    rows = (_receipt_rows_with_committed_arguments(batch_receipt, turn_outcome) if turn_outcome is not None
+        else _result_items_from_batch_receipt(batch_receipt))
+    for result in rows:
         tool_results.append(
             {
                 "tool": result.get("tool_name", ""),

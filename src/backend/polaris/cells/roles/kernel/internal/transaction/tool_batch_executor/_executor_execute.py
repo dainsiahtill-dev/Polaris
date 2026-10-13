@@ -1464,11 +1464,7 @@ class _ToolBatchExecuteMixin:
             for row in receipt.get("results", [])
             if isinstance(row, dict)
         )
-        if (
-            continuous_execution
-            and _is_materialize
-            and (not tool_batch_has_authoritative_write_invocation(invocations) or has_failed_feedback)
-        ):
+        if continuous_execution and _is_materialize:
             # A completed observation is input to the next decision, not a
             # demand to invent a write or synthesize an extra summary call.
             merged_batch_receipt = _merge_batch_receipts(receipts_as_dicts)
@@ -1478,7 +1474,7 @@ class _ToolBatchExecuteMixin:
                 "visible_content": "",
                 "finalization": {
                     "needs_followup_workflow": True,
-                    "workflow_reason": "tool_failure" if has_failed_feedback else "observation",
+                    "workflow_reason": "tool_failure" if has_failed_feedback else "task_progress",
                 },
             }
 

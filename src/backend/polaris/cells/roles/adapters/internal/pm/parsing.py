@@ -7,6 +7,12 @@ import re
 from typing import Any
 
 from polaris.cells.orchestration.pm_planning.public.artifact_contracts import validate_generated_outputs
+from polaris.cells.orchestration.pm_planning.public.task_intent import (
+    PM_TASK_INTENT_SCHEMA_VERSION,
+    PmTaskIntentError,
+    is_pm_task_intent,
+    project_pm_task_intent_draft,
+)
 
 from ._protocol import _PMAdapterMixinBase
 from .pm_text_utils import (
@@ -73,6 +79,14 @@ def _decode_complete_pm_payload(response: str) -> Any:
 
 def _complete_pm_tasks(payload: Any, path: str = "$", *, source_paths: list[str] | None = None) -> list[dict[str, Any]]:
     """Recognize only declared task containers and validate every task row."""
+    if isinstance(payload, dict) and payload.get("schema_version") == PM_TASK_INTENT_SCHEMA_VERSION:
+        try:
+            draft_tasks: list[dict[str, Any]] = project_pm_task_intent_draft(payload)
+        except PmTaskIntentError as exc:
+            raise _PMContractError(exc.diagnostic) from exc
+        if source_paths is not None:
+            source_paths.extend(f"{path}.tasks[{i}]" for i in range(len(draft_tasks)))
+        return draft_tasks
     candidate_keys = (
         "tasks",
         "task_list",
@@ -115,6 +129,11 @@ def _complete_pm_tasks(payload: Any, path: str = "$", *, source_paths: list[str]
     for row, row_path in zip(rows, paths, strict=True):
         if not isinstance(row, dict):
             raise _schema_error(row_path, "Task must be an object")
+        metadata = row.get("metadata")
+        if row.get("schema_version") == PM_TASK_INTENT_SCHEMA_VERSION or (
+            isinstance(metadata, dict) and metadata.get("planning_contract_version") == PM_TASK_INTENT_SCHEMA_VERSION
+        ):
+            raise _schema_error(row_path, "Semantic tasks require the complete versioned product envelope")
         if any(key in row for key in ("modality", "argv", "cwd")):
             raise _schema_error(row_path, "Verifier row fields belong inside verification_commands, not a task")
         title = row.get("title")
@@ -192,10 +211,10 @@ class PMContractParsingMixin(_PMAdapterMixinBase):
                 verifier_diagnostics = contract["metadata"]["pm_verification_command_diagnostics"]
                 for diagnostic in verifier_diagnostics:
                     diagnostic["path"] = source_path + diagnostic["path"][len(canonical_path) :]
-                if _pm_raw_task_is_dependency_chain(item) or _pm_raw_task_is_meta_diagnostic(item):
+                if not is_pm_task_intent(item) and (_pm_raw_task_is_dependency_chain(item) or _pm_raw_task_is_meta_diagnostic(item)):
                     excluded_diagnostics.extend(verifier_diagnostics)
                     continue
-                if _pm_raw_task_is_non_delivery_constraint(item):
+                if not is_pm_task_intent(item) and _pm_raw_task_is_non_delivery_constraint(item):
                     non_delivery_constraint_skips += 1
                     excluded_diagnostics.extend(verifier_diagnostics)
                     continue

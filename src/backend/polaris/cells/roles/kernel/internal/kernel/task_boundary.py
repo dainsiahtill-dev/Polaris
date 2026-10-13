@@ -94,7 +94,7 @@ def _extend_context_items(items: list[str], value: Any) -> None:
             items.append(item)
 
 
-def director_task_boundary_target_files(context_override: Any) -> list[str]:
+def _director_task_boundary_write_targets(context_override: Any) -> list[str]:
     """Extract Director target files from the current role-turn context."""
     if not isinstance(context_override, dict):
         return []
@@ -114,6 +114,98 @@ def director_task_boundary_target_files(context_override: Any) -> list[str]:
         if isinstance(task, dict):
             _extend_context_paths(paths, task.get("target_files"))
     return paths
+
+
+def director_task_boundary_source_targets(context_override: Any, *, workspace: str | None = None) -> list[str]:
+    """Bind verifier freshness to exact write targets and declared read inputs.
+
+    Read inputs are freshness dependencies only. They never become required
+    artifacts or grant tool/path permission, and historical context is excluded.
+    """
+    if not isinstance(context_override, dict):
+        return []
+    paths = _director_task_boundary_write_targets(context_override)
+    declared_files = list(paths)
+    records = [context_override]
+    visited: set[int] = set()
+    for record in records:
+        if id(record) in visited:
+            continue
+        visited.add(id(record))
+        _extend_context_paths(declared_files, record.get("context_files"))
+        for key in ("context_files", "allowed_read_paths"):
+            _extend_context_paths(paths, record.get(key))
+        for key in (
+            "metadata",
+            "task_metadata",
+            "task",
+            "current_task",
+            "task_payload",
+            "pm_task_contract",
+            "director_execution_profile",
+            "task_execution_profile",
+            "execution_profile",
+            "director_execution_envelope",
+            "task_execution_envelope",
+            "execution_envelope",
+            "authorization",
+            "job_token",
+            "control_plane_job_token",
+            "capability_token",
+        ):
+            nested = record.get(key)
+            if isinstance(nested, dict):
+                records.append(nested)
+    if workspace:
+        from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
+        filesystem = KernelFileSystem(workspace, get_default_adapter())
+        if any(filesystem.workspace_is_dir(path) for path in declared_files):
+            raise ValueError("continuation_declared_source_file_is_directory")
+    return paths
+
+
+def director_task_boundary_target_files(context_override: Any) -> list[str]:
+    """Required CE artifacts are obligations; optional write paths are capability."""
+    if isinstance(context_override, dict):
+        records = [context_override, _mapping(context_override.get("metadata"))]
+        for key in ("task", "current_task", "task_payload"):
+            record = _mapping(context_override.get(key))
+            records.extend([record, _mapping(record.get("metadata"))])
+        for record in records:
+            if record.get("required_write_targets") is not None:
+                return clean_relative_paths(record["required_write_targets"])
+            projection = _mapping(record.get("task_completion_projection"))
+            if isinstance(projection.get("owned_artifacts"), list):
+                return clean_relative_paths(
+                    [
+                        item.get("path")
+                        for item in projection["owned_artifacts"]
+                        if isinstance(item, dict) and item.get("applicability", "required") == "required"
+                    ]
+                )
+    return _director_task_boundary_write_targets(context_override)
+
+
+def committed_task_tool_results(request: Any, workspace: str) -> list[dict[str, Any]]:
+    """Re-read kernel-owned continuation refs using the current request identity."""
+    from polaris.cells.roles.kernel.internal.transaction.continuation_evidence import (
+        CONTINUATION_EVIDENCE_KEY,
+        load_committed_continuation_rows,
+    )
+
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    evidence = metadata.get(CONTINUATION_EVIDENCE_KEY)
+    if evidence is None:
+        return []
+    return load_committed_continuation_rows(
+        evidence,
+        workspace=workspace,
+        run_id=str(request.run_id or ""),
+        task_id=str(request.task_id or ""),
+        session_id=str(metadata.get("role_session_id") or ""),
+        source_targets=tuple(director_task_boundary_source_targets(request.context_override, workspace=workspace)),
+    )
 
 
 def director_task_boundary_downstream_pending_artifacts(context_override: Any) -> list[str]:
@@ -194,10 +286,16 @@ def director_task_boundary_verifier_policy(context_override: Any) -> dict[str, l
 
     if not isinstance(context_override, dict):
         return {"required": [], "completed": [], "missing": [], "failed": []}
+    ce_required_commands: list[str] = []
+    for record in (context_override, _mapping(context_override.get("metadata"))):
+        if record.get("verification_authority") == "chief_engineer" and "verification_commands" in record:
+            ce_required_commands = _string_items(record["verification_commands"])
+            break
     verifier_policy = _mapping(context_override.get("verifier_policy"))
     task_boundary = _mapping(context_override.get("task_boundary"))
     return {
         "required": [
+            *ce_required_commands,
             *_string_items(context_override.get("required_verifiers")),
             *_string_items(verifier_policy.get("required_verifiers")),
             *_string_items(task_boundary.get("required_verifiers")),
@@ -317,6 +415,22 @@ def build_director_task_boundary_verdict(
     evidence_policy = director_task_boundary_evidence_policy(context_override)
     verifier_policy = director_task_boundary_verifier_policy(context_override)
     observed_verifier_policy = verifier_policy_from_tool_results(tool_results)
+    records = (
+        [context_override, _mapping(context_override.get("metadata"))] if isinstance(context_override, dict) else []
+    )
+    ce_recipe = next(
+        (
+            record.get("verification_commands")
+            for record in records
+            if record.get("verification_authority") == "chief_engineer" and "verification_commands" in record
+        ),
+        None,
+    )
+    if isinstance(ce_recipe, (list, tuple)):
+        required = set(_string_items(ce_recipe))
+        observed_verifier_policy = {
+            key: [name for name in names if name in required] for key, names in observed_verifier_policy.items()
+        }
     for key in ("required", "completed", "missing", "failed"):
         verifier_policy[key] = list(dict.fromkeys([*verifier_policy[key], *observed_verifier_policy[key]]))
     has_boundary_obligation = bool(

@@ -344,7 +344,7 @@ def _contracts(*, valid: bool) -> str:
     }
     if valid:
         task["verification_commands"] = [
-            {"modality": "environment_prep", "argv": ["python3", "-m", "pip", "check"], "cwd": "."},
+            {"modality": "environment_prep", "argv": ["python3", "-m", "pip", "install", "-e", "."], "cwd": "."},
             {"modality": "test", "argv": ["python3", "-m", "unittest", "discover"], "cwd": "."},
         ]
     return jsonlib.dumps({"tasks": [task]})

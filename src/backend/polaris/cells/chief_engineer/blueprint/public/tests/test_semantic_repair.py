@@ -1384,8 +1384,14 @@ def test_patch_schema_validates_only_diagnosis_authorized_operation_items() -> N
         "task_behavior_ref_replacements": {},
     }
 
-    Draft202012Validator(schema).validate(payload)
-    strict_payload = json.loads(json.dumps(payload))
+    # Full legacy dictionaries remain DTO-compatible, but inactive groups are
+    # not part of a new diagnosis-scoped provider wire.
+    parsed = ChiefEngineerSemanticRepairPatchV1.from_provider_dict(payload, allowed_operations=("artifact_upsert",))
+    assert parsed.operations == ("artifact_upsert",)
+    assert parsed.entrypoint_upserts == ()
+    wire_payload = {key: payload[key] for key in ("base_candidate_hash", "diagnosis_hash", "artifact_upserts")}
+    Draft202012Validator(schema).validate(wire_payload)
+    strict_payload = json.loads(json.dumps(wire_payload))
     strict_payload["artifact_upserts"][0]["path"] = ""
     with pytest.raises(ValidationError):
         Draft202012Validator(schema).validate(strict_payload)

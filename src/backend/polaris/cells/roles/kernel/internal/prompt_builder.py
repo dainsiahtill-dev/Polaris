@@ -46,6 +46,7 @@ from polaris.kernelone.role.composer import (
 )
 from polaris.kernelone.role.language_identity import (
     LanguageProfessionalIdentity,
+    get_language_professional_identity,
     infer_language_professional_identity,
 )
 from polaris.kernelone.storage.persona_store import load_workspace_persona
@@ -246,6 +247,7 @@ class PromptBuilder:
         include_working_memory_contract: bool = True,
         include_tool_policy: bool = True,
         task_type: str = "default",
+        language: str = "",
     ) -> str:
         """构建完整系统提示词（支持分层缓存）
 
@@ -266,6 +268,7 @@ class PromptBuilder:
             include_working_memory_contract: 是否注入 ADR-0080 SESSION_PATCH 工作记忆契约
             include_tool_policy: 是否注入工具策略提示
             task_type: 权威运行时任务类型；未知值必须降级为 ``default``
+            language: 已解析 prompt profile 语言；空值保留原文本推断
         """
         effective_include_working_memory_contract = (
             include_working_memory_contract
@@ -291,6 +294,7 @@ class PromptBuilder:
                     ),
                     include_working_memory_contract=effective_include_working_memory_contract,
                     include_tool_policy=include_tool_policy,
+                    language=language,
                 )
             except (RuntimeError, ValueError) as exc:
                 raise RuntimeError(f"tri_axis_prompt_composition_failed:{core_template_id}") from exc
@@ -364,6 +368,7 @@ class PromptBuilder:
         task_type: str = "default",
         include_working_memory_contract: bool = True,
         include_tool_policy: bool = True,
+        language: str = "",
     ) -> str:
         """构建三轴专业角色提示词（Tri-Axis Role Composition）
 
@@ -410,6 +415,7 @@ class PromptBuilder:
             domain=domain,
             message=message,
             prompt_appendix=prompt_appendix,
+            language=language,
         )
         language_cache_token = profession_identity.cache_token if profession_identity else "recipe"
         cache_key = f"tri_axis:{recipe_id}:{profile.version}:{effective_task_type}:{language_cache_token}"
@@ -526,7 +532,22 @@ class PromptBuilder:
         for token, keywords in (
             ("bug_fix", ("bugfix", "bug_fix", "quality repair", "repair mode", "fix bug", "修 bug", "修复")),
             ("refactor", ("refactor", "重构")),
-            ("code_review", ("code_review", "review", "audit", "verification", "verify", "testing", "tests", "验收", "测试", "审查", "评审")),
+            (
+                "code_review",
+                (
+                    "code_review",
+                    "review",
+                    "audit",
+                    "verification",
+                    "verify",
+                    "testing",
+                    "tests",
+                    "验收",
+                    "测试",
+                    "审查",
+                    "评审",
+                ),
+            ),
             (
                 "new_code",
                 ("write_code", "new_code", "implement", "implementation", "materialize", "实现", "落地"),
@@ -580,10 +601,16 @@ class PromptBuilder:
         domain: str,
         message: str,
         prompt_appendix: str,
+        language: str = "",
     ) -> LanguageProfessionalIdentity | None:
         role_id = str(getattr(profile, "role_id", "") or "").strip().lower()
         if role_id not in {"architect", "chief_engineer", "director"}:
             return None
+        if str(language or "").strip():
+            # Use the same resolved profile that the final request audit owns.
+            # An unsupported explicit language retains the recipe profession;
+            # unrelated verifier/history text must not override that decision.
+            return get_language_professional_identity(language)
         # CE/Architect blueprints are often delivered as document-shaped
         # prompts, but their engineering language still determines the
         # profession identity and best-practice contract.
@@ -841,7 +868,8 @@ class PromptBuilder:
             self._l2_cache = CachedPromptLayer(
                 content=content, hash_key=content_hash, created_at=time.time(), ttl_seconds=self.L2_CACHE_TTL
             )
-            return content
+            security_content: str = content
+            return security_content
 
     def _get_cached_l3(self) -> str:
         """获取缓存的L3运行时契约（线程安全）"""
@@ -1009,7 +1037,8 @@ class PromptBuilder:
         template_id = profile.prompt_policy.core_template_id
 
         if template_id in ROLE_PROMPT_TEMPLATES:
-            return build_persona_prompt(template_id, persona_id)
+            persona_prompt: str = build_persona_prompt(template_id, persona_id)
+            return persona_prompt
 
         # 使用内置基础模板（不支持 persona 注入）
         return self._build_builtin_prompt(profile)

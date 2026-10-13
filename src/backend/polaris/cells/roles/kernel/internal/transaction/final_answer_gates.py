@@ -65,6 +65,8 @@ def evaluate_materialize_violation_gate(
     turn_id: Any,
     visible_content: str,
     ledger: TurnLedger,
+    committed_tool_results: list[dict[str, Any]] | None = None,
+    materialization_required: bool = True,
 ) -> FinalAnswerBlock | None:
     """Evaluate the MATERIALIZE_CHANGES write-side gate.
 
@@ -72,6 +74,10 @@ def evaluate_materialize_violation_gate(
     same anomaly/rejection/mark_blocked ledger side-effects as the original
     inline body, in the original order), or ``None`` to fall through.
     """
+    from polaris.cells.roles.kernel.internal.transaction.phase_manager import has_authoritative_write_receipt
+
+    if not materialization_required or (committed_tool_results and has_authoritative_write_receipt({"results": committed_tool_results})):
+        return None
     # MATERIALIZE_CHANGES 模式下，FINAL_ANSWER 意味着没有 write receipt —— 违反 Invariant A
     if not (ledger.delivery_contract.must_materialize and not ledger.mutation_obligation.mutation_satisfied):
         return None
@@ -135,6 +141,7 @@ def evaluate_recon_required_gate(
     visible_content: str,
     ledger: TurnLedger,
     recon_required: bool,
+    committed_tool_results: list[dict[str, Any]] | None = None,
 ) -> FinalAnswerBlock | None:
     """Evaluate the recon-required read-side gate (ADR-0091 R1).
 
@@ -145,7 +152,8 @@ def evaluate_recon_required_gate(
     # recon_required 内核中，零侦察的 FINAL_ANSWER —— 违反读侧落地不变量
     # (ADR-0091 R1，与上方 must_materialize 写侧门禁对称)。block-only：
     # 不注入第二个 TurnDecision、不注入 ToolBatch（ADR-0071 兼容）。
-    if not (recon_required and not has_successful_recon_execution(ledger.tool_executions)):
+    recon_executions = [*ledger.tool_executions, *(committed_tool_results or [])]
+    if not (recon_required and not has_successful_recon_execution(recon_executions)):
         return None
 
     # 例外：明确的拒绝响应（ADR-0091 R2，与写侧豁免一致）

@@ -326,7 +326,7 @@ async def execute_non_stream_role_turn(
             kernel_repair_reasons=kernel_repair_reasons,
             kernel_repair_exhausted=False,
             error=None,
-            is_complete=True,
+            is_complete=te_result.is_complete,
         )
 
     raise RuntimeError("Unexpected fallthrough in execute_non_stream_role_turn")

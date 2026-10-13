@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import tool_contract_requires_single_batch
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleTurnRequest
@@ -38,6 +38,12 @@ def build_system_prompt_for_request(
             "domain": domain,
             "message": request_message,
         }
+        if isinstance(context_override, dict):
+            audit = context_override.get("prompt_profile_audit")
+            if isinstance(audit, dict):
+                language = str(audit.get("inferred_language") or "").strip()
+                if language:
+                    prompt_kwargs["language"] = language
         if prompt_task_type != "default":
             prompt_kwargs["task_type"] = prompt_task_type
         if prompt_layer_options:
@@ -47,18 +53,24 @@ def build_system_prompt_for_request(
                 "include_working_memory_contract", True
             )
             prompt_kwargs["include_tool_policy"] = prompt_layer_options.get("include_tool_policy", True)
-            return prompt_builder.build_system_prompt(
+            return cast(
+                str,
+                prompt_builder.build_system_prompt(
+                    profile,
+                    effective_prompt_appendix,
+                    **prompt_kwargs,
+                ),
+            )
+        return cast(
+            str,
+            prompt_builder.build_system_prompt(
                 profile,
                 effective_prompt_appendix,
                 **prompt_kwargs,
-            )
-        return prompt_builder.build_system_prompt(
-            profile,
-            effective_prompt_appendix,
-            **prompt_kwargs,
+            ),
         )
     except TypeError:
-        return prompt_builder.build_system_prompt(profile, effective_prompt_appendix)
+        return cast(str, prompt_builder.build_system_prompt(profile, effective_prompt_appendix))
 
 
 def append_prompt_profiles_for_request(
@@ -96,7 +108,8 @@ def append_prompt_profiles_for_request(
     if not profile_appendix:
         return prompt_appendix
     if not str(prompt_appendix or "").strip():
-        return profile_appendix
+        resolved_appendix: str = profile_appendix
+        return resolved_appendix
     return f"{prompt_appendix.rstrip()}\n\n{profile_appendix}"
 
 

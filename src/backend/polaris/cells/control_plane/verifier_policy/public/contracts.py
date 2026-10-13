@@ -48,6 +48,16 @@ def _exact_token(name: str, value: object, *, max_bytes: int = 512) -> str:
     return value
 
 
+def normalize_verifier_command_argv(value: object) -> tuple[str, ...]:
+    """Validate opaque command operands without granting execution authority."""
+    if not isinstance(value, (list, tuple)) or not value:
+        raise ValueError("argv must be a non-empty list or tuple")
+    argv = tuple(_exact_token(f"argv[{index}]", item, max_bytes=2048) for index, item in enumerate(value))
+    if len(argv) > 128:
+        raise ValueError("argv must contain at most 128 items")
+    return argv
+
+
 def _sha256(name: str, value: object) -> str:
     token = _exact_token(name, value, max_bytes=64).lower()
     if len(token) != 64 or any(character not in "0123456789abcdef" for character in token):
@@ -197,12 +207,7 @@ class EvaluateVerifierCommandPolicyQueryV1:
         if modality not in VERIFIER_COMMAND_MODALITIES:
             raise ValueError(f"unsupported verifier modality: {modality}")
         object.__setattr__(self, "modality", modality)
-        if not isinstance(self.argv, (list, tuple)) or not self.argv:
-            raise ValueError("argv must be a non-empty list or tuple")
-        argv = tuple(_exact_token(f"argv[{index}]", item, max_bytes=2048) for index, item in enumerate(self.argv))
-        if len(argv) > 128:
-            raise ValueError("argv must contain at most 128 items")
-        object.__setattr__(self, "argv", argv)
+        object.__setattr__(self, "argv", normalize_verifier_command_argv(self.argv))
         object.__setattr__(self, "cwd", _relative_cwd(self.cwd))
         if not isinstance(self.input_obligation_ids, (list, tuple)) or not self.input_obligation_ids:
             raise ValueError("input_obligation_ids must be a non-empty list or tuple")
@@ -259,4 +264,5 @@ __all__ = [
     "VerifierCommandModalityV1",
     "VerifierCommandPolicyDecisionV1",
     "VerifierPolicyResultV1",
+    "normalize_verifier_command_argv",
 ]

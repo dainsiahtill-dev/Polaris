@@ -227,7 +227,7 @@ class OrchestratorSessionState:
     session_id: str
     goal: str = ""
     turn_count: int = 0
-    max_turns: int = 15
+    max_turns: int | None = 15
     artifacts: dict[str, Any] = field(default_factory=dict)
     last_failure: dict[str, Any] | None = None
     turn_history: list[dict[str, Any]] = field(default_factory=list)
@@ -263,7 +263,7 @@ class ContinuationPolicy:
 
     def __init__(
         self,
-        max_auto_turns: int = 10,
+        max_auto_turns: int | None = 10,
         speculative_hit_threshold: float = 0.7,
     ) -> None:
         self.max_auto_turns = max_auto_turns
@@ -336,7 +336,7 @@ class ContinuationPolicy:
             return False, f"mode={envelope.continuation_mode.value}"
 
         # Phase 5.1: Early success detection - allow extra turns for complex tasks
-        if state.turn_count >= self.max_auto_turns:
+        if self.max_auto_turns is not None and state.turn_count >= self.max_auto_turns:
             if self.should_allow_extra_turns(state):
                 pass
             else:
@@ -509,7 +509,8 @@ class ContinuationPolicy:
                     return False
                 observations = [
                     {key: row.get(key) for key in ("tool_name", "arguments", "status", "result")}
-                    for row in rows if isinstance(row, dict)
+                    for row in rows
+                    if isinstance(row, dict)
                 ]
                 signatures.append(json.dumps(observations, sort_keys=True, ensure_ascii=False, default=str))
             return len(signatures) == 3 and len(set(signatures)) == 1

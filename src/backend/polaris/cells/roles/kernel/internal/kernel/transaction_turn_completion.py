@@ -149,8 +149,10 @@ def build_transaction_turn_completion_result(
     # Pull the ledger from the TransactionKernel result so it can be committed
     # into the ContextOS snapshot, eliminating the parallel TurnLedger state.
     ledger = tk_result.get("ledger")
-    tool_calls = tool_calls_from_batch_receipt(normalized_batch_receipt)
-    tool_results = tool_results_from_batch_receipt(normalized_batch_receipt)
+    committed_outcome = tk_result.get("turn_outcome")
+    committed_outcome = committed_outcome if isinstance(committed_outcome, Mapping) else None
+    tool_calls = tool_calls_from_batch_receipt(normalized_batch_receipt, turn_outcome=committed_outcome)
+    tool_results = tool_results_from_batch_receipt(normalized_batch_receipt, turn_outcome=committed_outcome)
     structured_output = _extract_structured_output(
         kernel=kernel,
         response_schema=response_schema,
@@ -498,6 +500,9 @@ def _append_task_boundary_verdict(
     metadata: dict[str, Any],
     error_msg: str | None,
 ) -> dict[str, Any] | None:
+    from polaris.cells.roles.kernel.internal.kernel.task_boundary import committed_task_tool_results
+    if not metadata.get("needs_followup_workflow"):
+        tool_results = [*committed_task_tool_results(request, str(request.workspace or kernel.workspace or ".")), *tool_results]
     try:
         return append_role_turn_task_boundary_verdict(
             role=role,

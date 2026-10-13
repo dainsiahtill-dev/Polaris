@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from polaris.cells.chief_engineer.blueprint.public.contracts._behavior import (
     ChiefEngineerSharedBehaviorContractV1,
@@ -85,9 +85,27 @@ class ChiefEngineerPortfolioTaskV1:
     delivery_depth_contract: Mapping[str, Any] = field(default_factory=dict)
     context_files: tuple[str, ...] = field(default_factory=tuple)
     generated_outputs: tuple[GeneratedOutputV1, ...] = field(default_factory=tuple)
+    planning_contract_version: str = ""
+    verification_authority: Literal["pm", "chief_engineer"] = "pm"
+    observable_acceptance: tuple[str, ...] = field(default_factory=tuple)
+    explicit_constraints: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         task_id = _require_non_empty("task_id", self.task_id)
+        light_intent = self.planning_contract_version == "pm.task_intent.v1"
+        if self.planning_contract_version and not light_intent:
+            raise ValueError("unsupported planning_contract_version")
+        if self.verification_authority not in {"pm", "chief_engineer"}:
+            raise ValueError("verification_authority must be pm or chief_engineer")
+        if light_intent and (self.topology_authority != "chief_engineer" or self.verification_authority != "chief_engineer"):
+            raise ValueError("task intent requires Chief Engineer topology and verification delegation")
+        if not light_intent and self.verification_authority != "pm":
+            raise ValueError("verification delegation requires pm.task_intent.v1")
+        acceptance = _strict_unique_string_tuple("observable_acceptance", self.observable_acceptance)
+        if light_intent and not acceptance:
+            raise ValueError("task intent requires immutable observable_acceptance")
+        object.__setattr__(self, "observable_acceptance", acceptance)
+        object.__setattr__(self, "explicit_constraints", _strict_unique_string_tuple("explicit_constraints", self.explicit_constraints))
         dependencies = _strict_unique_string_tuple("dependencies", self.dependencies)
         if task_id in dependencies:
             raise ValueError("dependencies must not contain the task's own task_id")
@@ -97,7 +115,7 @@ class ChiefEngineerPortfolioTaskV1:
         object.__setattr__(
             self,
             "target_files",
-            _relative_path_tuple("target_files", self.target_files, require_items=True),
+            _relative_path_tuple("target_files", self.target_files, require_items=not light_intent),
         )
         object.__setattr__(self, "scope_paths", _relative_path_tuple("scope_paths", self.scope_paths))
         context_files = _relative_path_tuple("context_files", self.context_files)
@@ -121,7 +139,7 @@ class ChiefEngineerPortfolioTaskV1:
             "required_source_kinds",
             self.required_source_kinds,
         )
-        if topology_authority == "chief_engineer" and not required_source_kinds:
+        if topology_authority == "chief_engineer" and not light_intent and not required_source_kinds:
             raise ValueError("chief_engineer topology authority requires required_source_kinds")
         if topology_authority == "pm" and required_source_kinds:
             raise ValueError("PM topology authority must not declare delegated required_source_kinds")
@@ -132,7 +150,7 @@ class ChiefEngineerPortfolioTaskV1:
         )
         if any(not suffix.startswith(".") or "/" in suffix or "\\" in suffix for suffix in allowed_source_suffixes):
             raise ValueError("allowed_source_suffixes must contain normalized file suffixes")
-        if topology_authority == "chief_engineer" and (not primary_language or not allowed_source_suffixes):
+        if topology_authority == "chief_engineer" and not light_intent and (not primary_language or not allowed_source_suffixes):
             raise ValueError("chief_engineer topology authority requires immutable language suffix authority")
         entrypoint_kind_authority = str(self.entrypoint_kind_authority or "").strip().lower()
         if entrypoint_kind_authority and entrypoint_kind_authority not in {"cli", "web", "api", "library"}:
@@ -168,6 +186,13 @@ class ChiefEngineerPortfolioTaskV1:
         # Absent/empty optional fields retain historical sealed hash semantics.
         if self.context_files:
             result["context_files"] = list(self.context_files)
+        if self.planning_contract_version:
+            result.update({
+                "planning_contract_version": self.planning_contract_version,
+                "verification_authority": self.verification_authority,
+                "observable_acceptance": list(self.observable_acceptance),
+                "explicit_constraints": list(self.explicit_constraints),
+            })
         if self.generated_outputs:
             result["generated_outputs"] = [row.to_dict() for row in self.generated_outputs]
         return result
@@ -253,7 +278,11 @@ class _ChiefEngineerPortfolioAuthorityCarrierV1:
         if not normalized_tasks or any(type(task) is not ChiefEngineerPortfolioTaskV1 for task in normalized_tasks):
             raise TypeError("authority carrier tasks must be exact ChiefEngineerPortfolioTaskV1 values")
         normalized_commands = tuple(verification_command_authority)
-        if not normalized_commands or any(
+        delegated_commands = all(
+            task.planning_contract_version == "pm.task_intent.v1" and task.verification_authority == "chief_engineer"
+            for task in normalized_tasks
+        )
+        if (not normalized_commands and not delegated_commands) or any(
             type(item) is not VerificationCommandAuthorityV1 for item in normalized_commands
         ):
             raise TypeError("authority carrier commands must be exact VerificationCommandAuthorityV1 values")
@@ -437,8 +466,12 @@ class ChiefEngineerProjectInterfaceContractV1:
     file_task_ownership: Mapping[str, tuple[str, ...]]
     provider_declarations: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     consumer_declarations: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    ownership_authority: Literal["pm_authoritative_tasks", "chief_engineer_completion_contract"] = "pm_authoritative_tasks"
+    task_read_context: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if self.ownership_authority not in {"pm_authoritative_tasks", "chief_engineer_completion_contract"}:
+            raise ValueError("unsupported interface ownership_authority")
         contract_id = _require_safe_filename_token("contract_id", self.contract_id)
         contract_ref = _require_non_empty("contract_ref", self.contract_ref)
         path_part, separator, fragment = contract_ref.partition("#")
@@ -451,6 +484,16 @@ class ChiefEngineerProjectInterfaceContractV1:
             raise TypeError("task_file_ownership must be a mapping")
         if not isinstance(self.file_task_ownership, Mapping):
             raise TypeError("file_task_ownership must be a mapping")
+        if not isinstance(self.task_read_context, Mapping):
+            raise TypeError("task_read_context must be a mapping")
+        read_context = {
+            _require_non_empty("task_read_context task_id", str(task_id)): _relative_path_tuple(
+                f"task_read_context[{task_id!r}]", paths, require_items=True
+            )
+            for task_id, paths in self.task_read_context.items()
+        }
+        if not set(read_context) <= set(self.task_file_ownership):
+            raise ValueError("task_read_context must bind known task ownership")
 
         task_file_ownership: dict[str, tuple[str, ...]] = {}
         expected_file_owners: dict[str, list[str]] = {}
@@ -461,7 +504,9 @@ class ChiefEngineerProjectInterfaceContractV1:
             paths = _relative_path_tuple(
                 f"task_file_ownership[{task_id!r}]",
                 raw_paths,
-                require_items=True,
+                require_items=not (
+                    self.ownership_authority == "chief_engineer_completion_contract" and task_id in read_context
+                ),
             )
             task_file_ownership[task_id] = paths
             for path in paths:
@@ -497,6 +542,7 @@ class ChiefEngineerProjectInterfaceContractV1:
         object.__setattr__(self, "contract_hash", _require_non_empty("contract_hash", self.contract_hash))
         object.__setattr__(self, "task_file_ownership", task_file_ownership)
         object.__setattr__(self, "file_task_ownership", file_task_ownership)
+        object.__setattr__(self, "task_read_context", read_context)
         object.__setattr__(
             self,
             "provider_declarations",
@@ -530,7 +576,9 @@ class ChiefEngineerProjectInterfaceContractV1:
             "file_task_ownership": {path: list(task_ids) for path, task_ids in self.file_task_ownership.items()},
             "provider_declarations": [_json_safe_mapping(declaration) for declaration in self.provider_declarations],
             "consumer_declarations": [_json_safe_mapping(declaration) for declaration in self.consumer_declarations],
-            "ownership_authority": "pm_authoritative_tasks",
+            "ownership_authority": self.ownership_authority,
+            **({"task_read_context": {task_id: list(paths) for task_id, paths in self.task_read_context.items()}}
+               if self.task_read_context else {}),
             "interface_declaration_authority": "chief_engineer_advisory_only",
             "authoritative": False,
         }
@@ -620,7 +668,7 @@ class ChiefEngineerBlueprintPortfolioV1:
         if self.llm_blueprint_consumed:
             if type(completion_contract) is not ProjectCompletionContractV1:
                 raise TypeError("advisory portfolio requires exact ProjectCompletionContractV1")
-            completion_contract_v1 = cast(ProjectCompletionContractV1, completion_contract)
+            completion_contract_v1 = completion_contract
             expected_completion_ref = f"{portfolio_path}#project_completion_contract"
             if completion_ref != expected_completion_ref:
                 raise ValueError("project_completion_contract_ref must target the portfolio contract fragment")
@@ -636,7 +684,7 @@ class ChiefEngineerBlueprintPortfolioV1:
                     raise ValueError("shared behavior contract identity must be complete when present")
                 if type(behavior_contract) is not ChiefEngineerSharedBehaviorContractV1:
                     raise TypeError("shared_behavior_contract must be exact ChiefEngineerSharedBehaviorContractV1")
-                behavior_contract_v1 = cast(ChiefEngineerSharedBehaviorContractV1, behavior_contract)
+                behavior_contract_v1 = behavior_contract
                 expected_behavior_ref = f"{portfolio_path}#shared_behavior_contract"
                 if behavior_ref != expected_behavior_ref:
                     raise ValueError("shared_behavior_contract_ref must target the portfolio contract fragment")
@@ -1050,6 +1098,8 @@ class TaskBlueprintResultV1:
     # (e.g. test generation) know the actual API of files created by earlier tasks.
     existing_target_files: tuple[dict[str, str], ...] = field(default_factory=tuple)
     module_interface_contract: dict[str, Any] = field(default_factory=dict)
+    # None distinguishes legacy snapshots from an explicitly empty required set.
+    required_write_targets: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
@@ -1061,6 +1111,8 @@ class TaskBlueprintResultV1:
         object.__setattr__(self, "recommendations", tuple(str(v) for v in self.recommendations))
         object.__setattr__(self, "risks", tuple(str(v) for v in self.risks))
         object.__setattr__(self, "target_files", tuple(str(v) for v in self.target_files))
+        if self.required_write_targets is not None:
+            object.__setattr__(self, "required_write_targets", tuple(str(v) for v in self.required_write_targets))
         object.__setattr__(self, "acceptance_criteria", tuple(str(v) for v in self.acceptance_criteria))
         object.__setattr__(self, "execution_checklist", tuple(str(v) for v in self.execution_checklist))
         object.__setattr__(self, "scope_paths", tuple(str(v) for v in self.scope_paths))

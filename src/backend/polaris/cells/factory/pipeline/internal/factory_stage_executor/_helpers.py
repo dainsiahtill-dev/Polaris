@@ -241,20 +241,26 @@ Chief Engineer output contract:
   provider response protocol, not an executable workspace tool and not a side effect.
 - Required top-level keys: construction_plan, project_completion_contract, scope_for_apply, risk_flags.
 - construction_plan must describe one coherent project architecture, not isolated task answers.
-- construction_plan.task_plans must be an object keyed by every PM task id. Each task plan must name
-  concrete files, public interfaces, dependencies, implementation phases, and verification evidence.
+- construction_plan.task_plans must be an object keyed by every PM task id. Describe the concrete
+  artifacts and verification needed to start. Add interface declarations and shared invariants only
+  where separate owners need them; a single coupled implementation task may use empty declarations
+  and invariants arrays. Do not manufacture document tasks or implementation phases.
 - construction_plan.project_interface_contract must contain provider_declarations and
   consumer_declarations arrays. Declarations must identify repository-relative owner/consumer files,
   symbol names, symbol kinds, callable/type signatures where applicable, and semantic roles.
-- scope_for_apply must be an array of repository-relative paths or modules. It is advisory only and
-  cannot expand the PM-authoritative target_files/scope_paths.
+- scope_for_apply must be an array of repository-relative paths or modules. For legacy PM topology
+  authority it is advisory and cannot expand the authorized scope. For pm.task_intent.v1 with
+  chief_engineer topology authority, establish exact safe artifact ownership before execution;
+  preserve all explicit PM path and product constraints.
 - risk_flags must be an array, even when empty.
 - project_completion_contract must describe completion for the ENTIRE validated PM task set, never one task.
   It must contain obligations.artifacts, obligations.entrypoints, and
   obligations.verification. Every PM target file must be a required artifact. Active artifact and entrypoint
-  paths must be exact PM target paths or component-safe descendants of PM scope_paths, and owner_task_id must be
-  the PM task that owns that target/scope. Every verification must name covers_obligation_ids and select one exact
-  PM-owned command_authority_hash supplied in project_completion_authority; never invent or rewrite a command. Every active
+  paths must respect the task's topology authority, and owner_task_id must be a validated PM task.
+  Every verification must name covers_obligation_ids. Preserve supplied explicit PM command_authority_hash
+  bindings. When verification_authority is chief_engineer for a pm.task_intent.v1 task, provide the
+  concrete argv array and workspace-relative cwd with command_authority_hash=null; the platform validates
+  the recipe against command policy before binding execution authority. Every active
   obligation must name exact owner_task_id from the validated PM task set; not_applicable obligations must use
   owner_task_id=null. The immutable project_kind_authority in project_completion_authority decides application versus
   library; never emit or override project_kind. Every project kind requires at least one required build/test/lint

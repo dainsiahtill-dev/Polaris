@@ -12,6 +12,7 @@ import signal
 import sqlite3
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +25,7 @@ from polaris.cells.runtime.execution_broker.internal.project_verification_sandbo
 )
 from polaris.cells.runtime.execution_broker.public.contracts import (
     ExecutionProcessStatusV1,
+    ExecutionProcessWaitResultV1,
     LaunchExecutionProcessCommandV1,
 )
 from polaris.cells.runtime.execution_broker.public.project_verification import (
@@ -47,6 +49,7 @@ from polaris.cells.runtime.execution_broker.public.project_verification import (
     ResolveProjectVerificationAuthorityQueryV1,
     RunProjectVerificationCommandV1,
 )
+from polaris.kernelone.process import ProcessTreeCancelledError, ProcessTreeDrainError, ProcessTreeRunControl
 from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.storage.layout import resolve_existing_storage_roots_read_only
 
@@ -55,6 +58,14 @@ _AUTH_KEY_RELATIVE_PATH = "execution_broker/project_verification_receipt_hmac.ke
 _PROVENANCE_SCHEMA = "runtime.execution_broker.project_verification_provenance.v1"
 _MAX_TRANSIENT_ATTEMPTS = 3
 _ENTRYPOINT_READINESS_SECONDS = 2.0
+_VERIFIER_TERMINAL_STATUSES = frozenset(
+    {
+        ExecutionProcessStatusV1.SUCCESS,
+        ExecutionProcessStatusV1.FAILED,
+        ExecutionProcessStatusV1.TIMED_OUT,
+        ExecutionProcessStatusV1.CANCELLED,
+    }
+)
 _RECEIPT_REF_PREFIX = "execution-broker://project-verification/"
 _RECEIPT_SEAL = object()
 _SOURCE_BASELINE_SEAL = object()
@@ -81,6 +92,7 @@ class _ProjectVerificationProcessRunnerPortV1(Protocol):
         log_path: str,
         metadata: dict[str, str],
         on_launched: Callable[[str, int | None, str | None], None],
+        control: ProcessTreeRunControl | None = None,
     ) -> ProjectVerificationProcessResultV1: ...
 
 
@@ -1041,6 +1053,7 @@ def _verification_receipt_body(
     body["exit_code"] = result.exit_code
     body["timed_out"] = result.timed_out
     body["output_hash"] = hashlib.sha256(result.output_bytes).hexdigest()
+    body["output_excerpt"] = result.output_bytes[-8192:].decode("utf-8", errors="replace")
     body["proof_satisfied"] = evaluate_verifier_proof(
         profile_id=str(request_body["policy_profile_id"]),
         modality=str(request_body["modality"]),
@@ -1127,6 +1140,7 @@ class _ExecutionBrokerProjectVerificationRunner:
         log_path: str,
         metadata: dict[str, str],
         on_launched: Callable[[str, int | None, str | None], None],
+        control: ProcessTreeRunControl | None = None,
     ) -> ProjectVerificationProcessResultV1:
         return asyncio.run(
             self._run_async(
@@ -1137,6 +1151,7 @@ class _ExecutionBrokerProjectVerificationRunner:
                 log_path=log_path,
                 metadata=metadata,
                 on_launched=on_launched,
+                control=control,
             )
         )
 
@@ -1150,10 +1165,13 @@ class _ExecutionBrokerProjectVerificationRunner:
         log_path: str,
         metadata: dict[str, str],
         on_launched: Callable[[str, int | None, str | None], None],
+        control: ProcessTreeRunControl | None = None,
     ) -> ProjectVerificationProcessResultV1:
         from polaris.cells.runtime.execution_broker.public.service import get_execution_broker_service
 
         service = get_execution_broker_service()
+        if control is not None and control.cancellation_requested:
+            raise ProcessTreeCancelledError("project_verification_cancelled_before_spawn")
         launch = await service.launch_process(
             LaunchExecutionProcessCommandV1(
                 name=name,
@@ -1170,6 +1188,15 @@ class _ExecutionBrokerProjectVerificationRunner:
         )
         if not launch.success or launch.handle is None:
             raise ValueError(f"physical project verifier launch failed: {launch.error_message or 'unknown'}")
+        handle = launch.handle
+
+        async def stop_owned() -> ExecutionProcessWaitResultV1:
+            stopped = await service.terminate_process(handle)
+            terminal: ExecutionProcessWaitResultV1 = await service.wait_process(handle, timeout_seconds=5.0)
+            if not stopped or terminal.status not in _VERIFIER_TERMINAL_STATUSES:
+                raise ProcessTreeDrainError("project_verification_cancel_drain_unproven")
+            return terminal
+
         try:
             process_start_token = _process_start_token(launch.handle.pid)
             on_launched(
@@ -1177,35 +1204,57 @@ class _ExecutionBrokerProjectVerificationRunner:
                 launch.handle.pid,
                 process_start_token,
             )
-        except Exception:
-            await service.terminate_process(launch.handle)
+        except Exception as exc:
+            try:
+                await stop_owned()
+            except ProcessTreeDrainError as drain:
+                raise drain from exc
             raise
+
+        async def wait_owned(seconds: float) -> ExecutionProcessWaitResultV1:
+            if control is None:
+                result: ExecutionProcessWaitResultV1 = await service.wait_process(
+                    handle, timeout_seconds=seconds
+                )
+                return result
+            waiting = asyncio.create_task(service.wait_process(handle, timeout_seconds=seconds))
+            try:
+                while not waiting.done():
+                    if control.cancellation_requested:
+                        await stop_owned()
+                        raise ProcessTreeCancelledError("project_verification_cancelled_and_drained")
+                    await asyncio.wait((waiting,), timeout=0.05)
+                result = await waiting
+                return result
+            finally:
+                if not waiting.done():
+                    waiting.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await waiting
+
         readiness_probe_kind = "none"
         readiness_satisfied = False
         controlled_termination = False
         if metadata.get("modality") == "entrypoint":
             if launch.handle.pid is None or process_start_token is None:
-                await service.terminate_process(launch.handle)
+                await stop_owned()
                 raise ValueError("entrypoint readiness requires durable PID/start-token identity")
             readiness_window = min(_ENTRYPOINT_READINESS_SECONDS, max(0.25, timeout_seconds / 4.0))
-            waited = await service.wait_process(launch.handle, timeout_seconds=readiness_window)
+            waited = await wait_owned(readiness_window)
             if waited.timed_out and waited.status == ExecutionProcessStatusV1.RUNNING:
                 readiness_probe_kind = "process_liveness"
                 readiness_satisfied = _process_start_token(launch.handle.pid) == process_start_token
                 if not readiness_satisfied:
-                    await service.terminate_process(launch.handle)
+                    await stop_owned()
                     raise ValueError("entrypoint process identity changed before readiness")
-                controlled_termination = await service.terminate_process(launch.handle)
-                if not controlled_termination:
-                    raise ValueError("ready entrypoint could not be terminated by its owner")
-                waited = await service.wait_process(launch.handle, timeout_seconds=5.0)
+                waited = await stop_owned()
+                controlled_termination = True
         else:
-            waited = await service.wait_process(launch.handle, timeout_seconds=timeout_seconds + 5.0)
-        if waited.timed_out and waited.status not in {
-            ExecutionProcessStatusV1.TIMED_OUT,
-            ExecutionProcessStatusV1.CANCELLED,
-        }:
-            await service.terminate_process(launch.handle)
+            waited = await wait_owned(timeout_seconds + 5.0)
+        if waited.status not in _VERIFIER_TERMINAL_STATUSES:
+            terminal = await stop_owned()
+            if not waited.timed_out:
+                waited = terminal
         output_path = Path(log_path)
         if not output_path.is_file():
             raise ValueError("physical project verifier output log is missing")
@@ -1317,9 +1366,17 @@ def authorize_project_verification_command(
 
 def run_project_verification(
     command: RunProjectVerificationCommandV1,
+    *,
+    control: ProcessTreeRunControl | None = None,
 ) -> ProjectVerificationExecutionResultV1:
     if type(command) is not RunProjectVerificationCommandV1:
         raise TypeError("command must be an exact RunProjectVerificationCommandV1")
+    if control is not None:
+        if type(control) is not ProcessTreeRunControl:
+            raise TypeError("control must be an exact ProcessTreeRunControl")
+        control.claim_for_execution()
+        if control.cancellation_requested:
+            raise ProcessTreeCancelledError("project_verification_cancelled_before_spawn")
     fresh_command = authorize_project_verification_command(
         ResolveProjectVerificationAuthorityQueryV1(
             workspace=command.workspace,
@@ -1471,8 +1528,11 @@ def run_project_verification(
             pid=pid,
             process_start_token=process_start_token,
         )
+        if control is not None and control.cancellation_requested:
+            raise ProcessTreeCancelledError("project_verification_cancelled_before_spawn")
         prepared.release_after_fence()
 
+    drain_unproven = False
     try:
         result = execution_runner.run(
             name=f"project-verification-{request_hash[:16]}",
@@ -1493,9 +1553,12 @@ def run_project_verification(
                 "sandbox": "bubblewrap-immutable-inputs-v1",
             },
             on_launched=_record_launch_and_release,
+            **({"control": control} if control is not None else {}),
         )
         if type(result) is not ProjectVerificationProcessResultV1:
             raise TypeError("physical runner must return an exact ProjectVerificationProcessResultV1")
+        if control is not None and control.cancellation_requested:
+            raise ProcessTreeCancelledError("project_verification_cancelled_and_drained")
         prepared.assert_inputs_unchanged()
         post_snapshots, post_input_hash = _snapshot_inputs(command.workspace, command.input_artifacts)
         if post_snapshots != snapshots or post_input_hash != input_hash:
@@ -1525,6 +1588,7 @@ def run_project_verification(
             attempt_id=reservation.attempt_id,
         )
     except Exception as exc:
+        drain_unproven = isinstance(exc, ProcessTreeDrainError)
         _mark_failed(
             command.workspace,
             effect_key=effect_key,
@@ -1535,7 +1599,8 @@ def run_project_verification(
         )
         raise
     finally:
-        prepared.cleanup()
+        if not drain_unproven:
+            prepared.cleanup()
     return ProjectVerificationExecutionResultV1(
         code="project_verification_executed",
         spawned=True,

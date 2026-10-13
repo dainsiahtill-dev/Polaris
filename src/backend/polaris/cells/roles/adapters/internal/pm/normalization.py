@@ -18,6 +18,7 @@ from polaris.cells.orchestration.pm_planning.public.service import (
     autofix_pm_contract_for_quality,
     evaluate_pm_task_quality,
 )
+from polaris.cells.orchestration.pm_planning.public.task_intent import is_pm_task_intent
 from polaris.kernelone.planning import (
     Plan,
     PlanStep,
@@ -62,7 +63,8 @@ def _validate_pm_verification_commands(
     value: Any, *, path: str = "$.verification_commands"
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Compatibility caller of the shared pure command schema validator."""
-    return validate_pm_verification_commands(value, path=path)
+    result: tuple[list[dict[str, Any]], list[dict[str, Any]]] = validate_pm_verification_commands(value, path=path)
+    return result
 
 
 def _directive_requires_typescript_package_contract(directive: str) -> bool:
@@ -143,8 +145,6 @@ def _pm_typescript_factory_contract_missing(contracts: list[dict[str, Any]], dir
     for required in ("package.json", "tsconfig.json", "README.md"):
         if required.lower() not in lower_targets:
             missing.append(required)
-    if not _pm_contract_declares_html_entrypoint(contracts):
-        missing.append("index.html")
     ce_owns_topology = any(
         str((item.get("metadata") or {}).get("topology_authority") or "").strip() == "chief_engineer"
         for item in contracts
@@ -294,6 +294,11 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         index: int,
         directive: str,
     ) -> dict[str, Any]:
+        if is_pm_task_intent(raw):
+            normalized = deepcopy(raw)
+            normalized["metadata"]["pm_verification_command_diagnostics"] = []
+            return normalized
+
         title = _pm_title_fragment(raw.get("title") or raw.get("subject") or "")
         if _pm_is_placeholder_task_title(title):
             for candidate in (raw.get("goal"), raw.get("description"), raw.get("backlog_ref")):
@@ -763,6 +768,11 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         directive: str = "",
         context: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        if any(is_pm_task_intent(item) for item in contracts):
+            semantic_payload: dict[str, Any] = {"tasks": deepcopy(contracts)}
+            quality = evaluate_pm_task_quality(semantic_payload, workspace_full=str(Path(self.workspace).resolve()))
+            return semantic_payload["tasks"], quality
+
         # Capture original declarations before quality autofix can split or
         # remove tasks. Feedback describes input rows, not derived copies.
         verifier_diagnostics = _pm_verification_command_diagnostics(contracts)
@@ -777,7 +787,6 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         artifact_diagnostics = list(
             validate_pm_artifact_contracts(contracts, primary_language=primary_language).diagnostics
         )
-        declared_html_entrypoint = _pm_contract_declares_html_entrypoint(contracts)
         payload = _pm_quality_contract_context_payload(context)
         if primary_language:
             payload.setdefault("language", primary_language)
@@ -805,7 +814,7 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
                     item[field] = deepcopy(original[field])
                 else:
                     item.pop(field, None)
-        quality = evaluate_pm_task_quality(payload, docs_stage={})
+        quality = evaluate_pm_task_quality(payload, docs_stage={}, workspace_full=str(Path(self.workspace).resolve()))
         if fission:
             quality["task_fission"] = deepcopy(fission)
         _raw_tasks = payload.get("tasks") if isinstance(payload, dict) else None
@@ -837,7 +846,11 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         verification_command_issues = _pm_verification_command_contract_issues(normalized, directive)
         if verifier_diagnostics:
             verification_command_issues = ["verification_commands_invalid"]
-        contract_diagnostics = [*verifier_diagnostics]
+        quality_diagnostics = quality.get("contract_diagnostics")
+        contract_diagnostics = [
+            *(quality_diagnostics if isinstance(quality_diagnostics, list) else []),
+            *verifier_diagnostics,
+        ]
         for diagnostic in artifact_diagnostics:
             if diagnostic not in contract_diagnostics:
                 contract_diagnostics.append(diagnostic)
@@ -846,13 +859,6 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             if d["code"].startswith(("artifact_", "generated_output_", "pm_plan_language_mismatch"))
         ))
         missing_typescript_contract = _pm_typescript_factory_contract_missing(normalized, directive)
-        if (
-            _directive_requires_typescript_package_contract(directive)
-            and not declared_html_entrypoint
-            and "index.html" not in missing_typescript_contract
-        ):
-            # Quality autofix cannot manufacture entrypoint coverage from prose.
-            missing_typescript_contract.append("index.html")
         if missing_typescript_contract or verification_command_issues or artifact_issues:
             quality = dict(quality)
             raw_critical = quality.get("critical_issues")
@@ -865,7 +871,8 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             warnings = list(raw_warnings) if isinstance(raw_warnings, list) else []
             if missing_typescript_contract:
                 warnings.append(
-                    "factory TypeScript/npm directive requires package, src, engine, test, and README targets"
+                    "factory TypeScript/npm directive requires package.json/tsconfig.json, README, TypeScript business "
+                    "source and executable test targets; Chief Engineer chooses directories and entrypoints"
                 )
             if verification_command_issues:
                 warnings.append("PM contract requires exact structured verifier argv/cwd authority before CE dispatch")

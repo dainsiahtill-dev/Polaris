@@ -637,12 +637,11 @@ class FinalizationHandler:
         *,
         config: Any | None = None,
     ) -> list[dict]:
-        """构建收口上下文，将 tool results 格式化为文本摘要。
+        """构建收口上下文，保留调用方输出契约与有界工具反馈。
 
-        关键设计变更（防贴代码逃逸）：
-        1. 保留原始 system prompt（避免 HARD GATE 规则丢失）
-        2. 根据 delivery_contract.mode 生成差异化收口指令
-        3. 对 MATERIALIZE_CHANGES 模式明确禁止贴完整代码
+        保留原始角色 system 和当前请求；收口指令只约束阶段及 effect
+        事实，不选择或替换输出格式。MATERIALIZE_CHANGES 的落盘义务
+        仍禁止以完整代码或文本提案代替真实工具效果。
         """
         from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
             DeliveryMode,
@@ -698,35 +697,24 @@ class FinalizationHandler:
         if len(summary) > max_total:
             summary = summary[:max_total] + "\n\n[... additional results truncated]"
 
-        # 根据 delivery mode 生成差异化收口指令
+        # Delivery mode constrains settled effects, not the caller's output
+        # format. The original request may require JSON, a diff or plain prose.
         mode = DeliveryMode.ANALYZE_ONLY
         if delivery_contract is not None:
             mode = getattr(delivery_contract, "mode", DeliveryMode.ANALYZE_ONLY)
 
+        finalization_instruction = (
+            "【任务】结合当前请求与真实工具结果，完成调用方原有的输出契约。\n"
+            "【输出要求】遵守原输出格式、字段与职责边界，不追加其它格式或额外说明。\n"
+            "【事实约束】仅依据已确认收据陈述事实；读取成功或写入成功不证明整个任务或交付完成。\n"
+            "证据缺失和失败必须保留，未执行的验证不得声称通过。\n"
+            "【约束】此阶段已关闭所有工具调用通道；不要调用任何工具，也不要请求额外输入。\n"
+            "仍需读取、修改或验证时，按原契约表达剩余工作，不得用文字代替实际执行。"
+        )
         if mode == DeliveryMode.MATERIALIZE_CHANGES:
-            finalization_instruction = (
-                "【任务】根据每项工具的实际结果，准确说明当前进度和剩余工作。\n"
-                "【要求】只报告收据支持的修改和验证结果；写入成功不代表整个任务已经完成。\n"
-                "失败的写入或验证必须明确保留，未执行的验证不得声称通过。\n"
-                "不要贴出完整的可执行代码块或文件内容。\n"
-                "【约束】此阶段已关闭所有工具调用通道；不要调用任何工具，也不要请求额外输入。\n"
-                "仍需读取、修改或验证时，明确下一回合需要执行的工作，不得用文字总结代替实际执行。\n"
-                "请使用用户的语言回复。"
-            )
-        elif mode == DeliveryMode.PROPOSE_PATCH:
-            finalization_instruction = (
-                "【任务】基于以上结果，给出分析总结或 patch 提案。\n"
-                "【要求】可以输出 patch/diff 格式的提案作为参考，但明确说明这只是提案（不会自动落盘）。\n"
-                "【约束】此阶段已关闭所有工具调用通道；不要调用任何工具，也不要请求额外输入。\n"
-                "请使用用户的语言回复。"
-            )
-        else:
-            # ANALYZE_ONLY：弱化"一次性完成"表述，避免鼓励贴代码
-            finalization_instruction = (
-                "【任务】基于以上结果，给出分析、总结或建议。\n"
-                "【要求】提供清晰、简洁的答复；如需示例，保持简短（片段即可），不要贴出完整文件内容。\n"
-                "【约束】此阶段已关闭所有工具调用通道；不要调用任何工具，也不要请求额外输入。\n"
-                "请使用用户的语言回复。"
+            finalization_instruction += (
+                "\n失败的写入或验证必须明确保留。"
+                "不要贴出完整的可执行代码块或文件内容，不得以文本提案代替要求的落盘效果。"
             )
 
         finalization_message = {

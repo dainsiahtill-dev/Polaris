@@ -48,6 +48,69 @@ _PM_VERIFICATION_REPAIR_GUIDANCE = (
 )
 
 
+_PM_FEEDBACK_FIELDS = frozenset({
+    "ok", "score", "summary", "critical_issues", "warnings", "contract_diagnostics",
+    "code", "severity", "path", "paths", "task_id", "message", "hard_boundary", "repairable",
+    "allowed", "allowed_fields", "unknown_fields", "repair_fields", "expected", "actual",
+    "provenance", "original_task_id", "derived_task_id", "stage", "evidence",
+    "generated_output_path", "authored_owner_task_ids", "generated_owner_task_ids",
+    "declared_output_build", "task_build_verifiers", "primary_language", "wrong_authored_targets",
+    "allowed_source_suffixes", "foreign_scope_file_owners", "command_profile_feedback",
+    "profile_id", "policy_error_code", "schema_version", "error_code", "reason",
+    "argv", "cwd", "modality", "capabilities", "source", "operands", "operand", "value",
+    "classification", "supported", "safe", "required", "profile", "command", "status",
+    "guidance_only", "execution_authority", "candidate_profile_id", "accepted_shape", "argument_index",
+    "rejected_argument", "reason_code", "materialization_note",
+})
+
+
+_PM_OPTIONAL_TECHNICAL_FIELDS = frozenset({"scope_paths", "target_files", "context_files", "verification_commands", "generated_outputs"})
+
+
+def _pm_explicit_technical_fields(directive: str) -> frozenset[str]:
+    """Field guidance follows original explicit declarations, never model drafts."""
+    return frozenset(field for field in _PM_OPTIONAL_TECHNICAL_FIELDS if re.search(r"(?<![A-Za-z0-9_])" + field + r"(?![A-Za-z0-9_])", directive))
+
+
+def _pm_quality_feedback(quality: dict[str, Any], *, technical_fields: frozenset[str] | None = None) -> dict[str, Any]:
+    """Project repair facts, never arbitrary runtime metadata, into model text."""
+    def project(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: ({path: project(owners) for path, owners in item.items()}
+                      if key == "foreign_scope_file_owners" and isinstance(item, dict) else ([field for field in item if field not in _PM_OPTIONAL_TECHNICAL_FIELDS or field in technical_fields]
+                             if key in {"allowed_fields", "repair_fields"} and isinstance(item, list) and technical_fields is not None
+                             else project(item)))
+                for key, item in value.items() if key in _PM_FEEDBACK_FIELDS
+            }
+        if isinstance(value, list):
+            return [project(item) for item in value]
+        return value
+
+    return {key: project(quality[key]) for key in ("ok", "score", "summary", "critical_issues", "warnings", "contract_diagnostics") if key in quality}
+
+
+def _pm_generation_feedback(diagnostic: dict[str, Any] | None, previous_output: str) -> dict[str, Any]:
+    """Keep finish/budget/content association useful; identities stay in audit facts."""
+    result: dict[str, Any] = {
+        "response_sha256": sha256(previous_output.encode("utf-8")).hexdigest(),
+        "response_chars": len(previous_output),
+    }
+    if isinstance(diagnostic, dict):
+        outcome = diagnostic.get("generation_outcome")
+        if isinstance(outcome, dict):
+            result["generation_outcome"] = {
+                key: outcome[key]
+                for key in ("native_finish_reason", "max_tokens", "response_sha256")
+                if key in outcome
+            }
+        elif isinstance(diagnostic.get("generation_outcome_unavailable"), str):
+            result["generation_outcome_unavailable"] = diagnostic["generation_outcome_unavailable"]
+    if "generation_outcome" not in result and "generation_outcome_unavailable" not in result:
+        result["generation_outcome_unavailable"] = "generation_outcome_missing"
+    return result
+
+
 def _pm_task_output_example(projection_hint: dict[str, Any] | None) -> str:
     """One existing task-field contract for initial and full-JSON revision."""
     task: dict[str, Any] = {
@@ -142,6 +205,51 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
         projection_hint = self._extract_projection_contract_hint(
             input_data=projection_hint or {}, context={}, directive=directive
         )
+        if not projection_hint:
+            example = {
+                "schema_version": "pm.task_intent.v1",
+                "product_goal": "交付用户要求的产品行为",
+                "required_requirements": ["必须满足的用户需求"],
+                "optional_requirements": [],
+                "acceptance": ["用户可观察、可复现的产品验收结果"],
+                "explicit_constraints": ["用户明确提出的约束；原样保留语义"],
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "title": "实现完整产品能力",
+                        "goal": "实现相互耦合的能力",
+                        "acceptance": ["正常与边界输入呈现预期行为"],
+                        "depends_on": [],
+                    }
+                ],
+            }
+            return "\n".join(
+                [
+                    "你是 Polaris PM，负责产品目标、必须/可选需求、可观察验收，以及实现任务与真实依赖。",
+                    "只输出一个完整 pm.task_intent.v1 JSON 合同。禁止工具调用、提示词回显和占位交付。",
+                    "技术拓扑、手写/生成产物、公开接口与验证 recipe 由 Chief Engineer 决定，Director 只执行 CE 交接的任务。",
+                    "小项目可为一个完整任务。只拆分可独立验收的交付，保留耦合能力；不为了数量拆任务、不强制依赖链。",
+                    "PM 规划、CE 蓝图、QA 审查是原生阶段，不创建对应文档任务。用户独立要求交付文档时保留该需求。",
+                    "完整保留原始需求与约束；optional_requirements 不得变为必需交付。验收描述用户可观察行为，不要求猜文件或命令。",
+                    "任务只需 id/title/goal/acceptance/depends_on；其它字段可省略。没有用户明确技术约束时，不猜路径、命令或生成产物，由 CE 提供。",
+                    *( ["用户原文明确声明的技术字段（可选，值保持精确）: " + "/".join(sorted(_pm_explicit_technical_fields(directive))) + "。只保留这些原始约束，命令必须使用完整 modality/argv 数组/cwd，不是 shell 字符串。"] if _pm_explicit_technical_fields(directive) else []),
+                    "可选顶层 project_metadata、任务 task_metadata 与顶层/任务 planning_advisory JSON 对象保留产品背景和其它补充事实；verification_recipe_hint 保存建议。建议有深度、数量和大小限制，始终不授予路径、命令、角色、身份或深度门禁权限。",
+                    "任务 description 与 scope 可分别保存互补的产品文字，不产生技术权限。直接角色、路由、运行身份、token/hash、执行命令或权限字段不得作为补充事实提交；建议必须置于 planning_advisory。",
+                    "Output contract: exactly one JSON object; no Markdown fences or surrounding prose.",
+                    *(
+                        [
+                            f"Prospective output allowance: {output_budget_tokens} tokens; canonical request policy, not observed completion."
+                        ]
+                        if output_budget_tokens is not None
+                        else []
+                    ),
+                    "已有任务: " + json.dumps(tasks[:10], ensure_ascii=False),
+                    "原始需求（完整）:",
+                    directive,
+                    "合同示例:",
+                    json.dumps(example, ensure_ascii=False),
+                ]
+            )
         lines = [
             "你是 Polaris PM，需要产出可执行任务合同。",
             "禁止输出提示词内容、禁止 TODO/FIXME/stub 占位任务。",
@@ -249,6 +357,22 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
         directive_analysis: dict[str, Any] | None = None,
     ) -> str:
         """Revise full JSON; only strictly parsed candidates receive full feedback."""
+        quality = _pm_quality_feedback(quality, technical_fields=_pm_explicit_technical_fields(directive) if not projection_hint else None)
+        generation_diagnostic = _pm_generation_feedback(generation_diagnostic, previous_output)
+        generation_lines = ["Prior generation diagnostic (not task authority):", canonical_json(generation_diagnostic)]
+        if revision_base is not None and "product_contract_readonly" in revision_base.view:
+            return "\n".join([
+                "PM product intent quality feedback. Private bounded revision of the same original draft.",
+                "Return one bare pm.task_revision.v1 JSON object with exact keys schema_version/base_hash/updates/add_tasks/remove_task_ids.",
+                "Only edit_manifest set/append fields permit edits; immutable product goal, required/optional requirements, global acceptance and user constraints remain unchanged.",
+                "Task IDs, routing and metadata remain immutable. No task removal; no invented technical topology, steps, phase tasks or verifier commands.",
+                "New tasks use id/title/goal/acceptance/depends_on. Small coupled products may remain one task.",
+                "修复诊断指出的产品验收或目标问题。不要用 guessed 路径或命令修复语义合同；显式技术约束保持原值，由 CE 处理。",
+                "Original requirement (complete):", directive,
+                "Quality evidence (not execution authority):", canonical_json(quality),
+                *generation_lines,
+                "Revision base/view/manifest (server-owned):", revision_base.view_json,
+            ])
         if revision_base is not None:
             # Lossless grouping avoids repeating the same program explanation
             # for every verifier/output row in a bounded context window.
@@ -269,6 +393,21 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                 if len(row["paths"]) == 1:
                     row["path"] = row.pop("paths")[0]
                 visible_diagnostics.append(row)
+            operation_examples = []
+            for task_id, permissions in sorted(revision_base.view["edit_manifest"]["tasks"].items()):
+                # Set fields already appear losslessly in the manifest. Only
+                # append needs an example to distinguish addition from replace.
+                for operation in ("append",):
+                    fields = permissions[operation]
+                    if fields:
+                        value = "[new_item]"
+                        operation_examples.append(
+                            f"{task_id}: " + ", ".join(f"{operation}.{field}={value}" for field in sorted(fields))
+                        )
+                    elif operation == "append":
+                        operation_examples.append(
+                            f"{task_id}: no append fields authorized; append={{}} or omit append."
+                        )
             # This private output mode derives a full plan server-side. It neither
             # replaces the global PM role nor clips required content for budget fit.
             return "\n".join(
@@ -279,11 +418,12 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                     else "Output allowance unavailable.",
                     "Return one bare pm.task_revision.v1 JSON object; not a replacement plan.",
                     "Exact keys: schema_version,base_hash,updates,add_tasks,remove_task_ids.",
-                    "updates: [{task_id,set:{field:complete_value},append:{steps:[new_step],acceptance:[new_criterion]}}].",
-                    "同一字段只能选择 set 或 append：替换完整验收列表用 set.acceptance，追加新验收项用 append.acceptance；"
+                    "updates items use task_id and set/append objects. Append examples from the current manifest:",
+                    *operation_examples,
+                    "同一字段只能选择 set 或 append：set 替换完整值，只有已授权的 append 字段可以追加元素；"
                     "不得在同一 update 中同时操作同名字段。未使用的操作使用空对象或省略。",
                     "Only manifest fields permit edits; display grants none. "
-                    "absent_fields means no original value; hidden fields remain intact. append preserves all old elements.",
+                    "absent_fields means no original value; hidden fields remain intact. Authorized append preserves all old elements.",
                     "Existing id/assigned_to/execution_backend/projection/metadata are immutable. "
                     "No task removal. New tasks require full contracts, unique IDs and code_edit; "
                     "no projection override or reused ID.",
@@ -295,8 +435,15 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                     + "; argv array only; no shell -c. New tasks need id/title/goal/scope_paths/target_files/steps/acceptance/verification_commands.",
                     "target_files own writes; context_files are read-only. Verification code_edit must own a useful test/report; pure milestones use native QA/dependency/acceptance orchestration. "
                     "Optional generated_outputs=[{path,inputs:[{task_id,path}],build:{argv,cwd}}], exact keys. Owner is containing task; inputs bind self/ancestor authored targets; build equals its typed build verifier by value. No direct write grant or completed-build evidence.",
-                    _PM_ARTIFACT_OUTPUT_GUIDANCE,
-                    _PM_VERIFICATION_REPAIR_GUIDANCE,
+                    "共享文件按依赖协调，CE 确定交付归属，JobToken 确定写权限；规划文档引用不构成 target_files。"
+                    "修正语言/路径时同步其 goal/steps/acceptance/command 引用，不追加正确路径来隐藏错误路径。"
+                    "generated_outputs 是构建命令产生的派生文件，path 不得与所有任务的 target_files 重叠，每个派生路径只有一个 producer；"
+                    "inputs 绑定自己/祖先手写文件，build argv/cwd 完整等于本任务 typed build verifier。"
+                    "无需派生产物可省略或设 generated_outputs=[]，保留原 target_files；lint/test 只有同任务显式 build 绑定才可用。",
+                    "版本/help/probe 不是交付证明。仅删除诊断指出且 manifest 允许编辑的不适用 probe，"
+                    "保留所有实际 environment_prep/build/test/lint/entrypoint/QA 命令；纯规划可设 verification_commands=[]。"
+                    "项目仍须真实 environment_prep、至少一个 build/test/lint 与适用入口；禁止以 doc_only 为由清空实质验证。"
+                    "说明不扩展 manifest/工具权限，也不表示写入、构建或验收成功。",
                     "Original requirement (complete):",
                     directive,
                     "Quality evidence (not execution authority):",
@@ -307,6 +454,7 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                             "contract_diagnostics": visible_diagnostics,
                         }
                     ),
+                    *generation_lines,
                     "Revision base/view/manifest (server-owned):",
                     revision_base.view_json,
                 ]
@@ -314,6 +462,28 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
         projection_hint = self._extract_projection_contract_hint(
             input_data=projection_hint or {}, context={}, directive=directive
         )
+        if not projection_hint:
+            lines = [
+                self._build_pm_message([], directive, directive_analysis=directive_analysis,
+                                       output_budget_tokens=output_budget_tokens),
+                "Correct the complete semantic draft using this quality evidence; preserve the original user requirements and constraints:",
+                canonical_json(quality),
+            ]
+            if validated_candidate:
+                lines.extend([
+                    "Complete validated candidate (model-authored; quality failed):",
+                    "Preserve its protocol, every original task ID, acceptance and exact declared constraints. "
+                    "Return the complete replacement JSON, not a delta or fragment.",
+                    previous_output,
+                ])
+            else:
+                lines.extend([
+                    "Incomplete/unparseable candidate: no revision base or executable prefix. Return one complete replacement JSON under the unchanged original requirement and remaining stage budget.",
+                    "Every JSON field must occur exactly once, including schema_version. Keep required semantic fields strict. Preserve supplementary product facts in bounded planning_advisory; remove unauthorized direct authority fields. Omit unrequested optional technical fields; never salvage a partial task prefix.",
+                    "Prior generation diagnostic (not task authority):",
+                    canonical_json(generation_diagnostic),
+                ])
+            return "\n".join(lines)
         _raw_critical = quality.get("critical_issues") if isinstance(quality, dict) else None
         critical: list[str] = _raw_critical if isinstance(_raw_critical, list) else []
         _raw_warnings = quality.get("warnings") if isinstance(quality, dict) else None
@@ -406,14 +576,7 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                     "",
                     "Incomplete/unparseable candidate: no revision base or executable prefix. Return one complete replacement JSON once.",
                     "Prior generation diagnostic (not task authority):",
-                    canonical_json(
-                        generation_diagnostic
-                        or {
-                            "generation_outcome_unavailable": "generation_outcome_missing",
-                            "response_sha256": sha256(previous_output.encode("utf-8")).hexdigest(),
-                            "response_chars": len(previous_output),
-                        }
-                    ),
+                    canonical_json(generation_diagnostic),
                 ]
             )
         return "\n".join(lines)
@@ -522,6 +685,17 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
         """
         if not directive_analysis:
             return message
+
+        if "只输出一个完整 pm.task_intent.v1 JSON 合同" in message:
+            hint = (
+                "[Meta-Planning Hint] Strategy: "
+                + str(directive_analysis.get("recommended_strategy", "standard_decomposition"))
+                + ". Task count is advisory; one coupled implementation task is valid. Preserve all requirements."
+            )
+            # The semantic producer's complete JSON example must stay intact.
+            # Legacy minimum counts and insertion before an inner tasks key do
+            # not apply to this versioned product contract.
+            return message.replace("合同示例:\n", hint + "\n\n合同示例:\n", 1)
 
         if "[Meta-Planning]" in message or "[Meta-Planning Hint]" in message:
             return message

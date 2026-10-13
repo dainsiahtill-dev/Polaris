@@ -421,6 +421,7 @@ class ExecutionEnvelopeV1:
     envelope_hash: str
     created_at: str
     schema_version: str = "polaris.execution_envelope.v1"
+    task_execution_contract_hash: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "schema_version", _require_non_empty("schema_version", self.schema_version))
@@ -440,6 +441,12 @@ class ExecutionEnvelopeV1:
         object.__setattr__(self, "validity", _to_dict_copy(self.validity))
         object.__setattr__(self, "envelope_hash", _require_non_empty("envelope_hash", self.envelope_hash))
         object.__setattr__(self, "created_at", _require_non_empty("created_at", self.created_at))
+        if self.task_execution_contract_hash:
+            object.__setattr__(
+                self,
+                "task_execution_contract_hash",
+                _require_non_empty("task_execution_contract_hash", self.task_execution_contract_hash),
+            )
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe execution envelope payload."""
@@ -462,6 +469,11 @@ class ExecutionEnvelopeV1:
             "validity": dict(self.validity),
             "envelope_hash": self.envelope_hash,
             "created_at": self.created_at,
+            **(
+                {"task_execution_contract_hash": self.task_execution_contract_hash}
+                if self.task_execution_contract_hash
+                else {}
+            ),
         }
 
 

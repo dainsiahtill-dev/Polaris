@@ -702,7 +702,7 @@ def build_requirements_doc(project: dict[str, Any]) -> str:
         f"{metadata_block}\n"
         "## Acceptance Criteria\n"
         "- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。\n"
-        "- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口; CLI 项目提供 package.json 脚本或可直接执行的 main 文件; API 项目提供可启动服务入口和健康检查说明。\n"
+        "- 必须提供至少一种真实可执行入口，且验收脚本可自动发现。入口方式由 Chief Engineer 按原始目标选择，完整保留显式用户要求：Web 项目提供含 <html> 的 HTML 入口；CLI 项目提供实际执行的 package.json 脚本或 main 文件；API 项目提供实际 server 入口和健康检查。语言或 simulation/game 分类不额外指定 HTML 入口。\n"
         "- package.json 脚本不得是只检查 manifest 的占位脚本; build/test/start 或等价脚本必须实际运行产品入口或核心规则验证。\n"
         "- 附 README.md 说明如何运行。\n"
         f"- 关键验收维度: {project.get('test_focus', '')}。\n"

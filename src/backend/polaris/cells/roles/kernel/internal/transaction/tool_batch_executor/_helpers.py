@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -17,6 +18,8 @@ from polaris.cells.control_plane.run_ledger.public import (
     FailureClassV1,
     append_run_ledger_event,
     append_tool_call_lifecycle_event,
+)
+from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import (
     build_tool_batch_lifecycle_receipt_from_sources,
     effect_receipts_from_batch_receipts,
 )
@@ -1202,12 +1205,9 @@ def _job_token_from_capability_token(token: dict[str, Any], *, run_id: str, stag
         "execution_envelope_hash": str(token.get("execution_envelope_hash") or ""),
         "capability_audit": {
             "ok": bool(audit_ok) if audit_ok is not None else True,
-            "issues": [],
+            "issues": deepcopy(_mapping_value(token.get("capability_audit")).get("issues", [])),
         },
-        "gate_policy": {
-            "enabled_evidence_modalities": ["tool_receipt"],
-            "required_evidence_modalities": [],
-        },
+        "gate_policy": deepcopy(_mapping_value(token.get("gate_policy"))),
     }
 
 
@@ -1250,6 +1250,8 @@ def _normalize_capability_token(value: dict[str, Any]) -> dict[str, Any]:
         "blueprint_hash": str(value.get("blueprint_hash") or ""),
         "execution_envelope_hash": str(value.get("execution_envelope_hash") or ""),
         "capability_audit_ok": bool(value.get("capability_audit_ok", capability_audit_map.get("ok", True))),
+        "capability_audit": deepcopy(capability_audit_map),
+        "gate_policy": deepcopy(_mapping_value(value.get("gate_policy"))),
         "allowed_scope": list(dict.fromkeys(item for item in allowed_scope if item)),
     }
 
@@ -1282,7 +1284,7 @@ def _append_tool_batch_receipts_to_run_ledger(
     task_id: str,
     turn_id: str,
     invocations: list[Any] | None,
-    receipts: list[dict],
+    receipts: list[dict[str, Any]],
     capability_token: dict[str, Any] | None = None,
     execution_envelope_hash: str = "",
     provider_response_hash: str = "",
@@ -1368,6 +1370,10 @@ def _append_tool_batch_receipts_to_run_ledger(
                     "name": "tool_receipt",
                     "ok": ok,
                     "summary": "token-scoped tool batch recorded" if ok else "token-scoped tool batch failed",
+                    "gate_policy": {
+                        "enabled_evidence_modalities": ["tool_receipt"],
+                        "required_evidence_modalities": ["tool_receipt"],
+                    },
                 },
                 "job_token": _job_token_from_capability_token(token, run_id=resolved_run_id, stage=stage),
                 "physical_evidence": {

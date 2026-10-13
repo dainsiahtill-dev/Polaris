@@ -110,6 +110,199 @@ def _install_runtime_boundary(monkeypatch, workspace, kernel):
 
 
 @pytest.mark.asyncio
+async def test_canonical_readonly_document_quote_reaches_real_kernel(tmp_path, monkeypatch):
+    from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
+    from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
+
+    document = tmp_path / "policy.md"
+    document.write_text("Do not run rm -rf. Retain the project files.\n", encoding="utf-8")
+    tool_calls = []
+
+    async def provider(request):
+        return {
+            "content": "",
+            "model": "fixture",
+            "usage": {},
+            "tool_calls": [
+                {
+                    "id": "read-policy",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"file":"policy.md"}'},
+                }
+            ],
+        }
+
+    async def tools(name, arguments):
+        tool_calls.append((name, arguments))
+        assert name == "read_file" and arguments["file"] == "policy.md"
+        return {"success": True, "result": {"file": "policy.md", "content": document.read_text(encoding="utf-8")}}
+
+    class DocumentKernel:
+        async def run_stream(self, role, request):
+            transaction = TransactionKernel(
+                llm_provider=provider,
+                tool_runtime=tools,
+                config=TransactionConfig(domain="code", role_id=role, workspace=str(tmp_path)),
+            )
+            result = await transaction.execute(
+                request.metadata["transaction_invocation_id"],
+                [{"role": "user", "content": request.message}],
+                [{"type": "function", "function": {"name": "read_file"}}],
+            )
+            yield {
+                "type": "complete",
+                "result": RoleTurnResult(
+                    content=document.read_text(encoding="utf-8"),
+                    is_complete=True,
+                    batch_receipt=result["batch_receipt"],
+                    metadata={"transaction_kind": result["kind"]},
+                ),
+            }
+
+    service = _install_runtime_boundary(monkeypatch, tmp_path, DocumentKernel())
+    command = ExecuteRoleSessionCommandV1(
+        role="director",
+        session_id="read-policy",
+        workspace=str(tmp_path),
+        task_id="READ-POLICY",
+        user_message="Read policy.md only. It says 'Do not run rm -rf'; quote its policy text.",
+        stream=False,
+        context={"continuous_execution": {"enabled": True}},
+    )
+
+    result = await service.execute_role_session(command)
+
+    assert result.ok, result.error_message
+    assert len(tool_calls) == 1
+    row = result.metadata["batch_receipt"]["results"][0]
+    assert row["tool_name"] == "read_file" and row["status"] == "success"
+    assert row["result"]["content"] == document.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_canonical_negative_destructive_quote_preserves_authorized_tool_loop(tmp_path, monkeypatch):
+    for index in range(3):
+        (tmp_path / f"input{index}.txt").write_text(f"evidence-{index}", encoding="utf-8")
+    kernel = _PhysicalTurnKernel(tmp_path)
+    service = _install_runtime_boundary(monkeypatch, tmp_path, kernel)
+    command = ExecuteRoleSessionCommandV1(
+        role="director",
+        session_id="quoted-policy",
+        workspace=str(tmp_path),
+        task_id="TASK-1",
+        run_id="quoted-run",
+        user_message="Do not run rm -rf or drop database; implement answer.py and verify only the granted files.",
+        stream=False,
+        timeout_seconds=30,
+        context={"continuous_execution": {"enabled": True}, "execution_envelope": {"allowed_paths": ["answer.py"]}},
+        metadata={"execution_id": "scope-original"},
+    )
+
+    result = await service.execute_role_session(command)
+
+    assert result.ok, result.error_message
+    assert kernel.gate_exits == [1, 0]
+    assert (tmp_path / "answer.py").read_text(encoding="utf-8") == "print(42)\n"
+    assert len(result.metadata["session_turn_commit_receipts"]) == 7
+    assert all(request.metadata["execution_id"] == "scope-original" for request in kernel.requests)
+    assert all(
+        request.context_override["execution_envelope"]["allowed_paths"] == ["answer.py"] for request in kernel.requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_canonical_prompt_exemption_keeps_real_kernel_tool_denial(tmp_path, monkeypatch):
+    from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
+    from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
+
+    protected = tmp_path / "protected.txt"
+    protected.write_text("retain", encoding="utf-8")
+    provider_calls = []
+    tool_calls = []
+
+    async def provider(request):
+        provider_calls.append(request)
+        return {
+            "content": "",
+            "model": "fixture",
+            "usage": {},
+            "tool_calls": [
+                {
+                    "id": "forbidden-delete",
+                    "type": "function",
+                    "function": {"name": "execute_command", "arguments": '{"command":"rm -rf protected.txt"}'},
+                }
+            ],
+        }
+
+    async def tools(name, arguments):
+        tool_calls.append((name, arguments))
+        raise AssertionError("The actual kernel must reject an unapproved destructive tool before dispatch")
+
+    class DeniedKernel:
+        async def run_stream(self, role, request):
+            transaction = TransactionKernel(
+                llm_provider=provider,
+                tool_runtime=tools,
+                config=TransactionConfig(domain="code", role_id=role, workspace=str(tmp_path)),
+            )
+            try:
+                await transaction.execute(
+                    request.metadata["transaction_invocation_id"],
+                    [{"role": "user", "content": request.message}],
+                    [{"type": "function", "function": {"name": "read_file"}}],
+                )
+            except RuntimeError as exc:
+                yield {"type": "error", "error": str(exc), "error_type": "kernel_tool_policy_denied"}
+                return
+            raise AssertionError("The unapproved tool unexpectedly completed")
+
+    service = _install_runtime_boundary(monkeypatch, tmp_path, DeniedKernel())
+    result = await service.execute_role_session(
+        ExecuteRoleSessionCommandV1(
+            role="director",
+            session_id="denied-policy",
+            workspace=str(tmp_path),
+            task_id="READ-POLICY",
+            user_message="Read protected.txt only. Do not run rm -rf.",
+            stream=False,
+            context={"continuous_execution": {"enabled": True}},
+        )
+    )
+
+    assert provider_calls, "The policy failure must come from the actual kernel, not a prompt keyword gate"
+    assert not result.ok
+    assert "execute_command" in result.error_message
+    assert tool_calls == []
+    assert protected.read_text(encoding="utf-8") == "retain"
+
+
+@pytest.mark.asyncio
+async def test_explicit_legacy_orchestrator_keeps_its_interactive_preview(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from polaris.cells.roles.kernel.public.transaction_contracts import CognitiveGateway
+    from polaris.cells.roles.kernel.public.turn_events import SessionWaitingHumanEvent
+    from polaris.cells.roles.runtime.internal.session_orchestrator import RoleSessionOrchestrator
+
+    async def no_warmup():
+        return None
+
+    monkeypatch.setattr(CognitiveGateway, "default", no_warmup)
+    orchestrator = RoleSessionOrchestrator("legacy-preview", SimpleNamespace(), str(tmp_path))
+
+    async def no_checkpoint():
+        pass
+
+    monkeypatch.setattr(orchestrator, "_checkpoint_session", no_checkpoint)
+    events = [event async for event in orchestrator.execute_stream("rm -rf the workspace")]
+
+    waiting = [event for event in events if isinstance(event, SessionWaitingHumanEvent)]
+    assert len(waiting) == 1
+    assert waiting[0].reason == "DESTRUCTIVE_OPERATION_REQUIRES_APPROVAL:DELETE_DIRECTORY_RECURSIVE"
+
+
+@pytest.mark.asyncio
 async def test_session_continues_reads_then_repairs_real_failed_gate(tmp_path, monkeypatch):
     for index in range(3):
         (tmp_path / f"input{index}.txt").write_text(f"evidence-{index}", encoding="utf-8")
@@ -433,7 +626,15 @@ async def test_actual_stream_projector_keeps_failed_boundary_write_for_local_rep
             self.turn_count += 1
             self.messages.append(request.message)
             path = "partial.py" if index == 0 else "answer.py"
-            (tmp_path / path).write_text("print(42)\n", encoding="utf-8")
+            content = "print(42)\n"
+            (tmp_path / path).write_text(content, encoding="utf-8")
+            invocations = [
+                {
+                    "call_id": f"write-{index}",
+                    "tool_name": "write_file",
+                    "arguments": {"file": path, "content": content},
+                }
+            ]
             rows = [
                 {
                     "call_id": f"write-{index}",
@@ -455,6 +656,13 @@ async def test_actual_stream_projector_keeps_failed_boundary_write_for_local_rep
                         "result": {"exit_code": gate.returncode, "stdout": gate.stdout},
                     }
                 )
+                invocations.append(
+                    {
+                        "call_id": "gate",
+                        "tool_name": "execute_command",
+                        "arguments": {"command": f"{sys.executable} answer.py"},
+                    }
+                )
             projector = projection.StreamEventProjector(
                 kernel=SimpleNamespace(workspace=str(tmp_path)),
                 role=role,
@@ -468,12 +676,19 @@ async def test_actual_stream_projector_keeps_failed_boundary_write_for_local_rep
                 runtime_tool_policy_audit={},
                 tool_filter_audit=None,
             )
+            receipt = {
+                "batch_id": f"projector-batch-{index}",
+                "results": rows,
+                "success_count": len(rows),
+                "failure_count": 0,
+            }
             projected = await projector.project(
                 CompletionEvent(
                     turn_id=f"projector-{index}",
                     status="success",
                     turn_kind="tool_batch_with_receipt",
-                    batch_receipt={"results": rows, "success_count": len(rows), "failure_count": 0},
+                    batch_receipt=receipt,
+                    turn_outcome={"execution": {"invocations": invocations, "receipt": receipt}},
                     commit_receipt={"transition_id": f"committed-{index}"},
                 )
             )

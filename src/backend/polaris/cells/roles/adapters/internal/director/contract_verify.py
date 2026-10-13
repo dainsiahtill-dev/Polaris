@@ -80,6 +80,26 @@ class ContractStepVerifyResolution:
         }
 
 
+def ce_authoritative_verification_commands(context: Mapping[str, Any]) -> list[str] | None:
+    """Consume CE-owned exact recipes, including an explicit empty recipe.
+
+    ``None`` denotes the legacy contract. An empty authoritative recipe must
+    remain empty; PM intent, prose, and language guesses cannot supply it.
+    """
+    for record in _candidate_records(context):
+        if record.get("verification_authority") != "chief_engineer":
+            continue
+        if "verification_commands" not in record:
+            continue
+        raw = record["verification_commands"]
+        if not isinstance(raw, (list, tuple)) or any(not isinstance(item, str) or not item.strip() for item in raw):
+            raise ValueError("chief_engineer_verification_recipe_invalid")
+        return list(dict.fromkeys(item.strip() for item in raw))
+    if any(record.get("verification_authority") == "chief_engineer" for record in _candidate_records(context)):
+        return []
+    return None
+
+
 def resolve_contract_step_verify_command(
     context: dict[str, Any] | None,
     *,
@@ -99,6 +119,14 @@ def resolve_contract_step_verify(
 
     if not isinstance(context, dict):
         return ContractStepVerifyResolution()
+
+    authoritative_commands = ce_authoritative_verification_commands(context)
+    if authoritative_commands is not None:
+        return ContractStepVerifyResolution(
+            command=" && ".join(authoritative_commands),
+            disposition="run" if authoritative_commands else "absent",
+            reason="chief_engineer_verification_recipe" if authoritative_commands else "chief_engineer_verification_recipe_missing",
+        )
 
     records = list(_candidate_records(context))
     if isinstance(task, Mapping):

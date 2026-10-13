@@ -52,7 +52,11 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import De
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import leading_instruction_delivery_contract
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.transaction.phase_manager import Phase, has_authoritative_write_receipt
+from polaris.cells.roles.kernel.internal.transaction.phase_manager import (
+    _READ_TOOLS,
+    Phase,
+    has_authoritative_write_receipt,
+)
 from polaris.cells.roles.kernel.internal.transaction.read_strategy import (
     ReadStrategy,
     determine_optimal_strategy,
@@ -150,6 +154,8 @@ def _extract_read_tools_from_receipt(batch_receipt: dict[str, Any] | None) -> li
     seen: set[str] = set()
     reads: list[str] = []
     for item in results:
+        if not isinstance(item, dict) or item.get("status") != "success":
+            continue
         name = str(item.get("tool_name") or "").strip()
         if not name:
             continue
@@ -157,9 +163,7 @@ def _extract_read_tools_from_receipt(batch_receipt: dict[str, Any] | None) -> li
             continue
         # FIX-20250421: 只识别真正读取文件内容的工具
         # Exploration tools (glob, repo_rg, grep, search_code) are NOT read tools
-        if name.startswith(
-            ("read_file", "repo_read_head", "repo_read_slice", "repo_read_tail", "repo_read_around", "repo_read_range")
-        ):
+        if name in _READ_TOOLS:
             seen.add(name)
             reads.append(name)
     return reads
@@ -303,6 +307,7 @@ def _build_continue_visible_content(
     modification_contract_status: str = "empty",
     conversation_context: list[dict[str, Any]] | None = None,
     batch_receipt: dict[str, Any] | None = None,
+    tool_definitions: list[dict[str, Any]] | None = None,
 ) -> str:
     """构建 continue_multi_turn 的 visible_content，内嵌 SESSION_PATCH。
 
@@ -339,6 +344,16 @@ def _build_continue_visible_content(
         phase = Phase(current_progress)
     except ValueError:
         phase = Phase.EXPLORING
+    if read_tools and phase == Phase.EXPLORING:
+        phase = Phase.CONTENT_GATHERED
+    available_reads = (
+        sorted(extract_allowed_tool_names_from_definitions(tool_definitions) & _READ_TOOLS)
+        if tool_definitions is not None
+        else []
+    )
+    read_instruction = (
+        f"调用 {' / '.join(available_reads)} 读取目标文件内容" if available_reads else "使用本轮可用的文件内容读取工具"
+    )
 
     # FIX-20250422-v4: SUPER_MODE + MATERIALIZE_CHANGES 强制写工具检测
     # 如果当前 turn 没有写工具且处于 VERIFYING/IMPLEMENTING 阶段，强制回到 IMPLEMENTING
@@ -422,16 +437,18 @@ def _build_continue_visible_content(
     else:  # EXPLORING
         instruction = (
             "当前阶段：探索（EXPLORING）。允许使用 glob/repo_rg 定位文件。"
-            "找到目标文件后，必须调用 read_file 读取内容后才能修改。"
+            f"找到目标文件后，{read_instruction}，再根据真实内容实施修改。"
         )
         # FIX-20250421-v2: 在 MATERIALIZE_CHANGES 模式下，强制要求继续执行，不能返回文本
-        if force_read_required:
+        if force_read_required and (tool_definitions is None or available_reads):
             instruction += (
                 "\n\n🚨 CRITICAL: 当前任务要求代码修改（MATERIALIZE_CHANGES）。"
-                "你只执行了探索工具（glob/repo_rg），尚未读取任何文件内容。"
-                "MANDATORY: 必须立即调用 read_file 读取目标文件，然后执行 write_file/edit_file 完成修改。"
+                "当前回合未产生成功的文件内容读取结果；先使用已有结果，必要时继续读取。"
+                f"需要补充内容时，{read_instruction}，然后执行可用写工具完成修改。"
                 "严禁返回文本分析或建议——必须通过工具执行实际修改！"
             )
+        elif tool_definitions is not None and not available_reads:
+            instruction = "本轮未提供文件内容读取工具；依据已有任务、蓝图与观测，使用本轮可用工具继续执行。"
         visible_prefix = "探索阶段继续"
 
     patch: dict[str, Any] = {
@@ -1326,6 +1343,8 @@ class StreamOrchestrator:
         _contract_requires_tools = ledger.delivery_contract.mode == DeliveryModeEnum.MATERIALIZE_CHANGES
         if (
             decision_kind != TurnDecisionKind.TOOL_BATCH
+            and self.config.materialization_required
+            and not has_authoritative_write_receipt({"results": self.config.continuation_rows})
             and await self.requires_mutation_intent_hybrid(latest_user_request)
             and has_available_write_tool(tool_definitions)
         ):
@@ -1513,6 +1532,7 @@ class StreamOrchestrator:
                 modification_contract_status=ledger.modification_contract.status.value,
                 conversation_context=context,
                 batch_receipt=result.get("batch_receipt"),
+                tool_definitions=tool_definitions,
             )
 
         visible_content = result.get("visible_content", "")

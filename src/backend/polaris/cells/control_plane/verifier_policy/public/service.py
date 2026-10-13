@@ -17,12 +17,14 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.control_plane.verifier_policy.internal.trusted_command_profiles import (
+    describe_builtin_command_profile,
     evaluate_builtin_proof,
     resolve_builtin_profile,
 )
 from polaris.cells.control_plane.verifier_policy.public.contracts import (
     OPTIONAL_VERIFIER_MODALITIES,
     SUPPORTED_EVIDENCE_MODALITIES,
+    VERIFIER_COMMAND_MODALITIES,
     CompileEvidencePolicyCommandV1,
     ControlPlaneVerifierPolicyV1Error,
     EvaluateVerifierCommandPolicyQueryV1,
@@ -31,6 +33,9 @@ from polaris.cells.control_plane.verifier_policy.public.contracts import (
     UpdateVerifierPolicyCommandV1,
     VerifierCommandPolicyDecisionV1,
     VerifierPolicyResultV1,
+    _exact_token,
+    _relative_cwd,
+    normalize_verifier_command_argv,
 )
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
@@ -700,51 +705,126 @@ def _rejected_command_policy(
     )
 
 
-def _custom_script_profile(
-    query: EvaluateVerifierCommandPolicyQueryV1,
-    policy: dict[str, Any],
-) -> tuple[str, str, str]:
-    """Return custom profile id, error code, and bound content hash."""
-
-    if not _available_from_env("KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED"):
-        return "", "untrusted_verifier_command", ""
-    if "custom_script" not in _string_list(policy.get("enabled_modalities")):
-        return "", "untrusted_verifier_command", ""
-    argv = query.argv
+def _custom_script_candidate(argv: tuple[str, ...], cwd: str) -> str:
     executable = Path(argv[0].replace("\\", "/")).name.casefold()
     if executable in {"python", "python3", "py", "node", "bash", "sh", "pwsh", "powershell"}:
         candidate = argv[1] if len(argv) == 2 else ""
     else:
         candidate = argv[0] if len(argv) == 1 else ""
-    if not candidate:
-        return "", "untrusted_verifier_command", ""
+    if not candidate or candidate.startswith("-"):
+        return ""
     try:
         candidate_path = _normalize_script_path(candidate)
+        if cwd != ".":
+            candidate_path = _normalize_script_path(f"{cwd}/{candidate_path}")
     except ControlPlaneVerifierPolicyV1Error:
-        return "", "untrusted_verifier_command", ""
-    if query.cwd != ".":
-        candidate_path = _normalize_script_path(f"{query.cwd}/{candidate_path}")
+        return ""
+    return candidate_path
+
+
+def _declared_custom_script_profile(
+    *, modality: str, argv: tuple[str, ...], cwd: str, policy: dict[str, Any]
+) -> tuple[str, str, str, str]:
+    """Match the existing enabled/pinned registration without reading targets."""
+    if not _available_from_env("KERNELONE_CUSTOM_VERIFIER_SCRIPTS_ENABLED"):
+        return "", "untrusted_verifier_command", "", ""
+    if "custom_script" not in _string_list(policy.get("enabled_modalities")):
+        return "", "untrusted_verifier_command", "", ""
+    candidate_path = _custom_script_candidate(argv, cwd)
+    if not candidate_path:
+        return "", "untrusted_verifier_command", "", ""
     scripts = policy.get("custom_scripts")
     rows = scripts if isinstance(scripts, list) else []
     for row in rows:
         if not isinstance(row, dict) or not bool(row.get("enabled", True)):
             continue
-        if str(row.get("modality") or "custom_script").strip().lower() not in {"custom_script", query.modality}:
+        if str(row.get("modality") or "custom_script").strip().lower() not in {"custom_script", modality}:
             continue
         if str(row.get("path") or "") != candidate_path:
             continue
         expected_hash = _normalize_optional_sha256(row.get("content_sha256"))
         if not expected_hash:
-            return "", "custom_verifier_unpinned", ""
-        absolute_path = (Path(query.workspace).expanduser().resolve() / candidate_path).resolve()
-        workspace = Path(query.workspace).expanduser().resolve()
-        if workspace not in absolute_path.parents or not absolute_path.is_file():
-            return "", "custom_verifier_missing", ""
-        actual_hash = hashlib.sha256(absolute_path.read_bytes()).hexdigest()
-        if actual_hash != expected_hash:
-            return "", "custom_verifier_content_drift", actual_hash
-        return f"custom_script:{row.get('id') or Path(candidate_path).stem!s}", "", actual_hash
-    return "", "untrusted_verifier_command", ""
+            return "", "custom_verifier_unpinned", "", candidate_path
+        return f"custom_script:{row.get('id') or Path(candidate_path).stem!s}", "", expected_hash, candidate_path
+    return "", "untrusted_verifier_command", "", ""
+
+
+def _resolve_declared_command_profile(
+    *, modality: str, argv: tuple[str, ...], cwd: str, policy: dict[str, Any] | None
+) -> tuple[str, str, str, str]:
+    profile_id, error_code = resolve_builtin_profile(modality, argv)
+    if profile_id or error_code == "non_proving_verifier_command":
+        return profile_id, error_code, "", ""
+    if policy is None:
+        if _custom_script_candidate(argv, cwd):
+            return "", "verifier_workspace_binding_missing", "", ""
+        return "", error_code or "untrusted_verifier_command", "", ""
+    profile_id, custom_error, expected_hash, candidate_path = _declared_custom_script_profile(
+        modality=modality, argv=argv, cwd=cwd, policy=policy
+    )
+    if profile_id:
+        return profile_id, "", expected_hash, candidate_path
+    return "", custom_error if custom_error != "untrusted_verifier_command" else error_code or custom_error, "", ""
+
+
+def classify_verifier_command_profile(
+    *, workspace: str, modality: str, argv: object, cwd: str = "."
+) -> tuple[str, str]:
+    """Read-only planning classification, never permission, proof or a lease.
+
+    Registered scripts match their current enabled/pinned declaration only.
+    Runtime evaluation still requires the actual file/hash/executable identity.
+    An absent workspace binding is explicit uncertainty for custom candidates.
+    """
+    normalized_argv = normalize_verifier_command_argv(argv)
+    normalized_modality = _exact_token("modality", modality, max_bytes=64)
+    if normalized_modality not in VERIFIER_COMMAND_MODALITIES:
+        raise ValueError(f"unsupported verifier modality: {normalized_modality}")
+    normalized_cwd = _relative_cwd(cwd)
+    policy = read_verifier_policy(ReadVerifierPolicyQueryV1(workspace=workspace)).policy if workspace else None
+    profile_id, error_code, _expected_hash, _candidate_path = _resolve_declared_command_profile(
+        modality=normalized_modality, argv=normalized_argv, cwd=normalized_cwd, policy=policy
+    )
+    return profile_id, error_code
+
+
+def get_verifier_command_profile_feedback(
+    *, workspace: str, modality: str, argv: object, cwd: str = "."
+) -> dict[str, Any]:
+    """Expose owner-derived planning guidance without changing classification."""
+    profile_id, error_code = classify_verifier_command_profile(
+        workspace=workspace, modality=modality, argv=argv, cwd=cwd
+    )
+    feedback: dict[str, Any] = {
+        "source": POLICY_SOURCE,
+        "profile_id": profile_id,
+        "error_code": error_code,
+        "guidance_only": True,
+        "execution_authority": False,
+    }
+    if error_code:
+        feedback.update(describe_builtin_command_profile(modality, normalize_verifier_command_argv(argv)))
+    return feedback
+
+
+def _custom_script_profile(
+    query: EvaluateVerifierCommandPolicyQueryV1,
+    policy: dict[str, Any],
+) -> tuple[str, str, str]:
+    """Revalidate the matched registration against actual current source bytes."""
+    profile_id, error_code, expected_hash, candidate_path = _declared_custom_script_profile(
+        modality=query.modality, argv=query.argv, cwd=query.cwd, policy=policy
+    )
+    if not profile_id:
+        return "", error_code, ""
+    absolute_path = (Path(query.workspace).expanduser().resolve() / candidate_path).resolve()
+    workspace = Path(query.workspace).expanduser().resolve()
+    if workspace not in absolute_path.parents or not absolute_path.is_file():
+        return "", "custom_verifier_missing", ""
+    actual_hash = hashlib.sha256(absolute_path.read_bytes()).hexdigest()
+    if actual_hash != expected_hash:
+        return "", "custom_verifier_content_drift", actual_hash
+    return profile_id, "", actual_hash
 
 
 def evaluate_verifier_command_policy(
@@ -759,8 +839,10 @@ def evaluate_verifier_command_policy(
 
     if type(query) is not EvaluateVerifierCommandPolicyQueryV1:
         raise TypeError("query must be exact EvaluateVerifierCommandPolicyQueryV1")
-    profile_id, error_code = resolve_builtin_profile(query.modality, query.argv)
     policy = read_verifier_policy(ReadVerifierPolicyQueryV1(workspace=query.workspace)).policy
+    profile_id, error_code, _expected_hash, _candidate_path = _resolve_declared_command_profile(
+        modality=query.modality, argv=query.argv, cwd=query.cwd, policy=policy
+    )
     custom_content_hash = ""
     package_script_evidence_hash, package_script_error = _node_script_content_evidence(query)
     if profile_id and package_script_error:
@@ -769,7 +851,7 @@ def evaluate_verifier_command_policy(
             error_code=package_script_error,
             detail="package script is absent, mutable-only, watch-mode, or non-proving",
         )
-    if not profile_id and error_code != "non_proving_verifier_command":
+    if profile_id.startswith("custom_script:"):
         profile_id, custom_error, custom_content_hash = _custom_script_profile(query, policy)
         if profile_id:
             error_code = ""
@@ -888,9 +970,11 @@ def update_verifier_policy(command: UpdateVerifierPolicyCommandV1) -> VerifierPo
 __all__ = [
     "POLICY_RELATIVE_PATH",
     "POLICY_SOURCE",
+    "classify_verifier_command_profile",
     "compile_evidence_policy",
     "evaluate_verifier_command_policy",
     "evaluate_verifier_proof",
+    "get_verifier_command_profile_feedback",
     "read_verifier_policy",
     "update_verifier_policy",
     "verifier_policy_to_gate_policy",

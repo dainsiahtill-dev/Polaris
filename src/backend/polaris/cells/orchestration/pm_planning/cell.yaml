@@ -11,9 +11,11 @@ purpose: 'Produce PM task contracts from project goals and docs, enforce plannin
 current_modules:
 - polaris.cells.orchestration.pm_planning.public.contracts
 - polaris.cells.orchestration.pm_planning.public.artifact_contracts
+- polaris.cells.orchestration.pm_planning.public.task_intent
 tags: []
 owned_paths:
 - polaris/cells/orchestration/pm_planning/public/contracts.py
+- polaris/cells/orchestration/pm_planning/public/task_intent.py
 - polaris/cells/orchestration/pm_planning/tests/test_planning_inputs.py
 - polaris/cells/orchestration/pm_planning/internal/**
 - polaris/cells/orchestration/pm_planning/public/artifact_contracts.py
@@ -23,6 +25,7 @@ public_contracts:
   modules:
   - polaris.cells.orchestration.pm_planning.public.contracts
   - polaris.cells.orchestration.pm_planning.public.artifact_contracts
+  - polaris.cells.orchestration.pm_planning.public.task_intent
   commands:
   - GeneratePmTaskContractCommandV1
   queries:
@@ -31,10 +34,12 @@ public_contracts:
   - PmTaskContractGeneratedEventV1
   results:
   - PmProductPlanningInputV1
+  - PmTaskIntentV1
   - PmTaskContractResultV1
   errors:
   - PmPlanningErrorV1
 depends_on:
+- control_plane.verifier_policy
 - context.engine
 - llm.control_plane
 - runtime.execution_broker

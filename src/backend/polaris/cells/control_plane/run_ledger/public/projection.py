@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from copy import deepcopy
+from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public.directed_effect_receipt_validation import (
     directed_effect_receipt_payload_hash,
@@ -270,7 +271,11 @@ def _drop_modalities_satisfied_by_official_gates(
     missing: Sequence[str],
     gates: Sequence[Mapping[str, Any]],
 ) -> list[str]:
-    """Keep leftover/preflight missing from overriding a later official pass."""
+    """Remove missingness only when official evidence is actually present.
+
+    A present failure remains in failed_required_modalities. A bare gate PASS
+    cannot substitute for physical evidence, including authoritative receipts.
+    """
 
     satisfied: set[str] = set()
     for gate in gates:
@@ -279,16 +284,18 @@ def _drop_modalities_satisfied_by_official_gates(
         name = _clean_string(gate.get("name")).lower()
         modalities = gate.get("evidence_modalities")
         modality_map = modalities if isinstance(modalities, Mapping) else {}
-        if name == "qa_verdict" and bool(gate.get("ok")):
-            satisfied.add("qa")
-        if name in {"workspace_validation", "real_run_gate"} and bool(gate.get("ok")):
+        if name == "qa_verdict":
+            item = modality_map.get("qa")
+            if isinstance(item, Mapping) and item.get("present"):
+                satisfied.add("qa")
+        if name in {"workspace_validation", "real_run_gate"}:
             for key in ("command", "code"):
                 item = modality_map.get(key)
-                if isinstance(item, Mapping) and item.get("present") and item.get("ok"):
+                if isinstance(item, Mapping) and item.get("present"):
                     satisfied.add(key)
         if name == "tool_receipt":
             item = modality_map.get("tool_receipt")
-            if isinstance(item, Mapping) and item.get("present") and item.get("ok"):
+            if isinstance(item, Mapping) and item.get("present"):
                 satisfied.add("tool_receipt")
     return [name for name in missing if name not in satisfied]
 
@@ -677,7 +684,8 @@ def _is_lower_sha256(value: Any) -> bool:
 def _directed_effect_receipt_payload_hash(receipt: dict[str, Any]) -> str | None:
     """Compatibility alias for existing tests and local callers."""
 
-    return cast(str | None, directed_effect_receipt_payload_hash(receipt))
+    payload_hash: str | None = directed_effect_receipt_payload_hash(receipt)
+    return payload_hash
 
 
 def _directed_effect_receipt_errors(receipt: dict[str, Any], *, index: int) -> list[str] | None:
@@ -912,6 +920,27 @@ def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any
     commands = physical_evidence.get("commands")
     command_count = int(physical_evidence.get("command_count") or 0)
     if isinstance(build_requirement, dict) or command_count > 0 or isinstance(commands, list) or entrypoint_is_command:
+        declared_command = modalities.get("command")
+        declared_metadata = _dict_value(declared_command.get("metadata")) if declared_command else {}
+        if (
+            isinstance(commands, list)
+            and not any(isinstance(item, dict) for item in commands)
+            and "command_count" in physical_evidence
+            and command_count == 0
+            and not entrypoint_is_command
+            and declared_metadata.get("command_count") == 0
+            and declared_command is not None
+        ):
+            # A persisted derivation cache cannot create an executed command
+            # when its own count and the physical inventory both say zero.
+            # Preserve the raw event and explicit receipts without this cache
+            # counter; only the read model reconciles the contradictory claim.
+            declared_command["present"] = False
+            declared_command["ok"] = False
+            declared_command["metadata"] = {
+                **declared_metadata,
+                "presence_reconciled_from_command_inventory": True,
+            }
         if isinstance(build_requirement, dict):
             command_ok = bool(build_requirement.get("ok"))
             command_detail = _clean_string(build_requirement.get("detail"))
@@ -1059,6 +1088,17 @@ def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any
 
 
 GateRevisionKey = tuple[str, str, str, str, str, str, str]
+
+
+def derive_run_ledger_evidence_modalities(
+    physical_evidence: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Project physical evidence consistently for ledger producers and readers.
+
+    This read-only public boundary introduces no receipt or execution authority.
+    Caller data stays immutable, including historical derived modality claims.
+    """
+    return _evidence_modalities_from_physical_evidence(deepcopy(dict(physical_evidence)))
 
 
 def _gate_revision_key(event: dict[str, Any]) -> GateRevisionKey | None:
@@ -1541,12 +1581,17 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "job_token_ids": list(dict.fromkeys(job_token_ids)),
                 "stage": token_stage,
                 "task_id": task_id,
+                **(
+                    {"gate_policy": deepcopy(dict(job_token["gate_policy"]))}
+                    if isinstance(job_token.get("gate_policy"), Mapping)
+                    else {}
+                ),
             }
         command_count_total += int(physical_evidence.get("command_count") or 0)
         sampled_command_count += int(physical_evidence.get("sampled_command_count") or 0)
         if physical_evidence.get("commands_truncated"):
             truncated_command_events += 1
-        gate_modalities = _evidence_modalities_from_physical_evidence(physical_evidence)
+        gate_modalities = derive_run_ledger_evidence_modalities(physical_evidence)
         tool_receipt_modality = _tool_receipt_modality(physical_evidence, job_token)
         if tool_receipt_modality is not None:
             _merge_evidence_modality(
@@ -1575,8 +1620,24 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         if gate_is_effective:
             enabled_modalities.extend(gate_enabled_modalities)
             required_modalities.extend(gate_required_modalities)
-        gate_missing_required_modalities, gate_failed_required_modalities = _required_modalities_status(
+        # Token policy is immutable execution/project authority. A receipt gate
+        # may assess only its own effect without waiving the project obligations.
+        local_gate_policy = gate.get("gate_policy")
+        local_required_modalities = gate_required_modalities
+        local_enabled_modalities = gate_enabled_modalities
+        if isinstance(local_gate_policy, Mapping):
+            local_required_modalities = _modality_list(
+                local_gate_policy.get("required_evidence_modalities") or local_gate_policy.get("required_modalities")
+            )
+            local_enabled_modalities = _modality_list(
+                local_gate_policy.get("enabled_evidence_modalities") or local_gate_policy.get("enabled_modalities")
+            )
+        project_missing_required_modalities, project_failed_required_modalities = _required_modalities_status(
             gate_required_modalities,
+            gate_modalities,
+        )
+        gate_missing_required_modalities, gate_failed_required_modalities = _required_modalities_status(
+            local_required_modalities,
             gate_modalities,
         )
         gate_task_id = _clean_string(
@@ -1587,8 +1648,8 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         )
         gate_run_id = _clean_string(event.get("run_id") or physical_evidence.get("run_id") or job_token.get("run_id"))
         if gate_is_effective:
-            missing_required_modalities.extend(gate_missing_required_modalities)
-            failed_required_modalities.extend(gate_failed_required_modalities)
+            missing_required_modalities.extend(project_missing_required_modalities)
+            failed_required_modalities.extend(project_failed_required_modalities)
             for modality_name, modality in gate_modalities.items():
                 summary = evidence_modalities.setdefault(
                     modality_name,
@@ -1618,8 +1679,8 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "capability_ok": bool(capability_audit.get("ok")),
                 "capability_issues": list(issues) if isinstance(issues, list) else [],
                 "evidence_modalities": gate_modalities,
-                "enabled_evidence_modalities": gate_enabled_modalities,
-                "required_evidence_modalities": gate_required_modalities,
+                "enabled_evidence_modalities": local_enabled_modalities,
+                "required_evidence_modalities": local_required_modalities,
                 "missing_required_evidence_modalities": gate_missing_required_modalities,
                 "failed_required_evidence_modalities": gate_failed_required_modalities,
                 "effective": gate_is_effective,

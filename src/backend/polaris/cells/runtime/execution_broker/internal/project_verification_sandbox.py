@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,12 +13,38 @@ from pathlib import Path
 from polaris.cells.runtime.execution_broker.public.project_verification import (
     ProjectVerificationArtifactInputV1,
 )
+from polaris.kernelone.fs import GuardedRegularFileSnapshotV1, read_guarded_regular_file_snapshot
 from polaris.kernelone.storage import resolve_storage_roots
 
 _SANDBOX_GATE_ROOT = "/run/polaris-verifier-gate"
 _SANDBOX_GATE_RELEASE = f"{_SANDBOX_GATE_ROOT}/launch.release"
 _EPHEMERAL_EXECUTION_ROOTS = tuple(Path(item).resolve() for item in ("/tmp", "/var/tmp", "/dev/shm"))
 _ENV_ALLOWLIST = ("CI", "LANG", "LC_ALL", "LC_CTYPE", "NO_COLOR", "TERM", "TZ")
+_TRUSTED_ISOLATION_PATH = Path("/usr/bin/bwrap")
+
+
+def _trusted_isolation_snapshot(path: str) -> GuardedRegularFileSnapshotV1:
+    """Bind the canonical root-owned driver through the existing guarded FS read."""
+    canonical = Path(path).resolve(strict=True)
+    metadata = canonical.stat(follow_symlinks=False)
+    if (
+        canonical != _TRUSTED_ISOLATION_PATH
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_mode & 0o022
+    ):
+        raise RuntimeError("verification_isolation_binary_untrusted")
+    snapshot = read_guarded_regular_file_snapshot(str(canonical.parent), canonical.name, 256 * 1024 * 1024)
+    after = canonical.stat(follow_symlinks=False)
+    witness = (snapshot.device, snapshot.inode, snapshot.size, snapshot.mtime_ns, snapshot.ctime_ns)
+    if any(
+        (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns) != witness
+        or item.st_uid != metadata.st_uid
+        or item.st_mode != metadata.st_mode
+        for item in (metadata, after)
+    ):
+        raise RuntimeError("verification_isolation_binary_drift")
+    return snapshot
 
 
 def _hash_file(path: Path) -> str:
@@ -57,6 +84,14 @@ def _protected_platform_roots(workspace: Path) -> tuple[Path, ...]:
         # and rejected as verifier cwd/input, so treating it as an external
         # overlapping root would make every valid project unverifiable.
         if root == workspace_authority_root:
+            continue
+        if root == polaris_home and root in workspace.parents:
+            # The platform container may also hold independent project workspaces.
+            # Hide the container before remounting this exact workspace; its
+            # configuration subtree remains an authority-only namespace.
+            if workspace == config_root or config_root in workspace.parents:
+                raise RuntimeError("workspace overlaps protected Polaris authority storage")
+            protected.append(root)
             continue
         if root == workspace or root in workspace.parents or workspace in root.parents:
             raise RuntimeError("workspace overlaps protected Polaris authority storage")
@@ -112,7 +147,7 @@ def _resolved_execution_cwd(workspace: Path, cwd: str) -> Path:
         raise ValueError("project verifier cwd must be workspace-relative")
     candidate = workspace if cwd == "." else workspace / relative
     current = workspace
-    for part in (() if cwd == "." else relative.parts):
+    for part in () if cwd == "." else relative.parts:
         current /= part
         if current.is_symlink():
             raise ValueError("project verifier cwd must not traverse symlinks")
@@ -131,6 +166,7 @@ class PreparedProjectVerificationSandbox:
     snapshot_root: Path
     snapshots: tuple[tuple[Path, Path, str], ...]
     bwrap_path: str
+    bwrap_snapshot: GuardedRegularFileSnapshotV1
     protected_roots: tuple[Path, ...]
     gate_release_path: Path
     environment: tuple[tuple[str, str], ...]
@@ -138,6 +174,8 @@ class PreparedProjectVerificationSandbox:
     def wrap_command(self, argv: tuple[str, ...], *, executable_path: str | None = None) -> tuple[str, ...]:
         if not argv:
             raise ValueError("verifier argv must not be empty")
+        if _trusted_isolation_snapshot(self.bwrap_path) != self.bwrap_snapshot:
+            raise RuntimeError("verification_isolation_binary_drift")
         effective_argv = ((executable_path or argv[0]), *argv[1:])
         args: list[str] = [
             self.bwrap_path,
@@ -158,6 +196,17 @@ class PreparedProjectVerificationSandbox:
             _SANDBOX_GATE_ROOT,
         ]
         args.extend(("--tmpfs", "/tmp"))
+        # Mask platform containers first, then expose only the authorized
+        # workspace. Mounting these roots last would hide nested projects too.
+        for protected in self.protected_roots:
+            if not protected.exists():
+                continue
+            args.extend(("--tmpfs", str(protected)))
+            if protected in self.workspace.parents:
+                current = protected
+                for part in self.workspace.relative_to(protected).parts:
+                    current /= part
+                    args.extend(("--dir", str(current)))
         try:
             temporary_relative = self.workspace.relative_to("/tmp")
         except ValueError:
@@ -175,9 +224,6 @@ class PreparedProjectVerificationSandbox:
         for original, snapshot, _digest in self.snapshots:
             args.extend(("--ro-bind", str(snapshot), str(original)))
         args.extend(("--ro-bind", str(self.snapshot_root), _SANDBOX_GATE_ROOT))
-        for protected in self.protected_roots:
-            if protected.exists():
-                args.extend(("--tmpfs", str(protected)))
         for name, value in self.environment:
             args.extend(("--setenv", name, value))
         args.extend(
@@ -217,6 +263,8 @@ class PreparedProjectVerificationSandbox:
             os.close(descriptor)
 
     def assert_inputs_unchanged(self) -> None:
+        if _trusted_isolation_snapshot(self.bwrap_path) != self.bwrap_snapshot:
+            raise RuntimeError("verification_isolation_binary_drift")
         for original, _snapshot, expected_hash in self.snapshots:
             if _hash_tree(original) != expected_hash:
                 raise ValueError(f"project verification input changed during execution: {original}")
@@ -237,6 +285,8 @@ def prepare_project_verification_sandbox(
     bwrap_path = shutil.which("bwrap")
     if os.name != "posix" or not bwrap_path:
         raise RuntimeError("physical verifier requires Linux bubblewrap sandbox")
+    bwrap_snapshot = _trusted_isolation_snapshot(bwrap_path)
+    bwrap_path = str(_TRUSTED_ISOLATION_PATH)
     root = Path(workspace).expanduser().resolve(strict=True)
     if not root.is_dir():
         raise ValueError("project verification workspace must be a directory")
@@ -277,6 +327,7 @@ def prepare_project_verification_sandbox(
             snapshot_root=snapshot_root,
             snapshots=tuple(snapshots),
             bwrap_path=bwrap_path,
+            bwrap_snapshot=bwrap_snapshot,
             protected_roots=protected_roots,
             gate_release_path=snapshot_root / "launch.release",
             environment=_sanitized_environment(root),

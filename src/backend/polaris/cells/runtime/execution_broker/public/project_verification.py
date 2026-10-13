@@ -10,7 +10,9 @@ from __future__ import annotations
 import math
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
+
+from polaris.kernelone.process import ProcessTreeRunControl
 
 ProjectVerificationModalityV1 = Literal["environment_prep", "build", "test", "lint", "entrypoint"]
 
@@ -712,6 +714,7 @@ class ProjectVerificationReceiptV1:
     receipt_ref: str
     owner_module_id: str = field(init=False, default=_OWNER_MODULE_ID)
     _authority_token: InitVar[object | None] = None
+    output_excerpt: str = ""
 
     def __post_init__(self, _authority_token: object | None) -> None:
         from polaris.cells.runtime.execution_broker.internal.project_verification_authority import (
@@ -781,6 +784,12 @@ class ProjectVerificationReceiptV1:
         if self.exit_code is None and not self.timed_out and not self.controlled_termination:
             raise ValueError("a non-timeout receipt requires an exact exit_code")
         object.__setattr__(self, "output_hash", _require_sha256("output_hash", self.output_hash))
+        # A bounded diagnostic from the physical owner, authenticated with the
+        # receipt. It does not affect exit/proof success or command authority.
+        if not isinstance(self.output_excerpt, str):
+            raise TypeError("output_excerpt must be a str")
+        if len(self.output_excerpt) > 8192:
+            raise ValueError("output_excerpt exceeds the diagnostic bound")
         if type(self.proof_satisfied) is not bool:
             raise TypeError("proof_satisfied must be a bool")
         object.__setattr__(
@@ -841,7 +850,8 @@ def record_project_artifact(command: RecordProjectArtifactCommandV1) -> ProjectA
         record_project_artifact as _record,
     )
 
-    return _record(command)
+    receipt: ProjectArtifactReceiptV1 = _record(command)
+    return receipt
 
 
 def query_project_artifact_receipt(query: QueryProjectArtifactReceiptV1) -> ProjectArtifactReceiptV1 | None:
@@ -851,7 +861,8 @@ def query_project_artifact_receipt(query: QueryProjectArtifactReceiptV1) -> Proj
         query_project_artifact_receipt as _query,
     )
 
-    return _query(query)
+    receipt: ProjectArtifactReceiptV1 | None = _query(query)
+    return receipt
 
 
 def query_project_artifact_source_baseline(
@@ -862,12 +873,12 @@ def query_project_artifact_source_baseline(
         query_project_artifact_source_baseline as _query,
     )
 
-    result = _query(query)
+    result: ProjectArtifactSourceBaselineV1 | None = _query(query)
     if result is None:
         return None
     if type(result) is not ProjectArtifactSourceBaselineV1:
         raise TypeError("source baseline owner returned a lookalike")
-    return cast(ProjectArtifactSourceBaselineV1, result)
+    return result
 
 
 def authorize_project_verification_command(
@@ -879,11 +890,14 @@ def authorize_project_verification_command(
         authorize_project_verification_command as _authorize,
     )
 
-    return _authorize(query)
+    command: RunProjectVerificationCommandV1 = _authorize(query)
+    return command
 
 
 def run_project_verification(
     command: RunProjectVerificationCommandV1,
+    *,
+    control: ProcessTreeRunControl | None = None,
 ) -> ProjectVerificationExecutionResultV1:
     """Execute one exact verifier with concurrency-safe idempotency."""
 
@@ -891,7 +905,8 @@ def run_project_verification(
         run_project_verification as _run,
     )
 
-    return _run(command)
+    result: ProjectVerificationExecutionResultV1 = _run(command, control=control)
+    return result
 
 
 def query_project_verification_receipt(
@@ -903,7 +918,8 @@ def query_project_verification_receipt(
         query_project_verification_receipt as _query,
     )
 
-    return _query(query)
+    receipt: ProjectVerificationReceiptV1 | None = _query(query)
+    return receipt
 
 
 __all__ = [

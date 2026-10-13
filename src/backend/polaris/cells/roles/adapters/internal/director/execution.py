@@ -372,12 +372,12 @@ class DirectorPatchExecutor:
         task: dict[str, Any],
         file_paths: list[str],
     ) -> str | None:
-        """检查 Director 输出是否存在模板化/占位化迹象。"""
-        from .helpers import (
-            _GENERIC_SCAFFOLD_MARKERS,
-            _LOW_QUALITY_PATTERNS,
-            _PATCH_RESIDUE_PATTERNS,
-        )
+        """Check path, readability and unapplied patch protocol residue.
+
+        Source keywords cannot establish behavior. CE verification recipes and
+        independent QA retain responsibility for unfinished implementations.
+        """
+        from .helpers import _PATCH_RESIDUE_PATTERNS
         from .state_utils import extract_domain_tokens
 
         if not file_paths:
@@ -385,24 +385,21 @@ class DirectorPatchExecutor:
         workspace_path = Path(self.workspace).resolve()
         domain_tokens = extract_domain_tokens(task)
         matched_markers: list[str] = []
-        domain_hit = False
         inspected = 0
         for rel_path in file_paths[:40]:
             safety = self._check_file_quality(
                 rel_path,
                 workspace_path,
                 domain_tokens,
-                _LOW_QUALITY_PATTERNS,
+                (),
                 _PATCH_RESIDUE_PATTERNS,
-                _GENERIC_SCAFFOLD_MARKERS,
+                (),
             )
             if isinstance(safety, str):
                 return safety  # unsafe path error
-            marker, hit, readable = safety
+            marker, _hit, readable = safety
             if marker:
                 matched_markers.append(marker)
-            if hit:
-                domain_hit = True
             if readable:
                 inspected += 1
         if inspected == 0:
@@ -410,11 +407,6 @@ class DirectorPatchExecutor:
         if matched_markers:
             return "Director output quality gate failed: generic/placeholder content detected: " + "; ".join(
                 matched_markers[:6]
-            )
-        if domain_tokens and not domain_hit:
-            return (
-                "Director output quality gate failed: no project-domain signal found in changed files; "
-                f"expected one of {domain_tokens[:6]}"
             )
         return None
 

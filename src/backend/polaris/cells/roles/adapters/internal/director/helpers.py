@@ -222,6 +222,12 @@ def low_quality_pattern_match(pattern: re.Pattern[str], content: str, *, rel_pat
     """
     needs_string_guard = pattern.pattern in _STRING_LITERAL_GUARDED_PATTERNS
     needs_comment_guard = pattern.pattern in _COMMENT_GUARDED_PATTERNS
+    suffix = Path(str(rel_path or "")).suffix.lower()
+    is_documentation = suffix in _DOCUMENTATION_PROSE_SUFFIXES
+    if is_documentation and needs_string_guard:
+        # Source implementation tokens in prose/examples are not executable stubs.
+        # Generic placeholder prose and anchored unfinished-document markers remain.
+        return False
     if not needs_string_guard and not needs_comment_guard:
         return bool(pattern.search(content))
     for match in pattern.finditer(content):
@@ -232,7 +238,7 @@ def low_quality_pattern_match(pattern: re.Pattern[str], content: str, *, rel_pat
         line = content[line_start:line_end]
         rel_start = match.start() - line_start
         rel_end = match.end() - line_start
-        if needs_string_guard and _match_is_inside_string_literal(line, rel_start, rel_end):
+        if (needs_string_guard or is_documentation) and _match_is_inside_string_literal(line, rel_start, rel_end):
             continue
         if needs_comment_guard and _match_is_inside_line_comment(line, rel_start):
             continue

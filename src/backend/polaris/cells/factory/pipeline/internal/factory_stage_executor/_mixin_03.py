@@ -35,6 +35,7 @@ from polaris.kernelone.constants import (
 from .. import (
     factory_deadline_calculations as deadline_calc,
     factory_materialization_impl as materialization_impl,
+    factory_qa_recovery as qa_recovery,
     factory_stage_helpers as helpers,
     factory_workspace_quality_evidence as wq_evidence,
     factory_workspace_quality_impl as workspace_quality_impl,
@@ -526,8 +527,10 @@ class _Mixin03:
         interface_discrepancy_evidence: dict[str, Any] | None = None,
         owner_target_files: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        exact_owner = context.get("_factory_qa_repair_owner_task_id")
+        executor = qa_recovery.ExactQaOwnerExecutor(self, exact_owner) if isinstance(exact_owner, str) and exact_owner else self
         return await workspace_quality_impl._apply_workspace_quality_llm_repairs(
-            self,
+            executor,
             run=run,
             context=context,
             artifact_quality_errors=artifact_quality_errors,
@@ -973,7 +976,7 @@ class _Mixin03:
             if str(workspace_checks_artifact or "").strip()
             else {}
         )
-        target_files = self._collect_declared_delivery_targets(pm_tasks)
+        target_files = self._qa_delivery_targets(pm_tasks, run_id=run_id)
         raw_receipts = workspace_quality.get("commands") if isinstance(workspace_quality, dict) else None
         verifier_receipts = (
             [dict(item) for item in raw_receipts if isinstance(item, dict)] if isinstance(raw_receipts, list) else []
@@ -981,6 +984,7 @@ class _Mixin03:
 
         metadata: dict[str, Any] = {
             "source": "factory_stage_executor.quality_gate",
+            "factory_run_id": run_id,
             "pm_task_contracts": deepcopy(pm_tasks),
             "target_files": list(target_files),
             "scope_paths": list(target_files),
@@ -991,6 +995,30 @@ class _Mixin03:
         if pm_tasks:
             metadata["pm_task_contract"] = deepcopy(pm_tasks[0])
         return metadata
+
+    def _qa_delivery_targets(
+        self, pm_tasks: list[dict[str, Any]], *, run_id: str, required_only: bool = False,
+    ) -> list[str]:
+        """Read same-run CE artifact ownership when PM delegates technical topology."""
+        from polaris.cells.chief_engineer.blueprint.public import (
+            GetBlueprintStatusQueryV1,
+            get_blueprint_status,
+        )
+        from polaris.cells.orchestration.pm_planning.public.task_intent import is_pm_task_intent
+
+        paths = self._collect_declared_delivery_targets(pm_tasks)
+        for index, task in enumerate(pm_tasks, start=1):
+            if not is_pm_task_intent(task):
+                continue
+            blueprint = get_blueprint_status(
+                GetBlueprintStatusQueryV1(
+                    workspace=str(self.workspace), task_id=self._task_id(task, index), run_id=run_id
+                )
+            )
+            if blueprint.status == "generated":
+                required = getattr(blueprint, "required_write_targets", None)
+                paths.extend(required if required_only and required is not None else blueprint.target_files)
+        return list(dict.fromkeys(paths))
 
     async def _wait_for_canonical_quality_authority(
         self,
@@ -1098,7 +1126,9 @@ class _Mixin03:
             *(qa_payload.get("warnings") or []),
         ]
         findings = tuple(str(item).strip() for item in raw_findings if str(item).strip())
-        target_files = tuple(self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json")))
+        target_files = tuple(self._qa_delivery_targets(
+            self._load_pm_plan_tasks("tasks/plan.json"), run_id=run.id, required_only=True,
+        ))
         # QA publishes report evidence, not a Director workspace mutation.
         # Reuse the exact canonical boundary's committed lineage metadata.
         from polaris.cells.events.fact_stream.public import QueryFactEventsV1, query_fact_events
@@ -1411,7 +1441,55 @@ class _Mixin03:
             reconciled.append(external_task_id)
         return {"success": True, "reconciled_task_ids": reconciled}
 
+    async def _repair_qa_role_findings(
+        self, *, run: FactoryRun, context: dict[str, Any], qa_payload: dict[str, Any], report_hash: str,
+    ) -> qa_recovery.QaRepairReverification | None:
+        return await qa_recovery.repair_qa_role_findings(
+            self, run=run, context=context, qa_payload=qa_payload, report_hash=report_hash,
+        )
+
     async def _execute_quality_gate(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
+        """Continue exact-owner QA residuals inside the original Factory budget."""
+        working = dict(context)
+        # Continuation proof and role binding are stage-owned, never accepted
+        # from a caller's JSON metadata or a report file.
+        for key in ("_factory_qa_reverification", "_factory_qa_authority_binding", "_factory_qa_recovery_report"):
+            working.pop(key, None)
+        previous_findings: tuple[str, ...] = ()
+        stagnant = 0
+        round_number = 0
+        while True:
+            working.pop("_factory_qa_recovery_report", None)
+            result = await self._execute_quality_gate_once(run, working)
+            payload = working.pop("_factory_qa_recovery_report", None)
+            if result.status != "failed" or not isinstance(payload, dict):
+                return result
+            findings = qa_recovery.repairable_findings(payload)
+            if not findings:
+                return result
+            stagnant = stagnant + 1 if findings == previous_findings else 0
+            previous_findings = findings
+            # Reuse the existing nonprogress bound. A real Factory deadline
+            # remains the aggregate bound when residuals demonstrably change.
+            if stagnant >= 3 or (self._factory_deadline_remaining_seconds(working) is None and round_number >= 3):
+                return result
+            working["_factory_qa_repair_round"] = round_number
+            try:
+                proof = await self._repair_qa_role_findings(
+                    run=run, context=working, qa_payload=payload, report_hash=qa_recovery.report_hash(payload),
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                return self._build_quality_gate_failure_stage(
+                    run, reason_code="factory_quality_gate_qa_owned_repair_rejected",
+                    detail=f"QA exact-owner repair failed closed: {type(exc).__name__}: {exc}", context=working,
+                    qa_invoked=True,
+                )
+            if not isinstance(proof, qa_recovery.QaRepairReverification) or not proof.matches(str(self.workspace), run.id):
+                return result
+            working["_factory_qa_reverification"] = proof
+            round_number += 1
+
+    async def _execute_quality_gate_once(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing quality gate for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
         authority_port = self._factory_role_evidence_cutoff_port(context)
@@ -1504,6 +1582,8 @@ class _Mixin03:
             )
 
         qa_invoked = not physical_verifier_qa
+        qa_report_path = self._artifact_path("runtime/qa/report.json")
+        prior_report_bytes = qa_report_path.read_bytes() if qa_report_path.is_file() else b""
         if physical_verifier_qa:
             self._write_physical_verifier_qa_report(
                 run=run,
@@ -1521,6 +1601,10 @@ class _Mixin03:
                 workspace_checks_artifact=workspace_checks_artifact,
                 context=context,
             )
+            authority_binding = context.get("_factory_qa_authority_binding")
+            if authority_binding is None:
+                authority_binding = authority_port.mint_authority_binding("qa")
+                context["_factory_qa_authority_binding"] = authority_binding
             command_result = cast(
                 CommandResult,
                 await self._call_with_factory_role_evidence_authority(
@@ -1534,6 +1618,7 @@ class _Mixin03:
                             "metadata": qa_request_metadata,
                         },
                     ),
+                    authority_binding=authority_binding,
                 ),
             )
             final_result = await self._wait_run_completion(
@@ -1566,7 +1651,6 @@ class _Mixin03:
                 qa_invoked=qa_invoked,
             )
 
-        qa_report_path = self._artifact_path("runtime/qa/report.json")
         loaded: dict[str, Any] | Any = {}
         parse_error: Exception | None = None
         report_ready = self._artifact_file_ready(qa_report_path)
@@ -1582,12 +1666,36 @@ class _Mixin03:
                     await asyncio.sleep(0.2)
         qa_payload: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
 
+        reverified = context.get("_factory_qa_reverification")
+        fresh_reverified_qa = isinstance(reverified, qa_recovery.QaRepairReverification) and reverified.matches(
+            str(self.workspace), run.id,
+        )
         preexisting_authority = helpers.evaluate_canonical_factory_authority(
             self._canonical_factory_projection(run, context)
         )
+        if qa_invoked and (fresh_reverified_qa or (report_ready and qa_payload and not preexisting_authority.qa_verdict_present)):
+            stale_report = (
+                not qa_payload or qa_report_path.read_bytes() == prior_report_bytes
+                or (fresh_reverified_qa and qa_recovery.report_hash(qa_payload) == reverified.report_hash)
+            )
+            identity_error = await qa_recovery.qa_report_identity_error(
+                qa_payload, workspace=str(self.workspace), factory_run_id=run.id,
+                review_run_id=str(final_result.run_id or ""),
+            )
+            if stale_report or identity_error:
+                return self._build_quality_gate_failure_stage(
+                    run, reason_code=(
+                        "factory_quality_gate_qa_report_stale_or_foreign_after_repair"
+                        if fresh_reverified_qa else "factory_quality_gate_qa_report_stale_or_foreign_before_commit"
+                    ),
+                    detail=f"Fresh independent QA report is stale or foreign: {identity_error or 'stale_report'}",
+                    context=context, workspace_checks_artifact=workspace_checks_artifact,
+                    workspace_checks_passed=workspace_checks_passed, qa_invoked=qa_invoked,
+                )
+
         qa_commit: dict[str, Any] = {"success": False, "reason": "qa_role_report_unavailable"}
         qa_commit_attempted = False
-        if preexisting_authority.qa_verdict_present:
+        if preexisting_authority.qa_verdict_present and not fresh_reverified_qa:
             # Idempotent recovery/replay: the ledger verdict is authority.  A
             # stale or diagnostic report mirror must not append a competing
             # revision or overwrite an already-committed canonical decision.
@@ -1662,6 +1770,8 @@ class _Mixin03:
         if workspace_checks_artifact:
             artifacts.append(workspace_checks_artifact)
         self._mirror_quality_gate_artifacts(run.id, artifacts)
+        if not is_success and canonical_authority.reason_code == "qa_verdict_failed" and qa_invoked:
+            context["_factory_qa_recovery_report"] = qa_payload
         return StageResult(
             stage="quality_gate",
             status="success" if is_success else "failed",

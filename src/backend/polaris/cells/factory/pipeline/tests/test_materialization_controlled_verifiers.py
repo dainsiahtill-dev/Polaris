@@ -11,19 +11,31 @@ import os
 import shutil
 import subprocess
 import threading
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from polaris.cells.chief_engineer.blueprint.public import (
+    BuildChiefEngineerBlueprintPortfolioCommandV1,
+    ChiefEngineerPortfolioTaskV1,
+    VerificationCommandAuthorityV1,
+    build_chief_engineer_blueprint_portfolio,
+)
+from polaris.cells.chief_engineer.blueprint.public.tests.test_public_contractsa import _portfolio_command_authority
 from polaris.cells.factory.pipeline.internal import factory_materialization_impl as materialization
 from polaris.cells.factory.pipeline.internal.factory_run_models import FactoryConfig, FactoryRun, FactoryRunStatus
 from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
+from polaris.cells.factory.pipeline.tests._characterization_helpers import _library_completion_requirements
 from polaris.cells.factory.pipeline.tests.test_director_stage_materialization_settle import (
     canonical_settle_owner as canonical_settle_owner,
 )
 from polaris.cells.factory.pipeline.tests.test_native_validation_inputs import authored as authored
+from polaris.cells.runtime.execution_broker.internal import project_verification_authority as broker_owner
+from polaris.cells.runtime.execution_broker.public import project_verification as broker
+from polaris.cells.runtime.execution_broker.tests.test_project_verification_receipts import _AuthorityPort, _bind_runner
 from polaris.kernelone.quality.artifact_quality import ArtifactQualityEvidence
 
 
@@ -39,6 +51,158 @@ def _run() -> FactoryRun:
 async def _collect(executor: Any, **kwargs: Any) -> Any:
     result = executor._collect_director_stage_materialization_diagnostics(**kwargs)
     return await result if inspect.isawaitable(result) else result
+
+
+def _canonical_verifiers(
+    workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    files: tuple[str, ...],
+    commands: tuple[tuple[str, tuple[str, ...], str], ...],
+) -> tuple[Any, FactoryRun, Any]:
+    """Real CE persistence and Broker seals; only command authority resolution is doubled."""
+    monkeypatch.setenv("KERNELONE_HOME", "/home/dains/.polaris/test_authority/r26-controlled")
+    task = ChiefEngineerPortfolioTaskV1(task_id="TASK-1", objective="Verify declared inputs", target_files=files)
+    authorities = tuple(
+        VerificationCommandAuthorityV1(task_id=task.task_id, modality=modality, argv=argv)
+        for modality, argv, _profile in commands
+    )
+    test_path = next((path for path in files if "test" in path), files[-1])
+    sources = tuple(path for path in files if path != test_path)
+    completion = _library_completion_requirements(
+        *sources, owner_task_ids=(task.task_id,) * len(sources), test_path=test_path, test_owner_task_id=task.task_id
+    )
+    completion["obligations"]["verification"] = [
+        {
+            "obligation_id": f"verify-{index}",
+            "modality": authority.modality,
+            "command_authority_hash": authority.authority_hash,
+            "applicability": "required",
+            "covers_obligation_ids": [row["obligation_id"] for row in completion["obligations"]["artifacts"]],
+            "owner_task_id": task.task_id,
+        }
+        for index, authority in enumerate(authorities)
+    ]
+    portfolio = build_chief_engineer_blueprint_portfolio(
+        BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=str(workspace),
+            run_id="controlled-contract-run",
+            tasks=(task,),
+            **_portfolio_command_authority(
+                tasks=(task,),
+                project_kind="library",
+                workspace=workspace,
+                run_id="controlled-contract-run",
+                project_id="unit-project",
+                command_authority_override=authorities,
+            ),
+            llm_blueprint={
+                "construction_plan": {"project_interface_contract": {}},
+                "project_completion_contract": completion,
+                "risk_flags": [],
+            },
+        )
+    )
+    contract = portfolio.project_completion_contract
+    assert contract is not None
+
+    class Authority:
+        calls: list[broker.ResolveProjectVerificationAuthorityQueryV1]
+
+        def __init__(self) -> None:
+            self._base = _AuthorityPort()
+            self.calls = []
+
+        def resolve_project_artifact_authority(
+            self, query: broker.ResolveProjectArtifactAuthorityQueryV1
+        ) -> broker.ProjectArtifactExecutionAuthorityV1:
+            result: broker.ProjectArtifactExecutionAuthorityV1 = self._base.resolve_project_artifact_authority(query)
+            return result
+
+        def consume_project_verification_execution_capability(
+            self, command: broker.ConsumeProjectVerificationCapabilityCommandV1
+        ) -> broker.ProjectVerificationCapabilityConsumptionV1:
+            result: broker.ProjectVerificationCapabilityConsumptionV1 = (
+                self._base.consume_project_verification_execution_capability(command)
+            )
+            return result
+
+        def resolve_project_verification_authority(
+            self, query: broker.ResolveProjectVerificationAuthorityQueryV1
+        ) -> broker.ProjectVerificationExecutionAuthorityV1:
+            self.calls.append(query)
+            row = next(item for item in contract.obligations.verification if item.obligation_id == query.obligation_id)
+            index = next(
+                index
+                for index, authority in enumerate(authorities)
+                if authority.authority_hash == row.command_authority_hash
+            )
+            authority = authorities[index]
+            executable = shutil.which(authority.argv[0])
+            assert executable is not None
+            executable_path = Path(executable).absolute()
+            realpath = executable_path.resolve(strict=True)
+            return replace(
+                self._base.resolve_project_verification_authority(query),
+                owner_task_id=authority.task_id,
+                modality=authority.modality,
+                argv=authority.argv,
+                cwd=authority.cwd,
+                command_authority_hash=authority.authority_hash,
+                policy_profile_id=commands[index][2],
+                executable_path=str(executable_path),
+                executable_realpath=str(realpath),
+                executable_hash=hashlib.sha256(realpath.read_bytes()).hexdigest(),
+                input_artifacts=tuple(
+                    broker.ProjectVerificationArtifactInputV1(obligation_id=item.obligation_id, path=item.path)
+                    for item in contract.obligations.artifacts
+                ),
+            )
+
+    authority = Authority()
+    monkeypatch.setattr(broker_owner, "_EXECUTION_AUTHORITY_PORT", authority)
+    executor = OrchestrationStageExecutor(workspace)
+    run = _run()
+    run.id = contract.run_id
+    run.metadata["stage_results"] = {
+        "chief_engineer_review": {"status": "success", "artifacts": [portfolio.portfolio_path]}
+    }
+    return executor, run, authority
+
+
+class _ControlledRunner:
+    """Physical-result projection double: Broker, not this fixture, seals receipts."""
+
+    def __init__(self, outcome: Any) -> None:
+        self.outcome = outcome
+        self.commands: list[tuple[str, ...]] = []
+
+    def run(
+        self,
+        *,
+        name: str,
+        argv: tuple[str, ...],
+        cwd: str,
+        timeout_seconds: float,
+        log_path: str,
+        metadata: dict[str, str],
+        on_launched: Any,
+        control: Any = None,
+    ) -> broker.ProjectVerificationProcessResultV1:
+        del name, cwd, timeout_seconds, metadata, control
+        self.commands.append(argv)
+        outcome = self.outcome(argv) if callable(self.outcome) else self.outcome
+        if isinstance(outcome, BaseException):
+            raise outcome
+        on_launched("controlled-execution", 4242, "controlled-process-start")
+        output = str(
+            outcome.get("stdout_tail", "") or outcome.get("stderr_tail", "") or outcome.get("error", "")
+        ).encode("utf-8")
+        Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(log_path).write_bytes(output)
+        return broker.ProjectVerificationProcessResultV1(
+            exit_code=outcome.get("exit_code"), timed_out=outcome.get("timed_out", False), output_bytes=output
+        )
 
 
 @pytest.mark.asyncio
@@ -78,7 +242,7 @@ def test_missing_ce_blocks_before_any_verifier_spawn(tmp_path: Path, monkeypatch
     (tmp_path / "tests/verify.test.js").write_text("console.log('unit');\n", encoding="utf-8")
     executor = OrchestrationStageExecutor(tmp_path)
     spawn = Mock(return_value=type("Exit", (), {"returncode": 0, "stdout": "", "stderr": ""})())
-    monkeypatch.setattr(materialization.subprocess, "run", spawn)
+    monkeypatch.setattr(broker_owner._ExecutionBrokerProjectVerificationRunner, "run", spawn)
     observation = asyncio.run(_collect(executor, run=_run()))
     assert spawn.call_count == 0
     assert observation.blockers
@@ -90,10 +254,7 @@ def test_missing_ce_blocks_before_any_verifier_spawn(tmp_path: Path, monkeypatch
 async def test_collector_builds_before_tests_that_consume_generated_outputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, compile_only: bool, build_runs_tests: bool
 ) -> None:
-    """Real isolated commands in a self-owned fixture; Factory admission is doubled."""
-    from polaris.cells.factory.pipeline.internal import factory_node_dependencies as dependencies
-    from polaris.cells.factory.pipeline.internal.native_validation_group import verification_group
-
+    """Actual Broker-sealed Node commands share generated outputs without changing inputs."""
     workspace = tmp_path / "source"
     workspace.mkdir()
     files = {
@@ -116,55 +277,32 @@ async def test_collector_builds_before_tests_that_consume_generated_outputs(
         path = workspace / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-    monkeypatch.setattr(
-        dependencies,
-        "authenticated_preparation_contract",
-        Mock(return_value=SimpleNamespace(project_id="unit-project")),
+    executor, run, _ = _canonical_verifiers(
+        workspace,
+        monkeypatch,
+        files=tuple(files),
+        commands=(
+            ("build", ("npm", "run", "build"), "node.script_build"),
+            ("test", ("npm", "test"), "node.script_test"),
+        ),
     )
     monkeypatch.setattr(materialization, "node_dependency_readiness", Mock(return_value=SimpleNamespace(ready=True)))
-    node = shutil.which("node")
-    assert node is not None
-    tool_root = Path(node).resolve().parent.parent
-    # System roots are already mounted; avoid hashing all of /usr for a fixture.
-    tool_roots = () if tool_root in {Path("/usr"), Path("/usr/local")} else (tool_root,)
-    with verification_group(
-        workspace=workspace,
-        candidate_id="build-test-fixture",
-        input_hashes={name: hashlib.sha256(content.encode("utf-8")).hexdigest() for name, content in files.items()},
-        toolchain_roots=tool_roots,
-        staging_parent=tmp_path,
-    ) as group:
-
-        async def command(argv: list[str], timeout: float) -> dict[str, Any]:
-            result = group.execute_command(group.prepare_command(argv), timeout=timeout)
-            return {
-                "command": argv,
-                "exit_code": result.returncode,
-                "passed": result.returncode == 0,
-                "stdout_tail": result.stdout,
-                "stderr_tail": result.stderr,
-            }
-
-        monkeypatch.setattr(
-            materialization.NativeValidationSession,
-            "from_factory",
-            Mock(return_value=SimpleNamespace(run_command=command, close=lambda: None)),
-        )
-        result = await _collect(
-            OrchestrationStageExecutor(workspace), run=_run(), context={"project_id": "unit-project"}
-        )
-    assert not result.blockers
-    test = next(item for item in result.verifier_results if item["command"] == ["npm", "test"])
+    result = await _collect(executor, run=run, context={"project_id": "unit-project"})
+    assert not result.blockers, result.to_dict()
+    assert [row["command"] for row in result.verifier_results] == [["npm", "run", "build"], ["npm", "test"]]
+    assert all(row["receipt_ref"] and row["receipt_hash"] for row in result.verifier_results)
+    test = result.verifier_results[-1]
     if compile_only and not build_runs_tests:
         assert result
-        assert "npm manifest-only test script" in str(result)
-        assert test["exit_code"] == 0
-        assert test["passed"] is False
+        assert test["exit_code"] == 0 and test["passed"] is False
+        assert test["error"] == "project_verification_proof_failed"
+        assert result.to_dict()["failed_required_verifiers"] == [["npm", "test"]]
     else:
         assert not result
-        assert "# tests 1" in test["stdout_tail"]
+        assert "# tests 1" in test["diagnostic_excerpt"]
         assert test["passed"] is True
-    assert not (workspace / "dist").exists()
+    assert (workspace / "dist/tests/verify.test.js").read_text(encoding="utf-8") == files["tests/verify.test.js"]
+    assert all((workspace / name).read_text(encoding="utf-8") == content for name, content in files.items())
 
 
 def test_collector_consumes_static_inventory_without_second_tree_scan(
@@ -217,23 +355,41 @@ def test_incomplete_static_evidence_blocks_claim(tmp_path: Path, monkeypatch: py
 
 
 def test_unknown_deferred_check_cannot_be_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unknown required verifier intents stay deferred and block repair."""
+    """Static unknown discovery cannot erase an actual failed owner-sealed verifier."""
     import polaris.kernelone.quality as quality
     from polaris.kernelone.quality.artifact_quality import ArtifactQualityDeferredCheck
 
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/main.js").write_text("export const value = 1;\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/verify.test.js").write_text("require('node:test')('value', () => {});\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"node tests/verify.test.js"}}', encoding="utf-8")
+    executor, run, _ = _canonical_verifiers(
+        tmp_path,
+        monkeypatch,
+        files=("src/main.js", "tests/verify.test.js", "package.json"),
+        commands=(("test", ("npm", "test"), "node.script_test"),),
+    )
     monkeypatch.setattr(
         quality,
         "scan_workspace_artifact_quality_evidence",
         Mock(
             return_value=ArtifactQualityEvidence(
                 scan_mode="pure_static",
-                deferred_checks=(ArtifactQualityDeferredCheck("unknown-required", ("main.x",)),),
+                deferred_checks=(ArtifactQualityDeferredCheck("unknown-required", ("src/main.js",)),),
             )
         ),
     )
-    observation = asyncio.run(_collect(OrchestrationStageExecutor(tmp_path), run=_run()))
-    assert observation.blockers
+    monkeypatch.setattr(materialization, "node_dependency_readiness", Mock(return_value=SimpleNamespace(ready=True)))
+    _bind_runner(monkeypatch, _ControlledRunner({"exit_code": 1, "stderr_tail": "assertion failed"}))
+    observation = asyncio.run(_collect(executor, run=run))
+    assert observation and not observation.blockers
     assert observation.static_evidence["deferred_checks"][0]["check_id"] == "unknown-required"
+    assert observation.verifier_results[0]["passed"] is False
+    assert observation.verifier_results[0]["receipt_ref"]
+    assert observation.to_dict()["failed_required_verifiers"] == [["npm", "test"]]
+    assert observation.to_dict()["missing_required_verifiers"] == []
+    assert materialization._materialization_observation_with_coverage(observation) is observation
 
 
 def test_bare_diagnostics_do_not_authorize_settle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -294,36 +450,44 @@ def _factory_owner(executor: Any, authored: tuple[Any, Any, Any]) -> tuple[Facto
 
 
 def test_missing_context_project_id_uses_authenticated_ce_identity(
-    tmp_path: Path, authored: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / "src").mkdir(exist_ok=True)
-    (tmp_path / "src/authored.js").write_text("export function value() { return 1; }\n", encoding="utf-8")
-    executor = OrchestrationStageExecutor(tmp_path)
-    run, context = _factory_owner(executor, authored)
-    project_id = context.pop("project_id")
-    captured: dict[str, Any] = {}
+    """Missing presentation identity uses the persisted CE contract, never a guessed project."""
+    from polaris.cells.factory.pipeline.tests.test_materialization_contract_verifiers import _fixture
 
-    def observe_admission(_executor: Any, _run: FactoryRun, bound_context: dict[str, Any], **_kwargs: Any) -> Any:
-        captured.update(bound_context)
-        raise RuntimeError("stop_after_project_binding")
+    executor, run, _ = _fixture(tmp_path, monkeypatch)
+    captured: list[str] = []
+    authorize = broker.authorize_project_verification_command
 
-    monkeypatch.setattr(materialization.NativeValidationSession, "from_factory", observe_admission)
+    def observe(query: broker.ResolveProjectVerificationAuthorityQueryV1) -> broker.RunProjectVerificationCommandV1:
+        captured.append(query.project_id)
+        return authorize(query)
+
+    monkeypatch.setattr(broker, "authorize_project_verification_command", observe)
+    context = {"factory_run_id": run.id, "workspace": str(executor.workspace)}
     observation = asyncio.run(_collect(executor, run=run, context=context))
-
-    assert captured["project_id"] == project_id
-    assert "stop_after_project_binding" in str(observation.blockers)
-    assert "context_project_mismatch" not in str(observation.blockers)
+    assert not observation.blockers, observation.to_dict()
+    assert captured and set(captured) == {"unit-project"}
     assert "project_id" not in context
+    assert all(row["receipt_ref"] for row in observation.verifier_results)
 
 
 def test_dependency_change_reopens_validation_group_after_owned_preparation(
-    tmp_path: Path, authored: tuple[Any, Any, Any], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / "package.json").write_text('{"scripts":{"test":"node --test tests/verify.test.js"}}', encoding="utf-8")
-    (tmp_path / "tests").mkdir(exist_ok=True)
-    (tmp_path / "tests/verify.test.js").write_text("require('node:test')('value', () => {});\n", encoding="utf-8")
-    executor = OrchestrationStageExecutor(tmp_path)
-    run, context = _factory_owner(executor, authored)
+    """Old groups close before preparation; canonical Broker execution does not fabricate a new group."""
+    workspace = tmp_path / "preparation-project"
+    (workspace / "src").mkdir(parents=True)
+    (workspace / "src/main.js").write_text("export const value = 1;\n", encoding="utf-8")
+    (workspace / "tests").mkdir()
+    (workspace / "tests/verify.test.js").write_text("require('node:test')('value', () => {});\n", encoding="utf-8")
+    (workspace / "package.json").write_text('{"scripts":{"test":"node --test tests/verify.test.js"}}', encoding="utf-8")
+    executor, run, _ = _canonical_verifiers(
+        workspace,
+        monkeypatch,
+        files=("src/main.js", "tests/verify.test.js", "package.json"),
+        commands=(("test", ("npm", "test"), "node.script_test"),),
+    )
     old = SimpleNamespace(close=Mock())
     sessions: list[Any] = [old]
     monkeypatch.setattr(materialization, "node_dependency_readiness", Mock(return_value=SimpleNamespace(ready=False)))
@@ -331,74 +495,65 @@ def test_dependency_change_reopens_validation_group_after_owned_preparation(
     async def prepare(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         old.close.assert_called_once()
         assert sessions == []
+        (workspace / "node_modules").mkdir()
         return {"passed": True, "exit_code": 0}
 
     preparation = AsyncMock(side_effect=prepare)
     monkeypatch.setattr(materialization, "_await_materialization_preparation", preparation)
-
-    async def command(argv: list[str], _timeout: float) -> dict[str, Any]:
-        return {"command": argv, "exit_code": 0, "passed": True}
-
-    renewed = SimpleNamespace(run_command=command)
-    admission = Mock(return_value=renewed)
+    admission = Mock(side_effect=AssertionError("a disposable observation group became receipt authority"))
     monkeypatch.setattr(materialization.NativeValidationSession, "from_factory", admission)
-
-    observation = asyncio.run(_collect(executor, run=run, context=context, sessions=sessions))
-
-    assert observation.blockers == []
+    runner = _ControlledRunner({"exit_code": 0, "stdout_tail": "# tests 1\n# pass 1\n"})
+    _bind_runner(monkeypatch, runner)
+    observation = asyncio.run(_collect(executor, run=run, sessions=sessions))
+    assert not observation.blockers, observation.to_dict()
     preparation.assert_awaited_once()
-    admission.assert_called_once()
-    assert sessions == [renewed]
+    admission.assert_not_called()
+    assert sessions == []
     assert observation.preparation_results == [{"passed": True, "exit_code": 0}]
+    assert observation.verifier_results[0]["receipt_ref"]
 
 
 def test_real_untrusted_group_rejects_before_effect_or_repair(
     tmp_path: Path,
     tmp_path_factory: pytest.TempPathFactory,
-    authored: tuple[Any, Any, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Real CE persistence and original bwrap gate; no trusted callback/UID double."""
-    from polaris.cells.factory.pipeline.internal import native_validation_group as group
+    """A caller-owned isolation executable cannot become a trusted verification boundary."""
+    from polaris.cells.factory.pipeline.tests.test_materialization_contract_verifiers import _fixture
 
-    # Select an actual untrusted PATH executable instead of assuming the host
-    # lacks a trusted system installation. Keep the original binary/UID gate.
+    executor, run, _ = _fixture(tmp_path, monkeypatch)
     fake_tools = tmp_path_factory.mktemp("untrusted-tools")
     fake_bwrap = fake_tools / "bwrap"
     fake_bwrap.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
     fake_bwrap.chmod(0o755)
     monkeypatch.setenv("PATH", str(fake_tools), prepend=os.pathsep)
-    executor = OrchestrationStageExecutor(tmp_path)
-    run, context = _factory_owner(executor, authored)
-    spawn = Mock(side_effect=AssertionError("untrusted Group spawned"))
-    monkeypatch.setattr(group, "_owned_process_runner", spawn)
-    claim = Mock(side_effect=AssertionError("untrusted Group claimed repair"))
-    schedule = Mock(side_effect=AssertionError("untrusted Group entered schedule"))
+    spawn = Mock(side_effect=AssertionError("untrusted sandbox reached physical runner"))
+    monkeypatch.setattr(broker_owner._ExecutionBrokerProjectVerificationRunner, "run", spawn)
+    claim = Mock(side_effect=AssertionError("untrusted sandbox claimed repair"))
+    schedule = Mock(side_effect=AssertionError("untrusted sandbox entered schedule"))
     monkeypatch.setattr(executor, "_claim_workspace_quality_repair_attempt", claim)
     monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", schedule)
     before = {
-        p.relative_to(tmp_path).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in tmp_path.rglob("*")
-        if p.is_file()
+        path: (executor.workspace / path).read_bytes()
+        for path in ("src/module.py", "tests/test_output.py", "package.json")
     }
     result = asyncio.run(
         executor._run_director_stage_materialization_quality_settle(
-            run=run, context=context, stage_status="failed", error_code="director.dispatch_timeout"
+            run=run,
+            stage_status="failed",
+            error_code="director.dispatch_timeout",
         )
     )
     assert result["ok"] is False
     assert result["reason"] == "materialization_verification_blocked"
-    assert "verification_isolation_binary_untrusted" in result["detail"]
+    assert "untrusted" in result["detail"]
     assert result["validation_observations"][0]["missing_required_verifiers"] == [
-        ["node", "--check", "src/authored.js"]
+        ["python", "-m", "compileall", "-b", "src"],
+        ["python", "-m", "pytest", "-q", "tests/test_output.py"],
     ]
     assert result["validation_observations"][0]["failed_required_verifiers"] == []
     assert spawn.call_count == claim.call_count == schedule.call_count == 0
-    assert before == {
-        p.relative_to(tmp_path).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in tmp_path.rglob("*")
-        if p.is_file()
-    }
+    assert all((executor.workspace / path).read_bytes() == body for path, body in before.items())
 
 
 @pytest.mark.parametrize(
@@ -431,11 +586,13 @@ def test_identity_mismatch_never_opens_group(
         context["workspace"] = str(tmp_path / "foreign")
     else:
         context["run_id"] = "other-run"
-    admission = Mock(side_effect=AssertionError("mismatched identity opened Group"))
-    monkeypatch.setattr(materialization.NativeValidationSession, "from_factory", admission)
+    admission = Mock(side_effect=AssertionError("mismatched identity reached Broker command authority"))
+    spawn = Mock(side_effect=AssertionError("mismatched identity spawned a verifier"))
+    monkeypatch.setattr(broker, "authorize_project_verification_command", admission)
+    monkeypatch.setattr(broker_owner._ExecutionBrokerProjectVerificationRunner, "run", spawn)
     observation = asyncio.run(_collect(executor, run=run, context=context))
     assert error in str(observation.blockers)
-    assert admission.call_count == 0
+    assert admission.call_count == spawn.call_count == 0
 
 
 @pytest.mark.parametrize(
@@ -452,63 +609,58 @@ def test_identity_mismatch_never_opens_group(
             "verifier_failure",
             False,
         ),
-        (PermissionError("denied"), "startup", True),
-        (subprocess.TimeoutExpired(["npm", "test"], 0.01, output="partial"), "timeout", True),
-        ({"exit_code": None, "passed": False, "error": "timeout after 0.1s"}, "timeout", True),
+        (PermissionError("denied"), "admission", True),
+        (subprocess.TimeoutExpired(["npm", "test"], 0.01, output="partial"), "timeout", False),
+        ({"exit_code": None, "passed": False, "error": "timeout after 0.1s"}, "timeout", False),
     ],
 )
 def test_controlled_failures_keep_command_exit_error_and_classification(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    outcome: Any,
-    kind: str,
-    blocker: bool,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: Any, kind: str, blocker: bool
 ) -> None:
-    """Interface/result projection doubles; none prove physical Group execution."""
+    """Component runner outcomes go through the real Broker seal and current receipt query."""
     import polaris.kernelone.quality as quality
-    from polaris.cells.factory.pipeline.internal import factory_node_dependencies as dependencies
 
-    (tmp_path / "package.json").write_text('{"scripts":{"test":"node tests/verify.test.js"}}', encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/main.js").write_text("export const value = 1;\n", encoding="utf-8")
     (tmp_path / "tests").mkdir()
-    (tmp_path / "tests/verify.test.js").write_text("console.log('unit');", encoding="utf-8")
+    (tmp_path / "tests/verify.test.js").write_text("require('node:test')('value', () => {});\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"node tests/verify.test.js"}}', encoding="utf-8")
     monkeypatch.setattr(
         quality,
         "scan_workspace_artifact_quality_evidence",
         Mock(return_value=ArtifactQualityEvidence(scan_mode="pure_static")),
     )
-    monkeypatch.setattr(
-        dependencies,
-        "authenticated_preparation_contract",
-        Mock(return_value=SimpleNamespace(project_id="unit-project")),
+    executor, run, _ = _canonical_verifiers(
+        tmp_path,
+        monkeypatch,
+        files=("src/main.js", "tests/verify.test.js", "package.json"),
+        commands=(("test", ("npm", "test"), "node.script_test"),),
     )
     monkeypatch.setattr(materialization, "node_dependency_readiness", Mock(return_value=SimpleNamespace(ready=True)))
-
-    async def command(argv: list[str], _timeout: float) -> dict[str, Any]:
-        assert argv == ["npm", "test"]
-        if isinstance(outcome, BaseException):
-            raise outcome
-        return {"command": argv, "stdout_tail": "", "stderr_tail": "", **outcome}
-
-    close = Mock()
-    monkeypatch.setattr(
-        materialization.NativeValidationSession,
-        "from_factory",
-        Mock(return_value=SimpleNamespace(run_command=command, close=close)),
-    )
-    result = asyncio.run(
-        _collect(OrchestrationStageExecutor(tmp_path), run=_run(), context={"project_id": "unit-project"})
-    )
-    assert bool(result.blockers) is blocker
-    assert result.verifier_results[0]["command"] == ["npm", "test"]
-    assert result.verifier_results[0]["failure_kind"] == kind
-    assert "npm test failed" in str(result)
-    assert result.verifier_results[0]["exit_code"] == (
-        9 if kind == "nonzero" else 0 if kind == "verifier_failure" else None
-    )
+    if isinstance(outcome, subprocess.TimeoutExpired):
+        outcome = {"exit_code": None, "timed_out": True, "stdout_tail": str(outcome.output or "")}
+    elif isinstance(outcome, dict) and outcome.get("exit_code") is None:
+        outcome = {**outcome, "timed_out": True}
+    runner = _ControlledRunner(outcome)
+    _bind_runner(monkeypatch, runner)
+    result = asyncio.run(_collect(executor, run=run, context={"project_id": "unit-project"}))
+    assert bool(result.blockers) is blocker, result.to_dict()
+    row = result.verifier_results[0]
+    assert row["command"] == ["npm", "test"]
+    assert row["failure_kind"] == kind
+    assert row["exit_code"] == (9 if kind == "nonzero" else 0 if kind == "verifier_failure" else None)
     projection = result.to_dict()
-    assert projection["failed_required_verifiers"] == ([] if kind == "startup" else [["npm", "test"]])
-    assert projection["missing_required_verifiers"] == ([["npm", "test"]] if kind == "startup" else [])
-    assert close.call_count == 1
+    if kind == "admission":
+        assert not row.get("receipt_ref")
+        assert projection["failed_required_verifiers"] == []
+        assert projection["missing_required_verifiers"] == [["npm", "test"]]
+        assert not result._owner_receipts
+    else:
+        assert "npm test failed" in str(result)
+        assert row["receipt_ref"] and row["receipt_hash"]
+        assert projection["failed_required_verifiers"] == [["npm", "test"]]
+        assert projection["missing_required_verifiers"] == []
+        assert type(result._owner_receipts[0]) is broker.ProjectVerificationReceiptV1
 
 
 @pytest.mark.asyncio
@@ -560,15 +712,15 @@ async def test_cleanup_error_cannot_replace_primary_lifecycle_error(
     assert "unit close failed" in caplog.text
 
 
-def test_project_typecheck_does_not_erase_required_file_parser(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Unit dispatch: a tsconfig may exclude the required parser's source."""
+def test_project_typecheck_does_not_erase_required_file_parser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both explicit CE lint obligations survive, including a source excluded from the project."""
     import polaris.kernelone.quality as quality
-    from polaris.cells.factory.pipeline.internal import factory_node_dependencies as dependencies
     from polaris.kernelone.quality.artifact_quality import ArtifactQualityDeferredCheck
 
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src/main.ts").write_text("export const value = 1;\n", encoding="utf-8")
+    (tmp_path / "tests/excluded.ts").write_text("export const broken: = 1;\n", encoding="utf-8")
     (tmp_path / "tsconfig.json").write_text('{"include":["src/main.ts"]}', encoding="utf-8")
     evidence = ArtifactQualityEvidence(
         scan_mode="pure_static",
@@ -578,36 +730,37 @@ def test_project_typecheck_does_not_erase_required_file_parser(
         ),
     )
     monkeypatch.setattr(quality, "scan_workspace_artifact_quality_evidence", Mock(return_value=evidence))
-    monkeypatch.setattr(
-        dependencies,
-        "authenticated_preparation_contract",
-        Mock(return_value=SimpleNamespace(project_id="unit-project")),
+    executor, run, _ = _canonical_verifiers(
+        tmp_path,
+        monkeypatch,
+        files=("src/main.ts", "tsconfig.json", "tests/excluded.ts"),
+        commands=(
+            ("lint", ("npx", "tsc", "-p", "tsconfig.json", "--noEmit"), "node.typescript_check"),
+            ("lint", ("npx", "tsc", "--noEmit", "tests/excluded.ts"), "node.typescript_check"),
+            ("test", ("python", "-m", "pytest", "-q"), "python.pytest"),
+        ),
     )
     monkeypatch.setattr(materialization, "node_dependency_readiness", Mock(return_value=SimpleNamespace(ready=True)))
-    commands: list[list[str]] = []
 
-    async def command(argv: list[str], _timeout: float) -> dict[str, Any]:
-        commands.append(argv)
+    def outcome(argv: tuple[str, ...]) -> dict[str, Any]:
         parser = "tests/excluded.ts" in argv
         return {
-            "command": argv,
             "exit_code": 1 if parser else 0,
-            "passed": not parser,
             "stdout_tail": "tests/excluded.ts: error TS1005: expected ';'" if parser else "",
-            "stderr_tail": "",
         }
 
-    monkeypatch.setattr(
-        materialization.NativeValidationSession,
-        "from_factory",
-        Mock(return_value=SimpleNamespace(run_command=command, close=lambda: None)),
-    )
-    observation = asyncio.run(
-        _collect(OrchestrationStageExecutor(tmp_path), run=_run(), context={"project_id": "unit-project"})
-    )
-    assert any("tests/excluded.ts" in argv for argv in commands)
+    runner = _ControlledRunner(outcome)
+    _bind_runner(monkeypatch, runner)
+    observation = asyncio.run(_collect(executor, run=run, context={"project_id": "unit-project"}))
+    assert not observation.blockers, observation.to_dict()
+    assert any("tests/excluded.ts" in argv for argv in runner.commands)
     assert any("TS1005" in diagnostic for diagnostic in observation)
-    assert len(observation.verifier_results) == 2
+    assert len(observation.verifier_results) == 3
+    assert all(row["receipt_ref"] for row in observation.verifier_results[:2])
+    assert observation.verifier_results[0]["passed"] is True
+    assert observation.verifier_results[1]["passed"] is False
+    assert not observation.verifier_results[2].get("receipt_ref")
+    assert observation.to_dict()["missing_required_verifiers"] == [["python", "-m", "pytest", "-q"]]
 
 
 class _LifecycleSession:
@@ -754,10 +907,7 @@ def test_manifest_scan_race_never_reads_external_content_or_admits_effects(
 ) -> None:
     """Real scanner/read boundary; filesystem identities and trust gate stay real."""
     import polaris.kernelone.quality as quality
-    from polaris.cells.factory.pipeline.internal import (
-        factory_node_dependencies as dependencies,
-        native_validation_group as group,
-    )
+    from polaris.cells.factory.pipeline.internal import factory_node_dependencies as dependencies
 
     manifest = tmp_path / "package.json"
     manifest.write_text('{"scripts":{"test":"node tests/verify.test.js"}}', encoding="utf-8")
@@ -795,15 +945,15 @@ def test_manifest_scan_race_never_reads_external_content_or_admits_effects(
     monkeypatch.setattr(Path, "read_text", observe_read)
     monkeypatch.setattr(quality, "scan_workspace_artifact_quality_evidence", scan_then_replace)
     executor = OrchestrationStageExecutor(tmp_path)
-    admission = Mock(side_effect=AssertionError("manifest race reached CE/Group"))
+    admission = Mock(side_effect=AssertionError("manifest race reached Broker command authority"))
     authentication = Mock(side_effect=AssertionError("manifest race reached CE authentication"))
     spawn = Mock(side_effect=AssertionError("manifest race spawned a verifier"))
     preparation = Mock(side_effect=AssertionError("manifest race started preparation"))
     claim = Mock(side_effect=AssertionError("manifest race claimed repair"))
     schedule = Mock(side_effect=AssertionError("manifest race entered repair schedule"))
-    monkeypatch.setattr(materialization.NativeValidationSession, "from_factory", admission)
+    monkeypatch.setattr(broker, "authorize_project_verification_command", admission)
     monkeypatch.setattr(dependencies, "authenticated_preparation_contract", authentication)
-    monkeypatch.setattr(group, "_owned_process_runner", spawn)
+    monkeypatch.setattr(broker_owner._ExecutionBrokerProjectVerificationRunner, "run", spawn)
     monkeypatch.setattr(executor, "_ensure_director_stage_materialization_typescript_toolchain", preparation)
     monkeypatch.setattr(executor, "_claim_workspace_quality_repair_attempt", claim)
     monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", schedule)

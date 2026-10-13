@@ -17,6 +17,7 @@ class TestCEConsumerTaskMarketHandoffIntegration:
         mock_adr_store_cls: MagicMock,
         mock_run_preflight: MagicMock,
         mock_get_svc: MagicMock,
+        tmp_path,
     ) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
@@ -45,7 +46,7 @@ class TestCEConsumerTaskMarketHandoffIntegration:
         mock_adr_store = MagicMock()
         mock_adr_store_cls.return_value = mock_adr_store
 
-        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        consumer = CEConsumer(workspace=str(tmp_path), worker_id="w1")
         results = consumer.poll_once()
 
         assert len(results) == 1
@@ -87,6 +88,7 @@ class TestCEConsumerTaskMarketHandoffIntegration:
         mock_adr_store_cls: MagicMock,
         mock_run_preflight: MagicMock,
         mock_get_svc: MagicMock,
+        tmp_path,
     ) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
@@ -115,7 +117,7 @@ class TestCEConsumerTaskMarketHandoffIntegration:
         mock_adr_store = MagicMock()
         mock_adr_store_cls.return_value = mock_adr_store
 
-        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        consumer = CEConsumer(workspace=str(tmp_path), worker_id="w1")
         results = consumer.poll_once()
 
         assert len(results) == 1
@@ -161,13 +163,14 @@ class TestCEConsumerHandoffGate:
         mock_run_preflight: MagicMock,
         mock_get_svc: MagicMock,
         monkeypatch,
+        tmp_path,
     ) -> None:
         monkeypatch.delenv("KERNELONE_CE_HANDOFF_ENFORCEMENT", raising=False)
         mock_svc = self._wire_blocked_claim(mock_get_svc)
         mock_run_preflight.return_value = {"blueprint_id": "bp-blk"}
         mock_adr_store_cls.return_value = MagicMock()
 
-        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        consumer = CEConsumer(workspace=str(tmp_path), worker_id="w1")
         results = consumer.poll_once()
 
         # Advisory: the task still advances to the Director...
@@ -191,13 +194,14 @@ class TestCEConsumerHandoffGate:
         mock_run_preflight: MagicMock,
         mock_get_svc: MagicMock,
         monkeypatch,
+        tmp_path,
     ) -> None:
         monkeypatch.setenv("KERNELONE_CE_HANDOFF_ENFORCEMENT", "1")
         mock_svc = self._wire_blocked_claim(mock_get_svc)
         mock_run_preflight.return_value = {"blueprint_id": "bp-blk"}
         mock_adr_store_cls.return_value = MagicMock()
 
-        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        consumer = CEConsumer(workspace=str(tmp_path), worker_id="w1")
         results = consumer.poll_once()
 
         # Enforced: the blocked task is requeued, never handed to the Director.

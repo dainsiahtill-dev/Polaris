@@ -66,6 +66,16 @@ internal/
 
 - `runtime/state/qa/*`
 
+## Canonical verdict revisions
+
+QA observation and final-verdict events publish explicit Run Ledger obligation
+and subject fields derived from the host run, owning task, and QA gate purpose.
+Run Ledger allocates revisions from canonical facts. A fresh verdict can replace
+the effective outcome for that exact epoch while retaining the previous FAIL as
+history; report timestamps, model prose, and arrival order grant no authority.
+Different run/task epochs remain distinct obligations. The verdict engine still
+requires a current TaskBoundary and an evidence barrier before issuing PASS.
+
 ## Effects Allowed
 
 - `fs.read:workspace/**`

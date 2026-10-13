@@ -40,7 +40,7 @@ def _tasks() -> list[dict]:
             "phase": "validation",
             "assigned_to": "Director",
             "depends_on": ["build"],
-            "verification_commands": [{"modality": "test", "argv": ["node", "tests/check.mjs"], "cwd": "."}],
+            "verification_commands": [{"modality": "test", "argv": ["node", "--test", "tests/check.mjs"], "cwd": "."}],
         },
     ]
 

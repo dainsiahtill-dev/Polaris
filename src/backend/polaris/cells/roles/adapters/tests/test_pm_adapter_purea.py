@@ -358,12 +358,14 @@ class TestBuildPmMessage:
         msg = adapter._build_pm_message([{"subject": "T1", "status": "pending"}], "Do more")
         assert "T1" in msg
 
-    def test_meta_planning_injection(self, tmp_path: Any) -> None:
+    def test_meta_planning_hint_does_not_force_product_decomposition(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         analysis = {"complexity": "high", "estimated_task_count": 7, "recommended_strategy": "deep_decomposition"}
         msg = adapter._build_pm_message([], "Big task", directive_analysis=analysis)
-        assert "深度分解" in msg
-        assert "里程碑检查点" in msg
+        assert "pm.task_intent.v1" in msg
+        assert "小项目可为一个完整任务" in msg
+        assert "保留耦合能力" in msg
+        assert "里程碑检查点" not in msg
 
     def test_projection_hint_injection(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -386,11 +388,10 @@ class TestBuildPmMessage:
 
         msg = adapter._build_pm_message([], "Build a runnable Go CLI")
 
-        assert '"verification_commands"' in msg
-        assert '"modality": "environment_prep|build|test|lint|entrypoint"' in msg
-        assert '"argv": ["executable", "arg"]' in msg
-        assert '"cwd": "."' in msg
-        assert "shell command string" in msg
+        assert "验证 recipe 由 Chief Engineer 决定" in msg
+        assert "verification_commands 若声明，必须精确保留 modality/argv 数组/cwd" in msg
+        assert "禁止 shell 字符串" in msg
+        assert "不要猜测这些技术字段" in msg
 
     def test_pol71_code_edit_example_does_not_require_projection(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -403,13 +404,13 @@ class TestBuildPmMessage:
             {"execution_backend": "projection_generate", "projection": {"scenario_id": "   "}},
         ]:
             msg = adapter._build_pm_message([], "Implement model", projection_hint=hint)
-            payload, _ = json.JSONDecoder().raw_decode(msg[msg.index("\n{\n") + 1 :])
+            payload = json.loads(msg.split("合同示例:\n", 1)[1])
             task = payload["tasks"][0]
-            assert task["execution_backend"] == "code_edit"
+            assert payload["schema_version"] == "pm.task_intent.v1"
             assert "projection" not in task
             assert "projection_generate" not in msg
             assert "scenario_id" not in msg
-            assert "verification_commands" in task
+            assert "verification_commands" not in task
 
     def test_pol71_valid_projection_contract_uses_existing_fields(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -445,7 +446,7 @@ class TestBuildPmRetryMessage:
         for i in range(12):
             assert f"missing-{i}" in message
             assert f"warning-{i}" in message
-            assert f"invalid-{i}: retain" in message
+            assert f'"code":"invalid-{i}"' in message
         unrelated = adapter._build_pm_retry_message(
             directive="Another run", quality={"score": 0}, previous_output="malformed"
         )
@@ -471,8 +472,12 @@ class TestBuildPmRetryMessage:
             retry = adapter._build_pm_retry_message(
                 directive="Implement model", quality=quality, previous_output="invalid", projection_hint=hint
             )
-            initial_payload, _ = json.JSONDecoder().raw_decode(initial[initial.index("\n{\n") + 1 :])
-            retry_payload, _ = json.JSONDecoder().raw_decode(retry[retry.index("\n{\n") + 1 :])
+            if hint:
+                initial_payload, _ = json.JSONDecoder().raw_decode(initial[initial.index("\n{\n") + 1 :])
+                retry_payload, _ = json.JSONDecoder().raw_decode(retry[retry.index("\n{\n") + 1 :])
+            else:
+                initial_payload, _ = json.JSONDecoder().raw_decode(initial.split("合同示例:\n", 1)[1])
+                retry_payload, _ = json.JSONDecoder().raw_decode(retry.split("合同示例:\n", 1)[1])
             assert set(initial_payload["tasks"][0]) == set(retry_payload["tasks"][0])
             assert ("projection" in retry_payload["tasks"][0]) is bool(hint)
 
@@ -482,7 +487,8 @@ class TestBuildPmRetryMessage:
         msg = adapter._build_pm_retry_message(directive="Fix it", quality=quality, previous_output="old")
         assert "missing_goal" in msg
         assert "weak_scope" in msg
-        assert "至少 3 个任务" in msg
+        assert "小项目可为一个完整任务" in msg
+        assert "至少 3 个任务" not in msg
         assert "上一版 PM 合同未通过质量门禁" not in msg
         assert "禁止输出 [TOOL_CALL]" not in msg
         assert "Prior generation diagnostic" in msg
@@ -1828,7 +1834,9 @@ ts_syntax
         adapter = _make_adapter(tmp_path)
         quality = {"score": 50, "critical_issues": [], "warnings": []}
         msg = adapter._build_pm_retry_message(directive="Fix it", quality=quality, previous_output="old")
-        assert "无关键问题信息" in msg
+        assert '"critical_issues":[]' in msg
+        assert "Prior generation diagnostic" in msg
+        assert "pm.task_intent.v1" in msg
 
     def test_preserves_oversized_retry_directive(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

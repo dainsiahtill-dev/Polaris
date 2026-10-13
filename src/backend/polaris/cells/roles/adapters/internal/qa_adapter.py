@@ -492,6 +492,9 @@ class QAAdapter(BaseRoleAdapter):
                 target=target,
                 review_result=review_result,
                 raw_output=raw_content,
+                task_id=task_id,
+                run_id=run_id,
+                context=context,
             )
             taskboard_update = self._apply_taskboard_qa_verdict(
                 review_result=review_result,
@@ -501,6 +504,8 @@ class QAAdapter(BaseRoleAdapter):
             self._update_task_progress(task_id, "completed")
             return self._with_task_runtime_transition_failure_evidence(
                 {
+                    "task_id": task_id,
+                    "run_id": run_id,
                     "success": bool(review_result.get("passed")),
                     "stage": "qa",
                     "review_type": review_type,
@@ -543,6 +548,9 @@ class QAAdapter(BaseRoleAdapter):
                 target=target,
                 review_result=finalized,
                 raw_output=raw_content,
+                task_id=task_id,
+                run_id=run_id,
+                context=context,
             )
             taskboard_update = self._apply_taskboard_qa_verdict(
                 review_result=finalized,
@@ -551,6 +559,8 @@ class QAAdapter(BaseRoleAdapter):
             self._update_task_progress(task_id, "completed")
             return self._with_task_runtime_transition_failure_evidence(
                 {
+                    "task_id": task_id,
+                    "run_id": run_id,
                     "success": bool(finalized.get("passed")),
                     "stage": "qa",
                     "review_type": review_type,
@@ -1222,12 +1232,22 @@ class QAAdapter(BaseRoleAdapter):
         target: str,
         review_result: dict[str, Any],
         raw_output: str,
+        task_id: str = "",
+        run_id: str = "",
+        context: dict[str, Any] | None = None,
     ) -> Path:
         report_path = Path(resolve_runtime_path(self.workspace, "runtime/qa/report.json"))
         report_path.parent.mkdir(parents=True, exist_ok=True)
+        parent = context or {}
+        raw_metadata = parent.get("metadata")
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
         payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": "qa_adapter_v3",
+            "workspace": str(Path(self.workspace).resolve()),
+            "run_id": run_id,
+            "task_id": task_id,
+            "factory_run_id": str(parent.get("factory_run_id") or metadata.get("factory_run_id") or ""),
             "review_type": review_type,
             "target": target,
             "runtime_hard_gate_passed": _review_has_factory_runtime_hard_gate(review_result),
@@ -1239,6 +1259,7 @@ class QAAdapter(BaseRoleAdapter):
                 if isinstance(review_result, dict) and isinstance(review_result.get("critical_issues"), list)
                 else 0
             ),
+            "critical_issues": review_result.get("critical_issues", []),
             "major_issues": review_result.get("major_issues", []),
             "warnings": review_result.get("warnings", []),
             "evidence": review_result.get("evidence", []),

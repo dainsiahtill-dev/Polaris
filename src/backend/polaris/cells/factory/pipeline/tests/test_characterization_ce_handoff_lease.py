@@ -55,7 +55,7 @@ from polaris.kernelone.storage import resolve_logical_path
 
 
 class TestChiefEngineerHandoffGuards:
-    def test_chief_engineer_schema_repair_is_bounded_to_one_attempt(
+    def test_chief_engineer_schema_repair_stops_on_repeated_validation_failure(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -80,26 +80,39 @@ class TestChiefEngineerHandoffGuards:
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
 
-        # The Provider budget remains bounded to the primary call plus one
-        # schema-repair call.  After both unusable advisory responses, the
-        # deterministic PM-authority projection may complete a single-task
-        # portfolio without inventing cross-task behavior semantics.
+        # Repeated unusable responses stop when the validation failure makes
+        # no progress.  Each repair uses a fresh attempt of the same task;
+        # the validated PM projection preserves single-task authority.
         assert result.status == "success"
-        assert len(commands) == 2
-        assert commands[-1].task_id.endswith("-SCHEMA-REPAIR")
+        assert len(commands) == 3
+        repairs = commands[1:]
+        assert {command.task_id for command in repairs} == {f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR"}
+        assert [command.context["chief_engineer_repair_round"] for command in repairs] == [1, 2]
+        attempts = [command.execution_attempt for command in repairs]
+        assert all(attempt is not None for attempt in attempts)
+        assert len({attempt.session_id for attempt in attempts}) == 2
+        assert len({attempt.task_id for attempt in attempts}) == 1
+        assert [attempt.attempt for attempt in attempts] == [1, 2]
+        assert all(attempt.external_task_id == repairs[0].task_id and attempt.run_id == run.id for attempt in attempts)
         review = json.loads(
-            Path(
-                resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")
-            ).read_text(encoding="utf-8")
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
         )
-        assert review["llm_call_count"] == 2
+        assert review["llm_call_count"] == 3
         signal_codes = [signal["code"] for signal in review["signals"]]
-        assert signal_codes[:2] == [
+        assert signal_codes == [
             "chief_engineer.output_schema_repair_started",
+            "chief_engineer.output_contract_final_repair_started",
+            "chief_engineer.output_contract_repair_no_progress",
             "chief_engineer.advisory_projection_fallback",
         ]
+        assert review["signals"][0]["validation_errors"] == review["signals"][1]["validation_errors"]
+        assert review["signals"][1]["detail"] in review["signals"][2]["detail"]
+        assert review["signals"][3]["pm_authority_preserved"] is True
+        assert review["signals"][3]["scope_expansion_allowed"] is False
         assert "chief_engineer.llm_review_failed" not in signal_codes
-        assert len(keepers) == 2
+        assert len(keepers) == 3
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
@@ -230,14 +243,30 @@ class TestChiefEngineerHandoffGuards:
             "TASK-CANCEL",
         ]
         assert "Observed invalid root members" in repair_command.objective
-        assert commands[-1].task_id.endswith("-CONTRACT-REPAIR-2")
+        repairs = commands[1:]
+        assert {command.task_id for command in repairs} == {f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR"}
+        assert [command.context["chief_engineer_repair_round"] for command in repairs] == [1, 2]
+        attempts = [command.execution_attempt for command in repairs]
+        assert all(attempt is not None for attempt in attempts)
+        assert len({attempt.session_id for attempt in attempts}) == 2
+        assert len({attempt.task_id for attempt in attempts}) == 1
+        assert [attempt.attempt for attempt in attempts] == [1, 2]
+        assert all(attempt.external_task_id == repairs[0].task_id and attempt.run_id == run.id for attempt in attempts)
         review = json.loads(
-            Path(
-                resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")
-            ).read_text(encoding="utf-8")
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
         )
         signal_codes = [signal["code"] for signal in review["signals"]]
-        assert "chief_engineer.advisory_projection_fallback" in signal_codes
+        assert signal_codes == [
+            "chief_engineer.output_schema_repair_started",
+            "chief_engineer.output_contract_final_repair_started",
+            "chief_engineer.output_contract_repair_no_progress",
+            "chief_engineer.advisory_projection_fallback",
+        ]
+        assert review["signals"][1]["detail"] in review["signals"][2]["detail"]
+        assert review["signals"][3]["pm_authority_preserved"] is True
+        assert review["signals"][3]["scope_expansion_allowed"] is False
         assert "chief_engineer.advisory_projection_fallback_infeasible" not in signal_codes
         assert review["generated_blueprints"] == 1
 

@@ -418,6 +418,8 @@ def test_real_semantic_quality_exposes_only_the_original_acceptance_alias(tmp_pa
 
     payload = json.loads(_contracts(valid=True))
     task = payload["tasks"][0]
+    # Isolate acceptance correction from unrelated legacy `pip check` capability.
+    task["verification_commands"][0]["argv"] = ["python3", "-m", "pip", "install", "-e", "."]
     task[field] = [*task.pop("acceptance")[:2], "占位输出即可"]
     original = copy.deepcopy(payload)
     adapter = PMAdapter(workspace=str(tmp_path))
@@ -491,6 +493,22 @@ def test_absent_diagnosed_field_can_be_set_without_overwriting_hidden_values(tmp
     assert merged["tasks"][0]["description"] == "Implement the validated record model"
     assert merged["tasks"][0]["acceptance"] == payload["tasks"][0]["acceptance"]
     assert base.tasks == payload["tasks"]
+
+
+def test_advisory_readiness_diagnostic_cannot_grant_revision_fields(tmp_path: Path) -> None:
+    base = _base(tmp_path, quality={
+        "critical_issues": ["pm_plan_language_mismatch"],
+        "contract_diagnostics": [{
+            "code": "pm_plan_language_mismatch", "path": "$.tasks[0].target_files",
+            "task_id": "TASK-1", "repair_fields": ["target_files"],
+        }, {
+            "code": "verification_operand_producer_ambiguous", "severity": "warning",
+            "path": "$.tasks[0].verification_commands[0]", "task_id": "TASK-1",
+            "repair_fields": ["verification_commands", "depends_on"],
+        }],
+    })
+    assert base is not None
+    assert set(base.view["edit_manifest"]["tasks"]["TASK-1"]["set"]) == {"target_files"}
 
 
 def test_model_prose_cannot_grant_semantic_field_permissions(tmp_path: Path) -> None:

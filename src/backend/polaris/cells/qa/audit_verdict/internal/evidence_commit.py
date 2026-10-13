@@ -130,6 +130,20 @@ def _normalized_identity(
     return workspace_token, run_token, task_token
 
 
+def _qa_gate_obligation_fields(*, run_id: str, task_id: str, gate_name: str) -> dict[str, str]:
+    """Name the host-owned task epoch and QA purpose for canonical revisions.
+
+    Report timestamps, findings and verdict hashes identify observations, never
+    the obligation they judge. A different run or task remains a different
+    obligation; Run Ledger allocates revisions from its own canonical heads.
+    """
+    return {
+        "gate_obligation_id": f"{run_id}:{task_id}:{gate_name}",
+        "gate_subject_kind": "task",
+        "gate_subject_id": task_id,
+    }
+
+
 def _validate_canonical_verdict_route(
     *,
     envelope: Mapping[str, Any],
@@ -232,6 +246,7 @@ def commit_qa_evidence(
     }
     event: dict[str, Any] = {
         "event_type": "gate_evaluated",
+        **_qa_gate_obligation_fields(run_id=run_token, task_id=task_token, gate_name=gate_token),
         "stage": "qa",
         "task_id": task_token,
         "authoritative": False,
@@ -377,6 +392,7 @@ def commit_qa_verdict(
     event: dict[str, Any] = {
         "event_id": verdict_id,
         "event_type": "gate_evaluated",
+        **_qa_gate_obligation_fields(run_id=run_token, task_id=task_token, gate_name=_FINAL_VERDICT_GATE_NAME),
         "stage": "qa",
         "task_id": task_token,
         "authoritative": True,

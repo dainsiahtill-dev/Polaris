@@ -92,6 +92,22 @@ typed semantic final-request evidence cutoff shared with Factory role flows.
   stream physical attempt before provider I/O
 - runtime-only authority ports must never enter provider payloads, snapshots,
   events, or generated context assets
+- Director keeps policy-permitted read/search/edit/write/command tools by
+  default. An explicit legacy single-batch contract remains caller-owned.
+- A continuing Director turn records its exact workspace/run/task/session and
+  source hashes in the canonical turn fact. Completion re-reads strict-integrity
+  fact locators; transcripts and caller-projected success claims are observations.
+- Successful mutations do not finish a task. Earlier command verification is
+  invalid after a later mutation or source-hash change; CE-required commands must
+  succeed for the current source before TaskBoundary can complete.
+- CE `required_write_targets` defines materialization obligations separately
+  from authorized `target_files`. Explicit empty CE write obligations permit a
+  verification-only task; absent/None retains legacy behavior. Neither projection
+  grants tool, command or path permission.
+- Native history obtains arguments from the exact sealed invocation joined to
+  its receipt by batch/call/tool/status. Missing arguments and receipt drift
+  fail closed. Physical command failures retain bounded diagnostic feedback and
+  their original failed status.
 
 ## Typical Change Surface
 

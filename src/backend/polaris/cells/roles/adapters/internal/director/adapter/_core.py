@@ -835,6 +835,15 @@ class DirectorAdapter(BaseRoleAdapter):
     def _ensure_director_verification_commands(*, message: str, context: dict[str, Any]) -> list[str]:
         metadata_raw = context.get("metadata")
         metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        from ..contract_verify import ce_authoritative_verification_commands
+
+        authoritative_commands = ce_authoritative_verification_commands(context)
+        if authoritative_commands is not None:
+            context["verification_commands"] = list(authoritative_commands)
+            metadata["verification_commands"] = list(authoritative_commands)
+            metadata["verification_authority"] = "chief_engineer"
+            context["metadata"] = metadata
+            return authoritative_commands
         commands = _extract_director_verification_commands(
             context.get("verification_commands"),
             context.get("quality_commands"),

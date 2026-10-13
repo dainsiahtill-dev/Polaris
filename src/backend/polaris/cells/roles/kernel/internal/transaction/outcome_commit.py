@@ -62,6 +62,9 @@ def commit_turn_result(
     result: Mapping[str, Any] | None,
     completion_status: str,
     failure_reason: str | None = None,
+    session_id: str = "",
+    source_state_before: Mapping[str, str] | None = None,
+    source_state_after: Mapping[str, str] | None = None,
 ) -> DurableTurnCommit:
     """Build and atomically persist the canonical result for one turn.
 
@@ -125,6 +128,12 @@ def commit_turn_result(
         "outcome_hash": outcome_hash,
         "outcome": outcome_payload,
     }
+    if session_id:
+        event_payload["session_binding"] = {
+            "session_id": session_id,
+            "source_state_before": dict(source_state_before or {}),
+            "source_state_after": dict(source_state_after or {}),
+        }
     idempotency_key = ":".join(
         (
             TURN_OUTCOME_STREAM,
@@ -148,6 +157,8 @@ def commit_turn_result(
                 correlation_id=str(ledger.turn_id),
                 provenance=provenance,
                 idempotency_key=idempotency_key,
+                strict_integrity=bool(session_id),
+                durability="fsync" if session_id else "buffered",
             )
         )
     except (RuntimeError, ValueError) as exc:

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any
 
+from .task_intent import PmTaskIntentV1, is_pm_task_intent, normalize_pm_task_intent
+
 
 @dataclass(frozen=True)
 class PmProductPlanningInputV1:
@@ -197,5 +199,8 @@ __all__ = [
     "PmProductPlanningInputV1",
     "PmTaskContractGeneratedEventV1",
     "PmTaskContractResultV1",
+    "PmTaskIntentV1",
+    "is_pm_task_intent",
+    "normalize_pm_task_intent",
     "parse_pm_product_planning_input",
 ]

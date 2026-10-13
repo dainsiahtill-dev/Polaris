@@ -24,9 +24,9 @@ class TestExtractReadToolsFromReceipt:
     def test_extracts_read_tools_only(self):
         receipt = {
             "results": [
-                {"tool_name": "read_file"},
+                {"tool_name": "read_file", "status": "success"},
                 {"tool_name": "edit_file"},
-                {"tool_name": "repo_read_head"},
+                {"tool_name": "repo_read_head", "status": "success"},
                 {"tool_name": "write_file"},
                 {"tool_name": "search_symbol"},
             ]
@@ -42,8 +42,8 @@ class TestExtractReadToolsFromReceipt:
     def test_deduplicates_tools(self):
         receipt = {
             "raw_results": [
-                {"tool_name": "read_file"},
-                {"tool_name": "read_file"},
+                {"tool_name": "read_file", "status": "success"},
+                {"tool_name": "read_file", "status": "success"},
                 {"tool_name": "grep"},
             ]
         }
@@ -57,7 +57,7 @@ class TestExtractReadToolsFromReceipt:
             "results": [
                 {"tool_name": ""},
                 {"tool_name": "   "},
-                {"tool_name": "read_file"},
+                {"tool_name": "read_file", "status": "success"},
             ]
         }
         assert _extract_read_tools_from_receipt(receipt) == ["read_file"]

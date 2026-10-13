@@ -32,8 +32,9 @@ class ProcessTreeDrainError(RuntimeError):
 class ProcessTreeRunControl:
     """Single-use cancellation request, never caller-provided process evidence.
 
-    Only ``cancel`` is public. The runner owns process/group binding and drain;
-    cancellation requests cannot supply a PID or mark an invocation drained.
+    Callers request cancellation; a physical execution owner claims the control
+    once and observes its immutable request state. No API supplies a PID or
+    marks an invocation drained.
     """
 
     __slots__ = ("__cancel_requested", "__claim_lock", "__claimed")
@@ -47,14 +48,23 @@ class ProcessTreeRunControl:
         """Irreversibly request cancellation; repeated requests are harmless."""
         self.__cancel_requested.set()
 
-    def _claim(self) -> None:
+    def claim_for_execution(self) -> None:
+        """Consume this request control once; never claim physical completion."""
         with self.__claim_lock:
             if self.__claimed:
                 raise RuntimeError("process tree control already used")
             self.__claimed = True
 
-    def _cancelled(self) -> bool:
+    @property
+    def cancellation_requested(self) -> bool:
+        """Read the irreversible stop request, without process evidence."""
         return self.__cancel_requested.is_set()
+
+    def _claim(self) -> None:
+        self.claim_for_execution()
+
+    def _cancelled(self) -> bool:
+        return self.cancellation_requested
 
     def _wait(self, seconds: float) -> None:
         self.__cancel_requested.wait(seconds)

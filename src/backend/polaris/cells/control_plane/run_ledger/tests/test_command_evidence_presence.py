@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from polaris.cells.control_plane.run_ledger.public.projection import build_run_ledger_projection
 
 
 def _project(evidence: dict[str, Any]) -> dict[str, Any]:
-    return cast(dict[str, Any], build_run_ledger_projection([{
+    projection: dict[str, Any] = build_run_ledger_projection([{
         "event_type": "gate_evaluated",
         "stage": "real_run_gate",
         "gate": {"name": "real_run_gate", "ok": False, "summary": "verification incomplete"},
@@ -20,7 +20,8 @@ def _project(evidence: dict[str, Any]) -> dict[str, Any]:
             "gate_policy": {"required_evidence_modalities": ["command"]},
         },
         "physical_evidence": evidence,
-    }]))
+    }])
+    return projection
 
 
 @pytest.mark.parametrize("commands", [[], None])
@@ -59,3 +60,25 @@ def test_explicit_command_receipt_is_not_erased_by_empty_discovery_projection() 
     })
     assert projection["evidence_policy"]["missing_required_modalities"] == []
     assert projection["evidence_policy"]["failed_required_modalities"] == ["command"]
+
+
+def test_cached_zero_command_presence_cannot_override_actual_empty_inventory() -> None:
+    evidence: dict[str, Any] = {
+        "modalities": {"command": {
+            "present": True, "ok": False,
+            "detail": "no build/test/lint command was discovered",
+            "metadata": {"command_count": 0, "entrypoint_kind": ""},
+        }},
+        "commands": [],
+        "command_count": 0,
+        "requirements": {"build_test_lint_ran": {
+            "ok": False, "detail": "no build/test/lint command was discovered",
+        }},
+    }
+    from copy import deepcopy
+
+    original = deepcopy(evidence)
+    projection = _project(evidence)
+    assert projection["evidence_policy"]["missing_required_modalities"] == ["command"]
+    assert projection["evidence_policy"]["failed_required_modalities"] == []
+    assert evidence == original

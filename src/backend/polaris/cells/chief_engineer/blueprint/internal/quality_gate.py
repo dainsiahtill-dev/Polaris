@@ -137,7 +137,8 @@ def evaluate_quality_gate(
     warnings: list[str] = []
     info: list[str] = []
 
-    if not target_files:
+    from .readonly_handoff import is_verification_only_blueprint
+    if not target_files and not is_verification_only_blueprint(blueprint):
         blockers.append("target_files is empty; handoff requires at least one target file.")
     if not acceptance:
         blockers.append("acceptance_criteria is empty; handoff requires QA-evaluable acceptance.")

@@ -76,3 +76,18 @@ public projection; absent or conflicting authority rejects before effects.
 Each successful owner effect refreshes project artifact evidence before another
 candidate or terminal close. Verifier failure and TaskBoundary failure remain
 failed, regardless of files or a completed execution session.
+
+## Semantic product handoff
+
+`pm.task_intent.v1` delegates unspecified artifact topology and command recipes
+to Chief Engineer. Factory binds the committed PM identity and observable
+acceptance into the CE public task contract; empty technical fields do not grant
+workspace effects. CE must establish exact policy-compatible recipes and owned
+artifacts before Director dispatch. Explicit PM technical constraints remain
+binding, and legacy PM command contracts retain their exact authority.
+
+QA target context queries same-run CE blueprint status through the public Cell
+API when PM has no technical file list. The request schema and draft correction
+path accept CE-owned argv/cwd recipes, while execution and settlement still
+require current policy and physical evidence. See
+`docs/ROLE_DELIVERY_CONVERGENCE.md` for the platform ownership model.

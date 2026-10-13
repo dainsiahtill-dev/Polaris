@@ -7,7 +7,7 @@ import json
 import re
 import shlex
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, cast
 
@@ -44,6 +44,7 @@ from ..contracts._blueprint_dtos import (
     _verify_chief_engineer_portfolio_authority_carrier,
 )
 from ..contracts._helpers import project_completion_catalog_snapshot_hash
+from ._delegated_recipes import is_task_intent, prepare_delegated_recipes
 from ._helpers import (
     _BLUEPRINT_FILE_CONTAINER_KEYS,
     _BLUEPRINT_FILE_PATH_KEYS,
@@ -1238,8 +1239,20 @@ def _project_portfolio_artifact_rows(
         owner_task_id = str(row.get("owner_task_id") or "")
         task = delegated_topology_tasks.get(owner_task_id)
         semantic_role = str(row.get("semantic_role") or "")
+        if (
+            task is not None
+            and is_task_intent(task)
+            and task.scope_paths
+            and not _task_authorizes_completion_path(task=task, path=path)
+        ):
+            raise _portfolio_contract_error(
+                "CE artifact exceeds explicit user scope constraint",
+                code="invalid_project_completion_contract",
+                details={"path": path, "owner_task_id": owner_task_id},
+            )
         if task is None or not _ce_topology_authorizes_artifact(
             topology_authority=task.topology_authority,
+            planning_contract_version=task.planning_contract_version,
             required_source_kinds=task.required_source_kinds,
             allowed_source_suffixes=task.allowed_source_suffixes,
             semantic_role=semantic_role,
@@ -1668,6 +1681,7 @@ def _normalize_portfolio_completion_contract(
             code="invalid_project_completion_contract",
             details={"error_type": type(exc).__name__},
         ) from exc
+    requirements, prepared_command_authorities = prepare_delegated_recipes(command, requirements, carrier)
     payload = _strict_completion_mapping(
         requirements,
         field_name="project_completion_contract",
@@ -1709,8 +1723,25 @@ def _normalize_portfolio_completion_contract(
         },
     )
     try:
-        command_authorities = list(carrier.verification_command_authority)
+        command_authorities = list(prepared_command_authorities)
         command_authority_by_hash = {item.authority_hash: item for item in command_authorities}
+        delegated_task_ids = {task.task_id for task in command.tasks if is_task_intent(task)}
+        # Recipe capability does not make an optional CE obligation mandatory.
+        # Authored PM commands retain their existing required constraint; CE
+        # requirements come only from the validated source obligation rows.
+        required_recipe_hashes = {item.authority_hash for item in carrier.verification_command_authority}
+        required_recipe_hashes.update(
+            str(row["command_authority_hash"])
+            for row in verification_rows
+            if row["applicability"] == "required" and row["command_authority_hash"] is not None
+        )
+        required_recipe_hashes.update(
+            item.authority_hash
+            for row in entrypoint_rows
+            if row["applicability"] == "required"
+            for item in command_authorities
+            if item.modality == "entrypoint" and item.task_id == row["owner_task_id"] and item.command == row["command"]
+        )
 
         artifact_projection = _project_portfolio_artifact_rows(
             tasks=command.tasks,
@@ -1785,11 +1816,18 @@ def _normalize_portfolio_completion_contract(
             *,
             modality: str,
             owner_task_id: str | None = None,
+            required_only: bool = False,
         ) -> tuple[VerificationCommandAuthorityV1, ...]:
             return tuple(
                 item
                 for item in command_authorities
-                if item.modality == modality and (owner_task_id is None or item.task_id == owner_task_id)
+                if item.modality == modality
+                and (owner_task_id is None or item.task_id == owner_task_id)
+                and (
+                    not required_only
+                    or item.task_id not in delegated_task_ids
+                    or item.authority_hash in required_recipe_hashes
+                )
             )
 
         def dependency_complete_verifier_authority(
@@ -2309,6 +2347,12 @@ def _normalize_portfolio_completion_contract(
             if row["semantic_role"] != "test" or row["applicability"] != "required":
                 continue
             required_test_artifacts_by_owner.setdefault(str(row["owner_task_id"]), []).append(str(row["obligation_id"]))
+        # A semantic verification task owns its exact recipe while reading
+        # dependency artifacts; owning a test source file is not a prerequisite.
+        for row in required_test_seed_rows:
+            owner = str(row["owner_task_id"])
+            if owner in delegated_task_ids:
+                required_test_artifacts_by_owner.setdefault(owner, [])
         for index, (owner_task_id, covered_ids) in enumerate(
             sorted(required_test_artifacts_by_owner.items()),
             start=1,
@@ -2317,7 +2361,8 @@ def _normalize_portfolio_completion_contract(
             # argv/cwd identities always remain independent required verifiers.
             test_authorities = sorted(
                 {
-                    item.authority_hash: item for item in authorities_for(modality="test", owner_task_id=owner_task_id)
+                    item.authority_hash: item
+                    for item in authorities_for(modality="test", owner_task_id=owner_task_id, required_only=True)
                 }.values(),
                 key=lambda item: item.authority_hash,
             )
@@ -2395,7 +2440,9 @@ def _normalize_portfolio_completion_contract(
             if row["applicability"] != "required" or row["owner_task_id"] is None:
                 continue
             owner_task_id = str(row["owner_task_id"])
-            for authority in authorities_for(modality="environment_prep", owner_task_id=owner_task_id):
+            for authority in authorities_for(
+                modality="environment_prep", owner_task_id=owner_task_id, required_only=True
+            ):
                 semantic_priority = 0 if row["semantic_role"] in {"manifest", "config"} else 1
                 environment_candidates.append((semantic_priority, str(row["obligation_id"]), authority, owner_task_id))
 
@@ -2511,11 +2558,32 @@ def _normalize_portfolio_completion_contract(
                     "obligation_id": entrypoint_obligation_id,
                     "modality": "entrypoint",
                     "command_authority_hash": entrypoint_authorities[0].authority_hash,
-                    "applicability": "required",
+                    "applicability": entrypoint_row["applicability"]
+                    if entrypoint_row["owner_task_id"] in delegated_task_ids
+                    else "required",
                     "covers_obligation_ids": [entrypoint_row["obligation_id"]],
                     "owner_task_id": entrypoint_row["owner_task_id"],
                 }
             )
+
+        for index, row in enumerate(verification_rows, start=1):
+            if (
+                row["owner_task_id"] not in delegated_task_ids
+                or row["applicability"] != "optional"
+                or row["modality"] not in {"test", "environment_prep"}
+                or row["command_authority_hash"] in required_recipe_hashes
+                or any(
+                    item["command_authority_hash"] == row["command_authority_hash"]
+                    for item in normalized_verification_rows
+                )
+            ):
+                continue
+            optional_row = dict(row)
+            optional_row["obligation_id"] = claim_verification_obligation_id(
+                preferred=str(row["obligation_id"]),
+                fallback=f"verification-authority-optional-{index:03d}",
+            )
+            normalized_verification_rows.append(optional_row)
 
         obligations = ProjectCompletionObligationsV1(
             artifacts=tuple(
@@ -2918,6 +2986,16 @@ def _pm_authoritative_task_plan(task: ChiefEngineerPortfolioTaskV1) -> dict[str,
     dependency order, or entrypoint authority already validated by Factory.
     """
 
+    if is_task_intent(task):
+        return {
+            "objective": task.objective,
+            "dependencies": list(task.dependencies),
+            "planning_contract_version": task.planning_contract_version,
+            "verification_authority": task.verification_authority,
+            "observable_acceptance": list(task.observable_acceptance),
+            "explicit_constraints": list(task.explicit_constraints),
+            "context_files": list(task.context_files),
+        }
     return {
         "objective": task.objective,
         "target_files": list(task.target_files),
@@ -2940,6 +3018,7 @@ def _project_interface_seed(
     *,
     provider_declarations: tuple[dict[str, Any], ...],
     consumer_declarations: tuple[dict[str, Any], ...],
+    task_read_context: Mapping[str, tuple[str, ...]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
     task_file_ownership = {task.task_id: task.target_files for task in tasks}
     file_owners: dict[str, list[str]] = {}
@@ -2953,11 +3032,58 @@ def _project_interface_seed(
         "file_task_ownership": {path: list(task_ids) for path, task_ids in file_task_ownership.items()},
         "provider_declarations": [dict(item) for item in provider_declarations],
         "consumer_declarations": [dict(item) for item in consumer_declarations],
-        "ownership_authority": "pm_authoritative_tasks",
+        "ownership_authority": "chief_engineer_completion_contract"
+        if any(is_task_intent(task) for task in tasks)
+        else "pm_authoritative_tasks",
         "interface_declaration_authority": "chief_engineer_advisory_only",
         "authoritative": False,
+        **({"task_read_context": {task_id: list(paths) for task_id, paths in task_read_context.items()}}
+           if task_read_context else {}),
     }
     return seed, task_file_ownership, file_task_ownership
+
+
+def _portfolio_task_read_context(
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    completion: ProjectCompletionContractV1 | None,
+) -> dict[str, tuple[str, ...]]:
+    """Bind readonly inputs to task-local or dependency-owned CE artifacts."""
+    if completion is None:
+        return {}
+    by_task = {task.task_id: task for task in tasks}
+    artifacts = {item.obligation_id: item for item in completion.obligations.artifacts
+                 if item.applicability != "not_applicable"}
+    by_path = {item.path: item for item in artifacts.values()}
+    result: dict[str, tuple[str, ...]] = {}
+    for task in tasks:
+        if not is_task_intent(task):
+            continue
+        ancestors: set[str] = set()
+        pending = list(task.dependencies)
+        while pending:
+            owner = pending.pop()
+            if owner in ancestors:
+                continue
+            if owner not in by_task or owner == task.task_id:
+                raise _portfolio_contract_error("readonly context requires valid dependency ownership")
+            ancestors.add(owner)
+            pending.extend(by_task[owner].dependencies)
+        verifiers = [item for item in completion.obligations.verification
+                     if item.owner_task_id == task.task_id and item.applicability == "required"]
+        paths = list(task.context_files)
+        paths.extend(artifacts[covered].path for item in verifiers for covered in item.covers_obligation_ids
+                     if covered in artifacts)
+        closure = tuple(dict.fromkeys(path for path in paths if path not in task.target_files))
+        for path in closure:
+            artifact = by_path.get(path)
+            if artifact is None or artifact.owner_task_id not in ancestors | {task.task_id}:
+                raise _portfolio_contract_error("readonly context path is outside exact dependency artifact scope",
+                                                details={"task_id": task.task_id, "path": path})
+        if not task.target_files and (not closure or not verifiers):
+            raise _portfolio_contract_error("readonly task requires dependency read context and required verifier recipe")
+        if closure:
+            result[task.task_id] = closure
+    return result
 
 
 def _project_go_entrypoint_package_topology(
@@ -3274,7 +3400,31 @@ def build_chief_engineer_blueprint_portfolio(
     else:
         project_completion_contract = None
 
-    for task in command.tasks:
+    effective_tasks = tuple(
+        replace(
+            task,
+            target_files=tuple(
+                item.path
+                for item in project_completion_contract.obligations.artifacts
+                if item.owner_task_id == task.task_id and item.applicability != "not_applicable"
+            ),
+            scope_paths=tuple(
+                item.path
+                for item in project_completion_contract.obligations.artifacts
+                if item.owner_task_id == task.task_id and item.applicability != "not_applicable"
+            ),
+            entrypoint_targets=tuple(
+                item.source_path
+                for item in project_completion_contract.obligations.entrypoints
+                if item.owner_task_id == task.task_id and item.source_path is not None
+            ),
+        )
+        if is_task_intent(task) and project_completion_contract is not None
+        else task
+        for task in command.tasks
+    )
+    task_read_context = _portfolio_task_read_context(effective_tasks, project_completion_contract)
+    for task in effective_tasks:
         if parsed.consumed:
             task_plan, task_scope, task_rejections, task_risks = _task_plan_components(
                 task.task_id,
@@ -3285,6 +3435,24 @@ def build_chief_engineer_blueprint_portfolio(
             # the task-boundary authority even when the provider omits a
             # task-local overlay or attempts to restate an owned field.
             construction_plan.update(_pm_authoritative_task_plan(task))
+            if is_task_intent(task):
+                construction_plan.update(
+                    {
+                        "target_files": list(task.target_files),
+                        "scope_paths": list(task.scope_paths),
+                        "entrypoint_targets": list(task.entrypoint_targets),
+                        "verification_commands": [
+                            item.command
+                            for item in project_completion_contract.verification_command_authority
+                            if item.task_id == task.task_id and item.modality != "entrypoint"
+                            and item.authority_hash in {
+                                obligation.command_authority_hash
+                                for obligation in project_completion_contract.obligations.verification
+                                if obligation.owner_task_id == task.task_id and obligation.applicability == "required"
+                            }
+                        ],
+                    }
+                )
             requested_scope = _merge_scope_paths(parsed.scope_paths, task_scope)
             rejected_scope = _merge_scope_rejections(parsed.scope_rejections, task_rejections)
             risks = _merge_risk_flags(parsed.risk_flags, task_risks)
@@ -3313,7 +3481,11 @@ def build_chief_engineer_blueprint_portfolio(
         task.task_id: tuple(parsed.task_behavior_bindings.get(task.task_id, ())) for task in command.tasks
     }
     behavior_hash: str | None = None
-    if parsed.consumed and parsed.behavior_contract_declared:
+    if (
+        parsed.consumed
+        and parsed.behavior_contract_declared
+        and (parsed.behavior_invariants or not all(is_task_intent(task) for task in command.tasks))
+    ):
         normalized_away_obligation_ids = (
             _normalized_away_entrypoint_obligation_ids(
                 parsed.project_completion_requirements,
@@ -3366,13 +3538,14 @@ def build_chief_engineer_blueprint_portfolio(
         behavior_hash = shared_behavior_contract_hash(behavior_invariants, task_behavior_bindings)
 
     provider_declarations = _project_go_entrypoint_package_topology(
-        command.tasks,
+        effective_tasks,
         parsed.provider_declarations,
     )
     interface_seed, task_file_ownership, file_task_ownership = _project_interface_seed(
-        command.tasks,
+        effective_tasks,
         provider_declarations=provider_declarations,
         consumer_declarations=parsed.consumer_declarations,
+        task_read_context=task_read_context,
     )
     interface_hash = stable_hash(interface_seed)
     interface_id = f"ce_project_interface_{interface_hash[:24]}"
@@ -3419,6 +3592,8 @@ def build_chief_engineer_blueprint_portfolio(
         file_task_ownership=file_task_ownership,
         provider_declarations=provider_declarations,
         consumer_declarations=parsed.consumer_declarations,
+        ownership_authority=interface_seed["ownership_authority"],
+        task_read_context=task_read_context,
     )
 
     provisional_hash = "pending"
@@ -3547,6 +3722,8 @@ def project_chief_engineer_task_blueprint(
 def _project_blueprint_portfolio_context(
     context: Mapping[str, Any],
     *,
+    workspace: str,
+    run_id: str,
     task_id: str,
     target_files: list[str],
 ) -> dict[str, Any]:
@@ -3758,7 +3935,18 @@ def _project_blueprint_portfolio_context(
             },
         )
     owned_files = task_file_ownership.get(task_id)
-    if not isinstance(owned_files, list) or tuple(_string_list(owned_files)) != tuple(target_files):
+    pm_task = _mapping(context.get("pm_task_contract") or context.get("task"))
+    light_intent = _mapping(pm_task.get("metadata")).get("planning_contract_version") == "pm.task_intent.v1"
+    expected_files = (
+        tuple(
+            item.path
+            for item in completion_contract.obligations.artifacts
+            if item.owner_task_id == task_id and item.applicability != "not_applicable"
+        )
+        if light_intent
+        else tuple(target_files)
+    )
+    if not isinstance(owned_files, list) or tuple(_string_list(owned_files)) != expected_files:
         raise _portfolio_contract_error(
             "project interface ownership does not match the PM task target files",
             code="blueprint_portfolio_pm_authority_mismatch",
@@ -3787,4 +3975,31 @@ def _project_blueprint_portfolio_context(
                 "shared_behavior_contract": behavior_contract,
             }
         )
+    # Self-consistent hashes are claims, not permission. Consume only the
+    # exact portfolio bytes persisted by the CE owner in this workspace/run.
+    portfolio_id = PurePosixPath(portfolio_ref).stem
+    persisted = BlueprintPersistence(workspace, ensure_directory=False).load(portfolio_id)
+    if not isinstance(persisted, Mapping) or (
+        persisted.get("kind") != "chief_engineer_blueprint_portfolio"
+        or persisted.get("workspace") != workspace
+        or persisted.get("run_id") != run_id
+        or persisted.get("portfolio_path") != portfolio_ref
+        or persisted.get("portfolio_hash") != portfolio_hash
+        or _portfolio_hash(persisted) != portfolio_hash
+        or not isinstance(persisted.get("task_ids"), (list, tuple))
+        or task_id not in persisted.get("task_ids", ())
+    ):
+        raise _portfolio_contract_error(
+            "immutable blueprint portfolio authority identity or content mismatch",
+            code="blueprint_portfolio_immutability_conflict",
+            details={"task_id": task_id, "portfolio_id": portfolio_id},
+        )
+    for field in (*canonical_fields[2:], *(behavior_fields if present_behavior_fields else ())):
+        if context[field] != persisted.get(field):
+            raise _portfolio_contract_error(
+                "task context differs from immutable blueprint portfolio authority",
+                code="blueprint_portfolio_immutability_conflict",
+                details={"task_id": task_id, "portfolio_id": portfolio_id, "field": field},
+            )
+        projection[field] = persisted[field]
     return projection

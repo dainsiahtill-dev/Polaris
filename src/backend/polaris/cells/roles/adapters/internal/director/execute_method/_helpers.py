@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.roles.kernel.public.llm_caller_contracts import director_uses_legacy_tool_slices
 from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptIdentityV1,
 )
@@ -1329,33 +1330,39 @@ async def _run_no_write_materialization_retry(
     rebind_dependency_artifact = getattr(adapter, "_rebind_director_dependency_artifact_for_dialogue", None)
     if callable(rebind_dependency_artifact):
         rebind_dependency_artifact(retry_context)
-    retry_context["_transaction_kernel_forced_tool_definitions"] = _no_write_materialization_retry_tool_definitions(
-        retry_target_files,
-        strict_write_only=strict_write_only,
-        forced_tool_name=forced_tool_name,
-    )
-    if exact_tools:
-        retry_context["_transaction_kernel_forced_tool_choice"] = {
-            "type": "function",
-            "function": {"name": forced_tool_name},
-        }
-        retry_context["_transaction_kernel_force_exact_tools"] = True
-        retry_context["director_no_write_materialization_retry"] = {
-            "write_only_declared_targets": {
-                "tool": forced_tool_name,
-                "target_files": retry_target_files[:32],
+    legacy_tool_slices = director_uses_legacy_tool_slices(context)
+    fallback_allowed_tool_names: set[str] | None = None
+    if legacy_tool_slices:
+        retry_context["_transaction_kernel_forced_tool_definitions"] = _no_write_materialization_retry_tool_definitions(
+            retry_target_files,
+            strict_write_only=strict_write_only,
+            forced_tool_name=forced_tool_name,
+        )
+        if exact_tools:
+            retry_context["_transaction_kernel_forced_tool_choice"] = {
+                "type": "function",
+                "function": {"name": forced_tool_name},
             }
-        }
-        fallback_allowed_tool_names = {forced_tool_name}
+            retry_context["_transaction_kernel_force_exact_tools"] = True
+            retry_context["director_no_write_materialization_retry"] = {
+                "write_only_declared_targets": {
+                    "tool": forced_tool_name,
+                    "target_files": retry_target_files[:32],
+                }
+            }
+            fallback_allowed_tool_names = {forced_tool_name}
+        else:
+            retry_context["_transaction_kernel_forced_tool_choice"] = "required"
+            retry_context["director_no_write_materialization_retry"] = {
+                "multi_file_declared_targets": {
+                    "required_write_tools": sorted(_NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES),
+                    "target_files": retry_target_files[:32],
+                }
+            }
+            fallback_allowed_tool_names = set(_NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES)
     else:
-        retry_context["_transaction_kernel_forced_tool_choice"] = "required"
-        retry_context["director_no_write_materialization_retry"] = {
-            "multi_file_declared_targets": {
-                "required_write_tools": sorted(_NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES),
-                "target_files": retry_target_files[:32],
-            }
-        }
-        fallback_allowed_tool_names = set(_NO_WRITE_MULTI_TARGET_FALLBACK_TOOL_NAMES)
+        retry_message = original_message + "\nContinue this same owned task. Read or search current files as needed, edit or create only authorized targets, then run the CE verification recipe. Resolve the observed failure locally; preserve existing code.\n" + "\n".join(quality_errors)
+        retry_context["failure_feedback"] = {"reason": "no_materialized_changes", "quality_errors": quality_errors, "target_files": retry_target_files}
 
     async def _invoke_retry(message: str, *, stage_label: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         try:
@@ -1379,7 +1386,7 @@ async def _run_no_write_materialization_retry(
         summary = _summarize_llm_stage_result(result, stage=stage_label)
         extracted = adapter._execution.extract_kernel_tool_results(result)
         content = str(result.get("content") or result.get("response") or "")
-        if not extracted or not has_successful_write_tool(extracted):
+        if legacy_tool_slices and (not extracted or not has_successful_write_tool(extracted)):
             fallback_tool_results = await adapter._execution.execute_tools(
                 content,
                 target_task_id,
@@ -1456,21 +1463,26 @@ async def _run_empty_write_content_materialization_retry(
     rebind_dependency_artifact = getattr(adapter, "_rebind_director_dependency_artifact_for_dialogue", None)
     if callable(rebind_dependency_artifact):
         rebind_dependency_artifact(retry_context)
-    retry_context["_transaction_kernel_forced_tool_choice"] = {
-        "type": "function",
-        "function": {"name": forced_tool_name},
-    }
-    retry_context["_transaction_kernel_forced_tool_definitions"] = [
-        _empty_write_retry_tool_definition(forced_tool_name, target_files)
-    ]
-    if len(target_files) == 1:
-        retry_context["_transaction_kernel_force_exact_tools"] = True
-        retry_context["director_empty_write_retry"] = {
-            "write_only_single_target": {
-                "tool": forced_tool_name,
-                "target_file": target_files[0],
-            }
+    if director_uses_legacy_tool_slices(context):
+        retry_context["_transaction_kernel_forced_tool_choice"] = {
+            "type": "function",
+            "function": {"name": forced_tool_name},
         }
+        retry_context["_transaction_kernel_forced_tool_definitions"] = [
+            _empty_write_retry_tool_definition(forced_tool_name, target_files)
+        ]
+        if len(target_files) == 1:
+            retry_context["_transaction_kernel_force_exact_tools"] = True
+            retry_context["director_empty_write_retry"] = {
+                "write_only_single_target": {
+                    "tool": forced_tool_name,
+                    "target_file": target_files[0],
+                }
+            }
+    else:
+        retry_message = original_message + "\nContinue this same owned task. Previous write had empty or malformed content. Inspect current authorized files, correct the tool arguments and code, then execute the CE verification recipe.\n"
+        retry_context["failure_feedback"] = {"reason": "empty_write_content", "target_files": target_files}
+
     try:
         retry_result = await adapter._invoke_role_dialogue_with_timeout(
             retry_message,

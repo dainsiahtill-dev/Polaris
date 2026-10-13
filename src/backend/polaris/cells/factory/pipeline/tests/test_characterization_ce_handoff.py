@@ -43,6 +43,19 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
 
 
+def _assert_stable_repair_owner(commands: list[Any], run_id: str) -> None:
+    repairs = commands[1:]
+    assert repairs
+    assert {command.task_id for command in repairs} == {f"CE-PORTFOLIO-{run_id}-SCHEMA-REPAIR"}
+    assert [command.context["chief_engineer_repair_round"] for command in repairs] == list(range(1, len(repairs) + 1))
+    attempts = [command.execution_attempt for command in repairs]
+    assert all(attempt is not None for attempt in attempts)
+    assert len({attempt.session_id for attempt in attempts}) == len(attempts)
+    assert len({attempt.task_id for attempt in attempts}) == 1
+    assert [attempt.attempt for attempt in attempts] == list(range(1, len(attempts) + 1))
+    assert all(attempt.external_task_id == repairs[0].task_id and attempt.run_id == run_id for attempt in attempts)
+
+
 def _semantic_artifact_patch_result(
     command: Any,
     *,
@@ -2368,11 +2381,12 @@ class TestChiefEngineerHandoffGuards:
         )
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+        _assert_stable_repair_owner(commands, run.id)
 
         assert result.status == "success", result.output
         assert [command.task_id for command in commands] == [
             f"CE-PORTFOLIO-{run.id}",
-            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
         ]
         feedback = commands[1].context["failure_feedback"]
         assert feedback["failure_class"] == "output_validation_failed"
@@ -2380,16 +2394,14 @@ class TestChiefEngineerHandoffGuards:
         assert commands[1].structured_output_contract.schema_name == "chief_engineer_semantic_repair_patch"
         patch_schema = commands[1].structured_output_contract.json_schema["properties"]
         assert "items" in patch_schema["artifact_upserts"]
-        assert "items" not in patch_schema["entrypoint_upserts"]
-        assert "items" not in patch_schema["behavior_invariant_upserts"]
-        assert patch_schema["task_behavior_ref_replacements"] == {"type": "object"}
+        assert set(patch_schema) == {"base_candidate_hash", "diagnosis_hash", "artifact_upserts"}
         assert commands[1].context["chief_engineer_semantic_repair"] is True
         assert commands[1].context["chief_engineer_semantic_repair_candidate"]["candidate_hash"]
         assert commands[1].context["chief_engineer_semantic_repair_diagnosis"]["diagnostic_codes"] == [
             "chief_engineer.delivery_depth.prod_files_below_minimum"
         ]
-        assert "allowed_completion_obligation_ids" in commands[1].objective
-        assert "never copy diagnostic prose" in commands[1].objective
+        assert "Unadvertised or unchanged operation groups may be omitted" in commands[1].objective
+        assert "entrypoint_remove_obligation_ids" not in commands[1].objective
         assert "allowed_source_suffixes" in commands[1].objective
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
@@ -2516,15 +2528,18 @@ class TestChiefEngineerHandoffGuards:
         )
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+        _assert_stable_repair_owner(commands, run.id)
 
         assert result.status == "success", result.output
         assert [command.task_id for command in commands] == [
             f"CE-PORTFOLIO-{run.id}",
-            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH",
-            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH-REPAIR-2",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
         ]
-        assert "entrypoint_remove_obligation_ids" in commands[1].objective
-        assert "entrypoint_remove_obligation_ids" in (commands[1].structured_output_contract.json_schema["properties"])
+        assert "entrypoint_remove_obligation_ids" not in commands[1].objective
+        assert (
+            "entrypoint_remove_obligation_ids" not in (commands[1].structured_output_contract.json_schema["properties"])
+        )
         assert (
             commands[1].context["chief_engineer_semantic_repair_base_candidate_hash"]
             == commands[2].context["chief_engineer_semantic_repair_base_candidate_hash"]
@@ -2637,12 +2652,13 @@ class TestChiefEngineerHandoffGuards:
         )
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+        _assert_stable_repair_owner(commands, run.id)
 
         assert result.status == "success", result.output
         assert [command.task_id for command in commands] == [
             f"CE-PORTFOLIO-{run.id}",
-            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH",
-            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH-REPAIR-2",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
         ]
         assert (
             commands[1].context["chief_engineer_semantic_repair_base_candidate_hash"]
@@ -2699,12 +2715,13 @@ class TestChiefEngineerHandoffGuards:
         )
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+        _assert_stable_repair_owner(commands, run.id)
 
         assert result.status == "success", result.output
         assert [command.task_id for command in commands] == [
             f"CE-PORTFOLIO-{run.id}",
             f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
-            f"CE-PORTFOLIO-{run.id}-CONTRACT-REPAIR-2",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
         ]
         final_feedback = commands[-1].context["failure_feedback"]
         assert "'project_completion_contract' is a required property" in final_feedback["detail"]
@@ -2791,13 +2808,14 @@ class TestChiefEngineerHandoffGuards:
         )
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+        _assert_stable_repair_owner(commands, run.id)
 
         assert result.status == "success", result.output
         assert [command.task_id for command in commands] == [
             f"CE-PORTFOLIO-{run.id}",
             f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
-            f"CE-PORTFOLIO-{run.id}-CONTRACT-REPAIR-2",
-            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH-REPAIR-3",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
         ]
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
@@ -2859,13 +2877,14 @@ class TestChiefEngineerHandoffGuards:
         )
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+        _assert_stable_repair_owner(commands, run.id)
 
         assert result.status == "success", result.output
         assert [command.task_id for command in commands] == [
             f"CE-PORTFOLIO-{run.id}",
             f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
-            f"CE-PORTFOLIO-{run.id}-CONTRACT-REPAIR-2",
-            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH-REPAIR-3",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
         ]
         assert commands[-1].context["chief_engineer_semantic_repair_diagnosis"]["diagnostic_codes"] == [
             "chief_engineer.shared_behavior_contract.invalid"
@@ -2938,12 +2957,13 @@ class TestChiefEngineerHandoffGuards:
         )
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+        _assert_stable_repair_owner(commands, run.id)
 
         assert result.status == "success", result.output
         assert [command.task_id for command in commands] == [
             f"CE-PORTFOLIO-{run.id}",
             f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
-            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH-REPAIR-2",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
         ]
         assert commands[1].structured_output_contract.schema_name == "chief_engineer_blueprint_portfolio"
         assert commands[2].structured_output_contract.schema_name == "chief_engineer_semantic_repair_patch"
@@ -2975,10 +2995,13 @@ class TestChiefEngineerHandoffGuards:
             "owner_task_id",
         ]
         assert "artifact-1" in commands[2].objective
-        assert "mint a new unique obligation_id" in commands[2].objective
-        assert "leave the existing row unchanged" in commands[2].objective
-        assert "Call the required result-submission tool exactly once" in commands[2].objective
-        assert "add at least that row's exact deficit count" in commands[2].objective
+        assert "use a new unique obligation_id" in commands[2].objective
+        assert "never repurpose an old ID" in commands[2].objective
+        assert (
+            "Return exactly one typed Chief Engineer semantic patch through the required result tool"
+            in commands[2].objective
+        )
+        assert "Satisfy every authorized delivery-depth deficit" in commands[2].objective
         assert "Return JSON only" not in commands[2].objective
         task_authority = provider_patch_context["task_authority"]["TASK-CANCEL"]
         assert task_authority["target_files"] == ["src/cancel.py", "tests/test_cancel.py"]
@@ -2995,14 +3018,14 @@ class TestChiefEngineerHandoffGuards:
         assert review["llm_call_count"] == 3
         assert [signal["code"] for signal in review["signals"][:3]] == [
             "chief_engineer.output_schema_repair_started",
-            "chief_engineer.schema_repair_candidate_frozen",
+            "chief_engineer.semantic_repair_transaction_refreshed",
             "chief_engineer.output_contract_final_repair_started",
         ]
         assert len(keepers) == 3
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
-    def test_chief_engineer_semantic_repair_budget_is_two_bounded_calls(
+    def test_chief_engineer_semantic_repair_stops_on_repeated_candidate_and_failure(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -3047,21 +3070,31 @@ class TestChiefEngineerHandoffGuards:
         )
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+        _assert_stable_repair_owner(commands, run.id)
 
         assert result.status == "failed"
         assert [command.task_id for command in commands] == [
             f"CE-PORTFOLIO-{run.id}",
-            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH",
-            f"CE-PORTFOLIO-{run.id}-SEMANTIC-PATCH-REPAIR-2",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
+            f"CE-PORTFOLIO-{run.id}-SCHEMA-REPAIR",
         ]
         assert commands[-1].context["chief_engineer_repair_round"] == 2
         assert commands[-1].context["chief_engineer_semantic_repair_diagnosis"]["diagnostic_codes"] == [
             "chief_engineer.delivery_depth.prod_files_below_minimum"
         ]
+        assert (
+            commands[1].context["chief_engineer_semantic_repair_base_candidate_hash"]
+            == commands[2].context["chief_engineer_semantic_repair_base_candidate_hash"]
+        )
+        assert (
+            commands[1].context["chief_engineer_semantic_repair_diagnosis"]["diagnosis_hash"]
+            == commands[2].context["chief_engineer_semantic_repair_diagnosis"]["diagnosis_hash"]
+        )
         # A frozen semantic candidate plus typed diagnosis may retry one
         # transport-validation miss in place.  This is NOT another CE semantic
-        # round: PM authority, candidate hash, diagnosis hash, claim, and role
-        # remain unchanged.  Plain schema reconstruction stays at zero retries.
+        # round: PM authority, candidate hash, diagnosis hash, and role remain
+        # unchanged.  Each correction dispatch has a fresh execution attempt.
+        # Plain schema reconstruction stays at zero transport retries.
         assert commands[1].metadata["max_retries"] == 1
         assert commands[2].metadata["max_retries"] == 1
         assert result.metadata["error_code"] == "chief_engineer.semantic_repair_exhausted"
@@ -3074,13 +3107,19 @@ class TestChiefEngineerHandoffGuards:
         assert [signal["code"] for signal in review["signals"]] == [
             "chief_engineer.output_contract_repair_started",
             "chief_engineer.output_contract_final_repair_started",
+            "chief_engineer.output_contract_repair_no_progress",
             "chief_engineer.semantic_repair_exhausted",
         ]
+        assert review["signals"][0]["candidate_hash"] == review["signals"][1]["candidate_hash"]
+        assert review["signals"][0]["diagnosis_hash"] == review["signals"][1]["diagnosis_hash"]
+        assert "semantic_patch_invalid" in review["signals"][1]["detail"]
+        assert review["signals"][1]["detail"] in review["signals"][2]["detail"]
+        assert review["signals"][3]["detail"] == review["signals"][1]["detail"]
         assert len(keepers) == 3
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 
-    def test_chief_engineer_thinking_only_repair_falls_back_to_pm_authority_after_one_attempt(
+    def test_chief_engineer_thinking_only_repair_falls_back_after_repeated_failure(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -3104,9 +3143,10 @@ class TestChiefEngineerHandoffGuards:
         )
 
         result = asyncio.run(executor._execute_chief_engineer_review(run, _factory_stage_context()))
+        _assert_stable_repair_owner(commands, run.id)
 
         assert result.status == "success", result.output
-        assert len(commands) == 2
+        assert len(commands) == 3
         assert commands[-1].task_id.endswith("-SCHEMA-REPAIR")
         review = json.loads(
             Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
@@ -3114,16 +3154,24 @@ class TestChiefEngineerHandoffGuards:
             )
         )
         assert review["generated_blueprints"] == 1
+        assert review["llm_call_count"] == 3
         signal_codes = [signal["code"] for signal in review["signals"]]
-        assert "chief_engineer.advisory_projection_fallback" in signal_codes
+        assert signal_codes == [
+            "chief_engineer.output_schema_repair_started",
+            "chief_engineer.output_contract_final_repair_started",
+            "chief_engineer.output_contract_repair_no_progress",
+            "chief_engineer.advisory_projection_fallback",
+        ]
+        assert review["signals"][0]["validation_errors"] == review["signals"][1]["validation_errors"]
+        assert review["signals"][1]["detail"] in review["signals"][2]["detail"]
         fallback_signal = next(
             signal for signal in review["signals"] if signal["code"] == "chief_engineer.advisory_projection_fallback"
         )
         assert fallback_signal["pm_authority_preserved"] is True
         assert fallback_signal["scope_expansion_allowed"] is False
-        assert fallback_signal["provider_calls_capped"] == 2
+        assert "provider_calls_capped" not in fallback_signal
         assert fallback_signal["context_snapshot_ref"] == "abcdef123456abcdef123456"
-        assert len(keepers) == 2
+        assert len(keepers) == 3
         assert all(keeper.is_alive is False for keeper in keepers)
         _assert_no_chief_engineer_lease_keeper_threads()
 

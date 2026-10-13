@@ -307,6 +307,14 @@ _LEGACY_SWEEP_FLAG_NAMES: tuple[str, ...] = (
 
 KERNELONE_FLAG_REGISTRY: dict[str, FlagSpec] = {
     **{name: _legacy_sweep_spec(name) for name in _LEGACY_SWEEP_FLAG_NAMES},
+    "KERNELONE_FIRST_TURN_WRITE": FlagSpec(
+        name="KERNELONE_FIRST_TURN_WRITE",
+        default="off",
+        owner="roles.kernel",
+        purpose="Explicit compatibility opt-in for first-call write tool restriction; persistent execution is default.",
+        registered_at="2026-10-13",
+        expiry=None,
+    ),
     "KERNELONE_INSTANCE_WORKSPACE": FlagSpec(
         name="KERNELONE_INSTANCE_WORKSPACE",
         default=None,

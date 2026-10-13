@@ -21,8 +21,8 @@ from ..contracts import (
     ProjectCompletionContractV1,
     QueryBlueprintProvenanceV1,
     TaskBlueprintProvenanceSnapshotV1,
-    _strict_provenance_target_paths,
 )
+from ..contracts._helpers import _strict_provenance_target_paths
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
@@ -174,9 +174,17 @@ def _ce_topology_authorizes_artifact(
     allowed_source_suffixes: tuple[str, ...],
     semantic_role: str,
     path: str,
+    planning_contract_version: str = "",
 ) -> bool:
     if topology_authority != _CE_OWNED_TOPOLOGY_AUTHORITY:
         return False
+    if planning_contract_version == "pm.task_intent.v1":
+        normalized = _normalize_blueprint_file_path(path)
+        return bool(
+            normalized == path
+            and normalized.split("/")[0].casefold() not in {".git", ".polaris"}
+            and semantic_role in {"source", "entrypoint", "test", "manifest", "config", "docs"}
+        )
     if semantic_role not in _ce_delegated_artifact_roles(required_source_kinds):
         return False
     if not allowed_source_suffixes:
@@ -1746,10 +1754,11 @@ def _contract_completeness(
     delivery_depth_contract: dict[str, Any] | None = None,
     delivery_plan_document: dict[str, Any] | None = None,
     llm_blueprint_overlay: dict[str, Any] | None = None,
+    verification_only: bool = False,
 ) -> dict[str, Any]:
     missing_fields: list[str] = []
     advisory_missing_fields: list[str] = []
-    if not target_files:
+    if not target_files and not verification_only:
         missing_fields.append("target_files")
     if not acceptance_criteria:
         missing_fields.append("acceptance_criteria")
@@ -1778,7 +1787,8 @@ def _contract_completeness(
         "semantic_alignment": semantic_alignment,
         "semantic_blockers": semantic_blockers,
         "depth_contract_ready": not advisory_missing_fields,
-        "requires": ["target_files", "acceptance_criteria", "execution_checklist"],
+        "requires": [*(["context_files", "verification_commands"] if verification_only else ["target_files"]),
+                     "acceptance_criteria", "execution_checklist"],
         "advisory_requires": ["delivery_plan_document", "delivery_depth_contract"],
     }
 

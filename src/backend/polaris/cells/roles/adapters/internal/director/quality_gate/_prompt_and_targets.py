@@ -3225,6 +3225,7 @@ def _build_materialization_quality_repair_message(
     regression_guard_errors: list[str] | None = None,
     candidate_rejection_errors: list[str] | None = None,
     causal_reanalysis_required: bool = False,
+    allow_observation_tools: bool = True,
 ) -> str:
     directive_quality_errors = (
         directive_artifact_quality_errors if directive_artifact_quality_errors is not None else artifact_quality_errors
@@ -3247,9 +3248,9 @@ def _build_materialization_quality_repair_message(
     if missing_target_files:
         missing_lines = "\n".join(f"- {item}" for item in missing_target_files[:12])
         missing_block = (
-            f"MISSING TARGET FILES — create these exact paths NOW, one write_file call per path:\n{missing_lines}\n"
+            f"MISSING TARGET FILES — create these authorized paths, after any necessary read/search:\n{missing_lines}\n"
         )
-        if len(missing_target_files) == 1:
+        if len(missing_target_files) == 1 and not allow_observation_tools:
             single_missing = missing_target_files[0]
             single_missing_block = (
                 "SINGLE MISSING TARGET REPAIR:\n"

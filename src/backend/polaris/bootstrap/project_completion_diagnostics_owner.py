@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 from threading import RLock
-from typing import Any, cast
+from typing import Any
 
 from polaris.cells.chief_engineer.blueprint.public import (
     ArtifactObligationV1,
@@ -57,7 +57,6 @@ from polaris.cells.factory.verification_guard.public.contracts import (
     ProjectCompletionPhysicalEvidenceIntentV1,
     ProjectEntrypointObligationObservationV1,
     ProjectKindAuthorityObservationV1,
-    ProjectKindObservationV1,
     ProjectRepairCoverageV1,
     ProjectVerificationCommandAuthorityObservationV1,
     ProjectVerificationObligationObservationV1,
@@ -166,7 +165,7 @@ def _map_completion_contract(contract: object) -> ProjectCompletionContractObser
 
     if type(contract) is not ProjectCompletionContractV1:
         raise _fail("invalid_project_completion_contract_type", "CE returned a completion-contract lookalike")
-    typed_contract = cast(ProjectCompletionContractV1, contract)
+    typed_contract = contract
     artifacts = tuple(
         ProjectArtifactObligationObservationV1(
             obligation_id=item.obligation_id,
@@ -217,9 +216,9 @@ def _map_completion_contract(contract: object) -> ProjectCompletionContractObser
         contract_hash=typed_contract.contract_hash,
         project_id=typed_contract.project_id,
         run_id=typed_contract.run_id,
-        project_kind=cast(ProjectKindObservationV1, typed_contract.project_kind),
+        project_kind=typed_contract.project_kind,
         project_kind_authority=ProjectKindAuthorityObservationV1(
-            project_kind=cast(ProjectKindObservationV1, typed_contract.project_kind_authority.project_kind),
+            project_kind=typed_contract.project_kind_authority.project_kind,
             source_ref=typed_contract.project_kind_authority.source_ref,
             source_hash=typed_contract.project_kind_authority.source_hash,
             justification=typed_contract.project_kind_authority.justification,
@@ -411,33 +410,38 @@ class ProjectCompletionOwnerObservationAdapter:
         }:
             raise _fail("project_verification_run_ledger_scope_mismatch", "Run Ledger scope is stale")
         run_projection = _mapping(ledger.get("run_projection"), "run_ledger.run_projection")
-        capability = _mapping(run_projection.get("capability"), "run_ledger.run_projection.capability")
+        capability_by_task = _mapping(
+            run_projection.get("execution_capability_by_task"),
+            "run_ledger.run_projection.execution_capability_by_task",
+        )
+        capability = _mapping(
+            resolve_execution_capability_for_task(capability_by_task, intent.owner_task_id),
+            f"run_ledger.run_projection.execution_capability_by_task[{intent.owner_task_id!r}]",
+        )
         token_ids, latest_token_id = _committed_job_token_set(
             capability,
             error_code="project_verification_capability_not_authoritative",
-            message="Run Ledger capability must be clean and bind a committed JobToken set",
+            message="Verifier requires a clean task-local committed JobToken set",
         )
-        evidence_policy = _mapping(
-            run_projection.get("evidence_policy"),
-            "run_ledger.run_projection.evidence_policy",
+        execution_gate_policy = _mapping(
+            capability.get("gate_policy"),
+            "run_ledger.run_projection.execution_capability_by_task.gate_policy",
         )
-        raw_enabled = evidence_policy.get("enabled_modalities")
+        raw_enabled = execution_gate_policy.get("enabled_evidence_modalities") or execution_gate_policy.get(
+            "enabled_modalities"
+        )
         enabled_modalities = (
             {str(item).strip() for item in raw_enabled if isinstance(item, str) and str(item).strip()}
             if isinstance(raw_enabled, (list, tuple))
             else set()
         )
-        # Run Ledger evidence modalities describe effect classes (the
-        # physical verifier is a ``command`` effect). CE modalities describe
-        # verifier purpose (build/test/entrypoint/environment_prep). Comparing
-        # those enums rejected valid committed commands whenever the latest
-        # gate exposed ``command`` instead of a CE purpose. Fine-grained
-        # purpose/argv/cwd authority remains enforced below by
-        # evaluate_verifier_command_policy.
+        # Receipt gate policy describes what that one gate observes. Only the
+        # exact owner's original JobToken policy can permit a command effect.
+        # Fine-grained purpose/argv/cwd/input authority is re-evaluated below.
         if "command" not in enabled_modalities:
             raise _fail(
                 "project_verification_modality_not_permitted",
-                "Committed JobToken policy does not enable command evidence",
+                "Task-local committed JobToken policy does not enable command evidence",
             )
         policy_payload = {
             "domain": "runtime.execution_broker.project_verification_policy.v1",
@@ -454,7 +458,7 @@ class ProjectCompletionOwnerObservationAdapter:
             "job_token_id": latest_token_id,
             "job_token_ids": list(token_ids),
             "capability": capability,
-            "evidence_policy": evidence_policy,
+            "execution_gate_policy": execution_gate_policy,
         }
         policy_decision = evaluate_verifier_command_policy(
             EvaluateVerifierCommandPolicyQueryV1(

@@ -132,6 +132,11 @@ def _pol72_input(name: str) -> str:
         # ownership-valid local input, independent of the captured PM overlap.
         payload = json.loads(text)
         payload["tasks"][1]["target_files"] = ["src/garden/simulation/garden.ts"]
+        # Model-local fixture recipes use supported proof profiles; captured
+        # historical responses remain untouched in the evidence archive.
+        payload["tasks"][1]["verification_commands"][0]["argv"] = ["npx", "tsc", "-p", "."]
+        payload["tasks"][2]["verification_commands"][0]["argv"] = ["npx", "tsc", "-p", "."]
+        payload["tasks"][4]["verification_commands"][0]["argv"] = ["npx", "tsc", "--noEmit"]
         return json.dumps(payload, ensure_ascii=False)
     return text
 
@@ -293,9 +298,27 @@ async def test_pol72_typed_config_revision_fits_original_budget_and_preserves_ra
         captured["response"] = text
         return {"role": "assistant", "content": text}
 
-    runtime, freezes, wires = _local_runtime(
-        workspace, monkeypatch, [{"role": "assistant", "content": original_text}, model_edit]
-    )
+    ordinary_rejection = edit in {
+        "hidden_description",
+        "hidden_steps",
+        "conflict",
+        "bad_add",
+        "bad_command",
+        "mixed_command",
+        "dangling",
+        "cycle",
+        "duplicate_key",
+        "truncated",
+        "prefix",
+        "full_plan",
+        "nonfinite",
+    }
+    outputs = [{"role": "assistant", "content": original_text}, model_edit]
+    if ordinary_rejection:
+        # No rejected edit is accepted. Repeating the complete proposal proves
+        # no-progress termination under the unchanged base and physical budget.
+        outputs.append(model_edit)
+    runtime, freezes, wires = _local_runtime(workspace, monkeypatch, outputs)
     _native_fake_capacity(monkeypatch)
     profile = runtime._kernels[str(workspace)].registry.get_profile_or_raise("pm")
     assert profile.context_policy.max_context_tokens == 8000
@@ -303,19 +326,32 @@ async def test_pol72_typed_config_revision_fits_original_budget_and_preserves_ra
     adapter = PMAdapter(workspace=str(workspace))
     with bind_factory_role_evidence_authority(authority):
         result = await adapter._run_pm_stage(
-            "pm-task", directive, {}, {"run_id": "pm-pol72-child", "timeout_seconds": 43}
+            "pm-task",
+            directive,
+            {},
+            {"run_id": "pm-pol72-child", "timeout_seconds": 2100, "llm_call_timeout_seconds": 900},
         )
-    assert len(wires) == len(freezes) == len(runtime._test_commands) == 2
+    expected_calls = 3 if ordinary_rejection else 2
+    assert len(wires) == len(freezes) == len(runtime._test_commands) == expected_calls, json.dumps(
+        result, ensure_ascii=False
+    )
     assert all(wire["max_tokens"] == 60000 for wire in wires)
     assert {f.identity.run_id for f in freezes} == {"pm-pol72-child"}
-    assert len({f.identity.call_id for f in freezes}) == len({f.identity.request_freeze_id for f in freezes}) == 2
-    assert len({c.turn_request_id for c in runtime._test_commands}) == 2
     assert (
-        port._test_physical_attempt_coordinator.budget_state(authority.execution_authority_hash).consumed_attempts == 2
+        len({f.identity.call_id for f in freezes})
+        == len({f.identity.request_freeze_id for f in freezes})
+        == expected_calls
+    )
+    assert len({c.turn_request_id for c in runtime._test_commands}) == expected_calls
+    assert (
+        port._test_physical_attempt_coordinator.budget_state(authority.execution_authority_hash).consumed_attempts
+        == expected_calls
     )
     retry = "\n".join(message.get("content", "") for message in wires[1]["messages"])
     assert directive.strip() in retry
     assert captured["view"]["edit_manifest"]["remove_task_ids"] == []
+    if ordinary_rejection:
+        assert any(s["code"] == "pm.contracts.revision_no_progress" for s in result["quality_gate"]["signals"])
     assert result["success"] is (edit == "config"), (result, runtime._test_results)
     derivation = next(s for s in result["quality_gate"]["signals"] if s["code"] == "pm.contracts.revision_derivation")
     evidence = json.loads(Path(derivation["artifact_path"]).read_text(encoding="utf-8"))
@@ -350,7 +386,7 @@ async def test_pol72_typed_config_revision_fits_original_budget_and_preserves_ra
                     requests.append(request)
         request = next(r for r in requests if "final_physical_request" in r)
         assert request["final_physical_request"]["body"] == wire
-        assert request["final_physical_request"]["transport"]["timeout"] == [10.0, 43.0]
+        assert request["final_physical_request"]["transport"]["timeout"] == [10.0, 900.0]
         semantic = request["factory_final_request"]["canonical_final_payload"]
         assert semantic["role"] == "pm"
         assert "**PM**" in semantic["messages"][0]["content"]
@@ -425,9 +461,10 @@ async def test_semantic_acceptance_revision_through_real_budget_and_quality(
         captured["patch"] = patch
         return {"role": "assistant", "content": json.dumps(patch, ensure_ascii=False)}
 
-    runtime, freezes, wires = _local_runtime(
-        workspace, monkeypatch, [{"role": "assistant", "content": first}, model_edit]
-    )
+    outputs = [{"role": "assistant", "content": first}, model_edit]
+    if edit != "replace":
+        outputs.append(model_edit)
+    runtime, freezes, wires = _local_runtime(workspace, monkeypatch, outputs)
     _native_fake_capacity(monkeypatch)
     assert (
         runtime._kernels[str(workspace)].registry.get_profile_or_raise("pm").context_policy.max_context_tokens == 8000
@@ -435,14 +472,23 @@ async def test_semantic_acceptance_revision_through_real_budget_and_quality(
     authority = port.mint_authority_binding("pm")
     with bind_factory_role_evidence_authority(authority):
         result = await adapter._run_pm_stage(
-            "pm-task", directive, {}, {"run_id": "semantic-child", "timeout_seconds": 43}
+            "pm-task",
+            directive,
+            {},
+            {"run_id": "semantic-child", "timeout_seconds": 2100, "llm_call_timeout_seconds": 900},
         )
-    assert len(wires) == len(freezes) == len(runtime._test_commands) == 2
+    expected_calls = 2 if edit == "replace" else 3
+    assert len(wires) == len(freezes) == len(runtime._test_commands) == expected_calls
     assert all(wire["max_tokens"] == 60000 for wire in wires)
     assert {f.identity.run_id for f in freezes} == {"semantic-child"}
-    assert len({f.identity.call_id for f in freezes}) == len({f.identity.request_freeze_id for f in freezes}) == 2
     assert (
-        port._test_physical_attempt_coordinator.budget_state(authority.execution_authority_hash).consumed_attempts == 2
+        len({f.identity.call_id for f in freezes})
+        == len({f.identity.request_freeze_id for f in freezes})
+        == expected_calls
+    )
+    assert (
+        port._test_physical_attempt_coordinator.budget_state(authority.execution_authority_hash).consumed_attempts
+        == expected_calls
     )
     assert directive.strip() in "\n".join(m.get("content", "") for m in wires[1]["messages"])
     assert result["success"] is (edit == "replace"), (result, runtime._test_results)
@@ -460,6 +506,7 @@ async def test_semantic_acceptance_revision_through_real_budget_and_quality(
         assert result["real_planning_qualified"] is True
         assert result["tasks_created"] > 0
     else:
+        assert any(s["code"] == "pm.contracts.revision_no_progress" for s in result["quality_gate"]["signals"])
         assert result["tasks_created"] == 0
         assert adapter.task_runtime.list_observable_task_rows() == []
         assert result["real_planning_qualified"] is False
@@ -603,7 +650,7 @@ async def test_boundary_failure_uses_one_revision_under_real_factory_authority(
     authority = port.mint_authority_binding("pm")
     with bind_factory_role_evidence_authority(authority):
         result = await PMAdapter(workspace=str(workspace))._run_pm_stage(
-            "pm-task", "Create model", {}, {"run_id": "pm-owned-child", "timeout_seconds": 43}
+            "pm-task", "Create model", {}, {"run_id": "pm-owned-child", "timeout_seconds": 2100, "llm_call_timeout_seconds": 900}
         )
     assert result["success"] is revision_valid, (result, runtime._test_results)
     assert len(wires) == len(freezes) == len(runtime._test_commands) == 2
@@ -612,7 +659,7 @@ async def test_boundary_failure_uses_one_revision_under_real_factory_authority(
     assert (
         port._test_physical_attempt_coordinator.budget_state(authority.execution_authority_hash).consumed_attempts == 2
     )
-    assert all(command.context["timeout_seconds"] == 43 for command in runtime._test_commands)
+    assert all(command.context["timeout_seconds"] == 2100 for command in runtime._test_commands)
     assert len({command.turn_request_id for command in runtime._test_commands}) == 2
     snapshots: dict[str, Any] = {}
     for path in (workspace / ".polaris/runtime/contexts").glob("*/*"):
@@ -624,7 +671,7 @@ async def test_boundary_failure_uses_one_revision_under_real_factory_authority(
     for frozen, wire in zip(freezes, wires, strict=True):
         snapshot = snapshots[frozen.final_semantic_request_hash]
         assert snapshot["final_physical_request"]["body"] == wire
-        assert snapshot["final_physical_request"]["transport"]["timeout"] == [10.0, 43.0]
+        assert snapshot["final_physical_request"]["transport"]["timeout"] == [10.0, 900.0]
         payload = snapshot["factory_final_request"]["canonical_final_payload"]
         assert payload["role"] == "pm"
         assert "**PM**" in payload["messages"][0]["content"]
@@ -807,7 +854,7 @@ async def test_pol71_complete_candidate_survives_real_revision_wire(
     adapter = PMAdapter(workspace=str(workspace))
     with bind_factory_role_evidence_authority(authority):
         result = await adapter._run_pm_stage(
-            "pm-task", _pol72_input("FACTORY_DIRECTIVE.txt"), {}, {"run_id": "pm-pol71-child", "timeout_seconds": 43}
+            "pm-task", _pol72_input("FACTORY_DIRECTIVE.txt"), {}, {"run_id": "pm-pol71-child", "timeout_seconds": 2100, "llm_call_timeout_seconds": 900}
         )
     expected_calls = 1 if first_good else 2
     assert len(wires) == len(freezes) == len(runtime._test_commands) == expected_calls
@@ -816,7 +863,7 @@ async def test_pol71_complete_candidate_survives_real_revision_wire(
     assert len({f.identity.call_id for f in freezes}) == expected_calls
     assert len({f.identity.request_freeze_id for f in freezes}) == expected_calls
     assert len({c.turn_request_id for c in runtime._test_commands}) == expected_calls
-    assert all(c.context["timeout_seconds"] == 43 for c in runtime._test_commands)
+    assert all(c.context["timeout_seconds"] == 2100 for c in runtime._test_commands)
     state = port._test_physical_attempt_coordinator.budget_state(authority.execution_authority_hash)
     assert state.consumed_attempts == expected_calls
     assert state.attempt_budget == authority.attempt_budget
@@ -830,7 +877,7 @@ async def test_pol71_complete_candidate_survives_real_revision_wire(
     for frozen, wire in zip(freezes, wires, strict=True):
         request = snapshots[frozen.final_semantic_request_hash]
         assert request["final_physical_request"]["body"] == wire
-        assert request["final_physical_request"]["transport"]["timeout"] == [10.0, 43.0]
+        assert request["final_physical_request"]["transport"]["timeout"] == [10.0, 900.0]
         semantic = request["factory_final_request"]["canonical_final_payload"]
         assert semantic["role"] == "pm"
         assert "**PM**" in semantic["messages"][0]["content"]
@@ -1146,7 +1193,7 @@ async def test_pol88_captured_html_admitted_without_unnecessary_full_reanswer(
     adapter = PMAdapter(workspace=str(workspace))
     with bind_factory_role_evidence_authority(port.mint_authority_binding("pm")):
         result = await adapter._run_pm_stage(
-            "pm-task", _POL88_DIRECTIVE, {}, {"run_id": "pm-pol88-captured", "timeout_seconds": 43}
+            "pm-task", _POL88_DIRECTIVE, {}, {"run_id": "pm-pol88-captured", "timeout_seconds": 2100, "llm_call_timeout_seconds": 900}
         )
     assert len(wires) == len(freezes) == len(runtime._test_commands) == 1
     assert all(wire["max_tokens"] == 60000 for wire in wires)
@@ -1172,7 +1219,7 @@ async def test_pol88_captured_html_admitted_without_unnecessary_full_reanswer(
             == freeze.final_semantic_request_hash
         )
         assert request["final_physical_request"]["body"] == wire
-        assert request["final_physical_request"]["transport"]["timeout"] == [10.0, 43.0]
+        assert request["final_physical_request"]["transport"]["timeout"] == [10.0, 900.0]
         audit = request["final_request_context_audit"]
         assert audit["final_request_token_estimate"] >= audit["message_token_estimate"]
         assert audit["final_request_evidence_coverage"]["role_identity_ok"] is True

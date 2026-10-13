@@ -104,6 +104,7 @@ def _failed(
     failure_kind: str = "",
     physical_error: str = "",
     physical_error_type: str = "",
+    physical_result: Mapping[str, object] | None = None,
 ) -> DirectedEffectMutationPortResultV1:
     """Build a failed mutation result with nested physical-error evidence.
 
@@ -120,6 +121,16 @@ def _failed(
         "physical_error": str(physical_error or "").strip()[:800],
         "physical_error_type": str(physical_error_type or "").strip()[:120],
     }
+    if physical_result is not None:
+        # Observation-only failure feedback. Receipt/authority/status cannot be
+        # copied from a non-success executor result into this projection.
+        for key in ("stdout", "stderr"):
+            value = physical_result.get(key)
+            if isinstance(value, str):
+                detail[key] = value[:4000]
+        exit_code = physical_result.get("exit_code")
+        if type(exit_code) is int:
+            detail["exit_code"] = exit_code
     recovery_result = _recovery_tool_result(recovery)
     if recovery_result is not None:
         thawed = {key: _thaw_value(value) for key, value in recovery_result.payload}
@@ -732,7 +743,7 @@ class _DirectorDirectedEffectMutationPort:
             nested_error = ""
             nested_type = ""
             if isinstance(raw_result, Mapping):
-                nested_error = str(raw_result.get("error") or raw_result.get("message") or "").strip()
+                nested_error = str(raw_result.get("error") or raw_result.get("message") or raw_result.get("stderr") or "").strip()
                 nested_type = str(raw_result.get("error_type") or "").strip()
             recovery = _attempt_physical_effect_recovery(
                 prepared.context,
@@ -751,6 +762,7 @@ class _DirectorDirectedEffectMutationPort:
                 failure_kind="physical_result_failed",
                 physical_error=nested_error,
                 physical_error_type=nested_type,
+                physical_result=raw_result if isinstance(raw_result, Mapping) else None,
             )
         if raw_result.get("no_op") is True:
             reason = str(raw_result.get("reason") or "physical mutation produced no effect").strip()

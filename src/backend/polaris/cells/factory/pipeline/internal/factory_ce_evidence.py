@@ -337,7 +337,7 @@ def chief_engineer_portfolio_output_errors(
         for task_id, task_plan in task_plans.items():
             if not isinstance(task_plan, Mapping):
                 errors.append(f"task_plans[{task_id!r}] must be an object")
-            elif not isinstance(task_plan.get("behavior_invariant_refs"), list):
+            elif not isinstance(task_plan.get("behavior_invariant_refs", []), list):
                 errors.append(f"task_plans[{task_id!r}].behavior_invariant_refs must be an array")
     interface_contract = construction_plan.get("project_interface_contract")
     if not isinstance(interface_contract, Mapping):

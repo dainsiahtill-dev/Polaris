@@ -9,7 +9,7 @@ hashable payload incrementally.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.cells.director.tasking.public.contracts import (
@@ -69,7 +69,7 @@ def _hash_ref(*, ref: str, hash_value: str) -> dict[str, Any]:
 
 def _stable_hash_or_missing(value: Any, missing_key: str) -> str:
     if isinstance(value, Mapping) and value:
-        return stable_hash(dict(value))
+        return cast(str, stable_hash(dict(value)))
     return f"{_MISSING_PREFIX}{missing_key}"
 
 
@@ -115,11 +115,18 @@ def _allowed_paths(
     else:
         allowed_write_paths = list(target_files)
     legacy_read_paths = _string_list(token.get("allowed_paths"))
-    allowed_read_paths = (
-        _string_list(metadata.get("allowed_read_paths"))
-        or _string_list(token.get("allowed_read_paths"))
-        or list(dict.fromkeys([*allowed_write_paths, *scope_paths, *context_files, *legacy_read_paths]))
-    )
+    if "allowed_read_paths" in metadata:
+        allowed_read_paths = _string_list(metadata["allowed_read_paths"])
+        if "allowed_read_paths" in token:
+            allowed_read_paths = _intersect_admitted_paths(
+                allowed_read_paths, _string_list(token["allowed_read_paths"])
+            )
+    elif "allowed_read_paths" in token:
+        allowed_read_paths = _string_list(token["allowed_read_paths"])
+    else:
+        allowed_read_paths = list(
+            dict.fromkeys([*allowed_write_paths, *scope_paths, *context_files, *legacy_read_paths])
+        )
     return allowed_read_paths, allowed_write_paths
 
 
@@ -411,6 +418,7 @@ def build_execution_envelope(
         validity=validity,
         envelope_hash=envelope_hash,
         created_at=created,
+        task_execution_contract_hash=payload_without_hash["task_execution_contract_hash"],
     )
 
 

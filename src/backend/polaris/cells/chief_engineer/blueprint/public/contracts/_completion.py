@@ -271,7 +271,7 @@ class ProjectKindAuthorityV1:
 
 @dataclass(frozen=True)
 class VerificationCommandAuthorityV1:
-    """One exact PM-owned verifier command and its declared semantic modality."""
+    """One exact verifier recipe bound by authenticated PM or delegated CE authority."""
 
     task_id: str
     modality: VerificationModalityV1
