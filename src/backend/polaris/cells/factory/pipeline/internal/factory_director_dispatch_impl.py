@@ -866,7 +866,7 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
                     "director_binding_skips": director_binding_skips,
                 },
             }
-            missing_declared_targets = executor._missing_declared_delivery_targets(pm_tasks)
+            missing_declared_targets = executor._missing_declared_delivery_targets(pm_tasks, run_id=run.id)
             materialization_pending = bool(missing_declared_targets)
             first_materialization_pending = (
                 materialization_pending and not attempts and int(before_stats.get("completed") or 0) == 0
@@ -1818,8 +1818,10 @@ async def _execute_director_dispatch(executor, run: FactoryRun, context: dict[st
         # already-converged TaskBoard that never enters the dispatch loop.
         # Existence is necessary only; canonical receipts and verifier authority
         # remain the prerequisite for success above.
-        if stage_status == "success" and any(task.get("generated_outputs") for task in pm_tasks):
-            missing_declared_targets = executor._missing_declared_delivery_targets(pm_tasks)
+        if stage_status == "success" and any(
+            task.get("generated_outputs") or task.get("schema_version") == "pm.task_intent.v1" for task in pm_tasks
+        ):
+            missing_declared_targets = executor._missing_declared_delivery_targets(pm_tasks, run_id=run.id)
             if missing_declared_targets:
                 stage_status = "failed"
                 error_code = "director.declared_delivery_targets_missing"

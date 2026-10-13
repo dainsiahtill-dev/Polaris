@@ -605,6 +605,8 @@ class ProjectionEngine:
         if not sorted_events:
             return []
 
+        from polaris.kernelone.context.contributions import is_model_proposal, model_proposal_reference
+
         turns: list[dict[str, Any]] = []
         latest_sequence = max((int(getattr(event, "sequence", 0)) for event in events), default=0)
 
@@ -620,6 +622,10 @@ class ProjectionEngine:
             role = str(getattr(event, "role", "user") or "user")
             content = self._clean_turn_content(role, str(getattr(event, "content", "") or ""))
             event_id = self._sanitize_receipt_ref(getattr(event, "event_id", "")) or f"idx_{index}"
+
+            if is_model_proposal(role, metadata):
+                turns.append({"role": role, "content": model_proposal_reference(content, metadata)})
+                continue
 
             if route == "archive":
                 artifact_id = self._sanitize_receipt_ref(getattr(event, "artifact_id", "")) or event_id

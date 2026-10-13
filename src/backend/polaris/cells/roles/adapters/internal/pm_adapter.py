@@ -390,7 +390,7 @@ class PMAdapter(
             )
 
         def dispatch_context(mode: str) -> dict[str, Any]:
-            dispatched = {**planning_context, "mode": mode}
+            dispatched = {**planning_context, "mode": mode, "response_contribution": "model_proposal"}
             if pm_deadline is not None:
                 deadline = float(pm_deadline)
                 if isinstance(pm_deadline, bool) or not math.isfinite(deadline):

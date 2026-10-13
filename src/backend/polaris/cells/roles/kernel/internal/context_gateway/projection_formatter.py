@@ -11,6 +11,7 @@ from typing import Any
 
 from polaris.kernelone.context.context_os.helpers import get_metadata_value
 from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
+from polaris.kernelone.context.contributions import is_model_proposal, prompt_contribution_content
 from polaris.kernelone.context.projection_engine import render_run_card
 from polaris.kernelone.context.prompt_safety import (
     format_tool_failure_summary,
@@ -93,7 +94,8 @@ class ProjectionFormatter:
                 # Full: print all events with metadata
                 for event in transcript:
                     role = event.get("role", "?")
-                    content = prompt_safe_message_content(str(role), event.get("content", ""))
+                    source_content = prompt_contribution_content(str(role), str(event.get("content", "")), event.get("metadata"))
+                    content = prompt_safe_message_content(str(role), source_content)
                     event_id = event.get("event_id", "")
                     sequence = event.get("sequence", 0)
                     metadata = event.get("metadata", {})
@@ -106,7 +108,10 @@ class ProjectionFormatter:
                 # Summary: show last 5 events
                 for event in transcript[-5:]:
                     role = event.get("role", "?")
-                    content = prompt_safe_message_content(str(role), event.get("content", ""))[:80]
+                    source_content = prompt_contribution_content(str(role), str(event.get("content", "")), event.get("metadata"))
+                    content = prompt_safe_message_content(str(role), source_content)
+                    if not is_model_proposal(str(role), event.get("metadata")):
+                        content = content[:80]
                     lines.append(f"  [{role}] {content}...")
         else:
             lines.append("transcript_events: (empty)")
@@ -159,7 +164,11 @@ class ProjectionFormatter:
             if role == "tool_result":
                 role = "tool"
 
-            messages.append({"role": role, "content": prompt_safe_message_content(role, content)})
+            source_content = prompt_contribution_content(role, content, event.get("metadata"))
+            message: dict[str, Any] = {"role": role, "content": prompt_safe_message_content(role, source_content)}
+            if is_model_proposal(role, event.get("metadata")):
+                message["metadata"] = dict(event.get("metadata") or {})
+            messages.append(message)
 
         return ProjectionFormatter.compact_tool_failure_summaries(messages)
 
@@ -345,8 +354,13 @@ class ProjectionFormatter:
             projection.run_card.current_goal if projection.run_card else "<none>",
         )
 
+        from polaris.kernelone.context.contributions import is_model_proposal, model_proposal_reference
+
         # Add active window events with routing-aware processing
         for event in sorted_events:
+            if is_model_proposal(event.role, event.metadata):
+                messages.append({"role": event.role, "content": model_proposal_reference(event.content, event.metadata)})
+                continue
             route = str(event.route or "clear").lower()
 
             # Skip CLEAR events unless they're recent/forced

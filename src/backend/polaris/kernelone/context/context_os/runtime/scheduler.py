@@ -11,6 +11,8 @@ import contextlib
 import logging
 from typing import Any
 
+from polaris.kernelone.context.contributions import is_model_proposal
+
 from ..budget_math import (
     SMALL_CONTEXT_WINDOW_TOKENS,
     SMALL_WINDOW_ACTIVE_RATIO,
@@ -314,10 +316,10 @@ class _ContextOSSchedulerMixin:
         for item in transcript:
             # Classify dialog act for user and assistant messages
             dialog_act_result: DialogActResult | None = None
-            if item.role in ("user", "assistant") and self._dialog_act_classifier is not None:
+            if item.role in ("user", "assistant") and self._dialog_act_classifier is not None and not is_model_proposal(item.role, item.metadata):
                 dialog_act_result = self._dialog_act_classifier.classify(item.content, role=item.role)
 
-            if item.role == "assistant":
+            if item.role == "assistant" and not is_model_proposal(item.role, item.metadata):
                 # Extract follow-up action using generic patterns
                 inferred_action = _extract_assistant_followup_action(item.content)
 

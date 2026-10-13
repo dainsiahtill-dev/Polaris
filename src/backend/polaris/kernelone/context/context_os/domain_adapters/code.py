@@ -304,6 +304,10 @@ class CodeContextDomainAdapter(GenericContextDomainAdapter):
 
     def extract_state_hints(self, event: TranscriptEvent) -> DomainStatePatchHints:
         base = super().extract_state_hints(event)
+        from polaris.kernelone.context.contributions import is_model_proposal
+
+        if is_model_proposal(event.role, event.metadata):
+            return base
         content = _normalize_text(event.content)
         if not content or event.role in {"tool", "system"} or is_control_plane_noise(content):
             return base

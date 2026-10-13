@@ -145,6 +145,7 @@ async def persist_session_turn_state(
                     role=role,
                     content=content,
                     meta={
+                        **evt_meta,
                         "source": "roles.runtime.turn_events",
                         "event_id": str(evt.get("event_id") or ""),
                         "run_id": command.run_id,

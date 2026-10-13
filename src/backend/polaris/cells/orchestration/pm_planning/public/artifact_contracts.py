@@ -9,7 +9,7 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import Any, Literal
 
 from polaris.kernelone.quality.verification_commands import (
     normalize_verification_command_modality,
@@ -494,9 +494,16 @@ class PMArtifactContractResultV1:
 
 
 def validate_pm_artifact_contracts(
-    tasks: list[dict[str, Any]], *, primary_language: str = ""
+    tasks: list[dict[str, Any]],
+    *,
+    primary_language: str = "",
+    validation_phase: Literal["execution", "pm_planning"] = "execution",
 ) -> PMArtifactContractResultV1:
     """Single PM/Factory artifact, action, language and generated graph gate.
+
+    Execution ownership is strict by default. Only the explicit PM planning
+    phase can defer undeclared technical fields in a canonical semantic intent.
+    This never qualifies CE handoff or grants Director execution authority.
 
     Legacy typed-tsc/direct-test classification remains bounded to already
     authored paths. New output declarations never become authored targets.
@@ -537,6 +544,81 @@ def validate_pm_artifact_contracts(
                     (),
                     (),
                 )
+    if validation_phase not in {"execution", "pm_planning"}:
+        return PMArtifactContractResultV1(
+            (
+                {
+                    "code": "artifact_contract_phase_invalid",
+                    "path": "$.validation_phase",
+                    "message": "Unknown artifact contract validation phase",
+                },
+            ),
+            (),
+            (),
+        )
+    semantic_planning = False
+    if validation_phase == "pm_planning":
+        # Local import avoids the semantic DTO's dependency on pure artifact
+        # primitives. Route markers alone never qualify this exception.
+        from .task_intent import (
+            PM_TASK_INTENT_SCHEMA_VERSION,
+            PmTaskIntentError,
+            normalize_pm_task_intent,
+            pm_task_intent_payload,
+        )
+
+        claims_semantic = any(
+            task.get("schema_version") == PM_TASK_INTENT_SCHEMA_VERSION
+            or task.get("metadata", {}).get("planning_contract_version") == PM_TASK_INTENT_SCHEMA_VERSION
+            for task in tasks
+        )
+        if claims_semantic:
+            try:
+                canonical_tasks = normalize_pm_task_intent(pm_task_intent_payload(tasks))
+                forbidden = {
+                    "execution_backend",
+                    "command",
+                    "working_directory",
+                    "allowed_commands",
+                    "job_token",
+                    "phase",
+                    "steps",
+                    "handoff_ready",
+                }
+                for index, (task, expected) in enumerate(zip(tasks, canonical_tasks, strict=True)):
+                    for field, value in expected.items():
+                        if field != "metadata" and task.get(field) != value:
+                            raise PmTaskIntentError(
+                                f"$.tasks[{index}].{field}",
+                                "Semantic projection differs from its canonical declaration",
+                            )
+                    metadata = task.get("metadata", {})
+                    for field, value in expected["metadata"].items():
+                        if metadata.get(field) != value:
+                            raise PmTaskIntentError(
+                                f"$.tasks[{index}].metadata.{field}", "Semantic authority declaration is not canonical"
+                            )
+                    for field in forbidden:
+                        if field in task or field in metadata:
+                            raise PmTaskIntentError(
+                                f"$.tasks[{index}].{field}", "PM intent cannot declare execution authority"
+                            )
+                semantic_planning = True
+            except PmTaskIntentError as exc:
+                return PMArtifactContractResultV1((exc.diagnostic,), (), ())
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                return PMArtifactContractResultV1(
+                    (
+                        {
+                            "code": "pm_task_intent_invalid",
+                            "path": "$.tasks",
+                            "message": "Malformed semantic projection",
+                            "error_type": type(exc).__name__,
+                        },
+                    ),
+                    (),
+                    (),
+                )
     extensions = _LANGUAGE_SOURCE_EXTENSIONS.get(language, frozenset())
     by_id = {str(t.get("id") or f"TASK-{i + 1}"): t for i, t in enumerate(tasks)}
     ancestors: dict[str, set[str]] = {}
@@ -552,8 +634,13 @@ def validate_pm_artifact_contracts(
     owners: dict[str, str] = {}
 
     def reject(
-        index: int, field: str, code: str, message: str, *,
-        fields: tuple[str, ...] = (), evidence: dict[str, Any] | None = None,
+        index: int,
+        field: str,
+        code: str,
+        message: str,
+        *,
+        fields: tuple[str, ...] = (),
+        evidence: dict[str, Any] | None = None,
     ) -> None:
         task = tasks[index]
         metadata = task.get("metadata", {})
@@ -619,9 +706,9 @@ def validate_pm_artifact_contracts(
                         evidence={
                             "generated_output_path": output,
                             "authored_owner_task_ids": list(dict.fromkeys(authored_owners.get(output, []))),
-                            "generated_owner_task_ids": list(dict.fromkeys(
-                                [*([owners[output]] if output in owners else []), identity]
-                            )),
+                            "generated_owner_task_ids": list(
+                                dict.fromkeys([*([owners[output]] if output in owners else []), identity])
+                            ),
                         },
                     )
                 owners[output] = identity
@@ -637,7 +724,8 @@ def validate_pm_artifact_contracts(
                 "Read-only inputs cannot be task-owned writes",
             )
         if (
-            not targets
+            not semantic_planning
+            and not targets
             and task.get("execution_backend", task.get("metadata", {}).get("execution_backend", "code_edit"))
             == "code_edit"
         ):
@@ -645,8 +733,12 @@ def validate_pm_artifact_contracts(
                 index, "target_files", "artifact_action_contract_invalid", "code_edit requires a useful owned artifact"
             )
         scope = str(task.get("scope", ""))
-        if task.get("execution_backend", "code_edit") == "code_edit" and re.search(
-            r"(?:\bno\s+(?:code\s+)?(?:changes|writes)\b|无代码变更|不修改任何文件)", scope, re.IGNORECASE
+        if (
+            not semantic_planning
+            and task.get("execution_backend", "code_edit") == "code_edit"
+            and re.search(
+                r"(?:\bno\s+(?:code\s+)?(?:changes|writes)\b|无代码变更|不修改任何文件)", scope, re.IGNORECASE
+            )
         ):
             reject(
                 index,
@@ -741,14 +833,16 @@ def validate_pm_artifact_contracts(
         )
         if has_sources:
             auxiliaries.update(
-                path for path in task.get("target_files", [])
+                path
+                for path in task.get("target_files", [])
                 if str(path).replace("\\", "/").lower().startswith(("tests/", "test/", "__tests__/", "scripts/", "qa/"))
             )
         # TypeScript runs on the JavaScript toolchain. Authored JS helpers are
         # valid interoperability, not declarations of compiler-generated output.
         if language == "typescript":
             auxiliaries.update(
-                path for path in task.get("target_files", [])
+                path
+                for path in task.get("target_files", [])
                 if str(path).lower().endswith((".js", ".jsx", ".mjs", ".cjs"))
             )
         wrong: list[str] = []
@@ -770,14 +864,23 @@ def validate_pm_artifact_contracts(
             scope_paths = scopes if isinstance(scopes, list) else []
             foreign_scope_owners = {
                 path: list(dict.fromkeys(authored_owners[path]))
-                for path in scope_paths if isinstance(path, str)
-                and path in authored_owners and identity not in authored_owners[path]
+                for path in scope_paths
+                if isinstance(path, str) and path in authored_owners and identity not in authored_owners[path]
             }
             reject(
-                index, "target_files", "pm_plan_language_mismatch", f"Wrong primary-language authored targets: {wrong}",
+                index,
+                "target_files",
+                "pm_plan_language_mismatch",
+                f"Wrong primary-language authored targets: {wrong}",
                 fields=(
-                    "target_files", "context_files", "scope_paths", "goal", "description",
-                    "steps", "acceptance", "verification_commands",
+                    "target_files",
+                    "context_files",
+                    "scope_paths",
+                    "goal",
+                    "description",
+                    "steps",
+                    "acceptance",
+                    "verification_commands",
                 ),
                 evidence={
                     "primary_language": language,

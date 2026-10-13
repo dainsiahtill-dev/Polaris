@@ -208,16 +208,57 @@ class _Mixin00:
     def _collect_declared_delivery_targets(cls, tasks: list[dict[str, Any]]) -> list[str]:
         return helpers.collect_declared_delivery_targets(tasks)
 
-    def _missing_declared_delivery_targets(self, tasks: list[dict[str, Any]]) -> list[str]:
+    def _missing_declared_delivery_targets(
+        self,
+        tasks: list[dict[str, Any]],
+        *,
+        run_id: str = "",
+    ) -> list[str]:
+        """Check authored promises using CE authority when PM delegates topology."""
+        from polaris.cells.chief_engineer.blueprint.public import GetBlueprintStatusQueryV1, get_blueprint_status
+        from polaris.cells.orchestration.pm_planning.public.task_intent import is_pm_task_intent
+
         workspace_root = self.workspace.resolve()
         missing: list[str] = []
+        semantic = any(is_pm_task_intent(task) for task in tasks)
         contract = validate_pm_artifact_contracts(
-            tasks, primary_language=str(self._read_catalog_contract().get("primary_language") or "")
+            tasks,
+            primary_language=str(self._read_catalog_contract().get("primary_language") or ""),
+            validation_phase="pm_planning" if semantic else "execution",
         )
         if not contract.ok:
             return [f"artifact_contract_invalid:{d['path']}" for d in contract.diagnostics]
+        declared = self._collect_declared_delivery_targets(tasks)
         generated = [row["path"] for row in contract.generated_outputs]
-        for target in dict.fromkeys([*self._collect_declared_delivery_targets(tasks), *generated]):
+        if semantic:
+            if not run_id:
+                return ["chief_engineer_handoff_invalid:missing_factory_run_id"]
+            declared = []
+            for index, task in enumerate(tasks, start=1):
+                task_id = self._task_id(task, index)
+                blueprint = get_blueprint_status(
+                    GetBlueprintStatusQueryV1(
+                        workspace=str(self.workspace),
+                        task_id=task_id,
+                        run_id=run_id,
+                    )
+                )
+                if not blueprint.ok or blueprint.status != "generated":
+                    return [f"chief_engineer_handoff_invalid:{task_id}"]
+                handoff = validate_director_handoff_from_payload(
+                    str(self.workspace),
+                    {"task_id": task_id, "blueprint_id": blueprint.blueprint_id},
+                    require_strict=True,
+                )
+                projection = handoff.get("task_completion_projection", {})
+                if not handoff.get("allowed") or projection.get("run_id") != run_id:
+                    return [f"chief_engineer_handoff_invalid:{task_id}"]
+                declared.extend(
+                    row["path"]
+                    for row in projection.get("owned_artifacts", [])
+                    if row.get("applicability") == "required"
+                )
+        for target in dict.fromkeys([*declared, *generated]):
             try:
                 path = (workspace_root / target).resolve()
                 path.relative_to(workspace_root)
@@ -497,6 +538,19 @@ class _Mixin00:
         tasks = payload.get("tasks")
         if not isinstance(tasks, list) or not tasks:
             return "tasks_plan_empty_tasks"
+        if any(
+            isinstance(item, dict)
+            and (
+                item.get("schema_version") == "pm.task_intent.v1"
+                or (
+                    isinstance(item.get("metadata"), dict)
+                    and item["metadata"].get("planning_contract_version") == "pm.task_intent.v1"
+                )
+            )
+            for item in tasks
+        ):
+            result = validate_pm_artifact_contracts(tasks, validation_phase="pm_planning")
+            return "" if result.ok else f"tasks_plan_invalid_contract:{len(result.diagnostics)}"
         invalid = 0
         meta_diagnostic = 0
         for item in tasks:
@@ -557,7 +611,9 @@ class _Mixin00:
         if not catalog:
             return ""
         tasks = self._load_pm_plan_tasks(relative_path)
-        result = validate_pm_artifact_contracts(tasks, primary_language=str(catalog.get("primary_language") or ""))
+        result = validate_pm_artifact_contracts(
+            tasks, primary_language=str(catalog.get("primary_language") or ""), validation_phase="pm_planning"
+        )
         if result.ok:
             return ""
         return f"catalog primary_language={catalog.get('primary_language')!r}: " + "; ".join(
@@ -572,6 +628,7 @@ class _Mixin00:
         result = validate_pm_artifact_contracts(
             self._load_pm_plan_tasks(relative_path),
             primary_language=str(self._read_catalog_contract().get("primary_language") or ""),
+            validation_phase="pm_planning",
         )
         return "; ".join(f"{d['code']}: {d['path']}: {d['message']}" for d in result.diagnostics[:5])
 
@@ -651,7 +708,9 @@ class _Mixin00:
 
         task_rows = [dict(item) for item in raw_tasks if isinstance(item, dict)]
         artifact_contract = validate_pm_artifact_contracts(
-            task_rows, primary_language=str(self._read_catalog_contract().get("primary_language") or "")
+            task_rows,
+            primary_language=str(self._read_catalog_contract().get("primary_language") or ""),
+            validation_phase="pm_planning",
         )
         if not artifact_contract.ok:
             return {

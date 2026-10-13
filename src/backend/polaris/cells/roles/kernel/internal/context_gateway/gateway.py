@@ -345,7 +345,10 @@ class RoleContextGateway:
             if isinstance(item, dict):
                 proj_input.append(item)
             elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                proj_input.append({"role": item[0], "content": item[1]})
+                history_item: dict[str, Any] = {"role": item[0], "content": item[1]}
+                if len(item) >= 3 and isinstance(item[2], dict):
+                    history_item["metadata"] = dict(item[2])
+                proj_input.append(history_item)
 
         logger.debug(
             "[DEBUG][ContextGateway] _build_context_impl: has_snapshot=%s proj_input=%d max_history=%d effective_recent=%d focus=%r",

@@ -130,6 +130,7 @@ def _execute_commit_protocol(
             route="",
             content=str(meta.get("content") or ""),
             source_turns=(f"t{seq}",),
+            metadata=tuple(dict(meta.get("metadata") or {}).items()),
         )
         transcript_log.append(event.to_dict())
 
@@ -301,6 +302,12 @@ def _build_turn_history_and_events(
         )
 
     assistant_content = str(visible_content or "").strip()
+    context = getattr(request, "context_override", None) or {}
+    proposal_metadata: dict[str, Any] = {}
+    if context.get("response_contribution") == "model_proposal":
+        from polaris.kernelone.context.contributions import model_proposal_metadata
+
+        proposal_metadata = model_proposal_metadata(assistant_content)
     if assistant_content:
         turn_history.append(("assistant", assistant_content))
         turn_events_metadata.append(
@@ -309,6 +316,7 @@ def _build_turn_history_and_events(
                 "content": assistant_content,
                 "event_id": f"assistant_{turn_id}",
                 "kind": "assistant_turn",
+                **({"metadata": proposal_metadata} if proposal_metadata else {}),
             }
         )
 

@@ -1,0 +1,13 @@
+classification: structural
+assumptions:
+  - Factory pre-CE consumers require legacy scope and steps although semantic PM owns observable requirements.
+  - Artifact validation defaults missing execution_backend to code_edit and rejects delegated empty targets.
+  - CE portfolio, signed handoff, Director scope and TaskBoundary retain execution authority.
+pre_mortem:
+  - A metadata-only bypass could admit a malformed product contract or stale execution fields.
+  - A global validator relaxation could weaken post-CE ownership checks.
+verification:
+  - test_pm_semantic_consumer_phase.py reproduces Factory rejection and rejects forged projections.
+  - Existing artifact, semantic, CE handoff and Director scoped-tool suites verify execution boundaries.
+  - Replay immutable real PM response through normalization and Factory admission without target writes.
+native_delivery: pending_root_fresh_run

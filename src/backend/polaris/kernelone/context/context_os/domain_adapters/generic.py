@@ -6,6 +6,7 @@ import json
 import re
 
 from polaris.kernelone.context._token_estimator import estimate_tokens as _estimate_tokens
+from polaris.kernelone.context.contributions import is_model_proposal, model_proposal_reference
 from polaris.kernelone.context.control_plane_noise import is_control_plane_noise
 
 from ..helpers import _normalize_text, _trim_text, get_metadata_value
@@ -191,6 +192,10 @@ class GenericContextDomainAdapter(ContextDomainAdapter):
         *,
         policy: StateFirstContextOSPolicy,
     ) -> DomainRoutingDecision:
+        if is_model_proposal(event.role, event.metadata):
+            return DomainRoutingDecision(
+                route=RoutingClass.ARCHIVE, confidence=1.0, reasons=("unadmitted_model_proposal",)
+            )
         if _is_low_signal(event.content):
             return DomainRoutingDecision(
                 route=RoutingClass.CLEAR,
@@ -272,14 +277,15 @@ class GenericContextDomainAdapter(ContextDomainAdapter):
         decision = self.classify_event(event, policy=policy)
         if decision.route != RoutingClass.ARCHIVE:
             return None
+        proposal = is_model_proposal(event.role, event.metadata)
         return ArtifactRecord(
             artifact_id=artifact_id,
-            artifact_type=_guess_artifact_type(event.content),
+            artifact_type="model_proposal" if proposal else _guess_artifact_type(event.content),
             mime_type=_guess_mime(event.content),
             token_count=_estimate_tokens(event.content),
             char_count=len(event.content),
-            peek=_trim_text(event.content, max_chars=180),
-            keys=_extract_json_keys(event.content),
+            peek=model_proposal_reference(event.content, event.metadata) if proposal else _trim_text(event.content, max_chars=180),
+            keys=() if proposal else _extract_json_keys(event.content),
             content=event.content,
             source_event_ids=(event.event_id,),
             metadata=(
@@ -298,6 +304,7 @@ class GenericContextDomainAdapter(ContextDomainAdapter):
             or _is_tool_failure_summary_content(content)
             or _metadata_flag(event, "observation_only")
             or _metadata_flag(event, "non_deliverable")
+            or is_model_proposal(event.role, event.metadata)
         ):
             return DomainStatePatchHints()
         followup_action = _normalize_text(get_metadata_value(event.metadata, "followup_action"))

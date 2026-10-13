@@ -50,6 +50,7 @@ from polaris.kernelone.context.context_os.patterns import (
     _NEGATIVE_RESPONSE_PATTERNS,
 )
 from polaris.kernelone.context.context_os.policies import StateFirstContextOSPolicy
+from polaris.kernelone.context.contributions import is_model_proposal, prompt_contribution_content
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 
 from .contracts import (
@@ -406,10 +407,10 @@ class Canonicalizer:
         for item in transcript:
             # Classify dialog act
             dialog_act_result: DialogActResult | None = None
-            if item.role in ("user", "assistant"):
+            if item.role in ("user", "assistant") and not is_model_proposal(item.role, item.metadata):
                 dialog_act_result = self._classifier.classify(item.content, role=item.role)
 
-            if item.role == "assistant":
+            if item.role == "assistant" and not is_model_proposal(item.role, item.metadata):
                 inferred_action = _extract_assistant_followup_action(item.content)
 
                 if (
@@ -1305,16 +1306,16 @@ class EpisodeSealer:
             for item in closed_events
             if item.artifact_id and any(artifact.artifact_id == item.artifact_id for artifact in artifacts)
         )
-        combined = "\n".join(item.content for item in closed_events)
+        combined = "\n".join(prompt_contribution_content(item.role, item.content, item.metadata) for item in closed_events)
         intent = (
             working_state.task_state.current_goal.value
             if working_state.task_state.current_goal is not None
-            else _trim_text(closed_events[0].content, max_chars=96)
+            else _trim_text(prompt_contribution_content(closed_events[0].role, closed_events[0].content, closed_events[0].metadata), max_chars=96)
         )
         outcome = (
             working_state.decision_log[-1].summary
             if working_state.decision_log
-            else _trim_text(closed_events[-1].content, max_chars=160)
+            else _trim_text(prompt_contribution_content(closed_events[-1].role, closed_events[-1].content, closed_events[-1].metadata), max_chars=160)
         )
 
         episode = EpisodeCard(
@@ -1548,7 +1549,8 @@ class ArtifactSelector:
         if not active_window:
             return ""
         last_event = active_window[-1]
-        parts = [f"Last event: {last_event.role} -> {_trim_text(last_event.content, max_chars=180)}"]
+        last_content = prompt_contribution_content(last_event.role, last_event.content, last_event.metadata)
+        parts = [f"Last event: {last_event.role} -> {_trim_text(last_content, max_chars=180)}"]
         if working_state.task_state.open_loops:
             parts.append(f"Next focus: {working_state.task_state.open_loops[-1].value}")
         elif working_state.task_state.deliverables:
