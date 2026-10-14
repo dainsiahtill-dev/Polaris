@@ -504,19 +504,14 @@ def _strict_records(
     if not lease.exists:
         return []
     try:
-        content_bytes = lease.read_bytes()
-        if len(content_bytes) > store._strict_max_bytes:
-            raise EventSourcingError(
-                "strict event stream exceeds the configured byte limit",
-                code="strict_scan_limit_exceeded",
-                details={"stream": location.stream, "storage_path": location.logical_path},
+        # Complete facts are still required by the guarded snapshot contract.
+        # Reuse strict frame validation without treating disk history as a page.
+        return [
+            event
+            for event, _record_bytes in store._iter_strict_lease_records(
+                stream=location.stream, logical_path=location.logical_path, lease=lease
             )
-        return store._parse_strict_records(
-            content=content_bytes.decode("utf-8"),
-            storage_path=location.logical_path,
-            stream=location.stream,
-            byte_length=len(content_bytes),
-        )
+        ]
     except EventSourcingError as exc:
         normalized = normalize_strict_stream_failure(
             exc,
@@ -568,12 +563,11 @@ def _append_fsync_descriptor(
     envelope = store._build_envelope(semantic=semantic, seq=next_seq)
     encoded = _canonical_json(envelope.to_record(include_integrity_digest=True)) + b"\n"
     try:
-        current_size = len(lease.read_bytes()) if lease.exists else 0
-        if current_size + len(encoded) > store._strict_max_bytes:
-            raise EventSourcingError(
-                "strict event stream append exceeds the configured byte limit",
-                code="strict_stream_corruption",
-            )
+        store._validate_strict_record_budget(
+            stream=location.stream,
+            logical_path=location.logical_path,
+            record_bytes=len(encoded),
+        )
         lease.append_bytes(encoded, fsync_file=True, fsync_parent_on_create=True)
     except EventSourcingError:
         raise

@@ -1,0 +1,299 @@
+"""Transport observation for ordinary calls, separate from execution authority."""
+
+from __future__ import annotations
+
+import asyncio
+import copy
+import hashlib
+import json
+import threading
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from typing import Any, AsyncContextManager, TypeVar
+
+from polaris.kernelone.events.final_request_evidence import redact_provider_transport
+
+from .contracts import AIRequest, ModelSpec, _deep_freeze_provider_value
+from .internal.context_hash import validate_context_hash
+from .native_request_metrics import provider_native_request_metrics
+from .provider_native_request import build_anthropic_native_messages, build_openai_native_messages
+
+_Result = TypeVar("_Result")
+_Response = TypeVar("_Response")
+
+
+def verified_native_capture_audit(*, request: Any, workspace: str | None) -> dict[str, Any] | None:
+    """Read actual ordinary capture evidence under the caller's workspace."""
+    from polaris.kernelone.fs import KernelFileSystem
+    from polaris.kernelone.fs.registry import get_default_adapter
+
+    context = getattr(request, "context", None)
+    if not isinstance(context, dict) or not isinstance(context.get("physical_request_capture"), dict):
+        return None
+    try:
+        raw_ref = context.get("context_snapshot_ref")
+        if not isinstance(raw_ref, str):
+            return None
+        ref = validate_context_hash(raw_ref)
+        text = KernelFileSystem(workspace or ".", get_default_adapter()).read_text(f"runtime/contexts/{ref[:2]}/{ref}")
+        if hashlib.sha256(text.encode("utf-8")).hexdigest()[:24] != ref:
+            return None
+        snapshot = json.loads(text)
+        provider_request = snapshot["provider_request"]
+        if (
+            provider_request.get("evidence_level") != "physical_capture"
+            or provider_request.get("execution_qualified") is not False
+        ):
+            return None
+        wire = provider_request["final_physical_request"]
+        canonical = json.dumps(wire, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        if hashlib.sha256(canonical.encode("utf-8")).hexdigest() != provider_request["final_physical_wire_hash"]:
+            return None
+        if provider_request.get("role") != getattr(request, "role", None):
+            return None
+        if snapshot.get("call_id") != context.get("call_id"):
+            return None
+        if provider_request["physical_attempt"]["provider_request_id"] != context["physical_request_capture"].get(
+            "provider_request_id"
+        ):
+            return None
+        audit = provider_request["final_request_context_audit"]
+        if audit.get("audit_scope") != "provider_native_wire":
+            return None
+        resolved = copy.deepcopy(audit)
+        if isinstance(resolved.get("final_request_evidence_coverage"), dict):
+            resolved["final_request_evidence_coverage"]["context_snapshot_ref"] = ref
+        return resolved
+    except (OSError, RuntimeError, TypeError, ValueError, KeyError):
+        return None
+
+
+class NativeRequestCapturePort:
+    """Persist the actual native request without minting a domain qualification.
+
+    Existing Factory/session dispatch ports remain the authority for governed
+    calls. This port observes ordinary transport attempts and retains the same
+    immutable snapshot surface; it grants no effect or budget permissions.
+    """
+
+    def __init__(
+        self,
+        *,
+        request: AIRequest,
+        model_spec: ModelSpec,
+        trace_id: str,
+        messages: list[Any],
+        provider_request: dict[str, Any],
+        persist: Callable[..., str],
+        workspace: str | None,
+    ) -> None:
+        self._request = request
+        self._model_spec = model_spec
+        self._trace_id = trace_id
+        self._messages = copy.deepcopy(messages)
+        self._provider_request = copy.deepcopy(provider_request)
+        semantic = request.context.get("provider_request_semantic_audit")
+        if isinstance(semantic, dict):
+            self._provider_request = {**copy.deepcopy(semantic), **self._provider_request}
+            if isinstance(semantic.get("final_request_context_audit"), dict):
+                self._provider_request["final_request_context_audit"] = copy.deepcopy(
+                    semantic["final_request_context_audit"]
+                )
+        self._persist = persist
+        self._workspace = workspace
+        self._lock = threading.Lock()
+        self._attempts = 0
+        self._final: tuple[str, dict[str, Any]] | None = None
+
+    def _capture(self, wire_request: Mapping[str, Any]) -> tuple[Mapping[str, Any], dict[str, Any]]:
+        frozen = _deep_freeze_provider_value(wire_request)
+        wire = redact_provider_transport(frozen)
+        canonical = json.dumps(wire, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        wire_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        body = wire.get("body")
+        if not isinstance(body, dict):
+            raise RuntimeError("native_request_capture_body_required")
+        opaque_sdk = wire.get("transport", {}).get("kind") == "openai-python-sdk"
+        if opaque_sdk:
+            protocol = ""
+        elif "input" in body:
+            protocol = "openai_responses"
+        elif "system" in body or self._model_spec.provider_type == "anthropic_compat":
+            protocol = "anthropic_messages"
+        elif isinstance(body.get("messages"), list):
+            protocol = "openai_chat_completions"
+        else:
+            protocol = ""
+        audit = copy.deepcopy(self._provider_request.get("final_request_context_audit") or {})
+        if protocol:
+            audit.update(
+                provider_native_request_metrics(
+                    body=body,
+                    native_protocol=protocol,
+                    context_window_tokens=int(self._model_spec.max_context_tokens or 0),
+                )
+            )
+        else:
+            audit["audit_scope"] = "provider_native_wire_unrecognized"
+            audit["final_request_token_estimate"] = len(json.dumps(body, ensure_ascii=False)) // 4
+        source_messages = self._request.context.get("provider_request_semantic_messages")
+        source_messages = source_messages if isinstance(source_messages, list) else self._messages
+        if protocol == "anthropic_messages":
+            expected_messages, expected_system = build_anthropic_native_messages(source_messages)
+            projection_matches = body.get("messages") == expected_messages and body.get("system") == expected_system
+        elif protocol == "openai_chat_completions":
+            projection_matches = body.get("messages") == build_openai_native_messages(source_messages)
+        else:
+            projection_matches = False
+        audit["coverage_verification"] = (
+            "native_message_projection_matched" if projection_matches else "unverified_native_projection_changed"
+        )
+        if not projection_matches:
+            audit["semantic_projection_coverage"] = copy.deepcopy(audit.get("coverage") or {})
+            audit["coverage"] = dict.fromkeys(audit.get("coverage", {}), False)
+            evidence_coverage = audit.get("final_request_evidence_coverage")
+            if isinstance(evidence_coverage, dict):
+                audit["semantic_projection_evidence_coverage"] = copy.deepcopy(evidence_coverage)
+                evidence_coverage["pass"] = False
+                evidence_coverage["native_projection_coverage_unverified"] = True
+        audit["final_physical_wire_hash"] = wire_hash
+        if isinstance(audit.get("final_request_evidence_coverage"), dict):
+            audit["final_request_evidence_coverage"]["context_snapshot_ref"] = ""
+        with self._lock:
+            self._attempts += 1
+            attempt = {
+                "provider_request_id": uuid.uuid4().hex,
+                "attempt_number": self._attempts,
+                "status": "prepared",
+                "execution_qualified": False,
+            }
+            provider_request = copy.deepcopy(self._provider_request)
+            provider_request.update(
+                evidence_level="provider_call_observation" if opaque_sdk else "physical_capture",
+                execution_qualified=False,
+                final_physical_request=wire,
+                final_physical_wire_hash=wire_hash,
+                final_request_context_audit=audit,
+                physical_attempt=attempt,
+            )
+            if opaque_sdk:
+                provider_request["observed_provider_call"] = provider_request.pop("final_physical_request")
+                provider_request["observed_provider_call_hash"] = provider_request.pop("final_physical_wire_hash")
+                provider_request["final_request_context_audit"]["audit_scope"] = "provider_call_observation"
+                provider_request["final_request_context_audit"]["observed_provider_call_hash"] = provider_request[
+                    "final_request_context_audit"
+                ].pop("final_physical_wire_hash")
+            self._publish(provider_request)
+        return frozen, provider_request
+
+    def _publish(self, provider_request: dict[str, Any]) -> None:
+        try:
+            ref = self._persist(
+                workspace=self._workspace,
+                messages=self._messages,
+                trace_id=self._trace_id,
+                call_id=self._request.context.get("call_id"),
+                provider_request=provider_request,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise RuntimeError("native_request_capture_persist_failed") from exc
+        audit = provider_request["final_request_context_audit"]
+        live_audit = copy.deepcopy(audit)
+        if isinstance(live_audit.get("final_request_evidence_coverage"), dict):
+            live_audit["final_request_evidence_coverage"]["context_snapshot_ref"] = ref
+        self._request.context["context_snapshot_ref"] = ref
+        self._request.context["final_request_context_audit"] = live_audit
+        self._request.context["physical_request_capture"] = {
+            **provider_request["physical_attempt"],
+            "context_snapshot_ref": ref,
+        }
+        self._final = (ref, copy.deepcopy(live_audit))
+
+    def _finish(self, provider_request: dict[str, Any], *, status: str, error: BaseException | None = None) -> None:
+        provider_request["physical_attempt"]["status"] = status
+        if error is not None:
+            provider_request["physical_attempt"]["error_type"] = type(error).__name__
+        with self._lock:
+            self._publish(provider_request)
+
+    def final_context_evidence(self) -> tuple[str, dict[str, Any]] | None:
+        with self._lock:
+            return copy.deepcopy(self._final)
+
+    def dispatch_sync(
+        self, *, wire_request: Mapping[str, Any], send: Callable[[Mapping[str, Any]], _Result]
+    ) -> _Result:
+        frozen, provider_request = self._capture(wire_request)
+        try:
+            result = send(frozen)
+        except BaseException as exc:
+            self._finish(provider_request, status="failed", error=exc)
+            raise
+        self._finish(provider_request, status="completed")
+        return result
+
+    async def dispatch_async(
+        self, *, wire_request: Mapping[str, Any], send: Callable[[Mapping[str, Any]], Awaitable[_Result]]
+    ) -> _Result:
+        frozen, provider_request = await self._prepare_async(wire_request)
+        try:
+            result = await send(frozen)
+        except BaseException as exc:
+            self._finish(
+                provider_request, status="cancelled" if isinstance(exc, asyncio.CancelledError) else "failed", error=exc
+            )
+            raise
+        self._finish(provider_request, status="completed")
+        return result
+
+    async def dispatch_blocking_async(
+        self, *, wire_request: Mapping[str, Any], send: Callable[[Mapping[str, Any]], _Result]
+    ) -> _Result:
+        return await asyncio.to_thread(self.dispatch_sync, wire_request=wire_request, send=send)
+
+    async def _prepare_async(self, wire_request: Mapping[str, Any]) -> tuple[Mapping[str, Any], dict[str, Any]]:
+        capture = asyncio.create_task(asyncio.to_thread(self._capture, wire_request))
+        try:
+            return await asyncio.shield(capture)
+        except asyncio.CancelledError as cancellation:
+            # A worker cannot be killed by cancelling its asyncio waiter. Wait
+            # for its bounded local persistence before publishing cancellation;
+            # no transport is opened after cancellation during preparation.
+            while not capture.done():
+                try:
+                    await asyncio.shield(capture)
+                except asyncio.CancelledError:
+                    continue
+            try:
+                _frozen, provider_request = capture.result()
+            except Exception as exc:
+                raise cancellation from exc
+            self._finish(provider_request, status="cancelled", error=cancellation)
+            raise
+
+    async def dispatch_stream_async(
+        self,
+        *,
+        wire_request: Mapping[str, Any],
+        open_stream: Callable[[Mapping[str, Any]], AsyncContextManager[_Response]],
+        consume: Callable[[_Response], AsyncIterator[_Result]],
+    ) -> AsyncIterator[_Result]:
+        frozen, provider_request = await self._prepare_async(wire_request)
+        try:
+            async with open_stream(frozen) as response:
+                stream = consume(response)
+                try:
+                    async for item in stream:
+                        yield item
+                finally:
+                    close = getattr(stream, "aclose", None)
+                    if close is not None:
+                        await close()
+        except BaseException as exc:
+            self._finish(
+                provider_request,
+                status="cancelled" if isinstance(exc, (asyncio.CancelledError, GeneratorExit)) else "failed",
+                error=exc,
+            )
+            raise
+        self._finish(provider_request, status="completed")

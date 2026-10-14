@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
+  BookOpen,
   ExternalLink,
   Info,
   Loader2,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { StatusBadge } from '@/app/components/ui/badge';
+import { FoundationWorkspace } from './foundation/FoundationWorkspace';
 import {
   useConnectionState,
   useMessageHandler,
@@ -194,7 +196,36 @@ function isInstanceStatusMessage(message: unknown): boolean {
   return false;
 }
 
+function launcherDocumentationLocation() {
+  const search = new URLSearchParams(window.location.search);
+  return { foundation: search.get('view') === 'foundation', topic: search.get('topic') || undefined };
+}
+
 export function LauncherWorkspace() {
+  const [location, setLocation] = useState(launcherDocumentationLocation);
+  useEffect(() => {
+    const restore = () => setLocation(launcherDocumentationLocation());
+    window.addEventListener('popstate', restore);
+    return () => window.removeEventListener('popstate', restore);
+  }, []);
+  const navigate = useCallback((foundation: boolean, topic?: string) => {
+    const url = new URL(window.location.href);
+    if (foundation) {
+      url.searchParams.set('view', 'foundation');
+      if (topic) url.searchParams.set('topic', topic);
+      else url.searchParams.delete('topic');
+    } else {
+      url.searchParams.delete('view');
+      url.searchParams.delete('topic');
+    }
+    window.history.pushState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    setLocation(launcherDocumentationLocation());
+  }, []);
+  if (location.foundation) return <FoundationWorkspace topicId={location.topic} onNavigateTopic={topic => navigate(true, topic)} onExit={() => navigate(false)} />;
+  return <LauncherInstanceWorkspace onOpenFoundation={() => navigate(true)} />;
+}
+
+function LauncherInstanceWorkspace({ onOpenFoundation }: { onOpenFoundation: () => void }) {
   const [instances, setInstances] = useState<PolarisInstance[]>([]);
   const [form, setForm] = useState<StartInstancePayload>(defaultForm);
   const [loading, setLoading] = useState(false);
@@ -337,7 +368,11 @@ export function LauncherWorkspace() {
               <p className="text-xs text-slate-400">多实例总控 · 每个实例保持唯一 workspace</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onOpenFoundation}>
+              <BookOpen className="h-4 w-4" aria-hidden="true" />
+              原理研究
+            </Button>
             <StatusBadge color="success" variant="dot">{runningCount} running</StatusBadge>
             <StatusBadge color="info" variant="dot">{instances.length} instances</StatusBadge>
             <StatusBadge color="warning" variant="dot">{benchCount} bench</StatusBadge>

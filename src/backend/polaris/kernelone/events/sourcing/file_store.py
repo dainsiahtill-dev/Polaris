@@ -251,9 +251,9 @@ class JsonlEventStore:
         advancement share one stream-scoped critical section.  Callers therefore
         never have to implement their own query-then-append race window.
 
-        Strict mode validates the complete stream in one bounded pass before
-        allocating a sequence; its configured record and byte limits are
-        explicit fail-closed complexity bounds, not timing-based test gates.
+        Strict mode validates the complete stream before allocating a sequence.
+        Its record-count and physical-frame byte limits bound validation without
+        making the retained-page budget a cumulative stream lifetime limit.
         """
         if self._read_only:
             raise EventSourcingError("read-only event store cannot append", code="read_only_store")
@@ -413,7 +413,7 @@ class JsonlEventStore:
         Read-side byte limits bound each physical record and the retained page,
         rather than permanently disqualifying a healthy growing stream. The
         record-count complexity limit remains mandatory. Strict append and
-        guarded mutation retain their existing complete-stream byte budgets.
+        guarded mutation use the same physical-record validation boundary.
         A page never becomes evidence before the complete tail and descriptor
         identity have been validated. No ordinary parsed cache is consulted.
         """
@@ -627,43 +627,67 @@ class JsonlEventStore:
             lease.open_existing(writable=True)
             if self._validate_legacy_history and not strict_integrity and lease.exists:
                 self._validate_legacy_append_history(lease.read_bytes(), stream=semantic.stream)
-            records = self._read_lease_records_cached(
-                stream=semantic.stream,
-                logical_path=logical_path,
-                lease=lease,
-                strict_integrity=strict_integrity,
-            )
-            if idempotency_key:
-                idempotent_event = next(
-                    (
-                        event
-                        for event in records
-                        if str(event.metadata.get("idempotency_key") or "").strip() == idempotency_key
-                    ),
-                    None,
+            idempotent_event: EventEnvelope | None = None
+            if strict_integrity:
+                record_count = 0
+                head_seq = 0
+                for ordinal, (event, _record_bytes) in enumerate(
+                    self._iter_strict_lease_records(stream=semantic.stream, logical_path=logical_path, lease=lease),
+                    start=1,
+                ):
+                    record_count = ordinal
+                    head_seq = event.seq
+                    if (
+                        idempotency_key
+                        and idempotent_event is None
+                        and str(event.metadata.get("idempotency_key") or "").strip() == idempotency_key
+                    ):
+                        idempotent_event = event
+                # Even an early idempotent match is not returned until every
+                # frame and the complete tail have been strictly validated.
+            else:
+                records = self._read_lease_records_cached(
+                    stream=semantic.stream,
+                    logical_path=logical_path,
+                    lease=lease,
+                    strict_integrity=False,
                 )
-                if idempotent_event is not None:
-                    existing_semantic = self._semantic_from_event(idempotent_event)
-                    if existing_semantic != semantic:
-                        drift_fields = self._semantic_drift_fields(
-                            existing=existing_semantic,
-                            requested=semantic,
-                        )
-                        raise IdempotencyConflictError(
-                            "idempotency conflict: existing event does not match requested event "
-                            f"key={idempotency_key!r} fields={','.join(drift_fields)} "
-                            f"path={logical_path!r}",
-                            drift_fields=drift_fields,
-                        )
-                    if expected_seq is not None and idempotent_event.seq != expected_seq:
-                        raise ExpectedSequenceDriftError(
-                            "expected_seq drift for idempotent event: "
-                            f"requested={expected_seq} actual={idempotent_event.seq} path={logical_path!r}",
-                            requested_seq=expected_seq,
-                            actual_seq=idempotent_event.seq,
-                        )
-                    return idempotent_event
-            if strict_integrity and len(records) >= self._strict_max_records:
+                record_count = len(records)
+                head_seq = records[-1].seq if records else 0
+                idempotent_event = (
+                    next(
+                        (
+                            event
+                            for event in records
+                            if str(event.metadata.get("idempotency_key") or "").strip() == idempotency_key
+                        ),
+                        None,
+                    )
+                    if idempotency_key
+                    else None
+                )
+            if idempotency_key and idempotent_event is not None:
+                existing_semantic = self._semantic_from_event(idempotent_event)
+                if existing_semantic != semantic:
+                    drift_fields = self._semantic_drift_fields(
+                        existing=existing_semantic,
+                        requested=semantic,
+                    )
+                    raise IdempotencyConflictError(
+                        "idempotency conflict: existing event does not match requested event "
+                        f"key={idempotency_key!r} fields={','.join(drift_fields)} "
+                        f"path={logical_path!r}",
+                        drift_fields=drift_fields,
+                    )
+                if expected_seq is not None and idempotent_event.seq != expected_seq:
+                    raise ExpectedSequenceDriftError(
+                        "expected_seq drift for idempotent event: "
+                        f"requested={expected_seq} actual={idempotent_event.seq} path={logical_path!r}",
+                        requested_seq=expected_seq,
+                        actual_seq=idempotent_event.seq,
+                    )
+                return idempotent_event
+            if strict_integrity and record_count >= self._strict_max_records:
                 raise _StrictStreamIntegrityError(
                     "strict event stream append exceeds the configured record limit",
                     code="strict_scan_limit_exceeded",
@@ -672,10 +696,10 @@ class JsonlEventStore:
                         "storage_path": logical_path,
                         "limit": "max_records",
                         "max_records": self._strict_max_records,
-                        "actual_records": len(records) + 1,
+                        "actual_records": record_count + 1,
                     },
                 )
-            next_seq = (records[-1].seq if records else 0) + 1
+            next_seq = head_seq + 1
             if expected_seq is not None and next_seq != expected_seq:
                 raise ExpectedSequenceDriftError(
                     f"expected_seq drift: requested={expected_seq} actual={next_seq} path={logical_path!r}",
@@ -695,11 +719,11 @@ class JsonlEventStore:
                 ).encode("utf-8")
                 + b"\n"
             )
-            if strict_integrity and len(lease.read_bytes()) + len(encoded) > self._strict_max_bytes:
-                raise _StrictStreamIntegrityError(
-                    "strict event stream append exceeds the configured byte limit",
-                    code="strict_scan_limit_exceeded",
-                    details={"stream": semantic.stream, "storage_path": logical_path},
+            if strict_integrity:
+                self._validate_strict_record_budget(
+                    stream=semantic.stream,
+                    logical_path=logical_path,
+                    record_bytes=len(encoded),
                 )
             try:
                 lease.append_bytes(
@@ -1139,14 +1163,28 @@ class JsonlEventStore:
         lease: StreamLeaseV1,
         strict_integrity: bool,
     ) -> list[EventEnvelope]:
-        """Read a held no-follow lease and parse it without logical-path I/O."""
+        """Validate strict history per frame under its held no-follow lease.
+
+        Returned records remain fully materialized for existing consumers;
+        streaming decoding does not claim constant-memory snapshot output.
+        """
 
         if not lease.exists:
             return []
         started_at = time.perf_counter()
         try:
-            content_bytes = lease.read_bytes()
-            content = content_bytes.decode("utf-8")
+            if strict_integrity:
+                records = []
+                observed_bytes = 0
+                for event, record_bytes in self._iter_strict_lease_records(
+                    stream=stream, logical_path=logical_path, lease=lease
+                ):
+                    records.append(event)
+                    observed_bytes += record_bytes
+            else:
+                content_bytes = lease.read_bytes()
+                records = self._parse_records(content=content_bytes.decode("utf-8"), storage_path=logical_path)
+                observed_bytes = len(content_bytes)
         except LockedRegularFileError as exc:
             raise EventSourcingError(
                 f"stream descriptor read failed stream={stream!r}: {exc}",
@@ -1159,15 +1197,6 @@ class JsonlEventStore:
                 code="stream_read_failed",
                 details={"stream": stream, "storage_path": logical_path},
             ) from exc
-        if strict_integrity:
-            records = self._parse_strict_records(
-                content=content,
-                storage_path=logical_path,
-                stream=stream,
-                byte_length=len(content_bytes),
-            )
-        else:
-            records = self._parse_records(content=content, storage_path=logical_path)
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         if duration_ms >= 250:
             caller_path = " > ".join(
@@ -1177,7 +1206,7 @@ class JsonlEventStore:
             logger.warning(
                 "[event_stream.full_scan] stream=%s bytes=%d records=%d strict=%s duration_ms=%d callers=%s",
                 stream,
-                len(content_bytes),
+                observed_bytes,
                 len(records),
                 strict_integrity,
                 duration_ms,

@@ -258,7 +258,7 @@ async def test_owned_factory_snapshot_qualifies_real_persistence_and_native_disp
         "project_structure",
         "repo_identity",
     }
-    assert all(set(item) == {"role", "content"} for item in active)
+    assert active == prepared.messages
     assert prepared.ai_request.context["chat_messages"] == active
     assert payload["max_tokens"] == prepared.ai_request.options["max_tokens"] == 60000
     assert snapshot["provider_request"][
@@ -570,7 +570,7 @@ async def test_ce_prebuilt_factory_cutoff_enforces_current_table_before_transpor
     from polaris.infrastructure.llm.providers.openai_provider import _build_openai_payload
 
     genuine = case != "decoy"
-    expected_pass = case == "genuine"
+    expected_pass = case != "decoy"
     _bootstrap(tmp_path)
     gate, lifecycle = _gate(tmp_path)
     cutoff = request_fact_test._B32CutoffPort()
@@ -597,7 +597,8 @@ async def test_ce_prebuilt_factory_cutoff_enforces_current_table_before_transpor
         stream=stream,
         config={**prepared.request_options, "chat_messages": prepared.ai_request.context["chat_messages"]},
     )
-    assert all("name" not in item for item in prepared.ai_request.context["chat_messages"])
+    assert all(isinstance(item.get("role"), str) and "content" in item for item in wire["messages"])
+    assert all("receipt_refs" not in item for item in wire["messages"])
     audit = build_final_request_context_audit_for_request(
         ai_request=prepared.ai_request, prepared=prepared, profile=profile
     )
@@ -618,6 +619,20 @@ async def test_ce_prebuilt_factory_cutoff_enforces_current_table_before_transpor
         port.enforce_final_request_evidence_coverage(ai_request=prepared.ai_request, audit=bound)
         assert coverage["included_rows"] == capture["required_rows"]
         assert any(item.get("name") == "context_override" for item in frozen["messages"])
+        if case == "wire_substitution":
+            # Prepared evidence may pass; the actual native request must still
+            # match its frozen authority before any physical reservation.
+            context_ref = await invoker_helpers._store_active_request_context_snapshot(
+                workspace=str(tmp_path),
+                active_request=prepared.ai_request,
+                prepared=prepared,
+                profile=profile,
+                run_id=prepared.factory_semantic_request.identity.run_id,
+                call_id=prepared.factory_semantic_request.identity.call_id,
+            )
+            assert context_ref is None
+            assert prepared.ai_request.context["context_snapshot_degraded"]["code"] == "CONTEXT_STORE_WRITE_FAILED"
+            assert lifecycle.query_strict() == ()
     else:
         with pytest.raises(
             FinalRequestEvidenceCoverageError, match="ce_required_command_authority_final_request_mismatch"
@@ -690,7 +705,7 @@ def test_ce_untrusted_projection_rejected_after_real_serializer_before_transport
         options={},
     )
     prepared = PreparedLLMRequest(
-        messages=source,
+        messages=copy.deepcopy(wire["messages"]),
         input_text="",
         context_result=None,
         context_summary="",

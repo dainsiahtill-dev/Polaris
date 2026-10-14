@@ -146,7 +146,7 @@ def test_terminal_failed_read_batch_releases_without_future_qa(tmp_path: Path) -
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"status": "completed"},
+        {"status": "completed", "result_status": "success"},
         {"status": "in_progress"},
         {"tool": "write_file"},
         {"tool": "unknown_tool"},

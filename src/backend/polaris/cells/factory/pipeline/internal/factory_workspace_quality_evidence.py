@@ -196,6 +196,29 @@ def _dedupe_workspace_repair_paths(paths: list[str]) -> list[str]:
     return deduped
 
 
+def workspace_quality_entrypoint_causal_repair_targets(
+    artifact_quality_errors: Sequence[str],
+    authoritative_owner_paths: Sequence[str],
+) -> list[str]:
+    """Project controlled ENTRY feedback into hints within the claimed owner.
+
+    Native validation already emits source/config/manifest links from the CE
+    completion contract. They are causality hints, never scope authority. A
+    missing derived entry requires inspecting that build closure; selecting one
+    of those paths to lease the owner must not become a single-file write rule.
+    No disk inference, language rule or replacement verifier recipe is added.
+    """
+    owner_paths = set(_dedupe_workspace_repair_paths(list(authoritative_owner_paths)))
+    candidates: list[str] = []
+    for error in artifact_quality_errors:
+        if "artifact_quality_error: required entrypoint artifact missing:" not in error:
+            continue
+        for section in error.split("; "):
+            if section.startswith("repair source (") and section.endswith(")"):
+                candidates.extend(_dedupe_workspace_repair_paths([section[len("repair source (") : -1]]))
+    return [path for path in dict.fromkeys(candidates) if path in owner_paths]
+
+
 def workspace_quality_repair_result_has_mutation(item: dict[str, Any]) -> bool:
     """Return true only for a path-bound, non-no-op physical write receipt.
 

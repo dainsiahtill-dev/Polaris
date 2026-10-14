@@ -15,6 +15,7 @@ import json
 import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
@@ -124,6 +125,9 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         # Eagerly initialized to avoid thread-safety issues with lazy init
         # in concurrent async contexts.
         self._project_lock: asyncio.Lock = asyncio.Lock()
+        # Per-owner input version, guarded by the existing project lock.  It is
+        # concurrency bookkeeping for this view, not a second persisted state.
+        self._projection_input_version = 0
 
         # Observer registry for lifecycle events
         self._observers: list[ContextOSObserver] = []
@@ -497,12 +501,19 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         focus: str = "",
     ) -> ContextOSProjection:
         self._validate_project_input(messages)
+        frozen_messages = deepcopy(messages)
+        frozen_existing_snapshot = deepcopy(existing_snapshot)
+        # The worker consumes exactly these detached inputs, including any
+        # caller mutation that raced the first validation and the copy.
+        self._validate_project_input(frozen_messages)
         # Phase 2 Fix: Snapshot -> Compute -> Validate/Commit paradigm
         # 1. Take snapshot under lock (minimal critical section)
         async with self._get_project_lock():
             snapshot = self._take_snapshot()
             pipeline_runner = self._get_pipeline_runner()
             content_store = self._get_content_store()
+            self._projection_input_version += 1
+            input_version = self._projection_input_version
 
         # 2. Compute projection outside lock (CPU-intensive, thread-safe)
         loop = asyncio.get_event_loop()
@@ -510,8 +521,8 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
             self._executor,
             self._project_via_pipeline_sync,
             snapshot,
-            messages,
-            existing_snapshot,
+            frozen_messages,
+            frozen_existing_snapshot,
             recent_window_messages,
             focus,
             pipeline_runner,
@@ -520,10 +531,23 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
 
         # 3. Commit under lock (CAS check + write)
         async with self._get_project_lock():
-            if self._validate_projection(projection):
-                self._commit_projection(projection)
-                self._last_projection_report = projection_report.to_dict()
-                record_contextos_projection_report(self._workspace, self._last_projection_report)
+            if input_version != self._projection_input_version:
+                # Never return a computed but uncommitted view as current, or
+                # replace a newer report with an error about an older request.
+                raise ValidationError(
+                    "context projection superseded by a newer input; project the current input again",
+                    field="projection",
+                    constraint="projection_input_version",
+                )
+            if not self._validate_projection(projection):
+                raise ValidationError(
+                    "context projection cannot be committed",
+                    field="projection",
+                    constraint="projection_structure",
+                )
+            self._commit_projection(projection)
+            self._last_projection_report = projection_report.to_dict()
+            record_contextos_projection_report(self._workspace, self._last_projection_report)
 
         return projection
 
@@ -692,7 +716,9 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
         return transcript, working_state, cache_snapshot
 
     def _validate_projection(self, projection: ContextOSProjection) -> bool:
-        """Validate projection before commit (CAS check).
+        """Validate projection structure before commit.
+
+        The input-version comparison is performed by project() under its lock.
 
         Args:
             projection: The computed projection to validate.

@@ -377,7 +377,7 @@ class SessionContinuityEngine:
     ) -> None:
         self.policy = policy or SessionContinuityPolicy()
         self._max_cache_size = max_cache_size
-        self._context_os_cache: OrderedDict[str, StateFirstContextOS] = OrderedDict()
+        self._context_os_cache: OrderedDict[tuple[str, str, str, str], StateFirstContextOS] = OrderedDict()
 
     def resolve_history_window(self, history_limit: int | None) -> int:
         if history_limit is None or history_limit < 0:
@@ -419,14 +419,20 @@ class SessionContinuityEngine:
         )
         context_os_projection = None
         if context_os_enabled:
-            context_os_projection = await self._build_context_os(domain=context_os_domain).project(
-                messages=[dict(item) for item in normalized_messages],
-                recent_window_messages=max(
-                    1,
-                    int(recent_window_messages or self.policy.default_history_window_messages),
-                ),
-                focus=focus,
-            )
+            # Summary identity is descriptive and may have no session/workspace
+            # binding. Its partial history must not replace a current session view.
+            summary_view = self._new_context_os(domain=context_os_domain)
+            try:
+                context_os_projection = await summary_view.project(
+                    messages=[dict(item) for item in normalized_messages],
+                    recent_window_messages=max(
+                        1,
+                        int(recent_window_messages or self.policy.default_history_window_messages),
+                    ),
+                    focus=focus,
+                )
+            finally:
+                await summary_view.close()
         compacted_through_seq = max(item["sequence"] for item in normalized_messages)
         summary_source: list[dict[str, Any]] = []
         if existing is not None and existing.summary:
@@ -528,7 +534,10 @@ class SessionContinuityEngine:
                 domain=self._resolve_context_os_domain(
                     request=request,
                     existing_snapshot=existing_context_os,
-                )
+                ),
+                workspace=request.workspace,
+                session_id=request.session_id,
+                role=request.role,
             ).project(
                 messages=[dict(item) for item in messages],
                 existing_snapshot=existing_context_os,
@@ -669,8 +678,16 @@ class SessionContinuityEngine:
             changed=persisted_context_config != original_context_config,
         )
 
-    def _build_context_os(self, *, domain: str | None = None) -> StateFirstContextOS:
-        key = domain or "generic"
+    def _build_context_os(
+        self,
+        *,
+        domain: str | None = None,
+        workspace: str = "",
+        session_id: str = "",
+        role: str = "",
+    ) -> StateFirstContextOS:
+        # Reuse only the owner represented by the caller's actual session identity.
+        key = (workspace, session_id, role, domain or "generic")
         if key in self._context_os_cache:
             # Move to end (most recently used)
             self._context_os_cache.move_to_end(key)
@@ -680,8 +697,12 @@ class SessionContinuityEngine:
         if len(self._context_os_cache) >= self._max_cache_size:
             self._context_os_cache.popitem(last=False)
 
-        # Create new entry
-        os = StateFirstContextOS(
+        os = self._new_context_os(domain=domain, workspace=workspace)
+        self._context_os_cache[key] = os
+        return os
+
+    def _new_context_os(self, *, domain: str | None = None, workspace: str = "") -> StateFirstContextOS:
+        return StateFirstContextOS(
             policy=StateFirstContextOSPolicy(
                 context_window=ContextWindowPolicy(
                     default_history_window_messages=self.policy.default_history_window_messages,
@@ -692,10 +713,9 @@ class SessionContinuityEngine:
                     max_stable_facts=self.policy.max_stable_facts,
                 ),
             ),
-            domain=key,
+            domain=domain or "generic",
+            workspace=workspace,
         )
-        self._context_os_cache[key] = os
-        return os
 
     def _resolve_context_os_domain(
         self,

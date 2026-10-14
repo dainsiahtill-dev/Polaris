@@ -961,6 +961,41 @@ class StreamExecutor:
         )
         legacy_overall_timeout_enabled = not factory_governed_stream
 
+        capture_port = None
+        if physical_dispatch_port is None:
+            from ..executor import AIExecutor
+            from ..native_request_capture import NativeRequestCapturePort
+
+            snapshot_messages = effective_chat_messages or [{"role": "user", "content": str(prompt_input)}]
+            capture_port = NativeRequestCapturePort(
+                request=request,
+                model_spec=model_spec,
+                trace_id=trace_id,
+                messages=snapshot_messages,
+                provider_request=AIExecutor._build_context_snapshot_provider_request(
+                    request=request,
+                    messages=snapshot_messages,
+                    invoke_cfg=invoke_cfg,
+                    model_spec=model_spec,
+                    prompt_input=prompt_input,
+                ),
+                persist=AIExecutor._store_context_messages_sync,
+                workspace=self.workspace,
+            )
+
+        async def bind_capture(stream: AIStreamGenerator) -> AIStreamGenerator:
+            try:
+                while True:
+                    try:
+                        with bind_physical_provider_dispatch_port(capture_port or physical_dispatch_port):
+                            event = await anext(stream)
+                    except StopAsyncIteration:
+                        break
+                    yield event
+            finally:
+                with bind_physical_provider_dispatch_port(capture_port or physical_dispatch_port):
+                    await stream.aclose()
+
         def _check_overall_timeout() -> None:
             # Factory-governed streams already carry one qualified physical
             # deadline through the dispatch port/provider helper.  The gate
@@ -995,6 +1030,7 @@ class StreamExecutor:
                     trace_id=trace_id,
                     coalesce_replayed_text=factory_governed_stream,
                 )
+                upstream_stream = bind_capture(upstream_stream)
                 async for event in upstream_stream:
                     _check_overall_timeout()
                     if (
@@ -1051,6 +1087,7 @@ class StreamExecutor:
                     invoke_cfg=invoke_cfg,
                     trace_id=trace_id,
                 )
+                upstream_stream = bind_capture(upstream_stream)
                 async for event in upstream_stream:
                     _check_overall_timeout()
                     chunk_count += 1

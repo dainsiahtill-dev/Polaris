@@ -130,6 +130,7 @@ class FactoryRoleEvidenceAuthorityPort:
         self._grants: dict[str, _FactoryRoleEvidenceGrantState] = {}
         self._active_acquisitions = 0
         self._closed = False
+        self._quality_qa_child_cap = FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET
 
     def _authority_owner_loop(self) -> asyncio.AbstractEventLoop:
         """Return the Factory loop that owns ``_run_lock``.
@@ -172,11 +173,31 @@ class FactoryRoleEvidenceAuthorityPort:
             scheduled.cancel()
             raise
 
-    def _stage_role_and_cap(self) -> tuple[str, int]:
+    def _stage_role_and_cap(self, role: str) -> tuple[str, int]:
         policy = _STAGE_ROLE_AND_GRANT_CAP.get(self._authority.stage)
         if policy is None:
             raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_stage_role_unsupported")
-        return policy
+        cap = policy.get(role)
+        if cap is None:
+            raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_stage_role_mismatch")
+        if self._authority.stage == "quality_gate" and role == "qa":
+            cap = min(cap, self._quality_qa_child_cap)
+        return role, cap
+
+    def limit_quality_qa_children(self, count: int) -> None:
+        """Factory loop may reduce the physical-budget-derived child ceiling."""
+        if (
+            self._authority.stage != "quality_gate"
+            or type(count) is not int
+            or not 1 <= count <= FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET
+        ):
+            raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_quality_child_limit_invalid")
+        with self._grant_lock:
+            if self._closed:
+                raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_authority_closed")
+            if sum(g.role == "qa" for g in self._grants.values()) > count:
+                raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_stage_grant_cardinality_exceeded")
+            self._quality_qa_child_cap = min(self._quality_qa_child_cap, count)
 
     def _grant_hash(self, *, role: str, grant_nonce: str) -> str:
         authority = self._authority
@@ -201,14 +222,22 @@ class FactoryRoleEvidenceAuthorityPort:
             normalized_role = role_final_request_policy(role).role
         except (TypeError, ValueError) as exc:
             raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_stage_role_invalid") from exc
-        expected_role, grant_cap = self._stage_role_and_cap()
+        expected_role, grant_cap = self._stage_role_and_cap(normalized_role)
         if normalized_role != expected_role:
             raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_stage_role_mismatch")
         with self._grant_lock:
             if self._closed:
                 raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_authority_closed")
-            if len(self._grants) >= grant_cap:
+            _, grant_cap = self._stage_role_and_cap(normalized_role)
+            if sum(grant.role == normalized_role for grant in self._grants.values()) >= grant_cap:
                 raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_stage_grant_cardinality_exceeded")
+            previous_qa = (
+                tuple(g.execution_authority_hash for g in self._grants.values() if g.role == "qa")
+                if normalized_role == "qa" and self._authority.stage == "quality_gate"
+                else ()
+            )
+            if previous_qa and self._active_acquisitions:
+                raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_previous_child_unsettled")
             for _attempt in range(8):
                 grant_nonce = secrets.token_hex(16)
                 execution_authority_hash = self._grant_hash(role=normalized_role, grant_nonce=grant_nonce)
@@ -216,7 +245,7 @@ class FactoryRoleEvidenceAuthorityPort:
                     break
             else:  # pragma: no cover - cryptographic collision fail-closed guard
                 raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_grant_identity_exhausted")
-            self._grants[execution_authority_hash] = _FactoryRoleEvidenceGrantState(
+            new_grant = _FactoryRoleEvidenceGrantState(
                 grant_nonce=grant_nonce,
                 role=normalized_role,
                 attempt_budget=FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET,
@@ -234,8 +263,12 @@ class FactoryRoleEvidenceAuthorityPort:
                     stage_claim_nonce=self._authority.stage_claim_nonce,
                     execution_authority_hash=execution_authority_hash,
                     attempt_budget=FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET,
-                )
+                ),
+                retire_settled_hashes=previous_qa,
             )
+            for key in previous_qa:
+                self._grants[key].revoked = True
+            self._grants[execution_authority_hash] = new_grant
         return FactoryRoleEvidenceAuthorityBindingV1(
             schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
             verification_scope="factory",
@@ -256,13 +289,14 @@ class FactoryRoleEvidenceAuthorityPort:
             raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_stage_role_invalid") from exc
         if type(count) is not int or count < 0:
             raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_grant_capacity_count_invalid")
-        expected_role, grant_cap = self._stage_role_and_cap()
+        expected_role, grant_cap = self._stage_role_and_cap(normalized_role)
         if normalized_role != expected_role:
             raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_stage_role_mismatch")
         with self._grant_lock:
             if self._closed:
                 raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_authority_closed")
-            if len(self._grants) + count > grant_cap:
+            _, grant_cap = self._stage_role_and_cap(normalized_role)
+            if sum(grant.role == normalized_role for grant in self._grants.values()) + count > grant_cap:
                 raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_stage_grant_cardinality_exceeded")
 
     def revoke_authority_binding(self, binding: FactoryRoleEvidenceAuthorityBindingV1) -> None:
@@ -319,7 +353,7 @@ class FactoryRoleEvidenceAuthorityPort:
     def _begin_acquisition(self, request: FactoryRoleEvidenceCutoffRequestV1) -> None:
         """Atomically validate authority and register a close-drained lease."""
 
-        expected_role, _grant_cap = self._stage_role_and_cap()
+        expected_role, _grant_cap = self._stage_role_and_cap(request.role)
         with self._acquisition_condition:
             self._require_authorized_request_locked(request, expected_role=expected_role)
             self._active_acquisitions += 1
@@ -327,7 +361,7 @@ class FactoryRoleEvidenceAuthorityPort:
     def _preflight_authorized_request(self, request: FactoryRoleEvidenceCutoffRequestV1) -> None:
         """Reject invalid authority before awaiting run access or producing effects."""
 
-        expected_role, _grant_cap = self._stage_role_and_cap()
+        expected_role, _grant_cap = self._stage_role_and_cap(request.role)
         with self._grant_lock:
             self._require_authorized_request_locked(request, expected_role=expected_role)
 
@@ -345,7 +379,7 @@ class FactoryRoleEvidenceAuthorityPort:
     def _require_acquisition_live(self, request: FactoryRoleEvidenceCutoffRequestV1) -> None:
         """Revalidate closure/revocation at every persistent-effect boundary."""
 
-        expected_role, _grant_cap = self._stage_role_and_cap()
+        expected_role, _grant_cap = self._stage_role_and_cap(request.role)
         with self._grant_lock:
             self._require_authorized_request_locked(request, expected_role=expected_role)
 
@@ -358,7 +392,7 @@ class FactoryRoleEvidenceAuthorityPort:
     ) -> SegmentedFactEventAppendedV1:
         """Linearize authority validation and the durable cutoff commit append."""
 
-        expected_role, _grant_cap = self._stage_role_and_cap()
+        expected_role, _grant_cap = self._stage_role_and_cap(request.role)
         with self._acquisition_condition:
             self._require_authorized_request_locked(request, expected_role=expected_role)
             return self._append_commit(partial=partial, expected_sequence=expected_sequence)
@@ -371,7 +405,7 @@ class FactoryRoleEvidenceAuthorityPort:
     ) -> FactoryRoleEvidenceCutoffAckV1:
         """Atomically authorize ACK publication and release its acquisition lease."""
 
-        expected_role, _grant_cap = self._stage_role_and_cap()
+        expected_role, _grant_cap = self._stage_role_and_cap(request.role)
         with self._acquisition_condition:
             self._require_authorized_request_locked(request, expected_role=expected_role)
             self._end_acquisition_locked()

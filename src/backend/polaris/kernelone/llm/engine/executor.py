@@ -812,6 +812,25 @@ class AIExecutor:
             clamp_prompt_text=clamp_prompt_text,
         )
 
+        if physical_dispatch_port is None:
+            from .native_request_capture import NativeRequestCapturePort
+
+            physical_dispatch_port = NativeRequestCapturePort(
+                request=request,
+                model_spec=model_spec,
+                trace_id=trace_id,
+                messages=snapshot_messages or [],
+                provider_request=self._build_context_snapshot_provider_request(
+                    request=request,
+                    messages=snapshot_messages,
+                    invoke_cfg=invoke_cfg,
+                    model_spec=model_spec,
+                    prompt_input=prompt_input,
+                ),
+                persist=self._store_context_messages_sync,
+                workspace=self.workspace,
+            )
+
         # Propagate worker_id from caller (request.context) or environment
         # (KERNELONE_WORKER_ID, set by Director's WorkerPool at spawn time) so
         # the ContextOS multi-worker UI can attribute this LLM call to a
@@ -1042,8 +1061,8 @@ class AIExecutor:
             if receipt_required:
                 raise
 
+    @staticmethod
     def _build_context_snapshot_provider_request(
-        self,
         *,
         request: AIRequest,
         messages: list[Any] | None,

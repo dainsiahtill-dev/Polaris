@@ -908,6 +908,62 @@ class StreamLeaseV1:
                     ) from exc
                 raise cause from exc
 
+    def confirm_durability(self) -> None:
+        """Fsync an existing held file and its identity-checked directory chain.
+
+        This operation changes no bytes and creates no authority or stream. It
+        closes the crash window where complete immutable content exists but its
+        file and directory durability has not yet been confirmed.
+        """
+        with self._owner._operation():
+            self._owner._require_writable()
+            if self._file_fd is None:
+                raise _fail("stream_file_missing", "durability confirmation requires an existing held file")
+            self._verify_file()
+            self._verify_path()
+            directories: list[tuple[int, str]] = []
+            durability = self._directory_durability
+            durability.begin_append()
+            try:
+                root_fd = os.dup(self._owner._root_fd_required())
+                directories.append((root_fd, "runtime"))
+                parent_fd = root_fd
+                for index, (part, expected) in enumerate(self._ancestor_identities):
+                    fd = os.open(part, _flags(directory=True), dir_fd=parent_fd)
+                    directories.append((fd, "runtime/" + "/".join(self.parts[: index + 1])))
+                    if _directory(fd, name=self.logical_path) != expected:
+                        raise _fail("stream_identity_drift", "stream ancestor identity changed")
+                    parent_fd = fd
+                self._verify_path()
+                durability.begin_file_fsync()
+                try:
+                    os.fsync(self._file_fd)
+                except OSError as exc:
+                    raise _fail(
+                        "file_fsync_reconciliation_required", "file fsync outcome is ambiguous", errno=exc.errno
+                    ) from exc
+                durability.record_file_fsync(self.logical_path)
+                self._verify_after_durable_append()
+                for fd, path in reversed(directories):
+                    durability._fsync(fd, path=path, cause_code="stream_parent_directory_fsync_failed")
+                self._verify_after_durable_append()
+            except LockedRegularFileError as exc:
+                if durability.boundary_crossed:
+                    raise _post_fsync_reconciliation(
+                        "existing stream durability requires reconciliation", exc, **durability.reconciliation_details()
+                    ) from exc
+                raise
+            except OSError as exc:
+                cause = _fail("stream_identity_drift", "durability directory traversal failed", errno=exc.errno)
+                if durability.boundary_crossed:
+                    raise _post_fsync_reconciliation(
+                        "existing stream durability requires reconciliation", cause, **durability.reconciliation_details()
+                    ) from exc
+                raise cause from exc
+            finally:
+                for fd, _path in reversed(directories):
+                    os.close(fd)
+
     def _ensure_parent(self, *, create: bool) -> None:
         if create:
             self._owner._require_writable()

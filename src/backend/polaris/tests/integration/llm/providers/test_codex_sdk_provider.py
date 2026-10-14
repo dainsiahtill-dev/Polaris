@@ -128,6 +128,9 @@ class TestCodexSDKProviderHappyPath:
                 return response
 
         monkeypatch.setattr("polaris.infrastructure.llm.providers.codex_sdk_provider.CodexSDK", _SDK)
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.codex_sdk_provider._installed_openai_sdk_version", lambda: "2.41.0"
+        )
         config = {**codex_sdk_config, "max_retries": 9, "sdk_params": {}}
 
         with bind_physical_provider_dispatch_port(port):
@@ -180,6 +183,9 @@ class TestCodexSDKProviderHappyPath:
         sdk_params: object,
     ) -> None:
         port = _RecordingSyncDispatchPort()
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.codex_sdk_provider._installed_openai_sdk_version", lambda: "2.41.0"
+        )
         monkeypatch.setattr(
             "polaris.infrastructure.llm.providers.codex_sdk_provider.CodexSDK",
             lambda _config: (_ for _ in ()).throw(AssertionError("SDK client must not be constructed")),

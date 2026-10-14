@@ -68,6 +68,9 @@ from ._pkg_proxy import pkg
 
 logger = logging.getLogger("polaris.cells.factory.pipeline.internal.factory_stage_executor")
 
+# Existing no-deadline loop bound, shared with child admission.
+_QA_ROLE_REPAIR_MAX_ROUNDS_WITHOUT_DEADLINE = 3
+
 
 class _Mixin03:
     """Method group extracted from OrchestrationStageExecutor (lossless)."""
@@ -529,14 +532,62 @@ class _Mixin03:
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         exact_owner = context.get("_factory_qa_repair_owner_task_id")
         executor = qa_recovery.ExactQaOwnerExecutor(self, exact_owner) if isinstance(exact_owner, str) and exact_owner else self
-        return await workspace_quality_impl._apply_workspace_quality_llm_repairs(
-            executor,
-            run=run,
-            context=context,
-            artifact_quality_errors=artifact_quality_errors,
-            repair_attempt=repair_attempt,
-            interface_discrepancy_evidence=interface_discrepancy_evidence,
-            owner_target_files=owner_target_files,
+        # This diagnostic branch has no role child or provider send. Return it
+        # here rather than checking, then delegating an unbound implementation
+        # that could observe new source files on its second read.
+        if not self._workspace_quality_repair_changed_files():
+            return [], {
+                "attempted": False,
+                "repair_mode": "director_llm",
+                "reason": "no_workspace_source_files_for_repair",
+                "source_tools": [],
+                "tool_results": 0,
+            }
+
+        from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
+            FactoryRoleEvidenceAuthorityBindingV1,
+        )
+
+        authority_port = self._factory_role_evidence_cutoff_port(context)
+        binding_key = "_factory_director_authority_binding"
+        binding = context.get(binding_key)
+        if binding is None:
+            cached = getattr(self, binding_key, None)
+            if (
+                isinstance(cached, FactoryRoleEvidenceAuthorityBindingV1)
+                and type(cached) is FactoryRoleEvidenceAuthorityBindingV1
+                and cached.cutoff_port is authority_port
+                and cached.factory_run_id == run.id
+            ):
+                binding = cached
+            else:
+                binding = authority_port.mint_authority_binding("director")
+        if (
+            not isinstance(binding, FactoryRoleEvidenceAuthorityBindingV1)
+            or type(binding) is not FactoryRoleEvidenceAuthorityBindingV1
+            or binding.role != "director"
+            or binding.cutoff_port is not authority_port
+            or binding.factory_run_id != run.id
+        ):
+            raise RuntimeError("factory_quality_repair_authority_binding_scope_mismatch")
+        # Each round receives a context copy. Keep only this derived capability
+        # reference on its Factory owner; the live port still validates every
+        # request, closure and revocation. New stage ports never reuse it.
+        setattr(self, binding_key, binding)
+        context[binding_key] = binding
+        return await self._call_with_factory_role_evidence_authority(
+            authority_port,
+            "director",
+            lambda: workspace_quality_impl._apply_workspace_quality_llm_repairs(
+                executor,
+                run=run,
+                context=context,
+                artifact_quality_errors=artifact_quality_errors,
+                repair_attempt=repair_attempt,
+                interface_discrepancy_evidence=interface_discrepancy_evidence,
+                owner_target_files=owner_target_files,
+            ),
+            authority_binding=binding,
         )
 
     @staticmethod
@@ -1474,7 +1525,7 @@ class _Mixin03:
             previous_findings = findings
             # Reuse the existing nonprogress bound. A real Factory deadline
             # remains the aggregate bound when residuals demonstrably change.
-            if stagnant >= 3 or (self._factory_deadline_remaining_seconds(working) is None and round_number >= 3):
+            if stagnant >= 3 or (self._factory_deadline_remaining_seconds(working) is None and round_number >= _QA_ROLE_REPAIR_MAX_ROUNDS_WITHOUT_DEADLINE):
                 return result
             working["_factory_qa_repair_round"] = round_number
             try:
@@ -1604,10 +1655,14 @@ class _Mixin03:
                 workspace_checks_artifact=workspace_checks_artifact,
                 context=context,
             )
-            authority_binding = context.get("_factory_qa_authority_binding")
-            if authority_binding is None:
-                authority_binding = authority_port.mint_authority_binding("qa")
-                context["_factory_qa_authority_binding"] = authority_binding
+            # Each execute_qa_run creates a fresh qa UUID. Retain all previous
+            # grants, fence only settled children, and share the stage's 32
+            # physical attempts. Without a deadline the existing loop allows
+            # the initial review plus _QA_ROLE_REPAIR_MAX_ROUNDS_WITHOUT_DEADLINE repairs.
+            if self._factory_deadline_remaining_seconds(context) is None:
+                authority_port.limit_quality_qa_children(1 + _QA_ROLE_REPAIR_MAX_ROUNDS_WITHOUT_DEADLINE)
+            authority_binding = authority_port.mint_authority_binding("qa")
+            context["_factory_qa_authority_binding"] = authority_binding
             command_result = cast(
                 CommandResult,
                 await self._call_with_factory_role_evidence_authority(

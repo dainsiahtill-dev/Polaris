@@ -9,6 +9,7 @@ from typing import Any
 from polaris.infrastructure.llm.sdk import CodexSDK, SDKConfig, SDKMessage, SDKUnavailableError
 from polaris.kernelone.constants import DEFAULT_MAX_RETRIES
 from polaris.kernelone.llm.engine.contracts import get_physical_provider_dispatch_port
+from polaris.kernelone.llm.engine.native_request_capture import NativeRequestCapturePort
 from polaris.kernelone.llm.providers import (
     BaseProvider,
     ProviderConfigValidationResult,
@@ -277,7 +278,7 @@ class CodexSDKProvider(BaseProvider):
         try:
             bound_port = get_physical_provider_dispatch_port()
             effective_config = config
-            if bound_port is not None:
+            if bound_port is not None and type(bound_port) is not NativeRequestCapturePort:
                 if not hasattr(bound_port, "dispatch_sync"):
                     raise RuntimeError("bound physical provider dispatch port does not support dispatch_sync")
                 installed_version = _installed_openai_sdk_version()
@@ -324,8 +325,8 @@ class CodexSDKProvider(BaseProvider):
                         },
                         "transport": {
                             "kind": "openai-python-sdk",
-                            "sdk_version": _FACTORY_CODEX_OPENAI_SDK_VERSION,
-                            "max_retries": 0,
+                            "sdk_version": _installed_openai_sdk_version(),
+                            "max_retries": effective_config.get("max_retries", 3),
                         },
                     },
                     send=lambda frozen: client.invoke(

@@ -547,13 +547,35 @@ def _terminal_failure_has_closed_dispatches(
     states = [_task_state(fact) for fact in _latest_task_facts(task_runtime_facts).values()]
     if not states or any(state not in _TERMINAL_TASK_STATES for state in states):
         return False
-    if not any(state in _FAILED_TASK_STATES for state in states) and not (
-        run_projection.get("failed_gates") and any(closure.status == "closed" for closure in effect_closures)
-    ):
-        return False
     lifecycle = _mapping(run_projection.get("tool_lifecycle"))
     events = lifecycle.get("events")
     if not isinstance(events, Sequence) or isinstance(events, (str, bytes, bytearray)) or not events:
+        return False
+    # A completed child can precede a failed Factory QA stage. Historical
+    # dispatch failures are canonical terminal outcomes, not active resources.
+    # Bind a failure to its original ledger event; summary counts/caller flags
+    # cannot activate cleanup. Every dispatch still needs the strict proof below.
+    canonical_failure_receipts: dict[tuple[Any, ...], list[Any]] = {}
+    for fact in ledger_facts:
+        if fact.get("event_type") == "tool_call_lifecycle" and fact.get("append_id") and fact.get("content_id"):
+            key = tuple(fact.get(name) for name in ("append_id", "content_id", "run_id", "task_id"))
+            canonical_failure_receipts.setdefault(key, []).append(fact.get("tool_call_lifecycle_receipt"))
+    canonical_dispatch_failure = any(
+        event.get("failed") is True
+        and _mapping(event.get("receipt")).get("ok") is False
+        and _mapping(event.get("receipt")).get("schema_version") == "tool_call_lifecycle_receipt.v1"
+        and canonical_failure_receipts.get(
+            tuple(event.get(name) for name in ("append_id", "content_id", "run_id", "task_id"))
+        )
+        == [event.get("receipt")]
+        for event in events
+        if isinstance(event, Mapping)
+    )
+    if (
+        not any(state in _FAILED_TASK_STATES for state in states)
+        and not canonical_dispatch_failure
+        and not (run_projection.get("failed_gates") and any(closure.status == "closed" for closure in effect_closures))
+    ):
         return False
     batches: dict[str, list[Mapping[str, Any]]] = {}
     for fact in ledger_facts:

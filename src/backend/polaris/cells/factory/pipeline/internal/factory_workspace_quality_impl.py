@@ -42,6 +42,7 @@ from .factory_workspace_quality_evidence import (
     compact_go_stack_overflow_diagnostic,
     leftover_rotate_allows_quality_extra_round,
     leftover_targets_should_force_owner_rotate,
+    workspace_quality_entrypoint_causal_repair_targets,
     workspace_quality_latest_task_boundary_scope_filter,
     workspace_quality_repair_result_has_mutation,
     workspace_quality_residual_owner_handoff_targets,
@@ -3367,6 +3368,31 @@ async def _apply_workspace_quality_llm_repairs(
             "candidate_rejection_target_pinned": bool(inbound_candidate_rejections and rejection_retry_candidates),
         }
 
+    entrypoint_causal_targets = workspace_quality_entrypoint_causal_repair_targets(
+        artifact_quality_errors, authoritative_owner_paths
+    )
+    if entrypoint_causal_targets and not explicit_owner_rebind:
+        # The lease hint selects the same PM/CE owner; it does not authorize a
+        # smaller build closure. Keep all claimed owner paths visible to natural
+        # read/locate/config repair. DEO still enforces the original JobToken,
+        # and the host still revalidates the unchanged signed CE commands.
+        target_files = _dedupe_workspace_repair_paths(authoritative_owner_paths)
+        repair_context["target_files"] = target_files[:80]
+        repair_context["director_quality_repair"].update(
+            {
+                "repair_target_files": target_files[:80],
+                "write_only_single_target": None,
+                "causal_reanalysis_required": True,
+                "causal_reanalysis_reason": (
+                    "The required compiled entry was not produced. Inspect the linked source, "
+                    "manifest and build configuration within the claimed CE owner; repair "
+                    "their consistency without changing the signed entry command or acceptance. "
+                    "Causal locations: " + ", ".join(entrypoint_causal_targets)
+                ),
+            }
+        )
+        repair_context["factory_workspace_quality_repair"]["target_files"] = target_files[:80]
+
     repair_context["task_id"] = repair_task_id
     repair_context["session_id"] = execution_attempt.session_id
     repair_context["task_runtime_execution_attempt"] = execution_attempt
@@ -3614,8 +3640,8 @@ async def _run_workspace_quality_checks_in_session(
             active_pending[:] = [item for item in active_pending if item is not pending]
         return result
 
-    commands = executor._workspace_quality_commands(context, run=run)
     task_boundary_blocker = executor._workspace_quality_task_boundary_blocker(run, context)
+    commands = [] if task_boundary_blocker else executor._workspace_quality_commands(context, run=run)
     depth_result = (
         None if task_boundary_blocker else executor._workspace_quality.delivery_depth_contract_result(context)
     )

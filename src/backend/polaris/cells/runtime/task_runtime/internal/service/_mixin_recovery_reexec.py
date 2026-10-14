@@ -1411,11 +1411,12 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
     def _factory_abort_recovery_checkpoint(
         self, *, external_task_id: str, factory_run_id: str
     ) -> tuple[dict[str, Any], dict[str, Any], TaskExecutionSession] | None:
-        """Read an authenticated failure-drain checkpoint, never a caller flag.
+        """Read an authenticated same-owner terminal checkpoint.
 
-        A cleanup tombstone may hide the original row/session. Its immediate
-        task predecessor must be our failure-drain cancellation, backed by the
-        same attempt's durable terminal fact. The old session is evidence only.
+        A governed reset can remove a completed child when its Factory project
+        failed later. Bind the reset to the exact completed/failed terminal fact
+        and old owner proof; prior completion is history, never project acceptance
+        or authority for the subsequently claimed execution attempt.
         """
         from ..execution_effect_closure import _read_owner_events
 
@@ -1456,13 +1457,13 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             raise RuntimeError("factory_task_binding_ambiguous")
         history = next(iter(matching.values()))
         latest = history[-1]
-        failed_reset = False
+        terminal_reset = False
         if latest.get("event_type") == "runtime_reset_removed":
             details = latest["payload"].get("details", {})
             if details.get("reset_factory_run_id") != factory_run_id:
                 raise RuntimeError("factory_task_recovery_owner_not_failed")
-            if details.get("previous_status") == "failed":
-                failed_reset = True
+            if details.get("previous_status") in {"failed", "completed"}:
+                terminal_reset = True
                 reference = latest["payload"]["task_row_snapshot"]["metadata"].get("task_runtime_settlement")
                 if not isinstance(reference, Mapping):
                     raise RuntimeError("factory_task_recovery_terminal_fact_missing")
@@ -1471,11 +1472,11 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
                     for event in history
                     if (
                         event.get("seq", 0) < latest.get("seq", 0)
-                        and event.get("event_type") == "failed"
+                        and event.get("event_type") == details["previous_status"]
                         and event.get("event_id") == reference.get("fact_event_id")
                         and event.get("seq") == reference.get("fact_event_seq")
                         and event["payload"].get("transition_id") == reference.get("terminal_transition_id")
-                        and reference.get("outcome") == "failed"
+                        and reference.get("outcome") == details["previous_status"]
                     )
                 ]
                 if len(terminal) != 1:
@@ -1491,7 +1492,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             payload = cancelled["payload"]
         else:
             raise RuntimeError("factory_task_recovery_checkpoint_unavailable")
-        if not failed_reset:
+        if not terminal_reset:
             details = payload.get("details", {})
             if (
                 cancelled.get("event_type") != "cancelled"
@@ -1559,7 +1560,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         ):
             raise RuntimeError("factory_task_recovery_terminal_binding_invalid")
         if (
-            failed_reset
+            terminal_reset
             and _owner_reset_removed_session(
                 events,
                 DirectedEffectParentRegistryIdentityV1.from_execution_attempt(attempt),

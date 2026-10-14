@@ -27,10 +27,11 @@ _MAX_SOURCE_ITEMS_PER_SLOT = 32
 _MAX_SOURCE_ITEMS_TOTAL = 128
 _FRAGMENT_ENCODING = "base64url"
 _MAX_REQUEST_FREEZES_PER_GRANT = FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET
-_STAGE_ROLE_AND_GRANT_CAP: dict[str, tuple[str, int]] = {
-    "docs_generation": ("architect", 1),
-    "pm_planning": ("pm", 2),
-    "chief_engineer_review": ("chief_engineer", 1),
-    "director_dispatch": ("director", 512),
-    "quality_gate": ("qa", 1),
+_STAGE_ROLE_AND_GRANT_CAP: dict[str, dict[str, int]] = {
+    "docs_generation": {"architect": 1},
+    "pm_planning": {"pm": 2},
+    "chief_engineer_review": {"chief_engineer": 1},
+    "director_dispatch": {"director": 512},
+    # A nonempty fresh QA child consumes at least one of the existing 32 attempts.
+    "quality_gate": {"director": 1, "qa": FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET},
 }

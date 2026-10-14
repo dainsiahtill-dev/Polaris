@@ -3263,7 +3263,8 @@ def _build_materialization_quality_repair_message(
     if existing_repair_target_files:
         repair_lines = "\n".join(f"- {item}" for item in existing_repair_target_files[:12])
         existing_repair_block = (
-            "EXISTING FAILED TARGET FILES — repair these exact paths NOW. Prefer edit_file search/replace "
+            "EXISTING AUTHORIZED REPAIR PATHS — inspect current diagnostics and edit only the smallest causal subset. "
+            "These paths are permissions, not a claim that every file failed. Prefer edit_file search/replace "
             "for the minimal lines needed to satisfy the quality errors; use write_file only when you emit "
             "a complete corrected file body that preserves unrelated existing code. Use the CURRENT UTF-8 "
             "CONTENT block below to choose exact edit_file SEARCH strings. Use the tools supplied for this turn:\n"

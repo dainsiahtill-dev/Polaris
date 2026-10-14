@@ -487,6 +487,74 @@ class FactoryPhysicalAttemptCoordinator:
             self._grants[grant_view.execution_authority_hash] = state
             return self._budget_state_locked(state)
 
+    @staticmethod
+    def _quality_qa_pool_key(grant: FactoryPhysicalAttemptGrantViewV1) -> tuple[object, ...]:
+        return (
+            grant.factory_run_id,
+            grant.role,
+            grant.stage,
+            grant.workspace_fencing_token,
+            grant.stage_claim_attempt,
+            grant.stage_claim_nonce,
+        )
+
+    def _quality_qa_budget_available_locked(self, grant: FactoryPhysicalAttemptGrantViewV1) -> None:
+        if grant.role != "qa" or grant.stage != "quality_gate":
+            return
+        states = [
+            self._budget_state_locked(row)
+            for row in self._grants.values()
+            if self._quality_qa_pool_key(row.grant) == self._quality_qa_pool_key(grant)
+        ]
+        if any(state.attempt_budget != grant.attempt_budget for state in states):
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_budget_mismatch")
+        if any(state.ambiguous_count for state in states):
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_start_commit_ambiguous")
+        # Derived from the existing immutable records. Closed/revoked children
+        # remain charged; there is no second budget counter or quota refund.
+        if (
+            sum(state.consumed_attempts + state.reserved_count + state.ambiguous_count for state in states)
+            >= grant.attempt_budget
+        ):
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_role_budget_exhausted")
+
+    def register_successor_grant(
+        self,
+        grant_view: FactoryPhysicalAttemptGrantViewV1,
+        previous_hashes: tuple[str, ...],
+    ) -> FactoryPhysicalAttemptBudgetStateV1:
+        """Atomically retire settled QA children and admit their exact successor.
+
+        No blocking close/wait is used on the authority event loop. Every guard
+        precedes mutation under the same condition used by physical reserve.
+        """
+        if type(grant_view) is not FactoryPhysicalAttemptGrantViewV1:
+            raise FactoryPhysicalAttemptControlError("factory_physical_attempt_grant_view_exact_type_required")
+        FactoryPhysicalAttemptGrantViewV1.__post_init__(grant_view)
+        with self._condition:
+            if self._closed:
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed")
+            if grant_view.role != "qa" or grant_view.stage != "quality_gate":
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_successor_scope_mismatch")
+            expected_previous = {
+                key
+                for key, row in self._grants.items()
+                if self._quality_qa_pool_key(row.grant) == self._quality_qa_pool_key(grant_view)
+            }
+            if set(previous_hashes) != expected_previous:
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_successor_scope_mismatch")
+            previous = tuple(self._grant_locked(key) for key in previous_hashes)
+            if any(self._quality_qa_pool_key(row.grant) != self._quality_qa_pool_key(grant_view) for row in previous):
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_successor_scope_mismatch")
+            if any(not self._budget_state_locked(row).settled for row in previous):
+                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_previous_child_unsettled")
+            self._quality_qa_budget_available_locked(grant_view)
+            state = self.register_grant(grant_view)
+            for row in previous:
+                row.closed = row.revoked = True
+            self._condition.notify_all()
+            return state
+
     def register_cutoff(self, cutoff_view: FactoryPhysicalAttemptCutoffViewV1) -> FactoryPhysicalAttemptBudgetStateV1:
         """Bind one exact Factory-owned final-request cutoff to its grant."""
 
@@ -632,6 +700,7 @@ class FactoryPhysicalAttemptCoordinator:
             grant = self._grant_locked(command.execution_authority_hash)
             self._require_grant_open_locked(grant)
             cutoff = self._validate_reserve_authority_locked(grant, command)
+            self._quality_qa_budget_available_locked(grant.grant)
             state = self._budget_state_locked(grant)
             if state.ambiguous_count:
                 raise FactoryPhysicalAttemptControlError("factory_physical_attempt_start_commit_ambiguous")
@@ -1234,13 +1303,22 @@ class FactoryPhysicalAttemptLiveControlPort:
         except (FactoryWorkspaceRunLeaseConflictError, FactoryWorkspaceRunLeaseStorageError) as exc:
             raise FactoryPhysicalAttemptControlError("factory_physical_attempt_authority_closed") from exc
 
-    def register_grant(self, grant_view: FactoryPhysicalAttemptGrantViewV1) -> FactoryPhysicalAttemptBudgetStateV1:
+    def register_grant(
+        self,
+        grant_view: FactoryPhysicalAttemptGrantViewV1,
+        *,
+        retire_settled_hashes: tuple[str, ...] = (),
+    ) -> FactoryPhysicalAttemptBudgetStateV1:
         if type(grant_view) is not FactoryPhysicalAttemptGrantViewV1:
             raise FactoryPhysicalAttemptControlError("factory_physical_attempt_grant_view_exact_type_required")
         FactoryPhysicalAttemptGrantViewV1.__post_init__(grant_view)
         self._revalidate_durable_grant(grant_view)
         with self._authority_lock:
-            state = self._coordinator.register_grant(grant_view)
+            state = (
+                self._coordinator.register_successor_grant(grant_view, retire_settled_hashes)
+                if retire_settled_hashes
+                else self._coordinator.register_grant(grant_view)
+            )
         try:
             self._revalidate_durable_grant(grant_view)
         except FactoryPhysicalAttemptControlError:

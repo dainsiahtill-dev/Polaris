@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -588,6 +589,8 @@ async def _store_active_request_context_snapshot(
             prepared=prepared,
             profile=profile,
         )
+        ctx["provider_request_semantic_audit"] = provider_request_snapshot
+        ctx["provider_request_semantic_messages"] = deepcopy(messages)
         frozen = prepared.factory_semantic_request
         if frozen is not None:
             provider_request_snapshot["factory_final_request"] = final_request_snapshot_evidence(frozen)

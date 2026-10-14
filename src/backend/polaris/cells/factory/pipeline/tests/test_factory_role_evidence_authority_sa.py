@@ -629,7 +629,7 @@ def test_port_rejects_wrong_stage_role_before_minting_grant(tmp_path: Path) -> N
         ("pm_planning", "pm", 2),
         ("chief_engineer_review", "chief_engineer", 1),
         ("director_dispatch", "director", 512),
-        ("quality_gate", "qa", 1),
+        ("quality_gate", "qa", FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET),
     ],
 )
 def test_stage_grant_caps_fail_closed_before_source_or_fact_effect(
@@ -1080,6 +1080,7 @@ def test_revoke_wins_commit_linearization_without_commit_or_ack(tmp_path: Path) 
 @pytest.mark.asyncio
 async def test_unused_role_task_grant_revoke_blocks_cutoff_without_refunding_stage_cap(tmp_path: Path) -> None:
     port, _admission, resolver, facts = _authority(tmp_path=tmp_path, stage="quality_gate")
+    port.limit_quality_qa_children(1)
     binding = port.mint_authority_binding("qa")
     request = _request(
         role=binding.role,

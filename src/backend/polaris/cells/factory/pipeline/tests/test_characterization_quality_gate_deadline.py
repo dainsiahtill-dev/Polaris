@@ -611,7 +611,8 @@ class TestQualityGateDeadlineHandling:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        executor = _executor(tmp_path)
+        workspace = tmp_path
+        executor = _executor(workspace)
         run = FactoryRun(
             id="run-report-missing",
             config=FactoryConfig(name="missing-report-run"),
@@ -634,17 +635,70 @@ class TestQualityGateDeadlineHandling:
         monkeypatch.setattr(executor, "_build_orchestration_service", lambda _context: FakeQAService())
         monkeypatch.setattr(executor, "_wait_run_completion", fake_wait_run_completion)
 
-        result = await executor._execute_quality_gate(
-            run,
-            _factory_stage_context({"qa_target": "Quality gate"}),
+        import asyncio
+
+        from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
+            FactoryPhysicalAttemptLiveControlPort,
         )
+        from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
+            FactoryRoleEvidenceAuthorityPort,
+            FactoryRoleEvidenceStageAuthorityV1,
+        )
+        from polaris.cells.factory.pipeline.internal.factory_run_admission import FactoryWorkspaceRunAdmission
+        from polaris.cells.factory.pipeline.tests.test_factory_role_evidence_authority_sa import (
+            _MemoryFactStream,
+            _Resolver,
+        )
+
+        admission = FactoryWorkspaceRunAdmission(workspace, state_root=tmp_path / "private-admission")
+        lease = admission.acquire(run.id)
+        lease = admission.claim_stage(
+            run.id, fencing_token=lease.fencing_token, stage="quality_gate", nonce="deadline-fixture"
+        )
+        claim = lease.stage_execution_claim
+        assert claim is not None
+        authority = FactoryRoleEvidenceStageAuthorityV1(
+            factory_run_id=run.id,
+            stage=claim.stage,
+            workspace_fencing_token=lease.fencing_token,
+            stage_claim_attempt=claim.attempt,
+            stage_claim_nonce=claim.nonce,
+        )
+
+        def revalidate(grant):
+            with admission.hold_active_stage_claim(
+                grant.factory_run_id,
+                fencing_token=grant.workspace_fencing_token,
+                stage=grant.stage,
+                attempt=grant.stage_claim_attempt,
+                nonce=grant.stage_claim_nonce,
+            ) as check:
+                check()
+
+        async def load_run():
+            return run
+
+        control = FactoryPhysicalAttemptLiveControlPort(factory_run_id=run.id, revalidate_active_stage_claim=revalidate)
+        port = FactoryRoleEvidenceAuthorityPort(
+            workspace=workspace,
+            authority=authority,
+            run_lock=asyncio.Lock(),
+            run_loader=load_run,
+            admission=admission,
+            source_authority=_Resolver(),
+            fact_stream=_MemoryFactStream(),
+            physical_attempt_coordinator=control,
+        )
+        stage_context = _factory_stage_context({"qa_target": "Quality gate"})
+        stage_context["_factory_role_evidence_cutoff_port"] = port
+        result = await executor._execute_quality_gate(run, stage_context)
 
         assert result.status == "failed"
         assert "canonical_reason=task_runtime_contract_scope_mismatch" in result.output
         assert "report_ready=False" in result.output
-        report_path = Path(resolve_logical_path(tmp_path, "runtime/qa/report.json"))
+        report_path = Path(resolve_logical_path(workspace, "runtime/qa/report.json"))
         assert report_path.exists() is False
-        assert Path(resolve_logical_path(tmp_path, "workspace/qa/latest.report.json")).exists() is False
+        assert Path(resolve_logical_path(workspace, "workspace/qa/latest.report.json")).exists() is False
 
     @pytest.mark.asyncio
     async def test_quality_gate_physical_pass_commits_without_qa_llm(
@@ -848,7 +902,9 @@ class TestQualityGateDeadlineHandling:
             created_at="2026-06-25T00:00:00+00:00",
         )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["npm", "run", "build"]])
+        monkeypatch.setattr(
+            executor, "_workspace_quality_commands", lambda _context, *, run=None: [["npm", "run", "build"]]
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(
             executor,
@@ -928,7 +984,9 @@ class TestQualityGateDeadlineHandling:
         )
         observed_timeouts: list[float] = []
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["npm", "run", "build"]])
+        monkeypatch.setattr(
+            executor, "_workspace_quality_commands", lambda _context, *, run=None: [["npm", "run", "build"]]
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
         monkeypatch.setattr(
@@ -965,7 +1023,14 @@ class TestQualityGateDeadlineHandling:
 
         from types import SimpleNamespace
 
-        from polaris.cells.factory.pipeline.internal import factory_workspace_quality_impl as quality_impl
+        # Budget admission is isolated with an explicit fake execution session;
+        # resolving real CE preparation belongs to the clean-group suite.
+        from polaris.cells.factory.pipeline.internal import (
+            factory_workspace_quality_impl as quality_impl,
+            native_validation_session,
+        )
+
+        monkeypatch.setattr(native_validation_session, "required_clean_verifier_commands", lambda *_args, **_kwargs: [])
 
         async def scoped_deadline_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
             return fake_run_workspace_quality_command(command, timeout_seconds)
