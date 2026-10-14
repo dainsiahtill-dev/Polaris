@@ -11,6 +11,7 @@ import pytest
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
+    fact_stream_bootstrap_streams,
 )
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
@@ -25,8 +26,8 @@ def _surface(name: str) -> list[dict[str, Any]]:
 def _kernel(tmp_path: Path, *, handoff: bool = True, failed: bool = False):
     calls: list[tuple[str, dict[str, Any]]] = []
     bootstrap_fact_stream_workspace(BootstrapFactStreamWorkspaceCommandV1(
-        workspace=tmp_path,
-        logical_streams=("run_ledger",),
+        workspace=str(tmp_path),
+        streams=fact_stream_bootstrap_streams(),
         maintenance_reason="private handoff execution contract fixture",
     ))
 
