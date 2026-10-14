@@ -62,6 +62,7 @@ public_contracts:
   - GetDirectedEffectInventoryQueryV1
   - GetDirectedEffectParentReadinessQueryV1
   - QueryExecutionEffectClosureV1
+  - QueryExecutionEffectClosuresV1
   events:
   - RuntimeTaskLifecycleEventV1
   - TaskRuntimeExecutionFactV1
@@ -90,6 +91,7 @@ public_contracts:
   - ObservableTaskRowsProjectionV1
   - ExecutionEffectClosureObservationV1
   - ExecutionEffectCommitObservationV1
+  - ExecutionEffectTerminalFailureObservationV1
   errors:
   - RuntimeTaskRuntimeError
 descriptor_surface:
@@ -132,6 +134,7 @@ verification:
   - polaris/tests/test_runtime_projection_snapshot_tasks.py
   - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
   - polaris/cells/runtime/task_runtime/public/tests/test_execution_effect_closure.py
+  - polaris/cells/runtime/task_runtime/public/tests/test_batch_execution_effect_closure.py
   gaps:
   - DEO-2A, DEO-2B, DEO-2C, and DEO-2D are closed and complete. Repository
     inventory proves one physical mutation consumer and zero unbound mutation

@@ -498,6 +498,8 @@ def _read_requested_owner_facts(
             _require(page.captured_head == captured_head, "owner_payload_head_changed")
             selected = False
             for fact in page.events:
+                if fact.get("event_type") != _EVENT_TYPE:
+                    continue
                 body = _mapping(fact.get("expanded_payload"))
                 payload_key = tuple(body.get(name) for name in ("run_id", "task_id", "turn_id"))
                 if payload_key in candidates:

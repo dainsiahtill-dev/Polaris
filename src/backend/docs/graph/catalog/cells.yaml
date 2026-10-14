@@ -537,6 +537,7 @@ cells:
     public_contracts:
       modules:
         - polaris.cells.runtime.task_runtime.public.contracts
+        - polaris.cells.runtime.task_runtime.public.execution_effect_closure
       commands:
         - CreateRuntimeTaskCommandV1
         - UpdateRuntimeTaskCommandV1
@@ -570,6 +571,8 @@ cells:
         - GetDirectedEffectOperationQueryV1
         - GetDirectedEffectInventoryQueryV1
         - GetDirectedEffectParentReadinessQueryV1
+        - QueryExecutionEffectClosureV1
+        - QueryExecutionEffectClosuresV1
       events:
         - RuntimeTaskLifecycleEventV1
         - TaskRuntimeExecutionFactV1
@@ -596,6 +599,9 @@ cells:
         - DirectedEffectRecoverySweepItemV1
         - DirectedEffectRecoverySweepResultV1
         - ObservableTaskRowsProjectionV1
+        - ExecutionEffectClosureObservationV1
+        - ExecutionEffectCommitObservationV1
+        - ExecutionEffectTerminalFailureObservationV1
       errors:
         - RuntimeTaskRuntimeError
     depends_on:
@@ -622,6 +628,7 @@ cells:
         - polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py
         - polaris/tests/test_runtime_projection_snapshot_tasks.py
         - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
+        - polaris/cells/runtime/task_runtime/public/tests/test_batch_execution_effect_closure.py
       gaps:
         - DEO-2A, DEO-2B, DEO-2C, and DEO-2D are closed and complete. Repository inventory proves one physical mutation consumer and zero unbound mutation surfaces; TaskRuntime remains the sole durable directed-effect authority.
         - DEO-3 durable receipt settlement and DEO-4 legacy removal are closed and complete under their locked plans. The architecture fence preserves TaskRuntime as sole durable authority and the canonical mutation port as sole physical consumer. Pre-bench is active; Provider and Bench remain not_schedulable.
@@ -1972,127 +1979,136 @@ cells:
     visibility: public
     stateful: false
     owner: roles
-    purpose: >
-      Provide the shared role execution kernel, prompt assembly, parser,
-      retry, budget, and tool-gateway primitives used by all role flows.
+    purpose: 'Provide the shared role execution kernel, prompt assembly, parser, retry, budget, and tool-gateway
+      primitives used by all role flows.
+
+      '
     current_modules:
+    - polaris.cells.roles.kernel.public.generation_outcome
+    - polaris.cells.roles.kernel.public.llm_caller_contracts
+    - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
+    - polaris.cells.roles.kernel.public.structured_output_contracts
+    - polaris.cells.roles.kernel.public.directed_effect_contracts
+    - polaris.cells.roles.kernel.public.directed_effect_service
+    - polaris.cells.roles.kernel.internal
+    - polaris.cells.roles.kernel.internal.directed_effect_policy_guard
+    - polaris.cells.roles.kernel.internal.directed_effect_dispatch
+    - polaris.cells.roles.kernel.internal.directed_effect_lifecycle
+    - polaris.cells.roles.kernel.internal.kernel
+    - polaris.cells.roles.kernel.internal.tool_gateway
+    - polaris.cells.roles.kernel.internal.context_gateway
+    - polaris.cells.roles.kernel.internal.structured_output_transport
+    - polaris.cells.roles.kernel.internal.llm_caller.factory_dispatch_propagation
+    - polaris.cells.roles.kernel.internal.constitution_rules
+    - polaris.cells.roles.kernel.internal.constitution_adaptor
+    - polaris.cells.roles.kernel.internal.transaction
+    - polaris.cells.roles.kernel.internal.transaction.stream_orchestrator
+    - polaris.cells.roles.kernel.internal.transaction.tool_batch_executor
+    - polaris.cells.roles.kernel.internal.transaction.cognitive_gateway
+    - polaris.cells.roles.kernel.internal.transaction.ledger
+    - polaris.cells.roles.kernel.internal.transaction.finalization
+    - polaris.cells.roles.kernel.internal.transaction.delivery_contract
+    - polaris.cells.roles.kernel.public.outcome_recovery
+    owned_paths:
+    - polaris/cells/roles/kernel/**
+    public_contracts:
+      modules:
       - polaris.cells.roles.kernel.public.generation_outcome
       - polaris.cells.roles.kernel.public.llm_caller_contracts
+      - polaris.cells.roles.kernel.public.contracts
       - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
       - polaris.cells.roles.kernel.public.structured_output_contracts
       - polaris.cells.roles.kernel.public.directed_effect_contracts
       - polaris.cells.roles.kernel.public.directed_effect_service
-      - polaris.cells.roles.kernel.internal
-      - polaris.cells.roles.kernel.internal.directed_effect_policy_guard
-      - polaris.cells.roles.kernel.internal.directed_effect_dispatch
-      - polaris.cells.roles.kernel.internal.directed_effect_lifecycle
-      - polaris.cells.roles.kernel.internal.kernel
-      - polaris.cells.roles.kernel.internal.tool_gateway
-      - polaris.cells.roles.kernel.internal.context_gateway
-      - polaris.cells.roles.kernel.internal.structured_output_transport
-      - polaris.cells.roles.kernel.internal.llm_caller.factory_dispatch_propagation
-      - polaris.cells.roles.kernel.internal.constitution_rules
-      - polaris.cells.roles.kernel.internal.constitution_adaptor
-      - polaris.cells.roles.kernel.internal.transaction
-      - polaris.cells.roles.kernel.internal.transaction.stream_orchestrator
-      - polaris.cells.roles.kernel.internal.transaction.tool_batch_executor
-      - polaris.cells.roles.kernel.internal.transaction.cognitive_gateway
-      - polaris.cells.roles.kernel.internal.transaction.ledger
-      - polaris.cells.roles.kernel.internal.transaction.finalization
-      - polaris.cells.roles.kernel.internal.transaction.delivery_contract
-    owned_paths:
-      - polaris/cells/roles/kernel/**
-    public_contracts:
-      modules:
-        - polaris.cells.roles.kernel.public.generation_outcome
-        - polaris.cells.roles.kernel.public.llm_caller_contracts
-        - polaris.cells.roles.kernel.public.contracts
-        - polaris.cells.roles.kernel.public.final_request_evidence_cutoff
-        - polaris.cells.roles.kernel.public.structured_output_contracts
-        - polaris.cells.roles.kernel.public.directed_effect_contracts
-        - polaris.cells.roles.kernel.public.directed_effect_service
+      - polaris.cells.roles.kernel.public.outcome_recovery
       commands:
-        - ExecuteRoleKernelCommandV1
-        - FactoryRoleEvidenceCutoffRequestV1
+      - ExecuteRoleKernelCommandV1
+      - FactoryRoleEvidenceCutoffRequestV1
+      - ReplayPreparedTurnOutcomeCommandV1
       queries:
-        - QueryRoleKernelStatusV1
-        - FactoryRoleEvidenceCutoffPort.resolve_cutoff_proof
+      - QueryRoleKernelStatusV1
+      - FactoryRoleEvidenceCutoffPort.resolve_cutoff_proof
+      - QueryPreparedTurnOutcomeV1
       events:
-        - RoleKernelEventV1
+      - RoleKernelEventV1
       results:
-        - RoleGenerationOutcomeV1
-        - RoleKernelResultV1
-        - FactoryRoleEvidenceCutoffAckV1
-        - FactoryRoleEvidenceCutoffSourceHeadV1
-        - FactoryRoleEvidenceCutoffProofV1
-        - FactoryRoleSemanticRequestIdentityV1
-        - FactoryRoleSemanticCandidateV1
-        - FactoryRoleFrozenSemanticRequestV1
+      - RoleGenerationOutcomeV1
+      - RoleKernelResultV1
+      - FactoryRoleEvidenceCutoffAckV1
+      - FactoryRoleEvidenceCutoffSourceHeadV1
+      - FactoryRoleEvidenceCutoffProofV1
+      - FactoryRoleSemanticRequestIdentityV1
+      - FactoryRoleSemanticCandidateV1
+      - FactoryRoleFrozenSemanticRequestV1
+      - PreparedTurnOutcomeReferenceV1
+      - RecoveredTurnOutcomeV1
       errors:
-        - RoleKernelErrorV1
+      - RoleKernelErrorV1
     depends_on:
-      - context.engine
-      - llm.control_plane
-      - policy.permission
-      - audit.evidence
-      - control_plane.run_ledger
-      - events.fact_stream
-      - director.runtime
-      - director.execution
-      - roles.profile
-      - roles.session
-      - runtime.execution_broker
-      - runtime.task_runtime
-      - factory.cognitive_runtime
-      - storage.layout
-      - roles.scout
+    - context.engine
+    - llm.control_plane
+    - policy.permission
+    - audit.evidence
+    - control_plane.run_ledger
+    - events.fact_stream
+    - director.runtime
+    - director.execution
+    - roles.profile
+    - roles.session
+    - runtime.execution_broker
+    - runtime.task_runtime
+    - factory.cognitive_runtime
+    - storage.layout
+    - roles.scout
     subgraphs:
-      - execution_governance_pipeline
+    - execution_governance_pipeline
     state_owners: []
     effects_allowed:
-      - fs.read:workspace/**
-      - fs.write:runtime/events/runtime.events.jsonl
-      - llm.invoke:roles/*
-      - process.spawn:roles/*
-      - ws.outbound:runtime/*
+    - fs.read:workspace/**
+    - fs.write:runtime/events/runtime.events.jsonl
+    - llm.invoke:roles/*
+    - process.spawn:roles/*
+    - ws.outbound:runtime/*
     verification:
       tests:
-        - polaris/cells/roles/kernel/tests/test_pm_generation_contracts.py
-        - tests/test_roles_kernel.py
-        - tests/test_runtime_role_binding.py
-        - tests/test_role_kernel_write_budget.py
-        - polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py
-        - polaris/cells/roles/kernel/internal/transaction/tests/test_task_contract_builder.py
-        - polaris/cells/roles/kernel/internal/transaction/tests/test_cognitive_gateway.py
-        - polaris/cells/roles/kernel/internal/transaction/tests/test_protocol_canonicalization.py
-        - polaris/cells/roles/kernel/internal/transaction/tests/test_slm_coprocessor.py
-        - polaris/cells/roles/kernel/internal/transaction/tests/test_intent_embedding_router.py
-        - polaris/cells/roles/kernel/tests/test_transaction_controller.py
-        - polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py
-        - polaris/cells/roles/kernel/tests/test_integration_transactional_flow.py
-        - polaris/cells/roles/kernel/tests/test_kernel_guard.py
-        - polaris/cells/roles/kernel/tests/test_turn_contracts_v2.py
-        - polaris/cells/roles/kernel/tests/test_transaction_kernel_handoff_contract.py
-        - polaris/cells/roles/kernel/tests/test_context_gateway_integration.py
-        - polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py
-        - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py
-        - polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py
-        - polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py
-        - polaris/cells/roles/kernel/tests/test_llm_caller_components.py
-        - polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py
-        - polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py
-        - polaris/kernelone/llm/engine/tests/test_executor.py
-        - polaris/kernelone/llm/engine/stream/tests/test_executor.py
-        - polaris/cells/roles/kernel/tests/test_directed_effect_contracts.py
-        - polaris/cells/roles/kernel/tests/test_directed_effect_policy_guard.py
-        - polaris/cells/roles/kernel/tests/test_directed_effect_dispatch_fence.py
-        - polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py
-        - polaris/cells/roles/kernel/tests/test_directed_effect_runtime_wiring.py
+      - polaris/cells/roles/kernel/tests/test_pm_generation_contracts.py
+      - tests/test_roles_kernel.py
+      - tests/test_runtime_role_binding.py
+      - tests/test_role_kernel_write_budget.py
+      - polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py
+      - polaris/cells/roles/kernel/internal/transaction/tests/test_task_contract_builder.py
+      - polaris/cells/roles/kernel/internal/transaction/tests/test_cognitive_gateway.py
+      - polaris/cells/roles/kernel/internal/transaction/tests/test_protocol_canonicalization.py
+      - polaris/cells/roles/kernel/internal/transaction/tests/test_slm_coprocessor.py
+      - polaris/cells/roles/kernel/internal/transaction/tests/test_intent_embedding_router.py
+      - polaris/cells/roles/kernel/tests/test_transaction_controller.py
+      - polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py
+      - polaris/cells/roles/kernel/tests/test_integration_transactional_flow.py
+      - polaris/cells/roles/kernel/tests/test_kernel_guard.py
+      - polaris/cells/roles/kernel/tests/test_turn_contracts_v2.py
+      - polaris/cells/roles/kernel/tests/test_transaction_kernel_handoff_contract.py
+      - polaris/cells/roles/kernel/tests/test_context_gateway_integration.py
+      - polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py
+      - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py
+      - polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py
+      - polaris/cells/roles/kernel/tests/test_role_turn_request_fact_projection.py
+      - polaris/cells/roles/kernel/tests/test_llm_caller_components.py
+      - polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py
+      - polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py
+      - polaris/kernelone/llm/engine/tests/test_executor.py
+      - polaris/kernelone/llm/engine/stream/tests/test_executor.py
+      - polaris/cells/roles/kernel/tests/test_directed_effect_contracts.py
+      - polaris/cells/roles/kernel/tests/test_directed_effect_policy_guard.py
+      - polaris/cells/roles/kernel/tests/test_directed_effect_dispatch_fence.py
+      - polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py
+      - polaris/cells/roles/kernel/tests/test_directed_effect_runtime_wiring.py
+      - polaris/cells/roles/kernel/tests/test_pending_turn_outcome_recovery.py
       gaps:
-        - Kernel public boundary still needs final routing cleanup for a few parser/helper exports.
-        - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry full-request qualification remain guarded; B3.3 propagation metadata does not authorize provider dispatch.
+      - Kernel public boundary still needs final routing cleanup for a few parser/helper exports.
+      - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry full-request
+        qualification remain guarded; B3.3 propagation metadata does not authorize provider dispatch.
     generated_artifacts:
-      - generated/context.pack.json
+    - generated/context.pack.json
 
   - id: roles.profile
     title: Roles Profile
@@ -3573,134 +3589,137 @@ cells:
     visibility: public
     stateful: true
     owner: observability
-    purpose: >
-      Provide strict append-only FactStream facts, guarded snapshots, explicit lock
-      authority maintenance, and bounded per-stream queries.
+    purpose: 'Provide strict append-only FactStream facts, guarded snapshots, explicit lock authority maintenance,
+      and bounded per-stream queries.
+
+      '
     current_modules:
-      - polaris.cells.events.fact_stream.public
-      - polaris.cells.events.fact_stream.public.catalog
-      - polaris.cells.events.fact_stream.public.contracts
-      - polaris.cells.events.fact_stream.public.service
-      - polaris.cells.events.fact_stream.public.workspace_bootstrap
+    - polaris.cells.events.fact_stream.public
+    - polaris.cells.events.fact_stream.public.catalog
+    - polaris.cells.events.fact_stream.public.contracts
+    - polaris.cells.events.fact_stream.public.service
+    - polaris.cells.events.fact_stream.public.workspace_bootstrap
     owned_paths:
-      - polaris/cells/events/fact_stream/**
+    - polaris/cells/events/fact_stream/**
     public_surface:
       exports:
-        - AppendFactEventCommandV1
-        - AppendIfGuardedSnapshotCommandV1
-        - AppendSegmentedFactEventCommandV1
-        - BootstrapFactStreamWorkspaceCommandV1
-        - EnrollFactStreamStreamsCommandV1
-        - EnsureSegmentedFactLedgerCommandV1
-        - FactEventAppendedV1
-        - FactStreamError
-        - FactStreamHeadV1
-        - FactStreamLockIdentityV1
-        - FactStreamLockKeyEvidenceV1
-        - FactStreamMaintenanceProofV1
-        - FactStreamMaintenanceReceiptV1
-        - FactStreamProvenanceV1
-        - FactStreamQueryResultV1
-        - GuardedFactAppendedV1
-        - GuardedFactEventV1
-        - GuardedFactSnapshotProofV1
-        - GuardedFactSnapshotV1
-        - ProvisionFactStreamLockAuthorityCommandV1
-        - QueryFactEventsV1
-        - QueryFactStreamHeadV1
-        - QuerySegmentedFactEventsV1
-        - QuerySegmentedFactLedgerHeadV1
-        - ReadGuardedFactSnapshotCommandV1
-        - SegmentedFactEventAppendedV1
-        - SegmentedFactLedgerHeadV1
-        - SegmentedFactLedgerReadyV1
-        - SegmentedFactQueryResultV1
-        - append_fact_event
-        - append_if_guarded_snapshot
-        - append_segmented_fact_event
-        - bootstrap_fact_stream_workspace
-        - configure_debug_tracing
-        - emit_debug_event
-        - enroll_fact_stream_streams
-        - ensure_segmented_fact_ledger
-        - fact_stream_bootstrap_streams
-        - install_global_debug_hooks
-        - is_debug_tracing_enabled
-        - log_stream_token
-        - provision_fact_stream_lock_authority
-        - query_fact_events
-        - query_fact_stream_head
-        - query_segmented_fact_events
-        - query_segmented_fact_ledger_head
-        - read_guarded_fact_snapshot
-        - sanitize_headers
-        - set_debug_tracing_enabled
-        - AppendPayloadFactEventCommandV1
-        - FactPayloadReferenceV1
-        - QueryPayloadFactEventsV1
-        - StoreFactPayloadCommandV1
-        - append_payload_fact_event
-        - fact_payload_streams
-        - query_payload_fact_events
-        - query_payload_fact_ledger_presence
-        - store_fact_payload
+      - AppendFactEventCommandV1
+      - AppendIfGuardedSnapshotCommandV1
+      - AppendSegmentedFactEventCommandV1
+      - BootstrapFactStreamWorkspaceCommandV1
+      - EnrollFactStreamStreamsCommandV1
+      - EnsureSegmentedFactLedgerCommandV1
+      - FactEventAppendedV1
+      - FactStreamError
+      - FactStreamHeadV1
+      - FactStreamLockIdentityV1
+      - FactStreamLockKeyEvidenceV1
+      - FactStreamMaintenanceProofV1
+      - FactStreamMaintenanceReceiptV1
+      - FactStreamProvenanceV1
+      - FactStreamQueryResultV1
+      - GuardedFactAppendedV1
+      - GuardedFactEventV1
+      - GuardedFactSnapshotProofV1
+      - GuardedFactSnapshotV1
+      - ProvisionFactStreamLockAuthorityCommandV1
+      - QueryFactEventsV1
+      - QueryFactStreamHeadV1
+      - QuerySegmentedFactEventsV1
+      - QuerySegmentedFactLedgerHeadV1
+      - ReadGuardedFactSnapshotCommandV1
+      - SegmentedFactEventAppendedV1
+      - SegmentedFactLedgerHeadV1
+      - SegmentedFactLedgerReadyV1
+      - SegmentedFactQueryResultV1
+      - append_fact_event
+      - append_if_guarded_snapshot
+      - append_segmented_fact_event
+      - bootstrap_fact_stream_workspace
+      - configure_debug_tracing
+      - emit_debug_event
+      - enroll_fact_stream_streams
+      - ensure_segmented_fact_ledger
+      - fact_stream_bootstrap_streams
+      - install_global_debug_hooks
+      - is_debug_tracing_enabled
+      - log_stream_token
+      - provision_fact_stream_lock_authority
+      - query_fact_events
+      - query_fact_stream_head
+      - query_segmented_fact_events
+      - query_segmented_fact_ledger_head
+      - read_guarded_fact_snapshot
+      - sanitize_headers
+      - set_debug_tracing_enabled
+      - AppendPayloadFactEventCommandV1
+      - FactPayloadReferenceV1
+      - QueryPayloadFactEventsV1
+      - StoreFactPayloadCommandV1
+      - append_payload_fact_event
+      - fact_payload_streams
+      - query_payload_fact_events
+      - query_payload_fact_ledger_presence
+      - store_fact_payload
     public_contracts:
       modules:
-        - polaris.cells.events.fact_stream.public.contracts
+      - polaris.cells.events.fact_stream.public.contracts
       commands:
-        - AppendFactEventCommandV1
-        - AppendIfGuardedSnapshotCommandV1
-        - AppendSegmentedFactEventCommandV1
-        - BootstrapFactStreamWorkspaceCommandV1
-        - EnrollFactStreamStreamsCommandV1
-        - EnsureSegmentedFactLedgerCommandV1
-        - ProvisionFactStreamLockAuthorityCommandV1
-        - AppendPayloadFactEventCommandV1
-        - StoreFactPayloadCommandV1
+      - AppendFactEventCommandV1
+      - AppendIfGuardedSnapshotCommandV1
+      - AppendSegmentedFactEventCommandV1
+      - BootstrapFactStreamWorkspaceCommandV1
+      - EnrollFactStreamStreamsCommandV1
+      - EnsureSegmentedFactLedgerCommandV1
+      - ProvisionFactStreamLockAuthorityCommandV1
+      - AppendPayloadFactEventCommandV1
+      - StoreFactPayloadCommandV1
       queries:
-        - QueryFactEventsV1
-        - QueryFactStreamHeadV1
-        - QuerySegmentedFactEventsV1
-        - QuerySegmentedFactLedgerHeadV1
-        - ReadGuardedFactSnapshotCommandV1
-        - QueryPayloadFactEventsV1
+      - QueryFactEventsV1
+      - QueryFactStreamHeadV1
+      - QuerySegmentedFactEventsV1
+      - QuerySegmentedFactLedgerHeadV1
+      - ReadGuardedFactSnapshotCommandV1
+      - QueryPayloadFactEventsV1
+      - QueryPayloadFactByIdempotencyKeyV1
       events:
-        - FactEventAppendedV1
-        - GuardedFactEventV1
-        - SegmentedFactEventAppendedV1
+      - FactEventAppendedV1
+      - GuardedFactEventV1
+      - SegmentedFactEventAppendedV1
       results:
-        - FactStreamHeadV1
-        - FactStreamMaintenanceReceiptV1
-        - FactStreamProvenanceV1
-        - FactStreamQueryResultV1
-        - GuardedFactAppendedV1
-        - GuardedFactSnapshotProofV1
-        - GuardedFactSnapshotV1
-        - SegmentedFactLedgerHeadV1
-        - SegmentedFactLedgerReadyV1
-        - SegmentedFactQueryResultV1
-        - FactPayloadReferenceV1
+      - FactStreamHeadV1
+      - FactStreamMaintenanceReceiptV1
+      - FactStreamProvenanceV1
+      - FactStreamQueryResultV1
+      - GuardedFactAppendedV1
+      - GuardedFactSnapshotProofV1
+      - GuardedFactSnapshotV1
+      - SegmentedFactLedgerHeadV1
+      - SegmentedFactLedgerReadyV1
+      - SegmentedFactQueryResultV1
+      - FactPayloadReferenceV1
       errors:
-        - FactStreamError
+      - FactStreamError
     depends_on: []
     subgraphs:
-      - execution_governance_pipeline
-      - storage_archive_pipeline
+    - execution_governance_pipeline
+    - storage_archive_pipeline
     state_owners:
-      - runtime/events/*
+    - runtime/events/*
     effects_allowed:
-      - fs.read:runtime/events/*
-      - fs.write:runtime/events/*
+    - fs.read:runtime/events/*
+    - fs.write:runtime/events/*
     verification:
       tests:
-        - polaris/cells/events/fact_stream/public/tests/test_guarded_fact_append.py
-        - polaris/cells/events/fact_stream/public/tests/test_public_contracts.py
-        - polaris/cells/events/fact_stream/public/tests/test_public_service.py
-        - polaris/cells/events/fact_stream/public/tests/test_segmented_contracts.py
-        - polaris/cells/events/fact_stream/public/tests/test_workspace_bootstrap.py
-        - polaris/cells/events/fact_stream/public/tests/test_payload_fact_history.py
+      - polaris/cells/events/fact_stream/public/tests/test_guarded_fact_append.py
+      - polaris/cells/events/fact_stream/public/tests/test_public_contracts.py
+      - polaris/cells/events/fact_stream/public/tests/test_public_service.py
+      - polaris/cells/events/fact_stream/public/tests/test_segmented_contracts.py
+      - polaris/cells/events/fact_stream/public/tests/test_workspace_bootstrap.py
+      - polaris/cells/events/fact_stream/public/tests/test_payload_fact_history.py
+      - polaris/cells/events/fact_stream/public/tests/test_payload_fact_exact_lookup.py
       gaps:
-        - DEO-1A guarded-append closure requires separate lifecycle, race, and startup evidence.
+      - DEO-1A guarded-append closure requires separate lifecycle, race, and startup evidence.
 
   - id: orchestration.workflow_runtime
     title: Workflow Runtime

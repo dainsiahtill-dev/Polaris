@@ -31,6 +31,27 @@ logger = logging.getLogger(__name__)
 DecisionLike: TypeAlias = TurnDecision | dict[str, Any]
 
 
+def _initial_batch_failure(decision: TurnDecision, context: dict, ledger: TurnLedger) -> str | None:
+    """A delegated native batch must already have exact owner-recorded results."""
+    batch = decision.get("tool_batch")
+    invocations = list(batch.get("invocations", []) or []) if batch else []
+    if not invocations:
+        return None
+    rows = [row for receipt in context.get("batch_receipts", []) for row in receipt.get("results", [])]
+    for invocation in invocations:
+        call_id = str(invocation.get("call_id") or "")
+        tool_name = str(invocation.get("tool_name") or "")
+        matched = [row for row in rows if str(row.get("call_id") or "") == call_id and row.get("tool_name") == tool_name]
+        committed = [row for row in ledger.tool_executions if str(row.get("call_id") or "") == call_id and row.get("tool_name") == tool_name]
+        if len(matched) != 1 or len(committed) != 1 or matched[0].get("status") != committed[0].get("status"):
+            return "workflow_initial_batch_receipt_missing_or_ambiguous"
+        row = matched[0]
+        if row.get("status") not in {"success", "pending", "pending_async"}:
+            result = row.get("result")
+            return str(row.get("error") or (result.get("error") if isinstance(result, dict) else "") or "workflow_initial_batch_failed")
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Workflow handoff 上下文构建
 # ---------------------------------------------------------------------------
@@ -299,8 +320,8 @@ class HandoffHandler:
         )
 
         exploration_result_dict: dict[str, Any] | None = None
-        exploration_error: str | None = None
-        if self.workflow_runtime is not None:
+        exploration_error = _initial_batch_failure(decision, workflow_context, ledger)
+        if self.workflow_runtime is not None and exploration_error is None:
             try:
                 workflow_decision = _with_context_handoff_pack(decision, workflow_context, handoff_reason)
                 exploration_result = await self.workflow_runtime.execute(workflow_decision, TurnId(str(turn_id)))
@@ -422,9 +443,9 @@ class HandoffHandler:
             },
         )
 
-        workflow_error: str | None = None
+        workflow_error = _initial_batch_failure(decision, workflow_context, ledger)
         workflow_decision = _with_context_handoff_pack(decision, workflow_context, handoff_reason)
-        if self.workflow_runtime is not None and hasattr(self.workflow_runtime, "execute_stream"):
+        if workflow_error is None and self.workflow_runtime is not None and hasattr(self.workflow_runtime, "execute_stream"):
             try:
                 async for event in self.workflow_runtime.execute_stream(workflow_decision, TurnId(str(turn_id))):
                     event_error = _workflow_event_failure(event)
@@ -442,7 +463,7 @@ class HandoffHandler:
                     message=str(exc),
                     state_at_error="HANDOFF_WORKFLOW",
                 )
-        elif self.workflow_runtime is not None:
+        elif workflow_error is None and self.workflow_runtime is not None:
             try:
                 exploration_result = await self.workflow_runtime.execute(workflow_decision, TurnId(str(turn_id)))
                 workflow_error = _workflow_result_failure(exploration_result)

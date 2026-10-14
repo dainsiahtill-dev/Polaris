@@ -89,7 +89,7 @@ def test_commit_turn_result_persists_canonical_fact(tmp_path: Path) -> None:
     assert committed.outcome.outcome_status == OutcomeStatus.COMPLETED
     assert committed.outcome.resolution_code == ResolutionCode.COMPLETED
     assert committed.outcome.commit_ref == committed.receipt
-    assert committed.receipt.fact_event_seq == 1
+    assert committed.receipt.fact_event_seq == 2
     assert committed.receipt.outcome_hash
     queried = query_payload_fact_events(
         QueryPayloadFactEventsV1(
@@ -98,9 +98,9 @@ def test_commit_turn_result_persists_canonical_fact(tmp_path: Path) -> None:
             limit=10,
         )
     )
-    assert len(queried.events) == 1
-    assert queried.events[0]["expanded_payload"]["outcome_hash"] == committed.receipt.outcome_hash
-    provenance = queried.events[0]["expanded_payload"]["provenance"]
+    assert [event["event_type"] for event in queried.events] == ["turn_outcome_prepared", "turn_outcome_committed"]
+    assert queried.events[1]["expanded_payload"]["outcome_hash"] == committed.receipt.outcome_hash
+    provenance = queried.events[1]["expanded_payload"]["provenance"]
     assert provenance == {
         "workspace": str(workspace.resolve()),
         "run_id": "run-1",
@@ -307,8 +307,8 @@ def test_turn_outcomes_are_isolated_for_fresh_workspaces_with_matching_names(tmp
     first = commit(workspace_a)
     second = commit(workspace_b)
 
-    assert first.receipt.fact_event_seq == 1
-    assert second.receipt.fact_event_seq == 1
+    assert first.receipt.fact_event_seq == 2
+    assert second.receipt.fact_event_seq == 2
     first_event = query_payload_fact_events(
         QueryPayloadFactEventsV1(workspace=str(workspace_a), logical_stream=TURN_OUTCOME_PAYLOAD_STREAM, limit=10)
     ).events[0]
@@ -342,7 +342,8 @@ def test_turn_outcomes_are_isolated_for_separate_factory_runs(tmp_path: Path) ->
     queried = query_payload_fact_events(
         QueryPayloadFactEventsV1(workspace=str(workspace), logical_stream=TURN_OUTCOME_PAYLOAD_STREAM, limit=10)
     )
-    assert len(queried.events) == 2
+    assert len(queried.events) == 4
+    assert len([event for event in queried.events if event["event_type"] == "turn_outcome_committed"]) == 2
     assert {event["expanded_payload"]["provenance"]["run_id"] for event in queried.events} == {
         "factory-run-a",
         "factory-run-b",
@@ -373,7 +374,8 @@ def test_turn_outcomes_are_isolated_for_distinct_attempts_of_the_same_turn(tmp_p
     queried = query_payload_fact_events(
         QueryPayloadFactEventsV1(workspace=str(workspace), logical_stream=TURN_OUTCOME_PAYLOAD_STREAM, limit=10)
     )
-    assert len(queried.events) == 2
+    assert len(queried.events) == 4
+    assert len([event for event in queried.events if event["event_type"] == "turn_outcome_committed"]) == 2
     assert {event["expanded_payload"]["provenance"]["transition_id"] for event in queried.events} == {
         "invocation-a-attempt-0",
         "invocation-a-attempt-1",
@@ -402,7 +404,7 @@ def test_turn_outcome_concurrent_identical_attempt_returns_one_receipt(tmp_path:
         commits = list(executor.map(lambda _: commit(), range(16)))
 
     assert len({commit.receipt.fact_event_id for commit in commits}) == 1
-    assert {commit.receipt.fact_event_seq for commit in commits} == {1}
+    assert {commit.receipt.fact_event_seq for commit in commits} == {2}
 
 
 def test_turn_outcome_requires_explicit_transition_identity(tmp_path: Path) -> None:
@@ -511,14 +513,15 @@ def test_new_workspace_commits_small_v3_fact_and_reads_large_payload_separately(
     first = commit_turn_result(**arguments)
     assert first.receipt.fact_stream == "roles.kernel.turn_outcomes.v3"
     page = query_payload_fact_events(
-        QueryPayloadFactEventsV1(workspace=str(workspace), logical_stream=first.receipt.fact_stream, limit=1)
+        QueryPayloadFactEventsV1(workspace=str(workspace), logical_stream=first.receipt.fact_stream, limit=8)
     )
-    assert len(page.events) == 1
-    row = page.events[0]
+    assert len(page.events) == 2
+    row = next(event for event in page.events if event["event_id"] == first.receipt.fact_event_id)
+    assert row["event_type"] == "turn_outcome_committed"
     raw = row["storage_record"]
     expanded = row["expanded_payload"]
     assert raw["logical_stream"] == first.receipt.fact_stream
-    assert raw["global_seq"] == first.receipt.fact_event_seq == 1
+    assert raw["global_seq"] == first.receipt.fact_event_seq == 2
     assert raw["event_id"] == first.receipt.fact_event_id
     assert len(json.dumps(raw, ensure_ascii=False).encode("utf-8")) < 4096
     assert expanded["schema_version"] == "roles.kernel.turn_outcome_fact.v3"
@@ -537,8 +540,8 @@ def test_new_workspace_commits_small_v3_fact_and_reads_large_payload_separately(
     assert (
         query_payload_fact_events(
             QueryPayloadFactEventsV1(workspace=str(workspace), logical_stream=first.receipt.fact_stream)
-        ).events[0]["global_seq"]
-        == 1
+        ).events[1]["global_seq"]
+        == 2
     )
 
 
@@ -577,7 +580,7 @@ def test_existing_legacy_stream_keeps_v2_without_payload_namespace_migration(tmp
         completion_status="success",
     )
     assert committed.receipt.fact_stream == TURN_OUTCOME_STREAM
-    assert committed.receipt.fact_event_seq == before.next_expected_seq
+    assert committed.receipt.fact_event_seq == before.next_expected_seq + 1
     rows = query_fact_events(
         QueryFactEventsV1(workspace=str(tmp_path), stream=TURN_OUTCOME_STREAM, strict_integrity=True)
     ).events
@@ -623,7 +626,7 @@ def test_v3_namespace_ensure_is_first_commit_only_and_corrupt_existing_stays_rej
 
     first, second = commit(1), commit(2)
     assert len(ensured) == 1
-    assert first.receipt.fact_event_seq == 1 and second.receipt.fact_event_seq == 2
+    assert first.receipt.fact_event_seq == 2 and second.receipt.fact_event_seq == 4
     assert first.receipt.fact_stream == second.receipt.fact_stream == TURN_OUTCOME_PAYLOAD_STREAM
     filesystem = KernelFileSystem(str(tmp_path), get_default_adapter())
     record = filesystem.read_text(first.receipt.fact_storage_path, encoding="utf-8")

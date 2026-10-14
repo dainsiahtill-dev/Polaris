@@ -666,6 +666,30 @@ async def test_run_completion_cancel_during_dispatch_waits_for_canonical_termina
 
 
 @pytest.mark.asyncio
+async def test_characterization_qa_port_enforces_child_limit_without_authoritative_io() -> None:
+    from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
+        FactoryRoleEvidenceAuthorityError,
+    )
+
+    port = _factory_stage_context()[stage_executor_module.FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY]
+    port.limit_quality_qa_children(2)
+    first = port.mint_authority_binding("qa")
+    second = port.mint_authority_binding("qa")
+    assert first.execution_authority_hash != second.execution_authority_hash
+    port.revoke_authority_binding(first)
+    with pytest.raises(RuntimeError, match="cardinality_exceeded"):
+        port.mint_authority_binding("qa")
+    with pytest.raises(FactoryRoleEvidenceAuthorityError, match="cardinality_exceeded"):
+        port.limit_quality_qa_children(1)
+    with pytest.raises(FactoryRoleEvidenceAuthorityError, match="quality_child_limit_invalid"):
+        port.limit_quality_qa_children(True)
+    with pytest.raises(AssertionError, match="must not acquire cutoff"):
+        await port.acquire_cutoff(None)
+    with pytest.raises(AssertionError):
+        port.reserve(object())
+
+
+@pytest.mark.asyncio
 async def test_quality_gate_authority_ignores_report_and_workspace_display_status(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

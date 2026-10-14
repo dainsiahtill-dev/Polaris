@@ -8,6 +8,7 @@ decomposed into sibling collaborators.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import threading
@@ -40,8 +41,14 @@ from polaris.cells.events.fact_stream.public import (
 from polaris.cells.factory.pipeline.internal import (
     factory_stage_executor as stage_executor_module,
 )
+from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
+    FactoryPhysicalAttemptLiveControlPort,
+)
 from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
+    FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET,
+    FactoryRoleEvidenceAuthorityError,
     FactoryRoleEvidenceAuthorityPort,
+    FactoryRoleEvidenceStageAuthorityV1,
 )
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRun,
@@ -79,17 +86,78 @@ __all__ = [
 
 
 def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
-    """Return an exact production port type with test-only grant behavior."""
+    """Initialize the real port; grants remain explicit test-only observations.
 
-    port = object.__new__(FactoryRoleEvidenceAuthorityPort)
+    ``bindings`` is the sole synthetic grant count. No production grant,
+    cutoff, physical attempt or persisted receipt is created by this helper.
+    """
+
     bindings: list[FactoryRoleEvidenceAuthorityBindingV1] = []
     grant_caps = {
         "architect": 1,
         "pm": 2,
         "chief_engineer": 1,
         "director": 512,
-        "qa": 1,
+        "qa": FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET,
     }
+
+    def reject_physical_attempt(command: object) -> object:
+        raise AssertionError(command)
+
+    class RejectedAuthorityIO:
+        def hold_active_stage_claim(self, *_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("characterization test must not access admission")
+
+        def resolve_source_cut(self, **_kwargs: Any) -> Any:
+            raise AssertionError("characterization test must not resolve authority sources")
+
+        def ensure(self, **_kwargs: Any) -> Any:
+            raise AssertionError("characterization test must not enroll authority facts")
+
+        def query_events(self, **_kwargs: Any) -> Any:
+            raise AssertionError("characterization test must not query authority facts")
+
+        def query_head(self, **_kwargs: Any) -> Any:
+            raise AssertionError("characterization test must not query authority heads")
+
+        def append(self, **_kwargs: Any) -> Any:
+            raise AssertionError("characterization test must not append authority facts")
+
+    async def reject_run_loader() -> Any:
+        raise AssertionError("characterization test must not load authoritative runs")
+
+    io: Any = RejectedAuthorityIO()
+    port = FactoryRoleEvidenceAuthorityPort(
+        workspace=Path.cwd(),
+        authority=FactoryRoleEvidenceStageAuthorityV1(
+            factory_run_id="characterization-run",
+            stage="quality_gate",
+            workspace_fencing_token=1,
+            stage_claim_attempt=1,
+            stage_claim_nonce="characterization-only-claim",
+        ),
+        run_lock=asyncio.Lock(),
+        run_loader=reject_run_loader,
+        admission=io,
+        source_authority=io,
+        fact_stream=io,
+        physical_attempt_coordinator=FactoryPhysicalAttemptLiveControlPort(
+            factory_run_id="characterization-run",
+            revalidate_active_stage_claim=reject_physical_attempt,
+        ),
+    )
+    production_limit = port.limit_quality_qa_children
+
+    def limit_quality_qa_children(count: int) -> None:
+        # Real initialization/type/closure checks, plus the explicit synthetic
+        # count: real _grants must not silently substitute for test bindings.
+        with port._grant_lock:
+            if type(count) is not int or not 1 <= count <= FACTORY_ROLE_EVIDENCE_ATTEMPT_BUDGET or port._closed:
+                production_limit(count)  # Invalid inputs/closed ports reject before any cap change.
+                raise AssertionError("production limiter must reject invalid or closed input")
+            if sum(binding.role == "qa" for binding in bindings) > count:
+                raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_stage_grant_cardinality_exceeded")
+            production_limit(count)
 
     async def acquire_cutoff(request: object) -> object:
         del request
@@ -99,15 +167,17 @@ def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
         del ack
         raise AssertionError("characterization test must not resolve cutoff proof")
 
-    def reject_physical_attempt(command: object) -> object:
-        raise AssertionError(command)
-
     def require_grant_capacity(role: str, count: int) -> None:
         assert role == "director"
         assert len(bindings) + count <= 512
 
     def mint_authority_binding(role: str) -> FactoryRoleEvidenceAuthorityBindingV1:
-        if sum(binding.role == role for binding in bindings) >= grant_caps[role]:
+        if port._closed:
+            raise FactoryRoleEvidenceAuthorityError("factory_role_evidence_authority_closed")
+        cap = grant_caps[role]
+        if role == "qa":
+            cap = min(cap, port._quality_qa_child_cap)
+        if sum(binding.role == role for binding in bindings) >= cap:
             raise RuntimeError("factory_role_evidence_stage_grant_cardinality_exceeded")
         binding = FactoryRoleEvidenceAuthorityBindingV1(
             schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
@@ -135,6 +205,7 @@ def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
     port.settle = reject_physical_attempt  # type: ignore[attr-defined]
     port.terminal_persistence_failed = reject_physical_attempt  # type: ignore[attr-defined]
     port.require_grant_capacity = require_grant_capacity  # type: ignore[method-assign]
+    port.limit_quality_qa_children = limit_quality_qa_children  # type: ignore[method-assign]
     port.mint_authority_binding = mint_authority_binding  # type: ignore[method-assign]
     port.revoke_authority_binding = revoke_authority_binding  # type: ignore[method-assign]
     port._test_minted_authority_bindings = bindings  # type: ignore[attr-defined]

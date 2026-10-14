@@ -95,12 +95,15 @@ def run_factory_chain(
     director_dispatch_driver: str = "task-market",
     bench_session_id: str = "",
     start_from: str = "pm",
+    qa_semantic_review_required: bool = False,
     on_stage_change: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Start a full run, or resume the same failed run at its Director checkpoint."""
     normalized_start_from = str(start_from or "pm").strip().lower()
     if normalized_start_from not in {"pm", "director_resume"}:
         raise ValueError(f"unsupported factory bench start_from: {start_from!r}")
+    if qa_semantic_review_required and normalized_start_from != "pm":
+        raise ValueError("semantic QA override requires a fresh PM run")
     requested_start_from = normalized_start_from
     api_start_from = "director_resume" if normalized_start_from == "director_resume" else normalized_start_from
     workflow_mode = str(director_workflow_execution_mode or "parallel").strip().lower()
@@ -194,6 +197,9 @@ def run_factory_chain(
             "factory_run_deadline_source": "factory_bench_runner",
         },
     }
+    if qa_semantic_review_required:
+        payload["metadata"]["qa_semantic_review_required"] = True
+        payload["metadata"]["qa_llm_required"] = True
 
     with open(log_path, "w", encoding="utf-8") as log_fh:
 

@@ -369,6 +369,69 @@ class SegmentedJsonlEventStore:
                 captured_head=captured,
             )
 
+    def query_by_idempotency_key(self, key: str) -> SegmentedQueryResultV1:
+        """Read one existing locator against strict small-record history.
+
+        This is O(n) validation of sealed small records, not O(1) authority.
+        The existing cursor/manifest/locator are verified, never repaired. No
+        payload blobs are expanded and no new index or lock authority is made.
+        """
+        if not isinstance(key, str) or not key or key.strip() != key:
+            raise ValueError("idempotency key must be exact non-empty text")
+        if not self._read_only:
+            observer = SegmentedJsonlEventStore(
+                self.storage_identity.workspace_abs,
+                logical_stream=self.logical_stream,
+                segment_max_events=self._segment_max_events,
+                kernel_fs=self._kernel_fs,
+                lock_timeout_seconds=self._lock_timeout_seconds,
+                read_only=True,
+            )
+            return observer.query_by_idempotency_key(key)
+        with self._locked():
+            events, scanned = self._full_scan_and_rebuild_locked()
+            self._read_path(self._cursor_path)
+            cursor = self._load_cursor_locked()
+            if cursor is None:
+                raise SegmentedEventStoreError("lookup cursor is missing", code="lookup_cursor_missing")
+            shards: dict[str, set[str]] = {}
+            for item in events:
+                digest = hashlib.sha256(item.idempotency_key.encode("utf-8")).hexdigest()
+                shards.setdefault(digest[:2], set()).add(digest)
+            hashes = {
+                shard: self._hash_mapping(self._locator_manifest_payload(shard, tuple(sorted(digests))))
+                for shard, digests in shards.items()
+            }
+            expected = _Cursor(**{**asdict(scanned), "locator_shard_hashes": hashes})
+            if cursor != expected:
+                raise SegmentedEventStoreError("lookup cursor differs from history", code="lookup_cursor_drift")
+            shard = hashlib.sha256(key.encode("utf-8")).hexdigest()[:2]
+            self._read_path(self._locator_manifest_logical_path(shard))
+            self._read_path(self.locator_logical_path(key))
+            manifest = self._read_locator_manifest_locked(cursor, shard)
+            if manifest != tuple(sorted(shards.get(shard, ()))):
+                raise SegmentedEventStoreError("lookup manifest differs from history", code="lookup_manifest_drift")
+            event, observed_cursor = self._read_locator_event_locked(key, cursor=cursor)
+            expected_event = next((item for item in events if item.idempotency_key == key), None)
+            if event != expected_event or observed_cursor != cursor:
+                raise SegmentedEventStoreError("lookup locator differs from history", code="lookup_locator_drift")
+            after, after_cursor = self._full_scan_and_rebuild_locked()
+            if after != events or after_cursor != scanned or self._load_cursor_locked() != cursor:
+                raise SegmentedEventStoreError("lookup snapshot changed", code="lookup_snapshot_changed")
+            if self._read_locator_manifest_locked(cursor, shard) != manifest:
+                raise SegmentedEventStoreError("lookup manifest changed", code="lookup_snapshot_changed")
+            if self._read_locator_event_locked(key, cursor=cursor) != (event, cursor):
+                raise SegmentedEventStoreError("lookup locator changed", code="lookup_snapshot_changed")
+            captured = self._head(scanned)
+            return SegmentedQueryResultV1(
+                logical_stream=self.logical_stream,
+                events=() if event is None else (event,),
+                total_count=captured.total_count,
+                continuation=None,
+                head_hash=captured.head_hash,
+                captured_head=captured,
+            )
+
     def _full_scan_and_rebuild_locked(self) -> tuple[tuple[SegmentedStoredEventV1, ...], _Cursor]:
         indices = self._discover_segments_locked()
         events: list[SegmentedStoredEventV1] = []

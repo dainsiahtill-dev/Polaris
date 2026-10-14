@@ -11,6 +11,12 @@ from importlib import import_module
 from typing import Any
 
 _EXPORT_TO_MODULE: dict[str, str] = {
+    "PreparedTurnOutcomeReferenceV1": "polaris.cells.roles.kernel.public.outcome_recovery",
+    "QueryPreparedTurnOutcomeV1": "polaris.cells.roles.kernel.public.outcome_recovery",
+    "ReplayPreparedTurnOutcomeCommandV1": "polaris.cells.roles.kernel.public.outcome_recovery",
+    "RecoveredTurnOutcomeV1": "polaris.cells.roles.kernel.public.outcome_recovery",
+    "query_prepared_turn_outcome": "polaris.cells.roles.kernel.public.outcome_recovery",
+    "replay_prepared_turn_outcome": "polaris.cells.roles.kernel.public.outcome_recovery",
     "ROLE_STRUCTURED_OUTPUT_CONTRACT_SCHEMA": "polaris.cells.roles.kernel.public.structured_output_contracts",
     "STRUCTURED_OUTPUT_CONTRACT_CONTEXT_KEY": "polaris.cells.roles.kernel.public.structured_output_contracts",
     "RoleStructuredOutputContractV1": "polaris.cells.roles.kernel.public.structured_output_contracts",

@@ -1130,6 +1130,7 @@ class _ToolBatchExecuteMixin:
             ).execute_batch(
                 replay_batch,
                 TurnId(turn_id),
+                allowed_tool_names=allowed_tool_names,
             )
             receipts_as_dicts.extend(normalize_batch_receipts(receipts))
 
@@ -1483,14 +1484,14 @@ class _ToolBatchExecuteMixin:
             )
         )
         pending_async_count = sum(int(r.get("pending_async_count", 0)) for r in receipts_as_dicts)
-        if pending_async_count > 0:
+        if pending_async_count > 0 or decision.get("kind") == TurnDecisionKind.HANDOFF_WORKFLOW:
             merged_batch_receipt = _merge_batch_receipts(receipts_as_dicts)
             workflow_context = build_workflow_handoff_context(
                 decision=decision,
                 receipts=receipts_as_dicts,
                 ledger=ledger,
-                handoff_reason="async_operation",
-                handoff_source="async_pending_receipt",
+                handoff_reason="async_operation" if pending_async_count else str(metadata.get("handoff_reason") or "unknown"),
+                handoff_source="async_pending_receipt" if pending_async_count else "decision_handoff_receipt",
             )
             if stream:
                 return {
@@ -1503,7 +1504,7 @@ class _ToolBatchExecuteMixin:
                 state_machine,
                 ledger,
                 workflow_context=workflow_context,
-                handoff_reason="async_operation",
+                handoff_reason="async_operation" if pending_async_count else str(metadata.get("handoff_reason") or "unknown"),
                 batch_receipt=merged_batch_receipt,
             )
 

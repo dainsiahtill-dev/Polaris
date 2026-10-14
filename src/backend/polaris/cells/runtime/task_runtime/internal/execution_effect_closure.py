@@ -418,6 +418,8 @@ def _read_role_owner_events(
             observed_count += 1
             if event.get("global_seq") != observed_count:
                 raise ValueError("role payload fact history is incomplete")
+            if event.get("event_type") != "turn_outcome_committed":
+                continue
             payload = _validated_v3_role_payload(event, storage)
             session_binding = payload.get("session_binding")
             if (

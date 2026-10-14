@@ -912,3 +912,16 @@ class QueryPayloadFactEventsV1:
             limit=self.limit,
             continuation=self.continuation,
         )
+
+
+@dataclass(frozen=True)
+class QueryPayloadFactByIdempotencyKeyV1:
+    """One immutable storage key; it grants no append or outcome authority."""
+
+    workspace: str
+    logical_stream: str
+    idempotency_key: str
+
+    def __post_init__(self) -> None:
+        QuerySegmentedFactEventsV1(workspace=self.workspace, logical_stream=self.logical_stream, limit=1)
+        _require_exact_non_empty("idempotency_key", self.idempotency_key)

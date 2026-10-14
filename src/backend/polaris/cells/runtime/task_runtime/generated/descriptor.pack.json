@@ -1,76 +1,339 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-09T12:52:34.168994Z",
-  "source_hash": "b37e50d17bdf8417",
+  "generated_at": "2026-10-14T13:05:53.819947Z",
+  "source_hash": "76a80682392ea5df",
   "cell_id": "runtime.task_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
-      "name": "TaskRuntimeService",
-      "description": "Runtime task lifecycle service for the ``runtime.task_runtime`` cell.",
-      "defined_in": "polaris/cells/runtime/task_runtime/internal/service.py",
+      "name": "SealDirectedEffectInventoryCommandV1",
+      "description": "Seal the complete immutable inventory before any child effect claim.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_inventory.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FinalizeDirectedEffectInventoryAdmissionCommandV1",
+      "description": "Request exact sealed/admitted inventory equality before effect claims.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_inventory.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetDirectedEffectInventoryQueryV1",
+      "description": "Read the inventory bound to one exact attempt and parent admission.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_inventory.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectInventoryProjectionV1",
+      "description": "Immutable diagnostic projection of one sealed parent inventory.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_inventory.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectInventoryResultV1",
+      "description": "Typed inventory command/query result with immutable diagnostic evidence.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_inventory.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectClaimGrantV1",
+      "description": "One hash-bound claim capability returned only by the original claim.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
       "methods": [
         {
-          "name": "create_task_row",
-          "doc": "Create a task and return the runtime row projection with event evidence."
-        },
-        {
-          "name": "get_task",
-          "doc": "Return the task-runtime observable read model for a single task row."
-        },
-        {
-          "name": "update_task_row",
-          "doc": "Update a task and return the runtime row projection with event evidence."
-        },
-        {
-          "name": "reopen_task_row",
-          "doc": "Reopen a task and return the runtime row projection with event evidence."
-        },
-        {
-          "name": "list_observable_task_rows",
-          "doc": "Return task rows for read-only runtime projections."
-        },
-        {
-          "name": "claim_next_execution",
-          "doc": "Atomically select and claim the next executable task."
-        },
-        {
-          "name": "list_ready_task_rows",
-          "doc": "Return ready rows after the compatibility dependency refresh."
-        },
-        {
-          "name": "get_task_row_stats",
-          "doc": "Compatibility entrypoint for observable task-row status counts."
+          "name": "to_record",
+          "doc": "Return the canonical signed grant record."
         }
       ]
     },
     {
       "type": "class",
+      "name": "AdmitDirectedEffectParentCommandV1",
+      "description": "CAS admission request for one attempt-scoped parent registry.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AdmitDirectedEffectParentBatchCommandV1",
+      "description": "Admit one canonical batch, rolling over only a receipt-complete predecessor.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetDirectedEffectParentRegistryQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EnrollDirectedEffectParentRegistryStreamCommandV1",
+      "description": "Explicitly enroll the parent-registry stream for one validated attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EnrollDirectedEffectOperationStreamCommandV1",
+      "description": "Explicitly enroll one durable parent binding's operation stream.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectStreamEnrollmentResultV1",
+      "description": "Typed result for explicit DEO dynamic-stream maintenance enrollment.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AdmitDirectedEffectOperationCommandV1",
+      "description": "Admit the one legal ``ABSENT -> INTENT_COMMITTED`` transition.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ClaimDirectedEffectCommandV1",
+      "description": "Claim the one legal ``INTENT_COMMITTED -> EFFECT_STARTED`` transition.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AbortDirectedEffectOperationCommandV1",
+      "description": "Abort the one legal ``INTENT_COMMITTED -> ABORTED`` transition.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CommitDirectedEffectReceiptCommandV1",
+      "description": "Commit one durable physical-effect receipt to an ``EFFECT_STARTED`` operation.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "MarkDirectedEffectRecoveryPendingCommandV1",
+      "description": "Move ``EFFECT_STARTED`` to finite, evidence-bound recovery.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DeadLetterDirectedEffectOperationCommandV1",
+      "description": "Resolve ``RECOVERY_PENDING`` to an evidence-bound terminal dead letter.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetDirectedEffectOperationQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetDirectedEffectParentReadinessQueryV1",
+      "description": "Read one parent-bound operation-stream diagnostic without authority effects.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectParentReadinessStateCountV1",
+      "description": "One immutable final-state count from a strict parent operation scan.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectParentReadinessProjectionV1",
+      "description": "Immutable, non-authoritative diagnostic aggregate for one parent.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectParentReadinessResultV1",
+      "description": "Typed outcome for the read-only parent operation-stream diagnostic.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectOperationResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReconcileAmbiguousDirectedEffectsCommandV1",
+      "description": "Request one bounded Factory-startup recovery sweep without effect replay.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectRecoverySweepItemV1",
+      "description": "One TaskRuntime recovery/dead-letter fact exposed to read-only sinks.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectRecoverySweepResultV1",
+      "description": "Bounded startup/stale-owner recovery report.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DirectedEffectParentRegistryResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_directed_effect_operations.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SettleTaskRuntimeExecutionAttemptCommandV1",
+      "description": "Request the one canonical terminal settlement for a claimed attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_execution_attempts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptSettlementVerdictV1",
+      "description": "Typed result for a one-winner execution-attempt settlement.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_execution_attempts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HeartbeatTaskRuntimeExecutionAttemptCommandV1",
+      "description": "Request one bounded, identity-fenced TaskRuntime lease renewal.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_execution_attempts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return a detached, JSON-serializable heartbeat command record."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptHeartbeatVerdictV1",
+      "description": "Typed outcome for one bounded TaskRuntime execution-attempt heartbeat.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_execution_attempts.py",
+      "methods": [
+        {
+          "name": "reason",
+          "doc": "Expose the stable failure/success reason expected by consumers."
+        },
+        {
+          "name": "to_record",
+          "doc": "Return a detached, JSON-serializable heartbeat verdict record."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ValidateTaskRuntimeExecutionAttemptQueryV1",
+      "description": "Request a read-only validation of a persisted execution attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_execution_attempts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "OpenTaskRuntimeExecutionAttemptAuthorityCommandV1",
+      "description": "Request read-only opening of a process-local authority for one attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_execution_attempts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return a detached UTF-8 JSON-compatible open request record."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptValidationVerdictV1",
+      "description": "Fail-closed, read-only authority verdict for one execution attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_execution_attempts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return a detached, JSON-serializable validation result."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1",
+      "description": "Typed, non-durable authority-open result for a validated attempt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_execution_attempts.py",
+      "methods": [
+        {
+          "name": "to_record",
+          "doc": "Return UTF-8 JSON-compatible evidence without serializing authority."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RuntimeTaskRuntimeError",
+      "description": "Raised when `runtime.task_runtime` contract processing fails.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_execution_attempts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "CreateRuntimeTaskCommandV1",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "UpdateRuntimeTaskCommandV1",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "FenceExpiredFactoryRunSessionsCommandV1",
       "description": "Fence expired active sessions before Factory stale-owner recovery.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ExpiredFactoryRunSessionFenceResultV1",
       "description": "Typed, observation-safe result of expired-session fencing.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": [
         {
           "name": "to_record",
@@ -82,14 +345,14 @@
       "type": "class",
       "name": "BindRuntimeTaskToFactoryRunCommandV1",
       "description": "Bind one canonical TaskRuntime row to one Factory portfolio run.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "RuntimeTaskFactoryRunBindingResultV1",
       "description": "Typed outcome for write-once Factory portfolio-run binding.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": [
         {
           "name": "to_record",
@@ -101,35 +364,49 @@
       "type": "class",
       "name": "ReopenRuntimeTaskCommandV1",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "PrepareOwnerReworkExecutionCommandV1",
       "description": "Request TaskRuntime preparation after TaskMarket has granted a claim.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "PrepareSameTaskLocalReworkCommandV1",
       "description": "Apply one workflow-owned completion action to the exact Director task.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QuerySameTaskLocalReworkAuthorizationV1",
+      "description": "Read one exact committed local-rework authorization from durable facts.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "SameTaskLocalReworkAuthorizationQueryResultV1",
+      "description": "Typed durable lookup result for one same-task local-rework action.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "SameTaskLocalReworkPreparationResultV1",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "OwnerReworkExecutionPreparationResultV1",
       "description": "Typed outcome of TaskRuntime's owner-rework execution preparation.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": [
         {
           "name": "to_record",
@@ -141,21 +418,21 @@
       "type": "class",
       "name": "ListRuntimeTasksQueryV1",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "GetRuntimeTaskQueryV1",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ObservableTaskRowsProjectionV1",
       "description": "Observable TaskRuntime rows with explicit authority provenance.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": [
         {
           "name": "to_dict",
@@ -175,7 +452,7 @@
       "type": "class",
       "name": "TaskRuntimeExecutionFactV1",
       "description": "Immutable typed projection for one ``task_runtime.execution`` fact.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": [
         {
           "name": "from_payload",
@@ -199,317 +476,49 @@
       "type": "class",
       "name": "RuntimeTaskLifecycleEventV1",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "RuntimeTaskResultV1",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts/_lifecycle.py",
       "methods": []
     },
     {
       "type": "class",
-      "name": "SettleTaskRuntimeExecutionAttemptCommandV1",
-      "description": "Request the one canonical terminal settlement for a claimed attempt.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TaskRuntimeExecutionAttemptSettlementVerdictV1",
-      "description": "Typed result for a one-winner execution-attempt settlement.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": [
-        {
-          "name": "to_record",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "HeartbeatTaskRuntimeExecutionAttemptCommandV1",
-      "description": "Request one bounded, identity-fenced TaskRuntime lease renewal.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": [
-        {
-          "name": "to_record",
-          "doc": "Return a detached, JSON-serializable heartbeat command record."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskRuntimeExecutionAttemptHeartbeatVerdictV1",
-      "description": "Typed outcome for one bounded TaskRuntime execution-attempt heartbeat.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": [
-        {
-          "name": "reason",
-          "doc": "Expose the stable failure/success reason expected by consumers."
-        },
-        {
-          "name": "to_record",
-          "doc": "Return a detached, JSON-serializable heartbeat verdict record."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "ValidateTaskRuntimeExecutionAttemptQueryV1",
-      "description": "Request a read-only validation of a persisted execution attempt.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "OpenTaskRuntimeExecutionAttemptAuthorityCommandV1",
-      "description": "Request read-only opening of a process-local authority for one attempt.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": [
-        {
-          "name": "to_record",
-          "doc": "Return a detached UTF-8 JSON-compatible open request record."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskRuntimeExecutionAttemptValidationVerdictV1",
-      "description": "Fail-closed, read-only authority verdict for one execution attempt.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": [
-        {
-          "name": "to_record",
-          "doc": "Return a detached, JSON-serializable validation result."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1",
-      "description": "Typed, non-durable authority-open result for a validated attempt.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": [
-        {
-          "name": "to_record",
-          "doc": "Return UTF-8 JSON-compatible evidence without serializing authority."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "RuntimeTaskRuntimeError",
-      "description": "Raised when `runtime.task_runtime` contract processing fails.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "SealDirectedEffectInventoryCommandV1",
-      "description": "Seal the complete immutable inventory before any child effect claim.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "FinalizeDirectedEffectInventoryAdmissionCommandV1",
-      "description": "Request exact sealed/admitted inventory equality before effect claims.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "GetDirectedEffectInventoryQueryV1",
-      "description": "Read the inventory bound to one exact attempt and parent admission.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectedEffectInventoryProjectionV1",
-      "description": "Immutable diagnostic projection of one sealed parent inventory.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectedEffectInventoryResultV1",
-      "description": "Typed inventory command/query result with immutable diagnostic evidence.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectedEffectClaimGrantV1",
-      "description": "One hash-bound claim capability returned only by the original claim.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": [
-        {
-          "name": "to_record",
-          "doc": "Return the canonical signed grant record."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "AdmitDirectedEffectParentCommandV1",
-      "description": "CAS admission request for one attempt-scoped parent registry.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "AdmitDirectedEffectParentBatchCommandV1",
-      "description": "Admit one canonical batch, rolling over only a receipt-complete predecessor.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "GetDirectedEffectParentRegistryQueryV1",
+      "name": "QueryExecutionEffectClosureV1",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/execution_effect_closure.py",
       "methods": []
     },
     {
       "type": "class",
-      "name": "EnrollDirectedEffectParentRegistryStreamCommandV1",
-      "description": "Explicitly enroll the parent-registry stream for one validated attempt.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "name": "QueryExecutionEffectClosuresV1",
+      "description": "Identity-only batch query; owner snapshots cannot come from callers.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/execution_effect_closure.py",
       "methods": []
     },
     {
       "type": "class",
-      "name": "EnrollDirectedEffectOperationStreamCommandV1",
-      "description": "Explicitly enroll one durable parent binding's operation stream.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectedEffectStreamEnrollmentResultV1",
-      "description": "Typed result for explicit DEO dynamic-stream maintenance enrollment.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "AdmitDirectedEffectOperationCommandV1",
-      "description": "Admit the one legal ``ABSENT -> INTENT_COMMITTED`` transition.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ClaimDirectedEffectCommandV1",
-      "description": "Claim the one legal ``INTENT_COMMITTED -> EFFECT_STARTED`` transition.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "AbortDirectedEffectOperationCommandV1",
-      "description": "Abort the one legal ``INTENT_COMMITTED -> ABORTED`` transition.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "CommitDirectedEffectReceiptCommandV1",
-      "description": "Commit one durable physical-effect receipt to an ``EFFECT_STARTED`` operation.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "MarkDirectedEffectRecoveryPendingCommandV1",
-      "description": "Move ``EFFECT_STARTED`` to finite, evidence-bound recovery.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DeadLetterDirectedEffectOperationCommandV1",
-      "description": "Resolve ``RECOVERY_PENDING`` to an evidence-bound terminal dead letter.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "GetDirectedEffectOperationQueryV1",
+      "name": "ExecutionEffectCommitObservationV1",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/execution_effect_closure.py",
       "methods": []
     },
     {
       "type": "class",
-      "name": "GetDirectedEffectParentReadinessQueryV1",
-      "description": "Read one parent-bound operation-stream diagnostic without authority effects.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "name": "ExecutionEffectTerminalFailureObservationV1",
+      "description": "Owner-authenticated negative effect closure, never a success receipt.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/execution_effect_closure.py",
       "methods": []
     },
     {
       "type": "class",
-      "name": "DirectedEffectParentReadinessStateCountV1",
-      "description": "One immutable final-state count from a strict parent operation scan.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectedEffectParentReadinessProjectionV1",
-      "description": "Immutable, non-authoritative diagnostic aggregate for one parent.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectedEffectParentReadinessResultV1",
-      "description": "Typed outcome for the read-only parent operation-stream diagnostic.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectedEffectOperationResultV1",
+      "name": "ExecutionEffectClosureObservationV1",
       "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ReconcileAmbiguousDirectedEffectsCommandV1",
-      "description": "Request one bounded Factory-startup recovery sweep without effect replay.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectedEffectRecoverySweepItemV1",
-      "description": "One TaskRuntime recovery/dead-letter fact exposed to read-only sinks.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": [
-        {
-          "name": "to_record",
-          "doc": ""
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "DirectedEffectRecoverySweepResultV1",
-      "description": "Bounded startup/stale-owner recovery report.",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "DirectedEffectParentRegistryResultV1",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/task_runtime/public/contracts.py",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/execution_effect_closure.py",
       "methods": []
     }
   ],

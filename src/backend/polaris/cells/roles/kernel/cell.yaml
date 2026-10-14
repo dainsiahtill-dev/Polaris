@@ -4,9 +4,8 @@ kind: capability
 visibility: public
 stateful: false
 owner: roles
-purpose: 'Provide the shared role execution kernel for prompt construction, output
-  parsing, quality checking, error classification, retry policy, and kernel-level
-  observability.
+purpose: 'Provide the shared role execution kernel for prompt construction, output parsing, quality checking,
+  error classification, retry policy, and kernel-level observability.
 
   '
 current_modules:
@@ -38,6 +37,7 @@ current_modules:
 - polaris.cells.roles.kernel.internal.turn_engine
 - polaris.cells.roles.kernel.internal.constitution_rules
 - polaris.cells.roles.kernel.internal.constitution_adaptor
+- polaris.cells.roles.kernel.public.outcome_recovery
 tags: []
 owned_paths:
 - polaris/cells/roles/kernel/**
@@ -51,16 +51,19 @@ public_contracts:
   - polaris.cells.roles.kernel.public.directed_effect_contracts
   - polaris.cells.roles.kernel.public.directed_effect_service
   - polaris.cells.roles.kernel.public.deferred_repair_service
+  - polaris.cells.roles.kernel.public.outcome_recovery
   commands:
   - BuildRolePromptCommandV1
   - ParseRoleOutputCommandV1
   - CheckRoleQualityCommandV1
   - ExecuteRoleKernelTurnCommandV1
   - FactoryRoleEvidenceCutoffRequestV1
+  - ReplayPreparedTurnOutcomeCommandV1
   queries:
   - ClassifyKernelErrorQueryV1
   - ResolveRetryPolicyQueryV1
   - FactoryRoleEvidenceCutoffPort.resolve_cutoff_proof
+  - QueryPreparedTurnOutcomeV1
   events:
   - RoleKernelPromptBuiltEventV1
   - RoleKernelParsedOutputEventV1
@@ -77,6 +80,8 @@ public_contracts:
   - DeferredDirectorRepairRequestV1
   - DeferredDirectorRepairEffectBindingV1
   - DeferredDirectorRepairSynthesisResultV1
+  - PreparedTurnOutcomeReferenceV1
+  - RecoveredTurnOutcomeV1
   errors:
   - RoleKernelErrorV1
 depends_on:
@@ -135,32 +140,29 @@ verification:
   - polaris/cells/roles/kernel/tests/test_directed_effect_runtime_wiring.py
   - polaris/kernelone/llm/engine/tests/test_executor.py
   - polaris/kernelone/llm/engine/stream/tests/test_executor.py
+  - polaris/cells/roles/kernel/tests/test_pending_turn_outcome_recovery.py
   gaps:
-  - Some callers still import role kernel components through transitional compatibility
-    paths instead of canonical public contracts.
-  - 'Turn semantic-stage separation is explicit at runtime through AssistantTurnArtifacts,
-    but parser input and transcript output are not yet compile-time-distinct types.
+  - Some callers still import role kernel components through transitional compatibility paths instead
+    of canonical public contracts.
+  - 'Turn semantic-stage separation is explicit at runtime through AssistantTurnArtifacts, but parser
+    input and transcript output are not yet compile-time-distinct types.
 
     '
-  - 'KernelOne llm stream contracts still pass through a re-export chain (shared_contracts
-    -> engine.contracts -> executor) and rely on parity tests until more consumers
-    adopt canonical source imports.
+  - 'KernelOne llm stream contracts still pass through a re-export chain (shared_contracts -> engine.contracts
+    -> executor) and rely on parity tests until more consumers adopt canonical source imports.
 
     '
-  - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry
-    full-request qualification remain guarded; B3.3 propagation metadata does not
-    authorize provider dispatch.
-  - DEO-2D closes unbound mutation dispatch and bounded deferred-request traversal;
-    DEO-3 still owns durable receipt commit, recovery, and parent close.
-  - "Phase 4 execution unification (Task #47): RoleExecutionKernel confirmed as the\
-    \ single execution engine supporting CHAT and WORKFLOW modes: - kernel.run(role,\
-    \ request) — blocking execution with RoleTurnResult - kernel.run_stream(role,\
-    \ request) — async generator yielding event dicts Both accept RoleTurnRequest\
-    \ with mode=RoleExecutionMode.CHAT or WORKFLOW. Unified path (mandatory):\n  \
-    \  RoleRuntimeService → RoleExecutionKernel (CHAT | WORKFLOW mode)\nRoles.kernel\
-    \ is the execution engine; roles.runtime is the facade + lifecycle. Frozen standalone\
-    \ surfaces (StandaloneRoleAgent, AgentService, RoleAgentTUI) are non-production\
-    \ compatibility windows — all production routes must go through RoleExecutionKernel.\n"
+  - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry full-request qualification
+    remain guarded; B3.3 propagation metadata does not authorize provider dispatch.
+  - DEO-2D closes unbound mutation dispatch and bounded deferred-request traversal; DEO-3 still owns durable
+    receipt commit, recovery, and parent close.
+  - "Phase 4 execution unification (Task #47): RoleExecutionKernel confirmed as the single execution engine\
+    \ supporting CHAT and WORKFLOW modes: - kernel.run(role, request) — blocking execution with RoleTurnResult\
+    \ - kernel.run_stream(role, request) — async generator yielding event dicts Both accept RoleTurnRequest\
+    \ with mode=RoleExecutionMode.CHAT or WORKFLOW. Unified path (mandatory):\n    RoleRuntimeService\
+    \ → RoleExecutionKernel (CHAT | WORKFLOW mode)\nRoles.kernel is the execution engine; roles.runtime\
+    \ is the facade + lifecycle. Frozen standalone surfaces (StandaloneRoleAgent, AgentService, RoleAgentTUI)\
+    \ are non-production compatibility windows — all production routes must go through RoleExecutionKernel.\n"
   smoke_commands: []
 generated_artifacts:
 - generated/context.pack.json

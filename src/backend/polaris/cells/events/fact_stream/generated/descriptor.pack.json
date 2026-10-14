@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-10-14T09:11:28.000393Z",
-  "source_hash": "4d11e5ab2b842905",
+  "generated_at": "2026-10-14T12:58:03.503442Z",
+  "source_hash": "3d417f0ef1c3220b",
   "cell_id": "events.fact_stream",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -469,6 +469,13 @@
       "methods": []
     },
     {
+      "type": "class",
+      "name": "QueryPayloadFactByIdempotencyKeyV1",
+      "description": "One immutable storage key; it grants no append or outcome authority.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
       "type": "function",
       "name": "_require_non_empty",
       "description": "",
@@ -736,6 +743,18 @@
       "type": "function",
       "name": "query_payload_fact_events",
       "description": "Keep the actual small storage record/hash separate from expanded content.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_expand_payload_fact_event",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_payload_fact_by_idempotency_key",
+      "description": "Validate small-record history and expand only the exact selected blob.",
       "defined_in": "polaris/cells/events/fact_stream/public/service.py"
     },
     {

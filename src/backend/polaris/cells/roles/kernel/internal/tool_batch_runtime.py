@@ -51,6 +51,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolExecutionResult,
     ToolInvocation,
     TurnId,
+    classify_tool_invocation,
 )
 from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
@@ -758,6 +759,7 @@ class ToolBatchRuntime:
         turn_id: TurnId | None = None,
         *,
         context: ToolExecutionContext | None = None,
+        allowed_tool_names: set[str] | None = None,
     ) -> list[BatchReceipt]:
         """
         执行工具批次
@@ -777,6 +779,23 @@ class ToolBatchRuntime:
         readonly_serial = execution_plan["readonly_serial"]
         serial_writes = execution_plan["serial_writes"]
         async_receipts = execution_plan["async_receipts"]
+
+        # A role profile is the base capability, not this request's offered
+        # surface. Check every grouped member before any tool/provider I/O.
+        if allowed_tool_names is not None:
+            offered = {
+                classify_tool_invocation(name).canonical_tool_name
+                for name in allowed_tool_names
+                if classify_tool_invocation(name).registered
+            }
+            rejected = {
+                tool.tool_name
+                for group in execution_plan.values()
+                for tool in group
+                if not tool.classification.registered or tool.classification.canonical_tool_name not in offered
+            }
+            if rejected:
+                raise RuntimeError("tool_surface_violation: tool outside offered set: " + ", ".join(sorted(rejected)))
 
         if self.directed_effect_required and (serial_writes or async_receipts):
             prepared = self.prepared_directed_effect_batch

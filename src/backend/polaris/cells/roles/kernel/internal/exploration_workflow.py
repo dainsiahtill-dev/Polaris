@@ -22,11 +22,15 @@ from enum import Enum
 from typing import Any
 
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken, check_cancel
+from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime
+from polaris.cells.roles.kernel.internal.transaction.receipt_utils import normalize_batch_receipts
 from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolCallId,
     ToolEffectType,
     ToolExecutionMode,
     ToolInvocation,
+    ToolBatch,
+    BatchId,
     TurnDecision,
     TurnId,
 )
@@ -169,7 +173,11 @@ class ExplorationWorkflowRuntime:
 
         try:
             # 执行初始工具批次
-            if plan.initial_tools:
+            received_results = self._initial_receipt_results()
+            if received_results is not None:
+                tools_executed.extend(received_results)
+                self._discovery_cache.update(self._analyze_results(received_results))
+            elif plan.initial_tools:
                 check_cancel(self._cancel_token)
                 initial_results = await self._execute_tools(plan.initial_tools)
                 tools_executed.extend(initial_results)
@@ -184,6 +192,10 @@ class ExplorationWorkflowRuntime:
                 check_cancel(self._cancel_token)
                 additional_results = await self._continue_exploration(plan, remaining_steps)
                 tools_executed.extend(additional_results)
+
+            failures = [row for row in tools_executed if row.get("status") not in {"success", "pending", "pending_async"}]
+            if failures:
+                raise RuntimeError(str(failures[0].get("error") or "workflow_tool_failed"))
 
             # 综合分析（_synthesize 内部含兜底逻辑，即使 synthesis_llm 为 None 也会生成摘要）
             synthesis = await self._synthesize(tools_executed)
@@ -277,7 +289,11 @@ class ExplorationWorkflowRuntime:
             check_cancel(self._cancel_token)
 
             # 执行初始工具批次
-            if plan.initial_tools:
+            received_results = self._initial_receipt_results()
+            if received_results is not None:
+                tools_executed.extend(received_results)
+                self._discovery_cache.update(self._analyze_results(received_results))
+            elif plan.initial_tools:
                 async for event in self._execute_tools_stream(plan.initial_tools, str(turn_id)):
                     yield event
                     if (
@@ -333,6 +349,10 @@ class ExplorationWorkflowRuntime:
                     }
                 )
 
+            failures = [row for row in tools_executed if row.get("status") not in {"success", "pending", "pending_async"}]
+            if failures:
+                raise RuntimeError(str(failures[0].get("error") or "workflow_tool_failed"))
+
             # 综合分析（_synthesize 内部含兜底逻辑，即使 synthesis_llm 为 None 也会生成摘要）
             synthesis = await self._synthesize(tools_executed)
             if synthesis:
@@ -386,6 +406,9 @@ class ExplorationWorkflowRuntime:
             "run_card": dict(handoff_pack.run_card),
             "receipt_refs": list(handoff_pack.receipt_refs),
         }
+        workflow_context = handoff_pack.context_slice_plan.get("workflow_context")
+        if isinstance(workflow_context, dict) and "batch_receipts" in workflow_context:
+            self._handoff_context["batch_receipts"] = workflow_context["batch_receipts"]
         self._ledger.append({"phase": "handoff_entry", "handoff_id": handoff_pack.handoff_id})
 
         from polaris.cells.roles.kernel.public.turn_contracts import BatchId, FinalizeMode, ToolBatch, TurnDecisionKind
@@ -436,6 +459,11 @@ class ExplorationWorkflowRuntime:
         tool_batch = decision.get("tool_batch")
         initial_tools = tool_batch.get("invocations", []) if tool_batch else []
 
+        if "batch_receipts" in self._handoff_context:
+            # This owner turn has already dispatched its one initial batch.
+            # Adaptive new actions require an explicit continuation owner turn.
+            return ExplorationPlan(initial_tools=initial_tools, strategy="single_batch", max_steps=len(initial_tools))
+
         # 根据handoff原因确定策略
         if handoff_reason == "async_operation":
             strategy = "single_batch"
@@ -446,145 +474,38 @@ class ExplorationWorkflowRuntime:
 
         return ExplorationPlan(initial_tools=initial_tools, strategy=strategy, max_steps=self.max_steps)
 
+    def _initial_receipt_results(self) -> list[dict] | None:
+        receipts = self._handoff_context.get("batch_receipts")
+        if not isinstance(receipts, list):
+            return None
+        return [dict(row) for receipt in receipts for row in receipt.get("results", [])]
+
     async def _execute_tools(self, tools: list[ToolInvocation]) -> list[dict]:
-        """执行工具列表"""
-        results = []
-
-        for tool in tools:
-            # Check cancellation before each tool execution
-            check_cancel(self._cancel_token)
-
-            tool_name = tool.get("tool_name", "unknown")
-            arguments = tool.get("arguments", {})
-            call_id = str(tool.get("call_id", ""))
-
-            try:
-                result = await asyncio.wait_for(
-                    self.tool_executor(tool_name, arguments),
-                    timeout=30,  # 单个工具30秒超时
-                )
-
-                results.append(
-                    {
-                        "call_id": call_id,
-                        "tool_name": tool_name,
-                        "status": "success",
-                        "result": result,
-                        "arguments": arguments,
-                    }
-                )
-
-                # 缓存发现
-                if tool_name == "read_file":
-                    path = arguments.get("path", "")
-                    content = result.get("result", "") if isinstance(result, dict) else str(result)
-                    self._discovery_cache[path] = content
-
-            except asyncio.TimeoutError:
-                results.append(
-                    {
-                        "call_id": call_id,
-                        "tool_name": tool_name,
-                        "status": "timeout",
-                        "error": "Tool execution timed out",
-                        "arguments": arguments,
-                    }
-                )
-
-            except Exception as e:  # noqa: BLE001
-                results.append(
-                    {
-                        "call_id": call_id,
-                        "tool_name": tool_name,
-                        "status": "error",
-                        "error": str(e),
-                        "arguments": arguments,
-                    }
-                )
-
+        """Component execution uses canonical batch receipts, never raw success wrappers."""
+        if not tools:
+            return []
+        check_cancel(self._cancel_token)
+        batch = ToolBatch(batch_id=BatchId(f"workflow_{tools[0].call_id}"), invocations=tools)
+        receipts = await ToolBatchRuntime(executor=self.tool_executor).execute_batch(batch)
+        arguments = {str(tool.call_id): dict(tool.arguments) for tool in tools}
+        results = [dict(row) for receipt in normalize_batch_receipts(receipts) for row in receipt.get("results", [])]
+        for row in results:
+            row["arguments"] = arguments[str(row["call_id"])]
         return results
 
     async def _execute_tools_stream(
-        self,
-        tools: list[ToolInvocation],
-        turn_id: str,
+        self, tools: list[ToolInvocation], turn_id: str,
     ) -> AsyncIterator[ToolBatchEvent]:
-        """流式执行工具列表，产出 ToolBatchEvent。"""
         for tool in tools:
-            # Check cancellation before each tool execution
-            check_cancel(self._cancel_token)
-
-            tool_name = tool.get("tool_name", "unknown")
-            arguments = dict(tool.get("arguments", {}))
-            call_id = str(tool.get("call_id", ""))
-            start_ms = int(time.time() * 1000)
-
+            yield ToolBatchEvent(turn_id=turn_id, tool_name=tool.tool_name, call_id=str(tool.call_id), status="started", progress=0.0)
+        for row in await self._execute_tools(tools):
+            status = str(row.get("status") or "error")
             yield ToolBatchEvent(
-                turn_id=turn_id,
-                batch_id=f"{turn_id}_exploration",
-                tool_name=tool_name,
-                call_id=call_id,
-                status="started",
-                progress=0.0,
-                arguments=arguments,
+                turn_id=turn_id, tool_name=str(row["tool_name"]), call_id=str(row["call_id"]),
+                status=status if status in {"success", "error", "timeout"} else "started",
+                progress=1.0 if status in {"success", "error", "timeout"} else 0.0,
+                result=row.get("result"), error=row.get("error"), arguments=row.get("arguments"),
             )
-
-            try:
-                result = await asyncio.wait_for(
-                    self.tool_executor(tool_name, arguments),
-                    timeout=30,
-                )
-                duration_ms = int(time.time() * 1000) - start_ms
-
-                if tool_name == "read_file":
-                    path = arguments.get("path", "")
-                    content = result.get("result", "") if isinstance(result, dict) else str(result)
-                    self._discovery_cache[path] = content
-
-                # Checkpoint before yielding (WAL pattern)
-                self._checkpoint_step(f"{call_id}_success")
-
-                yield ToolBatchEvent(
-                    turn_id=turn_id,
-                    batch_id=f"{turn_id}_exploration",
-                    tool_name=tool_name,
-                    call_id=call_id,
-                    status="success",
-                    progress=1.0,
-                    arguments=arguments,
-                    result=result,
-                    execution_time_ms=duration_ms,
-                )
-
-            except asyncio.TimeoutError:
-                duration_ms = int(time.time() * 1000) - start_ms
-                self._checkpoint_step(f"{call_id}_timeout")
-                yield ToolBatchEvent(
-                    turn_id=turn_id,
-                    batch_id=f"{turn_id}_exploration",
-                    tool_name=tool_name,
-                    call_id=call_id,
-                    status="timeout",
-                    progress=1.0,
-                    arguments=arguments,
-                    error="Tool execution timed out",
-                    execution_time_ms=duration_ms,
-                )
-
-            except Exception as e:  # noqa: BLE001
-                duration_ms = int(time.time() * 1000) - start_ms
-                self._checkpoint_step(f"{call_id}_error")
-                yield ToolBatchEvent(
-                    turn_id=turn_id,
-                    batch_id=f"{turn_id}_exploration",
-                    tool_name=tool_name,
-                    call_id=call_id,
-                    status="error",
-                    progress=1.0,
-                    arguments=arguments,
-                    error=str(e),
-                    execution_time_ms=duration_ms,
-                )
 
     async def _continue_exploration(self, plan: ExplorationPlan, max_additional: int) -> list[dict]:
         """继续探索（自适应策略）"""

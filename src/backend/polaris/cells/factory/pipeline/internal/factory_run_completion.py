@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import inspect
+import json
 import logging
 import time
 from collections.abc import Mapping
@@ -362,66 +364,264 @@ class RunCompletionWaiter:
         *,
         run_id: str,
         process_terminal: bool,
+        projection: ObservableTaskRowsProjectionV1 | None = None,
     ) -> CommandResult | None:
-        """Project the latest committed TransactionKernel outcome.
+        """Project only committed turns belonging to each current terminal owner.
 
-        A turn outcome only closes the orchestration run after its process has
-        terminated; otherwise a completed intermediate turn could be mistaken
-        for the end of a continuation workflow.
+        TaskRuntime remains completion authority. Role facts can veto its
+        terminal result; a parent run or a latest unrelated turn is not an owner.
+        Public strict readers retain V2 records and expand authenticated V3
+        payloads. Each protocol is paged and its captured head is rechecked.
         """
-
         if not process_terminal:
             return None
-        try:
-            from polaris.cells.events.fact_stream.public import QueryFactEventsV1, query_fact_events
-
-            result = query_fact_events(
-                QueryFactEventsV1(
-                    workspace=str(self.workspace),
-                    stream="roles.kernel.turn_outcomes",
-                    event_type="turn_outcome_committed",
-                    run_id=run_id,
-                    limit=1000,
-                )
-            )
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            logger.debug("Committed turn outcome unavailable for run %s: %s", run_id, exc)
-            return None
-        if not result.events:
-            return None
-        event = result.events[-1]
-        payload = event.get("payload")
-        payload_map = payload if isinstance(payload, Mapping) else {}
-        if str(payload_map.get("schema_version") or "").strip() != "roles.kernel.turn_outcome_fact.v1":
-            return None
-        outcome = payload_map.get("outcome")
-        outcome_map = outcome if isinstance(outcome, Mapping) else {}
-        outcome_status = str(outcome_map.get("outcome_status") or "").strip().lower()
-        if outcome_status not in {"cancelled", "completed", "failed", "handed_off", "panic"}:
-            return None
-        if outcome_status == "completed":
-            result_status = "completed"
-        elif outcome_status == "cancelled":
-            result_status = "cancelled"
-        else:
-            result_status = "failed"
-        sequence = event.get("seq")
-        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 1:
-            return None
-        return CommandResult(
-            run_id=run_id,
-            status=result_status,
-            message=f"TransactionKernel committed turn outcome reached {outcome_status}",
-            metadata={
-                "canonical_authoritative": True,
-                "terminal_source": "roles.kernel.turn_outcomes",
-                "fact_event_seq": sequence,
-                "fact_event_id": str(event.get("event_id") or "").strip(),
-                "outcome_hash": str(payload_map.get("outcome_hash") or "").strip(),
-                "resolution_code": str(outcome_map.get("resolution_code") or "").strip(),
-                "failure_class": str(outcome_map.get("failure_class") or "").strip(),
-            },
+        from polaris.cells.events.fact_stream.public import (
+            QueryFactEventsV1,
+            QueryFactStreamHeadV1,
+            QueryPayloadFactEventsV1,
+            QuerySegmentedFactLedgerHeadV1,
+            query_fact_events,
+            query_fact_stream_head,
+            query_payload_fact_events,
+            query_payload_fact_ledger_presence,
+            query_segmented_fact_ledger_head,
         )
+        from polaris.cells.roles.kernel.public.turn_contracts import TurnOutcome
+        from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+        from polaris.kernelone.storage import resolve_workspace_runtime_identity
+
+        def unknown(reason: str) -> CommandResult:
+            return CommandResult(
+                run_id=run_id,
+                status="blocked",
+                message="Current owner role outcome cannot be observed authoritatively",
+                metadata={
+                    "canonical_authoritative": False,
+                    "terminal_source": "roles.kernel.turn_outcomes",
+                    "reason": "role_turn_outcome_observation_unknown",
+                    "observation_error": reason,
+                },
+            )
+
+        try:
+            rows = self._execution_rows(run_id=run_id, projection=projection)
+            selectors: dict[tuple[str, str], set[str]] = {}
+            for row in rows:
+                metadata = row.get("metadata")
+                runtime = metadata.get("runtime_execution") if isinstance(metadata, Mapping) else None
+                fact = metadata.get("task_runtime_execution_fact") if isinstance(metadata, Mapping) else None
+                if (
+                    not isinstance(metadata, Mapping)
+                    or not isinstance(runtime, Mapping)
+                    or not isinstance(fact, Mapping)
+                ):
+                    return unknown("current_task_owner_identity_missing")
+                child = str(runtime.get("run_id") or "").strip()
+                external = str(runtime.get("external_task_id") or "").strip()
+                session = str(runtime.get("session_id") or "").strip()
+                attempt = runtime.get("attempt")
+                if (
+                    not child
+                    or not external
+                    or not session
+                    or type(attempt) is not int
+                    or attempt < 1
+                    or str(runtime.get("task_id")) != str(row.get("task_id") or row.get("id"))
+                    or tuple(str(fact.get(key) or "") for key in ("run_id", "session_id", "task_id"))
+                    != (child, session, str(runtime.get("task_id")))
+                    or fact.get("attempt") != attempt
+                ):
+                    return unknown("current_task_owner_identity_conflict")
+                parent = str(row.get("factory_run_id") or "").strip()
+                if parent != str(metadata.get("factory_run_id") or "").strip():
+                    return unknown("current_task_parent_identity_conflict")
+                key = (external, session)
+                if key in selectors:
+                    return unknown("current_task_owner_identity_ambiguous")
+                selectors[key] = {value for value in (child, parent) if value}
+            if not selectors:
+                return None
+            storage = resolve_workspace_runtime_identity(str(self.workspace))
+            legacy_stream = "roles.kernel.turn_outcomes"
+            payload_stream = "roles.kernel.turn_outcomes.v3"
+            legacy_head_query = QueryFactStreamHeadV1(
+                workspace=str(self.workspace), stream=legacy_stream, strict_integrity=True
+            )
+            legacy_head = query_fact_stream_head(legacy_head_query)
+            events: list[tuple[str, dict[str, Any]]] = []
+            offset = 0
+            while True:
+                page = query_fact_events(
+                    QueryFactEventsV1(
+                        workspace=str(self.workspace),
+                        stream=legacy_stream,
+                        event_type="turn_outcome_committed",
+                        limit=100,
+                        offset=offset,
+                        strict_integrity=True,
+                    )
+                )
+                events.extend((legacy_stream, event) for event in page.events)
+                if len(page.events) < 100:
+                    break
+                offset += len(page.events)
+            if query_fact_stream_head(legacy_head_query) != legacy_head:
+                return unknown("role_outcome_legacy_head_changed")
+            payload_head_query = QuerySegmentedFactLedgerHeadV1(
+                workspace=str(self.workspace), logical_stream=payload_stream
+            )
+            payload_present = query_payload_fact_ledger_presence(payload_head_query)
+            payload_head = None
+            if payload_present:
+                continuation = None
+                while True:
+                    payload_page = query_payload_fact_events(
+                        QueryPayloadFactEventsV1(
+                            workspace=str(self.workspace),
+                            logical_stream=payload_stream,
+                            limit=100,
+                            continuation=continuation,
+                        )
+                    )
+                    if payload_head is None:
+                        payload_head = payload_page.captured_head
+                    elif payload_page.captured_head != payload_head:
+                        return unknown("role_outcome_payload_head_changed")
+                    events.extend(
+                        (payload_stream, event)
+                        for event in payload_page.events
+                        if event.get("event_type") == "turn_outcome_committed"
+                    )
+                    continuation = payload_page.continuation
+                    if continuation is None:
+                        break
+                if query_segmented_fact_ledger_head(payload_head_query) != payload_head:
+                    return unknown("role_outcome_payload_head_changed")
+            if query_payload_fact_ledger_presence(payload_head_query) != payload_present:
+                return unknown("role_outcome_payload_presence_changed")
+
+            closing_projection = TaskRuntimeService(str(self.workspace)).query_observable_task_rows_projection()
+            if (
+                not self._projection_is_authoritative(closing_projection)
+                or closing_projection.workspace != storage.workspace_abs
+                or self._execution_rows(run_id=run_id, projection=closing_projection) != rows
+            ):
+                return unknown("current_task_owner_changed_during_role_query")
+            if query_fact_stream_head(legacy_head_query) != legacy_head:
+                return unknown("role_outcome_legacy_head_changed")
+            if payload_present and query_segmented_fact_ledger_head(payload_head_query) != payload_head:
+                return unknown("role_outcome_payload_head_changed")
+            if query_payload_fact_ledger_presence(payload_head_query) != payload_present:
+                return unknown("role_outcome_payload_presence_changed")
+
+            latest: dict[tuple[str, str], tuple[str, int, CommandResult]] = {}
+            for stream, event in events:
+                payload = event.get("expanded_payload") if stream == payload_stream else event.get("payload")
+                if not isinstance(payload, Mapping):
+                    return unknown("committed_role_payload_missing")
+                external = str(payload.get("task_id") or "").strip()
+                outcome_run = str(payload.get("run_id") or "").strip()
+                candidates = [key for key, runs in selectors.items() if key[0] == external and outcome_run in runs]
+                if not candidates:
+                    continue
+                binding = payload.get("session_binding")
+                session = str(binding.get("session_id") or "") if isinstance(binding, Mapping) else ""
+                if not session:
+                    return unknown("committed_role_session_binding_missing")
+                key = (external, session)
+                if key not in candidates:
+                    continue  # A superseded session is not the current task owner.
+                event_metadata = event.get("metadata") if stream == legacy_stream else event
+                if not isinstance(event_metadata, Mapping):
+                    return unknown("committed_role_record_metadata_missing")
+                schema = (
+                    "roles.kernel.turn_outcome_fact.v3"
+                    if stream == payload_stream
+                    else "roles.kernel.turn_outcome_fact.v2"
+                )
+                provenance = payload.get("provenance")
+                outcome_payload = payload.get("outcome")
+                turn = str(payload.get("turn_id") or "")
+                transition = str(payload.get("transition_id") or "")
+                if (
+                    payload.get("schema_version") != schema
+                    or event.get("source") != "roles.kernel.transaction"
+                    or not turn
+                    or not transition
+                    or not isinstance(provenance, Mapping)
+                    or dict(provenance)
+                    != {
+                        "workspace": storage.workspace_abs,
+                        "run_id": outcome_run,
+                        "task_id": external,
+                        "turn_id": turn,
+                        "transition_id": transition,
+                    }
+                    or payload.get("storage_identity") != storage.to_record()
+                    or event_metadata.get("idempotency_key")
+                    != ":".join((stream, storage.token, outcome_run, external, turn, transition))
+                    or not isinstance(outcome_payload, Mapping)
+                ):
+                    return unknown("committed_role_provenance_invalid")
+                if stream == legacy_stream and (
+                    (event_metadata.get("run_id"), event_metadata.get("task_id")) != (outcome_run, external)
+                    or event_metadata.get("provenance") != provenance
+                    or event_metadata.get("storage_identity") != storage.to_record()
+                ):
+                    return unknown("committed_role_header_identity_invalid")
+                outcome = TurnOutcome.model_validate(outcome_payload)
+                outcome_hash = hashlib.sha256(
+                    json.dumps(dict(outcome_payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+                if (outcome.run_id, str(outcome.turn_id), payload.get("outcome_hash")) != (
+                    outcome_run,
+                    turn,
+                    outcome_hash,
+                ):
+                    return unknown("committed_role_outcome_hash_or_identity_invalid")
+                seq = event.get("global_seq") if stream == payload_stream else event.get("seq")
+                if type(seq) is not int or seq < 1 or not event.get("event_id"):
+                    return unknown("committed_role_sequence_invalid")
+                state = outcome.outcome_status.value
+                status = "completed" if state == "completed" else "cancelled" if state == "cancelled" else "failed"
+                result = CommandResult(
+                    run_id=run_id,
+                    status=status,
+                    message=f"Committed current-owner turn outcome reached {state}",
+                    metadata={
+                        "canonical_authoritative": True,
+                        "terminal_source": stream,
+                        "fact_stream": stream,
+                        "fact_event_seq": seq,
+                        "fact_event_id": event["event_id"],
+                        "outcome_hash": outcome_hash,
+                        "fact_event_hash": event.get("event_hash")
+                        if stream == payload_stream
+                        else event.get("integrity_digest"),
+                        "payload_ref": event.get("payload") if stream == payload_stream else None,
+                        "owner_run_id": outcome_run,
+                        "owner_task_id": external,
+                        "owner_session_id": session,
+                        "resolution_code": outcome.resolution_code.value,
+                        "failure_class": outcome.failure_class.value if outcome.failure_class else None,
+                    },
+                )
+                previous = latest.get(key)
+                if previous is not None and previous[0] != stream:
+                    return unknown("current_owner_present_in_both_role_protocols")
+                if previous is None or seq > previous[1]:
+                    latest[key] = (stream, seq, result)
+            if not latest:
+                return None
+            results = [entry[2] for entry in latest.values()]
+            selected = max(results, key=lambda result: _CANONICAL_STATUS_PRECEDENCE[result.status])
+            selected.metadata["current_owner_outcomes"] = [dict(result.metadata) for result in results]
+            return selected
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Canonical current-owner turn outcome lookup failed: %s", exc)
+            return unknown(str(exc))
 
     def canonical_terminal_result(
         self,
@@ -486,6 +686,7 @@ class RunCompletionWaiter:
         turn_outcome_result = self._committed_turn_outcome_result(
             run_id=run_id,
             process_terminal=process_terminal,
+            projection=projection,
         )
         if turn_outcome_result is None:
             return task_runtime_result
@@ -514,11 +715,12 @@ class RunCompletionWaiter:
             ),
             metadata={
                 **metadata,
-                "canonical_authoritative": True,
+                "canonical_authoritative": metadata.get("canonical_authoritative") is True,
                 "terminal_source": "canonical_conflict_matrix",
                 "canonical_conflict": task_runtime_status != turn_outcome_status,
                 "task_runtime_status": task_runtime_status,
                 "turn_outcome_status": turn_outcome_status,
+                "turn_outcome_observation": dict(turn_outcome_result.metadata or {}),
             },
         )
 

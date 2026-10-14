@@ -61,6 +61,14 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
 from typing import Any
 
+from polaris.cells.events.fact_stream.public import (
+    FactStreamError,
+    FactStreamProvenanceV1,
+    QueryFactStreamHeadV1,
+    QuerySegmentedFactLedgerHeadV1,
+    query_fact_stream_head,
+    query_segmented_fact_ledger_head,
+)
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.llm_caller.final_request_tool_surface import (
     is_provider_tool_surface_violation,
@@ -139,6 +147,13 @@ from polaris.cells.roles.kernel.internal.turn_decision_decoder import DecodeConf
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.directed_effect_contracts import (
     DirectedEffectRuntimeDependenciesV1,
+)
+from polaris.cells.roles.kernel.public.outcome_recovery import (
+    QueryPreparedTurnOutcomeV1,
+    RecoveredTurnOutcomeV1,
+    ReplayPreparedTurnOutcomeCommandV1,
+    query_prepared_turn_outcome,
+    replay_prepared_turn_outcome,
 )
 from polaris.cells.roles.kernel.public.turn_contracts import (
     RawLLMResponse,
@@ -726,6 +741,50 @@ class TurnTransactionController:
     # Public API
     # ---------------------------------------------------------------------------
 
+    def _recover_prepared_turn_outcome(self, turn_id: str) -> RecoveredTurnOutcomeV1 | None:
+        """Replay only a durable exact-owner outcome, never provider or tools."""
+        if not self.config.durable_commit_required:
+            return None
+        provenance = FactStreamProvenanceV1(
+            workspace=self.config.workspace,
+            run_id=self.config.run_id,
+            task_id=self.config.task_id,
+            turn_id=turn_id,
+            transition_id=self.config.transition_id,
+        )
+        prepared = query_prepared_turn_outcome(QueryPreparedTurnOutcomeV1(provenance))
+        if prepared is None:
+            return None
+        if prepared.stream == "roles.kernel.turn_outcomes":
+            head_seq = query_fact_stream_head(
+                QueryFactStreamHeadV1(workspace=self.config.workspace, stream=prepared.stream, strict_integrity=True)
+            ).current_seq
+        else:
+            head_seq = query_segmented_fact_ledger_head(
+                QuerySegmentedFactLedgerHeadV1(workspace=self.config.workspace, logical_stream=prepared.stream)
+            ).global_seq
+        return replay_prepared_turn_outcome(
+            ReplayPreparedTurnOutcomeCommandV1(prepared, head_seq, expected_session_id=self.config.session_id)
+        )
+
+    @staticmethod
+    def _recovered_turn_result(recovered: RecoveredTurnOutcomeV1) -> dict[str, Any]:
+        result = recovered.result_projection
+        if not isinstance(result.get("kind"), str) or not result["kind"]:
+            raise TurnOutcomeCommitError("prepared outcome lacks its original result kind")
+        if not isinstance(result.get("visible_content"), str):
+            raise TurnOutcomeCommitError("prepared outcome lacks its original visible result")
+        if result.get("completion_status") not in {"success", "failed", "error", "handoff", "suspended"}:
+            raise TurnOutcomeCommitError("prepared outcome lacks its original completion status")
+        result["turn_id"] = str(recovered.outcome.turn_id)
+        execution = recovered.outcome.execution
+        if execution is not None and execution.receipt is not None:
+            result["batch_receipt"] = execution.receipt.to_dict()
+        result["turn_outcome"] = recovered.outcome.to_dict()
+        result["commit_receipt"] = recovered.receipt.to_dict()
+        result["sealed_turn"] = recovered.sealed_turn.to_dict()
+        return result
+
     def _commit_canonical_outcome(
         self,
         *,
@@ -733,7 +792,7 @@ class TurnTransactionController:
         result: Mapping[str, Any] | None,
         completion_status: str,
         failure_reason: str | None = None,
-    ) -> DurableTurnCommit | None:
+    ) -> DurableTurnCommit | RecoveredTurnOutcomeV1 | None:
         """Commit authoritative task turns; leave ad-hoc chat turns ephemeral."""
 
         if not self.config.durable_commit_required:
@@ -745,19 +804,28 @@ class TurnTransactionController:
             if self.config.session_id
             else {}
         )
-        return commit_turn_result(
-            workspace=self.config.workspace,
-            run_id=self.config.run_id,
-            task_id=self.config.task_id,
-            transition_id=self.config.transition_id,
-            ledger=ledger,
-            result=result,
-            completion_status=completion_status,
-            failure_reason=failure_reason,
-            session_id=self.config.session_id,
-            source_state_before=getattr(ledger, "source_state_before", {}),
-            source_state_after=source_state_after,
-        )
+        try:
+            return commit_turn_result(
+                workspace=self.config.workspace,
+                run_id=self.config.run_id,
+                task_id=self.config.task_id,
+                transition_id=self.config.transition_id,
+                ledger=ledger,
+                result=result,
+                completion_status=completion_status,
+                failure_reason=failure_reason,
+                session_id=self.config.session_id,
+                source_state_before=getattr(ledger, "source_state_before", {}),
+                source_state_after=source_state_after,
+            )
+        except TurnOutcomeCommitError:
+            try:
+                recovered = self._recover_prepared_turn_outcome(ledger.turn_id)
+            except (FactStreamError, OSError, RuntimeError, ValueError) as replay_error:
+                raise TurnOutcomeCommitError(f"prepared turn recovery failed: {replay_error}") from replay_error
+            if recovered is None:
+                raise
+            return recovered
 
     @staticmethod
     def _completion_status_from_result(result: Mapping[str, Any]) -> str:
@@ -788,6 +856,9 @@ class TurnTransactionController:
 
         Returns TurnResult dict
         """
+        recovered = self._recover_prepared_turn_outcome(turn_id)
+        if recovered is not None:
+            return self._recovered_turn_result(recovered)
         # Correlation context vars — mirror execute_stream() so that
         # _emit_phase_event() can attach request/span IDs in non-stream mode.
         # Session/correlation/truthlog setup + teardown is shared with
@@ -890,6 +961,22 @@ class TurnTransactionController:
 
         产出事件序列，供CLI实时渲染
         """
+        recovered = self._recover_prepared_turn_outcome(turn_id)
+        if recovered is not None:
+            result = self._recovered_turn_result(recovered)
+            yield CompletionEvent(
+                turn_id=turn_id,
+                status=result["completion_status"],
+                visible_content=result["visible_content"],
+                turn_kind=result["kind"],
+                batch_receipt=result.get("batch_receipt", {}),
+                error=recovered.outcome.failure_reason,
+                turn_outcome=result["turn_outcome"],
+                commit_receipt=result["commit_receipt"],
+                turn_request_id=turn_request_id,
+                parent_span_id=parent_span_id,
+            )
+            return
         # Session/correlation/truthlog setup + teardown is shared with
         # execute() via turn_session_scope.
         async with turn_session_scope(
@@ -1169,7 +1256,13 @@ class TurnTransactionController:
             return await self._handle_final_answer(decision, state_machine, ledger)
 
         elif decision_kind == TurnDecisionKind.HANDOFF_WORKFLOW:
-            return await self._handoff_handler.handle_handoff(decision, state_machine, ledger)
+            return await self._tool_batch_executor.execute_tool_batch(
+                decision,
+                state_machine,
+                ledger,
+                context,
+                allowed_tool_names=extract_allowed_tool_names_from_definitions(tool_definitions),
+            )
 
         elif decision_kind == TurnDecisionKind.HANDOFF_DEVELOPMENT:
             return await self._handoff_handler.handle_development_handoff(decision, state_machine, ledger)

@@ -65,7 +65,9 @@
       "read_guarded_fact_snapshot",
       "sanitize_headers",
       "set_debug_tracing_enabled",
-      "store_fact_payload"
+      "store_fact_payload",
+      "QueryPayloadFactByIdempotencyKeyV1",
+      "query_payload_fact_by_idempotency_key"
     ]
   },
   "public_contracts": {
@@ -86,7 +88,8 @@
       "QueryPayloadFactEventsV1",
       "QuerySegmentedFactEventsV1",
       "QuerySegmentedFactLedgerHeadV1",
-      "ReadGuardedFactSnapshotCommandV1"
+      "ReadGuardedFactSnapshotCommandV1",
+      "QueryPayloadFactByIdempotencyKeyV1"
     ],
     "events": [
       "FactEventAppendedV1",
@@ -123,7 +126,8 @@
     "Strict stream ambiguity fails closed before an append or replay proceeds.",
     "Guarded snapshots are immutable evidence and never authorize domain work.",
     "Authority provision and stream enrollment are explicit maintenance operations; ordinary reads and appends never create or repair lock state.",
-    "All text file reads and writes use explicit UTF-8."
+    "All text file reads and writes use explicit UTF-8.",
+    "Exact idempotency queries reuse the existing authoritative manifest and locator; they verify small records and the requested payload without expanding unrelated historical payloads or repairing storage in a read-only query."
   ],
   "hotspots": [
     "polaris/cells/events/fact_stream/**"
@@ -134,7 +138,8 @@
     "polaris/cells/events/fact_stream/public/tests/test_public_contracts.py",
     "polaris/cells/events/fact_stream/public/tests/test_public_service.py",
     "polaris/cells/events/fact_stream/public/tests/test_segmented_contracts.py",
-    "polaris/cells/events/fact_stream/public/tests/test_workspace_bootstrap.py"
+    "polaris/cells/events/fact_stream/public/tests/test_workspace_bootstrap.py",
+    "polaris/cells/events/fact_stream/public/tests/test_payload_fact_exact_lookup.py"
   ],
   "change_guidance": {
     "read_order": [

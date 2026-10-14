@@ -62,6 +62,7 @@ from .contracts import (
     ProvisionFactStreamLockAuthorityCommandV1,
     QueryFactEventsV1,
     QueryFactStreamHeadV1,
+    QueryPayloadFactByIdempotencyKeyV1,
     QueryPayloadFactEventsV1,
     QuerySegmentedFactEventsV1,
     QuerySegmentedFactLedgerHeadV1,
@@ -867,33 +868,82 @@ def query_payload_fact_events(query: QueryPayloadFactEventsV1) -> SegmentedFactQ
         )
     )
     store = DurablePayloadStore(query.workspace, read_only=True)
-    events = []
-    for event in page.events:
-        try:
-            payload = event["payload"]
-            if (
-                set(payload) != {"schema_version", "payload_ref"}
-                or payload["schema_version"] != "kernelone.payload_fact.v1"
-            ):
-                raise ValueError("small payload-fact record shape is invalid")
-            ref = FactPayloadReferenceV1.from_record(payload["payload_ref"])
-            expanded = store.read(ref)
-            # SegmentedStoredEventV1 is the verified closed record schema. Its
-            # reconstructed wire record must hash to the actual sealed event hash.
-            raw_record = {"schema": "kernelone.segmented_event.v1", **event}
-            body = {key: value for key, value in raw_record.items() if key != "event_hash"}
-            canonical = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
-            if hashlib.sha256(canonical.encode("utf-8")).hexdigest() != event["event_hash"]:
-                raise ValueError("segmented storage-record projection hash mismatch")
-        except (PayloadStoreError, ValueError, TypeError, KeyError) as exc:
-            raise FactStreamError(str(exc), code=str(getattr(exc, "code", "payload_fact_read_failed"))) from exc
-        events.append({**event, "storage_record": raw_record, "expanded_payload": expanded})
+    events = tuple(_expand_payload_fact_event(store, event) for event in page.events)
     return SegmentedFactQueryResultV1(
         workspace=page.workspace,
         logical_stream=page.logical_stream,
         events=tuple(events),
         captured_head=page.captured_head,
         continuation=page.continuation,
+    )
+
+
+def _expand_payload_fact_event(store: DurablePayloadStore, event: dict[str, Any]) -> dict[str, Any]:
+    try:
+        payload = event["payload"]
+        if (
+            set(payload) != {"schema_version", "payload_ref"}
+            or payload["schema_version"] != "kernelone.payload_fact.v1"
+        ):
+            raise ValueError("small payload-fact record shape is invalid")
+        ref = FactPayloadReferenceV1.from_record(payload["payload_ref"])
+        expanded = store.read(ref)
+        # SegmentedStoredEventV1 is the verified closed record schema. Its
+        # reconstructed wire record must hash to the actual sealed event hash.
+        raw_record = {"schema": "kernelone.segmented_event.v1", **event}
+        body = {key: value for key, value in raw_record.items() if key != "event_hash"}
+        canonical = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        if hashlib.sha256(canonical.encode("utf-8")).hexdigest() != event["event_hash"]:
+            raise ValueError("segmented storage-record projection hash mismatch")
+    except (PayloadStoreError, ValueError, TypeError, KeyError) as exc:
+        raise FactStreamError(str(exc), code=str(getattr(exc, "code", "payload_fact_read_failed"))) from exc
+    return {**event, "storage_record": raw_record, "expanded_payload": expanded}
+
+
+def query_payload_fact_by_idempotency_key(query: QueryPayloadFactByIdempotencyKeyV1) -> SegmentedFactQueryResultV1:
+    """Validate small-record history and expand only the exact selected blob."""
+    if type(query) is not QueryPayloadFactByIdempotencyKeyV1:
+        raise TypeError("query must be QueryPayloadFactByIdempotencyKeyV1")
+    if query.logical_stream not in fact_payload_streams():
+        raise FactStreamError("payload fact namespace is not approved", code="payload_fact_namespace_required")
+    ledger = _segmented_authority_store(query.workspace, logical_stream=query.logical_stream, read_only=True)
+    try:
+        first = ledger.query_by_idempotency_key(query.idempotency_key)
+    except (LockedRegularFileError, SegmentedEventStoreError, ValueError, OSError) as exc:
+        raise _segmented_failure("query_payload_fact_by_idempotency_key", query.logical_stream, exc) from exc
+    rows = tuple(
+        {
+            "event_id": event.event_id,
+            "logical_stream": event.logical_stream,
+            "global_seq": event.global_seq,
+            "segment_index": event.segment_index,
+            "local_seq": event.local_seq,
+            "event_type": event.event_type,
+            "source": event.source,
+            "payload": dict(event.payload),
+            "idempotency_key": event.idempotency_key,
+            "occurred_at": event.occurred_at,
+            "previous_event_hash": event.previous_event_hash,
+            "event_hash": event.event_hash,
+        }
+        for event in first.events
+    )
+    store = DurablePayloadStore(query.workspace, read_only=True)
+    expanded = tuple(_expand_payload_fact_event(store, row) for row in rows)
+    try:
+        after = ledger.query_by_idempotency_key(query.idempotency_key)
+        if after != first:
+            raise SegmentedEventStoreError("payload fact lookup snapshot changed", code="payload_fact_lookup_changed")
+    except (LockedRegularFileError, SegmentedEventStoreError, ValueError, OSError) as exc:
+        raise _segmented_failure("query_payload_fact_by_idempotency_key", query.logical_stream, exc) from exc
+    if tuple(_expand_payload_fact_event(store, row) for row in rows) != expanded:
+        raise FactStreamError("payload fact content changed", code="payload_fact_lookup_changed")
+    return SegmentedFactQueryResultV1(
+        workspace=ledger.storage_identity.workspace_abs,
+        logical_stream=query.logical_stream,
+        events=expanded,
+        captured_head=_project_segmented_head(ledger.storage_identity.workspace_abs, first.captured_head),
+        continuation=None,
     )
 
 

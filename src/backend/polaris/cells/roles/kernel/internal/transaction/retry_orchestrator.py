@@ -303,6 +303,7 @@ class RetryOrchestrator:
         workspace: str,
         tool_batch: Any,
         ledger: TurnLedger,
+        allowed_tool_names: set[str] | None = None,
     ) -> dict[str, Any] | None:
         if isinstance(tool_batch, Mapping):
             raw_invocations = list(tool_batch.get("invocations", []) or [])
@@ -367,6 +368,7 @@ class RetryOrchestrator:
         receipts = await self._build_tool_batch_runtime(workspace).execute_batch(
             bootstrap_batch,
             TurnId(turn_id),
+            allowed_tool_names=allowed_tool_names,
         )
         receipts_as_dicts = normalize_batch_receipts(receipts)
         record_receipts_to_ledger(receipts_as_dicts, ledger)
@@ -691,6 +693,7 @@ class RetryOrchestrator:
         max_retry_attempts = getattr(self.config, "max_retry_attempts", 4)
         retry_llm_call_ordinal = 0
         candidate_bootstrap_decision: TurnDecision | None = None
+        candidate_bootstrap_allowed_tools = extract_allowed_tool_names_from_definitions(tool_definitions)
         # Phase-2 Wave-5 (2026-06-11, run10a live audit): when the ORIGINAL violating
         # batch is itself a safe READ-ONLY batch (the model asking for evidence, e.g.
         # read_file django/core/checks/model_checks.py — correct path!), discarding it
@@ -977,6 +980,7 @@ class RetryOrchestrator:
                         attempt_index + 1,
                     )
                     candidate_bootstrap_decision = retry_decision
+                    candidate_bootstrap_allowed_tools = set(attempt_allowed_tool_names)
                     break
                 if escalated_definitions is not None and not any(
                     name in ACTIVE_WRITE_TOOLS for name in retry_tool_names
@@ -1025,6 +1029,7 @@ class RetryOrchestrator:
                 workspace=bootstrap_workspace,
                 tool_batch=bootstrap_tool_batch,
                 ledger=ledger,
+                allowed_tool_names=candidate_bootstrap_allowed_tools,
             )
             if bootstrap_receipt is None:
                 raise RuntimeError("single_batch_contract_violation_retry_failed: bootstrap read receipt missing")
@@ -1304,6 +1309,7 @@ class RetryOrchestrator:
                         workspace=next_bootstrap_workspace,
                         tool_batch=next_bootstrap_decision.get("tool_batch"),
                         ledger=ledger,
+                        allowed_tool_names=set(current_followup_allowed_tool_names),
                     )
                     if next_bootstrap_receipt is None:
                         raise RuntimeError(

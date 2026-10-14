@@ -1412,10 +1412,6 @@ class StreamOrchestrator:
                     ledger,
                     emit_completion=False,
                 )
-            elif decision_kind == TurnDecisionKind.HANDOFF_WORKFLOW:
-                async for event in self.handoff_handler.handle_handoff_stream(decision, state_machine, ledger):
-                    yield event
-                return
             elif decision_kind == TurnDecisionKind.HANDOFF_DEVELOPMENT:
                 async for event in self.handoff_handler.handle_development_handoff_stream(
                     decision, state_machine, ledger
@@ -1424,7 +1420,7 @@ class StreamOrchestrator:
                 return
             elif decision_kind == TurnDecisionKind.ASK_USER:
                 result = await self.handoff_handler.handle_ask_user(decision, state_machine, ledger)
-            elif decision_kind == TurnDecisionKind.TOOL_BATCH:
+            elif decision_kind in {TurnDecisionKind.TOOL_BATCH, TurnDecisionKind.HANDOFF_WORKFLOW}:
                 allowed_tool_names = extract_allowed_tool_names_from_definitions(tool_definitions)
                 try:
                     result = await self.tool_batch_executor.execute_tool_batch(

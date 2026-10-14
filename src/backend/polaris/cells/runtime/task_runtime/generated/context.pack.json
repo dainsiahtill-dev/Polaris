@@ -30,11 +30,14 @@
     "queries": [
       "ListRuntimeTasksQueryV1",
       "GetRuntimeTaskQueryV1",
+      "QuerySameTaskLocalReworkAuthorizationV1",
       "ValidateTaskRuntimeExecutionAttemptQueryV1",
       "GetDirectedEffectParentRegistryQueryV1",
       "GetDirectedEffectOperationQueryV1",
       "GetDirectedEffectInventoryQueryV1",
-      "GetDirectedEffectParentReadinessQueryV1"
+      "GetDirectedEffectParentReadinessQueryV1",
+      "QueryExecutionEffectClosureV1",
+      "QueryExecutionEffectClosuresV1"
     ],
     "events": [
       "RuntimeTaskLifecycleEventV1",
@@ -45,6 +48,8 @@
       "RuntimeTaskFactoryRunBindingResultV1",
       "ExpiredFactoryRunSessionFenceResultV1",
       "OwnerReworkExecutionPreparationResultV1",
+      "SameTaskLocalReworkPreparationResultV1",
+      "SameTaskLocalReworkAuthorizationQueryResultV1",
       "TaskRuntimeExecutionAttemptValidationVerdictV1",
       "TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1",
       "TaskRuntimeExecutionAttemptHeartbeatVerdictV1",
@@ -58,7 +63,12 @@
       "DirectedEffectParentReadinessStateCountV1",
       "DirectedEffectParentReadinessProjectionV1",
       "DirectedEffectParentReadinessResultV1",
-      "ObservableTaskRowsProjectionV1"
+      "DirectedEffectRecoverySweepItemV1",
+      "DirectedEffectRecoverySweepResultV1",
+      "ObservableTaskRowsProjectionV1",
+      "ExecutionEffectClosureObservationV1",
+      "ExecutionEffectCommitObservationV1",
+      "ExecutionEffectTerminalFailureObservationV1"
     ],
     "errors": [
       "RuntimeTaskRuntimeError"
@@ -87,6 +97,7 @@
     "polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py",
     "polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py",
     "polaris/tests/test_runtime_projection_snapshot_tasks.py",
-    "polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py"
+    "polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py",
+    "polaris/cells/runtime/task_runtime/public/tests/test_batch_execution_effect_closure.py"
   ]
 }

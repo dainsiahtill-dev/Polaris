@@ -127,6 +127,11 @@ def main() -> int:
         ),
     )
     ap.add_argument(
+        "--qa-semantic-review-required",
+        action="store_true",
+        help="Require independent semantic QA for fresh PM runs through the existing Factory QA configuration",
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         help="validate projects and generate audit structure without running the chain",
@@ -154,6 +159,9 @@ def main() -> int:
             "PM→Chief Engineer→Director task-market chain",
             flush=True,
         )
+        return 2
+    if args.qa_semantic_review_required and args.start_from != "pm":
+        print("[factory-bench] --qa-semantic-review-required requires --start-from pm", flush=True)
         return 2
 
     projects = load_projects() if args.projects_file == str(_FIXTURE) else load_projects(args.projects_file)
@@ -612,6 +620,7 @@ def main() -> int:
                         director_dispatch_driver=args.director_dispatch_driver,
                         bench_session_id=bench_session_id,
                         start_from=args.start_from,
+                        qa_semantic_review_required=args.qa_semantic_review_required,
                         on_stage_change=_on_factory_stage_change,
                     )
             except subprocess.TimeoutExpired:
