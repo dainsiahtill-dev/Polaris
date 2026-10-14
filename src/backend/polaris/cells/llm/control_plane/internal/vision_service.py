@@ -2,7 +2,8 @@
 
 The module is import-safe in CPU/CI environments and only creates the singleton
 service on first access. Advanced model loading is optional and disabled unless
-transformers support and CUDA are available.
+transformers support and CUDA are available. Optional GPU dependencies are
+probed only when a caller explicitly requests model loading.
 """
 
 from __future__ import annotations
@@ -16,8 +17,11 @@ from typing import Any
 
 logger = logging.getLogger("app.services.vision_service")
 
+Image: Any = None
 try:
-    from PIL import Image
+    from PIL import Image as _Image
+
+    Image = _Image
 
     PIL_AVAILABLE = True
 except ImportError:
@@ -30,18 +34,30 @@ AutoModelForCausalLM: Any = None
 _TRANSFORMERS_AVAILABLE = False
 ADVANCED_VISION_AVAILABLE = False
 
-try:
-    import torch as _torch
-    from transformers import AutoModelForCausalLM as _AutoModelForCausalLM, AutoProcessor as _AutoProcessor
+_ADVANCED_DEPENDENCIES_CHECKED = False
 
-    torch = _torch
-    AutoProcessor = _AutoProcessor
-    AutoModelForCausalLM = _AutoModelForCausalLM
-    _TRANSFORMERS_AVAILABLE = True
-    ADVANCED_VISION_AVAILABLE = bool(torch.cuda.is_available())
-except ImportError:
-    _TRANSFORMERS_AVAILABLE = False
-    ADVANCED_VISION_AVAILABLE = False
+
+def _initialize_advanced_dependencies() -> None:
+    """Probe optional GPU dependencies only for an explicit model load."""
+    global torch, AutoProcessor, AutoModelForCausalLM
+    global _TRANSFORMERS_AVAILABLE, ADVANCED_VISION_AVAILABLE, _ADVANCED_DEPENDENCIES_CHECKED
+    if _ADVANCED_DEPENDENCIES_CHECKED or (_TRANSFORMERS_AVAILABLE and ADVANCED_VISION_AVAILABLE):
+        return
+    _ADVANCED_DEPENDENCIES_CHECKED = True
+    try:
+        import torch as _torch
+        from transformers import AutoModelForCausalLM as _AutoModelForCausalLM, AutoProcessor as _AutoProcessor
+
+        torch = _torch
+        AutoProcessor = _AutoProcessor
+        AutoModelForCausalLM = _AutoModelForCausalLM
+        _TRANSFORMERS_AVAILABLE = True
+        ADVANCED_VISION_AVAILABLE = bool(torch.cuda.is_available())
+    except (ImportError, OSError, RuntimeError):
+        logger.warning("Optional advanced vision dependencies are unavailable.", exc_info=True)
+        _TRANSFORMERS_AVAILABLE = False
+        ADVANCED_VISION_AVAILABLE = False
+
 
 VISION_AVAILABLE = PIL_AVAILABLE
 
@@ -69,6 +85,7 @@ class VisionService:
 
     def load_model(self, model_name: str = "microsoft/Florence-2-large") -> bool:
         """Load an advanced vision model into GPU memory."""
+        _initialize_advanced_dependencies()
         if not ADVANCED_VISION_AVAILABLE or not _TRANSFORMERS_AVAILABLE:
             logger.info("Advanced vision model not available (no GPU or transformers). Using basic mode.")
             return False
@@ -118,6 +135,7 @@ class VisionService:
         return {
             "pil_available": PIL_AVAILABLE,
             "advanced_available": ADVANCED_VISION_AVAILABLE,
+            "advanced_dependencies_checked": _ADVANCED_DEPENDENCIES_CHECKED,
             "transformers_available": _TRANSFORMERS_AVAILABLE,
             "model_loaded": self.is_loaded,
             "model_name": self._model_name,

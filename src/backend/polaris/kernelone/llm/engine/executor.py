@@ -827,6 +827,7 @@ class AIExecutor:
                     model_spec=model_spec,
                     prompt_input=prompt_input,
                 ),
+                prepared_surface={key: invoke_cfg.get(key) for key in ("tools", "tool_choice", "response_format")},
                 persist=self._store_context_messages_sync,
                 workspace=self.workspace,
             )

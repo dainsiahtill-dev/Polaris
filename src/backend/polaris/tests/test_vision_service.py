@@ -28,7 +28,7 @@ _MODULE_PATH = "polaris.cells.llm.control_plane.internal.vision_service"
 # Resolve the absolute filesystem path once so we can load it directly,
 # bypassing the package __init__.py chain (which in the current state of the
 # repo has a pre-existing SyntaxError in an unrelated file deep in the chain).
-_BACKEND_DIR = pathlib.Path(__file__).parent.parent.resolve()
+_BACKEND_DIR = pathlib.Path(__file__).resolve().parents[2]
 _VISION_SERVICE_FILE = _BACKEND_DIR / "polaris/cells/llm/control_plane/internal/vision_service.py"
 
 
@@ -209,3 +209,20 @@ def test_unload_model_warning_on_error(caplog: pytest.LogCaptureFixture) -> None
     assert any(
         "CUDA cache" in str(m) or "empty_cache" in str(m) or "unload" in str(m).lower() for m in warning_messages
     ), f"Expected warning about CUDA cache flush failure, got: {warning_messages}"
+
+
+def test_import_and_basic_status_do_not_probe_optional_gpu(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def deny_gpu(name, *args, **kwargs):
+        if name.split(".")[0] in {"torch", "transformers"}:
+            raise AssertionError("basic control-plane import must not load optional GPU runtime")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", deny_gpu)
+    module = _reload_vision_module()
+    status = module.get_vision_service().get_status()
+    assert status["model_loaded"] is False
+    assert status["advanced_dependencies_checked"] is False

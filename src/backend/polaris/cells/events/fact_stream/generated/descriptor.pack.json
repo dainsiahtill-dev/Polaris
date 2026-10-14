@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:38.731769Z",
-  "source_hash": "bd558544956ff68a",
+  "generated_at": "2026-10-14T09:11:28.000393Z",
+  "source_hash": "4d11e5ab2b842905",
   "cell_id": "events.fact_stream",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -271,6 +271,12 @@
       "defined_in": "polaris/cells/events/fact_stream/public/catalog.py"
     },
     {
+      "type": "function",
+      "name": "fact_payload_streams",
+      "description": "Approved small-fact namespaces; initialized by explicit segmented maintenance.",
+      "defined_in": "polaris/cells/events/fact_stream/public/catalog.py"
+    },
+    {
       "type": "class",
       "name": "FactStreamProvenanceV1",
       "description": "Typed identity for one durable role-transition fact.",
@@ -442,6 +448,27 @@
       ]
     },
     {
+      "type": "class",
+      "name": "StoreFactPayloadCommandV1",
+      "description": "Explicitly prepare pinned payload bytes under existing workspace authority.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "AppendPayloadFactEventCommandV1",
+      "description": "Append a small reference fact only after confirming its prepared payload.",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryPayloadFactEventsV1",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/contracts.py",
+      "methods": []
+    },
+    {
       "type": "function",
       "name": "_require_non_empty",
       "description": "",
@@ -559,6 +586,12 @@
       "type": "function",
       "name": "_find_existing_idempotent_event",
       "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_query_failure_storage_observation",
+      "description": "Bounded read-only leaf evidence; never enroll or authorize a stream.",
       "defined_in": "polaris/cells/events/fact_stream/public/service.py"
     },
     {
@@ -685,6 +718,30 @@
       "type": "function",
       "name": "_event_to_dict",
       "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "store_fact_payload",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "append_payload_fact_event",
+      "description": "",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_payload_fact_events",
+      "description": "Keep the actual small storage record/hash separate from expanded content.",
+      "defined_in": "polaris/cells/events/fact_stream/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_payload_fact_ledger_presence",
+      "description": "Observe namespace storage presence; this is no integrity or closure proof.",
       "defined_in": "polaris/cells/events/fact_stream/public/service.py"
     },
     {

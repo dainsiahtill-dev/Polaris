@@ -15,10 +15,20 @@ from typing import Any, Literal
 
 from polaris.cells.events.fact_stream.public import (
     AppendFactEventCommandV1,
+    AppendPayloadFactEventCommandV1,
+    EnsureSegmentedFactLedgerCommandV1,
     FactStreamProvenanceV1,
     QueryFactEventsV1,
+    QueryFactStreamHeadV1,
+    QuerySegmentedFactLedgerHeadV1,
+    StoreFactPayloadCommandV1,
     append_fact_event,
+    append_payload_fact_event,
+    ensure_segmented_fact_ledger,
     query_fact_events,
+    query_fact_stream_head,
+    query_payload_fact_ledger_presence,
+    store_fact_payload,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -32,9 +42,11 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnFailureClass,
     TurnOutcome,
 )
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 TURN_OUTCOME_STREAM = "roles.kernel.turn_outcomes"
+TURN_OUTCOME_PAYLOAD_STREAM = "roles.kernel.turn_outcomes.v3"
 TURN_OUTCOME_EVENT_TYPE = "turn_outcome_committed"
 TURN_OUTCOME_SOURCE = "roles.kernel.transaction"
 
@@ -98,6 +110,13 @@ def commit_turn_result(
         transition_id=normalized_transition_id,
     )
     _reject_unscoped_legacy_transition(provenance)
+    # Presence chooses the existing protocol; it grants no integrity or write
+    # authority. Resolve the legacy location through its public owner contract.
+    legacy_head = query_fact_stream_head(
+        QueryFactStreamHeadV1(workspace=normalized_workspace, stream=TURN_OUTCOME_STREAM)
+    )
+    legacy_present = KernelFileSystem(normalized_workspace, get_default_adapter()).exists(legacy_head.storage_path)
+    stream = TURN_OUTCOME_STREAM if legacy_present else TURN_OUTCOME_PAYLOAD_STREAM
 
     result_payload = dict(result or {})
     failure_class = _failure_class_for(
@@ -118,7 +137,9 @@ def commit_turn_result(
     outcome_payload = outcome.model_dump(mode="json", exclude={"commit_ref"})
     outcome_hash = _stable_hash(outcome_payload)
     event_payload = {
-        "schema_version": "roles.kernel.turn_outcome_fact.v2",
+        "schema_version": "roles.kernel.turn_outcome_fact.v2"
+        if legacy_present
+        else "roles.kernel.turn_outcome_fact.v3",
         "run_id": normalized_run_id,
         "task_id": normalized_task_id,
         "turn_id": str(ledger.turn_id),
@@ -136,7 +157,7 @@ def commit_turn_result(
         }
     idempotency_key = ":".join(
         (
-            TURN_OUTCOME_STREAM,
+            stream,
             storage_identity.token,
             normalized_run_id,
             normalized_task_id,
@@ -145,24 +166,54 @@ def commit_turn_result(
         )
     )
     try:
-        appended = append_fact_event(
-            AppendFactEventCommandV1(
-                workspace=normalized_workspace,
-                stream=TURN_OUTCOME_STREAM,
-                event_type=TURN_OUTCOME_EVENT_TYPE,
-                payload=event_payload,
-                source=TURN_OUTCOME_SOURCE,
-                run_id=normalized_run_id,
-                task_id=normalized_task_id,
-                correlation_id=str(ledger.turn_id),
-                provenance=provenance,
-                idempotency_key=idempotency_key,
-                # Every role appends to the same authoritative outcome stream.
-                # Sessionless planning must not leave history unreadable by task sessions.
-                strict_integrity=True,
-                durability="fsync" if session_id else "buffered",
+        if legacy_present:
+            appended = append_fact_event(
+                AppendFactEventCommandV1(
+                    workspace=normalized_workspace,
+                    stream=TURN_OUTCOME_STREAM,
+                    event_type=TURN_OUTCOME_EVENT_TYPE,
+                    payload=event_payload,
+                    source=TURN_OUTCOME_SOURCE,
+                    run_id=normalized_run_id,
+                    task_id=normalized_task_id,
+                    correlation_id=str(ledger.turn_id),
+                    provenance=provenance,
+                    idempotency_key=idempotency_key,
+                    # Every role appends to the same authoritative outcome stream.
+                    # Sessionless planning must not leave history unreadable by task sessions.
+                    strict_integrity=True,
+                    durability="fsync" if session_id else "buffered",
+                )
             )
-        )
+        else:
+            if not query_payload_fact_ledger_presence(
+                QuerySegmentedFactLedgerHeadV1(workspace=normalized_workspace, logical_stream=stream)
+            ):
+                ensure_segmented_fact_ledger(
+                    EnsureSegmentedFactLedgerCommandV1(
+                        workspace=normalized_workspace,
+                        logical_stream=stream,
+                        maintenance_reason="roles.kernel.turn_outcome_payload_protocol",
+                    )
+                )
+            payload_ref = store_fact_payload(
+                StoreFactPayloadCommandV1(
+                    workspace=normalized_workspace,
+                    payload=event_payload,
+                    payload_schema="roles.kernel.turn_outcome_fact.v3",
+                    maintenance_reason="roles.kernel.turn_outcome_payload_commit",
+                )
+            )
+            appended = append_payload_fact_event(
+                AppendPayloadFactEventCommandV1(
+                    workspace=normalized_workspace,
+                    logical_stream=stream,
+                    event_type=TURN_OUTCOME_EVENT_TYPE,
+                    source=TURN_OUTCOME_SOURCE,
+                    payload_ref=payload_ref,
+                    idempotency_key=idempotency_key,
+                )
+            )
     except (RuntimeError, ValueError) as exc:
         raise TurnOutcomeCommitError(f"failed to commit turn outcome: {exc}") from exc
 

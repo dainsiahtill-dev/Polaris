@@ -13,11 +13,21 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from polaris.cells.control_plane.run_ledger.public.ledger import stable_hash
-from polaris.cells.events.fact_stream.public import QueryFactEventsV1, query_fact_events
+from polaris.cells.events.fact_stream.public import (
+    FactPayloadReferenceV1,
+    QueryFactEventsV1,
+    QueryPayloadFactEventsV1,
+    QuerySegmentedFactLedgerHeadV1,
+    query_fact_events,
+    query_payload_fact_events,
+    query_payload_fact_ledger_presence,
+    query_segmented_fact_ledger_head,
+)
 from polaris.kernelone.storage import resolve_workspace_runtime_identity
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 _STREAM = "roles.kernel.turn_outcomes"
+_PAYLOAD_STREAM = "roles.kernel.turn_outcomes.v3"
 _SOURCE = "roles.kernel.transaction"
 _EVENT_TYPE = "turn_outcome_committed"
 _MAX_FACTS = 4096
@@ -112,13 +122,39 @@ def _observe_owner(
     workspace: str, lifecycle: dict[str, Any], fact: dict[str, Any]
 ) -> CommittedTurnReceiptObservationV1:
     run_id, task_id, turn_id = (lifecycle[key] for key in ("run_id", "task_id", "turn_id"))
-    payload = _mapping(fact.get("payload"))
-    metadata = _mapping(fact.get("metadata"))
+    is_payload_fact = "storage_record" in fact
+    record = _mapping(fact.get("storage_record")) if is_payload_fact else fact
+    stream = record.get("logical_stream") if is_payload_fact else record.get("stream")
+    payload = _mapping(fact.get("expanded_payload")) if is_payload_fact else _mapping(fact.get("payload"))
+    metadata = _mapping(record.get("metadata"))
     outcome = _mapping(payload.get("outcome"))
     execution = _mapping(outcome.get("execution"))
     receipt = _mapping(execution.get("receipt"))
     batch_id = receipt.get("batch_id")
     identity = resolve_workspace_runtime_identity(workspace)
+    if is_payload_fact:
+        small = _mapping(record.get("payload"))
+        _require(
+            set(small) == {"schema_version", "payload_ref"}
+            and small.get("schema_version") == "kernelone.payload_fact.v1",
+            "owner_payload_reference_shape_mismatch",
+        )
+        ref = FactPayloadReferenceV1.from_record(small["payload_ref"])
+        encoded = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+        _require(
+            stable_hash(payload) == ref.sha256
+            and len(encoded) == ref.byte_size
+            and ref.payload_schema == "roles.kernel.turn_outcome_fact.v3"
+            and ref.storage_identity_token == identity.token,
+            "owner_expanded_payload_binding_mismatch",
+        )
+        _require(
+            stable_hash({key: value for key, value in record.items() if key != "event_hash"})
+            == record.get("event_hash"),
+            "owner_small_record_hash_mismatch",
+        )
     provenance = payload.get("provenance")
     expected_provenance = {
         "workspace": workspace,
@@ -128,15 +164,22 @@ def _observe_owner(
         "transition_id": payload.get("transition_id"),
     }
     _require(
-        fact.get("stream") == _STREAM
-        and fact.get("source") == _SOURCE
-        and fact.get("event_type") == _EVENT_TYPE
-        and fact.get("schema_version") == 1
-        and fact.get("event_version") == 1,
+        record.get("source") == _SOURCE
+        and record.get("event_type") == _EVENT_TYPE
+        and (
+            (is_payload_fact and stream == _PAYLOAD_STREAM and record.get("schema") == "kernelone.segmented_event.v1")
+            or (
+                not is_payload_fact
+                and stream == _STREAM
+                and record.get("schema_version") == 1
+                and record.get("event_version") == 1
+            )
+        ),
         "noncanonical_owner",
     )
     _require(
-        payload.get("schema_version") == "roles.kernel.turn_outcome_fact.v2"
+        payload.get("schema_version")
+        == ("roles.kernel.turn_outcome_fact.v3" if is_payload_fact else "roles.kernel.turn_outcome_fact.v2")
         and outcome.get("schema_version") == "roles.kernel.turn_outcome.v1",
         "unsupported_owner_schema",
     )
@@ -145,24 +188,32 @@ def _observe_owner(
         "owner_identity_missing",
     )
     _require(
-        provenance == expected_provenance and metadata.get("provenance") == expected_provenance,
+        provenance == expected_provenance and (is_payload_fact or metadata.get("provenance") == expected_provenance),
         "owner_provenance_mismatch",
     )
     _require(
         payload.get("storage_identity") == identity.to_record()
-        and metadata.get("storage_identity") == identity.to_record(),
+        and (is_payload_fact or metadata.get("storage_identity") == identity.to_record()),
         "owner_storage_mismatch",
     )
     _require(
         all(payload.get(key) == expected_provenance[key] for key in ("run_id", "task_id", "turn_id"))
-        and metadata.get("run_id") == run_id
-        and metadata.get("task_id") == task_id
-        and fact.get("aggregate_id") == task_id
-        and fact.get("correlation_id") == turn_id,
+        and (
+            is_payload_fact
+            or (
+                metadata.get("run_id") == run_id
+                and metadata.get("task_id") == task_id
+                and fact.get("aggregate_id") == task_id
+                and fact.get("correlation_id") == turn_id
+            )
+        ),
         "owner_envelope_identity_mismatch",
     )
-    expected_key = ":".join((_STREAM, identity.token, run_id, task_id, turn_id, payload["transition_id"]))
-    _require(metadata.get("idempotency_key") == expected_key, "owner_idempotency_mismatch")
+    expected_key = ":".join((str(stream), identity.token, run_id, task_id, turn_id, payload["transition_id"]))
+    _require(
+        (record.get("idempotency_key") if is_payload_fact else metadata.get("idempotency_key")) == expected_key,
+        "owner_idempotency_mismatch",
+    )
     _require(outcome.get("run_id") == run_id and outcome.get("turn_id") == turn_id, "owner_outcome_identity_mismatch")
     _require(stable_hash(outcome) == payload.get("outcome_hash"), "owner_outcome_hash_mismatch")
     _require(execution.get("side_effect_class") == "readonly", "owner_has_mutations")
@@ -344,7 +395,8 @@ def _observe_owner(
             any(stable_hash(layout) == lifecycle["batch_receipt_hash"] for layout in matches),
             "owner_batch_receipt_hash_mismatch",
         )
-    event_id, seq = fact.get("event_id"), fact.get("seq")
+    event_id = record.get("event_id")
+    seq = record.get("global_seq") if is_payload_fact else record.get("seq")
     _require(type(event_id) is str and bool(event_id) and type(seq) is int and seq > 0, "owner_fact_identity_missing")
     event_id, seq = cast(str, event_id), cast(int, seq)
     return CommittedTurnReceiptObservationV1(
@@ -368,7 +420,7 @@ def _observe_owner(
         fact_event_seq=seq,
         outcome_hash=payload["outcome_hash"],
         evidence_refs=(
-            _STREAM + ":" + event_id + ":" + str(seq),
+            str(stream) + ":" + event_id + ":" + str(seq),
             payload["outcome_hash"],
             stable_hash(receipt),
             *(ref[1] for ref in observed_refs),
@@ -378,67 +430,149 @@ def _observe_owner(
     )
 
 
+def _read_legacy_owner_scope(workspace: str, run_id: str, task_id: str) -> list[dict[str, Any]]:
+    """One complete strict read, retaining the existing per-scope record budget."""
+    facts: list[dict[str, Any]] = []
+    offset = 0
+    while True:
+        page = query_fact_events(
+            QueryFactEventsV1(
+                workspace=workspace,
+                stream=_STREAM,
+                run_id=run_id,
+                task_id=task_id,
+                event_type=_EVENT_TYPE,
+                strict_integrity=True,
+                limit=1000,
+                offset=offset,
+            )
+        )
+        facts.extend(page.events)
+        _require(len(facts) <= _MAX_FACTS, "owner_history_limit_exceeded")
+        if page.next_offset == 0:
+            return facts
+        _require(page.next_offset > offset, "owner_history_cursor_invalid")
+        offset = page.next_offset
+
+
+def _read_requested_owner_facts(
+    workspace: str,
+    keys: set[tuple[str, str, str]],
+) -> dict[tuple[str, str, str], list[dict[str, Any]]]:
+    """Share only this request's strict snapshot, then verify its currentness.
+
+    V2 scopes retain exact bytes/digests. V3 pages bind one captured head;
+    selected pages are re-read so mutable or missing blobs cannot borrow an
+    earlier observation. No proof is accepted from a caller or another query.
+    """
+    candidates: dict[tuple[str, str, str], list[dict[str, Any]]] = {key: [] for key in keys}
+    legacy: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for run_id, task_id in sorted({key[:2] for key in keys}):
+        facts = _read_legacy_owner_scope(workspace, run_id, task_id)
+        legacy[(run_id, task_id)] = facts
+        for fact in facts:
+            payload_turn = _mapping(fact.get("payload")).get("turn_id")
+            correlation = fact.get("correlation_id")
+            for turn_id in {payload_turn, correlation}:
+                key = (run_id, task_id, turn_id)
+                if key in candidates:
+                    candidates[cast(tuple[str, str, str], key)].append(fact)
+    head_query = QuerySegmentedFactLedgerHeadV1(workspace=workspace, logical_stream=_PAYLOAD_STREAM)
+    presence = query_payload_fact_ledger_presence(head_query)
+    captured_head = None
+    selected_pages: list[tuple[str | None, str]] = []
+    if presence:
+        continuation = None
+        seen_cursors: set[str] = set()
+        while True:
+            page = query_payload_fact_events(
+                QueryPayloadFactEventsV1(
+                    workspace=workspace,
+                    logical_stream=_PAYLOAD_STREAM,
+                    limit=8,
+                    continuation=continuation,
+                )
+            )
+            if captured_head is None:
+                captured_head = page.captured_head
+            _require(page.captured_head == captured_head, "owner_payload_head_changed")
+            selected = False
+            for fact in page.events:
+                body = _mapping(fact.get("expanded_payload"))
+                payload_key = tuple(body.get(name) for name in ("run_id", "task_id", "turn_id"))
+                if payload_key in candidates:
+                    candidates[cast(tuple[str, str, str], payload_key)].append(fact)
+                    selected = True
+            if selected:
+                selected_pages.append((continuation, stable_hash(page.events)))
+            if page.continuation is None:
+                break
+            _require(page.continuation not in seen_cursors, "owner_history_cursor_invalid")
+            seen_cursors.add(page.continuation)
+            continuation = page.continuation
+        for continuation, page_hash in selected_pages:
+            page = query_payload_fact_events(
+                QueryPayloadFactEventsV1(
+                    workspace=workspace,
+                    logical_stream=_PAYLOAD_STREAM,
+                    limit=8,
+                    continuation=continuation,
+                )
+            )
+            _require(page.captured_head == captured_head, "owner_payload_head_changed")
+            _require(stable_hash(page.events) == page_hash, "owner_payload_snapshot_changed")
+        _require(query_segmented_fact_ledger_head(head_query) == captured_head, "owner_payload_head_changed")
+    _require(query_payload_fact_ledger_presence(head_query) == presence, "owner_payload_namespace_changed")
+    for (run_id, task_id), facts in legacy.items():
+        _require(_read_legacy_owner_scope(workspace, run_id, task_id) == facts, "owner_legacy_snapshot_changed")
+    return candidates
+
+
 def query_committed_turn_receipts(
     workspace: str | Path, *, lifecycle_receipts: Sequence[Mapping[str, Any]]
 ) -> tuple[CommittedTurnReceiptObservationV1, ...]:
     """Read exact readonly owner facts; missing/ambiguous evidence stays unknown.
 
-    Strict FactStream reads validate the entire owner stream. Scope is supplied
-    only by the requested lifecycle identity; no success flag or tool name from
-    that caller can authorize closure. All proof derives from the owner outcome.
+    One request reads each V2 scope and the V3 ledger once, with a closing
+    currentness check. Every receipt still undergoes independent owner binding.
+    Scope is supplied only by lifecycle identity, never by success/tool flags.
     """
     normalized_workspace = str(Path(workspace).expanduser().resolve())
+    lifecycles = [dict(raw) for raw in lifecycle_receipts]
+    keys = {
+        cast(tuple[str, str, str], tuple(lifecycle.get(key) for key in ("run_id", "task_id", "turn_id")))
+        for lifecycle in lifecycles
+        if all(
+            type(lifecycle.get(key)) is str and lifecycle[key] and lifecycle[key].strip() == lifecycle[key]
+            for key in ("run_id", "task_id", "turn_id")
+        )
+    }
+    candidates: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    snapshot_error = ""
+    try:
+        if keys:
+            candidates = _read_requested_owner_facts(normalized_workspace, keys)
+    except (OSError, RuntimeError, TypeError, ValueError, KeyError) as exc:
+        snapshot_error = str(exc)
     observations = []
-    for raw in lifecycle_receipts:
-        lifecycle = dict(raw)
-        scope = {key: lifecycle.get(key) for key in ("run_id", "task_id", "turn_id")}
-        unknown = {
-            "workspace": normalized_workspace,
-            **{key: str(value or "") for key, value in scope.items()},
-            "batch_id": "",
-            "status": "unknown",
-        }
+    for lifecycle in lifecycles:
+        scope = tuple(lifecycle.get(key) for key in ("run_id", "task_id", "turn_id"))
         try:
             _require(
-                all(type(value) is str and value and value.strip() == value for value in scope.values()),
+                all(type(value) is str and value and value.strip() == value for value in scope),
                 "lifecycle_identity_missing",
             )
-            facts: list[dict[str, Any]] = []
-            offset = 0
-            while True:
-                page = query_fact_events(
-                    QueryFactEventsV1(
-                        workspace=normalized_workspace,
-                        stream=_STREAM,
-                        run_id=scope["run_id"],
-                        task_id=scope["task_id"],
-                        event_type=_EVENT_TYPE,
-                        strict_integrity=True,
-                        limit=1000,
-                        offset=offset,
-                    )
-                )
-                facts.extend(page.events)
-                _require(len(facts) <= _MAX_FACTS, "owner_history_limit_exceeded")
-                if page.next_offset == 0:
-                    break
-                _require(page.next_offset > offset, "owner_history_cursor_invalid")
-                offset = page.next_offset
-            candidates = [
-                fact
-                for fact in facts
-                if _mapping(fact.get("payload")).get("turn_id") == scope["turn_id"]
-                or fact.get("correlation_id") == scope["turn_id"]
-            ]
-            _require(len(candidates) == 1, "owner_turn_missing_or_ambiguous")
-            observations.append(_observe_owner(normalized_workspace, lifecycle, candidates[0]))
+            _require(not snapshot_error, snapshot_error)
+            matching = candidates[cast(tuple[str, str, str], scope)]
+            _require(len(matching) == 1, "owner_turn_missing_or_ambiguous")
+            observations.append(_observe_owner(normalized_workspace, lifecycle, matching[0]))
         except (OSError, RuntimeError, TypeError, ValueError, KeyError) as exc:
             observations.append(
                 CommittedTurnReceiptObservationV1(
                     workspace=normalized_workspace,
-                    run_id=unknown["run_id"],
-                    task_id=unknown["task_id"],
-                    turn_id=unknown["turn_id"],
+                    run_id=str(scope[0] or ""),
+                    task_id=str(scope[1] or ""),
+                    turn_id=str(scope[2] or ""),
                     batch_id="",
                     status="unknown",
                     reason=str(exc),

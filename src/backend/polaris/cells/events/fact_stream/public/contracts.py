@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -13,6 +14,7 @@ from polaris.kernelone.events.sourcing.guarded import (
     GuardedFactSnapshotV1,
     ReadGuardedFactSnapshotCommandV1,
 )
+from polaris.kernelone.events.sourcing.payload_store import PayloadReferenceV1 as FactPayloadReferenceV1
 from polaris.kernelone.fs.contracts import DurabilityMode, validate_durability
 
 
@@ -845,3 +847,68 @@ __all__ = [
     "SegmentedFactLedgerReadyV1",
     "SegmentedFactQueryResultV1",
 ]
+
+
+@dataclass(frozen=True)
+class StoreFactPayloadCommandV1:
+    """Explicitly prepare pinned payload bytes under existing workspace authority."""
+
+    workspace: str
+    payload: Mapping[str, Any]
+    payload_schema: str
+    maintenance_reason: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_exact_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "payload_schema", _require_exact_non_empty("payload_schema", self.payload_schema))
+        object.__setattr__(
+            self, "maintenance_reason", _require_exact_non_empty("maintenance_reason", self.maintenance_reason)
+        )
+        if type(self.payload) is not dict:
+            raise ValueError("payload must be an exact dict")
+        object.__setattr__(self, "payload", deepcopy(self.payload))
+
+
+@dataclass(frozen=True)
+class AppendPayloadFactEventCommandV1:
+    """Append a small reference fact only after confirming its prepared payload."""
+
+    workspace: str
+    logical_stream: str
+    event_type: str
+    source: str
+    payload_ref: FactPayloadReferenceV1
+    idempotency_key: str
+    expected_global_seq: int | None = None
+    require_idempotency_replay: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.payload_ref) is not FactPayloadReferenceV1:
+            raise ValueError("payload_ref must be an exact FactPayloadReferenceV1")
+        FactPayloadReferenceV1.__post_init__(self.payload_ref)
+        AppendSegmentedFactEventCommandV1(
+            workspace=self.workspace,
+            logical_stream=self.logical_stream,
+            event_type=self.event_type,
+            source=self.source,
+            payload={"schema_version": "kernelone.payload_fact.v1", "payload_ref": self.payload_ref.to_record()},
+            idempotency_key=self.idempotency_key,
+            expected_global_seq=self.expected_global_seq,
+            require_idempotency_replay=self.require_idempotency_replay,
+        )
+
+
+@dataclass(frozen=True)
+class QueryPayloadFactEventsV1:
+    workspace: str
+    logical_stream: str
+    limit: int = 100
+    continuation: str | None = None
+
+    def __post_init__(self) -> None:
+        QuerySegmentedFactEventsV1(
+            workspace=self.workspace,
+            logical_stream=self.logical_stream,
+            limit=self.limit,
+            continuation=self.continuation,
+        )

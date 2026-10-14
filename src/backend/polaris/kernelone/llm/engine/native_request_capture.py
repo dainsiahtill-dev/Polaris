@@ -15,8 +15,14 @@ from polaris.kernelone.events.final_request_evidence import redact_provider_tran
 
 from .contracts import AIRequest, ModelSpec, _deep_freeze_provider_value
 from .internal.context_hash import validate_context_hash
+from .invocation_budget import get_provider_invocation_budget
 from .native_request_metrics import provider_native_request_metrics
-from .provider_native_request import build_anthropic_native_messages, build_openai_native_messages
+from .provider_native_request import (
+    build_anthropic_native_messages,
+    build_openai_native_messages,
+    convert_tool_choice_to_anthropic,
+    convert_tools_to_anthropic,
+)
 
 _Result = TypeVar("_Result")
 _Response = TypeVar("_Response")
@@ -86,6 +92,7 @@ class NativeRequestCapturePort:
         provider_request: dict[str, Any],
         persist: Callable[..., str],
         workspace: str | None,
+        prepared_surface: Mapping[str, Any] | None = None,
     ) -> None:
         self._request = request
         self._model_spec = model_spec
@@ -101,6 +108,9 @@ class NativeRequestCapturePort:
                 )
         self._persist = persist
         self._workspace = workspace
+        semantic_surface = request.context.get("provider_request_semantic_surface")
+        surface = semantic_surface if isinstance(semantic_surface, dict) else prepared_surface
+        self._prepared_surface = copy.deepcopy(dict(surface)) if surface is not None else None
         self._lock = threading.Lock()
         self._attempts = 0
         self._final: tuple[str, dict[str, Any]] | None = None
@@ -145,6 +155,34 @@ class NativeRequestCapturePort:
             projection_matches = body.get("messages") == build_openai_native_messages(source_messages)
         else:
             projection_matches = False
+        surface = self._prepared_surface or self._provider_request
+        expected_tools = surface.get("tools") or []
+        expected_choice = surface.get("tool_choice")
+        if protocol == "anthropic_messages":
+            expected_tools = convert_tools_to_anthropic(expected_tools)
+            expected_choice = convert_tool_choice_to_anthropic(expected_choice)
+        surface_matches = (
+            body.get("tools", []) == expected_tools
+            and body.get("tool_choice") == expected_choice
+            and body.get("response_format") == surface.get("response_format")
+        )
+        evidence_coverage = audit.get("final_request_evidence_coverage")
+        if isinstance(evidence_coverage, dict):
+            offered = []
+            for tool in body.get("tools", []) or []:
+                if isinstance(tool, dict):
+                    function = tool.get("function")
+                    name = function.get("name") if isinstance(function, dict) else tool.get("name")
+                    if isinstance(name, str) and name:
+                        offered.append(name)
+            required = evidence_coverage.get("required_tools") or []
+            missing = [name for name in required if name not in offered]
+            evidence_coverage["available_tools"] = offered
+            evidence_coverage["missing_required_tools"] = missing
+            if missing:
+                evidence_coverage["pass"] = False
+        projection_matches = projection_matches and surface_matches
+        audit["native_surface_projection_matched"] = surface_matches
         audit["coverage_verification"] = (
             "native_message_projection_matched" if projection_matches else "unverified_native_projection_changed"
         )
@@ -210,6 +248,17 @@ class NativeRequestCapturePort:
         self._final = (ref, copy.deepcopy(live_audit))
 
     def _finish(self, provider_request: dict[str, Any], *, status: str, error: BaseException | None = None) -> None:
+        budget = get_provider_invocation_budget()
+        stop_reason = budget.stop_reason if budget is not None else ""
+        if stop_reason:
+            provider_request["physical_attempt"]["stop_reason"] = stop_reason
+            if status == "failed":
+                if stop_reason == "caller_cancelled":
+                    status = "cancelled"
+                elif stop_reason == "deadline":
+                    status = "timed_out"
+            elif status == "completed":
+                provider_request["physical_attempt"]["caller_stop_requested"] = True
         provider_request["physical_attempt"]["status"] = status
         if error is not None:
             provider_request["physical_attempt"]["error_type"] = type(error).__name__

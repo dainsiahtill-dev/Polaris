@@ -28,3 +28,8 @@ def fact_stream_bootstrap_streams() -> tuple[str, ...]:
 
 
 __all__ = ["fact_stream_bootstrap_streams"]
+
+
+def fact_payload_streams() -> tuple[str, ...]:
+    """Approved small-fact namespaces; initialized by explicit segmented maintenance."""
+    return ("roles.kernel.turn_outcomes.v3",)

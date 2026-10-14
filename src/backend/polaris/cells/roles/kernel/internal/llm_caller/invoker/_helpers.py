@@ -504,6 +504,10 @@ _CONTEXT_SNAPSHOT_CONTEXT_KEYS = (
     "contextSnapshotDegraded",
     "context_snapshot_degraded_reason",
     "contextSnapshotDegradedReason",
+    "physical_request_capture",
+    "provider_request_semantic_audit",
+    "provider_request_semantic_messages",
+    "provider_request_semantic_surface",
 )
 
 
@@ -589,8 +593,13 @@ async def _store_active_request_context_snapshot(
             prepared=prepared,
             profile=profile,
         )
-        ctx["provider_request_semantic_audit"] = provider_request_snapshot
-        ctx["provider_request_semantic_messages"] = deepcopy(messages)
+        if ctx is not None:
+            ctx["provider_request_semantic_audit"] = provider_request_snapshot
+            ctx["provider_request_semantic_messages"] = deepcopy(messages)
+            options = request.options if isinstance(request.options, dict) else prepared.request_options
+            ctx["provider_request_semantic_surface"] = deepcopy(
+                {key: options.get(key) for key in ("tools", "tool_choice", "response_format")}
+            )
         frozen = prepared.factory_semantic_request
         if frozen is not None:
             provider_request_snapshot["factory_final_request"] = final_request_snapshot_evidence(frozen)

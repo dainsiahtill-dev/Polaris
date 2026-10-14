@@ -333,3 +333,70 @@ def test_non_null_known_effect_field_cannot_be_hidden_by_legacy_serializer(tmp_p
     payload["outcome_hash"] = _hash(payload["outcome"])
     _append(tmp_path, payload)
     assert _query(tmp_path, lifecycle)[0].status == "unknown"
+
+
+@pytest.mark.parametrize("corrupt_blob", [False, True])
+def test_payload_fact_v3_owner_is_observed_with_actual_stream_sequence_and_no_write(
+    tmp_path: Path, corrupt_blob: bool
+) -> None:
+    from polaris.cells.events.fact_stream.public import (
+        AppendPayloadFactEventCommandV1,
+        EnsureSegmentedFactLedgerCommandV1,
+        StoreFactPayloadCommandV1,
+        append_payload_fact_event,
+        ensure_segmented_fact_ledger,
+        store_fact_payload,
+    )
+
+    payload, lifecycle = _fixture(tmp_path)
+    payload["schema_version"] = "roles.kernel.turn_outcome_fact.v3"
+    stream = "roles.kernel.turn_outcomes.v3"
+    ensure_segmented_fact_ledger(
+        EnsureSegmentedFactLedgerCommandV1(
+            workspace=str(tmp_path), logical_stream=stream, maintenance_reason="readonly payload owner fixture"
+        )
+    )
+    ref = store_fact_payload(
+        StoreFactPayloadCommandV1(
+            workspace=str(tmp_path),
+            payload=payload,
+            payload_schema=payload["schema_version"],
+            maintenance_reason="readonly payload owner fixture",
+        )
+    )
+    key = ":".join(
+        (
+            stream,
+            resolve_workspace_runtime_identity(str(tmp_path)).token,
+            payload["run_id"],
+            payload["task_id"],
+            payload["turn_id"],
+            payload["transition_id"],
+        )
+    )
+    committed = append_payload_fact_event(
+        AppendPayloadFactEventCommandV1(
+            workspace=str(tmp_path),
+            logical_stream=stream,
+            event_type="turn_outcome_committed",
+            source="roles.kernel.transaction",
+            payload_ref=ref,
+            idempotency_key=key,
+        )
+    )
+    if corrupt_blob:
+        from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
+        KernelFileSystem(str(tmp_path), get_default_adapter()).write_text(ref.logical_path, "{}", encoding="utf-8")
+    before = {p: _hash(p.read_text(encoding="utf-8")) for p in tmp_path.rglob("*.jsonl")}
+    observation = _query(tmp_path, lifecycle)[0]
+    if corrupt_blob:
+        assert observation.status == "unknown"
+        assert observation.batch_receipt == {}
+        assert before == {p: _hash(p.read_text(encoding="utf-8")) for p in tmp_path.rglob("*.jsonl")}
+        return
+    assert observation.status == "observed", observation.reason
+    assert observation.fact_event_id == committed.event_id
+    assert observation.fact_event_seq == committed.appended_seq
+    assert observation.evidence_refs[0].startswith(stream + ":")
+    assert before == {p: _hash(p.read_text(encoding="utf-8")) for p in tmp_path.rglob("*.jsonl")}

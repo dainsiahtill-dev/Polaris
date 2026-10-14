@@ -38,6 +38,13 @@ def _commit_ce_outcomes(workspace: Path) -> None:
             maintenance_reason="mixed_role_integrity_regression",
         )
     )
+    # This suite preserves mixed-role legacy V2 compatibility explicitly. The
+    # fresh V3 protocol has separate producer/consumer and blob-integrity tests.
+    from polaris.cells.events.fact_stream.public import QueryFactStreamHeadV1, query_fact_stream_head
+    from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
+    head = query_fact_stream_head(QueryFactStreamHeadV1(workspace=str(workspace), stream=TURN_OUTCOME_STREAM))
+    KernelFileSystem(str(workspace), get_default_adapter()).write_text(head.storage_path, "", encoding="utf-8")
     commit_turn_result(
         workspace=str(workspace),
         run_id="factory-mixed",

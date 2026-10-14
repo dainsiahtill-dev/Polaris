@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
@@ -9,14 +9,17 @@ from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     FactStreamError,
     QueryFactEventsV1,
+    QueryPayloadFactEventsV1,
     append_fact_event,
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
     query_fact_events,
+    query_payload_fact_events,
 )
 from polaris.cells.roles.kernel.internal.kernel.transaction_factory import _resolve_durable_workspace
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.outcome_commit import (
+    TURN_OUTCOME_PAYLOAD_STREAM,
     TURN_OUTCOME_STREAM,
     DurableTurnCommit,
     TurnOutcomeCommitError,
@@ -88,16 +91,16 @@ def test_commit_turn_result_persists_canonical_fact(tmp_path: Path) -> None:
     assert committed.outcome.commit_ref == committed.receipt
     assert committed.receipt.fact_event_seq == 1
     assert committed.receipt.outcome_hash
-    queried = query_fact_events(
-        QueryFactEventsV1(
+    queried = query_payload_fact_events(
+        QueryPayloadFactEventsV1(
             workspace=str(workspace),
-            stream=TURN_OUTCOME_STREAM,
+            logical_stream=committed.receipt.fact_stream,
             limit=10,
         )
     )
-    assert queried.total == 1
-    assert queried.events[0]["payload"]["outcome_hash"] == committed.receipt.outcome_hash
-    provenance = queried.events[0]["payload"]["provenance"]
+    assert len(queried.events) == 1
+    assert queried.events[0]["expanded_payload"]["outcome_hash"] == committed.receipt.outcome_hash
+    provenance = queried.events[0]["expanded_payload"]["provenance"]
     assert provenance == {
         "workspace": str(workspace.resolve()),
         "run_id": "run-1",
@@ -105,7 +108,7 @@ def test_commit_turn_result_persists_canonical_fact(tmp_path: Path) -> None:
         "turn_id": "turn-1",
         "transition_id": "transition-1",
     }
-    assert "commit_ref" not in queried.events[0]["payload"]["outcome"]
+    assert "commit_ref" not in queried.events[0]["expanded_payload"]["outcome"]
 
 
 def test_commit_turn_result_does_not_lazily_bootstrap_authority(tmp_path: Path) -> None:
@@ -306,13 +309,16 @@ def test_turn_outcomes_are_isolated_for_fresh_workspaces_with_matching_names(tmp
 
     assert first.receipt.fact_event_seq == 1
     assert second.receipt.fact_event_seq == 1
-    first_event = query_fact_events(
-        QueryFactEventsV1(workspace=str(workspace_a), stream=TURN_OUTCOME_STREAM, limit=10)
+    first_event = query_payload_fact_events(
+        QueryPayloadFactEventsV1(workspace=str(workspace_a), logical_stream=TURN_OUTCOME_PAYLOAD_STREAM, limit=10)
     ).events[0]
-    second_event = query_fact_events(
-        QueryFactEventsV1(workspace=str(workspace_b), stream=TURN_OUTCOME_STREAM, limit=10)
+    second_event = query_payload_fact_events(
+        QueryPayloadFactEventsV1(workspace=str(workspace_b), logical_stream=TURN_OUTCOME_PAYLOAD_STREAM, limit=10)
     ).events[0]
-    assert first_event["payload"]["storage_identity"]["token"] != second_event["payload"]["storage_identity"]["token"]
+    assert (
+        first_event["expanded_payload"]["storage_identity"]["token"]
+        != second_event["expanded_payload"]["storage_identity"]["token"]
+    )
 
 
 def test_turn_outcomes_are_isolated_for_separate_factory_runs(tmp_path: Path) -> None:
@@ -333,9 +339,11 @@ def test_turn_outcomes_are_isolated_for_separate_factory_runs(tmp_path: Path) ->
             completion_status="success",
         )
 
-    queried = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream=TURN_OUTCOME_STREAM, limit=10))
-    assert queried.total == 2
-    assert {event["payload"]["provenance"]["run_id"] for event in queried.events} == {
+    queried = query_payload_fact_events(
+        QueryPayloadFactEventsV1(workspace=str(workspace), logical_stream=TURN_OUTCOME_PAYLOAD_STREAM, limit=10)
+    )
+    assert len(queried.events) == 2
+    assert {event["expanded_payload"]["provenance"]["run_id"] for event in queried.events} == {
         "factory-run-a",
         "factory-run-b",
     }
@@ -362,9 +370,11 @@ def test_turn_outcomes_are_isolated_for_distinct_attempts_of_the_same_turn(tmp_p
             completion_status="success",
         )
 
-    queried = query_fact_events(QueryFactEventsV1(workspace=str(workspace), stream=TURN_OUTCOME_STREAM, limit=10))
-    assert queried.total == 2
-    assert {event["payload"]["provenance"]["transition_id"] for event in queried.events} == {
+    queried = query_payload_fact_events(
+        QueryPayloadFactEventsV1(workspace=str(workspace), logical_stream=TURN_OUTCOME_PAYLOAD_STREAM, limit=10)
+    )
+    assert len(queried.events) == 2
+    assert {event["expanded_payload"]["provenance"]["transition_id"] for event in queried.events} == {
         "invocation-a-attempt-0",
         "invocation-a-attempt-1",
     }
@@ -474,3 +484,156 @@ def test_durable_turn_rejects_request_workspace_that_differs_from_kernel_workspa
     with pytest.raises(RuntimeError, match="workspace identity mismatch"):
         kernel = type("Kernel", (), {"workspace": str(workspace)})()
         _resolve_durable_workspace(request, kernel)
+
+
+def test_new_workspace_commits_small_v3_fact_and_reads_large_payload_separately(tmp_path: Path) -> None:
+    import hashlib
+    import json
+
+    from polaris.cells.events.fact_stream.public import QueryPayloadFactEventsV1, query_payload_fact_events
+
+    workspace = tmp_path / "v3-workspace"
+    workspace.mkdir()
+    _bootstrap_workspace(workspace)
+    ledger = TurnLedger(turn_id="payload-turn")
+    ledger.record_decision(_decision("payload-turn"))
+    reason = "真实失败证据" * 24000
+    arguments: dict[str, Any] = {
+        "workspace": str(workspace),
+        "run_id": "payload-run",
+        "task_id": "payload-task",
+        "transition_id": "payload-transition",
+        "ledger": ledger,
+        "result": None,
+        "completion_status": "failed",
+        "failure_reason": reason,
+    }
+    first = commit_turn_result(**arguments)
+    assert first.receipt.fact_stream == "roles.kernel.turn_outcomes.v3"
+    page = query_payload_fact_events(
+        QueryPayloadFactEventsV1(workspace=str(workspace), logical_stream=first.receipt.fact_stream, limit=1)
+    )
+    assert len(page.events) == 1
+    row = page.events[0]
+    raw = row["storage_record"]
+    expanded = row["expanded_payload"]
+    assert raw["logical_stream"] == first.receipt.fact_stream
+    assert raw["global_seq"] == first.receipt.fact_event_seq == 1
+    assert raw["event_id"] == first.receipt.fact_event_id
+    assert len(json.dumps(raw, ensure_ascii=False).encode("utf-8")) < 4096
+    assert expanded["schema_version"] == "roles.kernel.turn_outcome_fact.v3"
+    assert expanded["outcome"]["failure_reason"] == reason
+    assert (
+        raw["payload"]["payload_ref"]["sha256"]
+        == hashlib.sha256(
+            json.dumps(expanded, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+    )
+    assert expanded["outcome_hash"] == first.receipt.outcome_hash
+    second = commit_turn_result(**arguments)
+    assert second.receipt == first.receipt
+    assert (
+        query_payload_fact_events(
+            QueryPayloadFactEventsV1(workspace=str(workspace), logical_stream=first.receipt.fact_stream)
+        ).events[0]["global_seq"]
+        == 1
+    )
+
+
+def test_existing_legacy_stream_keeps_v2_without_payload_namespace_migration(tmp_path: Path) -> None:
+    from polaris.cells.events.fact_stream.public import (
+        QueryFactStreamHeadV1,
+        QuerySegmentedFactLedgerHeadV1,
+        query_fact_stream_head,
+        query_payload_fact_ledger_presence,
+    )
+
+    _bootstrap_workspace(tmp_path)
+    # Explicit public legacy history producer, not an invented owner turn.
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(tmp_path),
+            stream=TURN_OUTCOME_STREAM,
+            event_type="legacy_fixture_presence",
+            payload={"fixture": "legacy protocol"},
+            source="test.protocol_fixture",
+            run_id="legacy-fixture",
+            task_id="legacy-fixture",
+            strict_integrity=True,
+        )
+    )
+    before = query_fact_stream_head(QueryFactStreamHeadV1(workspace=str(tmp_path), stream=TURN_OUTCOME_STREAM))
+    ledger = TurnLedger(turn_id="legacy-next")
+    ledger.record_decision(_decision("legacy-next"))
+    committed = commit_turn_result(
+        workspace=str(tmp_path),
+        run_id="run",
+        task_id="task",
+        transition_id="legacy-next",
+        ledger=ledger,
+        result=None,
+        completion_status="success",
+    )
+    assert committed.receipt.fact_stream == TURN_OUTCOME_STREAM
+    assert committed.receipt.fact_event_seq == before.next_expected_seq
+    rows = query_fact_events(
+        QueryFactEventsV1(workspace=str(tmp_path), stream=TURN_OUTCOME_STREAM, strict_integrity=True)
+    ).events
+    assert rows[-1]["payload"]["schema_version"] == "roles.kernel.turn_outcome_fact.v2"
+    assert rows[0]["payload"] == {"fixture": "legacy protocol"}
+    assert (
+        query_payload_fact_ledger_presence(
+            QuerySegmentedFactLedgerHeadV1(workspace=str(tmp_path), logical_stream=TURN_OUTCOME_PAYLOAD_STREAM)
+        )
+        is False
+    )
+
+
+def test_v3_namespace_ensure_is_first_commit_only_and_corrupt_existing_stays_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.roles.kernel.internal.transaction import outcome_commit as owner
+    from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
+    _bootstrap_workspace(tmp_path)
+    actual_ensure = owner.ensure_segmented_fact_ledger
+    ensured = []
+
+    def observe_ensure(command):
+        ensured.append(command)
+        return actual_ensure(command)
+
+    monkeypatch.setattr(owner, "ensure_segmented_fact_ledger", observe_ensure)
+
+    def commit(index):
+        ledger = TurnLedger(turn_id=f"presence-{index}")
+        ledger.record_decision(_decision(f"presence-{index}"))
+        return commit_turn_result(
+            workspace=str(tmp_path),
+            run_id="run",
+            task_id="task",
+            transition_id=f"presence-{index}",
+            ledger=ledger,
+            result=None,
+            completion_status="success",
+        )
+
+    first, second = commit(1), commit(2)
+    assert len(ensured) == 1
+    assert first.receipt.fact_event_seq == 1 and second.receipt.fact_event_seq == 2
+    assert first.receipt.fact_stream == second.receipt.fact_stream == TURN_OUTCOME_PAYLOAD_STREAM
+    filesystem = KernelFileSystem(str(tmp_path), get_default_adapter())
+    record = filesystem.read_text(first.receipt.fact_storage_path, encoding="utf-8")
+    # Presence is not integrity authority: a damaged actual segment must still
+    # fail the strict appender even though initialization is skipped.
+    filesystem.write_text(
+        first.receipt.fact_storage_path,
+        record.replace("roles.kernel.transaction", "wrong.record.source", 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(TurnOutcomeCommitError):
+        commit(3)
+    assert len(ensured) == 1

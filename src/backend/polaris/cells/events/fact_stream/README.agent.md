@@ -119,3 +119,39 @@ without depending on another Polaris Cell.
 - `polaris/cells/events/fact_stream/public/tests/test_public_service.py`
 - `polaris/cells/events/fact_stream/public/tests/test_segmented_contracts.py`
 - `polaris/cells/events/fact_stream/public/tests/test_workspace_bootstrap.py`
+
+## Pinned payload facts
+
+`StoreFactPayloadCommandV1` / `store_fact_payload` explicitly prepares canonical
+UTF-8 JSON using the existing workspace lock authority. It enrolls the derived
+content path, writes complete bytes once, and confirms file and parent-directory
+fsync before returning `FactPayloadReferenceV1`. A replay verifies the entire
+SHA-256, byte size, declared payload schema and storage identity, then confirms
+durability without rewriting bytes. Queries never enroll or repair lock state.
+
+`AppendPayloadFactEventCommandV1` / `append_payload_fact_event` consumes that
+reference. It confirms the existing payload again before the existing segmented
+store appends a small `kernelone.payload_fact.v1` record. The generic segmented
+append API enforces the same validation for approved payload namespaces, so it
+cannot bypass payload verification. Small record size and segment limits remain
+unchanged; large JSON does not enter the 4 KiB record.
+
+`QueryPayloadFactEventsV1` / `query_payload_fact_events` returns actual segmented
+coordinates and `event_hash`, the complete small `storage_record`, and separately
+verified `expanded_payload`. The event hash binds the small raw record; the
+reference SHA binds canonical expanded bytes. They are distinct hashes, and a
+consumer must not pretend that expanded data was the original storage record.
+Missing, foreign or corrupt payloads fail closed. Content remains pinned audit
+data and does not use ContextOS TTL or cache eviction.
+
+The initial approved namespace is `roles.kernel.turn_outcomes.v3`, initialized
+through `EnsureSegmentedFactLedgerCommandV1`. It is separate from the ordinary
+bootstrap catalog. `query_payload_fact_ledger_presence`, using
+`QuerySegmentedFactLedgerHeadV1`, observes storage existence without initializing
+it; this boolean is not integrity, completion, or release evidence.
+
+New role-outcome writers can use V3 in an empty namespace. Existing V2 streams
+retain their original bytes, identities, sequence numbers, hashes and references.
+This capability does not automatically migrate a live stream or remove its old
+lifetime limit. A future legacy cutover requires an explicit stopped-owner
+protocol; no dual-write or raw-digest substitution is provided here.

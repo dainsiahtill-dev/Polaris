@@ -293,9 +293,11 @@ def test_missing_and_failed_required_evidence_are_distinct(tmp_path: Path) -> No
     assert "required_evidence_missing" in missing.blocking_reasons
     assert failed.missing_required_modalities == ()
     assert failed.failed_required_modalities == ("command",)
-    assert failed.closed is True
+    # This fixture supplies an unpersisted write receipt; failed evidence
+    # is distinct from missing evidence, but neither proves resource closure.
+    assert failed.closed is False
     assert failed.passed is False
-    assert failed.release_allowed is True
+    assert failed.release_allowed is False
     assert "required_evidence_failed" in failed.blocking_reasons
 
 
@@ -323,8 +325,8 @@ def test_active_task_lifecycle_keeps_barrier_open(tmp_path: Path) -> None:
     assert "lifecycle_open" in result.blocking_reasons
 
 
-def test_missing_effect_receipt_is_diagnostic_not_lease_pin(tmp_path: Path) -> None:
-    """Residual effect gaps must not pin workspace lease after task lifecycles terminal."""
+def test_missing_effect_receipt_without_owner_blocks_release(tmp_path: Path) -> None:
+    """A terminal task plus a missing physical owner is not closure proof."""
     _append_terminal_run(
         tmp_path,
         factory_run_id="factory-no-effect",
@@ -337,15 +339,15 @@ def test_missing_effect_receipt_is_diagnostic_not_lease_pin(tmp_path: Path) -> N
     assert result.expected_effect_count == 1
     assert result.effect_receipt_count == 0
     assert result.open_effect_count == 1
-    # Lease may release; QA still sees residual effect gaps via blockers/passed=false.
-    assert result.closed is True
-    assert result.release_allowed is True
+    # The claimed write lacks a persisted terminal owner/effect receipt.
+    assert result.closed is False
+    assert result.release_allowed is False
     assert result.passed is False
     assert "effect_receipt_missing" in result.blocking_reasons
     assert "effect_receipts_open" in result.blocking_reasons
 
 
-def test_terminal_early_failure_without_dispatch_effects_or_gates_can_settle(
+def test_zero_dispatch_without_execution_owner_remains_unproven(
     tmp_path: Path,
 ) -> None:
     factory_run_id = "factory-early-failure"
@@ -370,15 +372,15 @@ def test_terminal_early_failure_without_dispatch_effects_or_gates_can_settle(
     assert result.effect_receipt_count == 0
     assert result.open_effect_count == 0
     assert result.open_lifecycle_count == 0
-    assert result.closed is True
-    assert result.release_allowed is True
+    assert result.closed is False
+    assert result.release_allowed is False
     assert result.passed is False
     assert "run_ledger_gate_missing" not in result.blocking_reasons
     assert "effect_receipt_missing" not in result.blocking_reasons
     assert "lifecycle_failed" in result.blocking_reasons
 
 
-def test_failed_task_run_is_closed_but_cannot_pass(tmp_path: Path) -> None:
+def test_failed_task_with_unproved_mutation_cannot_release(tmp_path: Path) -> None:
     _append_terminal_run(
         tmp_path,
         factory_run_id="factory-task-failed",
@@ -388,10 +390,10 @@ def test_failed_task_run_is_closed_but_cannot_pass(tmp_path: Path) -> None:
 
     result = query_factory_settlement_barrier(tmp_path, "factory-task-failed")
 
-    assert result.closed is True
+    assert result.closed is False
     assert result.failed_lifecycle_count == 1
     assert result.passed is False
-    assert result.release_allowed is True
+    assert result.release_allowed is False
     assert "lifecycle_failed" in result.blocking_reasons
 
 
@@ -540,9 +542,10 @@ def test_barrier_hash_is_idempotent_for_unchanged_facts(tmp_path: Path) -> None:
     assert first == second
     assert files_after == files_before
     assert len(first.barrier_hash) == 64
-    assert first.closed is True
-    assert first.passed is True
-    assert first.release_allowed is True
+    # Stable synthetic facts remain stably unproven, never a real commit.
+    assert first.closed is False
+    assert first.passed is False
+    assert first.release_allowed is False
 
 
 def test_query_isolated_across_workspace_and_factory_run(tmp_path: Path) -> None:

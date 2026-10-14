@@ -1498,8 +1498,8 @@ def _terminal_execution_effect_observations(workspace: Path, facts: list[dict[st
     """Compile observer query identities only from canonical TaskRuntime facts."""
     from polaris.cells.runtime.task_runtime.public.contracts import TaskRuntimeExecutionAttemptIdentityV1
     from polaris.cells.runtime.task_runtime.public.execution_effect_closure import (
-        QueryExecutionEffectClosureV1,
-        query_execution_effect_closure,
+        QueryExecutionEffectClosuresV1,
+        query_execution_effect_closures,
     )
 
     # A later claim replaces the task-row session, not the effects of earlier
@@ -1542,10 +1542,7 @@ def _terminal_execution_effect_observations(workspace: Path, facts: list[dict[st
             attempt.role_id, attempt.worker_id, attempt.run_id,
         )
         attempts[key] = attempt
-    return tuple(
-        query_execution_effect_closure(QueryExecutionEffectClosureV1(str(workspace), attempt))
-        for attempt in attempts.values()
-    )
+    return query_execution_effect_closures(QueryExecutionEffectClosuresV1(str(workspace), tuple(attempts.values())))
 
 
 def read_run_ledger_projection_barrier(

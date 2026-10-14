@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 from polaris.cells.director.runtime.public import hash_directed_effect_arguments
-from polaris.cells.events.fact_stream.public import FactStreamError, QueryFactEventsV1, query_fact_events
+from polaris.cells.events.fact_stream.public import (
+    FactPayloadReferenceV1,
+    FactStreamError,
+    QueryFactEventsV1,
+    QueryPayloadFactEventsV1,
+    QuerySegmentedFactLedgerHeadV1,
+    query_fact_events,
+    query_payload_fact_events,
+    query_payload_fact_ledger_presence,
+)
 from polaris.cells.runtime.task_runtime.internal.directed_effect_operation import (
     DirectedEffectOperationRepository,
     DirectedEffectSettlementPreBarrierVerdictV1,
@@ -29,6 +38,7 @@ from polaris.cells.runtime.task_runtime.public.execution_effect_closure import (
     ExecutionEffectClosureObservationV1,
     ExecutionEffectCommitObservationV1,
     ExecutionEffectTerminalFailureObservationV1,
+    QueryExecutionEffectClosuresV1,
     QueryExecutionEffectClosureV1,
 )
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
@@ -36,6 +46,14 @@ from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 
 def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> ExecutionEffectClosureObservationV1:
+    return _observe_execution_effect_closure(query)
+
+
+def _observe_execution_effect_closure(
+    query: QueryExecutionEffectClosureV1,
+    *,
+    owner_history: tuple[Mapping[str, Any], ...] | None = None,
+) -> ExecutionEffectClosureObservationV1:
     if not isinstance(query, QueryExecutionEffectClosureV1):
         raise TypeError("query must be QueryExecutionEffectClosureV1")
     attempt = query.execution_attempt
@@ -61,7 +79,7 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
         identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(attempt)
         if before is not None and not isinstance(current_session, dict):
             return refused("session_identity_mismatch")
-        owner_events = _read_owner_events(query.workspace)
+        owner_events = _read_owner_events(query.workspace) if owner_history is None else owner_history
         current_matches = isinstance(current_session, dict) and _session_matches_identity(current_session, identity)
         if current_matches and isinstance(current_session, dict) and not _terminal(current_session):
             return refused("session_not_terminal", active=True)
@@ -149,7 +167,11 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
                     if session.get("status") != "failed":
                         return refused("negative_effect_requires_failed_owner")
                     if role_owner_events is None:
-                        role_owner_events = _read_owner_events(query.workspace, stream="roles.kernel.turn_outcomes")
+                        role_owner_events = _read_role_owner_events(
+                            query.workspace,
+                            attempt,
+                            turn_ids=frozenset(item.correlation.turn_id for item in registry.bindings_by_id.values()),
+                        )
                         parent_owner_events = _read_owner_events(query.workspace, stream=registry.stream_token)
                     member = next(m for m in inventory.members if m.operation_id == aggregate.operation.operation_id)
                     assert parent_owner_events is not None
@@ -161,7 +183,7 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
                         reduced,
                         registry,
                         owner_terminal,
-                        role_owner_events,
+                        role_owner_events.events,
                         parent_owner_events,
                         repository,
                     )
@@ -200,7 +222,7 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
         if (
             after != before
             or repository._load_registry(query.workspace, identity) != registry
-            or _read_owner_events(query.workspace) != owner_events
+            or (owner_history is None and _read_owner_events(query.workspace) != owner_events)
         ):
             return refused("closure_observation_changed")
         if any(
@@ -208,8 +230,15 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
             for token, read in stream_reads
         ):
             return refused("closure_observation_changed")
+        if role_owner_events is not None:
+            assert not isinstance(registry, DirectedEffectOperationResultV1)
         if role_owner_events is not None and (
-            _read_owner_events(query.workspace, stream="roles.kernel.turn_outcomes") != role_owner_events
+            _read_role_owner_events(
+                query.workspace,
+                attempt,
+                turn_ids=frozenset(item.correlation.turn_id for item in registry.bindings_by_id.values()),
+            )
+            != role_owner_events
             or _read_owner_events(query.workspace, stream=registry.stream_token) != parent_owner_events
         ):
             return refused("closure_observation_changed")
@@ -235,7 +264,14 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
             hashlib.sha256(basis).hexdigest(),
             terminal_failures=tuple(terminal_failures),
         )
-    except FactStreamError as exc:
+    except (OSError, RuntimeError, TypeError, ValueError, KeyError, FactStreamError) as exc:
+        return _history_error_observation(query, exc)
+
+
+def _history_error_observation(
+    query: QueryExecutionEffectClosureV1, exc: Exception
+) -> ExecutionEffectClosureObservationV1:
+    if isinstance(exc, FactStreamError):
         # Keep canonical failure attribution while exposing only bounded public
         # location fields. Provider text, arbitrary details and tokens stay out.
         diagnostics: list[str] = []
@@ -261,9 +297,54 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
             and all(char.isascii() and (char.isalnum() or char in "_.-") for char in exc.code)
             else "fact_stream_error"
         )
-        return refused(f"closure_observation_unavailable:{code}", evidence_refs=tuple(diagnostics))
-    except (OSError, RuntimeError, TypeError, ValueError, KeyError) as exc:
-        return refused(f"closure_observation_unavailable:{type(exc).__name__}")
+        return ExecutionEffectClosureObservationV1(
+            "unknown",
+            f"closure_observation_unavailable:{code}",
+            query.execution_attempt,
+            evidence_refs=tuple(diagnostics),
+        )
+
+    return ExecutionEffectClosureObservationV1(
+        "unknown", f"closure_observation_unavailable:{type(exc).__name__}", query.execution_attempt
+    )
+
+
+def observe_execution_effect_closures(
+    query: QueryExecutionEffectClosuresV1,
+) -> tuple[ExecutionEffectClosureObservationV1, ...]:
+    if not isinstance(query, QueryExecutionEffectClosuresV1):
+        raise TypeError("query must be QueryExecutionEffectClosuresV1")
+    queries = tuple(QueryExecutionEffectClosureV1(query.workspace, attempt) for attempt in query.execution_attempts)
+    if not queries:
+        return ()
+    eligible = tuple(
+        Path(item.workspace).resolve() == Path(item.execution_attempt.workspace).resolve() for item in queries
+    )
+    if not any(eligible):
+        return tuple(_observe_execution_effect_closure(item) for item in queries)
+    try:
+        before = _read_owner_events(query.workspace)
+    except (OSError, RuntimeError, TypeError, ValueError, KeyError, FactStreamError) as exc:
+        return tuple(
+            _history_error_observation(item, exc) if same_workspace else _observe_execution_effect_closure(item)
+            for item, same_workspace in zip(queries, eligible, strict=True)
+        )
+    observations = tuple(_observe_execution_effect_closure(item, owner_history=before) for item in queries)
+    try:
+        after = _read_owner_events(query.workspace)
+    except (OSError, RuntimeError, TypeError, ValueError, KeyError, FactStreamError) as exc:
+        return tuple(
+            _history_error_observation(item, exc) if same_workspace else observation
+            for item, observation, same_workspace in zip(queries, observations, eligible, strict=True)
+        )
+    if after != before:
+        return tuple(
+            ExecutionEffectClosureObservationV1("unknown", "closure_observation_changed", item.execution_attempt)
+            if same_workspace
+            else observation
+            for item, observation, same_workspace in zip(queries, observations, eligible, strict=True)
+        )
+    return observations
 
 
 def _read_owner_events(workspace: str, *, stream: str = "task_runtime.execution") -> tuple[Mapping[str, Any], ...]:
@@ -293,6 +374,121 @@ def _read_owner_events(workspace: str, *, stream: str = "task_runtime.execution"
         if page.next_offset <= offset:
             raise ValueError("owner fact history pagination did not advance")
         offset = page.next_offset
+
+
+_V3_ROLE_STREAM = "roles.kernel.turn_outcomes.v3"
+_V3_ROLE_SCHEMA = "roles.kernel.turn_outcome_fact.v3"
+
+
+@dataclass(frozen=True)
+class _RoleOwnerHistory:
+    events: tuple[Mapping[str, Any], ...]
+    # Query snapshot only; never persisted or accepted as a new fact authority.
+    v3_head: Any = None
+
+
+def _read_role_owner_events(
+    workspace: str, attempt: TaskRuntimeExecutionAttemptIdentityV1, *, turn_ids: frozenset[str]
+) -> _RoleOwnerHistory:
+    """Observe both immutable protocols without remapping V3 hashes or seqs."""
+    legacy = _read_owner_events(workspace, stream="roles.kernel.turn_outcomes")
+    if not query_payload_fact_ledger_presence(
+        QuerySegmentedFactLedgerHeadV1(workspace=workspace, logical_stream=_V3_ROLE_STREAM)
+    ):
+        return _RoleOwnerHistory(legacy)
+    events: list[Mapping[str, Any]] = []
+    observed_count = 0
+    storage = resolve_workspace_runtime_identity(workspace)
+    continuation = None
+    captured_head = None
+    seen: set[str] = set()
+    while True:
+        page = query_payload_fact_events(
+            QueryPayloadFactEventsV1(
+                workspace=workspace, logical_stream=_V3_ROLE_STREAM, limit=32, continuation=continuation
+            )
+        )
+        if captured_head is None:
+            captured_head = page.captured_head
+        if page.captured_head != captured_head:
+            raise ValueError("role payload fact history changed during observation")
+        # Expand at most one bounded page, retain only this exact owner. The
+        # captured head still detects concurrent changes anywhere in history.
+        for event in page.events:
+            observed_count += 1
+            if event.get("global_seq") != observed_count:
+                raise ValueError("role payload fact history is incomplete")
+            payload = _validated_v3_role_payload(event, storage)
+            session_binding = payload.get("session_binding")
+            if (
+                payload.get("run_id") == attempt.run_id
+                and payload.get("task_id") == attempt.external_task_id
+                and isinstance(session_binding, Mapping)
+                and session_binding.get("session_id") == attempt.session_id
+                and payload.get("turn_id") in turn_ids
+            ):
+                events.append(event)
+        if page.continuation is None:
+            if observed_count != captured_head.total_count:
+                raise ValueError("role payload fact history is incomplete")
+            return _RoleOwnerHistory((*legacy, *events), captured_head)
+        if page.continuation in seen:
+            raise ValueError("role payload fact pagination did not advance")
+        seen.add(page.continuation)
+        continuation = page.continuation
+
+
+def _validated_v3_role_payload(event: Mapping[str, Any], storage: Any) -> Mapping[str, Any]:
+    """Bind expanded owner data to the actual small sealed storage record."""
+    raw = event.get("storage_record")
+    payload = event.get("expanded_payload")
+    fields = {
+        "schema",
+        "event_id",
+        "logical_stream",
+        "global_seq",
+        "segment_index",
+        "local_seq",
+        "event_type",
+        "source",
+        "payload",
+        "idempotency_key",
+        "occurred_at",
+        "previous_event_hash",
+        "event_hash",
+    }
+    if (
+        type(raw) is not dict
+        or set(raw) != fields
+        or raw.get("schema") != "kernelone.segmented_event.v1"
+        or raw.get("logical_stream") != _V3_ROLE_STREAM
+        or any(raw[key] != event.get(key) for key in fields - {"schema"})
+        or type(payload) is not dict
+        or payload.get("schema_version") != _V3_ROLE_SCHEMA
+    ):
+        raise ValueError("role payload storage record or expanded schema mismatch")
+    body = {key: value for key, value in raw.items() if key != "event_hash"}
+    if _canonical_sha256(body) != raw["event_hash"]:
+        raise ValueError("role payload raw storage hash mismatch")
+    reference_payload = raw["payload"]
+    if (
+        type(reference_payload) is not dict
+        or set(reference_payload) != {"schema_version", "payload_ref"}
+        or reference_payload.get("schema_version") != "kernelone.payload_fact.v1"
+    ):
+        raise ValueError("role payload reference shape mismatch")
+    ref = FactPayloadReferenceV1.from_record(reference_payload["payload_ref"])
+    data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode(
+        "utf-8"
+    )
+    if (
+        ref.storage_identity_token != storage.token
+        or ref.payload_schema != _V3_ROLE_SCHEMA
+        or ref.byte_size != len(data)
+        or ref.sha256 != hashlib.sha256(data).hexdigest()
+    ):
+        raise ValueError("role expanded payload integrity or workspace mismatch")
+    return payload
 
 
 def _session_matches_identity(session: Mapping[str, Any], identity: DirectedEffectParentRegistryIdentityV1) -> bool:
@@ -580,12 +776,13 @@ def _observe_terminal_failure(
     storage = resolve_workspace_runtime_identity(attempt.workspace)
     matches = []
     for event in role_events:
-        payload = event.get("payload", {})
+        is_v3 = event.get("logical_stream") == _V3_ROLE_STREAM
+        payload = _validated_v3_role_payload(event, storage) if is_v3 else event.get("payload", {})
         if not isinstance(payload, Mapping):
             continue
         outcome = payload.get("outcome")
         metadata = event.get("metadata")
-        if not isinstance(outcome, Mapping) or not isinstance(metadata, Mapping):
+        if not isinstance(outcome, Mapping) or (not is_v3 and not isinstance(metadata, Mapping)):
             continue
         execution = outcome.get("execution")
         if not isinstance(execution, Mapping):
@@ -601,40 +798,48 @@ def _observe_terminal_failure(
             "turn_id": binding.correlation.turn_id,
             "transition_id": transition,
         }
+        expected_key = ":".join(
+            (
+                _V3_ROLE_STREAM if is_v3 else "roles.kernel.turn_outcomes",
+                storage.token,
+                attempt.run_id,
+                attempt.external_task_id,
+                binding.correlation.turn_id,
+                str(transition),
+            )
+        )
+        if is_v3:
+            if event.get("idempotency_key") != expected_key:
+                continue
+        else:
+            assert isinstance(metadata, Mapping)
+            if (
+                metadata.get("provenance") != provenance
+                or metadata.get("storage_identity") != storage.to_record()
+                or metadata.get("run_id") != attempt.run_id
+                or metadata.get("task_id") != attempt.external_task_id
+                or event.get("aggregate_id") != attempt.external_task_id
+                or event.get("correlation_id") != binding.correlation.turn_id
+                or metadata.get("idempotency_key") != expected_key
+            ):
+                continue
         if (
             event.get("source") != "roles.kernel.transaction"
             or event.get("event_type") != "turn_outcome_committed"
-            or payload.get("schema_version") != "roles.kernel.turn_outcome_fact.v2"
+            or payload.get("schema_version") != (_V3_ROLE_SCHEMA if is_v3 else "roles.kernel.turn_outcome_fact.v2")
             or outcome.get("schema_version") != "roles.kernel.turn_outcome.v1"
             or not isinstance(transition, str)
             or not transition
             or payload.get("provenance") != provenance
-            or metadata.get("provenance") != provenance
             or payload.get("storage_identity") != storage.to_record()
-            or metadata.get("storage_identity") != storage.to_record()
             or not isinstance(payload.get("session_binding"), Mapping)
             or payload["session_binding"].get("session_id") != attempt.session_id
             or payload.get("run_id") != attempt.run_id
-            or metadata.get("run_id") != attempt.run_id
             or payload.get("task_id") != attempt.external_task_id
-            or metadata.get("task_id") != attempt.external_task_id
-            or event.get("aggregate_id") != attempt.external_task_id
-            or event.get("correlation_id") != binding.correlation.turn_id
             or payload.get("turn_id") != binding.correlation.turn_id
             or outcome.get("turn_id") != binding.correlation.turn_id
             or outcome.get("run_id") != attempt.run_id
             or _canonical_sha256(outcome) != payload.get("outcome_hash")
-            or metadata.get("idempotency_key")
-            != ":".join(
-                (
-                    "roles.kernel.turn_outcomes",
-                    storage.token,
-                    attempt.run_id,
-                    attempt.external_task_id,
-                    binding.correlation.turn_id,
-                    transition,
-                )
-            )
             or batch.get("turn_id") != binding.correlation.turn_id
             or execution.get("batch_id") != batch.get("batch_id")
             or batch.get("pending_async_count") != 0
@@ -753,7 +958,7 @@ def _observe_terminal_failure(
                 owner_result_hash=_canonical_sha256({k: v for k, v in row.items() if k != "execution_time_ms"}),
                 owner_raw_result_hash=_canonical_sha256({k: v for k, v in raw_row.items() if k != "execution_time_ms"}),
                 owner_turn_event_id=str(event["event_id"]),
-                owner_turn_event_seq=int(event["seq"]),
+                owner_turn_event_seq=int(event["global_seq"] if is_v3 else event["seq"]),
                 parent_close_event_id=str(parent["event_id"]),
                 parent_close_version=int(close["version"]),
                 owner_terminal_event_id=str(owner_terminal["event_id"]),

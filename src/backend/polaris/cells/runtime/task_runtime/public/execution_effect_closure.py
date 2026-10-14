@@ -21,6 +21,22 @@ class QueryExecutionEffectClosureV1:
 
 
 @dataclass(frozen=True, slots=True)
+class QueryExecutionEffectClosuresV1:
+    """Identity-only batch query; owner snapshots cannot come from callers."""
+
+    workspace: str
+    execution_attempts: tuple[TaskRuntimeExecutionAttemptIdentityV1, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.workspace, str) or not self.workspace.strip():
+            raise ValueError("workspace must be non-empty")
+        if type(self.execution_attempts) is not tuple or any(
+            type(attempt) is not TaskRuntimeExecutionAttemptIdentityV1 for attempt in self.execution_attempts
+        ):
+            raise TypeError("execution_attempts must be a tuple of TaskRuntimeExecutionAttemptIdentityV1")
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionEffectCommitObservationV1:
     operation_id: str
     batch_id: str
@@ -89,3 +105,17 @@ def query_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Exec
     from polaris.cells.runtime.task_runtime.internal.execution_effect_closure import observe_execution_effect_closure
 
     return observe_execution_effect_closure(query)
+
+
+def query_execution_effect_closures(
+    query: QueryExecutionEffectClosuresV1,
+) -> tuple[ExecutionEffectClosureObservationV1, ...]:
+    """Observe each requested owner against one strict before/after history.
+
+    Results retain input order. Session, registry, operation and negative-effect
+    checks remain independent. Unknown or changed evidence grants no closure.
+    This query has no execution authority, snapshot input or cross-query cache.
+    """
+    from polaris.cells.runtime.task_runtime.internal.execution_effect_closure import observe_execution_effect_closures
+
+    return observe_execution_effect_closures(query)

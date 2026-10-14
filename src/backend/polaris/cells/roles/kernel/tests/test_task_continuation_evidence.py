@@ -117,3 +117,43 @@ def test_required_artifacts_keep_legacy_absence_and_explicit_empty_distinct(requ
         director_task_boundary_target_files({"target_files": ["answer.py"], "required_write_targets": required})
         == expected
     )
+
+
+def test_continuation_policy_keeps_actual_v3_receipt_stream_without_granting_tools() -> None:
+    from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import prepare_role_session_continuation_policy
+    from polaris.cells.roles.kernel.internal.transaction.continuation_evidence import (
+        CONTINUATION_EVIDENCE_KEY,
+        load_committed_continuation_rows,
+    )
+    from polaris.cells.roles.profile.public.service import RoleTurnResult
+
+    receipt = {
+        "validation_passed": True,
+        "fact_stream": "roles.kernel.turn_outcomes.v3",
+        "turn_id": "turn",
+        "fact_event_id": "event",
+        "fact_event_seq": 1,
+        "outcome_hash": "a" * 64,
+    }
+    previous = RoleTurnResult(content="", metadata={"turn_commit_receipt": receipt})
+    context, metadata = prepare_role_session_continuation_policy(
+        {},
+        {"role_session_id": "session"},
+        role="director",
+        host_kind="director_adapter",
+        previous_result=previous,
+        prior_results=(previous,),
+    )
+    evidence = metadata[CONTINUATION_EVIDENCE_KEY]
+    assert evidence.streams == ("roles.kernel.turn_outcomes.v3",)
+    assert context == {}
+    # External JSON carrying a schema-looking locator still has no owner mint.
+    with pytest.raises(RuntimeError, match="not_kernel_owned"):
+        load_committed_continuation_rows(
+            {"references": [receipt]},
+            workspace="workspace",
+            run_id="run",
+            task_id="task",
+            session_id="session",
+            source_targets=[],
+        )

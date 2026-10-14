@@ -1,13 +1,12 @@
 """A complete pre-crash file must be confirmed durable without another append."""
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
 import pytest
-
-from polaris.kernelone.fs import LockedRegularFileError, LockedRegularFileSetV1
-from polaris.kernelone.fs import locked_regular_file as module
+from polaris.kernelone.fs import LockedRegularFileError, LockedRegularFileSetV1, locked_regular_file as module
 
 _PATH = "runtime/events/.payloads/ab/blob.json"
 
@@ -15,9 +14,22 @@ _PATH = "runtime/events/.payloads/ab/blob.json"
 def _acquire(tmp_path: Path, *, read_only: bool = False):
     root = tmp_path / "runtime"
     authority = tmp_path / "authority"
-    LockedRegularFileSetV1.provision_authority(runtime_root=str(root), storage_identity_token="test-storage", platform_lock_root=str(authority))
-    LockedRegularFileSetV1.enroll_stream_lock_keys(runtime_root=str(root), storage_identity_token="test-storage", logical_paths=(_PATH,), platform_lock_root=str(authority))
-    return LockedRegularFileSetV1.acquire(runtime_root=str(root), storage_identity_token="test-storage", logical_paths=(_PATH,), platform_lock_root=str(authority), read_only=read_only)
+    LockedRegularFileSetV1.provision_authority(
+        runtime_root=str(root), storage_identity_token="test-storage", platform_lock_root=str(authority)
+    )
+    LockedRegularFileSetV1.enroll_stream_lock_keys(
+        runtime_root=str(root),
+        storage_identity_token="test-storage",
+        logical_paths=(_PATH,),
+        platform_lock_root=str(authority),
+    )
+    return LockedRegularFileSetV1.acquire(
+        runtime_root=str(root),
+        storage_identity_token="test-storage",
+        logical_paths=(_PATH,),
+        platform_lock_root=str(authority),
+        read_only=read_only,
+    )
 
 
 def test_existing_complete_bytes_are_fsynced_without_appending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

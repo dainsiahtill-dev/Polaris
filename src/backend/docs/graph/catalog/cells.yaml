@@ -2414,6 +2414,7 @@ cells:
       - director.runtime
       - events.fact_stream
       - director.tasking
+      - qa.audit_verdict
     subgraphs:
       - storage_archive_pipeline
       - execution_governance_pipeline
@@ -3634,6 +3635,15 @@ cells:
         - read_guarded_fact_snapshot
         - sanitize_headers
         - set_debug_tracing_enabled
+        - AppendPayloadFactEventCommandV1
+        - FactPayloadReferenceV1
+        - QueryPayloadFactEventsV1
+        - StoreFactPayloadCommandV1
+        - append_payload_fact_event
+        - fact_payload_streams
+        - query_payload_fact_events
+        - query_payload_fact_ledger_presence
+        - store_fact_payload
     public_contracts:
       modules:
         - polaris.cells.events.fact_stream.public.contracts
@@ -3645,12 +3655,15 @@ cells:
         - EnrollFactStreamStreamsCommandV1
         - EnsureSegmentedFactLedgerCommandV1
         - ProvisionFactStreamLockAuthorityCommandV1
+        - AppendPayloadFactEventCommandV1
+        - StoreFactPayloadCommandV1
       queries:
         - QueryFactEventsV1
         - QueryFactStreamHeadV1
         - QuerySegmentedFactEventsV1
         - QuerySegmentedFactLedgerHeadV1
         - ReadGuardedFactSnapshotCommandV1
+        - QueryPayloadFactEventsV1
       events:
         - FactEventAppendedV1
         - GuardedFactEventV1
@@ -3666,6 +3679,7 @@ cells:
         - SegmentedFactLedgerHeadV1
         - SegmentedFactLedgerReadyV1
         - SegmentedFactQueryResultV1
+        - FactPayloadReferenceV1
       errors:
         - FactStreamError
     depends_on: []
@@ -3684,6 +3698,7 @@ cells:
         - polaris/cells/events/fact_stream/public/tests/test_public_service.py
         - polaris/cells/events/fact_stream/public/tests/test_segmented_contracts.py
         - polaris/cells/events/fact_stream/public/tests/test_workspace_bootstrap.py
+        - polaris/cells/events/fact_stream/public/tests/test_payload_fact_history.py
       gaps:
         - DEO-1A guarded-append closure requires separate lifecycle, race, and startup evidence.
 

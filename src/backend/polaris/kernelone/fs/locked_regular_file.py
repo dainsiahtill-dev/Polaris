@@ -957,7 +957,9 @@ class StreamLeaseV1:
                 cause = _fail("stream_identity_drift", "durability directory traversal failed", errno=exc.errno)
                 if durability.boundary_crossed:
                     raise _post_fsync_reconciliation(
-                        "existing stream durability requires reconciliation", cause, **durability.reconciliation_details()
+                        "existing stream durability requires reconciliation",
+                        cause,
+                        **durability.reconciliation_details(),
                     ) from exc
                 raise cause from exc
             finally:

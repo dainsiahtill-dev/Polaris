@@ -11,11 +11,13 @@
     "exports": [
       "AppendFactEventCommandV1",
       "AppendIfGuardedSnapshotCommandV1",
+      "AppendPayloadFactEventCommandV1",
       "AppendSegmentedFactEventCommandV1",
       "BootstrapFactStreamWorkspaceCommandV1",
       "EnrollFactStreamStreamsCommandV1",
       "EnsureSegmentedFactLedgerCommandV1",
       "FactEventAppendedV1",
+      "FactPayloadReferenceV1",
       "FactStreamError",
       "FactStreamHeadV1",
       "FactStreamLockIdentityV1",
@@ -31,6 +33,7 @@
       "ProvisionFactStreamLockAuthorityCommandV1",
       "QueryFactEventsV1",
       "QueryFactStreamHeadV1",
+      "QueryPayloadFactEventsV1",
       "QuerySegmentedFactEventsV1",
       "QuerySegmentedFactLedgerHeadV1",
       "ReadGuardedFactSnapshotCommandV1",
@@ -38,8 +41,10 @@
       "SegmentedFactLedgerHeadV1",
       "SegmentedFactLedgerReadyV1",
       "SegmentedFactQueryResultV1",
+      "StoreFactPayloadCommandV1",
       "append_fact_event",
       "append_if_guarded_snapshot",
+      "append_payload_fact_event",
       "append_segmented_fact_event",
       "bootstrap_fact_stream_workspace",
       "configure_debug_tracing",
@@ -53,26 +58,32 @@
       "provision_fact_stream_lock_authority",
       "query_fact_events",
       "query_fact_stream_head",
+      "query_payload_fact_events",
+      "query_payload_fact_ledger_presence",
       "query_segmented_fact_events",
       "query_segmented_fact_ledger_head",
       "read_guarded_fact_snapshot",
       "sanitize_headers",
-      "set_debug_tracing_enabled"
+      "set_debug_tracing_enabled",
+      "store_fact_payload"
     ]
   },
   "public_contracts": {
     "commands": [
       "AppendFactEventCommandV1",
       "AppendIfGuardedSnapshotCommandV1",
+      "AppendPayloadFactEventCommandV1",
       "AppendSegmentedFactEventCommandV1",
       "BootstrapFactStreamWorkspaceCommandV1",
       "EnrollFactStreamStreamsCommandV1",
       "EnsureSegmentedFactLedgerCommandV1",
-      "ProvisionFactStreamLockAuthorityCommandV1"
+      "ProvisionFactStreamLockAuthorityCommandV1",
+      "StoreFactPayloadCommandV1"
     ],
     "queries": [
       "QueryFactEventsV1",
       "QueryFactStreamHeadV1",
+      "QueryPayloadFactEventsV1",
       "QuerySegmentedFactEventsV1",
       "QuerySegmentedFactLedgerHeadV1",
       "ReadGuardedFactSnapshotCommandV1"
@@ -83,6 +94,7 @@
       "SegmentedFactEventAppendedV1"
     ],
     "results": [
+      "FactPayloadReferenceV1",
       "FactStreamHeadV1",
       "FactStreamMaintenanceReceiptV1",
       "FactStreamProvenanceV1",
@@ -118,6 +130,7 @@
   ],
   "test_targets": [
     "polaris/cells/events/fact_stream/public/tests/test_guarded_fact_append.py",
+    "polaris/cells/events/fact_stream/public/tests/test_payload_fact_history.py",
     "polaris/cells/events/fact_stream/public/tests/test_public_contracts.py",
     "polaris/cells/events/fact_stream/public/tests/test_public_service.py",
     "polaris/cells/events/fact_stream/public/tests/test_segmented_contracts.py",

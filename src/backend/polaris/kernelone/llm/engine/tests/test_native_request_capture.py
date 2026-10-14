@@ -422,3 +422,158 @@ async def test_ordinary_stream_preserves_native_capture_and_cleanup(
         server.shutdown()
         server.server_close()
         worker.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_real_invoke_cancel_during_preparation_never_sends(tmp_path, monkeypatch):
+    observed = []
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            observed.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            payload = json.dumps({"content": [{"type": "text", "text": "accepted"}]}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    provider = AnthropicProvider()
+
+    class Manager:
+        def get_provider_instance(self, kind):
+            return provider
+
+    monkeypatch.setattr("polaris.kernelone.llm.engine.executor.get_provider_manager", Manager)
+    real = AIExecutor._store_context_messages_sync
+
+    def persist(*args, **kw):
+        status = kw.get("provider_request", {}).get("physical_attempt", {}).get("status")
+        if status == "prepared":
+            entered.set()
+            assert release.wait(5)
+        result = real(*args, **kw)
+        if status in ("completed", "failed", "cancelled"):
+            finished.set()
+        return result
+
+    monkeypatch.setattr(AIExecutor, "_store_context_messages_sync", staticmethod(persist))
+    executor = AIExecutor(workspace=str(tmp_path), model_catalog=_Catalog(), token_budget=_Budget())
+    monkeypatch.setattr(
+        executor,
+        "_get_provider_config",
+        lambda _: {
+            "type": "anthropic_compat",
+            "base_url": f"http://127.0.0.1:{server.server_port}",
+            "api_key": "private-fixture",
+            "timeout": 5,
+            "retries": 0,
+        },
+    )
+    request = AIRequest(
+        task_type=TaskType.GENERATION,
+        role="director",
+        provider_id="local-native",
+        model="local-model",
+        input="Inspect.",
+        options={"max_tokens": 128},
+        context={
+            "call_id": "cancel-invoke",
+            "run_id": "cancel-run",
+            "chat_messages": [{"role": "user", "content": "Inspect."}],
+        },
+    )
+    task = asyncio.create_task(executor.invoke(request))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        assert await asyncio.to_thread(finished.wait, 5)
+        assert observed == [], "Engine cancelled during native preflight but worker later opened real HTTP"
+        assert request.context.get("physical_request_capture", {}).get("status") == "cancelled"
+        assert request.context["physical_request_capture"]["stop_reason"] == "caller_cancelled"
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("changed", ["tools", "tool_choice", "response_format"])
+def test_matching_messages_cannot_retain_changed_native_surface_coverage(tmp_path: Path, changed: str) -> None:
+    port, request = _capture_port(tmp_path)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+            },
+        }
+    ]
+    port._provider_request.update(tools=tools, tool_choice="required", response_format={"type": "json_object"})
+    port._provider_request["final_request_context_audit"] = {
+        "coverage": {"required_tool_schema": True},
+        "final_request_evidence_coverage": {
+            "pass": True,
+            "required_tools": ["read_file"],
+            "available_tools": ["read_file"],
+            "missing_required_tools": [],
+        },
+    }
+    wire = _wire()
+    wire["body"].update(tools=tools, tool_choice="required", response_format={"type": "json_object"})
+    wire["body"][changed] = [] if changed == "tools" else None
+    port.dispatch_sync(wire_request=wire, send=lambda _: "ok")
+    audit = request.context["final_request_context_audit"]
+    assert not audit["final_request_evidence_coverage"]["pass"]
+    if changed == "tools":
+        assert audit["tool_schema_count"] == 0
+        assert audit["final_request_evidence_coverage"]["available_tools"] == []
+        assert audit["final_request_evidence_coverage"]["missing_required_tools"] == ["read_file"]
+
+
+@pytest.mark.parametrize("protocol", ["openai", "anthropic"])
+def test_matching_native_tool_surface_retains_verified_coverage(tmp_path: Path, protocol: str) -> None:
+    from dataclasses import replace
+
+    from polaris.kernelone.llm.engine.provider_native_request import convert_tools_to_anthropic
+
+    port, request = _capture_port(tmp_path)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+            },
+        }
+    ]
+    port._prepared_surface = {"tools": tools, "tool_choice": "required", "response_format": None}
+    port._provider_request["final_request_context_audit"] = {
+        "coverage": {"required_tool_schema": True},
+        "final_request_evidence_coverage": {"pass": True, "required_tools": ["read_file"]},
+    }
+    wire = _wire()
+    if protocol == "anthropic":
+        wire["body"].update(system=None, tools=convert_tools_to_anthropic(tools), tool_choice={"type": "any"})
+    else:
+        port._model_spec = replace(port._model_spec, provider_type="openai")
+        wire["body"].update(tools=tools, tool_choice="required")
+    port.dispatch_sync(wire_request=wire, send=lambda _: "ok")
+    audit = request.context["final_request_context_audit"]
+    assert audit["native_surface_projection_matched"]
+    assert audit["final_request_evidence_coverage"]["pass"]
+    assert audit["final_request_evidence_coverage"]["available_tools"] == ["read_file"]
+    assert audit["final_request_evidence_coverage"]["missing_required_tools"] == []

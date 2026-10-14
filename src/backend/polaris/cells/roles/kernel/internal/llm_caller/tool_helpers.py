@@ -141,7 +141,7 @@ def prepare_role_session_continuation_policy(
         if all(
             isinstance(receipt, Mapping)
             and receipt.get("validation_passed") is True
-            and receipt.get("fact_stream") == "roles.kernel.turn_outcomes"
+            and receipt.get("fact_stream") in {"roles.kernel.turn_outcomes", "roles.kernel.turn_outcomes.v3"}
             for receipt in receipts
         ):
             metadata[CONTINUATION_EVIDENCE_KEY] = ContinuationReceiptReferences.from_receipts(

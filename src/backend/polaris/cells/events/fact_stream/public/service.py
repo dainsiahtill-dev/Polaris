@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,7 @@ from polaris.kernelone.events.sourcing import (
     append_if_guarded_snapshot as _append_if_guarded_snapshot,
     read_guarded_fact_snapshot as _read_guarded_fact_snapshot,
 )
+from polaris.kernelone.events.sourcing.payload_store import DurablePayloadStore, PayloadStoreError
 from polaris.kernelone.fs import (
     GuardedRegularFileSnapshotError,
     LockedRegularFileError,
@@ -36,13 +39,16 @@ from polaris.kernelone.fs import (
 from polaris.kernelone.fs.locked_regular_file import default_platform_lock_root
 from polaris.kernelone.storage import resolve_runtime_path
 
+from .catalog import fact_payload_streams
 from .contracts import (
     AppendFactEventCommandV1,
     AppendIfGuardedSnapshotCommandV1,
+    AppendPayloadFactEventCommandV1,
     AppendSegmentedFactEventCommandV1,
     EnrollFactStreamStreamsCommandV1,
     EnsureSegmentedFactLedgerCommandV1,
     FactEventAppendedV1,
+    FactPayloadReferenceV1,
     FactStreamError,
     FactStreamHeadV1,
     FactStreamLockIdentityV1,
@@ -56,6 +62,7 @@ from .contracts import (
     ProvisionFactStreamLockAuthorityCommandV1,
     QueryFactEventsV1,
     QueryFactStreamHeadV1,
+    QueryPayloadFactEventsV1,
     QuerySegmentedFactEventsV1,
     QuerySegmentedFactLedgerHeadV1,
     ReadGuardedFactSnapshotCommandV1,
@@ -63,6 +70,7 @@ from .contracts import (
     SegmentedFactLedgerHeadV1,
     SegmentedFactLedgerReadyV1,
     SegmentedFactQueryResultV1,
+    StoreFactPayloadCommandV1,
 )
 
 # Authority-stream appends use fsync durability while factory director heartbeats
@@ -492,6 +500,18 @@ def append_segmented_fact_event(
     """Append one strict fsync fact through the segmented authority API."""
 
     _require_segmented_authority_stream(command.logical_stream)
+    if command.logical_stream in fact_payload_streams():
+        try:
+            payload = command.payload
+            if (
+                set(payload) != {"schema_version", "payload_ref"}
+                or payload["schema_version"] != "kernelone.payload_fact.v1"
+            ):
+                raise ValueError("payload fact namespace requires a canonical reference record")
+            ref = FactPayloadReferenceV1.from_record(payload["payload_ref"])
+            DurablePayloadStore(command.workspace).confirm(ref)
+        except (PayloadStoreError, ValueError, TypeError, KeyError) as exc:
+            raise FactStreamError(str(exc), code=str(getattr(exc, "code", "payload_fact_append_failed"))) from exc
     store = _segmented_authority_store(command.workspace, logical_stream=command.logical_stream)
     try:
         event = store.append(
@@ -586,7 +606,9 @@ def _project_segmented_head(workspace: str, head: SegmentedLedgerHeadV1) -> Segm
 
 def _is_segmented_authority_stream(stream: str) -> bool:
     token = str(stream or "").strip()
-    return any(token.startswith(prefix) and len(token) > len(prefix) for prefix in _SEGMENTED_AUTHORITY_PREFIXES)
+    return token in fact_payload_streams() or any(
+        token.startswith(prefix) and len(token) > len(prefix) for prefix in _SEGMENTED_AUTHORITY_PREFIXES
+    )
 
 
 def _require_segmented_authority_stream(stream: str) -> None:
@@ -600,7 +622,11 @@ def _require_segmented_authority_stream(stream: str) -> None:
 
 def _reject_ordinary_segmented_stream(stream: str) -> None:
     token = str(stream or "").strip()
-    if any(token.startswith(prefix) for prefix in _SEGMENTED_AUTHORITY_PREFIXES) or ".segmented" in token:
+    if (
+        token in fact_payload_streams()
+        or any(token.startswith(prefix) for prefix in _SEGMENTED_AUTHORITY_PREFIXES)
+        or ".segmented" in token
+    ):
         raise FactStreamError(
             "segmented authority streams require the typed segmented API",
             code="segmented_stream_api_required",
@@ -785,3 +811,98 @@ __all__ = [
     "sanitize_headers",
     "set_debug_tracing_enabled",
 ]
+
+
+# Payload bytes are storage data, not a second terminal outcome authority.
+
+
+def store_fact_payload(command: StoreFactPayloadCommandV1) -> FactPayloadReferenceV1:
+    try:
+        return DurablePayloadStore(command.workspace).prepare(
+            command.payload, payload_schema=command.payload_schema, maintenance_reason=command.maintenance_reason
+        )
+    except (PayloadStoreError, ValueError, TypeError) as exc:
+        raise FactStreamError(str(exc), code=str(getattr(exc, "code", "payload_preparation_failed"))) from exc
+
+
+def append_payload_fact_event(command: AppendPayloadFactEventCommandV1) -> FactEventAppendedV1:
+    if command.logical_stream not in fact_payload_streams():
+        raise FactStreamError("payload fact namespace is not approved", code="payload_fact_namespace_required")
+    try:
+        event = append_segmented_fact_event(
+            AppendSegmentedFactEventCommandV1(
+                workspace=command.workspace,
+                logical_stream=command.logical_stream,
+                event_type=command.event_type,
+                source=command.source,
+                payload={"schema_version": "kernelone.payload_fact.v1", "payload_ref": command.payload_ref.to_record()},
+                idempotency_key=command.idempotency_key,
+                expected_global_seq=command.expected_global_seq,
+                require_idempotency_replay=command.require_idempotency_replay,
+            )
+        )
+    except (PayloadStoreError, ValueError, TypeError) as exc:
+        raise FactStreamError(str(exc), code=str(getattr(exc, "code", "payload_fact_append_failed"))) from exc
+    store = _segmented_authority_store(command.workspace, logical_stream=command.logical_stream, read_only=True)
+    return FactEventAppendedV1(
+        event_id=event.event_id,
+        workspace=event.workspace,
+        stream=event.logical_stream,
+        storage_path=store.segment_logical_path(event.segment_index),
+        appended_at=event.appended_at,
+        appended_seq=event.global_seq,
+    )
+
+
+def query_payload_fact_events(query: QueryPayloadFactEventsV1) -> SegmentedFactQueryResultV1:
+    """Keep the actual small storage record/hash separate from expanded content."""
+    if query.logical_stream not in fact_payload_streams():
+        raise FactStreamError("payload fact namespace is not approved", code="payload_fact_namespace_required")
+    page = query_segmented_fact_events(
+        QuerySegmentedFactEventsV1(
+            workspace=query.workspace,
+            logical_stream=query.logical_stream,
+            limit=query.limit,
+            continuation=query.continuation,
+        )
+    )
+    store = DurablePayloadStore(query.workspace, read_only=True)
+    events = []
+    for event in page.events:
+        try:
+            payload = event["payload"]
+            if (
+                set(payload) != {"schema_version", "payload_ref"}
+                or payload["schema_version"] != "kernelone.payload_fact.v1"
+            ):
+                raise ValueError("small payload-fact record shape is invalid")
+            ref = FactPayloadReferenceV1.from_record(payload["payload_ref"])
+            expanded = store.read(ref)
+            # SegmentedStoredEventV1 is the verified closed record schema. Its
+            # reconstructed wire record must hash to the actual sealed event hash.
+            raw_record = {"schema": "kernelone.segmented_event.v1", **event}
+            body = {key: value for key, value in raw_record.items() if key != "event_hash"}
+            canonical = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            if hashlib.sha256(canonical.encode("utf-8")).hexdigest() != event["event_hash"]:
+                raise ValueError("segmented storage-record projection hash mismatch")
+        except (PayloadStoreError, ValueError, TypeError, KeyError) as exc:
+            raise FactStreamError(str(exc), code=str(getattr(exc, "code", "payload_fact_read_failed"))) from exc
+        events.append({**event, "storage_record": raw_record, "expanded_payload": expanded})
+    return SegmentedFactQueryResultV1(
+        workspace=page.workspace,
+        logical_stream=page.logical_stream,
+        events=tuple(events),
+        captured_head=page.captured_head,
+        continuation=page.continuation,
+    )
+
+
+def query_payload_fact_ledger_presence(query: QuerySegmentedFactLedgerHeadV1) -> bool:
+    """Observe namespace storage presence; this is no integrity or closure proof."""
+    if query.logical_stream not in fact_payload_streams():
+        raise FactStreamError("payload fact namespace is not approved", code="payload_fact_namespace_required")
+    from polaris.kernelone.fs import KernelFileSystem
+    from polaris.kernelone.fs.registry import get_default_adapter
+
+    store = _segmented_authority_store(query.workspace, logical_stream=query.logical_stream, read_only=True)
+    return KernelFileSystem(store.storage_identity.workspace_abs, get_default_adapter()).exists(store.storage_prefix)
