@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 from collections.abc import Mapping
@@ -14,7 +13,6 @@ from . import factory_workspace_quality_impl as quality
 from .factory_stage_executor._helpers import (
     _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS,
     _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS,
-    _WORKSPACE_QUALITY_REPAIR_MIN_LLM_START_BUDGET_SECONDS,
 )
 from .native_validation_session import NativeValidationSession
 
@@ -190,84 +188,99 @@ async def repair_qa_role_findings(
     if not findings:
         return None
     groups = owned_finding_groups(executor, run, findings)
-    commands = executor._workspace_quality_commands(context)
+    commands = executor._workspace_quality_commands(context, run=run)
     if not groups or not commands:
         return None
+    from .factory_materialization_impl import (
+        MaterializationDiagnostics,
+        _continue_materialization_verifier_repair,
+    )
+
     receipt_ids: list[str] = []
     for ordinal, (task_id, target_files) in enumerate(groups.items(), 1):
-        abort = await executor._quality_gate_abort_reason(executor._resolve_abort_checker(context))
-        remaining = executor._factory_deadline_remaining_seconds(context)
-        if abort or (remaining is not None and remaining < _WORKSPACE_QUALITY_REPAIR_MIN_LLM_START_BUDGET_SECONDS):
-            return None
+        owner_executor = ExactQaOwnerExecutor(executor, task_id)
         session = NativeValidationSession.from_factory(executor, run, context, commands=commands)
-        session.before_repair()
-        pending: Mapping[str, Any] | None = None
-        try:
-            repair_context = dict(context)
-            repair_context["_factory_qa_repair_owner_task_id"] = task_id
-            repair_context["factory_workspace_quality_owner_rebind"] = {
-                "required": True,
-                "source": "independent_qa_observation",
-            }
-            effects, summary = await executor._apply_workspace_quality_llm_repairs(
-                run=run,
-                context=repair_context,
-                artifact_quality_errors=list(findings),
-                repair_attempt=int(context.get("_factory_qa_repair_round") or 0) + ordinal,
-                owner_target_files=target_files,
-            )
-            raw_pending = summary.get("_pending_task_runtime_repair_attempt")
-            pending = raw_pending if isinstance(raw_pending, Mapping) else None
-            if pending is None or pending.get("task_id") != task_id or pending.get("mutation_committed") is not True:
-                return None
-            mutations = [item for item in effects if executor._workspace_quality_repair_result_has_mutation(item)]
-            if not mutations:
-                return None
-            # This authenticates the exact CE projection and owner-sealed real
-            # effects before any verifier reads the candidate source.
-            session.candidate(pending=pending, results=mutations)
-            results: list[dict[str, Any]] = []
+        repair_context = dict(context)
+        repair_context["_factory_qa_repair_owner_task_id"] = task_id
+        repair_context["factory_workspace_quality_owner_rebind"] = {
+            "required": True,
+            "source": "independent_qa_observation",
+        }
+
+        async def collect(_session=session, _context=repair_context) -> MaterializationDiagnostics:
+            results = []
             for command in commands:
-                abort = await executor._quality_gate_abort_reason(executor._resolve_abort_checker(context))
-                remaining = executor._factory_deadline_remaining_seconds(context)
+                abort = await executor._quality_gate_abort_reason(executor._resolve_abort_checker(_context))
+                remaining = executor._factory_deadline_remaining_seconds(_context)
                 reserve = _QUALITY_GATE_MIN_QA_START_BUDGET_SECONDS + _QUALITY_GATE_QA_DEADLINE_SAFETY_SECONDS
                 if abort or (remaining is not None and remaining <= reserve):
-                    return None
-                configured = float(context.get("workspace_validation_timeout_seconds") or 120.0)
+                    raise RuntimeError("independent_qa_verification_cancelled_or_deadline")
+                configured = float(_context.get("workspace_validation_timeout_seconds") or 120.0)
                 timeout = min(configured, remaining - reserve) if remaining is not None else configured
-                result = await session.run_command(command, max(1.0, timeout))
-                results.append(result)
-                if result.get("passed") is not True or result.get("exit_code") != 0:
-                    return None
-            settled = await quality._settle_pending_workspace_quality_repair_attempt(
-                executor,
-                pending,
-                accepted=True,
-                reason="independent_qa_owned_repair_physically_reverified",
+                row = await _session.run_command(command, max(1.0, timeout))
+                row["command"] = list(command)
+                results.append(row)
+            failures = [row for row in results if row.get("passed") is not True or row.get("exit_code") != 0]
+            errors = executor._workspace_quality_repair_errors(failures, run=run) if failures else []
+            return MaterializationDiagnostics(
+                errors,
+                verifier_results=results,
+                static_evidence={"scan_mode": "pure_static", "scan_complete": True, "controlled_checks_complete": True},
+                blockers=[
+                    str(row.get("error") or "verification_input_not_qualified")
+                    for row in results
+                    if row.get("verification_contract_blocker") is True
+                ],
             )
-            if not settled or settled.get("settled") is not True or settled.get("outcome") != "completed":
-                return None
-            pending = None
+
+        async def repair(
+            *,
+            errors: list[str],
+            attempt: int,
+            _owner=owner_executor,
+            _context=repair_context,
+            _ordinal=ordinal,
+            _targets=target_files,
+            _task_id=task_id,
+        ) -> Any:
+            effects, summary = await _owner._apply_workspace_quality_llm_repairs(
+                run=run,
+                context=_context,
+                artifact_quality_errors=errors,
+                repair_attempt=int(context.get("_factory_qa_repair_round") or 0) + _ordinal + attempt - 1,
+                owner_target_files=_targets,
+            )
+            pending = summary.get("_pending_task_runtime_repair_attempt")
+            if isinstance(pending, Mapping) and pending.get("task_id") != _task_id:
+                await quality._settle_pending_workspace_quality_repair_attempt(
+                    executor, pending, accepted=False, reason="independent_qa_repair_owner_mismatch"
+                )
+                return [], {"attempted": False, "error_code": "independent_qa_repair_owner_mismatch"}
             receipt_ids.extend(
                 str(item["effect_receipt"].get("receipt_id") or item["effect_receipt"].get("receipt_hash") or "")
-                for item in mutations
+                for item in effects
                 if isinstance(item.get("effect_receipt"), Mapping)
+                and executor._workspace_quality_repair_result_has_mutation(item)
             )
+            return effects, summary
+
+        try:
+            baseline = await collect()
+            if baseline.blockers:
+                return None
+            result = await _continue_materialization_verifier_repair(
+                owner_executor,
+                run=run,
+                context=repair_context,
+                result={"ok": False, "post_commit_diagnostics": list(findings)},
+                sessions=[session],
+                observations=[baseline.to_dict()],
+                collect_diagnostics=collect,
+                repair_candidate=repair,
+            )
+            if result.get("ok") is not True:
+                return None
         finally:
-            if pending is not None:
-                cleanup = asyncio.create_task(
-                    quality._settle_pending_workspace_quality_repair_attempt(
-                        executor,
-                        pending,
-                        accepted=False,
-                        reason="independent_qa_owned_repair_not_accepted",
-                    )
-                )
-                try:
-                    await asyncio.shield(cleanup)
-                except asyncio.CancelledError:
-                    await cleanup
-                    raise
             session.close()
     # Existing full workspace checks own command/entrypoint receipt projection.
     # Their new evidence must pass before a fresh independent QA can run.

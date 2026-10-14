@@ -307,26 +307,47 @@ def _projection(portfolio: Any, contract: Any) -> dict[str, Any]:
     return {**seed, "projection_hash": stable_hash(seed)}
 
 
-async def _real_effect(root: Path, *, attempt: Any = None) -> tuple[Any, list[dict[str, Any]]]:
+async def _real_effect(
+    root: Path,
+    *,
+    attempt: Any = None,
+    tool_name: str = "write_file",
+    target_path: str = "src/a.py",
+    turn_id: str = "turn-input-fixture",
+) -> tuple[Any, list[dict[str, Any]]]:
     """Existing production fixture issues real claim/fence/commit and writes via owner port."""
     if attempt is None:
         attempt = production._setup_attempt(str(root))
-    before = hashlib.sha256((root / "src/a.py").read_bytes()).hexdigest()
+    target = root / target_path
+    before = hashlib.sha256(target.read_bytes()).hexdigest()
+    arguments = (
+        {"content": "after\n", "path": target_path}
+        if tool_name == "write_file"
+        else {
+            "blocks": f"<<<<<<< SEARCH\n{target.read_text(encoding='utf-8')}=======\nafter\n>>>>>>> REPLACE\n",
+            "file": target_path,
+        }
+    )
+    batch_id = f"batch-{turn_id}"
     candidate = production._candidate(
         attempt,
         ordinal=0,
+        normalized_tool_name=tool_name,
+        normalized_arguments=tuple(sorted(arguments.items())),
+        target_path=target_path,
+        allowed_paths=("src/",),
         target_exists=True,
         target_before_content_hash=before,
-        turn_id="turn-input-fixture",
-        batch_id="batch-input-fixture",
+        turn_id=turn_id,
+        batch_id=batch_id,
     )
     policy = production._WorkspaceObservingPolicyPort(root)
     authority = production._authority(attempt)
     lifecycle = production.DirectedEffectLifecycleService(policy_snapshot_port=policy).prepare_batch(
         execution_attempt=attempt,
         execution_attempt_authority=authority,
-        turn_id="turn-input-fixture",
-        batch_id="batch-input-fixture",
+        turn_id=turn_id,
+        batch_id=batch_id,
         candidates=(candidate,),
     )
     assert lifecycle.status == "ready", lifecycle
@@ -356,7 +377,7 @@ async def _real_effect(root: Path, *, attempt: Any = None) -> tuple[Any, list[di
     invocation = production.ToolInvocation(
         call_id=production.ToolCallId(member.tool_call_id),
         tool_name=member.normalized_tool_name,
-        arguments={"content": "after\n", "path": "src/a.py"},
+        arguments=arguments,
     )
     batches = await runtime.execute_batch(
         production.ToolBatch(
@@ -364,19 +385,20 @@ async def _real_effect(root: Path, *, attempt: Any = None) -> tuple[Any, list[di
             invocations=[invocation],
             serial_writes=[invocation],
         ),
-        production.TurnId("turn-input-fixture"),
+        production.TurnId(turn_id),
     )
     assert batches[0].success_count == 1
     return prepared.execution_attempt, list(batches[0].raw_results)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["write_file", "edit_blocks"])
 async def test_current_real_committed_effect_overlays_frozen_baseline_without_receipt_requery(
-    tmp_path: Path, authored: tuple[Any, Any, KernelFileSystem], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, authored: tuple[Any, Any, KernelFileSystem], monkeypatch: pytest.MonkeyPatch, tool_name: str
 ) -> None:
     portfolio, contract, fs = authored
     baseline = _freeze(tmp_path, contract)
-    attempt, rows = await _real_effect(tmp_path)
+    attempt, rows = await _real_effect(tmp_path, tool_name=tool_name)
     module = _module()
     assert callable(getattr(module, "overlay_native_validation_candidate", None)), "verified overlay builder is missing"
     monkeypatch.setattr(
@@ -409,12 +431,13 @@ async def test_current_real_committed_effect_overlays_frozen_baseline_without_re
     "attack", ["legacy", "body", "before", "after", "foreign_attempt", "projection_owner", "projection_hash", "noop"]
 )
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["write_file", "edit_blocks"])
 async def test_overlay_rejects_unknown_or_forged_proof(
-    tmp_path: Path, authored: tuple[Any, Any, KernelFileSystem], attack: str
+    tmp_path: Path, authored: tuple[Any, Any, KernelFileSystem], attack: str, tool_name: str
 ) -> None:
     portfolio, contract, _fs = authored
     baseline = _freeze(tmp_path, contract)
-    attempt, rows = await _real_effect(tmp_path)
+    attempt, rows = await _real_effect(tmp_path, tool_name=tool_name)
     module = _module()
     assert callable(getattr(module, "overlay_native_validation_candidate", None)), "verified overlay builder is missing"
     rows = deepcopy(rows)
@@ -444,12 +467,13 @@ async def test_overlay_rejects_unknown_or_forged_proof(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["write_file", "edit_blocks"])
 async def test_selfconsistent_v2_receipt_does_not_replace_persisted_commit(
-    tmp_path: Path, authored: tuple[Any, Any, KernelFileSystem]
+    tmp_path: Path, authored: tuple[Any, Any, KernelFileSystem], tool_name: str
 ) -> None:
     portfolio, contract, _fs = authored
     baseline = _freeze(tmp_path, contract)
-    attempt, original_rows = await _real_effect(tmp_path)
+    attempt, original_rows = await _real_effect(tmp_path, tool_name=tool_name)
     rows = deepcopy(original_rows)
     receipt = rows[0]["effect_receipt"]
     commit = rows[0]["effect_receipt_commit"]
@@ -473,14 +497,15 @@ async def test_selfconsistent_v2_receipt_does_not_replace_persisted_commit(
 
 @pytest.mark.parametrize("drift", ["before", "after", "sibling", "symlink"])
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["write_file", "edit_blocks"])
 async def test_real_committed_effect_cannot_cover_source_or_candidate_drift(
-    tmp_path: Path, authored: tuple[Any, Any, KernelFileSystem], drift: str
+    tmp_path: Path, authored: tuple[Any, Any, KernelFileSystem], drift: str, tool_name: str
 ) -> None:
     portfolio, contract, fs = authored
     baseline = _freeze(tmp_path, contract)
     if drift == "before":
         fs.workspace_write_text("src/a.py", "interloper\n", encoding="utf-8")
-    attempt, rows = await _real_effect(tmp_path)
+    attempt, rows = await _real_effect(tmp_path, tool_name=tool_name)
     if drift == "after":
         fs.workspace_write_text("src/a.py", "late unreceipted write\n", encoding="utf-8")
     elif drift == "sibling":
@@ -490,6 +515,35 @@ async def test_real_committed_effect_cannot_cover_source_or_candidate_drift(
         (tmp_path / "src/a.py").symlink_to(tmp_path / "src/authored.js")
     module = _module()
     with pytest.raises(module.NativeValidationInputError):
+        module.overlay_native_validation_candidate(
+            baseline,
+            pending={"task_id": "DEO-LIFECYCLE", "task_row_id": attempt.task_id, "execution_attempt": attempt},
+            task_completion_projection=_projection(portfolio, contract),
+            round_repair_results=rows,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["read_file", "execute_command", "unknown_write", "append_to_file"])
+async def test_selfconsistent_non_source_tool_receipt_cannot_overlay_candidate(
+    tmp_path: Path, authored: tuple[Any, Any, KernelFileSystem], tool_name: str
+) -> None:
+    portfolio, contract, _fs = authored
+    module = _module()
+    baseline = _freeze(tmp_path, contract)
+    attempt, rows = await _real_effect(tmp_path, tool_name="edit_blocks")
+    rows = deepcopy(rows)
+    receipt = rows[0]["effect_receipt"]
+    commit = rows[0]["effect_receipt_commit"]
+    receipt["normalized_tool_name"] = tool_name
+    receipt["receipt_hash"] = directed_effect_receipt_payload_hash(receipt)
+    receipt["receipt_id"] = f"director-physical-effect-{receipt['receipt_hash'][:24]}"
+    commit["receipt_hash"] = receipt["receipt_hash"]
+    commit["receipt_ref"] = receipt["receipt_id"]
+    rows[0]["result"]["effect_receipt"] = receipt
+    rows[0]["result"]["effect_receipt_commit"] = commit
+    assert directed_effect_receipt_v2_errors(receipt, commit, prefix="test") == ()
+    with pytest.raises(module.NativeValidationInputError, match="effect_not_source_write"):
         module.overlay_native_validation_candidate(
             baseline,
             pending={"task_id": "DEO-LIFECYCLE", "task_row_id": attempt.task_id, "execution_attempt": attempt},

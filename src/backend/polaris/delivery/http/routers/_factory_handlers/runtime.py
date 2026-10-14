@@ -1003,7 +1003,14 @@ async def _control_factory_run_core(
             raise StructuredHTTPException(status_code=400, code="INVALID_REQUEST", message=str(exc)) from exc
         if recovered.status == ServiceRunStatus.RECOVERING:
             _schedule_factory_run_task(
-                service, recovered.id, _build_retry_start_request(recovered, effective_workspace), state
+                service,
+                recovered.id,
+                _build_retry_start_request(
+                    recovered,
+                    effective_workspace,
+                    qa_semantic_review_required=payload.qa_semantic_review_required,
+                ),
+                state,
             )
         return _map_service_run_to_contract(recovered)
     if payload.action == "retry_phase":
@@ -1014,7 +1021,14 @@ async def _control_factory_run_core(
             raise StructuredHTTPException(status_code=400, code="INVALID_REQUEST", message=str(exc)) from exc
         if recovered.status == ServiceRunStatus.RECOVERING:
             _schedule_factory_run_task(
-                service, recovered.id, _build_retry_start_request(recovered, effective_workspace), state
+                service,
+                recovered.id,
+                _build_retry_start_request(
+                    recovered,
+                    effective_workspace,
+                    qa_semantic_review_required=payload.qa_semantic_review_required,
+                ),
+                state,
             )
         return _map_service_run_to_contract(recovered)
 

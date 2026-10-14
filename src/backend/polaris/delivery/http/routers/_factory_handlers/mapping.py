@@ -276,10 +276,7 @@ def _resolve_retry_stage(run: FactoryRun, target_phase: RunPhase | None) -> str:
     )
     for raw_stage in failed_stage_candidates:
         failed_stage = str(raw_stage or "").strip()
-        if (
-            failed_stage in configured_stages
-            and STAGE_TO_PHASE.get(failed_stage) == target_phase
-        ):
+        if failed_stage in configured_stages and STAGE_TO_PHASE.get(failed_stage) == target_phase:
             return failed_stage
     for candidate in PHASE_TO_RETRY_STAGES.get(target_phase, ()):
         if candidate in configured_stages:
@@ -337,7 +334,12 @@ def _store_start_request_metadata(run: FactoryRun, payload: FactoryStartRequest,
     run.metadata["factory_start_request"] = start_payload
 
 
-def _build_retry_start_request(run: FactoryRun, workspace: str) -> FactoryStartRequest:
+def _build_retry_start_request(
+    run: FactoryRun,
+    workspace: str,
+    *,
+    qa_semantic_review_required: bool | None = None,
+) -> FactoryStartRequest:
     configured_stages = [str(stage).strip() for stage in run.config.stages if str(stage).strip()]
     raw_start_payload = run.metadata.get("factory_start_request")
     start_payload = dict(raw_start_payload) if isinstance(raw_start_payload, dict) else {}
@@ -362,6 +364,8 @@ def _build_retry_start_request(run: FactoryRun, workspace: str) -> FactoryStartR
 
     stored_metadata_raw = start_payload.get("metadata")
     retry_metadata: dict[str, Any] = dict(stored_metadata_raw) if isinstance(stored_metadata_raw, dict) else {}
+    if qa_semantic_review_required is True:
+        retry_metadata["qa_semantic_review_required"] = True
     run_metadata = run.metadata if isinstance(run.metadata, Mapping) else {}
     for key in _FACTORY_RUN_DEADLINE_RETRY_COPY_KEYS:
         if key in run_metadata and run_metadata.get(key) is not None:

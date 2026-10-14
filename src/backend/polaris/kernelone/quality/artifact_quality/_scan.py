@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import stat
@@ -657,6 +658,79 @@ def _source_narration_contamination_error(relative_path: str, text: str) -> str:
     )
 
 
+def _source_map_structure_error(value: Any, *, depth: int = 0) -> str:
+    """Check debug metadata shape without resolving or reading its references."""
+    if depth > 8:
+        return "indexed_map_depth_limit"
+    if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 3:
+        return "invalid_version_or_object"
+    for field in ("file", "sourceRoot"):
+        if field in value and value[field] is not None and not isinstance(value[field], str):
+            return f"invalid_{field}"
+    if "sections" in value:
+        sections = value["sections"]
+        if not isinstance(sections, list):
+            return "invalid_sections"
+        previous = (-1, -1)
+        for section in sections:
+            if not isinstance(section, dict) or not isinstance(section.get("offset"), dict):
+                return "invalid_section_offset"
+            offset = section["offset"]
+            if any(type(offset.get(key)) is not int or offset[key] < 0 for key in ("line", "column")):
+                return "invalid_section_offset"
+            position = (offset["line"], offset["column"])
+            if position <= previous:
+                return "unordered_section_offset"
+            previous = position
+            if ("map" in section) == ("url" in section):
+                return "invalid_section_map"
+            if "map" in section:
+                error = _source_map_structure_error(section["map"], depth=depth + 1)
+                if error:
+                    return error
+            elif not isinstance(section["url"], str):
+                return "invalid_section_url"
+        return ""
+    sources = value.get("sources")
+    mappings = value.get("mappings")
+    if not isinstance(sources, list) or any(source is not None and not isinstance(source, str) for source in sources):
+        return "invalid_sources"
+    if not isinstance(mappings, str):
+        return "invalid_mappings"
+    for field in ("names", "sourcesContent"):
+        if field in value and (
+            not isinstance(value[field], list)
+            or any(
+                not isinstance(item, str) and not (field == "sourcesContent" and item is None) for item in value[field]
+            )
+        ):
+            return f"invalid_{field}"
+    if "ignoreList" in value and (
+        not isinstance(value["ignoreList"], list)
+        or any(type(index) is not int or not 0 <= index < len(sources) for index in value["ignoreList"])
+    ):
+        return "invalid_ignoreList"
+    # Each comma-delimited mapping has one, four, or five complete base64 VLQ
+    # fields. This validates encoding only; it does not qualify generated code.
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    for line in mappings.split(";"):
+        if not line:
+            continue
+        for segment in line.split(","):
+            fields = 0
+            continuation = False
+            for character in segment:
+                digit = alphabet.find(character)
+                if digit < 0:
+                    return "invalid_mappings_character"
+                continuation = bool(digit & 32)
+                if not continuation:
+                    fields += 1
+            if continuation or fields not in {1, 4, 5}:
+                return "invalid_mappings_segment"
+    return ""
+
+
 def _scan_file_evidence(
     root_full: Path,
     full_path: Path,
@@ -668,12 +742,16 @@ def _scan_file_evidence(
     """Return legacy and typed artifact-quality findings for one file."""
 
     suffix = full_path.suffix.lower()
+    source_map = full_path.name.lower().endswith(
+        (".js.map", ".mjs.map", ".cjs.map", ".jsx.map", ".css.map", ".d.ts.map", ".d.mts.map", ".d.cts.map")
+    )
     deferred_checks: list[ArtifactQualityDeferredCheck] = []
     incomplete_reasons: list[str] = []
     if pure_static:
         deferred_checks.extend(_static_file_checks(relative_path))
         if (
             not deferred_checks
+            and not source_map
             and suffix not in {".py", ".json", ".html", ".htm", ".go", ".md", ".markdown"}
             and full_path.name.lower() not in {"cargo.toml", "go.mod"}
         ):
@@ -730,6 +808,40 @@ def _scan_file_evidence(
                     code="source_narration_contamination",
                 ),
             ),
+        )
+
+    if pure_static and source_map:
+        try:
+            error = _source_map_structure_error(json.loads(syntax_text))
+        except (ValueError, RecursionError):
+            error = "invalid_json"
+        if error:
+            message = f"Artifact quality scan failed: invalid source map in {relative_path}: {error}"
+            return _FileArtifactQualityEvidence(
+                errors=(message,),
+                issues=(
+                    _file_artifact_quality_issue(
+                        message, relative_path, code="invalid_source_map", metadata={"structure_error": error}
+                    ),
+                ),
+                incomplete_reasons=(*incomplete_reasons, f"invalid_source_map:{relative_path}"),
+            )
+        return _FileArtifactQualityEvidence(
+            issues=(
+                ArtifactQualityIssue(
+                    code="non_executable_source_map",
+                    message="Source-map debug metadata covered by snapshot and structure checks; no executable verdict.",
+                    path=relative_path,
+                    severity="info",
+                    source="file_artifact_scanner",
+                    metadata={
+                        "artifact_kind": "source_map",
+                        "execution_qualified": False,
+                        "references_followed": False,
+                    },
+                ),
+            ),
+            incomplete_reasons=tuple(incomplete_reasons),
         )
 
     errors: list[str] = []

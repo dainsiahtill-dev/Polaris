@@ -2616,6 +2616,20 @@ async def test_failed_retry_resumes_orphaned_settle_claim_then_replays(tmp_path:
     owner = FactoryRunService(workspace, cache_root=cache_root, executor=_SuccessfulStageExecutor())
     created = await owner.create_run(FactoryConfig(name="orphaned-settle-retry", stages=["director_dispatch"]))
     running = await owner.start_run(created.id)
+    from dataclasses import asdict
+
+    # A restarted owner needs the real previous epoch's closed budget proof,
+    # even when that epoch made no provider calls. An empty new process alone
+    # is not physical settlement evidence.
+    physical_drain = owner._physical_attempt_coordinator(running.id).close()
+    assert physical_drain.settled is True
+    running.metadata["factory_physical_attempt_drain"] = {
+        "factory_run_id": physical_drain.factory_run_id,
+        "settled": physical_drain.settled,
+        "blocking_reservation_ids": list(physical_drain.blocking_reservation_ids),
+        "terminal_failure_reservation_ids": list(physical_drain.terminal_failure_reservation_ids),
+        "by_authority": [asdict(state) for state in physical_drain.by_authority],
+    }
     running.status = FactoryRunStatus.FAILED
     await owner.store.save_run(running)
     orphan_nonce = "lifecycle_orphaned_settle_terminal"

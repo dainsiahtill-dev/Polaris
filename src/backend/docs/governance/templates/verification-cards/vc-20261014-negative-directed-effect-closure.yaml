@@ -1,0 +1,27 @@
+id: vc-20261014-negative-directed-effect-closure
+classification: pattern
+cell: runtime.task_runtime
+design: docs/blueprints/NEGATIVE_DIRECTED_EFFECT_CLOSURE_20261014.md
+problem: Real failed CLI effects settled as DEAD_LETTER remained unobservable to operational cleanup.
+assumptions:
+  - TaskRuntime remains the only directed-effect owner; roles.kernel owns physical turn outcomes.
+  - Existing public director.runtime canonical argument hashing authenticates producer seals.
+  - Negative closure is independent of positive EffectReceipt evidence.
+pre_mortem:
+  - A DEAD_LETTER label or caller failure flag cannot authenticate a failed physical effect.
+  - A strict parent close must match operation head and exact inventory counts.
+  - Current active attempts and malformed owner bindings remain fail closed.
+  - Negative closure cannot change failed delivery into PASS.
+verification:
+  - test_dead_letter_execution_effect_closure.py: real private CLI exit 1 produces typed negative closure and no success receipts, with no observation writes.
+  - test_dead_letter_execution_effect_closure.py: active, foreign, binding, physical, mirror, native, resolution, parent and null-shape negatives denied.
+  - test_terminal_failure_cleanup.py: real failed CLI cleanup closes without positive effect receipts and keeps missing QA/command evidence.
+  - Existing terminal_failure_cleanup regressions preserve success/foreign/active/receipt reuse and exact readonly observations.
+scope:
+  public_contract_changed: true
+  new_state_owner: false
+  execution_authority_expanded: false
+  observer_writes: false
+  negative_proofs_are_success_receipts: false
+  native18_epoch3_delivery_qualified: false
+  fresh_delivery_qualification: pending

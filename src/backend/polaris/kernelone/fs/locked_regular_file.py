@@ -12,7 +12,7 @@ import stat
 import threading
 import time
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Final, Literal
@@ -29,6 +29,7 @@ LOCK_AUTHORITY_FORMAT_REVISION: Final[str] = "polaris.lock-authority.v1"
 _POLL_SECONDS: Final[float] = 0.01
 _PROVISION_LOCK_MARKER: Final[bytes] = b"polaris.provision-lock.v1\n"
 _DEFAULT_MAINTENANCE_TIMEOUT_SECONDS: Final[float] = 5.0
+_MAX_STREAM_SCAN_CHUNK_BYTES: Final[int] = 1024 * 1024
 
 
 class LockedRegularFileError(RuntimeError):
@@ -742,6 +743,66 @@ class StreamLeaseV1:
                 return b"".join(chunks)
             except OSError as exc:
                 raise _fail("stream_identity_drift", "stream descriptor read failed", errno=exc.errno) from exc
+
+    def iter_bytes(self, *, chunk_size: int = 64 * 1024) -> Generator[bytes, None, None]:
+        """Read a complete captured file through a bounded verified descriptor.
+
+        The owner operation remains held until exhaustion or iterator close.
+        Consumers must exhaust the iterator before accepting evidence. Both
+        namespace identity, content version, and complete content digest are
+        rechecked. Coarse filesystem timestamps cannot certify an in-place
+        rewrite as an unchanged file. No history-sized buffer is allocated.
+        """
+
+        if type(chunk_size) is not int or not 1 <= chunk_size <= _MAX_STREAM_SCAN_CHUNK_BYTES:
+            raise ValueError("chunk_size must be an exact positive integer no larger than 1 MiB")
+        with self._owner._operation():
+            if self._file_fd is None:
+                return
+            self._verify_file()
+            try:
+                initial = os.fstat(self._file_fd)
+                version = (initial.st_size, initial.st_mtime_ns, initial.st_ctime_ns)
+
+                def content_digest() -> bytes:
+                    assert self._file_fd is not None
+                    os.lseek(self._file_fd, 0, os.SEEK_SET)
+                    digest = hashlib.sha256()
+                    remaining_bytes = initial.st_size
+                    while remaining_bytes:
+                        block = os.read(self._file_fd, min(chunk_size, remaining_bytes))
+                        if not block:
+                            raise _fail("stream_identity_drift", "stream changed during descriptor scan")
+                        digest.update(block)
+                        remaining_bytes -= len(block)
+                    if os.read(self._file_fd, 1):
+                        raise _fail("stream_identity_drift", "stream grew during descriptor scan")
+                    return digest.digest()
+
+                initial_digest = content_digest()
+                os.lseek(self._file_fd, 0, os.SEEK_SET)
+                remaining = initial.st_size
+                emitted_digest = hashlib.sha256()
+                try:
+                    while remaining:
+                        chunk = os.read(self._file_fd, min(chunk_size, remaining))
+                        if not chunk:
+                            raise _fail("stream_identity_drift", "stream changed during descriptor scan")
+                        emitted_digest.update(chunk)
+                        remaining -= len(chunk)
+                        yield chunk
+                    if emitted_digest.digest() != initial_digest:
+                        raise _fail("stream_identity_drift", "stream content changed during descriptor scan")
+                finally:
+                    self._verify_file()
+                    final = os.fstat(self._file_fd)
+                    if (final.st_size, final.st_mtime_ns, final.st_ctime_ns) != version:
+                        raise _fail("stream_identity_drift", "stream content version changed during descriptor scan")
+                    if content_digest() != initial_digest:
+                        raise _fail("stream_identity_drift", "stream content changed during descriptor scan")
+                    self._verify_file()
+            except OSError as exc:
+                raise _fail("stream_identity_drift", "stream descriptor scan failed", errno=exc.errno) from exc
 
     def read_tail_bytes(self, max_bytes: int) -> bytes:
         """Read at most ``max_bytes`` from the verified descriptor tail.

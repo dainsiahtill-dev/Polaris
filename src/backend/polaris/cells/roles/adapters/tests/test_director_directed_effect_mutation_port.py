@@ -304,8 +304,21 @@ class _PhysicalSpy:
         return self.result
 
 
-def _context() -> tuple[DirectedEffectExecutionContextV1, DirectedEffectFencePortsV1, str]:
-    batch = _prepared_batch()
+def _context(
+    *,
+    workspace: str | None = None,
+    tool_name: str = "write_file",
+    arguments: tuple[tuple[str, object], ...] = _ARGUMENTS,
+) -> tuple[DirectedEffectExecutionContextV1, DirectedEffectFencePortsV1, str]:
+    attempt = _attempt()
+    if workspace is not None:
+        attempt = replace(attempt, workspace=workspace)
+    members = tuple(_member(index, normalized_tool_name=tool_name) for index in range(2))
+    batch = _prepared_batch(
+        execution_attempt=attempt,
+        inventory=_inventory(attempt, members),
+        normalized_arguments=arguments,
+    )
     prepared = batch.prepared_members[0]
     member = prepared.member
     evidence = batch.authorization_evidence_by_call_id[0][1]
@@ -988,38 +1001,52 @@ async def test_repair_binding_matching_post_state_executes(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-async def test_real_repair_cas_returns_hash_bound_physical_effect_receipt(tmp_path: Path) -> None:
+@pytest.mark.parametrize("tool_name", ["write_file", "edit_blocks"])
+async def test_real_repair_cas_returns_hash_bound_physical_effect_receipt(tmp_path: Path, tool_name: str) -> None:
     """A real guarded repair write returns the adapter receipt consumed by ToolBatchRuntime."""
 
     workspace_path = tmp_path / "workspace"
     target = workspace_path / "src" / "a.py"
     target.parent.mkdir(parents=True)
-    target.write_text("before", encoding="utf-8")
-    before_hash = hashlib.sha256(b"before").hexdigest()
-    after_content = "after"
+    before_content = "# 中文\nvalue = 1\n"
+    target.write_text(before_content, encoding="utf-8")
+    before_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+    after_content = "# 中文\nvalue = 2\n"
+    tool_arguments = (
+        (("content", after_content), ("file", "src/a.py"))
+        if tool_name == "write_file"
+        else (
+            ("blocks", "<<<<<<< SEARCH\nvalue = 1\n=======\nvalue = 2\n>>>>>>> REPLACE\n"),
+            ("file", "src/a.py"),
+        )
+    )
     after_hash = hashlib.sha256(after_content.encode("utf-8")).hexdigest()
-    effect = DirectorRepairEffectV1(
-        call_id="source-real-repair",
-        operation_id="operation-real-repair",
-        tool_name="write_file",
-        arguments=(("content", after_content), ("file", "src/a.py")),
-        contingency_kind="forward",
-        target_path="src/a.py",
-        expected_before_hash=before_hash,
-        expected_after_hash=after_hash,
-        exists_before=True,
-        exists_after=True,
-    )
-    binding = DeferredDirectorRepairEffectBindingV1(
-        request_id="repair-request-real",
-        request_hash="a" * 64,
-        plan_hash="b" * 64,
-        effect=effect,
-    )
-    context, fence, workspace, arguments = _repair_context(
-        binding,
-        workspace=str(workspace_path),
-    )
+    binding = None
+    if tool_name == "write_file":
+        effect = DirectorRepairEffectV1(
+            call_id="source-real-repair",
+            operation_id="operation-real-repair",
+            tool_name="write_file",
+            arguments=tool_arguments,
+            contingency_kind="forward",
+            target_path="src/a.py",
+            expected_before_hash=before_hash,
+            expected_after_hash=after_hash,
+            exists_before=True,
+            exists_after=True,
+        )
+        binding = DeferredDirectorRepairEffectBindingV1(
+            request_id="repair-request-real",
+            request_hash="a" * 64,
+            plan_hash="b" * 64,
+            effect=effect,
+        )
+        context, fence, workspace, arguments = _repair_context(binding, workspace=str(workspace_path))
+    else:
+        # Native edit_blocks uses the same admitted DEO path as real provider
+        # calls; it is not a deferred deterministic repair binding.
+        arguments = tool_arguments
+        context, fence, workspace = _context(workspace=str(workspace_path), tool_name=tool_name, arguments=arguments)
     events: list[str] = []
 
     class _FilesystemPolicy(_PolicySpy):
@@ -1039,12 +1066,14 @@ async def test_real_repair_cas_returns_hash_bound_physical_effect_receipt(tmp_pa
         fence_consume_port=_ConsumeSpy(events, fence.consume),
     )
 
-    result = await port.execute_mutation(context, "write_file", arguments, binding)
+    result = await port.execute_mutation(context, tool_name, arguments, binding)
 
     assert result.status == "executed"
     assert result.tool_result is not None
     assert target.read_text(encoding="utf-8") == after_content
     payload = dict(result.tool_result.payload)
+    assert payload["before_sha256"] == before_hash
+    assert payload["after_sha256"] == hashlib.sha256(target.read_bytes()).hexdigest() == after_hash
     receipt_value = payload["effect_receipt"]
     assert isinstance(receipt_value, DirectedEffectImmutableMapV1)
     receipt = dict(receipt_value.items)
@@ -1056,10 +1085,25 @@ async def test_real_repair_cas_returns_hash_bound_physical_effect_receipt(tmp_pa
     assert receipt["receipt_outcome"] == "succeeded"
     assert receipt["context_id"] == context.context_id
     assert receipt["claim_grant_hash"] == context.claim_grant.grant_hash
-    assert receipt["tool_call_id"] == binding.tool_call_id
-    assert receipt["repair_binding_hash"] == binding.binding_hash
-    assert receipt["plan_hash"] == binding.plan_hash
+    assert receipt["tool_call_id"] == context.tool_call_id
+    assert receipt["repair_binding_hash"] == (binding.binding_hash if binding else None)
+    assert receipt["plan_hash"] == (binding.plan_hash if binding else None)
     assert receipt["target_state_hash"]
+    physical_payload = tuple(
+        (key, value)
+        for key, value in result.tool_result.payload
+        if key not in {"effect_receipt", "effect_receipt_commit"}
+    )
+    assert receipt["physical_result_hash"] == hash_directed_effect_arguments(physical_payload)
+    tampered_physical_payload = tuple(
+        (key, "0" * 64 if key == "after_sha256" else value) for key, value in physical_payload
+    )
+    assert receipt["physical_result_hash"] != hash_directed_effect_arguments(tampered_physical_payload)
+    from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
+        workspace_quality_repair_result_has_mutation,
+    )
+
+    assert workspace_quality_repair_result_has_mutation({"success": True, "tool": tool_name, "result": payload})
     receipt_hash_payload = tuple(
         (key, value) for key, value in receipt_value.items if key not in {"receipt_hash", "receipt_id"}
     )
@@ -1078,15 +1122,15 @@ async def test_real_repair_cas_returns_hash_bound_physical_effect_receipt(tmp_pa
     assert commit["receipt_hash"] == receipt["receipt_hash"]
     assert commit["receipt_binding_hash"] == receipt["receipt_binding_hash"]
     assert commit["receipt_outcome"] == receipt["receipt_outcome"]
-    assert events == ["revalidate", "consume", "revalidate"]
+    assert events == (["revalidate", "consume", "revalidate"] if binding else ["revalidate", "consume"])
     event_log = workspace_path / ".polaris" / "runtime" / "file-edits" / "events.jsonl"
     event = json.loads(event_log.read_text(encoding="utf-8").strip().splitlines()[-1])
     event_payload = event["payload"]
     assert event_payload["operation"] == "modify"
     assert event_payload["has_patch"] is True
     assert "patch_unavailable_reason" not in event_payload
-    assert "-before" in event_payload["patch"]
-    assert "+after" in event_payload["patch"]
+    assert "-value = 1" in event_payload["patch"]
+    assert "+value = 2" in event_payload["patch"]
 
 
 @pytest.mark.asyncio

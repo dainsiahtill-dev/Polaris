@@ -69,6 +69,7 @@ class _FactoryRunServiceLifecycleMixin:
         lease: FactoryWorkspaceRunLeaseV1 | None,
         *,
         operation_nonce: str,
+        require_quiescent_children: bool = False,
     ) -> FactoryRun:
         if lease is None or lease.state.value == "released":
             return run
@@ -104,6 +105,12 @@ class _FactoryRunServiceLifecycleMixin:
             target_run.status in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}
             and self._settlement_barrier_query(self.workspace, target_run.id).missing_required_modalities
         )
+        terminal_claim = lease.lifecycle_operation_claim
+        resume_terminal_claim = bool(
+            target_run.status in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}
+            and terminal_claim is not None
+            and terminal_claim.operation == "settle_terminal_run"
+        )
         coordinator = self._physical_attempt_coordinators.get(target_run.id)
         if coordinator is None:
             # After Launcher-restart the process-local coordinator is gone.
@@ -113,19 +120,29 @@ class _FactoryRunServiceLifecycleMixin:
             existing_map = existing_drain if isinstance(existing_drain, Mapping) else {}
             if target_run.status not in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}:
                 raise FactoryPhysicalAttemptControlError("factory_physical_attempt_replay_required")
-            if failed_evidence_incomplete:
+            if failed_evidence_incomplete or resume_terminal_claim:
                 try:
                     claim = lease.lifecycle_operation_claim
                     if claim is None or existing_map.get("factory_run_id") != target_run.id:
                         raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
-                    with self._admission.hold_active_lifecycle_operation_claim(
-                        target_run.id,
-                        fencing_token=lease.fencing_token,
-                        operation=claim.operation,
-                        sequence=claim.sequence,
-                        nonce=claim.nonce,
-                        allow_expired_owner=claim.operation == "recover_stale_workspace_owner",
-                    ) as revalidate:
+                    hold = (
+                        self._admission.hold_terminal_settlement_claim(
+                            target_run.id,
+                            fencing_token=lease.fencing_token,
+                            sequence=claim.sequence,
+                            nonce=claim.nonce,
+                        )
+                        if resume_terminal_claim
+                        else self._admission.hold_active_lifecycle_operation_claim(
+                            target_run.id,
+                            fencing_token=lease.fencing_token,
+                            operation=claim.operation,
+                            sequence=claim.sequence,
+                            nonce=claim.nonce,
+                            allow_expired_owner=claim.operation == "recover_stale_workspace_owner",
+                        )
+                    )
+                    with hold as revalidate:
                         held = revalidate()
                         fence = self._capture_physical_attempt_replay_fence(factory_run_id=target_run.id, lease=held)
                         role_evidence, lifecycle = self._capture_physical_attempt_replay_views(target_run.id)
@@ -135,19 +152,25 @@ class _FactoryRunServiceLifecycleMixin:
                             lifecycle=lifecycle,
                         )
                         states = existing_map.get("by_authority")
-                        if not candidate.records or any(record.terminal is None for record in candidate.records):
+                        if any(record.terminal is None for record in candidate.records):
                             raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
                         if (
                             not isinstance(states, list)
-                            or not states
                             or not all(isinstance(state, Mapping) for state in states)
                             or existing_map.get("settled") is not True
+                            or existing_map.get("blocking_reservation_ids")
                         ):
                             raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
-                        authority_hashes = {record.start.execution_authority_hash for record in candidate.records}
-                        if {str(state.get("execution_authority_hash")) for state in states} != authority_hashes:
+                        replayed, recovery_work = FactoryPhysicalAttemptLiveControlPort.from_replay_candidate(candidate)
+                        canonical_drain = replayed.drain_snapshot()
+                        if recovery_work or not canonical_drain.settled:
                             raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
                         for state in states:
+                            authority_records = [
+                                record
+                                for record in candidate.records
+                                if record.start.execution_authority_hash == state.get("execution_authority_hash")
+                            ]
                             if (
                                 state.get("factory_run_id") != target_run.id
                                 or any(
@@ -162,6 +185,7 @@ class _FactoryRunServiceLifecycleMixin:
                                         "inflight_count",
                                     )
                                 )
+                                or state.get("committed_count") != len(authority_records)
                             ):
                                 raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
                         verified_role, verified_lifecycle = self._capture_physical_attempt_replay_views(target_run.id)
@@ -174,6 +198,17 @@ class _FactoryRunServiceLifecycleMixin:
                             != fence
                         ):
                             raise FactoryPhysicalAttemptReplayError("factory_physical_attempt_replay_required")
+                        # The persisted latest epoch may have zero calls while
+                        # append-only history contains earlier epochs. Both are
+                        # independently closed; their authority sets need not be equal.
+                        existing_map = dict(existing_map)
+                        existing_map["canonical_history_drain"] = {
+                            "factory_run_id": canonical_drain.factory_run_id,
+                            "settled": canonical_drain.settled,
+                            "blocking_reservation_ids": list(canonical_drain.blocking_reservation_ids),
+                            "terminal_failure_reservation_ids": list(canonical_drain.terminal_failure_reservation_ids),
+                            "by_authority": [asdict(state) for state in canonical_drain.by_authority],
+                        }
                 except (OSError, RuntimeError, TypeError, ValueError) as exc:
                     return await self._record_drain_conflict(
                         target_run,
@@ -192,6 +227,8 @@ class _FactoryRunServiceLifecycleMixin:
                     ),
                     "by_authority": list(existing_map.get("by_authority") or []),
                 }
+                if "canonical_history_drain" in existing_map:
+                    physical_drain_evidence["canonical_history_drain"] = existing_map["canonical_history_drain"]
             else:
                 physical_drain_evidence = {
                     "factory_run_id": target_run.id,
@@ -222,6 +259,14 @@ class _FactoryRunServiceLifecycleMixin:
 
         settlement = self._query_child_session_settlement(target_run.id)
         target_run.metadata[_CHILD_SESSION_SETTLEMENT_EVIDENCE_METADATA_KEY] = settlement
+        if require_quiescent_children and settlement.get("settled") is not True:
+            return await self._record_drain_conflict(
+                target_run,
+                lease,
+                code="factory_workspace_run_child_session_inflight",
+                message="Orphan terminal settlement observed child authority reopen during closure",
+                details={"settlement": settlement},
+            )
         # R64: Director settlement-barrier timeouts leave owned active sessions that
         # pin child-session settlement forever. On FAILED/CANCELLED factory drain,
         # force-fail those owned active sessions (not foreign ones) so lease release
@@ -444,12 +489,17 @@ class _FactoryRunServiceLifecycleMixin:
                 "physical_attempt_drain": physical_drain_evidence,
             },
         )
-        released = self._admission.release(
+        released, release_committed = self._admission.release_with_transition(
             target_run.id,
             fencing_token=lease.fencing_token,
             settlement_evidence=release_evidence,
             operation_nonce=operation_nonce,
         )
+        if not release_committed:
+            # Another service won the durable release CAS for this same orphan
+            # nonce. Its evidence owns the transition and the release event;
+            # this caller must not append a second authoritative closeout.
+            return await self.store.get_run(target_run.id) or target_run
         self._attach_workspace_lease(target_run, released)
         target_run.metadata.pop("factory_workspace_run_drain_conflict", None)
         target_run.updated_at = self._now()
@@ -1386,15 +1436,43 @@ class _FactoryRunServiceLifecycleMixin:
             else f"lifecycle_{uuid.uuid4().hex}"
         )
         claimed = False
+        resumed_terminal_claim = False
         try:
-            lease = self._claim_lifecycle_operation(
-                run,
-                operation=operation,
-                nonce=nonce,
-                acquire_if_available=False,
-                expected_fencing_token=expected_fencing_token,
-            )
-            claimed = True
+            if (
+                current is not None
+                and current.run_id == run.id
+                and current.state.value == "draining"
+                and current_claim is not None
+                and current_claim.operation == operation
+                and run.status in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}
+            ):
+                with self._admission.hold_terminal_settlement_claim(
+                    run.id,
+                    fencing_token=(current.fencing_token if expected_fencing_token is None else expected_fencing_token),
+                    sequence=current_claim.sequence,
+                    nonce=current_claim.nonce,
+                ) as revalidate:
+                    lease = revalidate()
+                settlement = self._query_child_session_settlement(run.id)
+                if settlement.get("settled") is not True:
+                    from polaris.cells.factory.pipeline.public.contracts import FactoryPipelineError
+
+                    raise FactoryPipelineError(
+                        "Orphan terminal settlement requires already settled child sessions",
+                        code="factory_workspace_run_child_session_inflight",
+                        details={"settlement": settlement},
+                    )
+                self._attach_workspace_lease(run, lease)
+                resumed_terminal_claim = True
+            else:
+                lease = self._claim_lifecycle_operation(
+                    run,
+                    operation=operation,
+                    nonce=nonce,
+                    acquire_if_available=False,
+                    expected_fencing_token=expected_fencing_token,
+                )
+            claimed = not resumed_terminal_claim
             if lease.state.value == "active":
                 draining_lease = await self._begin_terminal_drain(
                     run,
@@ -1408,8 +1486,19 @@ class _FactoryRunServiceLifecycleMixin:
                 run,
                 lease,
                 operation_nonce=nonce,
+                require_quiescent_children=resumed_terminal_claim,
             )
             current = self._admission.current()
+            if resumed_terminal_claim and (
+                current is None or current.run_id != run.id or current.state.value != "released"
+            ):
+                from polaris.cells.factory.pipeline.public.contracts import FactoryPipelineError
+
+                raise FactoryPipelineError(
+                    "Orphan terminal settlement lacks complete release proof",
+                    code="factory_workspace_run_drain_unproven",
+                    details={"current_lease": current.to_dict() if current is not None else None},
+                )
             if (
                 current is not None
                 and current.run_id == run.id
@@ -1448,6 +1537,27 @@ class _FactoryRunServiceLifecycleMixin:
             if run is None:
                 raise ValueError(f"Run {run_id} not found")
             run = await self.assert_mutation_allowed(run_id, current_run=run)
+            current = self._admission.current()
+            if (
+                current is not None
+                and current.run_id == run_id
+                and current.state.value == "draining"
+                and current.lifecycle_operation_claim is not None
+                and current.lifecycle_operation_claim.operation == "settle_terminal_run"
+                and run.status in {FactoryRunStatus.FAILED, FactoryRunStatus.CANCELLED}
+            ):
+                self._admission.assert_stale_owner(run_id, fencing_token=expected_fencing_token)
+                await self._settle_terminal_run_locked(run, expected_fencing_token=expected_fencing_token)
+                released = self._admission.current()
+                if released is None or released.run_id != run_id or released.state.value != "released":
+                    from polaris.cells.factory.pipeline.public.contracts import FactoryPipelineError
+
+                    raise FactoryPipelineError(
+                        "Orphan terminal settlement lacks complete release proof",
+                        code="factory_workspace_run_drain_unproven",
+                        details={"current_lease": released.to_dict() if released is not None else None},
+                    )
+                return released
             operation = "recover_stale_workspace_owner"
             operation_nonce = uuid.uuid4().hex
             claimed = False

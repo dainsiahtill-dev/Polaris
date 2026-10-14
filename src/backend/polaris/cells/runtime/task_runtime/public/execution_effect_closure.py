@@ -35,6 +35,34 @@ class ExecutionEffectCommitObservationV1:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionEffectTerminalFailureObservationV1:
+    """Owner-authenticated negative effect closure, never a success receipt."""
+
+    operation_id: str
+    parent_binding_id: str
+    batch_id: str
+    turn_id: str
+    tool_call_id: str
+    normalized_tool_name: str
+    expected_receipt_binding_hash: str
+    context_id: str
+    resolution_evidence_ref: str
+    resolution_evidence_hash: str
+    dead_letter_event_id: str
+    dead_letter_version: int
+    exit_code: int
+    physical_failure_hash: str
+    owner_result_hash: str
+    owner_raw_result_hash: str
+    owner_turn_event_id: str
+    owner_turn_event_seq: int
+    parent_close_event_id: str
+    parent_close_version: int
+    owner_terminal_event_id: str
+    owner_terminal_event_seq: int
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionEffectClosureObservationV1:
     status: Literal["closed", "active", "unknown"]
     reason: str
@@ -43,6 +71,7 @@ class ExecutionEffectClosureObservationV1:
     evidence_refs: tuple[str, ...] = ()
     observation_hash: str = ""
     execution_authority: Literal[False] = False
+    terminal_failures: tuple[ExecutionEffectTerminalFailureObservationV1, ...] = ()
 
     def __post_init__(self) -> None:
         if self.execution_authority is not False:

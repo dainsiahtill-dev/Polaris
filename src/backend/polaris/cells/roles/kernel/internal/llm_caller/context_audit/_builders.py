@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import copy
 from typing import Any
 
 from ..response_types import PreparedLLMRequest
@@ -36,6 +37,7 @@ from ._request_core import (
     _execution_profile,
     _execution_strategy,
     _prompt_profile_selection,
+    _request_context,
     _request_messages,
     _request_option_payloads,
     _tool_execution_surface_audit,
@@ -112,6 +114,10 @@ def build_final_request_context_audit_for_request(
     """
 
     messages = _request_messages(ai_request, [dict(item) for item in prepared.messages if isinstance(item, dict)])
+    # Audit getters must bind observations to the supplied final messages, even
+    # when the caller still carries older context/history. Never mutate it.
+    ai_request = copy(ai_request)
+    ai_request.context = {**_request_context(ai_request), "chat_messages": messages}
     message_chars = _message_chars(messages)
     message_token_estimate = _estimate_tokens_from_chars(message_chars)
 

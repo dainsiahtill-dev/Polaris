@@ -43,6 +43,8 @@ class CommittedTurnReceiptObservationV1:
     fact_event_seq: int = 0
     outcome_hash: str = ""
     evidence_refs: tuple[str, ...] = ()
+    provider_correlation_qualified: bool = False
+    provider_response_hash: str = ""
 
     @property
     def batch_receipt(self) -> dict[str, Any]:
@@ -278,12 +280,19 @@ def _observe_owner(
         "owner_native_envelope_mismatch",
     )
     envelopes = cast(list[dict[str, Any]], envelopes)
-    _require(
-        _mapping(decision.get("metadata")).get("provider_response_hash") == lifecycle.get("provider_response_hash")
-        and type(lifecycle.get("provider_response_hash")) is str
-        and len(lifecycle["provider_response_hash"]) == 64,
-        "owner_provider_response_mismatch",
+    owner_provider_hash = _mapping(decision.get("metadata")).get("provider_response_hash")
+    lifecycle_provider_hash = lifecycle.get("provider_response_hash")
+    provider_binding_missing = owner_provider_hash in (None, "") and lifecycle_provider_hash in (None, "")
+    provider_binding_qualified = (
+        type(owner_provider_hash) is str
+        and owner_provider_hash == lifecycle_provider_hash
+        and len(owner_provider_hash) == 64
+        and all(character in "0123456789abcdef" for character in owner_provider_hash)
     )
+    # A strict immutable readonly owner receipt proves resource quiescence even
+    # when a historical producer omitted provider correlation. It supplies no
+    # delivery acceptance. Present conflicting bindings remain unknown.
+    _require(provider_binding_missing or provider_binding_qualified, "owner_provider_response_mismatch")
     for index, (invocation, envelope, result) in enumerate(zip(invocations, envelopes, results, strict=True)):
         _require(type(invocation) is dict and type(envelope) is dict, "owner_invocation_shape_mismatch")
         classification = _mapping(invocation.get("classification"))
@@ -345,7 +354,11 @@ def _observe_owner(
         turn_id=turn_id,
         batch_id=batch_id,
         status="observed",
-        reason="immutable_readonly_owner_receipt_observed",
+        reason=(
+            "immutable_readonly_owner_receipt_observed"
+            if provider_binding_qualified
+            else "immutable_readonly_owner_receipt_observed_provider_binding_unavailable"
+        ),
         batch_receipt_json=json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
         batch_receipt_hash=stable_hash(receipt),
         batch_receipt_refs=observed_refs,
@@ -360,6 +373,8 @@ def _observe_owner(
             stable_hash(receipt),
             *(ref[1] for ref in observed_refs),
         ),
+        provider_correlation_qualified=provider_binding_qualified,
+        provider_response_hash=cast(str, owner_provider_hash) if provider_binding_qualified else "",
     )
 
 
@@ -388,7 +403,7 @@ def query_committed_turn_receipts(
                 all(type(value) is str and value and value.strip() == value for value in scope.values()),
                 "lifecycle_identity_missing",
             )
-            facts = []
+            facts: list[dict[str, Any]] = []
             offset = 0
             while True:
                 page = query_fact_events(

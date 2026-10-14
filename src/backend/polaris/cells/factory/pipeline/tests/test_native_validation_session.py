@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from polaris.cells.factory.pipeline.internal.native_validation_session import NativeValidationSession
@@ -131,27 +130,15 @@ def test_no_mutation_round_does_not_leave_a_closed_group_as_next_baseline(tmp_pa
         session.close()
 
 
-def test_factory_session_uses_committed_ce_portfolio_identity(tmp_path: Path, authored: tuple) -> None:
-    portfolio, contract, fs = authored
-    run = SimpleNamespace(
-        id=contract.run_id,
-        metadata={
-            "stage_results": {
-                "chief_engineer_review": {
-                    "status": "success",
-                    "artifacts": [portfolio.portfolio_path],
-                }
-            }
-        },
-    )
-    executor = SimpleNamespace(
-        workspace=tmp_path,
-        _canonical_project_id=lambda _context: contract.project_id,
-        _read_json_artifact_payload=lambda path: fs.read_json(path),
-    )
+def test_factory_session_uses_committed_ce_portfolio_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from polaris.cells.factory.pipeline.tests.test_exact_ce_clean_verification import _record_sources
+    from polaris.cells.factory.pipeline.tests.test_materialization_contract_verifiers import _fixture
+
+    executor, run, port = _fixture(tmp_path, monkeypatch)
+    _record_sources(executor, run, port)
     session = NativeValidationSession.from_factory(executor, run, {})
     try:
-        assert session.baseline.contract == contract
+        assert session.baseline.contract == port.completion_contract
     finally:
         session.close()
 

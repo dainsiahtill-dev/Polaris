@@ -1,7 +1,7 @@
 """QA role adapter.
 
 Runs deterministic workspace quality checks and persists an auditable QA report.
-LLM output is treated as optional enrichment and never as single point of truth.
+Independent judgement and physical verifier observations must both remain truthful.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from typing import Any, cast
 from polaris.cells.runtime.task_runtime.public.evidence import task_row_execution_event_failure
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.llm.budget_policy import TIMEOUT_OVERRIDE_CONTEXT_KEYS
+from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
 from polaris.kernelone.storage import resolve_runtime_path
 
 from .base import BaseRoleAdapter
@@ -102,33 +103,6 @@ _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING = "qa_llm_judgement_unavailable"
 _QA_MIN_PASS_SCORE = 70
 _FACTORY_RUNTIME_HARD_GATE_EVIDENCE = "factory_runtime_hard_gate_passed=True"
 _FACTORY_WORKSPACE_QUALITY_EVIDENCE = "factory_workspace_quality_passed=True"
-
-_FACTORY_HARD_GATE_BLOCKER_RE = re.compile(
-    r"(?:"
-    r"\b("
-    r"build\s+fail|test\s+fail|lint\s+fail|install\s+fail|dependency\s+fail|"
-    r"runtime\s+fail|entry\s+(?:failed|missing)|missing\s+(?:code|source|artifact)|"
-    r"no\s+(?:code|source|artifact|workspace\s+validation)|placeholder|"
-    r"command\s+(?:failed|exit(?:ed)?\s+[1-9])|exit[_\s-]?code\s*[:=]\s*[1-9]|"
-    r"cannot\s+(?:run|start|execute)|not\s+(?:runnable|executable)"
-    r")\b|"
-    r"test_file_count\s*[:=]\s*0|tests?_not_detected|"
-    r"测试文件计数\s*(?:为|=|:)?\s*0|"
-    r"测试脚本.{0,80}占位(?:符)?|占位(?:符)?测试|"
-    r"未运行任何测试用例|没有(?:任何)?行为级验证|"
-    r"核心(?:领域)?规则.{0,80}未(?:被)?验证"
-    r")",
-    re.IGNORECASE,
-)
-_FACTORY_QUALITY_RISK_RE = re.compile(
-    r"\b("
-    r"coverage|assertion|behavioral\s+test|unit\s+test|test\s+coverage|"
-    r"lint|format|ci|empty\s+stdout|semantic\s+correctness|surface-level|"
-    r"deterministic\s+repair|repair\s+diff|before/after|no\s+diff|"
-    r"type\s+checker,\s+not\s+a\s+unit\s+test|quality\s+gate\s+erodes"
-    r")\b",
-    re.IGNORECASE,
-)
 
 
 def _sanitize_qa_target_for_prompt(target: str) -> str:
@@ -227,14 +201,6 @@ def _workspace_quality_evidence_lines(summary: dict[str, Any]) -> list[str]:
 def _review_has_factory_runtime_hard_gate(review: dict[str, Any]) -> bool:
     evidence = review.get("evidence") if isinstance(review, dict) else None
     return isinstance(evidence, list) and _FACTORY_RUNTIME_HARD_GATE_EVIDENCE in {str(item) for item in evidence}
-
-
-def _issue_blocks_factory_hard_gate(issue: str) -> bool:
-    return _FACTORY_HARD_GATE_BLOCKER_RE.search(str(issue or "")) is not None
-
-
-def _issue_is_factory_quality_risk(issue: str) -> bool:
-    return _FACTORY_QUALITY_RISK_RE.search(str(issue or "")) is not None
 
 
 def _first_execution_scope_token(payload: dict[str, Any]) -> tuple[str, str]:
@@ -389,6 +355,112 @@ def _bind_qa_transaction_execution_identity(
     return payload
 
 
+def _qa_observation_data_projection(value: Any) -> Any:
+    """Keep semantic data; historical LLM frames remain in original artifacts."""
+    if isinstance(value, list):
+        return [_qa_observation_data_projection(item) for item in value]
+    if not isinstance(value, dict):
+        return deepcopy(value)
+    result = {}
+    for key, item in value.items():
+        if key == "llm_evidence" and isinstance(item, dict):
+            references: list[dict[str, str]] = []
+
+            def collect(node: Any, collected: list[dict[str, str]]) -> None:
+                if isinstance(node, dict):
+                    for name, token in node.items():
+                        width = 24 if name == "context_snapshot_ref" else 64 if name == "request_hash" else 0
+                        if width and isinstance(token, str) and re.fullmatch(rf"[0-9a-f]{{{width}}}", token):
+                            reference = {"kind": name, "value": token}
+                            if reference not in collected:
+                                collected.append(reference)
+                        else:
+                            collect(token, collected)
+                elif isinstance(node, list):
+                    for child in node:
+                        collect(child, collected)
+
+            collect(item, references)
+            result["llm_observation_refs"] = {
+                "references": references,
+                "source_payload_sha256": hashlib.sha256(
+                    json.dumps(item, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                ).hexdigest(),
+                "historical_audit_in_original_evidence": True,
+            }
+        else:
+            result[key] = _qa_observation_data_projection(item)
+    return result
+
+
+def _qa_review_evidence_slots(context: dict[str, Any], source_evidence: str) -> dict[str, Any]:
+    """Model-facing data projection; original binding/effect facts stay intact."""
+    slots = dict(context.get("context_evidence_slots") or {})
+    if source_evidence:
+        slots["current_source"] = json.loads(source_evidence)
+    review = {}
+    for key in _QA_STRUCTURED_EVIDENCE_KEYS:
+        value = context.get(key)
+        if value is None:
+            continue
+        if key in {"workspace_quality", "workspace_quality_evidence"} and isinstance(value, dict):
+            latest = {}
+            for row in value.get("commands", ()):
+                if isinstance(row, dict):
+                    identity = {
+                        name: row.get(name)
+                        for name in (
+                            "command",
+                            "cwd",
+                            "working_directory",
+                            "phase",
+                            "source",
+                            "contract_hash",
+                            "command_authority_hash",
+                            "ce_verification_binding",
+                        )
+                    }
+                    latest[json.dumps(identity, ensure_ascii=False, sort_keys=True)] = row
+            current = []
+            for row in latest.values():
+                observation = {name: deepcopy(item) for name, item in row.items() if name != "verification_group"}
+                group = row.get("verification_group")
+                if isinstance(group, dict):
+                    observation["verification_group"] = {
+                        name: deepcopy(item) for name, item in group.items() if name != "commands"
+                    }
+                    observation["verification_group"]["commands"] = [
+                        {name: deepcopy(item) for name, item in command.items() if name != "wrapped_argv"}
+                        for command in group.get("commands", ())
+                        if isinstance(command, dict)
+                    ]
+                current.append(observation)
+            review[key] = {
+                name: deepcopy(item)
+                for name, item in value.items()
+                if name not in {"commands", "effective_commands", "repair"}
+            }
+            review[key].update(
+                commands=current,
+                source_payload_sha256=hashlib.sha256(
+                    json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                ).hexdigest(),
+                historical_command_rows_omitted=len(value.get("commands", ())) - len(current),
+                repair_history_in_original_evidence=True,
+            )
+        else:
+            review[key] = _qa_observation_data_projection(value)
+    if review:
+        slots["qa_review"] = review
+        quality = review.get("workspace_quality_evidence") or review.get("workspace_quality")
+        if isinstance(quality, dict):
+            slots["workspace_quality"] = deepcopy(quality)
+            slots["verifier_receipts"] = [
+                deepcopy(row) for row in quality.get("commands", ()) if isinstance(row.get("verification_group"), dict)
+            ]
+    return slots
+
+
 class QAAdapter(BaseRoleAdapter):
     """QA adapter."""
 
@@ -406,6 +478,109 @@ class QAAdapter(BaseRoleAdapter):
             "semantic_equivalence_checking",
             "regression_detection",
         ]
+
+    def _build_qa_blueprint_evidence(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Read exact CE-owned semantic artifacts; never grant execution scope."""
+        from polaris.cells.chief_engineer.blueprint.public import (
+            GetBlueprintStatusQueryV1,
+            QueryBlueprintProvenanceV1,
+            QueryProjectCompletionContractV1,
+            get_blueprint_status,
+            query_blueprint_provenance,
+            query_project_completion_contract,
+        )
+
+        review = context.get("chief_engineer_blueprint") or context.get("ce_blueprint")
+        if not isinstance(review, dict) or not isinstance(review.get("blueprints"), list):
+            return {}
+        run_id = str(context.get("run_id") or "")
+        if not run_id or review.get("factory_run_id") != run_id:
+            raise ValueError("qa_blueprint_run_binding_invalid")
+        tasks = {
+            str(task.get("task_id") or task.get("id")): task
+            for task in context.get("pm_task_contracts", ())
+            if isinstance(task, dict)
+        }
+        reader = WorkspaceReadSnapshot(self.workspace)
+        blueprints = []
+        observations = []
+        completions = {}
+        for row in review["blueprints"]:
+            if not isinstance(row, dict) or row.get("task_id") not in tasks:
+                raise ValueError("qa_blueprint_task_binding_invalid")
+            task_id = row["task_id"]
+            status = get_blueprint_status(
+                GetBlueprintStatusQueryV1(
+                    workspace=str(self.workspace),
+                    task_id=task_id,
+                    run_id=run_id,
+                )
+            )
+            if (
+                not status.ok
+                or status.status != "generated"
+                or status.blueprint_id != row.get("blueprint_id")
+                or status.blueprint_path != row.get("blueprint_path")
+            ):
+                raise ValueError("qa_blueprint_identity_binding_invalid")
+            path = Path(resolve_runtime_path(str(self.workspace), status.blueprint_path, read_only=True))
+            snapshot = reader.read(path)
+            if snapshot.status != "readable":
+                raise ValueError("qa_blueprint_artifact_unreadable")
+            payload = json.loads(snapshot.text)
+            provenance = query_blueprint_provenance(
+                QueryBlueprintProvenanceV1(
+                    blueprint=payload,
+                    expected_pm_task=tasks[task_id],
+                    expected_factory_run_id=run_id,
+                    expected_task_id=task_id,
+                    expected_blueprint_id=status.blueprint_id,
+                    expected_logical_path=status.blueprint_path,
+                )
+            )
+            if provenance.embedded_blueprint_hash != status.blueprint_hash:
+                raise ValueError("qa_blueprint_hash_binding_invalid")
+            portfolio = review.get("portfolio") or {}
+            if portfolio and payload.get("blueprint_portfolio_hash") != portfolio.get("portfolio_hash"):
+                raise ValueError("qa_blueprint_portfolio_binding_invalid")
+            completion = payload.get("project_completion_contract") or {}
+            contract = query_project_completion_contract(
+                QueryProjectCompletionContractV1(
+                    workspace=str(self.workspace),
+                    project_id=completion["project_id"],
+                    run_id=run_id,
+                    contract_hash=completion["contract_hash"],
+                )
+            )
+            completions[contract.contract_hash] = contract.to_dict()
+            # Capability carriers remain in original governed storage, not QA data.
+            model_payload = _qa_observation_data_projection(
+                {key: value for key, value in payload.items() if key not in {"job_token", "capability_token"}}
+            )
+            blueprints.append(model_payload)
+            observations.append(
+                {
+                    "path": status.blueprint_path,
+                    "content_sha256": snapshot.content_sha256,
+                    "provenance": provenance.to_dict(),
+                    "model_payload_sha256": hashlib.sha256(
+                        json.dumps(model_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                    ).hexdigest(),
+                }
+            )
+        if not blueprints or reader.drift_reasons():
+            raise ValueError("qa_blueprint_source_incomplete_or_drifted")
+        return {
+            "schema_version": "factory.workspace_quality_repair.ce_blueprint_context.v1",
+            "blueprints": blueprints,
+            "project_completion_contracts": list(completions.values()),
+            "module_interface_contract": {
+                item["task_id"]: item.get("module_interface_contract") for item in blueprints
+            },
+            "execution_checklist": {item["task_id"]: item.get("execution_checklist") for item in blueprints},
+            "architecture_decisions": {item["task_id"]: item.get("architecture_decisions") for item in blueprints},
+            "source_observations": observations,
+        }
 
     async def execute(
         self,
@@ -426,6 +601,7 @@ class QAAdapter(BaseRoleAdapter):
             review_result = self._run_static_review(target, run_id=run_id)
             prompt_target = _sanitize_qa_target_for_prompt(target)
             message = self._build_qa_message(review_type, prompt_target, review_result=review_result)
+            source_evidence = self._build_qa_source_evidence(context)
             prompt_appendix = self._build_qa_prompt_appendix()
             llm_context = _bind_qa_transaction_execution_identity(
                 task_id=task_id,
@@ -435,6 +611,18 @@ class QAAdapter(BaseRoleAdapter):
                 stage_label="judgement",
             )
             llm_context["target"] = prompt_target
+            llm_context["context_evidence_slots"] = _qa_review_evidence_slots(llm_context, source_evidence)
+            blueprint_evidence = self._build_qa_blueprint_evidence(llm_context)
+            if blueprint_evidence:
+                llm_context["context_evidence_slots"]["ce_blueprint"] = blueprint_evidence
+                for key in (
+                    "chief_engineer_blueprint",
+                    "ce_blueprint",
+                    "verifier_receipts",
+                    "workspace_quality_evidence",
+                    "workspace_quality",
+                ):
+                    llm_context["context_evidence_slots"].get("qa_review", {}).pop(key, None)
             response = await self._call_role_llm(
                 message=message,
                 context=llm_context,
@@ -465,6 +653,17 @@ class QAAdapter(BaseRoleAdapter):
                 )
                 repair_context["target"] = prompt_target
                 repair_context["qa_retry"] = "strict_json_verdict"
+                repair_context["context_evidence_slots"] = _qa_review_evidence_slots(repair_context, source_evidence)
+                if blueprint_evidence:
+                    repair_context["context_evidence_slots"]["ce_blueprint"] = deepcopy(blueprint_evidence)
+                    for key in (
+                        "chief_engineer_blueprint",
+                        "ce_blueprint",
+                        "verifier_receipts",
+                        "workspace_quality_evidence",
+                        "workspace_quality",
+                    ):
+                        repair_context["context_evidence_slots"].get("qa_review", {}).pop(key, None)
                 repair_response = await self._call_role_llm(
                     message=repair_message,
                     context=repair_context,
@@ -965,6 +1164,32 @@ class QAAdapter(BaseRoleAdapter):
             "parsed_json": True,
         }
 
+    def _build_qa_source_evidence(self, context: dict[str, Any]) -> str:
+        """Reuse confined snapshots for the exact supplied authored target set."""
+        metadata = context.get("metadata")
+        sources = [context, metadata] if isinstance(metadata, dict) else [context]
+        paths = list(
+            dict.fromkeys(
+                path for source in sources for path in source.get("target_files", ()) if isinstance(path, str) and path
+            )
+        )
+        if not paths:
+            return ""
+        reader = WorkspaceReadSnapshot(self.workspace)
+        records = []
+        for path in paths:
+            snapshot = reader.read(Path(path))
+            records.append(
+                {
+                    "path": path,
+                    "status": snapshot.status,
+                    "content_sha256": snapshot.content_sha256,
+                    "content": snapshot.text if snapshot.status == "readable" else "",
+                    "detail": snapshot.detail,
+                }
+            )
+        return json.dumps({"files": records, "source_drift": reader.drift_reasons()}, ensure_ascii=False)
+
     def _build_qa_message(
         self,
         review_type: str,
@@ -977,7 +1202,7 @@ class QAAdapter(BaseRoleAdapter):
         prompt_target = _sanitize_qa_target_for_prompt(target)
         return "\n".join(
             [
-                "Review the QA target using only the deterministic evidence already collected by Polaris.",
+                "Review the original requirements, Chief Engineer handoff, current source and verifier evidence attached to this QA request.",
                 f"Review type: {review_type}",
                 f"Target: {prompt_target}",
                 "",
@@ -997,9 +1222,9 @@ class QAAdapter(BaseRoleAdapter):
                 "Do not inspect the workspace. Do not call tools. Do not narrate the QA process.",
                 "Judge semantic task completion quality; do not rely only on file count or line count.",
                 "Small but complete utility classes are acceptable if requirements are met.",
-                "For Factory Bench, the runtime hard gate is: code artifacts landed, dependency/env prepare ran when needed, at least one real build/test/lint gate passed, and at least one CLI/Web/API entry executed or started.",
-                "If deterministic evidence includes factory_runtime_hard_gate_passed=True, report coverage/lint/deeper behavioral-test gaps as major_issues or warnings unless you can cite evidence that the runtime hard gate is false.",
-                "Use critical_issues only for defects that block the explicit runtime hard gate or prove the generated project is not runnable.",
+                "Passing build, tests and entry commands proves execution; independently check whether the original requirements and interfaces are satisfied.",
+                "Report evidenced requirement violations, incorrect behavior or regressions as critical_issues even when runtime commands passed.",
+                "Do not invent requirements or require optional capabilities that were not enabled. If necessary source or requirement evidence is unavailable, return FAIL and describe the missing evidence.",
                 "Use this schema:",
                 "{",
                 '  "verdict": "PASS|FAIL",',
@@ -1079,7 +1304,7 @@ class QAAdapter(BaseRoleAdapter):
                 "warnings": ["qa_llm_partial_parse_recovered"],
                 "evidence": [],
                 "suggestions": [],
-                "parsed_json": True,
+                "parsed_json": str(fallback_verdict.group(1) or "").strip().upper() != "PASS",
             }
         return {
             "parsed_json": False,
@@ -1088,9 +1313,9 @@ class QAAdapter(BaseRoleAdapter):
         }
 
     def _merge_review_result(self, base: dict[str, Any], llm: dict[str, Any]) -> dict[str, Any]:
-        """Merge deterministic review with LLM review."""
+        """Preserve independent judgement alongside deterministic observations."""
         merged = {
-            "verdict": str(base.get("verdict") or "PASS"),
+            "verdict": str(base.get("verdict") or ""),
             "score": int(base.get("score") or 100),
             "critical_issues": self._dedupe_list(base.get("critical_issues")),
             "major_issues": self._dedupe_list(base.get("major_issues")),
@@ -1098,70 +1323,22 @@ class QAAdapter(BaseRoleAdapter):
             "evidence": self._dedupe_list(base.get("evidence")),
             "suggestions": self._dedupe_list(base.get("suggestions")),
         }
-
-        if bool(llm.get("parsed_json")):
-            factory_runtime_hard_gate_passed = _review_has_factory_runtime_hard_gate(merged)
-            llm_verdict = str(llm.get("verdict") or "").strip().upper()
-            llm_critical_issues = self._dedupe_list(llm.get("critical_issues"))
-            retained_llm_critical: list[str] = []
-            quality_risk_critical: list[str] = []
-            if factory_runtime_hard_gate_passed:
-                for issue in llm_critical_issues:
-                    if _issue_blocks_factory_hard_gate(issue):
-                        retained_llm_critical.append(issue)
-                    elif _issue_is_factory_quality_risk(issue) or issue:
-                        quality_risk_critical.append(issue)
-            else:
-                retained_llm_critical = llm_critical_issues
-
-            if llm_verdict in {"PASS", "CONDITIONAL", "FAIL", "BLOCKED"} and (
-                not factory_runtime_hard_gate_passed or retained_llm_critical or llm_verdict == "PASS"
-            ):
+        llm_verdict = str(llm.get("verdict") or "").strip().upper()
+        if bool(llm.get("parsed_json")) and llm_verdict in {"PASS", "CONDITIONAL", "FAIL", "BLOCKED"}:
+            # Runtime gates prove execution, not fidelity to the original requirements.
+            # Neither judgement may erase the other observers failure.
+            if str(merged["verdict"]).upper() not in {"FAIL", "BLOCKED", "CONDITIONAL"}:
                 merged["verdict"] = llm_verdict
-            merged["critical_issues"] = self._dedupe_list(
-                list(cast("list", merged["critical_issues"])) + retained_llm_critical
-            )
-            merged["major_issues"] = self._dedupe_list(
-                list(cast("list", merged["major_issues"]))
-                + quality_risk_critical
-                + self._dedupe_list(llm.get("major_issues"))
-            )
-            merged["warnings"] = self._dedupe_list(
-                list(cast("list", merged["warnings"])) + self._dedupe_list(llm.get("warnings"))
-            )
-            merged["evidence"] = self._dedupe_list(
-                list(cast("list", merged["evidence"])) + self._dedupe_list(llm.get("evidence"))
-            )
-            merged["suggestions"] = self._dedupe_list(
-                list(cast("list", merged["suggestions"])) + self._dedupe_list(llm.get("suggestions"))
-            )
-            llm_score = int(llm.get("score") or 0) if isinstance(llm.get("score"), (int, float, str)) else 0
-            if llm_score > 0:
-                _current_score = merged.get("score")
-                merged["score"] = min(
-                    int(_current_score) if isinstance(_current_score, (int, float, str)) else 100, llm_score
-                )
-            if (
-                factory_runtime_hard_gate_passed
-                and llm_verdict in {"FAIL", "BLOCKED", "CONDITIONAL"}
-                and not retained_llm_critical
-            ):
-                merged["warnings"] = self._dedupe_list(
-                    [*list(cast("list", merged["warnings"])), "qa_llm_quality_risk_not_runtime_blocker"]
-                )
-                merged["evidence"] = self._dedupe_list(
-                    [
-                        *list(cast("list", merged["evidence"])),
-                        f"qa_llm_verdict_downgraded={llm_verdict}:factory_runtime_hard_gate_passed",
-                    ]
-                )
+            for key in ("critical_issues", "major_issues", "warnings", "evidence", "suggestions"):
+                merged[key] = self._dedupe_list(list(cast("list", merged[key])) + self._dedupe_list(llm.get(key)))
+            llm_score = self._coerce_int(llm.get("score"))
+            if llm.get("score") is not None:
+                merged["score"] = min(self._coerce_int(merged["score"]), llm_score)
         else:
-            # LLM 审查输出是增强信息，不应成为单点致死条件。
-            # 当确定性门禁已经给出 hard blocker 时，不再把 LLM
-            # JSON 漂移投影成 QA route 异常；它只是附属证据。
             deterministic_blocked = bool(merged["critical_issues"]) or str(merged["verdict"]).upper() in {
                 "FAIL",
                 "BLOCKED",
+                "CONDITIONAL",
             }
             if deterministic_blocked:
                 merged["evidence"] = self._dedupe_list(
@@ -1171,8 +1348,7 @@ class QAAdapter(BaseRoleAdapter):
                     ]
                 )
             else:
-                # 当确定性静态门禁已通过时，仅将其记录为 warning，
-                # 避免因为模型格式漂移导致 quality_gate 假阴性失败。
+                merged["verdict"] = "BLOCKED"
                 merged["warnings"] = self._dedupe_list(
                     [*list(cast("list", merged["warnings"])), _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING]
                 )
@@ -1193,12 +1369,13 @@ class QAAdapter(BaseRoleAdapter):
         suggestions = self._dedupe_list(review.get("suggestions"))
 
         computed_score = max(0, 100 - len(critical) * 30 - len(major) * 10 - len(warnings) * 4)
+        score_value = review.get("score")
         try:
-            raw_score = int(review.get("score") or 100)
+            raw_score = int(score_value if score_value is not None else 100)
         except (TypeError, ValueError):
             raw_score = 100
         score = min(raw_score, computed_score)
-        if critical or merged_verdict in {"FAIL", "BLOCKED", "CONDITIONAL"}:
+        if critical or _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING in warnings or merged_verdict != "PASS":
             passed = False
         elif score < _QA_MIN_PASS_SCORE:
             passed = False
@@ -1211,8 +1388,7 @@ class QAAdapter(BaseRoleAdapter):
         elif merged_verdict == "PASS":
             passed = True
         else:
-            # 无显式 FAIL 且无 critical 时，交给 QA 语义判定通过
-            passed = True
+            passed = False
 
         return {
             "verdict": "PASS" if passed else "FAIL",
@@ -1337,13 +1513,14 @@ class QAAdapter(BaseRoleAdapter):
 
         return {
             "verdict": str(payload.get("verdict") or "").strip().upper(),
-            "score": self._coerce_int(payload.get("score")),
+            "score": self._coerce_int(payload.get("score") if payload.get("score") is not None else 100),
             "critical_issues": self._dedupe_list(critical_issues),
             "major_issues": self._dedupe_list(major_issues),
             "warnings": self._dedupe_list(warnings),
             "evidence": self._dedupe_list(evidence),
             "suggestions": self._dedupe_list(suggestions),
-            "parsed_json": True,
+            "parsed_json": str(payload.get("verdict") or "").strip().upper()
+            in {"PASS", "CONDITIONAL", "FAIL", "BLOCKED"},
         }
 
     @staticmethod

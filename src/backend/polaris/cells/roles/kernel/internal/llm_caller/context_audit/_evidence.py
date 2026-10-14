@@ -24,6 +24,7 @@ from ._constants import (
     _REF_BASED_SUPERSEDED_FINDING_CODES,
 )
 from ._payloads import (
+    _body_bound_qa_evidence_slots,
     _ce_required_command_row_coverage,
     _request_sampling_audit,
 )
@@ -317,6 +318,21 @@ def _final_request_evidence_coverage(
         request_metadata_summary=request_metadata_summary,
         receipt_refs=receipt_refs,
     )
+    # These standard QA data slots are body-bound observations, not caller
+    # booleans or substitutes for Factory cutoff/verification authority.
+    qa_slots = _body_bound_qa_evidence_slots(ai_request)
+    context_slots = _request_context(ai_request).get("context_evidence_slots")
+    if (
+        role_id == "qa"
+        and isinstance(context_slots, dict)
+        and any(key in context_slots for key in ("ce_blueprint", "verifier_receipts", "workspace_quality"))
+    ):
+        included_refs = [
+            ref for ref in included_refs if ref not in {"ce_blueprint", "verifier_receipts", "workspace_quality"}
+        ]
+    for ref in qa_slots:
+        if ref not in included_refs:
+            included_refs.append(ref)
     required_refs = _required_evidence_refs(
         ai_request=ai_request,
         role_id=role_id,

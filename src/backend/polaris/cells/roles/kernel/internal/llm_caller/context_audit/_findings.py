@@ -15,6 +15,7 @@ from ._constants import (
 from ._payloads import (
     _actual_sibling_exports_payload,
     _architecture_or_file_plan_payload,
+    _body_bound_qa_evidence_slots,
     _failed_gate_evidence_payload,
     _module_interface_contract_payload,
     _workspace_quality_evidence_payload,
@@ -129,6 +130,14 @@ def _coverage_flags(
             structured_flags.get("has_workspace_quality_evidence") or workspace_quality_evidence
         ),
     }
+    context = _request_context(ai_request) if ai_request is not None else {}
+    slots = context.get("context_evidence_slots")
+    if str(getattr(ai_request, "role", "")).lower() == "qa" and isinstance(slots, dict):
+        bound = _body_bound_qa_evidence_slots(ai_request)
+        if "ce_blueprint" in slots:
+            coverage["has_chief_engineer_blueprint"] = bool(bound.get("ce_blueprint"))
+        if "workspace_quality" in slots:
+            coverage["has_workspace_quality_evidence"] = bool(bound.get("workspace_quality"))
     coverage.update(_resident_agi_coverage_flags(ai_request))
     return coverage
 

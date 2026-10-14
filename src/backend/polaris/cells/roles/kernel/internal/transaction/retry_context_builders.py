@@ -24,6 +24,7 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
 )
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_latest_user_message,
+    resolve_callable_tool_names,
 )
 from polaris.kernelone.audit.task_write_guidance import render_task_write_guidance
 
@@ -107,16 +108,71 @@ def _retry_write_guidance_pins(context: list[dict]) -> list[str]:
     return pins
 
 
+def _retry_user_message(context: list[dict], content: str) -> dict[str, Any]:
+    """Preserve existing typed tool contracts without promoting other metadata."""
+    current_user = next(
+        (
+            item
+            for item in reversed(context)
+            if isinstance(item, Mapping) and str(item.get("role") or "").strip().lower() == "user"
+        ),
+        {},
+    )
+    message: dict[str, Any] = {"role": "user", "content": content}
+    metadata = current_user.get("metadata")
+    contracts = {
+        key: dict(value)
+        for key in ("tool_contract", "platform_tool_contract")
+        if isinstance(metadata, Mapping) and isinstance((value := metadata.get(key)), Mapping)
+    }
+    if contracts:
+        message["metadata"] = contracts
+    for key in ("tool_contract", "platform_tool_contract"):
+        value = current_user.get(key)
+        if isinstance(value, Mapping):
+            message[key] = dict(value)
+    return message
+
+
+def _continuous_retry_context_enabled(context: list[dict], enabled: bool) -> bool:
+    from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import tool_contract_requires_single_batch
+
+    return enabled and not any(tool_contract_requires_single_batch(item) for item in context if isinstance(item, dict))
+
+
 def build_contract_retry_context(
     context: list[dict],
     tool_definitions: list[dict],
     *,
     forced_write_tool_name: str | None = None,
+    tool_choice_override: Any = None,
+    continuous_execution: bool = False,
 ) -> list[dict]:
     """构建突变合约违反后的 retry 上下文。"""
+    continuous_execution = _continuous_retry_context_enabled(context, continuous_execution)
     role_definition = _extract_role_definition_block(context)
     latest_user = extract_latest_user_message(context)
     latest_assistant = _extract_latest_assistant_message(context)
+    if continuous_execution:
+        callable_names = resolve_callable_tool_names(tool_definitions, tool_choice_override)
+        guidance = "\n".join(_retry_write_guidance_pins(context))
+        return [
+            {
+                "role": "system",
+                "content": (
+                    (role_definition + "\n" if role_definition else "")
+                    + "Continue the owning task through the supplied native tool interface.\n"
+                    + "Callable tools for this request: "
+                    + ", ".join(callable_names)
+                    + ".\n"
+                    + "Use only offered tools. Current-source inspection may precede permitted edits and verification "
+                    "across task turns. An observation-only turn is valid; task completion still requires all "
+                    "authorized write obligations and current-source verification to pass. "
+                    "Tool availability never expands the original CE capability or path authorization.\n" + guidance
+                ),
+            },
+            _retry_user_message(context, latest_user),
+        ]
     raw_target_file_tokens = extract_target_files_from_message(latest_user)
     target_file_tokens: list[str] = []
     for token in raw_target_file_tokens:
@@ -194,7 +250,7 @@ def build_contract_retry_context(
             "Only write these target files; acceptance criteria, verification commands, test names, and command "
             "output paths are not authorization to create or modify extra files."
         )
-        if forced_write_tool_name == "write_file" and len(target_file_tokens) > 1:
+        if forced_write_tool_name == "write_file" and len(target_file_tokens) > 1 and not continuous_execution:
             retry_lines.append(
                 "MULTI-TARGET WRITE CONVERGENCE: call write_file once for each still-missing target file from "
                 "the list above in this same tool batch. Prefer source, entrypoint, test, README, or HTML targets "
@@ -239,27 +295,7 @@ def build_contract_retry_context(
                 + "\nKERNELONE_AUTHORIZED_SCOPE_PATHS: "
                 + json.dumps({"scope_paths": authorized_scope_paths}, ensure_ascii=False)
             )
-        retry_message: dict[str, Any] = {"role": "user", "content": user_content}
-        current_user = next(
-            (
-                item
-                for item in reversed(context)
-                if isinstance(item, Mapping) and str(item.get("role") or "").strip().lower() == "user"
-            ),
-            {},
-        )
-        current_metadata = current_user.get("metadata")
-        preserved_contracts = {
-            key: dict(value)
-            for key in ("tool_contract", "platform_tool_contract")
-            if isinstance(current_metadata, Mapping) and isinstance((value := current_metadata.get(key)), Mapping)
-        }
-        if preserved_contracts:
-            retry_message["metadata"] = preserved_contracts
-        for key in ("tool_contract", "platform_tool_contract"):
-            value = current_user.get(key)
-            if isinstance(value, Mapping):
-                retry_message[key] = dict(value)
+        retry_message = _retry_user_message(context, user_content)
         retry_context.append(retry_message)
     else:
         for item in context:
@@ -280,8 +316,10 @@ def append_retry_enforcement_hint(
     allowed_tool_names: set[str],
     reason: str,
     forced_write_tool_name: str | None = None,
+    continuous_execution: bool = False,
 ) -> list[dict]:
     """向 retry 上下文追加强制约束提示。"""
+    continuous_execution = _continuous_retry_context_enabled(retry_context, continuous_execution)
     rendered_allowed = ", ".join(sorted(allowed_tool_names)) if allowed_tool_names else "<none>"
     forced_tool_detail = ""
     if forced_write_tool_name == "write_file":
@@ -313,13 +351,27 @@ def append_retry_enforcement_hint(
             + ". Acceptance criteria, verification commands, test names, and command output paths are "
             "not authorization to create or modify extra files."
         )
-        if forced_write_tool_name == "write_file" and len(target_file_tokens) > 1:
+        if forced_write_tool_name == "write_file" and len(target_file_tokens) > 1 and not continuous_execution:
             target_file_detail += (
                 "\nMULTI-TARGET WRITE CONVERGENCE: select exactly one still-missing target file from this list "
                 "and write that complete file body now. Prefer the first missing source, entrypoint, test, README, "
                 "or HTML target required by the current task. Do not use package.json, tsconfig.json, or another "
                 "already-created sibling as a substitute unless it is the selected target."
             )
+    if continuous_execution:
+        return [
+            *retry_context,
+            {
+                "role": "system",
+                "content": (
+                    f"RETRY FEEDBACK: {reason}\n"
+                    f"Callable tools for this request: {rendered_allowed}\n"
+                    "Use only offered tools. Read or command observations may precede a later authorized edit. "
+                    "TaskBoundary still requires the task's write obligations and current-source verification."
+                    + target_file_detail
+                ),
+            },
+        ]
     enforcement_hint = {
         "role": "system",
         "content": (
@@ -450,7 +502,10 @@ def build_retry_write_after_bootstrap_context(
     bootstrap_receipt: Mapping[str, Any],
     forced_write_tool_name: str | None,
     from_scratch_create: bool = False,
+    callable_tool_names: list[str] | None = None,
+    continuous_execution: bool = False,
 ) -> list[dict]:
+    continuous_execution = _continuous_retry_context_enabled(original_context, continuous_execution)
     latest_user = extract_latest_user_message(original_context)
     summary_lines: list[str] = []
     successful_files: list[str] = []
@@ -525,10 +580,15 @@ def build_retry_write_after_bootstrap_context(
                 failed_files.append(resolved_file)
 
     forced_line = (
-        f"Mandatory write tool: {forced_write_tool_name}."
+        "Continue the owning task across turns; inspection and command observations may precede permitted edits. "
+        "Task completion still requires authorized writes and current-source verification."
+        if continuous_execution
+        else f"Mandatory write tool: {forced_write_tool_name}."
         if forced_write_tool_name
         else "Mandatory: include at least one write tool."
     )
+    if callable_tool_names is not None:
+        forced_line += "\nCallable tools for this request: " + ", ".join(callable_tool_names) + "."
     summary_block = "\n".join(summary_lines) if summary_lines else "- (no readable bootstrap receipts)"
     role_definition = _extract_role_definition_block(original_context)
     retry_system = (
@@ -564,14 +624,14 @@ def build_retry_write_after_bootstrap_context(
     if failed_files:
         retry_system += "\nDo NOT edit unresolved paths (read failed): " + ", ".join(failed_files) + "."
         retry_system += "\nFor unresolved files that must be newly created, use write_file/create_file/append_to_file instead of edit_file."
-    if forced_write_tool_name == "write_file":
+    if forced_write_tool_name == "write_file" and not continuous_execution:
         retry_system += (
             "\nUse write_file for a complete production implementation of the selected target file. "
             "Do not preserve deterministic scaffold, audit seed, TODO, or placeholder-only code."
         )
     return [
         {"role": "system", "content": retry_system},
-        {"role": "user", "content": latest_user},
+        _retry_user_message(original_context, latest_user),
     ]
 
 

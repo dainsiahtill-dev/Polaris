@@ -877,6 +877,8 @@ print(f"Java javac passed for {len(files)} source file(s)")
         timeout_seconds: float,
         group: VerificationGroup,
         cancel_control: ProcessTreeRunControl,
+        *,
+        cwd: str = ".",
     ) -> dict[str, Any]:
         """Execute one verifier in the source-bound group; never fall back live."""
         resolved = helpers.resolve_workspace_quality_command(command)
@@ -913,6 +915,7 @@ print(f"Java javac passed for {len(files)} source file(s)")
             cargo_test=is_cargo_test_command(resolved),
             verification_group=group,
             cancel_control=cancel_control,
+            cwd=cwd,
         )
 
     @staticmethod
@@ -933,6 +936,7 @@ print(f"Java javac passed for {len(files)} source file(s)")
         cargo_test: bool,
         verification_group: VerificationGroup | None = None,
         cancel_control: ProcessTreeRunControl | None = None,
+        cwd: str = ".",
     ) -> dict[str, Any]:
         prepared = None
         try:
@@ -946,7 +950,7 @@ print(f"Java javac passed for {len(files)} source file(s)")
                     env=workspace_quality_subprocess_env(workspace=self.workspace),
                 )
             else:
-                prepared = verification_group.prepare_command(resolved_command)
+                prepared = verification_group.prepare_command(resolved_command, cwd=cwd)
                 completed = verification_group.execute_command(
                     prepared,
                     timeout=max(1.0, float(timeout_seconds or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS)),

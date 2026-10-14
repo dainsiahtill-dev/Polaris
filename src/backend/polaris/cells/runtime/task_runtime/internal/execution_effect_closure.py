@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Mapping
 
+from polaris.cells.director.runtime.public import hash_directed_effect_arguments
 from polaris.cells.events.fact_stream.public import FactStreamError, QueryFactEventsV1, query_fact_events
 from polaris.cells.runtime.task_runtime.internal.directed_effect_operation import (
     DirectedEffectOperationRepository,
@@ -15,7 +16,10 @@ from polaris.cells.runtime.task_runtime.internal.directed_effect_operation impor
     _registry_stream_token,
 )
 from polaris.cells.runtime.task_runtime.internal.execution_session import TaskExecutionSession
-from polaris.cells.runtime.task_runtime.internal.terminal_intent import validate_fulfilled_terminal_intent
+from polaris.cells.runtime.task_runtime.internal.terminal_intent import (
+    _canonical_sha256,
+    validate_fulfilled_terminal_intent,
+)
 from polaris.cells.runtime.task_runtime.public.contracts import (
     DirectedEffectOperationResultV1,
     DirectedEffectParentRegistryIdentityV1,
@@ -24,9 +28,11 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
 from polaris.cells.runtime.task_runtime.public.execution_effect_closure import (
     ExecutionEffectClosureObservationV1,
     ExecutionEffectCommitObservationV1,
+    ExecutionEffectTerminalFailureObservationV1,
     QueryExecutionEffectClosureV1,
 )
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 
 def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> ExecutionEffectClosureObservationV1:
@@ -47,23 +53,33 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
     path = f"runtime/tasks/task_{attempt.task_id}.session.json"
     repository = DirectedEffectOperationRepository()
     try:
-        before = fs.read_text(path, encoding="utf-8")
-        current_session = json.loads(before)
+        try:
+            before = fs.read_text(path, encoding="utf-8")
+        except FileNotFoundError:
+            before = None
+        current_session = json.loads(before) if before is not None else None
         identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(attempt)
-        if not isinstance(current_session, dict):
+        if before is not None and not isinstance(current_session, dict):
             return refused("session_identity_mismatch")
         owner_events = _read_owner_events(query.workspace)
-        current_matches = _session_matches_identity(current_session, identity)
-        if current_matches and not _terminal(current_session):
+        current_matches = isinstance(current_session, dict) and _session_matches_identity(current_session, identity)
+        if current_matches and isinstance(current_session, dict) and not _terminal(current_session):
             return refused("session_not_terminal", active=True)
         terminal = _owner_terminal_session(owner_events, identity, attempt)
         if terminal is None:
             return refused("owner_terminal_fact_missing")
         session, owner_terminal = terminal
+        removal_witness = None
         # The current attempt retains its strict disk guard. A historical query
         # requires a real successor claim; a foreign replacement session cannot
         # manufacture a history route.
-        if current_matches:
+        if current_session is None:
+            removal_witness = _owner_reset_removed_session(
+                owner_events, identity, session, owner_terminal, attempt.workspace
+            )
+            if removal_witness is None:
+                return refused("owner_reset_removal_fact_missing_or_invalid")
+        elif current_matches:
             if not _same_terminal_proof(current_session, session):
                 return refused("terminal_owner_session_mismatch")
         elif not _owner_session_known(owner_events, current_session, query.workspace, attempt.task_id):
@@ -100,7 +116,12 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
                 return refused("terminal_parent_closure_mismatch")
         receipts: list[ExecutionEffectCommitObservationV1] = []
         stream_reads = []
+        terminal_failures: list[ExecutionEffectTerminalFailureObservationV1] = []
+        role_owner_events = None
+        parent_owner_events = None
         refs = [f"task_runtime.execution:{owner_terminal['event_id']}:{owner_terminal['seq']}"]
+        if removal_witness is not None:
+            refs.append(f"task_runtime.execution:{removal_witness['event_id']}:{removal_witness['seq']}")
         if not isinstance(registry, DirectedEffectOperationResultV1):
             refs.append(f"{registry.stream_token}:{registry.source_head_seq}")
         else:
@@ -123,6 +144,30 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
             refs.append(f"{binding.operation_stream_token}:{reduced.source_head_seq}")
             for aggregate in reduced.aggregates:
                 if aggregate.state == "ABORTED":
+                    continue
+                if aggregate.state == "DEAD_LETTER":
+                    if session.get("status") != "failed":
+                        return refused("negative_effect_requires_failed_owner")
+                    if role_owner_events is None:
+                        role_owner_events = _read_owner_events(query.workspace, stream="roles.kernel.turn_outcomes")
+                        parent_owner_events = _read_owner_events(query.workspace, stream=registry.stream_token)
+                    member = next(m for m in inventory.members if m.operation_id == aggregate.operation.operation_id)
+                    assert parent_owner_events is not None
+                    failure = _observe_terminal_failure(
+                        attempt,
+                        binding,
+                        member,
+                        aggregate,
+                        reduced,
+                        registry,
+                        owner_terminal,
+                        role_owner_events,
+                        parent_owner_events,
+                        repository,
+                    )
+                    if failure is None:
+                        return refused("terminal_failure_proof_missing_or_invalid")
+                    terminal_failures.append(failure)
                     continue
                 if aggregate.state != "CLOSED_BY_PARENT":
                     return refused("effect_not_closed")
@@ -148,8 +193,12 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
                         commit_version=transition.version,
                     )
                 )
+        try:
+            after = fs.read_text(path, encoding="utf-8")
+        except FileNotFoundError:
+            after = None
         if (
-            fs.read_text(path, encoding="utf-8") != before
+            after != before
             or repository._load_registry(query.workspace, identity) != registry
             or _read_owner_events(query.workspace) != owner_events
         ):
@@ -159,6 +208,11 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
             for token, read in stream_reads
         ):
             return refused("closure_observation_changed")
+        if role_owner_events is not None and (
+            _read_owner_events(query.workspace, stream="roles.kernel.turn_outcomes") != role_owner_events
+            or _read_owner_events(query.workspace, stream=registry.stream_token) != parent_owner_events
+        ):
+            return refused("closure_observation_changed")
         basis = json.dumps(
             {
                 "identity": identity.to_record(),
@@ -166,6 +220,7 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
                 "owner_terminal": owner_terminal,
                 "refs": refs,
                 "receipts": [asdict(receipt) for receipt in receipts],
+                "terminal_failures": [asdict(failure) for failure in terminal_failures],
             },
             sort_keys=True,
             ensure_ascii=False,
@@ -178,6 +233,7 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
             tuple(receipts),
             tuple(refs),
             hashlib.sha256(basis).hexdigest(),
+            terminal_failures=tuple(terminal_failures),
         )
     except FactStreamError as exc:
         # Keep canonical failure attribution while exposing only bounded public
@@ -210,7 +266,7 @@ def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> Ex
         return refused(f"closure_observation_unavailable:{type(exc).__name__}")
 
 
-def _read_owner_events(workspace: str) -> tuple[Mapping[str, Any], ...]:
+def _read_owner_events(workspace: str, *, stream: str = "task_runtime.execution") -> tuple[Mapping[str, Any], ...]:
     """Read complete canonical history with KernelOne integrity and pagination."""
     events: list[Mapping[str, Any]] = []
     offset = 0
@@ -219,7 +275,7 @@ def _read_owner_events(workspace: str) -> tuple[Mapping[str, Any], ...]:
         page = query_fact_events(
             QueryFactEventsV1(
                 workspace=workspace,
-                stream="task_runtime.execution",
+                stream=stream,
                 limit=1000,
                 offset=offset,
                 strict_integrity=True,
@@ -358,6 +414,91 @@ def _owner_session_known(
     )
 
 
+def _owner_reset_removed_session(
+    events: tuple[Mapping[str, Any], ...],
+    identity: DirectedEffectParentRegistryIdentityV1,
+    terminal_session: Mapping[str, Any],
+    owner_terminal: Mapping[str, Any],
+    workspace: str,
+) -> Mapping[str, Any] | None:
+    """Only the latest canonical task fact may explain an absent session."""
+    scoped = [
+        event
+        for event in events
+        if isinstance(event.get("payload"), Mapping)
+        and str(event["payload"].get("task_id")) == str(terminal_session.get("task_id"))
+    ]
+    if not scoped:
+        return None
+    latest = scoped[-1]
+    session = _event_session(latest, workspace)
+    if session is None or not _owner_session_known(events, session, workspace, identity.task_id):
+        return None
+    successor_attempt = _attempt_from_session(workspace, session)
+    successor_identity = DirectedEffectParentRegistryIdentityV1.from_execution_attempt(successor_attempt)
+    if successor_identity.external_task_id != identity.external_task_id:
+        return None
+    successor_terminal = _owner_terminal_session(events, successor_identity, successor_attempt)
+    if successor_terminal is None:
+        return None
+    successor_session, successor_owner = successor_terminal
+    if successor_owner.get("seq", 0) < owner_terminal.get("seq", 0):
+        return None
+    validation = validate_fulfilled_terminal_intent(
+        TaskExecutionSession.from_dict(successor_session), successor_attempt
+    )
+    if isinstance(validation, DirectedEffectSettlementPreBarrierVerdictV1):
+        return None
+    successor_registry = DirectedEffectOperationRepository()._load_registry(workspace, successor_identity)
+    successor_proof = successor_session["metadata"]["terminal_settlement_proof"]
+    if isinstance(successor_registry, DirectedEffectOperationResultV1):
+        if successor_proof.get("registry_state") != "unenrolled_or_nonexistent" or not _registry_absent(
+            successor_registry, workspace, successor_identity
+        ):
+            return None
+    elif successor_registry.open_binding is not None:
+        return None
+    elif not successor_registry.bindings_by_id:
+        if (
+            successor_proof.get("registry_state") != "strict_empty"
+            or successor_proof.get("registry_version") != successor_registry.registry_version
+        ):
+            return None
+    elif successor_registry.settlement_close_proof is None or any(
+        successor_proof.get(key) != value for key, value in successor_registry.settlement_close_proof.items()
+    ):
+        return None
+    payload = latest["payload"]
+    row = payload.get("task_row_snapshot")
+    metadata = row.get("metadata") if isinstance(row, Mapping) else None
+    reference = metadata.get("task_runtime_settlement") if isinstance(metadata, Mapping) else None
+    envelope_metadata = latest.get("metadata")
+    transition = payload.get("transition_id")
+    reset_key = f"task_runtime.execution:runtime_reset_removed:{transition}"
+    valid = bool(
+        latest.get("event_type") == "runtime_reset_removed"
+        and isinstance(row, Mapping)
+        and row.get("status") == "removed"
+        and payload.get("status") == payload.get("execution_state") == "removed"
+        and payload.get("attempt") == successor_session.get("attempt")
+        and payload.get("session_id") == ""
+        and isinstance(transition, str)
+        and transition
+        and payload.get("idempotency_key") == reset_key
+        and isinstance(envelope_metadata, Mapping)
+        and envelope_metadata.get("idempotency_key") == reset_key
+        and isinstance(reference, Mapping)
+        and reference.get("fact_event_id") == successor_owner.get("event_id")
+        and reference.get("fact_event_seq") == successor_owner.get("seq")
+        and reference.get("outcome") == successor_session.get("status")
+        and reference.get("terminal_transition_id") == successor_session.get("terminal_transition_id")
+        and _session_matches_identity(session, successor_identity)
+        and _same_terminal_proof(session, successor_session)
+        and _terminal(session)
+    )
+    return latest if valid else None
+
+
 def _same_terminal_proof(current: Mapping[str, Any], owner: Mapping[str, Any]) -> bool:
     keys = ("status", "resumable", "terminal_transition_id")
     if any(current.get(key) != owner.get(key) for key in keys):
@@ -389,3 +530,234 @@ def _registry_absent(
             and details.get("storage_path") == f"runtime/events/{token}.jsonl"
         )
     )
+
+
+def _observe_terminal_failure(
+    attempt: TaskRuntimeExecutionAttemptIdentityV1,
+    binding: Any,
+    member: Any,
+    aggregate: Any,
+    reduced: Any,
+    registry: Any,
+    owner_terminal: Mapping[str, Any],
+    role_events: tuple[Mapping[str, Any], ...],
+    parent_events: tuple[Mapping[str, Any], ...],
+    repository: DirectedEffectOperationRepository,
+) -> ExecutionEffectTerminalFailureObservationV1 | None:
+    """Bind the negative result to real role, operation, parent and task owners."""
+    dead = repository._transition_for_kind(aggregate, "dead_letter")
+    recovery = repository._transition_for_kind(aggregate, "mark_recovery_pending")
+    claim = repository._transition_for_kind(aggregate, "claim")
+    if (
+        dead is None
+        or recovery is None
+        or claim is None
+        or repository._transition_for_kind(aggregate, "commit_receipt") is not None
+    ):
+        return None
+    descriptor = dead.descriptor
+    if descriptor.get("expected_receipt_binding_hash") != member.expected_receipt_binding_hash:
+        return None
+    parents = [
+        e
+        for e in parent_events
+        if e.get("event_type") == "task_runtime.deo_parent_registry.v1.closed"
+        and e.get("source") == "runtime.task_runtime"
+        and e.get("payload", {}).get("binding_id") == binding.binding_id
+    ]
+    if len(parents) != 1:
+        return None
+    parent = parents[0]
+    close = parent["payload"]
+    if (
+        close.get("stable_registry_identity") != registry.identity.to_record()
+        or close.get("operation_source_head_seq") != reduced.source_head_seq
+        or close.get("dead_letter_count") != sum(a.state == "DEAD_LETTER" for a in reduced.aggregates)
+        or close.get("receipt_count") != sum(a.state == "CLOSED_BY_PARENT" for a in reduced.aggregates)
+        or close.get("actor") not in {"runtime.task_runtime.settlement", "runtime.task_runtime.batch_rollover"}
+    ):
+        return None
+    storage = resolve_workspace_runtime_identity(attempt.workspace)
+    matches = []
+    for event in role_events:
+        payload = event.get("payload", {})
+        if not isinstance(payload, Mapping):
+            continue
+        outcome = payload.get("outcome")
+        metadata = event.get("metadata")
+        if not isinstance(outcome, Mapping) or not isinstance(metadata, Mapping):
+            continue
+        execution = outcome.get("execution")
+        if not isinstance(execution, Mapping):
+            continue
+        batch = execution.get("receipt")
+        if not isinstance(batch, Mapping):
+            continue
+        transition = payload.get("transition_id")
+        provenance = {
+            "workspace": attempt.workspace,
+            "run_id": attempt.run_id,
+            "task_id": attempt.external_task_id,
+            "turn_id": binding.correlation.turn_id,
+            "transition_id": transition,
+        }
+        if (
+            event.get("source") != "roles.kernel.transaction"
+            or event.get("event_type") != "turn_outcome_committed"
+            or payload.get("schema_version") != "roles.kernel.turn_outcome_fact.v2"
+            or outcome.get("schema_version") != "roles.kernel.turn_outcome.v1"
+            or not isinstance(transition, str)
+            or not transition
+            or payload.get("provenance") != provenance
+            or metadata.get("provenance") != provenance
+            or payload.get("storage_identity") != storage.to_record()
+            or metadata.get("storage_identity") != storage.to_record()
+            or not isinstance(payload.get("session_binding"), Mapping)
+            or payload["session_binding"].get("session_id") != attempt.session_id
+            or payload.get("run_id") != attempt.run_id
+            or metadata.get("run_id") != attempt.run_id
+            or payload.get("task_id") != attempt.external_task_id
+            or metadata.get("task_id") != attempt.external_task_id
+            or event.get("aggregate_id") != attempt.external_task_id
+            or event.get("correlation_id") != binding.correlation.turn_id
+            or payload.get("turn_id") != binding.correlation.turn_id
+            or outcome.get("turn_id") != binding.correlation.turn_id
+            or outcome.get("run_id") != attempt.run_id
+            or _canonical_sha256(outcome) != payload.get("outcome_hash")
+            or metadata.get("idempotency_key")
+            != ":".join(
+                (
+                    "roles.kernel.turn_outcomes",
+                    storage.token,
+                    attempt.run_id,
+                    attempt.external_task_id,
+                    binding.correlation.turn_id,
+                    transition,
+                )
+            )
+            or batch.get("turn_id") != binding.correlation.turn_id
+            or execution.get("batch_id") != batch.get("batch_id")
+            or batch.get("pending_async_count") != 0
+            or batch.get("has_pending_async") is not False
+        ):
+            continue
+        rows = batch.get("results")
+        raw_rows = batch.get("raw_results")
+        if not isinstance(rows, list) or not isinstance(raw_rows, list) or len(rows) != len(raw_rows):
+            continue
+        selected = [row for row in rows if isinstance(row, dict) and row.get("call_id") == member.tool_call_id]
+        if len(selected) != 1:
+            continue
+        row = selected[0]
+        raw_selected = [r for r in raw_rows if isinstance(r, dict) and r.get("call_id") == member.tool_call_id]
+        if len(raw_selected) != 1:
+            continue
+        raw_row = raw_selected[0]
+        authority_fields = (
+            "call_id",
+            "tool_name",
+            "status",
+            "result",
+            "error",
+            "effect_receipt",
+            "effect_receipt_commit",
+            "directed_effect_claim_status",
+            "directed_effect_mutation_status",
+        )
+        if any(raw_row.get(k) != row.get(k) for k in authority_fields):
+            continue
+        invocations = execution.get("invocations")
+        decision = outcome.get("decision")
+        decision_metadata = decision.get("metadata") if isinstance(decision, Mapping) else None
+        envelopes = (
+            decision_metadata.get("native_tool_call_envelopes") if isinstance(decision_metadata, Mapping) else None
+        )
+        if not isinstance(invocations, list) or not isinstance(envelopes, list):
+            continue
+        calls = [i for i in invocations if isinstance(i, dict) and i.get("call_id") == member.tool_call_id]
+        native = [e for e in envelopes if isinstance(e, dict) and e.get("call_id") == member.tool_call_id]
+        if len(calls) != 1 or len(native) != 1:
+            continue
+        arguments = calls[0].get("arguments")
+        if (
+            not isinstance(arguments, dict)
+            or calls[0].get("tool_name") != member.normalized_tool_name
+            or native[0].get("tool_name") != member.normalized_tool_name
+            or native[0].get("arguments_hash") != _canonical_sha256(arguments)
+        ):
+            continue
+        physical = row.get("result")
+        if not isinstance(physical, dict):
+            continue
+        fact = physical.get("effect_recovery")
+        if not isinstance(fact, dict):
+            continue
+        ref = descriptor.get("resolution_evidence_ref")
+        context = ref.removeprefix("dead-letter://director/") if isinstance(ref, str) else ""
+        code = physical.get("exit_code")
+        if (
+            row.get("status") not in {"error", "failed", "cancelled"}
+            or row.get("tool_name") != member.normalized_tool_name
+            or row.get("directed_effect_claim_status") != "claimed"
+            or row.get("directed_effect_mutation_status") != "failed"
+            or row.get("effect_receipt") is not None
+            or row.get("effect_receipt_commit") is not None
+            or physical.get("schema_version") != "roles.adapters.directed_effect_physical_failure.v1"
+            or physical.get("failure_kind") != "physical_result_failed"
+            or physical.get("error_code") != "deo_physical_execution_failed"
+            or type(code) is not int
+            or code <= 0
+            or not isinstance(physical.get("physical_error"), str)
+            or len(context) != 64
+            or any(c not in "0123456789abcdef" for c in context)
+            or ref != f"dead-letter://director/{context}"
+            or fact.get("schema_version") != "roles.adapters.directed_effect_recovery_fact.v1"
+            or fact.get("state") != "DEAD_LETTER"
+            or fact.get("operation_id") != aggregate.operation.operation_id
+            or fact.get("event_id") != dead.event_id
+            or fact.get("version") != dead.version
+            or fact.get("resolution_evidence_ref") != ref
+            or fact.get("resolution_evidence_hash") != descriptor.get("resolution_evidence_hash")
+        ):
+            continue
+        evidence = (
+            ("context_id", context),
+            ("failure_kind", "physical_result_failed"),
+            ("result_type", "dict"),
+            ("physical_error", physical["physical_error"][:400]),
+            ("physical_error_type", str(physical.get("physical_error_type") or "")[:80]),
+        )
+        if (
+            hash_directed_effect_arguments(evidence) != recovery.descriptor.get("recovery_evidence_hash")
+            or recovery.descriptor.get("recovery_evidence_ref") != f"recovery://director/{context}"
+            or hash_directed_effect_arguments((*evidence, ("recovery_event_id", recovery.event_id)))
+            != descriptor.get("resolution_evidence_hash")
+        ):
+            continue
+        matches.append(
+            ExecutionEffectTerminalFailureObservationV1(
+                operation_id=aggregate.operation.operation_id,
+                parent_binding_id=binding.binding_id,
+                batch_id=binding.correlation.batch_id,
+                turn_id=binding.correlation.turn_id,
+                tool_call_id=member.tool_call_id,
+                normalized_tool_name=member.normalized_tool_name,
+                expected_receipt_binding_hash=member.expected_receipt_binding_hash,
+                context_id=context,
+                resolution_evidence_ref=ref,
+                resolution_evidence_hash=descriptor["resolution_evidence_hash"],
+                dead_letter_event_id=dead.event_id,
+                dead_letter_version=dead.version,
+                exit_code=code,
+                physical_failure_hash=_canonical_sha256(physical),
+                owner_result_hash=_canonical_sha256({k: v for k, v in row.items() if k != "execution_time_ms"}),
+                owner_raw_result_hash=_canonical_sha256({k: v for k, v in raw_row.items() if k != "execution_time_ms"}),
+                owner_turn_event_id=str(event["event_id"]),
+                owner_turn_event_seq=int(event["seq"]),
+                parent_close_event_id=str(parent["event_id"]),
+                parent_close_version=int(close["version"]),
+                owner_terminal_event_id=str(owner_terminal["event_id"]),
+                owner_terminal_event_seq=int(owner_terminal["seq"]),
+            )
+        )
+    return matches[0] if len(matches) == 1 else None

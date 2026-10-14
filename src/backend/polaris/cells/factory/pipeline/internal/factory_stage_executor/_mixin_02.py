@@ -2757,7 +2757,11 @@ class _Mixin02:
     def _load_package_scripts(self) -> dict[str, str]:
         return cast(dict[str, str], self._workspace_quality.load_package_scripts())
 
-    def _workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
+    def _workspace_quality_commands(self, context: dict[str, Any], *, run: FactoryRun | None = None) -> list[list[str]]:
+        if run is not None:
+            from ..native_validation_session import required_clean_verifier_commands
+
+            return required_clean_verifier_commands(self, run)
         return cast(list[list[str]], self._workspace_quality.workspace_quality_commands(context))
 
     @staticmethod
@@ -3144,8 +3148,10 @@ class _Mixin02:
     def _resolve_workspace_quality_command(command: list[str]) -> list[str]:
         return helpers.resolve_workspace_quality_command(command)
 
-    def _workspace_quality_repair_errors(self, results: list[dict[str, Any]]) -> list[str]:
-        return workspace_quality_impl._workspace_quality_repair_errors(self, results)
+    def _workspace_quality_repair_errors(
+        self, results: list[dict[str, Any]], *, run: FactoryRun | None = None
+    ) -> list[str]:
+        return workspace_quality_impl._workspace_quality_repair_errors(self, results, run=run)
 
     @staticmethod
     def _workspace_quality_diagnostic_signature(errors: Iterable[str]) -> tuple[str, ...]:

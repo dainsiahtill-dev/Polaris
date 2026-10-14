@@ -402,11 +402,11 @@ def _verify_persisted_commit(
     snapshot = operation.snapshot
     if (
         not operation.ok
-        or operation.state != "RECEIPT_COMMITTED"
+        or operation.state not in {"RECEIPT_COMMITTED", "CLOSED_BY_PARENT"}
         or snapshot is None
         or (
-            operation.version != commit.get("version")
-            or snapshot.last_event_id != commit.get("event_id")
+            operation.version != commit.get("version") + (operation.state == "CLOSED_BY_PARENT")
+            or (operation.state == "RECEIPT_COMMITTED" and snapshot.last_event_id != commit.get("event_id"))
             or operation.operation is None
             or operation.operation.operation_id != receipt.get("operation_id")
         )
@@ -422,13 +422,16 @@ def _verify_persisted_commit(
             strict_integrity=True,
         )
     )
-    events = [event for event in facts.events if event.get("event_id") == snapshot.last_event_id]
+    events = [event for event in facts.events if event.get("event_id") == commit.get("event_id")]
     if len(events) != 1:
         raise NativeValidationInputError("native_validation_commit_event_missing")
     payload = events[0].get("payload")
     descriptor = payload.get("replay_descriptor") if isinstance(payload, Mapping) else None
     if (
         not isinstance(descriptor, Mapping)
+        or payload.get("operation") != operation.operation.to_record()
+        or payload.get("version") != commit.get("version")
+        or payload.get("state") != "RECEIPT_COMMITTED"
         or descriptor.get("command") != "commit_receipt"
         or any(
             descriptor.get(key) != commit.get(key)
@@ -436,6 +439,59 @@ def _verify_persisted_commit(
         )
     ):
         raise NativeValidationInputError("native_validation_persisted_receipt_binding_mismatch")
+    if operation.state == "CLOSED_BY_PARENT":
+        closed = [event for event in facts.events if event.get("event_id") == snapshot.last_event_id]
+        close = closed[0].get("payload") if len(closed) == 1 else None
+        close_descriptor = close.get("replay_descriptor") if isinstance(close, Mapping) else None
+        rollover_hash = close_descriptor.get("batch_rollover_hash") if isinstance(close_descriptor, Mapping) else None
+        if (
+            not isinstance(close, Mapping)
+            or not isinstance(close_descriptor, Mapping)
+            or not isinstance(rollover_hash, str)
+            or len(rollover_hash) != 64
+            or any(character not in "0123456789abcdef" for character in rollover_hash)
+            or close.get("operation") != operation.operation.to_record()
+            or close.get("version") != operation.version
+            or close.get("previous_version") != commit.get("version")
+            or close.get("state") != "CLOSED_BY_PARENT"
+            or close_descriptor.get("command") != "close_by_parent"
+            or close_descriptor.get("actor") != "runtime.task_runtime.batch_rollover"
+            or close_descriptor.get("expected_version") != commit.get("version")
+            or close_descriptor.get("expected_seq") != closed[0].get("seq")
+            or close_descriptor.get("expected_receipt_binding_hash") != receipt.get("receipt_binding_hash")
+            or close_descriptor.get("terminal_intent_hash") != ""
+            or close_descriptor.get("settlement_outcome") != ""
+            or close_descriptor.get("reason") != ""
+            or registry.source_head_seq > 4096
+        ):
+            raise NativeValidationInputError("native_validation_effect_rollover_close_invalid")
+        parent_facts = query_fact_events(
+            QueryFactEventsV1(
+                workspace=attempt.workspace,
+                stream=registry.registry_stream_token,
+                limit=max(1, registry.source_head_seq),
+                strict_integrity=True,
+            )
+        )
+        parent_closes = [
+            event["payload"]
+            for event in parent_facts.events
+            if isinstance(event.get("payload"), Mapping)
+            and event["payload"].get("binding_id") == binding.binding_id
+            and event["payload"].get("close_kind") == "batch_rollover"
+        ]
+        if len(parent_closes) != 1 or any(
+            parent_closes[0].get(key) != value
+            for key, value in {
+                "actor": "runtime.task_runtime.batch_rollover",
+                "batch_rollover_hash": rollover_hash,
+                "close_evidence_ref": "batch-rollover://" + rollover_hash,
+                "parent_sequence": binding.parent_sequence,
+                "stable_registry_identity": registry.registry_identity.to_record(),
+                "operation_source_head_seq": snapshot.source_head_seq,
+            }.items()
+        ):
+            raise NativeValidationInputError("native_validation_parent_rollover_close_invalid")
 
 
 def overlay_native_validation_candidate(
@@ -496,6 +552,7 @@ def overlay_native_validation_candidate(
                 raise NativeValidationInputError("native_validation_effect_receipt_not_valid_v2")
             if receipt.get("receipt_outcome") != "succeeded" or receipt.get("normalized_tool_name") not in {
                 "edit_file",
+                "edit_blocks",
                 "write_file",
             }:
                 raise NativeValidationInputError("native_validation_effect_not_source_write")

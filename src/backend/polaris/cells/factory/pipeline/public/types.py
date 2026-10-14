@@ -125,6 +125,9 @@ class FactoryControlRequest(BaseModel):
     )
     target_phase: RunPhase | None = Field(default=None, description="目标阶段（用于 retry_* 操作）")
     reason: str | None = Field(default=None, description="操作原因")
+    qa_semantic_review_required: Literal[True] | None = Field(
+        default=None, description="重试时启用既有独立语义 QA；省略则继承原配置，不能关闭已有要求"
+    )
 
 
 class AgentTurnRequest(BaseModel):

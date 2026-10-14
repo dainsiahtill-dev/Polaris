@@ -493,3 +493,71 @@ def test_artifact_receipt_reuse_requires_exact_terminal_zero_effect_owner(defect
     )
     closures = () if defect == "missing_owner" else (owner, owner) if defect == "duplicate_owner" else (owner,)
     assert _closed_artifact_receipt_reuse(receipt, closures, workspace="workspace") is (defect == "")
+
+
+@pytest.mark.asyncio
+async def test_real_dead_letter_nonzero_cli_releases_without_positive_effect_receipts(tmp_path: Path) -> None:
+    from polaris.cells.runtime.task_runtime.public import (
+        BindRuntimeTaskToFactoryRunCommandV1,
+        bind_runtime_task_to_factory_run,
+    )
+    from polaris.cells.runtime.task_runtime.public.tests.test_dead_letter_execution_effect_closure import (
+        _real_failed_cli,
+    )
+
+    attempt, batch = await _real_failed_cli(tmp_path)
+    factory_run_id = "factory-dead-letter-cleanup"
+    assert bind_runtime_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(tmp_path), task_id=str(attempt.task_id), factory_run_id=factory_run_id
+        )
+    ).ok
+    lifecycle = build_tool_call_lifecycle_receipt(
+        run_id=attempt.run_id,
+        task_id=attempt.external_task_id,
+        turn_id=batch["turn_id"],
+        role="director",
+        native_tool_calls_count=1,
+        decoded_tool_calls_count=1,
+        dispatched_tool_calls_count=1,
+        receipts=[batch],
+    ).to_dict()
+    append_tool_call_lifecycle_event(
+        AppendToolCallLifecycleEventCommandV1(
+            workspace=str(tmp_path),
+            run_id=attempt.run_id,
+            task_id=attempt.external_task_id,
+            turn_id=batch["turn_id"],
+            role="director",
+            project_id="project-1",
+            lifecycle_receipt=lifecycle,
+        )
+    )
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(tmp_path),
+            run_id=attempt.run_id,
+            event={
+                "event_type": "gate_evaluated",
+                "run_id": attempt.run_id,
+                "stage": "qa_verifier",
+                "gate": {"name": "qa_verifier", "ok": False, "summary": "CLI failed"},
+                "job_token": {
+                    "run_id": attempt.run_id,
+                    "project_id": "project-1",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {
+                        "required_evidence_modalities": ["qa", "command"],
+                        "enabled_evidence_modalities": ["qa", "command"],
+                    },
+                },
+                "physical_evidence": {"batch_receipt": batch},
+            },
+        )
+    )
+    result = query_factory_settlement_barrier(tmp_path, factory_run_id)
+    assert result.closed is True, result
+    assert result.release_allowed is True
+    assert result.passed is False
+    assert result.effect_receipt_count == 0
+    assert set(result.missing_required_modalities) == {"qa", "command"}

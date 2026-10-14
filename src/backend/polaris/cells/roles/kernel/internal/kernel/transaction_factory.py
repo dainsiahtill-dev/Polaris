@@ -465,6 +465,24 @@ def create_transaction_kernel(
 
         __slots__ = ()
 
+        def resolve_tool_surface(
+            self,
+            tool_definitions: list[dict[str, Any]],
+            tool_choice: Any = None,
+        ) -> tuple[list[dict[str, Any]], Any]:
+            """Resolve the same caller-owned scope consumed by request preparation."""
+            from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
+                _apply_forced_transaction_tool_definitions,
+            )
+            from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
+
+            override = _build_context_override_with_prebuilt_messages([], tool_definitions, tool_choice)
+            definitions = _apply_forced_transaction_tool_definitions(
+                build_native_tool_schemas(provider_profile),
+                override,
+            )
+            return definitions, override.get("_transaction_kernel_forced_tool_choice", "auto")
+
         async def __call__(self, request_payload: dict[str, Any]) -> dict[str, Any]:
             effective_profile = _build_effective_profile(request_payload)
             raw_messages = list(request_payload.get("messages", []))

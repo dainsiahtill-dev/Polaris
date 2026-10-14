@@ -9,6 +9,7 @@ import threading
 import time
 import traceback
 from collections import OrderedDict
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,7 +37,7 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +329,17 @@ class JsonlEventStore:
         with self._locked_streams(logical_path) as leases:
             lease = leases.lease(logical_path)
             lease.open_existing(writable=False)
+            if strict_integrity:
+                return self._query_strict_lease(
+                    stream=stream_token,
+                    logical_path=logical_path,
+                    lease=lease,
+                    limit=limit,
+                    offset=offset,
+                    event_type=event_type,
+                    run_id=run_id,
+                    task_id=task_id,
+                )
             records = self._read_lease_records_cached(
                 stream=stream_token,
                 logical_path=logical_path,
@@ -377,13 +389,166 @@ class JsonlEventStore:
                     logical_path=logical_path,
                     lease=lease,
                 )
-            records = self._read_lease_records(
-                stream=stream_token,
-                logical_path=logical_path,
-                lease=lease,
-                strict_integrity=strict_integrity,
+            head = 0
+            for event, _ in self._iter_strict_lease_records(
+                stream=stream_token, logical_path=logical_path, lease=lease
+            ):
+                head = event.seq
+            return head
+
+    def _query_strict_lease(
+        self,
+        *,
+        stream: str,
+        logical_path: str,
+        lease: StreamLeaseV1,
+        limit: int,
+        offset: int,
+        event_type: str | None,
+        run_id: str | None,
+        task_id: str | None,
+    ) -> EventQueryResult:
+        """Authenticate all history, retaining only one bounded matching page.
+
+        Read-side byte limits bound each physical record and the retained page,
+        rather than permanently disqualifying a healthy growing stream. The
+        record-count complexity limit remains mandatory. Strict append and
+        guarded mutation retain their existing complete-stream byte budgets.
+        A page never becomes evidence before the complete tail and descriptor
+        identity have been validated. No ordinary parsed cache is consulted.
+        """
+
+        window: list[EventEnvelope] = []
+        window_bytes = 0
+        total = 0
+        page_full = False
+        for event, record_bytes in self._iter_strict_lease_records(
+            stream=stream, logical_path=logical_path, lease=lease
+        ):
+            if not self._matches(envelope=event, event_type=event_type, run_id=run_id, task_id=task_id):
+                continue
+            match_offset = total
+            total += 1
+            if match_offset < offset or page_full:
+                continue
+            if len(window) >= limit or window_bytes + record_bytes > self._strict_max_bytes:
+                page_full = True
+                continue
+            window.append(event)
+            window_bytes += record_bytes
+        next_offset = offset + len(window)
+        if next_offset >= total:
+            next_offset = 0
+        return EventQueryResult(
+            stream=stream, storage_path=logical_path, events=tuple(window), total=total, next_offset=next_offset
+        )
+
+    def _iter_strict_lease_records(
+        self, *, stream: str, logical_path: str, lease: StreamLeaseV1
+    ) -> Iterator[tuple[EventEnvelope, int]]:
+        """Validate each raw physical record and sequence using bounded buffers."""
+
+        try:
+            chunks = lease.iter_bytes(chunk_size=min(64 * 1024, self._strict_max_bytes))
+            with closing(chunks):
+                yield from self._decode_strict_lease_chunks(stream=stream, logical_path=logical_path, chunks=chunks)
+        except LockedRegularFileError as exc:
+            raise EventSourcingError(
+                f"stream descriptor read failed stream={stream!r}: {exc}", code=exc.code, details=dict(exc.details)
+            ) from exc
+        except (OSError, UnicodeDecodeError) as exc:
+            raise _StrictStreamIntegrityError(
+                f"strict read failed stream={stream!r}: {exc}",
+                code="stream_read_failed",
+                details={"stream": stream, "storage_path": logical_path},
+            ) from exc
+
+    def _decode_strict_lease_chunks(
+        self, *, stream: str, logical_path: str, chunks: Iterator[bytes]
+    ) -> Iterator[tuple[EventEnvelope, int]]:
+        pending = bytearray()
+        physical_line = 0
+        for chunk in chunks:
+            pending.extend(chunk)
+            while (newline := pending.find(b"\n")) >= 0:
+                record_bytes = newline + 1
+                self._validate_strict_record_budget(stream=stream, logical_path=logical_path, record_bytes=record_bytes)
+                physical_line += 1
+                if physical_line > self._strict_max_records:
+                    raise _StrictStreamIntegrityError(
+                        "strict event stream exceeds the configured record limit",
+                        code="strict_scan_limit_exceeded",
+                        details={
+                            "stream": stream,
+                            "storage_path": logical_path,
+                            "limit": "max_records",
+                            "max_records": self._strict_max_records,
+                            "actual_records": physical_line,
+                        },
+                    )
+                line = bytes(pending[:newline]).decode("utf-8")
+                del pending[:record_bytes]
+                if not line.strip(" \t\r"):
+                    raise _StrictStreamIntegrityError(
+                        "strict event stream contains an empty physical record",
+                        code="stream_corruption",
+                        details={"stream": stream, "storage_path": logical_path, "physical_line": physical_line},
+                    )
+                try:
+                    event = decode_strict_event_record(line)
+                    if event.stream != stream:
+                        raise StrictEventRecordError(reason="stream_mismatch", field="stream")
+                except StrictEventRecordError as exc:
+                    raise _StrictStreamIntegrityError(
+                        "strict event stream record failed raw-shape validation",
+                        code=self._strict_record_error_code(exc.details["reason"], field=exc.details.get("field")),
+                        details={
+                            "stream": stream,
+                            "storage_path": logical_path,
+                            "physical_line": physical_line,
+                            **exc.details,
+                        },
+                    ) from exc
+                if event.seq != physical_line:
+                    raise _StrictStreamIntegrityError(
+                        "strict event stream sequence is not contiguous",
+                        code="sequence_violation",
+                        details={
+                            "stream": stream,
+                            "storage_path": logical_path,
+                            "physical_line": physical_line,
+                            "expected_seq": physical_line,
+                            "actual_seq": event.seq,
+                        },
+                    )
+                yield event, record_bytes
+            self._validate_strict_record_budget(stream=stream, logical_path=logical_path, record_bytes=len(pending))
+        if pending:
+            raise _StrictStreamIntegrityError(
+                "strict event stream has a malformed non-newline-terminated tail",
+                code="torn_tail",
+                details={
+                    "stream": stream,
+                    "storage_path": logical_path,
+                    "physical_line": physical_line + 1,
+                    "recovery_required": True,
+                },
             )
-            return records[-1].seq if records else 0
+
+    def _validate_strict_record_budget(self, *, stream: str, logical_path: str, record_bytes: int) -> None:
+        if record_bytes > self._strict_max_bytes:
+            raise _StrictStreamIntegrityError(
+                "strict event stream record exceeds the configured byte limit",
+                code="strict_scan_limit_exceeded",
+                details={
+                    "stream": stream,
+                    "storage_path": logical_path,
+                    "limit": "max_bytes",
+                    "max_bytes": self._strict_max_bytes,
+                    "actual_bytes": record_bytes,
+                    "budget_scope": "physical_record",
+                },
+            )
 
     def _read_lease_tail_seq(
         self,

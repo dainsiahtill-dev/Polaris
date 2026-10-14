@@ -1143,6 +1143,8 @@ class DirectorToolExecutor:
                 "ok": True,
                 "file": rel_path,
                 "blocks_applied": len(scoped),
+                "before_sha256": sha256(content.encode("utf-8")).hexdigest(),
+                "after_sha256": sha256(final_content.encode("utf-8")).hexdigest(),
                 "broadcast_ok": bool(write_result.get("broadcast_ok")),
                 "director_policy": policy_result.get("director_policy"),
             }

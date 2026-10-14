@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from polaris.cells.roles.adapters.internal.director.execution_tools import _create_director_tool_executor
 
 
@@ -305,6 +307,9 @@ def test_r179_edit_blocks_is_available_and_applies_search_replace(tmp_path) -> N
     )
     assert result.get("ok") is True, result
     assert "return 2" in target.read_text(encoding="utf-8")
+    assert result["before_sha256"] == hashlib.sha256(b"def hello():\n    return 1\n").hexdigest()
+    assert result["after_sha256"] == hashlib.sha256(target.read_bytes()).hexdigest()
+    assert result["before_sha256"] != result["after_sha256"]
 
 
 def test_r195_write_file_recovers_structured_content_no_dict_leak(tmp_path) -> None:

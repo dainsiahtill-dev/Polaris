@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,6 +12,7 @@ from polaris.cells.factory.pipeline.internal import factory_qa_recovery as recov
 from polaris.cells.factory.pipeline.internal.factory_run_models import FactoryConfig, FactoryRun, FactoryRunStatus
 from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
 from polaris.cells.factory.pipeline.internal.native_validation_session import NativeValidationSession
+from polaris.cells.factory.pipeline.tests.test_materialization_llm_continuation import _entrypoint_source_effect
 from polaris.cells.factory.pipeline.tests.test_native_validation_inputs import (
     _projection,
     _real_effect,
@@ -25,7 +27,7 @@ authored = _authored
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["pass", "cancel", "foreign_owner", "verifier_failure", "heartbeat_failure"])
+@pytest.mark.parametrize("case", ["pass", "retry", "cancel", "foreign_owner", "verifier_failure", "heartbeat_failure"])
 async def test_owned_qa_repair_uses_real_effect_then_verifies_or_drains_cancelled_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -34,6 +36,14 @@ async def test_owned_qa_repair_uses_real_effect_then_verifies_or_drains_cancelle
 ) -> None:
     portfolio, contract, _fs = authored
     executor = OrchestrationStageExecutor(tmp_path)
+    authority_port = SimpleNamespace(mint_authority_binding=lambda _role: object())
+    monkeypatch.setattr(executor, "_factory_role_evidence_cutoff_port", lambda _context: authority_port)
+
+    async def authorized(_port: Any, role: str, operation: Any, **_kwargs: Any) -> Any:
+        assert _port is authority_port and role == "director"
+        return await operation()
+
+    monkeypatch.setattr(executor, "_call_with_factory_role_evidence_authority", authorized)
     run = FactoryRun(
         id="run",
         config=FactoryConfig(name="physical QA"),
@@ -46,7 +56,7 @@ async def test_owned_qa_repair_uses_real_effect_then_verifies_or_drains_cancelle
         "-c",
         "from pathlib import Path; assert Path('src/a.py').read_text(encoding='utf-8') == 'after\\n'",
     ]
-    monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [command])
+    monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context, *, run=None: [command])
     monkeypatch.setattr(recovery, "owned_finding_groups", lambda *_args: {"DEO-LIFECYCLE": ["src/a.py"]})
 
     def session(*_args: Any, **_kwargs: Any) -> NativeValidationSession:
@@ -71,12 +81,23 @@ async def test_owned_qa_repair_uses_real_effect_then_verifies_or_drains_cancelle
     monkeypatch.setattr(recovery.quality, "_settle_pending_workspace_quality_repair_attempt", settle)
 
     async def repair(**_kwargs: Any) -> Any:
+        if attempts and (case != "retry" or len(attempts) >= 2):
+            return [], {"attempted": False}
         guard = await DirectorQualityRepairCandidateGuard.capture(
             workspace=tmp_path,
             candidate_id="independent-qa-repair",
             target_files=["src/a.py"],
         )
-        attempt, effects = await _real_effect(tmp_path)
+        if case == "retry":
+            attempt, effects = await _entrypoint_source_effect(
+                tmp_path,
+                "src/a.py",
+                "wrong\n" if not attempts else "after\n",
+                f"qa-retry-{len(attempts)}",
+                attempt=attempts[-1] if attempts else None,
+            )
+        else:
+            attempt, effects = await _real_effect(tmp_path)
         await guard.seal_effect()
         attempts.append(attempt)
         stop = asyncio.Event()
@@ -140,23 +161,32 @@ async def test_owned_qa_repair_uses_real_effect_then_verifies_or_drains_cancelle
     if case == "cancel":
         with pytest.raises(asyncio.CancelledError):
             await recovery.repair_qa_role_findings(executor, **kwargs)
-    elif case == "pass":
+    elif case in {"pass", "retry"}:
         proof = await recovery.repair_qa_role_findings(executor, **kwargs)
-        assert checks[0]["passed"] is True, checks[0].get("stderr_tail") or checks[0].get("error")
-        assert settlements[0]["artifact_receipt_error"] == ""
-        assert settlements[0]["project_artifact_receipt_count"] == len(projection["owned_artifacts"])
-        assert settlements[0]["outcome"] == "completed", settlements[0]
+        assert checks[0]["passed"] is False  # Actual pre-repair source baseline.
+        candidate_index = 3 if case == "retry" else 1
+        assert checks[candidate_index]["passed"] is True, checks[candidate_index].get("error")
+        assert settlements[-1]["artifact_receipt_error"] == ""
+        assert settlements[-1]["project_artifact_receipt_count"] == len(projection["owned_artifacts"])
+        assert settlements[-1]["outcome"] == "completed", settlements[-1]
         assert proof is not None and proof.matches(str(tmp_path), "run"), (checks, settlements)
         assert proof.owner_task_ids == ("DEO-LIFECYCLE",)
         assert proof.effect_receipt_ids
-        assert len(checks) == 2 and all(item["exit_code"] == 0 for item in checks)
+        if case == "retry":
+            assert len(checks) == 5 and checks[1]["exit_code"] == 1
+            assert settlements[0]["outcome"] == "failed"
+            assert settlements[0]["candidate_guard_receipt"]["status"] == "restored"
+            assert attempts[0].task_id == attempts[1].task_id
+        else:
+            assert len(checks) == 3 and all(item["exit_code"] == 0 for item in checks[1:])
     else:
         assert await recovery.repair_qa_role_findings(executor, **kwargs) is None
-    if case != "pass":
+    if case not in {"pass", "retry"}:
         assert (tmp_path / "src/a.py").read_text(encoding="utf-8") == "before\n"
-        assert settlements[0]["candidate_guard_receipt"]["status"] == "restored"
+        if case != "cancel":
+            assert settlements[0]["candidate_guard_receipt"]["status"] == "restored"
     assert all(task.done() for task in heartbeat_tasks)
-    assert len(attempts) == 1
+    assert len(attempts) == (0 if case == "cancel" else 2 if case == "retry" else 1)
     rows = TaskRuntimeService(str(tmp_path)).list_task_rows(include_terminal=True)
     assert not any(str(row.get("status") or "") in {"in_progress", "claimed"} for row in rows)
 

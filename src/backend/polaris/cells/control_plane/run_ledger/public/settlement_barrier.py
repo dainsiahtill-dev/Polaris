@@ -474,6 +474,58 @@ def _closed_artifact_receipt_reuse(
     return len(matching) == 1 and not matching[0].receipts
 
 
+def _negative_terminal_result_matches(
+    result: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+    effect_closures: Sequence[ExecutionEffectClosureObservationV1],
+    *,
+    workspace: str,
+    raw_result: Mapping[str, Any] | None = None,
+) -> bool:
+    """Match a failure only to the owner's independent, terminal negative proof."""
+    physical = _mapping(result.get("result"))
+    recovery = _mapping(physical.get("effect_recovery"))
+    code = physical.get("exit_code")
+    if (
+        result.get("status") not in {"error", "failed", "cancelled"}
+        or result.get("effect_receipt") is not None
+        or result.get("effect_receipt_commit") is not None
+        or result.get("directed_effect_claim_status") != "claimed"
+        or result.get("directed_effect_mutation_status") != "failed"
+        or physical.get("schema_version") != "roles.adapters.directed_effect_physical_failure.v1"
+        or physical.get("failure_kind") != "physical_result_failed"
+        or type(code) is not int
+        or code <= 0
+    ):
+        return False
+    matching = [
+        failure
+        for closure in effect_closures
+        if closure.status == "closed"
+        and closure.execution_attempt.workspace == workspace
+        and closure.execution_attempt.run_id == receipt.get("run_id")
+        and closure.execution_attempt.external_task_id == receipt.get("task_id")
+        for failure in closure.terminal_failures
+        if failure.operation_id == recovery.get("operation_id")
+        and failure.turn_id == receipt.get("turn_id")
+        and failure.tool_call_id == result.get("call_id")
+        and failure.normalized_tool_name == result.get("tool_name")
+        and failure.dead_letter_event_id == recovery.get("event_id")
+        and failure.dead_letter_version == recovery.get("version")
+        and failure.resolution_evidence_ref == recovery.get("resolution_evidence_ref")
+        and failure.resolution_evidence_hash == recovery.get("resolution_evidence_hash")
+        and failure.exit_code == code
+        and failure.physical_failure_hash == stable_hash(dict(physical))
+        and failure.owner_result_hash == stable_hash({k: v for k, v in result.items() if k != "execution_time_ms"})
+        and (
+            raw_result is None
+            or failure.owner_raw_result_hash
+            == stable_hash({k: v for k, v in raw_result.items() if k != "execution_time_ms"})
+        )
+    ]
+    return len(matching) == 1
+
+
 def _terminal_failure_has_closed_dispatches(
     task_runtime_facts: Sequence[Mapping[str, Any]],
     run_projection: Mapping[str, Any],
@@ -553,12 +605,15 @@ def _terminal_failure_has_closed_dispatches(
         # projection details. Non-null errors/effects, unknown fields and every
         # nested value remain exact; mutations still require authentic commits.
         try:
-            if stable_hash(
-                [_closed_tool_result_identity(row, committed_readonly=committed_readonly) for row in results]
-            ) != stable_hash(
-                [_closed_tool_result_identity(row, committed_readonly=committed_readonly) for row in raw_results]
-            ):
-                return False
+            for typed_row, raw_row in zip(results, raw_results, strict=True):
+                if stable_hash(
+                    _closed_tool_result_identity(typed_row, committed_readonly=committed_readonly)
+                ) != stable_hash(
+                    _closed_tool_result_identity(raw_row, committed_readonly=committed_readonly)
+                ) and not _negative_terminal_result_matches(
+                    typed_row, receipt, effect_closures, workspace=workspace, raw_result=raw_row
+                ):
+                    return False
         except (TypeError, ValueError):
             return False
         if batch.get("pending_async_count") != 0 or batch.get("has_pending_async") is not False:
@@ -581,6 +636,8 @@ def _terminal_failure_has_closed_dispatches(
             if spec is None:
                 return False
             if spec.is_write_tool() or spec.is_exec_tool():
+                if _negative_terminal_result_matches(result, receipt, effect_closures, workspace=workspace):
+                    continue
                 effect = _mapping(result.get("effect_receipt"))
                 commit = _mapping(result.get("effect_receipt_commit"))
                 if directed_effect_receipt_v2_errors(effect, commit, prefix="closure") != ():

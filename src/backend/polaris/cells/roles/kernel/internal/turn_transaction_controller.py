@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -359,6 +360,12 @@ class TurnTransactionController:
             execute_tool_batch=_proxy_execute_tool_batch,
             guard_assert_single_tool_batch=_proxy_guard_assert_single_tool_batch,
             emit_event=self._emit_phase_event,
+            resolve_tool_surface=(
+                getattr(llm_provider, "resolve_tool_surface", None)
+                if callable(getattr(type(llm_provider), "resolve_tool_surface", None))
+                and not inspect.iscoroutinefunction(getattr(type(llm_provider), "resolve_tool_surface", None))
+                else None
+            ),
         )
         # Active TruthLog recorder — set during execute()/execute_stream(),
         # used by _emit_phase_event() for best-effort callback-path recording.
@@ -732,7 +739,12 @@ class TurnTransactionController:
         if not self.config.durable_commit_required:
             return None
         from polaris.cells.roles.kernel.internal.transaction.continuation_evidence import capture_task_source_state
-        source_state_after = capture_task_source_state(self.config.workspace, self.config.source_targets) if self.config.session_id else {}
+
+        source_state_after = (
+            capture_task_source_state(self.config.workspace, self.config.source_targets)
+            if self.config.session_id
+            else {}
+        )
         return commit_turn_result(
             workspace=self.config.workspace,
             run_id=self.config.run_id,

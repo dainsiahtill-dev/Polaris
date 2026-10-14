@@ -13,7 +13,9 @@ import re
 import stat
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import count as round_numbers
 from os import PathLike
 from pathlib import Path
 from types import SimpleNamespace
@@ -821,8 +823,9 @@ async def _settle_pending_workspace_quality_repair_attempt(
     *,
     accepted: bool,
     reason: str,
+    verifier_resolved: bool = True,
 ) -> dict[str, Any] | None:
-    """Settle one repair attempt only after its verifier-owned decision."""
+    """Retain accepted bytes independently from the attempt's terminal outcome."""
 
     if not isinstance(pending, Mapping):
         return None
@@ -880,23 +883,237 @@ async def _settle_pending_workspace_quality_repair_attempt(
             rollback_status = str(candidate_guard_receipt.get("status") or "")
             if rollback_status not in {"restored", "closed"}:
                 reason = f"workspace_quality_repair_candidate_rollback_failed:{rollback_status or 'unknown'}"
+    outcome = "completed" if accepted and verifier_resolved else "failed"
+    requested_outcome = outcome
     settle_result = executor._settle_director_stage_materialization_attempt(
         task_row_id=task_row_id,
         execution_attempt=execution_attempt,
-        stage_status="success" if accepted else "failed",
+        stage_status="success" if outcome == "completed" else "failed",
         summary=reason,
     )
+    completion_rejection: dict[str, Any] = {}
+    if (
+        outcome == "completed"
+        and settle_result.get("success") is False
+        and settle_result.get("code") == "settlement_effect_outcome_conflict"
+    ):
+        # The owner rejected completion before writing a terminal intent.
+        # Preserve the negative physical evidence with a real failed close;
+        # accepted bytes and clean current verifiers do not erase that failure.
+        completion_rejection = dict(settle_result)
+        outcome = "failed"
+        settle_result = executor._settle_director_stage_materialization_attempt(
+            task_row_id=task_row_id,
+            execution_attempt=execution_attempt,
+            stage_status="failed",
+            summary=reason,
+        )
     return {
         "task_id": task_id,
+        "task_row_id": task_row_id,
         "session_id": str(getattr(execution_attempt, "session_id", "") or ""),
         "settled": bool(settle_result.get("success")),
-        "outcome": "completed" if accepted else "failed",
-        "success_authority": "post_repair_verifier" if accepted else "repair_attempt_failure",
+        "outcome": outcome,
+        "requested_outcome": requested_outcome,
+        "candidate_accepted": accepted,
+        "verifier_resolved": verifier_resolved,
+        "settlement_code": settle_result.get("code") or settle_result.get("reason"),
+        "settlement_evidence": dict(settle_result),
+        "completion_rejection": completion_rejection,
+        "success_authority": "post_repair_verifier"
+        if outcome == "completed" and settle_result.get("success")
+        else "none",
+        "candidate_acceptance_authority": "post_repair_verifier" if accepted else "none",
+        "completion_contract_hash": (
+            pending["task_completion_projection"].get("project_contract_hash")
+            if isinstance(pending.get("task_completion_projection"), Mapping)
+            else None
+        ),
         "project_artifact_receipt_count": len(artifact_receipts),
         "project_artifact_receipts": [dict(item) for item in artifact_receipts],
         "artifact_receipt_error": artifact_receipt_error,
         "candidate_guard_receipt": candidate_guard_receipt,
     }
+
+
+@dataclass
+class _WorkspaceRepairContinuation:
+    """Local policy over existing verifier facts; never an execution authority."""
+
+    executor: Any
+    context: Mapping[str, Any]
+    fallback_rounds: int = _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS
+    nonprogress: int = 0
+    stop_reason: str = ""
+
+    def rounds(self):
+        explicit = self.context.get("workspace_quality_repair_max_rounds")
+        limit = max(1, int(explicit)) if explicit is not None else None
+        if limit is None and self.executor._factory_deadline_remaining_seconds(self.context) is None:
+            limit = self.fallback_rounds
+        for ordinal in round_numbers():
+            if limit is not None and ordinal >= limit:
+                self.stop_reason = "repair_round_budget_exhausted"
+                return
+            remaining = self.executor._factory_deadline_remaining_seconds(self.context)
+            if remaining is not None and remaining < _WORKSPACE_QUALITY_REPAIR_MIN_LLM_START_BUDGET_SECONDS:
+                self.stop_reason = "quality_repair_deadline_insufficient"
+                return
+            if self.nonprogress >= 2:
+                self.stop_reason = "two_nonprogress_repairs_without_verified_progress"
+                return
+            yield ordinal
+
+    def observe(self, *, progress: bool) -> None:
+        self.nonprogress = 0 if progress else self.nonprogress + 1
+
+
+def _workspace_quality_candidate_advances(
+    effect: str, *, after_codes: set[str], seen_codes: set[str], newly_plannable: bool = False
+) -> bool:
+    """All consumers use the same verified frontier and oscillation boundary."""
+    return (
+        effect in {"resolved", "progress"}
+        or (effect == "forward_unmask" and not bool(after_codes & seen_codes))
+        or (effect == "equal_count_swap" and newly_plannable)
+    )
+
+
+def _workspace_quality_test_frontier_reduced(
+    before: Sequence[Mapping[str, Any]],
+    after: Sequence[Mapping[str, Any]],
+    *,
+    before_receipts: Sequence[Any] = (),
+    after_receipts: Sequence[Any] = (),
+) -> bool:
+    """Same unittest discovery executes the same tests with fewer failed cases."""
+    from polaris.cells.runtime.execution_broker.public.project_verification import ProjectVerificationReceiptV1
+
+    if (
+        not before_receipts
+        or not after_receipts
+        or any(type(item) is not ProjectVerificationReceiptV1 for item in (*before_receipts, *after_receipts))
+    ):
+        return False
+    prior_seals = {item.obligation_id: item for item in before_receipts}
+    current_seals = {item.obligation_id: item for item in after_receipts}
+    previous = {tuple(row.get("command") or ()): row for row in before}
+    improved = False
+    for row in after:
+        old = previous.get(tuple(row.get("command") or ()))
+        if old is None:
+            return False
+        if old.get("passed") is True and row.get("passed") is not True:
+            return False
+        old_count = _workspace_quality_test_failure_counts(old)
+        new_count = _workspace_quality_test_failure_counts(row)
+        if old_count is None or new_count is None:
+            continue
+        prior = next((item for item in prior_seals.values() if item.argv == tuple(row.get("command") or ())), None)
+        seal = current_seals.get(prior.obligation_id) if prior is not None else None
+        if prior is None or seal is None or prior.modality != "test" or seal.modality != "test":
+            return False
+        identity = (
+            "workspace",
+            "project_id",
+            "run_id",
+            "completion_contract_hash",
+            "owner_task_id",
+            "argv",
+            "cwd",
+            "command_authority_hash",
+            "job_token_id",
+            "job_token_set_hash",
+            "execution_policy_hash",
+            "authority_revision",
+            "policy_decision_hash",
+            "executable_hash",
+        )
+        if any(getattr(prior, name) != getattr(seal, name) for name in identity):
+            return False
+        if old.get("receipt_hash") != prior.receipt_hash or row.get("receipt_hash") != seal.receipt_hash:
+            return False
+        test_inputs = {
+            item.path: item.artifact_hash
+            for item in prior.input_artifacts
+            if "test" in Path(item.path).parts or "tests" in Path(item.path).parts
+        }
+        new_test_inputs = {
+            item.path: item.artifact_hash
+            for item in seal.input_artifacts
+            if "test" in Path(item.path).parts or "tests" in Path(item.path).parts
+        }
+        if not test_inputs or new_test_inputs != test_inputs:
+            return False
+        if re.search(r"\bskipped\s*=\s*[1-9]\d*", seal.output_excerpt, re.IGNORECASE):
+            return False
+        sealed_old = {"command": list(prior.argv), "stderr_tail": prior.output_excerpt, "passed": prior.succeeded}
+        sealed_new = {"command": list(seal.argv), "stderr_tail": seal.output_excerpt, "passed": seal.succeeded}
+        if (
+            _workspace_quality_test_failure_counts(sealed_old) != old_count
+            or _workspace_quality_test_failure_counts(sealed_new) != new_count
+        ):
+            return False
+        ran = _workspace_quality_unittest_run_count(old)
+        if ran is None or ran <= 0 or _workspace_quality_unittest_run_count(row) != ran:
+            continue
+        if (
+            _workspace_quality_unittest_run_count(sealed_old) != ran
+            or _workspace_quality_unittest_run_count(sealed_new) != ran
+        ):
+            return False
+        if sum(new_count) > sum(old_count):
+            return False
+        before_ids = _workspace_quality_failing_test_identities([prior.output_excerpt])
+        after_ids = _workspace_quality_failing_test_identities([seal.output_excerpt])
+        if not before_ids or (sum(new_count) > 0 and not after_ids) or not after_ids <= before_ids:
+            continue
+        improved = improved or sum(new_count) < sum(old_count)
+    return improved
+
+
+async def _finish_workspace_quality_repair_candidate(
+    executor: Any,
+    pending: Mapping[str, Any] | None,
+    *,
+    run: FactoryRun,
+    context: dict[str, Any],
+    accepted: bool,
+    verifier_resolved: bool,
+    reason: str,
+    sessions: list[NativeValidationSession],
+    observations: list[dict[str, Any]],
+    revalidate: Any = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Close the real attempt, preserving its negative effects before fresh verification."""
+    settled = await _settle_pending_workspace_quality_repair_attempt(
+        executor, pending, accepted=accepted, verifier_resolved=verifier_resolved, reason=reason
+    )
+    post = None
+    if (
+        accepted
+        and verifier_resolved
+        and settled
+        and settled.get("settled") is True
+        and settled.get("candidate_accepted") is True
+        and settled.get("outcome") == "failed"
+        and settled.get("completion_rejection", {}).get("code") == "settlement_effect_outcome_conflict"
+    ):
+        from .factory_materialization_impl import _revalidate_materialization_original_owner
+
+        post = await _revalidate_materialization_original_owner(
+            executor,
+            run=run,
+            context=context,
+            original_owner_task_id=str(settled["task_id"]),
+            original_task_row_id=str(settled["task_row_id"]),
+            expected_completion_contract_hash=str(settled.get("completion_contract_hash") or ""),
+            original_owned_paths=[str(row["path"]) for row in settled.get("project_artifact_receipts") or ()],
+            sessions=sessions,
+            observations=observations,
+            collect_diagnostics=revalidate,
+        )
+    return settled, post
 
 
 def _is_deferred_declared_test_entrypoint_issue(
@@ -1068,11 +1285,27 @@ def _workspace_quality_hold_llm_for_plannable_deterministic(
     return any(marker in blob or marker in lowered for marker in _CRATE_REWRITE_HOLD_MARKERS)
 
 
-def _workspace_quality_repair_errors(executor, results: list[dict[str, Any]]) -> list[str]:
+def _workspace_quality_repair_errors(
+    executor, results: list[dict[str, Any]], *, run: FactoryRun | None = None
+) -> list[str]:
+    """Project failures plus source discovery; no-run is standalone diagnosis.
+
+    Committed Factory sessions pass ``run`` and require its exact CE closure.
+    Standalone callers retain historical whole-workspace diagnosis, which
+    provides no execution or completion authority.
+    """
     errors: list[str] = []
     for result in results:
         if bool(result.get("passed")):
             continue
+        typed_diagnostic = result.get("repair_diagnostic")
+        if isinstance(typed_diagnostic, Mapping) and typed_diagnostic.get("code") == "failed_required_entrypoint":
+            # The clean verifier's exact CE source-affinity projection is
+            # diagnostic input only; its group observation is never a seal.
+            message = str(typed_diagnostic.get("message") or "").strip()
+            if message:
+                errors.append(message)
+                continue
         error_text = str(result.get("error") or "").strip()
         diagnostic_excerpt = str(result.get("diagnostic_excerpt") or "").strip()
         stream_output = "\n".join(
@@ -1146,7 +1379,36 @@ def _workspace_quality_repair_errors(executor, results: list[dict[str, Any]]) ->
     try:
         from polaris.kernelone.quality import scan_workspace_artifact_quality_evidence
 
-        evidence = scan_workspace_artifact_quality_evidence(str(executor.workspace))
+        source_scope = None
+        scope_reader = None
+        if run is not None:
+            from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
+
+            from .factory_materialization_impl import _materialization_source_scope
+            from .factory_node_dependencies import authenticated_preparation_contract
+
+            scope_reader = WorkspaceReadSnapshot(executor.workspace)
+            source_scope = _materialization_source_scope(
+                authenticated_preparation_contract(executor, run), reader=scope_reader
+            )
+        evidence = scan_workspace_artifact_quality_evidence(
+            str(executor.workspace),
+            relative_paths=source_scope,
+            scan_mode="pure_static" if run is not None else "legacy",
+        )
+        if run is not None:
+            hard_unknown = [
+                reason
+                for reason in evidence.incomplete_reasons
+                if not reason.startswith(("script_invocation_unknown:", "import_target_missing:"))
+            ]
+            if scope_reader is not None:
+                hard_unknown.extend(scope_reader.drift_reasons())
+            if hard_unknown:
+                errors.append(
+                    "Artifact quality scan failed: workspace quality source coverage incomplete:"
+                    + str(tuple(hard_unknown))
+                )
         declared_targets = {
             str(path or "").strip().replace("\\", "/")
             for path in executor._workspace_quality_repair_target_files()
@@ -3336,7 +3598,9 @@ async def _run_workspace_quality_checks_in_session(
     sessions: list[NativeValidationSession],
     active_pending: list[Mapping[str, Any]],
 ) -> tuple[bool, str]:
-    async def settle_pending_attempt(executor_arg, pending, *, accepted: bool, reason: str):
+    async def settle_pending_attempt(
+        executor_arg, pending, *, accepted: bool, reason: str, verifier_resolved: bool = True
+    ):
         if executor_arg is not executor:
             raise ValueError("verification settlement owner changed")
         result = await _settle_pending_workspace_quality_repair_attempt(
@@ -3344,12 +3608,13 @@ async def _run_workspace_quality_checks_in_session(
             pending,
             accepted=accepted,
             reason=reason,
+            verifier_resolved=verifier_resolved,
         )
         if pending is not None and result is not None and result.get("settled") is True:
             active_pending[:] = [item for item in active_pending if item is not pending]
         return result
 
-    commands = executor._workspace_quality_commands(context)
+    commands = executor._workspace_quality_commands(context, run=run)
     task_boundary_blocker = executor._workspace_quality_task_boundary_blocker(run, context)
     depth_result = (
         None if task_boundary_blocker else executor._workspace_quality.delivery_depth_contract_result(context)
@@ -3458,8 +3723,43 @@ async def _run_workspace_quality_checks_in_session(
             # Dependency preparation remains the existing, distinct platform
             # step. Verification never opens network or promotes its outputs.
             from .factory_node_dependencies import NODE_PREPARATION_COMMAND, authenticated_preparation_contract
+            from .native_validation_session import _CeVerifierArgv
 
-            if tuple(command) == NODE_PREPARATION_COMMAND:
+            if isinstance(command, _CeVerifierArgv):
+                from polaris.cells.runtime.execution_broker.public import project_verification as broker
+
+                from .native_validation_execution import await_verification_worker
+
+                authority = command.authority
+                execution = await await_verification_worker(
+                    lambda control: broker.run_project_verification(authority, control=control)
+                )
+                receipt = execution.receipt
+                if receipt is not None:
+                    query = broker.QueryProjectVerificationReceiptV1(
+                        **{
+                            name: getattr(authority, name)
+                            for name in broker.QueryProjectVerificationReceiptV1.__dataclass_fields__
+                        }
+                    )
+                    current = broker.query_project_verification_receipt(query)
+                    if type(current) is not broker.ProjectVerificationReceiptV1 or current != receipt:
+                        raise ValueError("preparation_owner_receipt_not_current")
+                result = {
+                    "command": list(command),
+                    "cwd": authority.cwd,
+                    "obligation_id": authority.obligation_id,
+                    "command_authority_hash": authority.command_authority_hash,
+                    "exit_code": receipt.exit_code if receipt is not None else None,
+                    "passed": receipt.succeeded if receipt is not None else False,
+                    "receipt_ref": receipt.receipt_ref if receipt is not None else None,
+                    "receipt_hash": receipt.receipt_hash if receipt is not None else None,
+                    "stdout_tail": receipt.output_excerpt if receipt is not None else "",
+                    "stderr_tail": "",
+                    "error": "" if receipt is not None and receipt.succeeded else execution.code,
+                    "execution_owner": "runtime.execution_broker",
+                }
+            elif tuple(command) == NODE_PREPARATION_COMMAND:
                 import inspect
 
                 try:
@@ -3530,7 +3830,10 @@ async def _run_workspace_quality_checks_in_session(
             initial_deadline_detail,
         )
 
-    prepare_commands = executor._workspace_quality_prepare_commands(commands, context)
+    from .native_validation_session import required_clean_verifier_commands
+
+    prepare_commands = required_clean_verifier_commands(executor, run, preparation=True)
+    prepare_commands.extend(executor._workspace_quality_prepare_commands(commands, context))
     prepare_failed = False
     for command in prepare_commands:
         result, deadline_detail = await run_workspace_quality_command_with_deadline(command, "prepare")
@@ -3720,8 +4023,11 @@ async def _run_workspace_quality_checks_in_session(
 
         forced_next_owner_targets: list[str] = []
         leftover_extra_pending = False
-        for round_index in range(max_rounds + extra_round_limit):
-            if not leftover_rotate_allows_quality_extra_round(
+        continuation = _WorkspaceRepairContinuation(executor, context, fallback_rounds=max_rounds + extra_round_limit)
+        for round_index in continuation.rounds():
+            if executor._factory_deadline_remaining_seconds(
+                context
+            ) is None and not leftover_rotate_allows_quality_extra_round(
                 round_index=round_index,
                 max_rounds=max_rounds,
                 leftover_extra_pending=(leftover_extra_pending or provider_transport_retry_pending),
@@ -3747,7 +4053,7 @@ async def _run_workspace_quality_checks_in_session(
             if latest_check_results and all(bool(item.get("passed")) for item in latest_check_results):
                 convergence_stop_reason = "verifier_passed"
                 break
-            repair_errors = executor._workspace_quality_repair_errors(latest_check_results or results)
+            repair_errors = executor._workspace_quality_repair_errors(latest_check_results or results, run=run)
             if not repair_errors:
                 convergence_stop_reason = "failed_verifier_diagnostics_unavailable"
                 break
@@ -4437,7 +4743,8 @@ async def _run_workspace_quality_checks_in_session(
             rerun_results = []
             round_prepare_failed = False
             prepare_phase = "prepare_after_repair" if round_index == 0 else f"prepare_after_repair_{round_index + 1}"
-            prepare_commands = executor._workspace_quality_prepare_commands(commands, context)
+            prepare_commands = required_clean_verifier_commands(executor, run, preparation=True)
+            prepare_commands.extend(executor._workspace_quality_prepare_commands(commands, context))
             for command in prepare_commands:
                 result, deadline_detail = await run_workspace_quality_command_with_deadline(command, prepare_phase)
                 if deadline_detail:
@@ -4517,7 +4824,9 @@ async def _run_workspace_quality_checks_in_session(
                     rerun_results.append(round_depth_result)
             round_residual_failures = [item for item in latest_check_results if not bool(item.get("passed"))]
             after_errors = (
-                executor._workspace_quality_repair_errors(round_residual_failures) if round_residual_failures else []
+                executor._workspace_quality_repair_errors(round_residual_failures, run=run)
+                if round_residual_failures
+                else []
             )
             after_signature = executor._workspace_quality_diagnostic_signature(after_errors)
             verifier_passed = not round_residual_failures
@@ -4530,6 +4839,10 @@ async def _run_workspace_quality_checks_in_session(
                 after_results=latest_check_results,
                 workspace=Path(executor.workspace),
             )
+            if repair_effect not in {"resolved", "regression"} and _workspace_quality_test_frontier_reduced(
+                before_check_results, latest_check_results
+            ):
+                repair_effect = "progress"
             candidate_verifier_effect = repair_effect
             after_codes = executor._workspace_quality_diagnostic_error_codes(after_signature)
             after_plan_probe = executor._workspace_quality_repair_plan_probe_report(after_errors)
@@ -4552,8 +4865,11 @@ async def _run_workspace_quality_checks_in_session(
             plannable_repair_unmasked = repair_effect == "equal_count_swap" and bool(newly_plannable_source_tools)
             if plannable_repair_unmasked:
                 round_payload["newly_plannable_source_tools"] = newly_plannable_source_tools
-            candidate_accepted = (
-                repair_effect in {"resolved", "progress"} or forward_unmask_advances or plannable_repair_unmasked
+            candidate_accepted = _workspace_quality_candidate_advances(
+                repair_effect,
+                after_codes=after_codes,
+                seen_codes=seen_diagnostic_error_codes,
+                newly_plannable=bool(newly_plannable_source_tools),
             )
             candidate_guard_present = (
                 isinstance(pending_round_attempt, Mapping) and pending_round_attempt.get("candidate_guard") is not None
@@ -4683,18 +4999,39 @@ async def _run_workspace_quality_checks_in_session(
                 }
                 round_payload["semantic_contract_conflict_candidate"] = dict(semantic_contract_conflict_candidate)
                 semantic_contract_conflict_this_round = True
-            settled_attempt = await settle_pending_attempt(
+            post_observations: list[dict[str, Any]] = []
+            settled_attempt, post_attempt = await _finish_workspace_quality_repair_candidate(
                 executor,
                 pending_round_attempt,
+                run=run,
+                context=context,
                 accepted=candidate_accepted,
+                verifier_resolved=verifier_passed,
                 reason=f"workspace_quality_repair_{repair_effect}",
+                sessions=sessions,
+                observations=post_observations,
             )
+            if pending_round_attempt is not None and settled_attempt and settled_attempt.get("settled") is True:
+                active_pending[:] = [item for item in active_pending if item is not pending_round_attempt]
+            if post_attempt is not None:
+                settled_attempt = post_attempt
+                round_payload["post_verification_attempt"] = dict(post_attempt)
+                round_payload["post_verification_observations"] = post_observations
+                if post_attempt.get("settled") is not True or post_attempt.get("outcome") != "completed":
+                    return write_workspace_validation_failure(
+                        "workspace_quality_post_verification_failed",
+                        "Fresh same-owner verification did not complete",
+                        repair_override=current_workspace_repair_summary(
+                            residual_errors=list(post_attempt.get("verifier_diagnostics") or ()),
+                        ),
+                        extra_payload={"post_verification_attempt": dict(post_attempt)},
+                    )
             settlement_rejected_candidate = bool(
                 candidate_accepted
                 and pending_round_attempt is not None
                 and (
                     not isinstance(settled_attempt, Mapping)
-                    or settled_attempt.get("outcome") != "completed"
+                    or settled_attempt.get("outcome") != ("completed" if verifier_passed else "failed")
                     or settled_attempt.get("settled") is not True
                 )
             )
@@ -4765,7 +5102,7 @@ async def _run_workspace_quality_checks_in_session(
                 latest_check_results = restored_results
                 rerun_results = [dict(item) for item in restored_results]
                 after_errors = executor._workspace_quality_repair_errors(
-                    [item for item in restored_results if not bool(item.get("passed"))]
+                    [item for item in restored_results if not bool(item.get("passed"))], run=run
                 )
                 after_signature = executor._workspace_quality_diagnostic_signature(after_errors)
                 after_codes = executor._workspace_quality_diagnostic_error_codes(after_signature)
@@ -4794,7 +5131,10 @@ async def _run_workspace_quality_checks_in_session(
                 projected_summary = projected_summary_raw
                 projected_summary["claimed_success_before_revalidation"] = bool(projected_summary.get("success"))
                 projected_summary["success"] = verifier_passed
-                projected_summary["success_authority"] = "post_repair_verifier"
+                projected_summary["success_authority"] = "post_repair_verifier" if verifier_passed else "none"
+                projected_summary["candidate_acceptance_authority"] = (
+                    "post_repair_verifier" if candidate_accepted else "none"
+                )
                 projected_summary["verifier_effect"] = repair_effect
                 if settled_attempt is not None:
                     projected_summary["task_runtime_repair_attempt"] = settled_attempt
@@ -4804,6 +5144,7 @@ async def _run_workspace_quality_checks_in_session(
                 round_task_id = str(projected_for_task.get("task_id") or "").strip()
             if not round_task_id:
                 round_task_id = "__unknown_owner__"
+            continuation.observe(progress=candidate_accepted)
             if repair_effect in {"resolved", "progress"} or forward_unmask_advances or plannable_repair_unmasked:
                 consecutive_stagnant_rounds = 0
                 nonprogress_rounds_since_last_progress = 0
@@ -4940,9 +5281,11 @@ async def _run_workspace_quality_checks_in_session(
             # budget decision even if the last accepted candidate progressed.
             # Preserve its receipts and residuals; never leave a retry hint or
             # an empty string pretending to be the terminal stop reason.
-            convergence_stop_reason = "repair_round_budget_exhausted"
+            convergence_stop_reason = continuation.stop_reason or "repair_round_budget_exhausted"
         residual_failures = [item for item in latest_check_results if not bool(item.get("passed"))]
-        residual_errors = executor._workspace_quality_repair_errors(residual_failures) if residual_failures else []
+        residual_errors = (
+            executor._workspace_quality_repair_errors(residual_failures, run=run) if residual_failures else []
+        )
         residual_coverage_report = executor._workspace_quality_repair_coverage_report(residual_errors)
         repair_revalidated = bool(rerun_results)
         repair_summary = {

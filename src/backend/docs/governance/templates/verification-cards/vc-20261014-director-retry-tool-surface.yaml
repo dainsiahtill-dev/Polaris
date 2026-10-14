@@ -1,0 +1,27 @@
+id: vc-20261014-director-retry-tool-surface
+classification: pattern
+cell: roles.kernel
+design: docs/blueprints/DIRECTOR_RETRY_TOOL_SURFACE_CONVERGENCE_20261014.md
+problem: Final provider read schema and legacy retry execution names disagreed.
+assumptions:
+  - The existing caller override and final quality-repair augmentation own effective definitions.
+  - The existing callable-name resolver intersects definitions with tool_choice.
+  - Tool names and arguments normalize before existing CE capability and path authorization.
+  - Continuous execution changes turn guidance, not task completion or effect permission.
+pre_mortem:
+  - Existing forced caller scope may override narrowed retry definitions after allowset capture.
+  - Named choices, exact/no-tools and structured result protocol must not acquire companion tools.
+  - Continuous guidance must not retain same-turn mandatory write or reject read/command-only observations.
+  - A fixture transport is component evidence, never actual provider or Factory qualification.
+verification:
+  - test_retry_tool_surface_convergence.py: real preparer and transaction executor admit provider-offered native read.
+  - test_retry_tool_surface_convergence.py: exact surface rejects unoffered tools before physical effects.
+  - Existing transaction wiring, retry surface, native prompt and gateway tests retain strict boundaries.
+scope:
+  public_contract_changed: false
+  cross_cell_import_added: false
+  new_state_owner: false
+  execution_authority_expanded: false
+  new_registry_or_cache: false
+  native18_epoch4_delivery_qualified: false
+  fresh_delivery_qualification: pending

@@ -760,6 +760,63 @@ class FactoryWorkspaceRunAdmission:
             yield revalidate
 
     @contextmanager
+    def hold_terminal_settlement_claim(
+        self,
+        run_id: str,
+        *,
+        fencing_token: int,
+        sequence: int,
+        nonce: str,
+    ) -> Iterator[Callable[[], FactoryWorkspaceRunLeaseV1]]:
+        """Read-only fence for an existing terminal drain, including after expiry.
+
+        This cannot acquire authority, renew a lease, or admit live execution.
+        The run service must independently prove terminal status and strict
+        child/provider closure before using the existing release path.
+        """
+
+        normalized_run_id = _normalize_run_id(run_id)
+        normalized_nonce = _normalize_run_id(nonce)
+        if type(fencing_token) is not int or fencing_token < 1:
+            raise ValueError("fencing_token must be an int >= 1")
+        if type(sequence) is not int or sequence < 1:
+            raise ValueError("sequence must be an int >= 1")
+        with _stable_exclusive_lock(self.lock_path):
+
+            def revalidate() -> FactoryWorkspaceRunLeaseV1:
+                current = self._require_owned_locked(
+                    run_id=normalized_run_id,
+                    fencing_token=fencing_token,
+                    now=self._now(),
+                    allow_expired=True,
+                )
+                if current.state.value != "draining" or current.stage_execution_claim is not None:
+                    self._raise_conflict(
+                        "Terminal settlement requires a draining owner without an active stage",
+                        code="factory_workspace_run_not_draining",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
+                claim = current.lifecycle_operation_claim
+                if (
+                    claim is None
+                    or claim.run_id != normalized_run_id
+                    or claim.operation != "settle_terminal_run"
+                    or claim.sequence != sequence
+                    or claim.nonce != normalized_nonce
+                ):
+                    self._raise_conflict(
+                        "Terminal settlement requires its exact existing lifecycle claim",
+                        code="factory_lifecycle_operation_fenced",
+                        run_id=normalized_run_id,
+                        current=current,
+                    )
+                return current
+
+            revalidate()
+            yield revalidate
+
+    @contextmanager
     def hold_active_stage_claim(
         self,
         run_id: str,
@@ -985,6 +1042,29 @@ class FactoryWorkspaceRunAdmission:
     ) -> FactoryWorkspaceRunLeaseV1:
         """Release an owned DRAINING lease only with settlement evidence."""
 
+        released, _ = self.release_with_transition(
+            run_id,
+            fencing_token=fencing_token,
+            settlement_evidence=settlement_evidence,
+            operation_nonce=operation_nonce,
+        )
+        return released
+
+    def release_with_transition(
+        self,
+        run_id: str,
+        *,
+        fencing_token: int,
+        settlement_evidence: FactoryWorkspaceReleaseEvidenceV1 | None = None,
+        operation_nonce: str = "",
+    ) -> tuple[FactoryWorkspaceRunLeaseV1, bool]:
+        """Return the lease and whether this call won its durable release CAS.
+
+        The transition flag is an operation result, never another persisted
+        owner. It is decided under the same exclusive lock as the lease write,
+        even if competing callers submit byte-identical release evidence.
+        """
+
         normalized_run_id = _normalize_run_id(run_id)
         with _stable_exclusive_lock(self.lock_path):
             now = self._now()
@@ -995,7 +1075,7 @@ class FactoryWorkspaceRunAdmission:
                 allow_expired=True,
             )
             if current.state.value == "released":
-                return current
+                return current, False
             if current.state.value != "draining":
                 self._raise_conflict(
                     "Factory workspace lease must drain before release",
@@ -1038,7 +1118,7 @@ class FactoryWorkspaceRunAdmission:
                 release_evidence=settlement_evidence,
             )
             self._write_locked(released)
-            return released
+            return released, True
 
     def assert_stale_owner(
         self,

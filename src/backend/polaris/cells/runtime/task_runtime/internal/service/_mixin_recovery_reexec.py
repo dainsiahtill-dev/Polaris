@@ -1439,7 +1439,14 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
                 or payload.get("factory_run_id") != factory_run_id
                 or str(event.get("aggregate_id")) != str(snapshot.get("id"))
                 or str(payload.get("task_id")) != str(snapshot.get("id"))
-                or self._same_task_external_aliases(snapshot) != {external_task_id}
+                or (
+                    self._same_task_external_aliases(snapshot) != {external_task_id}
+                    and not (
+                        event.get("event_type") in {"heartbeat_renewed", "claim_renewed"}
+                        and not self._same_task_external_aliases(snapshot)
+                        and metadata.get("task_id") == external_task_id
+                    )
+                )
             ):
                 raise RuntimeError("factory_task_recovery_fact_binding_invalid")
             matching.setdefault(str(snapshot["id"]), []).append(dict(event))
@@ -1449,41 +1456,65 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             raise RuntimeError("factory_task_binding_ambiguous")
         history = next(iter(matching.values()))
         latest = history[-1]
+        failed_reset = False
         if latest.get("event_type") == "runtime_reset_removed":
             details = latest["payload"].get("details", {})
-            if details.get("previous_status") != "cancelled":
-                return None
-            if details.get("reset_factory_run_id") != factory_run_id or len(history) < 2:
+            if details.get("reset_factory_run_id") != factory_run_id:
                 raise RuntimeError("factory_task_recovery_owner_not_failed")
-            cancelled = history[-2]
+            if details.get("previous_status") == "failed":
+                failed_reset = True
+                reference = latest["payload"]["task_row_snapshot"]["metadata"].get("task_runtime_settlement")
+                if not isinstance(reference, Mapping):
+                    raise RuntimeError("factory_task_recovery_terminal_fact_missing")
+                terminal = [
+                    event
+                    for event in history
+                    if (
+                        event.get("seq", 0) < latest.get("seq", 0)
+                        and event.get("event_type") == "failed"
+                        and event.get("event_id") == reference.get("fact_event_id")
+                        and event.get("seq") == reference.get("fact_event_seq")
+                        and event["payload"].get("transition_id") == reference.get("terminal_transition_id")
+                        and reference.get("outcome") == "failed"
+                    )
+                ]
+                if len(terminal) != 1:
+                    raise RuntimeError("factory_task_recovery_terminal_fact_missing")
+                payload = terminal[0]["payload"]
+            elif details.get("previous_status") == "cancelled" and len(history) >= 2:
+                cancelled = history[-2]
+                payload = cancelled["payload"]
+            else:
+                raise RuntimeError("factory_task_recovery_owner_not_failed")
         elif latest.get("event_type") == "cancelled":
             cancelled = latest
+            payload = cancelled["payload"]
         else:
-            return None
-        payload = cancelled["payload"]
-        details = payload.get("details", {})
-        if (
-            cancelled.get("event_type") != "cancelled"
-            or payload.get("execution_state") != "cancelled"
-            or details.get("factory_abort") is not True
-            or details.get("factory_run_id") != factory_run_id
-            or details.get("source") != "factory_terminal_drain"
-            or details.get("reason") != "factory_failed"
-        ):
-            raise RuntimeError("factory_task_recovery_owner_not_failed")
-        terminal = [
-            event
-            for event in history
+            raise RuntimeError("factory_task_recovery_checkpoint_unavailable")
+        if not failed_reset:
+            details = payload.get("details", {})
             if (
-                event.get("seq", 0) < cancelled.get("seq", 0)
-                and event.get("event_type") in {"completed", "failed"}
-                and event["payload"].get("session_id") == payload.get("session_id")
-                and event["payload"].get("attempt") == payload.get("attempt")
-                and event["payload"].get("run_id") == payload.get("run_id")
-            )
-        ]
-        if len(terminal) != 1:
-            raise RuntimeError("factory_task_recovery_terminal_fact_missing")
+                cancelled.get("event_type") != "cancelled"
+                or payload.get("execution_state") != "cancelled"
+                or details.get("factory_abort") is not True
+                or details.get("factory_run_id") != factory_run_id
+                or details.get("source") != "factory_terminal_drain"
+                or details.get("reason") != "factory_failed"
+            ):
+                raise RuntimeError("factory_task_recovery_owner_not_failed")
+            terminal = [
+                event
+                for event in history
+                if (
+                    event.get("seq", 0) < cancelled.get("seq", 0)
+                    and event.get("event_type") in {"completed", "failed"}
+                    and event["payload"].get("session_id") == payload.get("session_id")
+                    and event["payload"].get("attempt") == payload.get("attempt")
+                    and event["payload"].get("run_id") == payload.get("run_id")
+                )
+            ]
+            if len(terminal) != 1:
+                raise RuntimeError("factory_task_recovery_terminal_fact_missing")
         terminal_payload = terminal[0]["payload"]
         terminal_metadata = terminal_payload["task_row_snapshot"]["metadata"]
         checkpoint_metadata = latest["payload"]["task_row_snapshot"]["metadata"]
@@ -1508,7 +1539,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         session = TaskExecutionSession.from_dict(runtime)
         from polaris.cells.runtime.task_runtime.public.contracts import DirectedEffectParentRegistryIdentityV1
 
-        from ..execution_effect_closure import _owner_terminal_session
+        from ..execution_effect_closure import _owner_reset_removed_session, _owner_terminal_session
 
         attempt = self._execution_attempt_identity_from_session(session)
         authenticated = _owner_terminal_session(
@@ -1527,6 +1558,18 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             or not self._has_pending_terminal_intent(session)
         ):
             raise RuntimeError("factory_task_recovery_terminal_binding_invalid")
+        if (
+            failed_reset
+            and _owner_reset_removed_session(
+                events,
+                DirectedEffectParentRegistryIdentityV1.from_execution_attempt(attempt),
+                authenticated[0],
+                authenticated[1],
+                self.workspace,
+            )
+            != latest
+        ):
+            raise RuntimeError("factory_task_recovery_reset_witness_invalid")
         row = self._project_execution_fact_event_row(latest)
         if row is None:
             raise RuntimeError("factory_task_recovery_fact_binding_invalid")
@@ -1627,6 +1670,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
                 "factory_recovery_checkpoint_event_id": event["event_id"],
                 "claim_attempt": old_session.attempt + 1,
             }
+            task: Task | None
             if removed:
                 payload = self._task_row_payload_for_reexecution(row)
                 payload["metadata"].update(recovery_metadata)

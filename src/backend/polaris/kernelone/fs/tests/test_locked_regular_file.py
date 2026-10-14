@@ -149,6 +149,53 @@ def _initialize_stream_authority(root: Path, logical_path: str) -> None:
         assert leases.lease(logical_path).open_existing() is False
 
 
+def test_bounded_stream_iterator_reads_exact_bytes(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    logical = "runtime/events/bounded.jsonl"
+    content = "完整事实\n".encode("utf-8") * 100  # noqa: UP012 - explicit UTF-8 is required
+    with _leases(root, logical) as leases:
+        lease = leases.lease(logical)
+        lease.append_bytes(content, fsync_file=False, fsync_parent_on_create=False)
+        chunks = list(lease.iter_bytes(chunk_size=13))
+        assert chunks
+        assert all(0 < len(chunk) <= 13 for chunk in chunks)
+        assert b"".join(chunks) == content
+
+
+@pytest.mark.parametrize("mutation", ["same_inode", "leaf_replaced", "root_replaced"])
+def test_bounded_stream_iterator_rejects_mutation_before_exhaustion(tmp_path: Path, mutation: str) -> None:
+    root = tmp_path / "runtime"
+    logical = "runtime/events/bounded.jsonl"
+    with _leases(root, logical) as leases:
+        lease = leases.lease(logical)
+        lease.append_bytes(b"original-content\n", fsync_file=False, fsync_parent_on_create=False)
+        iterator = lease.iter_bytes(chunk_size=2)
+        assert next(iterator) == b"or"
+        path = root / "events" / "bounded.jsonl"
+        if mutation == "same_inode":
+            before = path.stat()
+            path.write_text("mutated--content\n", encoding="utf-8")
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+            assert path.stat().st_ino == before.st_ino
+        elif mutation == "leaf_replaced":
+            path.rename(path.with_suffix(".old"))
+            path.write_text("original-content\n", encoding="utf-8")
+        else:
+            root.rename(tmp_path / "displaced-runtime")
+            root.mkdir()
+        with pytest.raises(LockedRegularFileError) as rejected:
+            list(iterator)
+        assert rejected.value.code == "stream_identity_drift"
+
+
+@pytest.mark.parametrize("chunk_size", [0, -1, True, 2 * 1024 * 1024])
+def test_bounded_stream_iterator_rejects_invalid_resource_budget(tmp_path: Path, chunk_size: int) -> None:
+    with _leases(tmp_path / "runtime", "runtime/events/bounded.jsonl") as leases:
+        lease = leases.lease("runtime/events/bounded.jsonl")
+        with pytest.raises(ValueError):
+            list(lease.iter_bytes(chunk_size=chunk_size))
+
+
 def _readonly_acquire(root: Path, *, read_only: bool = True) -> LockedRegularFileSetV1:
     return LockedRegularFileSetV1.acquire(
         runtime_root=str(root),

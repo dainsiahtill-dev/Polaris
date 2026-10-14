@@ -88,6 +88,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
     extract_allowed_tool_names_from_definitions,
     extract_latest_user_message,
     extract_task_instruction,
+    resolve_callable_tool_names,
 )
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
@@ -260,6 +261,7 @@ class RetryOrchestrator:
         execute_tool_batch: Callable[..., Any],
         guard_assert_single_tool_batch: Callable[..., None],
         emit_event: Callable[[Any], None] | None = None,
+        resolve_tool_surface: Callable[[list[dict], Any], tuple[list[dict], Any]] | None = None,
     ) -> None:
         self.tool_runtime = tool_runtime
         self.config = config
@@ -269,6 +271,21 @@ class RetryOrchestrator:
         self.execute_tool_batch = execute_tool_batch
         self.guard_assert_single_tool_batch = guard_assert_single_tool_batch
         self.emit_event = emit_event
+        self.resolve_tool_surface = resolve_tool_surface
+
+    def _resolve_retry_tool_surface(
+        self,
+        tool_definitions: list[dict],
+        tool_choice: Any = None,
+    ) -> tuple[list[dict], Any, set[str]]:
+        """Bind retry execution to its effective offered definitions and choice."""
+        if self.resolve_tool_surface is not None:
+            tool_definitions, tool_choice = self.resolve_tool_surface(tool_definitions, tool_choice)
+        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+
+        callable_names = resolve_callable_tool_names(tool_definitions, tool_choice)
+        allowed = {str(normalize_tool_name(name) or name) for name in callable_names}
+        return tool_definitions, tool_choice, allowed
 
     def _build_tool_batch_runtime(self, workspace: str = ".") -> ToolBatchRuntime:
         return ToolBatchRuntime(
@@ -409,7 +426,9 @@ class RetryOrchestrator:
             requires_mutation=requires_mutation,
             forbidden_tool_names=_forbidden,
         )
-        allowed_retry_tool_names = extract_allowed_tool_names_from_definitions(retry_tool_definitions)
+        retry_tool_definitions, retry_tool_choice, allowed_retry_tool_names = self._resolve_retry_tool_surface(
+            retry_tool_definitions,
+        )
         _latest_request = extract_latest_user_message(context)
         _retry_workspace = _resolve_materialization_workspace(self.config)
         _retry_target_files = tuple(extract_target_files_from_message(_latest_request))
@@ -437,11 +456,13 @@ class RetryOrchestrator:
         # can choose write_file/edit_blocks/edit_file based on the task. Strict
         # tool_choice forcing is reserved for escalation attempts and bootstrap
         # follow-up where context has already been collected.
-        forced_tool_choice: dict[str, Any] | None = None
+        forced_tool_choice = retry_tool_choice
         retry_context = build_contract_retry_context(
             context,
             retry_tool_definitions,
             forced_write_tool_name=None,
+            tool_choice_override=retry_tool_choice,
+            continuous_execution=bool(getattr(self.config, "continuous_execution", False)),
         )
         logger.warning(
             "mutation-contract retry scope: turn_id=%s allowed_tools=%s strict_allowed_tools=%s forced_tool=%s",
@@ -665,6 +686,7 @@ class RetryOrchestrator:
                 allowed_tool_names=allowed_retry_tool_names,
                 reason=initial_failure_reason,
                 forced_write_tool_name=None,
+                continuous_execution=bool(getattr(self.config, "continuous_execution", False)),
             )
         max_retry_attempts = getattr(self.config, "max_retry_attempts", 4)
         retry_llm_call_ordinal = 0
@@ -696,7 +718,7 @@ class RetryOrchestrator:
             attempt_tool_definitions = retry_tool_definitions
             attempt_allowed_tool_names = allowed_retry_tool_names
             attempt_context = retry_context
-            attempt_tool_choice_override: Any | None = None
+            attempt_tool_choice_override: Any | None = forced_tool_choice
             retry_llm_call_ordinal += 1
             attempt_model_override = resolve_retry_model_override(retry_llm_call_ordinal)
             if attempt_index > 0:
@@ -710,6 +732,7 @@ class RetryOrchestrator:
                     allowed_tool_names=attempt_allowed_tool_names,
                     reason="escalation: enforce write-inclusive batch in retry scope",
                     forced_write_tool_name=None,
+                    continuous_execution=bool(getattr(self.config, "continuous_execution", False)),
                 )
 
             # ADR-0090: API-level escalation — late attempts narrow the offered
@@ -735,6 +758,24 @@ class RetryOrchestrator:
                     sorted(attempt_allowed_tool_names),
                     escalated_tool_choice or "auto",
                 )
+
+            attempt_tool_definitions, attempt_tool_choice_override, attempt_allowed_tool_names = (
+                self._resolve_retry_tool_surface(attempt_tool_definitions, attempt_tool_choice_override)
+            )
+            if bool(getattr(self.config, "continuous_execution", False)):
+                attempt_context = build_contract_retry_context(
+                    context,
+                    attempt_tool_definitions,
+                    tool_choice_override=attempt_tool_choice_override,
+                    continuous_execution=True,
+                )
+                if initial_failure_reason:
+                    attempt_context = append_retry_enforcement_hint(
+                        attempt_context,
+                        allowed_tool_names=attempt_allowed_tool_names,
+                        reason=initial_failure_reason,
+                        continuous_execution=True,
+                    )
 
             # ADR-0090 W2.6: phase-aware decoding — escalated attempts transcribe
             # an already-made decision, so they sample near-deterministically.
@@ -783,6 +824,7 @@ class RetryOrchestrator:
                         "Emit one authorized write/edit tool call now."
                     ),
                     forced_write_tool_name=None,
+                    continuous_execution=bool(getattr(self.config, "continuous_execution", False)),
                 )
                 continue
             if attempt_model_override:
@@ -851,6 +893,7 @@ class RetryOrchestrator:
                         allowed_tool_names=attempt_allowed_tool_names,
                         reason="retry decision did not produce a valid tool batch",
                         forced_write_tool_name=None,
+                        continuous_execution=bool(getattr(self.config, "continuous_execution", False)),
                     )
                     continue
                 raise RuntimeError(
@@ -965,6 +1008,7 @@ class RetryOrchestrator:
                     allowed_tool_names=attempt_allowed_tool_names,
                     reason=f"{retry_exc!s} (attempt {attempt_index + 1}/{max_retry_attempts})",
                     forced_write_tool_name=None,
+                    continuous_execution=bool(getattr(self.config, "continuous_execution", False)),
                 )
                 continue
 
@@ -1008,12 +1052,6 @@ class RetryOrchestrator:
             followup_prompt_forced_write_tool_name = (
                 None if edit_blocks_is_preference_only else followup_forced_write_tool_name
             )
-            write_context = build_retry_write_after_bootstrap_context(
-                original_context=context,
-                bootstrap_receipt=bootstrap_receipt,
-                forced_write_tool_name=followup_prompt_forced_write_tool_name,
-                from_scratch_create=from_scratch_create,
-            )
             if followup_forced_write_tool_name != forced_write_tool_name:
                 logger.warning(
                     "mutation-contract bootstrap-followup adjusted forced write tool: %s -> %s (failed_files=%s)",
@@ -1041,6 +1079,20 @@ class RetryOrchestrator:
                 followup_tool_definitions = retry_tool_definitions
                 followup_allowed_tool_names = allowed_retry_tool_names
             followup_tool_choice_override: Any | None = followup_forced_tool_choice or forced_tool_choice
+            followup_tool_definitions, followup_tool_choice_override, followup_allowed_tool_names = (
+                self._resolve_retry_tool_surface(followup_tool_definitions, followup_tool_choice_override)
+            )
+            write_context = build_retry_write_after_bootstrap_context(
+                original_context=context,
+                bootstrap_receipt=bootstrap_receipt,
+                forced_write_tool_name=followup_prompt_forced_write_tool_name,
+                from_scratch_create=from_scratch_create,
+                callable_tool_names=resolve_callable_tool_names(
+                    followup_tool_definitions,
+                    followup_tool_choice_override,
+                ),
+                continuous_execution=bool(getattr(self.config, "continuous_execution", False)),
+            )
             # ADR-0090 W2.6: the bootstrap follow-up forces a write tool to
             # transcribe freshly-read content — same deterministic phase as the
             # escalated retries, same low-temperature treatment.
@@ -1197,9 +1249,6 @@ class RetryOrchestrator:
                         if is_mutation_contract_violation(followup_exc) and followup_attempt < (
                             max_followup_attempts - 1
                         ):
-                            followup_error_text = str(followup_exc).lower()
-                            if "outside narrowed set" in followup_error_text and allowed_retry_tool_names:
-                                current_followup_allowed_tool_names = set(allowed_retry_tool_names)
                             current_write_context = append_retry_enforcement_hint(
                                 current_write_context,
                                 allowed_tool_names=(
@@ -1209,6 +1258,7 @@ class RetryOrchestrator:
                                 ),
                                 reason=f"{followup_exc!s} (bootstrap follow-up {followup_attempt + 1}/{max_followup_attempts})",
                                 forced_write_tool_name=followup_prompt_forced_write_tool_name,
+                                continuous_execution=bool(getattr(self.config, "continuous_execution", False)),
                             )
                             continue
                         if is_mutation_contract_violation(followup_exc):

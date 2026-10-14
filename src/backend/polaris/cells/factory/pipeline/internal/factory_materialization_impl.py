@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import re
+import stat
 import sys
 import time
 import uuid
@@ -24,6 +25,7 @@ from typing import Any
 
 from polaris.cells.chief_engineer.blueprint.public import ProjectCompletionContractV1
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
+from polaris.cells.director.runtime.public import RepairDiagnosticV1
 from polaris.cells.runtime.execution_broker.public.project_verification import ProjectVerificationReceiptV1
 from polaris.cells.runtime.task_runtime.public import (
     BindRuntimeTaskToFactoryRunCommandV1,
@@ -47,7 +49,6 @@ from .run_ledger import load_run_ledger_projection
 
 logger = logging.getLogger(__name__)
 
-_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
 _MATERIALIZATION_TYPESCRIPT_PARSER = """
 const fs = require('fs');
 const ts = require('./node_modules/typescript/lib/typescript.js');
@@ -132,7 +133,7 @@ def _materialization_verifier_diagnostics(
     result: Mapping[str, Any], *, receipt: ProjectVerificationReceiptV1 | None = None
 ) -> list[str]:
     """Project a controlled result without scanning or executing anything."""
-    if type(receipt) is ProjectVerificationReceiptV1 and receipt.succeeded:
+    if receipt is not None and type(receipt) is ProjectVerificationReceiptV1 and receipt.succeeded:
         return []
     if receipt is None and result.get("passed") is True and result.get("exit_code") == 0 and not result.get("error"):
         return []
@@ -145,6 +146,108 @@ def _materialization_verifier_diagnostics(
         f"{': '.join(part for part in (str(result.get('error') or ''), detail[-_WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS:]) if part) or 'no diagnostic output'}"
     )
     return list(dict.fromkeys([*coded, failure]))
+
+
+def _missing_required_entrypoint_diagnostic(
+    *,
+    contract: ProjectCompletionContractV1,
+    command: Any,
+    command_text: str,
+    error: FileNotFoundError,
+    receipts: Sequence[ProjectVerificationReceiptV1],
+) -> RepairDiagnosticV1 | None:
+    """Project an absent declared build output; never relax broker admission.
+
+    Only a required entrypoint whose source inputs still match a successful
+    same-owner build is recoverable. Source loss, drift, links and authority
+    failures remain blockers. Candidate paths are CE-owned discovery hints;
+    the subsequent Director claim still enforces the original JobToken scope.
+    """
+    from polaris.cells.runtime.execution_broker.public import project_verification as broker
+    from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
+
+    if type(command) is not broker.RunProjectVerificationCommandV1 or command.modality != "entrypoint":
+        return None
+    if not error.filename:
+        return None
+    build = next(
+        (
+            receipt
+            for receipt in reversed(receipts)
+            if type(receipt) is ProjectVerificationReceiptV1
+            and receipt.modality == "build"
+            and receipt.owner_task_id == command.owner_task_id
+            and receipt.succeeded
+        ),
+        None,
+    )
+    if build is None:
+        return None
+    reader = WorkspaceReadSnapshot(command.workspace)
+    failed_path = Path(error.filename)
+    for entry in contract.obligations.entrypoints:
+        if (
+            entry.applicability != "required"
+            or entry.owner_task_id != command.owner_task_id
+            or entry.command != command_text
+            or not entry.runtime_path
+            or not entry.source_path
+        ):
+            continue
+        expected = reader.root / entry.runtime_path
+        if failed_path != expected and failed_path not in expected.parents:
+            continue
+        try:
+            failed_path.relative_to(reader.root)
+            _, runtime_witness = reader.confined_path(expected)
+            if runtime_witness is not None:
+                continue
+            runtime_inputs = [item for item in command.input_artifacts if item.path == entry.runtime_path]
+            if len(runtime_inputs) != 1:
+                continue
+            build_inputs = {item.path: item.artifact_hash for item in build.input_artifacts}
+            for item in command.input_artifacts:
+                if item.path == entry.runtime_path:
+                    continue
+                snapshot = reader.read(reader.root / item.path)
+                if snapshot.status != "readable" or snapshot.content_sha256 != build_inputs.get(item.path):
+                    return None
+            scope = [
+                item.path
+                for item in contract.obligations.artifacts
+                if item.owner_task_id == entry.owner_task_id
+                and item.applicability == "required"
+                and (item.path == entry.source_path or item.semantic_role in {"config", "manifest"})
+                and reader.read(reader.root / item.path).status == "readable"
+            ]
+            if entry.source_path not in scope or reader.drift_reasons():
+                return None
+        except (OSError, RuntimeError, ValueError):
+            return None
+        scope = list(dict.fromkeys(scope))
+        message = (
+            f"artifact_quality_error: required entrypoint artifact missing: {entry.runtime_path}; "
+            f"expected command: {command_text}; successful build did not produce the required runtime path; "
+            + "; ".join(f"repair source ({path})" for path in scope)
+        )
+        return RepairDiagnosticV1(
+            source="verifier_admission",
+            code="failed_required_entrypoint",
+            message=message,
+            path=entry.source_path,
+            metadata={
+                "runtime_path": entry.runtime_path,
+                "source_path": entry.source_path,
+                "expected_command": list(command.argv),
+                "repair_possible_scope": scope,
+                "scope_is_authority": False,
+                "build_receipt_ref": build.receipt_ref,
+                "obligation_id": command.obligation_id,
+                "execution_started": False,
+                "command_receipt_missing": True,
+            },
+        )
+    return None
 
 
 async def _await_materialization_preparation(
@@ -509,6 +612,41 @@ def _seal_director_stage_missing_tool_lifecycles(
     }
 
 
+def _materialization_source_scope(contract: ProjectCompletionContractV1, *, reader: Any) -> tuple[str, ...]:
+    """Use the entire committed project artifact closure for source discovery."""
+    if type(contract) is not ProjectCompletionContractV1:
+        raise TypeError("materialization_completion_contract_invalid")
+    artifacts = tuple(item for item in contract.obligations.artifacts if item.applicability != "not_applicable")
+    paths = tuple(item.path for item in artifacts)
+    if not paths or len(set(paths)) != len(paths):
+        raise ValueError("materialization_authored_source_scope_missing_or_ambiguous")
+    if any(
+        item.owner_task_id not in contract.covered_task_ids
+        for item in artifacts
+        if item.applicability == "required" or item.owner_task_id is not None
+    ):
+        raise ValueError("materialization_authored_source_owner_not_covered")
+    if any(
+        item.source_path not in paths
+        for item in contract.obligations.entrypoints
+        if item.applicability != "not_applicable" and item.source_path
+    ):
+        raise ValueError("materialization_authored_entrypoint_source_not_covered")
+    selected: list[str] = []
+    for item in artifacts:
+        if item.semantic_role == "assets":
+            _, witness = reader.confined_path(reader.root / item.path)
+            if witness is None and item.applicability == "required":
+                raise ValueError("materialization_required_asset_missing:" + item.path)
+            if witness is not None and not stat.S_ISREG(witness.st_mode):
+                raise ValueError("materialization_asset_not_regular_file:" + item.path)
+            continue
+        if item.applicability == "optional" and reader.read(reader.root / item.path).status == "missing":
+            continue
+        selected.append(item.path)
+    return tuple(selected)
+
+
 async def _collect_director_stage_materialization_diagnostics(
     executor: Any,
     *,
@@ -547,10 +685,52 @@ async def _collect_director_stage_materialization_diagnostics(
                 )
 
     try:
+        if run is None:
+            raise ValueError("materialization verification requires a committed Chief Engineer Factory run")
+        bound_context = dict(context or {})
+        for key in ("factory_run_id", "run_id"):
+            if key in bound_context and bound_context[key] != run.id:
+                raise ValueError("materialization_context_run_mismatch:" + key)
+        if "workspace" in bound_context and Path(bound_context["workspace"]).resolve() != executor.workspace.resolve():
+            raise ValueError("materialization_context_workspace_mismatch")
+        from .factory_node_dependencies import authenticated_preparation_contract
+
+        contract = authenticated_preparation_contract(executor, run)
         reader = WorkspaceReadSnapshot(executor.workspace)
+        source_scope = _materialization_source_scope(contract, reader=reader)
+        project_id = executor._canonical_project_id(bound_context)
+        if project_id and contract.project_id != project_id:
+            raise ValueError("materialization_context_project_mismatch")
         manifest = reader.read(executor.workspace / "package.json")
-        evidence = scan_workspace_artifact_quality_evidence(str(executor.workspace), scan_mode="pure_static")
+        evidence = scan_workspace_artifact_quality_evidence(
+            str(executor.workspace), relative_paths=source_scope, scan_mode="pure_static"
+        )
         static = evidence.to_dict()
+        static["materialization_source_scope"] = {
+            "source": "chief_engineer_project_completion_contract",
+            "completion_contract_hash": contract.contract_hash,
+            "covered_task_ids": list(contract.covered_task_ids),
+            "relative_paths": list(source_scope),
+            "required_paths": [
+                item.path for item in contract.obligations.artifacts if item.applicability == "required"
+            ],
+            "observed_optional_paths": [
+                item.path
+                for item in contract.obligations.artifacts
+                if item.applicability == "optional" and item.path in source_scope
+            ],
+            "absent_optional_paths": [
+                item.path
+                for item in contract.obligations.artifacts
+                if item.applicability == "optional" and item.semantic_role != "assets" and item.path not in source_scope
+            ],
+            "asset_paths": [
+                item.path
+                for item in contract.obligations.artifacts
+                if item.applicability != "not_applicable" and item.semantic_role == "assets"
+            ],
+            "execution_qualified": False,
+        }
         diagnostics.extend(evidence.errors)
         static["materialization_manifest_snapshot"] = {
             "path": manifest.path,
@@ -581,9 +761,6 @@ async def _collect_director_stage_materialization_diagnostics(
                 blockers.append("materialization_verifier_project_invalid:" + str(project))
         if blockers:
             return MaterializationDiagnostics(diagnostics, static_evidence=static, blockers=blockers)
-        if run is None:
-            raise ValueError("materialization verification requires a committed Chief Engineer Factory run")
-        bound_context = dict(context or {})
         deadlines = []
         for key in ("factory_run_deadline_epoch_seconds", "factory_director_execution_deadline_epoch_seconds"):
             value = bound_context.get(key)
@@ -594,20 +771,8 @@ async def _collect_director_stage_materialization_diagnostics(
             deadlines.append(float(value))
         if deadlines and min(deadlines) <= time.time():
             raise ValueError("materialization_verifier_deadline_expired")
-        for key in ("factory_run_id", "run_id"):
-            if key in bound_context and bound_context[key] != run.id:
-                raise ValueError("materialization_context_run_mismatch:" + key)
-        if "workspace" in bound_context and Path(bound_context["workspace"]).resolve() != executor.workspace.resolve():
-            raise ValueError("materialization_context_workspace_mismatch")
-        from .factory_node_dependencies import authenticated_preparation_contract
         from .native_validation_execution import await_verification_worker
 
-        contract = authenticated_preparation_contract(executor, run)
-        if type(contract) is not ProjectCompletionContractV1:
-            raise TypeError("materialization_completion_contract_invalid")
-        project_id = executor._canonical_project_id(bound_context)
-        if project_id and contract.project_id != project_id:
-            raise ValueError("materialization_context_project_mismatch")
         priorities = {"environment_prep": 0, "build": 1, "lint": 2, "test": 3, "entrypoint": 4}
         verifiers = sorted(
             (row for row in contract.obligations.verification if row.applicability == "required"),
@@ -709,8 +874,43 @@ async def _collect_director_stage_materialization_diagnostics(
             remaining = min(deadlines) - time.time() if deadlines else None
             if remaining is not None and remaining <= 0:
                 raise ValueError("materialization_verifier_deadline_expired")
-            async with asyncio.timeout(remaining):
-                result = await await_verification_worker(partial(execute, command))
+            try:
+                async with asyncio.timeout(remaining):
+                    result = await await_verification_worker(partial(execute, command))
+            except FileNotFoundError as exc:
+                diagnostic = _missing_required_entrypoint_diagnostic(
+                    contract=contract,
+                    command=command,
+                    command_text=authority.command,
+                    error=exc,
+                    receipts=receipts,
+                )
+                if diagnostic is None:
+                    raise
+                diagnostics.append(diagnostic.message)
+                results.append(
+                    {
+                        **next(
+                            row for row in planned_verifier_results if row["obligation_id"] == verifier.obligation_id
+                        ),
+                        "exit_code": None,
+                        "passed": False,
+                        "error": f"{type(exc).__name__}:{exc}",
+                        "failure_kind": "admission",
+                        "phase": "entrypoint_artifact_missing",
+                        "receipt_ref": None,
+                        "repair_diagnostic": {
+                            "source": diagnostic.source,
+                            "code": diagnostic.code,
+                            "message": diagnostic.message,
+                            "path": diagnostic.path,
+                            "severity": diagnostic.severity,
+                            "metadata": dict(diagnostic.metadata),
+                        },
+                    }
+                )
+                append_unexecuted_verifiers(error="materialization_verifier_dependency_failed", phase="dependency")
+                break
             results.append(result)
             diagnostics.extend(_materialization_verifier_diagnostics(result, receipt=receipts[-1]))
             if result["passed"] is not True:
@@ -1112,6 +1312,121 @@ def _materialization_observation_with_coverage(observation: Any) -> Materializat
     return observation
 
 
+def _current_materialization_receipts(
+    executor: Any, run: FactoryRun, results: Sequence[Mapping[str, Any]]
+) -> tuple[ProjectVerificationReceiptV1, ...]:
+    """Capture the current owner-sealed baseline before a candidate changes it."""
+    from polaris.cells.runtime.execution_broker.public import project_verification as broker
+
+    from .factory_node_dependencies import authenticated_preparation_contract
+
+    if not any(row.get("receipt_hash") for row in results):
+        return ()
+    contract = authenticated_preparation_contract(executor, run)
+    receipts = []
+    for row in results:
+        if not row.get("receipt_ref"):
+            continue
+        command = broker.authorize_project_verification_command(
+            broker.ResolveProjectVerificationAuthorityQueryV1(
+                workspace=str(executor.workspace),
+                project_id=contract.project_id,
+                run_id=run.id,
+                completion_contract_hash=contract.contract_hash,
+                obligation_id=str(row["obligation_id"]),
+            )
+        )
+        receipt = broker.query_project_verification_receipt(
+            broker.QueryProjectVerificationReceiptV1(
+                **{
+                    name: getattr(command, name)
+                    for name in broker.QueryProjectVerificationReceiptV1.__dataclass_fields__
+                }
+            )
+        )
+        if (
+            type(receipt) is not ProjectVerificationReceiptV1
+            or receipt.receipt_ref != row.get("receipt_ref")
+            or receipt.receipt_hash != row.get("receipt_hash")
+            or receipt.argv != tuple(row.get("command") or ())
+            or receipt.command_authority_hash != row.get("command_authority_hash")
+            or receipt.exit_code != row.get("exit_code")
+            or receipt.succeeded is not row.get("passed")
+        ):
+            raise ValueError("materialization_baseline_verifier_receipt_not_current")
+        receipts.append(receipt)
+    return tuple(receipts)
+
+
+def _entrypoint_missing_after_verified_frontier_advance(
+    before: Sequence[ProjectVerificationReceiptV1], after: MaterializationDiagnostics
+) -> bool:
+    """Preserve a proven test repair that exposes only a declared missing entry."""
+    if not before or after.blockers:
+        return False
+    missing: list[Mapping[str, Any]] = []
+    for row in after.verifier_results:
+        if row.get("passed") is True:
+            continue
+        item = row.get("repair_diagnostic")
+        if not isinstance(item, Mapping):
+            return False
+        metadata = item.get("metadata")
+        if (
+            item.get("code") != "failed_required_entrypoint"
+            or not isinstance(metadata, Mapping)
+            or metadata.get("execution_started") is not False
+            or metadata.get("command_receipt_missing") is not True
+        ):
+            return False
+        missing.append(item)
+    if not missing:
+        return False
+    if set(after) != {item["message"] for item in missing}:
+        return False
+    current = {receipt.obligation_id: receipt for receipt in after._owner_receipts}
+    improved = False
+    for previous in before:
+        receipt = current.get(previous.obligation_id)
+        if (
+            type(previous) is not ProjectVerificationReceiptV1
+            or receipt is None
+            or type(receipt) is not ProjectVerificationReceiptV1
+        ):
+            return False
+        identity = (
+            "workspace",
+            "project_id",
+            "run_id",
+            "completion_contract_hash",
+            "owner_task_id",
+            "modality",
+            "argv",
+            "cwd",
+            "command_authority_hash",
+            "job_token_id",
+            "job_token_set_hash",
+            "execution_policy_hash",
+            "authority_revision",
+            "policy_profile_id",
+            "policy_decision_hash",
+            "executable_path",
+            "executable_realpath",
+            "executable_hash",
+        )
+        if any(getattr(previous, name) != getattr(receipt, name) for name in identity) or not receipt.succeeded:
+            return False
+        if {(item.obligation_id, item.path) for item in previous.input_artifacts} != {
+            (item.obligation_id, item.path) for item in receipt.input_artifacts
+        }:
+            return False
+        if not previous.succeeded:
+            if previous.modality != "test" or previous.exit_code in {None, 0}:
+                return False
+            improved = True
+    return improved
+
+
 async def _continue_materialization_verifier_repair(
     executor: Any,
     *,
@@ -1120,6 +1435,8 @@ async def _continue_materialization_verifier_repair(
     result: dict[str, Any],
     sessions: list[NativeValidationSession],
     observations: list[dict[str, Any]],
+    collect_diagnostics: Any = None,
+    repair_candidate: Any = None,
 ) -> dict[str, Any]:
     """Use the existing Director repair owner after deterministic settlement.
 
@@ -1129,37 +1446,55 @@ async def _continue_materialization_verifier_repair(
     """
     from .factory_workspace_quality_impl import (
         _apply_workspace_quality_llm_repairs,
+        _finish_workspace_quality_repair_candidate,
         _record_workspace_quality_repair_artifact_receipts,
         _settle_pending_workspace_quality_repair_attempt,
         _stop_workspace_quality_repair_heartbeat,
+        _workspace_quality_candidate_advances,
+        _workspace_quality_test_frontier_reduced,
+        _WorkspaceRepairContinuation,
     )
 
     errors = list(result.get("post_commit_diagnostics") or ())
     pending: Mapping[str, Any] | None = None
     preparations: list[dict[str, Any]] = []
     authority_binding = None
+    baseline_restored = False
+    continuation = _WorkspaceRepairContinuation(executor, context)
+    seen_codes: set[str] = set()
     try:
-        for round_number in range(_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS):
+        for round_number in continuation.rounds():
             if not errors:
                 break
+            abort = await executor._quality_gate_abort_reason(executor._resolve_abort_checker(context))
+            if abort:
+                result["convergence_stop_reason"] = "quality_repair_cancelled"
+                break
             before_results = observations[-1].get("verifier_results", []) if observations else []
+            baseline_receipts = (
+                () if baseline_restored else _current_materialization_receipts(executor, run, before_results)
+            )
             for session in sessions:
                 session.before_repair()
             authority_port = executor._factory_role_evidence_cutoff_port(context)
             if authority_binding is None:
                 authority_binding = authority_port.mint_authority_binding("director")
+
+            async def repair_operation(_errors=tuple(errors), _round=round_number):
+                if repair_candidate is not None:
+                    return await repair_candidate(errors=list(_errors), attempt=_round + 1)
+                return await _apply_workspace_quality_llm_repairs(
+                    executor,
+                    run=run,
+                    context=context,
+                    artifact_quality_errors=list(_errors),
+                    repair_attempt=int(result.get("repair_round_count") or 0) + _round + 1,
+                )
+
             tools, summary = await executor._call_with_factory_role_evidence_authority(
                 authority_port,
                 "director",
-                lambda _errors=list(errors), _attempt=int(result.get("repair_round_count") or 0) + round_number + 1: (
-                    _apply_workspace_quality_llm_repairs(
-                        executor,
-                        run=run,
-                        context=context,
-                        artifact_quality_errors=_errors,
-                        repair_attempt=_attempt,
-                    )
-                ),
+                repair_operation,
                 authority_binding=authority_binding,
             )
             summary = dict(summary)
@@ -1167,9 +1502,45 @@ async def _continue_materialization_verifier_repair(
             result["llm_repair"] = {
                 key: value
                 for key, value in summary.items()
-                if key in {"attempted", "success", "error", "error_code", "repair_mode", "task_id"}
+                if key
+                in {
+                    "attempted",
+                    "success",
+                    "error",
+                    "error_code",
+                    "repair_mode",
+                    "task_id",
+                    "stage",
+                    "success_reason",
+                    "llm_fallback_blocked",
+                }
                 and (value is None or type(value) in {str, bool, int, float})
             }
+            scope_filter = summary.get("task_boundary_scope_filter")
+            if isinstance(scope_filter, Mapping):
+                projected_scope = {
+                    key: value
+                    for key, value in scope_filter.items()
+                    if key in {"schema_version", "reason", "deferred"}
+                    and (value is None or type(value) in {str, bool, int, float})
+                }
+                for key in ("task_declared_write_targets", "out_of_scope_repair_target_files"):
+                    value = scope_filter.get(key)
+                    if isinstance(value, (list, tuple)):
+                        projected_scope[key] = [item for item in value[:12] if isinstance(item, str)]
+                requests = scope_filter.get("ownership_handoff_requests")
+                if isinstance(requests, (list, tuple)):
+                    projected_scope["ownership_handoff_requests"] = [
+                        {
+                            key: value
+                            for key, value in item.items()
+                            if key in {"target_file", "owner_found", "owner_task_id", "recommended_route", "reason"}
+                            and (value is None or type(value) in {str, bool, int, float})
+                        }
+                        for item in requests[:12]
+                        if isinstance(item, Mapping)
+                    ]
+                result["llm_repair"]["task_boundary_scope_filter"] = projected_scope
             result["tool_result_count"] = int(result.get("tool_result_count") or 0) + len(tools)
             if not isinstance(pending, Mapping):
                 pending = None
@@ -1179,11 +1550,12 @@ async def _continue_materialization_verifier_repair(
                 for item in tools
                 if isinstance(item, Mapping)
                 and (
-                    str(item.get("tool_name") or item.get("tool") or "") in {"write_file", "edit_file", "delete_file"}
+                    str(item.get("tool_name") or item.get("tool") or "")
+                    in {"write_file", "edit_file", "edit_blocks", "delete_file"}
                     or (
                         isinstance(item.get("effect_receipt"), Mapping)
                         and item["effect_receipt"].get("normalized_tool_name")
-                        in {"write_file", "edit_file", "delete_file"}
+                        in {"write_file", "edit_file", "edit_blocks", "delete_file"}
                     )
                 )
             ]
@@ -1193,7 +1565,9 @@ async def _continue_materialization_verifier_repair(
             # Refresh them before a dependency change may require a new group.
             _record_workspace_quality_repair_artifact_receipts(pending)
             observation = _materialization_observation_with_coverage(
-                await executor._collect_director_stage_materialization_diagnostics(
+                await collect_diagnostics()
+                if collect_diagnostics is not None
+                else await executor._collect_director_stage_materialization_diagnostics(
                     run=run,
                     context=context,
                     sessions=sessions,
@@ -1213,16 +1587,50 @@ async def _continue_materialization_verifier_repair(
                 after_results=observation.verifier_results,
                 workspace=Path(executor.workspace),
             )
-            accepted = effect in {"resolved", "progress"}
-            settlement = await _settle_pending_workspace_quality_repair_attempt(
+            if effect not in {"resolved", "regression"} and _workspace_quality_test_frontier_reduced(
+                before_results,
+                observation.verifier_results,
+                before_receipts=baseline_receipts,
+                after_receipts=observation._owner_receipts,
+            ):
+                effect = "progress"
+            if (
+                collect_diagnostics is not None
+                and before_results
+                and all(row.get("passed") is True and row.get("exit_code") == 0 for row in before_results)
+                and after_errors
+            ):
+                # A semantic QA finding is not a failed physical baseline.
+                effect = "regression"
+            if effect == "equal_count_swap" and _entrypoint_missing_after_verified_frontier_advance(
+                baseline_receipts, observation
+            ):
+                # A successful test repair can expose an entry prerequisite
+                # with the same diagnostic count. Receipts prove the frontier;
+                # the missing entry still prevents final completion.
+                effect = "progress"
+            after_codes = executor._workspace_quality_diagnostic_error_codes(
+                executor._workspace_quality_diagnostic_signature(after_errors)
+            )
+            accepted = _workspace_quality_candidate_advances(effect, after_codes=after_codes, seen_codes=seen_codes)
+            seen_codes.update(after_codes)
+            settlement, post = await _finish_workspace_quality_repair_candidate(
                 executor,
                 pending,
+                run=run,
+                context=context,
+                sessions=sessions,
+                observations=observations,
                 accepted=accepted,
                 reason=f"director_stage_verifier_repair_{effect}",
+                verifier_resolved=not after_errors,
+                revalidate=collect_diagnostics,
             )
             pending = None
+            baseline_restored = not accepted
             result["llm_repair"]["verifier_effect"] = effect
             result["llm_repair"]["task_runtime_repair_attempt"] = settlement
+            continuation.observe(progress=accepted)
             if not accepted:
                 for session in sessions:
                     session.restored()
@@ -1234,8 +1642,22 @@ async def _continue_materialization_verifier_repair(
                 repair_context["candidate_rejection_errors"] = after_errors[:4]
                 repair_context["candidate_rejection_target_files"] = list(summary.get("repair_target_files") or ())[:12]
                 context["director_quality_repair"] = repair_context
+                if collect_diagnostics is not None:
+                    restored = _materialization_observation_with_coverage(await collect_diagnostics())
+                    observations.append(restored.to_dict())
+                    if restored.blockers:
+                        raise _MaterializationVerificationBlockedError(restored)
                 continue
-            if not settlement or settlement.get("outcome") != "completed" or not settlement.get("settled"):
+            result["post_commit_diagnostics"] = after_errors
+            result["post_commit_diagnostic_count"] = len(after_errors)
+            if post is not None:
+                settlement = post
+                result["llm_repair"]["post_verification_attempt"] = post
+                after_errors = list(observations[-1].get("diagnostics") or ())
+                result["post_commit_diagnostics"] = after_errors
+                result["post_commit_diagnostic_count"] = len(after_errors)
+            expected_outcome = "completed" if effect == "resolved" else "failed"
+            if not settlement or settlement.get("outcome") != expected_outcome or not settlement.get("settled"):
                 break
             errors = after_errors
             result["post_commit_diagnostics"] = errors
@@ -1266,7 +1688,132 @@ async def _continue_materialization_verifier_repair(
                 accepted=False,
                 reason="director_stage_verifier_repair_interrupted",
             )
+    result["convergence_stop_reason"] = continuation.stop_reason or result.get("convergence_stop_reason", "")
     return result
+
+
+async def _revalidate_materialization_original_owner(
+    executor: Any,
+    *,
+    run: FactoryRun,
+    context: dict[str, Any],
+    original_owner_task_id: str,
+    original_task_row_id: str,
+    expected_completion_contract_hash: str,
+    original_owned_paths: list[str],
+    sessions: list[NativeValidationSession],
+    observations: list[dict[str, Any]],
+    collect_diagnostics: Any = None,
+) -> dict[str, Any]:
+    """Reuse the existing CE claim and controlled verifier paths without new effects."""
+    from polaris.cells.runtime.task_runtime.public import create_task_runtime_execution_attempt_authority
+
+    from .factory_workspace_quality_impl import (
+        _claim_workspace_quality_repair_attempt,
+        _record_workspace_quality_repair_artifact_receipts,
+        _run_workspace_quality_repair_heartbeat,
+        _stop_workspace_quality_repair_heartbeat,
+        _task_completion_projection_from_repair_task,
+    )
+
+    for session in sessions:
+        session.before_repair()
+    owner_id, task_row_id, attempt, repair_task = _claim_workspace_quality_repair_attempt(
+        executor,
+        run=run,
+        repair_attempt=1,
+        target_files=original_owned_paths,
+        original_owner_task_id=original_owner_task_id,
+    )
+    observation = None
+    artifact_receipts: tuple[dict[str, str], ...] = ()
+    projection = None
+    heartbeat_stop = asyncio.Event()
+    heartbeat_failures: list[dict[str, Any]] = []
+    heartbeat_task = None
+    try:
+        if owner_id != original_owner_task_id or str(task_row_id) != original_task_row_id:
+            raise ValueError("materialization_post_verification_owner_mismatch")
+        projection = _task_completion_projection_from_repair_task(repair_task)
+        heartbeat_task = asyncio.create_task(
+            _run_workspace_quality_repair_heartbeat(
+                create_task_runtime_execution_attempt_authority(attempt),
+                stop=heartbeat_stop,
+                failures=heartbeat_failures,
+                context_summary="director_stage_post_verification",
+            )
+        )
+        commit_context = executor._director_stage_materialization_settle_commit_context(
+            run=run,
+            run_id=run.id,
+            diagnostics=[],
+            repair_task=repair_task,
+        )
+        if (
+            not expected_completion_contract_hash
+            or commit_context["task_completion_projection"].get("project_contract_hash")
+            != expected_completion_contract_hash
+            or not projection
+            or projection.get("project_contract_hash") != expected_completion_contract_hash
+        ):
+            raise ValueError("materialization_post_verification_contract_mismatch")
+        artifact_receipts = _record_workspace_quality_repair_artifact_receipts(
+            {
+                "task_id": owner_id,
+                "execution_attempt": attempt,
+                "task_completion_projection": projection,
+            }
+        )
+        observation = _materialization_observation_with_coverage(
+            await collect_diagnostics()
+            if collect_diagnostics is not None
+            else await executor._collect_director_stage_materialization_diagnostics(
+                run=run, context=context, sessions=sessions
+            )
+        )
+        observations.append(observation.to_dict())
+        passed = (
+            not observation
+            and not observation.blockers
+            and observation.static_evidence.get("controlled_checks_complete") is True
+        )
+        await _stop_workspace_quality_repair_heartbeat(heartbeat_task, heartbeat_stop)
+        if heartbeat_failures:
+            raise RuntimeError("materialization_post_verification_heartbeat_failed")
+    except (ProcessTreeCancelledError, ProcessTreeDrainError):
+        # A live physical verifier remains owned; no terminal close is inferred.
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        executor._settle_director_stage_materialization_attempt(
+            task_row_id=task_row_id,
+            execution_attempt=attempt,
+            stage_status="failed",
+            summary=f"director_stage_post_verification_admission_failed:{type(exc).__name__}:{exc}",
+        )
+        raise
+    finally:
+        if heartbeat_task is not None:
+            await _stop_workspace_quality_repair_heartbeat(heartbeat_task, heartbeat_stop)
+    closed = executor._settle_director_stage_materialization_attempt(
+        task_row_id=task_row_id,
+        execution_attempt=attempt,
+        stage_status="success" if passed else "failed",
+        summary="director_stage_post_verification_passed" if passed else "director_stage_post_verification_failed",
+    )
+    return {
+        "task_id": owner_id,
+        "task_row_id": str(task_row_id),
+        "session_id": attempt.session_id,
+        "settled": closed.get("success") is True,
+        "outcome": "completed" if passed else "failed",
+        "project_artifact_receipt_count": len(artifact_receipts),
+        "settlement_code": closed.get("code") or closed.get("reason"),
+        "settlement_evidence": dict(closed),
+        "completion_contract_hash": projection.get("project_contract_hash") if projection else None,
+        "verifier_diagnostics": list(observation),
+        "verifier_blockers": list(observation.blockers),
+        "verifier_results": observation.verifier_results,
+    }
 
 
 async def _run_materialization_settle_with_session(
@@ -1403,7 +1950,10 @@ async def _run_materialization_settle_with_session(
         while True:
             seen_owner_frontiers.add((external_task_id, tuple(current_diagnostics)))
             seen_diagnostic_signatures = {tuple(current_diagnostics)}
-            for _owner_round in range(_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS):
+            from .factory_workspace_quality_impl import _WorkspaceRepairContinuation
+
+            deterministic_continuation = _WorkspaceRepairContinuation(executor, context)
+            for _owner_round in deterministic_continuation.rounds():
                 repair_round_count += 1
                 if owner_revalidation:
                     # A prior residual-close cannot become completed merely
@@ -1547,6 +2097,14 @@ async def _run_materialization_settle_with_session(
                 post_signature = tuple(post_commit_diagnostics)
                 if not round_committed or post_signature in seen_diagnostic_signatures:
                     break
+                deterministic_effect = executor._workspace_quality_repair_effect(
+                    before_signature=executor._workspace_quality_diagnostic_signature(current_diagnostics),
+                    after_signature=executor._workspace_quality_diagnostic_signature(post_commit_diagnostics),
+                    verifier_passed=False,
+                    write_tool_evidence=round_committed,
+                    workspace=Path(executor.workspace),
+                )
+                deterministic_continuation.observe(progress=deterministic_effect in {"progress", "forward_unmask"})
                 seen_diagnostic_signatures.add(post_signature)
                 current_diagnostics = list(post_commit_diagnostics)
             if heartbeat_task is not None:

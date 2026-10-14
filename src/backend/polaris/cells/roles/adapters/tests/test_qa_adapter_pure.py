@@ -1046,7 +1046,7 @@ class TestQaExecute:
         assert evidence_bound["metadata"]["request_timeout_seconds"] == 595
         assert evidence_bound["metadata"]["timeout_seconds"] == 595
 
-    def test_cognitive_runtime_blocked_is_nonfatal_when_static_gate_passes(
+    def test_cognitive_runtime_blocked_keeps_independent_judgement_incomplete(
         self, tmp_path: Any, monkeypatch: Any
     ) -> None:
         adapter = _make_adapter(tmp_path)
@@ -1101,7 +1101,7 @@ class TestQaExecute:
             )
         )
 
-        assert result["success"] is True
+        assert result["success"] is False
         assert result["critical_issues"] == []
         assert "qa_llm_judgement_unavailable" in result["warnings"]
 
@@ -1271,7 +1271,7 @@ class TestMergeReviewResult:
         merged = adapter._merge_review_result(base, llm)
         assert merged["critical_issues"] == ["a", "b"]
 
-    def test_factory_runtime_hard_gate_demotes_quality_only_llm_criticals(self, tmp_path: Any) -> None:
+    def test_factory_runtime_hard_gate_preserves_independent_llm_criticals(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         base = {
             "verdict": "PASS",
@@ -1299,14 +1299,12 @@ class TestMergeReviewResult:
         merged = adapter._merge_review_result(base, llm)
         finalized = adapter._finalize_review_result(merged)
 
-        assert merged["verdict"] == "PASS"
-        assert merged["critical_issues"] == []
-        assert "No evidence of behavioral test execution: npm test invokes tsc --noEmit" in merged["major_issues"]
-        assert "qa_llm_quality_risk_not_runtime_blocker" in merged["warnings"]
-        assert "qa_llm_verdict_downgraded=FAIL:factory_runtime_hard_gate_passed" in merged["evidence"]
+        assert merged["verdict"] == "FAIL"
+        assert merged["critical_issues"] == llm["critical_issues"]
+        assert "qa_llm_quality_risk_not_runtime_blocker" not in merged["warnings"]
+        assert "qa_llm_verdict_downgraded=FAIL:factory_runtime_hard_gate_passed" not in merged["evidence"]
         assert finalized["passed"] is False
         assert finalized["verdict"] == "FAIL"
-        assert "qa_score_below_pass_threshold=55<70" in finalized["warnings"]
 
     def test_factory_runtime_hard_gate_keeps_placeholder_test_critical(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

@@ -841,6 +841,9 @@ class _Mixin03:
         """
 
         sources = [context]
+        metadata = context.get("metadata")
+        if isinstance(metadata, Mapping):
+            sources.append(dict(metadata))
         qa_input = context.get("qa_input")
         if isinstance(qa_input, Mapping):
             sources.append(dict(qa_input))
