@@ -1,0 +1,31 @@
+id: vc-20261015-command-start-interface
+classification: defect
+status: component_verified
+scope:
+  - polaris/kernelone/process/command_executor.py
+  - polaris/cells/roles/adapters/internal/director/execution_tools.py
+assumptions:
+  - Conventional start uses the existing package-manager command contract without rewriting exact argv.
+  - Workspace, executable, timeout, shell and explicit run-script validation remain unchanged.
+  - Command diagnostics are observations and never grant execution or receipt authority.
+hypotheses:
+  - H1: The existing package-manager verb set rejects start before any subprocess.
+  - H2: The Director result projection discards actual lower-layer failure and timeout diagnostics.
+evidence:
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m06-command-interface/topic.json
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m06-command-interface/red.xml
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m06-command-interface/green.xml
+verification:
+  - polaris/tests/test_command_start_contract.py
+  - polaris/cells/roles/adapters/tests/test_director_command_interface.py
+  - A private offline npm start script executes through the actual KernelOne to Director seam.
+  - Actual refusal and one-second timeout retain their reason and partial output.
+  - The projection whitelist excludes lower-layer status, authority and receipt fields.
+architecture:
+  - Existing KernelOne process contract remains the owner; no new Cell or public DTO.
+  - Catalog and public interface declarations need no change for this internal compatibility fix.
+remaining:
+  - Five legacy tests have pre-existing removed-facade fixture failures; original-byte control retains all five failures.
+  - Four pre-existing Director formatting hunks are retained without unrelated formatting edits.
+  - Directed-effect failure conversion is unchanged; command-interface success is not a delivery verdict.
+  - Official KernelOne release gate and fresh native delivery remain separate acceptance steps.

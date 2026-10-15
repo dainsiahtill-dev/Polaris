@@ -61,6 +61,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolBatch,
     ToolExecutionMode,
     TurnDecision,
+    TurnDecisionKind,
     TurnId,
 )
 from polaris.cells.roles.kernel.public.turn_events import TurnPhaseEvent

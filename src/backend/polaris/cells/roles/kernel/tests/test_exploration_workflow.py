@@ -177,9 +177,12 @@ class TestAsyncHandoff:
 
         result = await workflow.execute(decision, TurnId("turn_async"))
 
-        assert result.status == ExplorationStatus.COMPLETED
+        assert result.status == ExplorationStatus.FAILED
         assert result.steps_completed == 1
         assert mock_executor.call_count == 1
+        assert result.tools_executed[0]["call_id"] == "async_1"
+        assert result.tools_executed[0]["status"] == "error"
+        assert "effect_receipt" in result.error
 
 
 # ============ Test Strategy ============
@@ -237,15 +240,16 @@ class TestErrorHandling:
 
     @pytest.mark.asyncio
     async def test_tool_failure_continues(self, workflow, mock_executor, handoff_decision) -> None:
-        """工具失败后继续执行"""
+        """已尝试成员保留失败收据，不把探索标为完成。"""
         # 第一个成功，第二个失败
         mock_executor.side_effect = [{"success": True, "result": "content 1"}, Exception("File not found")]
 
         result = await workflow.execute(handoff_decision, TurnId("turn_fail"))
 
-        # 仍然完成探索
-        assert result.status == ExplorationStatus.COMPLETED
+        assert result.status == ExplorationStatus.FAILED
         assert result.steps_completed == 2
+        assert any(row["status"] == "error" and row["error"] == "File not found" for row in result.tools_executed)
+        assert result.error == "File not found"
 
     @pytest.mark.asyncio
     async def test_timeout_handling(self, mock_executor, mock_synthesis_llm) -> None:

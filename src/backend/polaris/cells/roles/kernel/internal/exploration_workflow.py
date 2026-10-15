@@ -15,6 +15,7 @@ Exploration Workflow Runtime - 复杂探索工作流运行时
 """
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -25,12 +26,12 @@ from polaris.cells.roles.kernel.internal.speculation.models import CancelToken, 
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime
 from polaris.cells.roles.kernel.internal.transaction.receipt_utils import normalize_batch_receipts
 from polaris.cells.roles.kernel.public.turn_contracts import (
+    BatchId,
+    ToolBatch,
     ToolCallId,
     ToolEffectType,
     ToolExecutionMode,
     ToolInvocation,
-    ToolBatch,
-    BatchId,
     TurnDecision,
     TurnId,
 )
@@ -135,6 +136,7 @@ class ExplorationWorkflowRuntime:
         self._handoff_context: dict[str, Any] = {}
 
     def _apply_handoff_pack_from_metadata(self, decision: TurnDecision) -> None:
+        self._handoff_context = {}
         metadata = decision.get("metadata", {})
         if not isinstance(metadata, dict):
             return
@@ -173,7 +175,7 @@ class ExplorationWorkflowRuntime:
 
         try:
             # 执行初始工具批次
-            received_results = self._initial_receipt_results()
+            received_results = self._initial_receipt_results(decision)
             if received_results is not None:
                 tools_executed.extend(received_results)
                 self._discovery_cache.update(self._analyze_results(received_results))
@@ -289,7 +291,7 @@ class ExplorationWorkflowRuntime:
             check_cancel(self._cancel_token)
 
             # 执行初始工具批次
-            received_results = self._initial_receipt_results()
+            received_results = self._initial_receipt_results(decision)
             if received_results is not None:
                 tools_executed.extend(received_results)
                 self._discovery_cache.update(self._analyze_results(received_results))
@@ -406,9 +408,6 @@ class ExplorationWorkflowRuntime:
             "run_card": dict(handoff_pack.run_card),
             "receipt_refs": list(handoff_pack.receipt_refs),
         }
-        workflow_context = handoff_pack.context_slice_plan.get("workflow_context")
-        if isinstance(workflow_context, dict) and "batch_receipts" in workflow_context:
-            self._handoff_context["batch_receipts"] = workflow_context["batch_receipts"]
         self._ledger.append({"phase": "handoff_entry", "handoff_id": handoff_pack.handoff_id})
 
         from polaris.cells.roles.kernel.public.turn_contracts import BatchId, FinalizeMode, ToolBatch, TurnDecisionKind
@@ -459,7 +458,9 @@ class ExplorationWorkflowRuntime:
         tool_batch = decision.get("tool_batch")
         initial_tools = tool_batch.get("invocations", []) if tool_batch else []
 
-        if "batch_receipts" in self._handoff_context:
+        from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import _current_workflow_owner_receipts
+
+        if _current_workflow_owner_receipts() is not None:
             # This owner turn has already dispatched its one initial batch.
             # Adaptive new actions require an explicit continuation owner turn.
             return ExplorationPlan(initial_tools=initial_tools, strategy="single_batch", max_steps=len(initial_tools))
@@ -474,23 +475,65 @@ class ExplorationWorkflowRuntime:
 
         return ExplorationPlan(initial_tools=initial_tools, strategy=strategy, max_steps=self.max_steps)
 
-    def _initial_receipt_results(self) -> list[dict] | None:
-        receipts = self._handoff_context.get("batch_receipts")
-        if not isinstance(receipts, list):
+    def _initial_receipt_results(self, decision: TurnDecision) -> list[dict] | None:
+        from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import _current_workflow_owner_receipts
+
+        owned = _current_workflow_owner_receipts()
+        if owned is None:
             return None
-        return [dict(row) for receipt in receipts for row in receipt.get("results", [])]
+        receipts = json.loads(owned.receipts_json)
+        batch = json.loads(owned.input_batch_json)
+        expected = decision.get("tool_batch")
+        if str(decision.get("turn_id")) != owned.turn_id or not batch or not expected:
+            raise RuntimeError("workflow_initial_receipt_binding_invalid")
+        captured = {str(item.get("call_id")): item for item in batch.get("invocations", [])}
+        for invocation in expected.get("invocations", []):
+            item = captured.get(str(invocation.get("call_id")))
+            if item is None or item.get("tool_name") != invocation.get("tool_name") or dict(item.get("native_arguments") or item.get("arguments") or {}) != dict(invocation.get("native_arguments") or invocation.get("arguments") or {}):
+                raise RuntimeError("workflow_initial_receipt_invocation_mismatch")
+        results = [dict(row) for receipt in receipts for row in receipt.get("results", [])]
+        seen: set[str] = set()
+        for row in results:
+            call_id = str(row.get("call_id") or "")
+            item = captured.get(call_id)
+            if not item or call_id in seen or row.get("tool_name") != item.get("tool_name"):
+                raise RuntimeError("workflow_initial_receipt_member_mismatch")
+            seen.add(call_id)
+            row["arguments"] = dict(item.get("arguments") or {})
+        if seen != set(captured):
+            raise RuntimeError("workflow_initial_receipt_inventory_incomplete")
+        self._remember_read_results(results)
+        return results
+
+    def _remember_read_results(self, results: list[dict]) -> None:
+        for row in results:
+            if row.get("tool_name") == "read_file" and row.get("status") == "success":
+                arguments = row.get("arguments") or {}
+                path = arguments.get("file") or arguments.get("file_path") or arguments.get("path")
+                result = row.get("result")
+                content = result.get("result", "") if isinstance(result, dict) else result
+                if path and isinstance(content, str):
+                    self._discovery_cache[str(path)] = content
 
     async def _execute_tools(self, tools: list[ToolInvocation]) -> list[dict]:
         """Component execution uses canonical batch receipts, never raw success wrappers."""
         if not tools:
             return []
         check_cancel(self._cancel_token)
-        batch = ToolBatch(batch_id=BatchId(f"workflow_{tools[0].call_id}"), invocations=tools)
+        batch = ToolBatch(
+            batch_id=BatchId(f"workflow_{tools[0].call_id}"),
+            invocations=tools,
+            parallel_readonly=[tool for tool in tools if tool.execution_mode == ToolExecutionMode.READONLY_PARALLEL],
+            readonly_serial=[tool for tool in tools if tool.execution_mode == ToolExecutionMode.READONLY_SERIAL],
+            serial_writes=[tool for tool in tools if tool.execution_mode == ToolExecutionMode.WRITE_SERIAL],
+            async_receipts=[tool for tool in tools if tool.execution_mode == ToolExecutionMode.ASYNC_RECEIPT],
+        )
         receipts = await ToolBatchRuntime(executor=self.tool_executor).execute_batch(batch)
         arguments = {str(tool.call_id): dict(tool.arguments) for tool in tools}
         results = [dict(row) for receipt in normalize_batch_receipts(receipts) for row in receipt.get("results", [])]
         for row in results:
             row["arguments"] = arguments[str(row["call_id"])]
+        self._remember_read_results(results)
         return results
 
     async def _execute_tools_stream(

@@ -1553,6 +1553,7 @@ class DirectorToolExecutor:
                 "exit_code": result.get("returncode", -1),
                 "stdout": result.get("stdout", ""),
                 "stderr": result.get("stderr", ""),
+                **{key: result[key] for key in ("error", "error_type", "timed_out", "command") if key in result},
             }
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}

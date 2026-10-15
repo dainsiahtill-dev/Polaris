@@ -1,0 +1,27 @@
+id: vc-20261015-task-session-heartbeat-fact-fold
+classification: pattern
+status: component_verified
+scope:
+  - polaris/cells/runtime/task_runtime/internal/execution_session.py
+  - polaris/cells/runtime/task_runtime/internal/service/_mixin_task_rows.py
+assumptions:
+  - Compact heartbeat facts are session deltas over already committed task state.
+  - Static task fields come from earlier facts, never mutable file fallback.
+  - Current session identity and lease come from the actual heartbeat fact.
+  - UI-compacted event payloads cannot serve as canonical execution facts.
+evidence:
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m07-task-session-publication/design-causal-red.json
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m07-task-session-publication/repo-red.xml
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m07-task-session-publication/cold-diagnostic.json
+verification:
+  - polaris/cells/runtime/task_runtime/tests/test_execution_session_publication_contract.py
+  - Public claim and heartbeat preserve the full current owner tuple and actual lease.
+  - A fresh subprocess folds strict facts across small pages without process-local cache.
+  - Distinct subject and small static metadata survive while unrelated large data is absent from heartbeat records.
+  - Legacy missing bindings cannot inherit owner authority; terminal or foreign owners cannot be revived.
+  - Canonical completed and failed settlement, new-owner rework and the original Factory strict consumer remain covered.
+  - Materialized rows retain original fact payloads, actual sequence and immutable disk bytes.
+remaining:
+  - Two old Factory quality fixtures lack authority state and fail unchanged under original-byte control.
+  - Two retired-API mypy return diagnostics are unchanged under original-byte shadow control.
+  - Module experiments do not establish the sole cause of the observed native stall or complete delivery.

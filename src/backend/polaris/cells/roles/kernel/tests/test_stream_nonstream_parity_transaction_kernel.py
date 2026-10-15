@@ -223,7 +223,11 @@ class TestStreamNonStreamParity:
         assert run_result["kind"] == "handoff_workflow"
         assert stream_summary["status"] == "handoff"
         assert run_result["metrics"]["llm_calls"] == stream_summary["llm_calls"] == 1
-        assert run_result["metrics"]["tool_calls"] == stream_summary["tool_calls"] == 0
+        assert run_result["metrics"]["tool_calls"] == stream_summary["tool_calls"] == 1
+        assert run_result["batch_receipt"]["results"][0]["call_id"] == "call_1"
+        assert stream_summary["batch_receipt"]["results"][0]["call_id"] == "call_1"
+        assert run_result["ledger"].invocation_batches[0].invocations[0].call_id == "call_1"
+        assert run_result["ledger"].tool_batch_count == 1
 
     @pytest.mark.asyncio
     async def test_stream_handoff_fails_closed_when_workflow_runtime_fails(self, async_tool_name: str) -> None:

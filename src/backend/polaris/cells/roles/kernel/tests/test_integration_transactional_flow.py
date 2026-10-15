@@ -655,7 +655,7 @@ class TestExplorationWorkflowIntegration:
         assert mock_synthesis.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_transaction_kernel_routes_handoff_to_workflow_runtime(self) -> None:
+    async def test_transaction_kernel_routes_handoff_to_workflow_runtime(self, tool_defs) -> None:
         """TransactionKernel with workflow_runtime executes it on HANDOFF_WORKFLOW."""
         from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 
@@ -699,14 +699,14 @@ class TestExplorationWorkflowIntegration:
             workflow_runtime=mock_workflow,
         )
 
-        result = await tk.execute("turn_1", [{"role": "user", "content": "explore"}], [])
+        result = await tk.execute("turn_1", [{"role": "user", "content": "explore"}], tool_defs)
 
         # The workflow runtime is invoked when decoder yields HANDOFF_WORKFLOW
         mock_workflow.execute.assert_called_once()
         assert result["kind"] == "handoff_workflow"
 
     @pytest.mark.asyncio
-    async def test_transaction_kernel_fails_closed_when_workflow_runtime_fails(self) -> None:
+    async def test_transaction_kernel_fails_closed_when_workflow_runtime_fails(self, tool_defs) -> None:
         """Workflow runtime failures must not be reported as successful handoff."""
         from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 
@@ -740,7 +740,7 @@ class TestExplorationWorkflowIntegration:
             workflow_runtime=mock_workflow,
         )
 
-        result = await tk.execute("turn_workflow_fail", [{"role": "user", "content": "explore"}], [])
+        result = await tk.execute("turn_workflow_fail", [{"role": "user", "content": "explore"}], tool_defs)
 
         mock_workflow.execute.assert_called_once()
         assert result["kind"] == "workflow_execution_error"
@@ -750,7 +750,7 @@ class TestExplorationWorkflowIntegration:
         assert "FAILED" in result["state_trajectory"]
 
     @pytest.mark.asyncio
-    async def test_transaction_kernel_fails_closed_when_workflow_runtime_returns_failed_result(self) -> None:
+    async def test_transaction_kernel_fails_closed_when_workflow_runtime_returns_failed_result(self, tool_defs) -> None:
         """Returned FAILED exploration results must not be reported as successful handoff."""
         from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 
@@ -788,7 +788,7 @@ class TestExplorationWorkflowIntegration:
             workflow_runtime=workflow_runtime,
         )
 
-        result = await tk.execute("turn_workflow_failed_status", [{"role": "user", "content": "explore"}], [])
+        result = await tk.execute("turn_workflow_failed_status", [{"role": "user", "content": "explore"}], tool_defs)
 
         assert result["kind"] == "workflow_execution_error"
         assert result["finalization"]["phase"] == "handoff_workflow"

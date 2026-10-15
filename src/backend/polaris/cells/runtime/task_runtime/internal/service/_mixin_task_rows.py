@@ -1350,7 +1350,12 @@ class _TaskRowsMixin(_ServiceMixinBase):
             status_by_id[task_id] = status
         return status_by_id
 
-    def _project_execution_fact_event_row(self, event: Mapping[str, Any]) -> dict[str, Any] | None:
+    def _project_execution_fact_event_row(
+        self,
+        event: Mapping[str, Any],
+        *,
+        heartbeat_base: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """Project one FactStream event into the task-runtime row read model.
 
         The event wrapper may carry the canonical append sequence separately
@@ -1369,7 +1374,27 @@ class _TaskRowsMixin(_ServiceMixinBase):
             wrapper_seq = _coerce_fact_event_seq(event.get("seq"))
             if wrapper_seq is not None:
                 fact["fact_event_seq"] = wrapper_seq
-        return project_task_row_from_execution_fact_payload(fact)
+        projection_fact = fact
+        if heartbeat_base is not None:
+            snapshot = deepcopy(dict(heartbeat_base))
+            metadata = dict(snapshot.get("metadata") or {})
+            # A legacy heartbeat without a typed session stays unqualified.
+            # Static inheritance must never manufacture its missing owner.
+            metadata.pop("runtime_execution", None)
+            delta = fact.get("task_row_snapshot")
+            if isinstance(delta, Mapping):
+                snapshot.update(deepcopy(dict(delta)))
+                delta_metadata = delta.get("metadata")
+                if isinstance(delta_metadata, Mapping):
+                    metadata.update(deepcopy(dict(delta_metadata)))
+            snapshot["metadata"] = metadata
+            projection_fact = {**fact, "task_row_snapshot": snapshot}
+        row = project_task_row_from_execution_fact_payload(projection_fact)
+        if row and heartbeat_base is not None:
+            # The materialized row is derived; the inspected fact remains the
+            # actual compact payload, with its original sequence and body.
+            row["metadata"]["task_runtime_execution_fact"] = fact
+        return row
 
     def _query_execution_fact_events(
         self,
@@ -1385,6 +1410,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
                 stream=TASK_RUNTIME_EXECUTION_STREAM_V1,
                 limit=limit,
                 offset=offset,
+                strict_integrity=True,
             )
         )
 
@@ -1598,6 +1624,21 @@ class _TaskRowsMixin(_ServiceMixinBase):
         latest_by_task: dict[str, dict[str, Any]],
         events: list[Any],
     ) -> None:
+        def owner_key(binding: Any) -> tuple[Any, ...] | None:
+            if not isinstance(binding, Mapping):
+                return None
+            attempt = binding.get("attempt")
+            task_id = binding.get("task_id")
+            if isinstance(task_id, bool) or type(attempt) is not int or attempt < 1:
+                return None
+            identity = tuple(
+                str(binding.get(key) or "").strip()
+                for key in ("session_id", "run_id", "role_id", "worker_id", "external_task_id")
+            )
+            if not str(task_id or "").strip() or not identity[0] or not identity[2] or not identity[3]:
+                return None
+            return (str(task_id), *identity, attempt)
+
         for event in events:
             if not isinstance(event, dict):
                 continue
@@ -1613,6 +1654,38 @@ class _TaskRowsMixin(_ServiceMixinBase):
                 existing_seq = _coerce_fact_event_seq(existing.get("fact_event_seq")) or -1
                 if incoming_seq < existing_seq:
                     continue
+            payload = event.get("payload")
+            if isinstance(payload, Mapping) and payload.get("event_type") in {"heartbeat", "heartbeat_renewed"}:
+                if existing is None:
+                    raise RuntimeError("task_runtime_heartbeat_committed_anchor_missing")
+                if is_terminal_task_row_status(str(existing.get("status") or "")):
+                    raise RuntimeError("task_runtime_heartbeat_after_terminal_owner")
+                metadata = row.get("metadata")
+                binding = metadata.get("runtime_execution") if isinstance(metadata, Mapping) else None
+                if binding is not None:
+                    previous_metadata = existing.get("metadata")
+                    previous_binding = (
+                        previous_metadata.get("runtime_execution") if isinstance(previous_metadata, Mapping) else None
+                    )
+                    current_owner = owner_key(binding)
+                    previous_owner = owner_key(previous_binding)
+                    header_owner = (
+                        str(payload.get("task_id") or ""),
+                        str(payload.get("session_id") or ""),
+                        str(payload.get("run_id") or ""),
+                        payload.get("attempt"),
+                    )
+                    if (
+                        current_owner is None
+                        or current_owner != previous_owner
+                        or (current_owner[0], current_owner[1], current_owner[2], current_owner[-1]) != header_owner
+                        or str(payload.get("workspace") or "") != self.workspace
+                        or str(binding.get("status") or "") != "active"
+                    ):
+                        raise RuntimeError("task_runtime_heartbeat_current_owner_conflict")
+                row = self._project_execution_fact_event_row(event, heartbeat_base=existing)
+                if row is None:
+                    raise RuntimeError("task_runtime_heartbeat_projection_missing")
             latest_by_task[task_id] = row
 
     def _finalize_execution_fact_rows(
@@ -1662,10 +1735,10 @@ class _TaskRowsMixin(_ServiceMixinBase):
 
         ``limit`` is the FactStream *page size*, not an authority window.
         Factory cutover/coverage compares every file-backed TaskRuntime row
-        against this projection. Query the newest page first so later facts
-        win, then walk older pages so a task whose latest event sits behind a
-        long rematerialize tail remains visible. After the first complete
-        snapshot, later observers merge only events after the cached head.
+        against this projection. Fold pages in canonical sequence so compact
+        heartbeats retain committed static task state without retaining whole
+        event history in memory. After the first complete snapshot, later
+        observers merge only events after the cached head.
 
         The queried FactStream event wrapper exposes the canonical
         ``FactEventAppendedV1.appended_seq`` value as the ``seq`` field on
@@ -1712,41 +1785,30 @@ class _TaskRowsMixin(_ServiceMixinBase):
                     count=stream_head - snapshot[0],
                     page_size=event_limit,
                 )
-            except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
-                logger.debug("failed to incrementally load task runtime execution fact rows: %s", exc)
-            else:
                 latest_by_task = snapshot[1]
                 self._merge_execution_fact_events(latest_by_task, delta_events)
+            except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("failed to incrementally load task runtime execution fact rows: %s", exc)
+                latest_by_task = {}
+            else:
                 complete_head = stream_head
 
         if complete_head is None:
             try:
                 result = self._query_execution_fact_events(limit=event_limit)
                 total = int(getattr(result, "total", 0) or 0)
-                latest_events = [event for event in list(result.events or []) if isinstance(event, dict)]
-                if total > len(latest_events):
-                    latest_offset = max(0, total - event_limit)
-                    if latest_offset:
-                        result = self._query_execution_fact_events(
-                            limit=event_limit,
-                            offset=latest_offset,
-                        )
-                        latest_events = [event for event in list(result.events or []) if isinstance(event, dict)]
-                self._merge_execution_fact_events(latest_by_task, latest_events)
-                older_cursor = max(0, total - event_limit)
-                while older_cursor > 0:
-                    older_offset = max(0, older_cursor - event_limit)
-                    older_page = self._query_execution_fact_events(
-                        limit=event_limit,
-                        offset=older_offset,
-                    )
-                    self._merge_execution_fact_events(
-                        latest_by_task,
-                        [event for event in list(older_page.events or []) if isinstance(event, dict)],
-                    )
-                    if older_offset == 0:
+                # Compact heartbeat facts are deltas over committed task state.
+                # Fold pages in canonical order, retaining only one row per task.
+                offset = 0
+                while True:
+                    page_events = [event for event in list(result.events or []) if isinstance(event, dict)]
+                    self._merge_execution_fact_events(latest_by_task, page_events)
+                    offset += len(page_events)
+                    if offset >= total:
                         break
-                    older_cursor = older_offset
+                    if not page_events:
+                        raise RuntimeError("task_runtime_execution_fact_page_incomplete")
+                    result = self._query_execution_fact_events(limit=min(event_limit, total - offset), offset=offset)
             except (FactStreamError, RuntimeError, TypeError, ValueError) as exc:
                 logger.debug("failed to load task runtime execution fact rows: %s", exc)
                 return []

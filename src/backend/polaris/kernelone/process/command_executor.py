@@ -189,7 +189,7 @@ _PYTHON_ALLOWED_OPTION_ARITY = {
 }
 _NODE_INLINE_FLAGS = {"-e", "--eval", "-p", "--print", "-"}
 _NODE_ALLOWED_OPTIONS = {"--version", "-v", "--check"}
-_SAFE_PACKAGE_MANAGER_VERBS = {"test", "run", "build", "lint", "install", "ci"}
+_SAFE_PACKAGE_MANAGER_VERBS = {"test", "run", "start", "build", "lint", "install", "ci"}
 _SAFE_PYTHON_MODULES = {
     "compileall",
     "mypy",

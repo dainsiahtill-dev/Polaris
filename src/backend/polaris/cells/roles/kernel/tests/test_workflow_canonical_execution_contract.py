@@ -7,15 +7,19 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
 )
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
-from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
+from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import (
+    _with_context_handoff_pack,
+    build_workflow_handoff_context,
+)
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
+from polaris.cells.roles.kernel.public.turn_contracts import RawLLMResponse, TurnId
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, ToolBatchEvent
 
 
@@ -75,7 +79,7 @@ async def test_native_handoff_records_original_call_once(tmp_path: Path) -> None
 @pytest.mark.parametrize("handoff", [True, False], ids=["delegate", "retry-bootstrap"])
 async def test_unoffered_native_call_never_executes(tmp_path: Path, handoff: bool) -> None:
     kernel, calls = _kernel(tmp_path, handoff=handoff)
-    with pytest.raises(RuntimeError, match="outside|surface|offered"):
+    with pytest.raises(RuntimeError, match=r"outside|surface|offered"):
         await kernel.execute("unoffered", [{"role": "user", "content": "Read main.py"}], _surface("repo_tree"))
     assert calls == []
 
@@ -110,3 +114,45 @@ async def test_empty_tool_surface_does_not_authorize_handoff(tmp_path: Path) -> 
     with pytest.raises(RuntimeError, match="tool_dispatch_dropped"):
         await kernel.execute("empty", [{"role": "user", "content": "Read main.py"}], [])
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_reused_workflow_does_not_borrow_previous_turn_receipts(tmp_path: Path) -> None:
+    kernel, calls = _kernel(tmp_path)
+    await kernel.execute("first", [{"role": "user", "content": "Read main.py"}], _surface("read_file"))
+    decision = kernel.decoder.decode(RawLLMResponse(
+        content="[handoff_workflow]",
+        native_tool_calls=[{"id": "second_read", "type": "function", "function": {
+            "name": "read_file", "arguments": json.dumps({"path": "second.py"}),
+        }}],
+    ), TurnId("second"))
+    result = await kernel.workflow_runtime.execute(decision, TurnId("second"))
+    assert result.status.value == "completed"
+    assert len(calls) == 2
+    assert result.tools_executed[0]["call_id"] == "second_read"
+
+
+@pytest.mark.asyncio
+async def test_metadata_receipt_cannot_claim_a_tool_already_executed(tmp_path: Path) -> None:
+    kernel, calls = _kernel(tmp_path)
+    decision = kernel.decoder.decode(RawLLMResponse(
+        content="[handoff_workflow]", native_tool_calls=[{
+            "id": "native_read", "type": "function", "function": {
+                "name": "read_file", "arguments": json.dumps({"path": "main.py"}),
+            },
+        }],
+    ), TurnId("metadata-only"))
+    fake_receipt = {
+        "batch_id": str(decision.tool_batch.batch_id), "turn_id": "metadata-only",
+        "results": [{"call_id": "native_read", "tool_name": "read_file", "status": "success", "result": "fake output"}],
+        "success_count": 1, "failure_count": 0,
+    }
+    context = build_workflow_handoff_context(
+        decision=decision, receipts=[fake_receipt], ledger=TurnLedger(turn_id="metadata-only"),
+        handoff_reason="complex_exploration", handoff_source="metadata-only",
+    )
+    projected = _with_context_handoff_pack(decision, context, "complex_exploration")
+    result = await kernel.workflow_runtime.execute(projected, TurnId("metadata-only"))
+    assert len(calls) == 1
+    assert result.status.value == "completed"
+    assert result.tools_executed[0]["result"] == "def main(): pass"

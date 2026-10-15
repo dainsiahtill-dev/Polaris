@@ -8,9 +8,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, TypeAlias
 
@@ -31,16 +35,69 @@ logger = logging.getLogger(__name__)
 DecisionLike: TypeAlias = TurnDecision | dict[str, Any]
 
 
+@dataclass(frozen=True)
+class _OwnerWorkflowReceipts:
+    """Detached observation supplied by the executing owner, never by metadata."""
+
+    turn_id: str
+    input_batch_json: str
+    receipts_json: str
+
+
+_workflow_owner_receipts: ContextVar[_OwnerWorkflowReceipts | None] = ContextVar("workflow_owner_receipts", default=None)
+
+
+def _current_workflow_owner_receipts() -> _OwnerWorkflowReceipts | None:
+    return _workflow_owner_receipts.get()
+
+
+@contextmanager
+def _workflow_owner_receipt_scope(decision: TurnDecision, context: dict, ledger: TurnLedger):
+    failure = _initial_batch_failure(decision, context, ledger)
+    if failure:
+        raise RuntimeError(failure)
+    expected = decision.get("tool_batch")
+    carrier = None
+    if expected and expected.get("invocations"):
+        batches = [batch for batch in ledger.invocation_batches if str(batch.batch_id) == str(expected.get("batch_id"))]
+        if len(batches) != 1:
+            raise RuntimeError("workflow_owner_input_batch_missing_or_ambiguous")
+        input_batch = {"batch_id": str(batches[0].batch_id), "invocations": [
+            {"call_id": str(item.call_id), "tool_name": item.tool_name,
+             "arguments": dict(item.arguments), "native_arguments": dict(item.native_arguments or item.arguments)}
+            for item in batches[0].invocations
+        ]}
+        receipts = context.get("batch_receipts", [])
+        if not receipts or any(str(receipt.get("turn_id")) != str(ledger.turn_id) for receipt in receipts):
+            raise RuntimeError("workflow_owner_receipt_turn_mismatch")
+        carrier = _OwnerWorkflowReceipts(
+            str(ledger.turn_id),
+            json.dumps(input_batch, ensure_ascii=False, sort_keys=True, allow_nan=False),
+            json.dumps(receipts, ensure_ascii=False, sort_keys=True, allow_nan=False),
+        )
+    token = _workflow_owner_receipts.set(carrier)
+    try:
+        yield
+    finally:
+        _workflow_owner_receipts.reset(token)
+
+
 def _initial_batch_failure(decision: TurnDecision, context: dict, ledger: TurnLedger) -> str | None:
     """A delegated native batch must already have exact owner-recorded results."""
     batch = decision.get("tool_batch")
     invocations = list(batch.get("invocations", []) or []) if batch else []
     if not invocations:
         return None
+    if str(decision.get("turn_id")) != str(ledger.turn_id):
+        return "workflow_initial_batch_owner_mismatch"
+    inventory = [item for captured in ledger.invocation_batches for item in captured.invocations]
     rows = [row for receipt in context.get("batch_receipts", []) for row in receipt.get("results", [])]
     for invocation in invocations:
         call_id = str(invocation.get("call_id") or "")
         tool_name = str(invocation.get("tool_name") or "")
+        captured = [item for item in inventory if str(item.call_id) == call_id and item.tool_name == tool_name]
+        if len(captured) != 1 or dict(captured[0].native_arguments or captured[0].arguments) != dict(invocation.get("native_arguments") or invocation.get("arguments") or {}):
+            return "workflow_initial_batch_invocation_mismatch"
         matched = [row for row in rows if str(row.get("call_id") or "") == call_id and row.get("tool_name") == tool_name]
         committed = [row for row in ledger.tool_executions if str(row.get("call_id") or "") == call_id and row.get("tool_name") == tool_name]
         if len(matched) != 1 or len(committed) != 1 or matched[0].get("status") != committed[0].get("status"):
@@ -186,6 +243,8 @@ def build_workflow_handoff_context(
     """构建可恢复的 workflow handoff 上下文。"""
     metadata = decision.get("metadata", {})
     tool_batch = decision.get("tool_batch") or {}
+    captured_batches = [batch for batch in ledger.invocation_batches if str(batch.batch_id) == str(tool_batch.get("batch_id") or "")]
+    receipt_input_batch = captured_batches[0] if len(captured_batches) == 1 else tool_batch
     primary_receipt = select_primary_batch_receipt(receipts)
     pending_receipts = [
         receipt
@@ -205,7 +264,7 @@ def build_workflow_handoff_context(
             else str(decision.get("finalize_mode", "")),
             "metadata": dict(metadata),
         },
-        "tool_batch": tool_batch,
+        "tool_batch": receipt_input_batch,
         "batch_receipts": receipts,
         "pending_async_receipts": pending_receipts,
         "batch_summary": summarize_batch_receipts(receipts),
@@ -324,7 +383,8 @@ class HandoffHandler:
         if self.workflow_runtime is not None and exploration_error is None:
             try:
                 workflow_decision = _with_context_handoff_pack(decision, workflow_context, handoff_reason)
-                exploration_result = await self.workflow_runtime.execute(workflow_decision, TurnId(str(turn_id)))
+                with _workflow_owner_receipt_scope(decision, workflow_context, ledger):
+                    exploration_result = await self.workflow_runtime.execute(workflow_decision, TurnId(str(turn_id)))
                 exploration_result_dict = {
                     "turn_id": str(exploration_result.turn_id),
                     "status": exploration_result.status.value,
@@ -358,6 +418,7 @@ class HandoffHandler:
                     llm_calls=len(ledger.llm_calls),
                     tool_calls=len(ledger.tool_executions),
                     error=exploration_error,
+                    batch_receipt=batch_receipt or {},
                 )
             )
             return self.build_turn_result(
@@ -393,6 +454,7 @@ class HandoffHandler:
                 duration_ms=ledger.get_duration_ms(),
                 llm_calls=len(ledger.llm_calls),
                 tool_calls=len(ledger.tool_executions),
+                batch_receipt=batch_receipt or {},
             )
         )
 
@@ -447,13 +509,14 @@ class HandoffHandler:
         workflow_decision = _with_context_handoff_pack(decision, workflow_context, handoff_reason)
         if workflow_error is None and self.workflow_runtime is not None and hasattr(self.workflow_runtime, "execute_stream"):
             try:
-                async for event in self.workflow_runtime.execute_stream(workflow_decision, TurnId(str(turn_id))):
-                    event_error = _workflow_event_failure(event)
-                    if event_error:
-                        workflow_error = event_error
-                    if isinstance(event, CompletionEvent):
-                        continue
-                    yield event
+                with _workflow_owner_receipt_scope(decision, workflow_context, ledger):
+                    async for event in self.workflow_runtime.execute_stream(workflow_decision, TurnId(str(turn_id))):
+                        event_error = _workflow_event_failure(event)
+                        if event_error:
+                            workflow_error = event_error
+                        if isinstance(event, CompletionEvent):
+                            continue
+                        yield event
             except Exception as exc:
                 logger.exception("ExplorationWorkflowRuntime stream failed during handoff: turn_id=%s", turn_id)
                 workflow_error = str(exc)
@@ -465,7 +528,8 @@ class HandoffHandler:
                 )
         elif workflow_error is None and self.workflow_runtime is not None:
             try:
-                exploration_result = await self.workflow_runtime.execute(workflow_decision, TurnId(str(turn_id)))
+                with _workflow_owner_receipt_scope(decision, workflow_context, ledger):
+                    exploration_result = await self.workflow_runtime.execute(workflow_decision, TurnId(str(turn_id)))
                 workflow_error = _workflow_result_failure(exploration_result)
                 visible_content = exploration_result.synthesis or "[HANDOFF] Exploration completed."
                 if visible_content and not workflow_error:
@@ -496,6 +560,7 @@ class HandoffHandler:
             tool_calls=len(ledger.tool_executions),
             turn_kind="handoff_workflow",
             error=workflow_error,
+            batch_receipt=batch_receipt or {},
             visible_content=(
                 f"[HANDOFF_ERROR] Exploration workflow failed. Reason: {handoff_reason}. Error: {workflow_error}"
                 if workflow_error

@@ -964,6 +964,7 @@ class RetryOrchestrator:
                             attempt_index + 1,
                         )
                         candidate_bootstrap_decision = bootstrap_decision
+                        candidate_bootstrap_allowed_tools = set(attempt_allowed_tool_names)
                         break
                 if not is_mutation_contract_violation(retry_exc):
                     raise

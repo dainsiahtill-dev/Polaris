@@ -268,16 +268,19 @@ _HEARTBEAT_SNAPSHOT_METADATA_KEYS: tuple[str, ...] = (
     "factory_run_id",
     "task_id",
     "run_id",
+    "runtime_execution",
 )
 
 
 def build_heartbeat_task_row_snapshot(task_row: dict[str, Any]) -> dict[str, Any]:
-    """Return identity-only snapshot for ``heartbeat_renewed`` durable facts.
+    """Return a compact session delta for ``heartbeat_renewed`` durable facts.
 
     Live L2-13: each heartbeat copied ``metadata.adapter_result`` (~1.4MiB)
     into ``task_runtime.execution.jsonl``. Quality-gate then stalled parsing
     78MiB of those copies. Heartbeat is lease evidence, not adapter receipt
     authority; parse-time compact already dropped the blob. Stop writing it.
+    Keep the producer's actual typed session; static task state is folded from
+    earlier committed snapshots rather than copied into every heartbeat.
     """
 
     metadata_raw = task_row.get("metadata")
