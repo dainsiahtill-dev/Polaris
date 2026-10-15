@@ -1141,6 +1141,10 @@ class StreamOrchestrator:
             if call_llm_for_decision_stream is not None
             else self._call_llm_for_decision_stream_impl
         )
+        tool_definitions, _super_tool_choice_override, callable_names = (
+            self.retry_orchestrator._resolve_retry_tool_surface(tool_definitions, _super_tool_choice_override)
+        )
+        invocation_tool_names = frozenset(callable_names)
         provider_error_emitted = False
         async for event in _call_llm_stream(
             context,
@@ -1203,6 +1207,10 @@ class StreamOrchestrator:
                     metadata={"superseded_by_corrective_retry": corrective_ask.reason},
                 )
             corrective_response: RawLLMResponse | None = None
+            tool_definitions, _super_tool_choice_override, callable_names = (
+                self.retry_orchestrator._resolve_retry_tool_surface(tool_definitions, _super_tool_choice_override)
+            )
+            invocation_tool_names = frozenset(callable_names)
             async for event in _call_llm_stream(
                 build_corrective_context(context, corrective_ask),
                 tool_definitions,
@@ -1421,7 +1429,7 @@ class StreamOrchestrator:
             elif decision_kind == TurnDecisionKind.ASK_USER:
                 result = await self.handoff_handler.handle_ask_user(decision, state_machine, ledger)
             elif decision_kind in {TurnDecisionKind.TOOL_BATCH, TurnDecisionKind.HANDOFF_WORKFLOW}:
-                allowed_tool_names = extract_allowed_tool_names_from_definitions(tool_definitions)
+                allowed_tool_names = set(invocation_tool_names)
                 try:
                     result = await self.tool_batch_executor.execute_tool_batch(
                         decision,
@@ -1447,6 +1455,7 @@ class StreamOrchestrator:
                         # discarding the model's (often correct) reads and re-asking
                         # makes weak models emit worse, hallucinated calls.
                         original_decision=decision,
+                        original_allowed_tool_names=invocation_tool_names,
                     )
                 batch_receipt = normalize_batch_receipt(result.get("batch_receipt"))
                 if batch_receipt:

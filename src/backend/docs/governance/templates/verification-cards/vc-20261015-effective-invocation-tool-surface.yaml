@@ -1,0 +1,35 @@
+id: vc-20261015-effective-invocation-tool-surface
+classification: defect
+status: component_verified
+scope:
+  - polaris/cells/roles/kernel/internal/turn_transaction_controller.py
+  - polaris/cells/roles/kernel/internal/transaction/stream_orchestrator.py
+  - polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py
+assumptions:
+  - Existing request-owner resolve_tool_surface uses the same overrides as real request preparation.
+  - Callable names include the actual tool_choice restriction, not only schema names.
+  - The offered surface never grants workspace access or directed-effect authority.
+hypotheses:
+  - H1: Raw local retry definitions can differ from the effective prepared request.
+  - H2: Primary dispatch and original-decision bootstrap must retain their own invocation surface before provider I/O.
+evidence:
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m08-invocation-tool-surface/design-causal-red.json
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m08-invocation-tool-surface/repo-red.xml
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m08-invocation-tool-surface/green1.xml
+verification:
+  - polaris/cells/roles/kernel/tests/test_effective_invocation_tool_surface.py
+  - polaris/cells/roles/kernel/tests/test_retry_tool_surface_convergence.py
+  - Real registry-generated schemas and request preparation reproduce effective17 versus local2.
+  - Real synchronous and streaming handlers execute a private allowed read once.
+  - Real effective2 versus local17 and named-choice controls reject without physical read.
+  - A transient surface ending after provider return cannot alter the captured callable set.
+  - Original bootstrap and follow-up retain distinct callback identities and real batch receipts.
+architecture:
+  - Reuse existing provider resolver and private per-invocation frozenset; no registry or public DTO.
+  - Existing decoder, ToolBatchRuntime guard, RoleToolGateway, DEO and receipt ownership remain unchanged.
+  - Catalog and public graph contracts need no change for this internal binding correction.
+remaining:
+  - Private remote transport and stream materialization are explicit component seams, not wire qualification.
+  - Actual native local offered-set contents remain unknown; the sealed final prepared request contains17.
+  - The separate target-source missing-types failure is outside this module.
+  - Whole native delivery requires a fresh integrated run; component verification does not prove delivery.

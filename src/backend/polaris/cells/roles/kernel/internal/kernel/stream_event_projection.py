@@ -340,7 +340,10 @@ class StreamEventProjector:
             self._record_projection_outcome(success=False, reason="stream task boundary failure")
             repairable = (
                 director_continuous_execution_enabled(self.role, self.request.context_override)
-                and bool(batch_receipt and batch_receipt.get("results"))
+                # A text-only turn still has a real durable commit. Requiring
+                # a new tool result here would stop before missing-output
+                # feedback can reach the next authorized same-owner turn.
+                and bool(event.commit_receipt)
                 and isinstance(task_boundary_verdict, dict)
                 and task_boundary_verdict.get("failure_class")
                 in {

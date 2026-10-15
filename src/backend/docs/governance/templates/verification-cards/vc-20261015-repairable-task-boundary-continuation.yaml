@@ -1,0 +1,33 @@
+id: vc-20261015-repairable-task-boundary-continuation
+classification: defect
+status: component_verified
+scope:
+  - polaris/cells/roles/kernel/internal/kernel/stream_event_projection.py
+  - polaris/cells/roles/runtime/internal/kernel_session_turn.py
+assumptions:
+  - CompletionEvent and RoleTurnResult commit fields come from the existing canonical turn owner.
+  - A repairable TaskBoundary verdict remains failed until outputs and verifiers actually pass.
+  - Followup grants no authority; the existing Runtime validates the active task attempt before each next turn.
+hypotheses:
+  - H1: Requiring a tool result in the current text-only turn prevents missing-output feedback from reaching the next invocation.
+evidence:
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m09-materialization-continuation/design-causal-red.json
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m09-materialization-continuation/repo-red.xml
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m09-materialization-continuation/green1.xml
+verification:
+  - polaris/cells/roles/runtime/tests/test_repairable_task_boundary_continuation.py
+  - polaris/cells/roles/runtime/tests/test_kernel_session_continuation.py
+  - polaris/cells/roles/kernel/internal/kernel/tests/test_stream_event_projection.py
+  - A real public two-file session commits its first DEO write, sees a text-only final turn fail TaskBoundary, and sends missing-output feedback in the next actual prepared HTTP request.
+  - The second output has a distinct real DEO commit; the approved verifier executes before final completed_verified.
+  - Missing commit carrier and nonrepairable failure stop without another model or tool dispatch.
+  - Actual stale authority and a foreign next-turn session are rejected before provider I/O.
+  - Repeated empty finals remain failed under the existing explicit turn limit.
+architecture:
+  - Existing metadata and typed event fields only; no new public DTO, owner or cross-Cell private dependency.
+  - No TaskBoundary, JobToken, DEO, Factory success predicate or budget changes.
+  - Catalog and public graph declarations require no interface change.
+remaining:
+  - The loopback model is a controlled private producer, not a remote model or Bench delivery result.
+  - Native tool-result omission preceding materialization is a separate M10 topic.
+  - Fresh native delivery remains unverified until formal integration and operator execution.

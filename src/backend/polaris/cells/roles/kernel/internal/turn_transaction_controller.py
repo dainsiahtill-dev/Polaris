@@ -137,9 +137,6 @@ from polaris.cells.roles.kernel.internal.transaction.outcome_commit import (
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import PhaseManager
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import StreamOrchestrator
-from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
-    extract_allowed_tool_names_from_definitions,
-)
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
 from polaris.cells.roles.kernel.internal.transaction.truthlog_recorder import TurnTruthLogRecorder
 from polaris.cells.roles.kernel.internal.transaction.turn_session_scope import turn_session_scope
@@ -1122,6 +1119,14 @@ class TurnTransactionController:
     ) -> dict:
         """核心turn执行逻辑（run模式）"""
 
+        # Resolve the same request-owner override used by actual preparation.
+        # Keep this invocation's callable set local; later retry overrides must
+        # never retroactively authorize or reject its response.
+        tool_definitions, tool_choice_override, callable_names = self._retry_orchestrator._resolve_retry_tool_surface(
+            tool_definitions, tool_choice_override
+        )
+        invocation_tool_names = frozenset(callable_names)
+
         # === Phase 1: 构建Context ===
         state_machine.transition_to(TurnState.CONTEXT_BUILT)
         ledger.state_history.append(("CONTEXT_BUILT", int(time.time() * 1000)))
@@ -1159,11 +1164,16 @@ class TurnTransactionController:
             call_tool_definitions: list[dict],
             call_ledger: TurnLedger,
         ) -> RawLLMResponse:
+            nonlocal invocation_tool_names
+            call_tool_definitions, call_choice, callable_names = self._retry_orchestrator._resolve_retry_tool_surface(
+                call_tool_definitions, tool_choice_override
+            )
+            invocation_tool_names = frozenset(callable_names)
             return await self._call_llm_for_decision(
                 call_context,
                 call_tool_definitions,
                 call_ledger,
-                tool_choice_override=tool_choice_override,
+                tool_choice_override=call_choice,
             )
 
         try:
@@ -1261,7 +1271,7 @@ class TurnTransactionController:
                 state_machine,
                 ledger,
                 context,
-                allowed_tool_names=extract_allowed_tool_names_from_definitions(tool_definitions),
+                allowed_tool_names=set(invocation_tool_names),
             )
 
         elif decision_kind == TurnDecisionKind.HANDOFF_DEVELOPMENT:
@@ -1275,7 +1285,7 @@ class TurnTransactionController:
                 workspace=self._resolve_shadow_workspace(context),
                 turn_id=turn_id,
             )
-            allowed_tool_names = extract_allowed_tool_names_from_definitions(tool_definitions)
+            allowed_tool_names = set(invocation_tool_names)
             try:
                 return await self._tool_batch_executor.execute_tool_batch(
                     decision,
@@ -1300,6 +1310,7 @@ class TurnTransactionController:
                     # Wave-5: bootstrap a READ-ONLY violating batch directly instead
                     # of discarding the model's reads and re-asking.
                     original_decision=decision,
+                    original_allowed_tool_names=invocation_tool_names,
                     initial_failure_reason=str(exc),
                 )
 

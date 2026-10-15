@@ -651,8 +651,15 @@ class RetryOrchestrator:
         stream: bool,
         shadow_engine: Any | None = None,
         original_decision: Any | None = None,
+        original_allowed_tool_names: frozenset[str] | None = None,
         initial_failure_reason: str = "",
     ) -> dict:
+        # Capture the original invocation before building any new retry scope.
+        # Normal dispatch passes its pre-I/O snapshot; direct internal callers
+        # use the same existing request-owner resolver, never a schema union.
+        if original_allowed_tool_names is None:
+            _, _, callable_names = self._resolve_retry_tool_surface(tool_definitions)
+            original_allowed_tool_names = frozenset(callable_names)
         latest_user_request = extract_latest_user_message(context)
         requires_mutation = requires_mutation_intent(extract_task_instruction(context))
         # Phase-1 A2 (2026-06-11, run20 audit): a mutation contract IMPLIES the
@@ -693,7 +700,7 @@ class RetryOrchestrator:
         max_retry_attempts = getattr(self.config, "max_retry_attempts", 4)
         retry_llm_call_ordinal = 0
         candidate_bootstrap_decision: TurnDecision | None = None
-        candidate_bootstrap_allowed_tools = extract_allowed_tool_names_from_definitions(tool_definitions)
+        candidate_bootstrap_allowed_tools = set(original_allowed_tool_names)
         # Phase-2 Wave-5 (2026-06-11, run10a live audit): when the ORIGINAL violating
         # batch is itself a safe READ-ONLY batch (the model asking for evidence, e.g.
         # read_file django/core/checks/model_checks.py — correct path!), discarding it

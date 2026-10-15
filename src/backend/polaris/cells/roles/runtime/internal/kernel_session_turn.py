@@ -724,11 +724,12 @@ class KernelSessionTurnBridge:
                             final_result = replace(candidate, error=candidate.error or error, is_complete=False)
                             error_result_received = True
                             candidate_metadata = candidate.metadata or {}
-                            has_committed_receipt = (
-                                bool((candidate.batch_receipt or {}).get("results"))
-                                and isinstance(candidate_metadata.get("turn_commit_receipt"), Mapping)
-                                and bool(candidate_metadata["turn_commit_receipt"])
-                            )
+                            # Canonical empty-final turns have a durable
+                            # outcome too; a followup does not require another
+                            # tool batch and grants no new execution authority.
+                            has_committed_receipt = isinstance(
+                                candidate_metadata.get("turn_commit_receipt"), Mapping
+                            ) and bool(candidate_metadata["turn_commit_receipt"])
                             recoverable = (
                                 str(event.get("error_type")) in {"task_boundary_failed", "stream_execution_failed"}
                                 and candidate_metadata.get("transaction_kind") == "continue_multi_turn"
