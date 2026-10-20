@@ -20,7 +20,7 @@ from polaris.kernelone.trace import get_trace_id
 
 from ... import providers as _providers_module
 from ...provider_adapters.factory import get_adapter
-from ...providers.base_provider import THINKING_PREFIX
+from ...providers.base_provider import THINKING_PREFIX, BaseProvider
 from ...providers.stream_thinking_parser import ChunkKind, StreamThinkingParser
 from .._executor_base import (
     build_final_request_observability_fields,
@@ -516,6 +516,8 @@ class StreamExecutor:
                 "content_xml_close_count": content_text.count("</"),
                 "assembly": dict(accumulator.provider_meta.get("assembly") or {}),
             }
+            if argument_audit == accumulator.argument_audit:
+                return
             accumulator.argument_audit = argument_audit
             _debug_stream_module.emit_debug_event(
                 category="llm_tool_call",
@@ -1039,6 +1041,9 @@ class StreamExecutor:
                     invoke_cfg=invoke_cfg,
                     trace_id=trace_id,
                     coalesce_replayed_text=factory_governed_stream,
+                    require_provider_terminal=(
+                        "messages" in request.options or isinstance(provider_instance, BaseProvider)
+                    ),
                 )
                 upstream_stream = bind_capture(upstream_stream)
                 async for event in upstream_stream:
@@ -1341,6 +1346,7 @@ class StreamExecutor:
         invoke_cfg: dict[str, Any],
         trace_id: str,
         coalesce_replayed_text: bool = False,
+        require_provider_terminal: bool = True,
     ) -> AIStreamGenerator:
         """Preferred path for providers that expose raw structured stream deltas."""
         adapter = get_adapter(provider_type)
@@ -1353,13 +1359,17 @@ class StreamExecutor:
         pending_text_kind = ""
         pending_text = ""
         # Governed replay was buffered and terminalized by its existing owner;
-        # preserve its event order. Live native streams need their own terminal.
-        native_terminal_required = not coalesce_replayed_text and provider_type in {
+        # preserve its event order. Every other native call waits for strict
+        # argument validation. Legacy standalone event adapters own iterator
+        # completion; concrete transports and canonical requests require wire
+        # completion too. This policy is chosen by the backend, never config.
+        native_call_validation = not coalesce_replayed_text and provider_type in {
             "openai",
             "openai_compat",
             "anthropic",
             "anthropic_compat",
         }
+        native_terminal_required = native_call_validation and require_provider_terminal
         anthropic_stream = "anthropic" in provider_type
         terminal_seen = False
         finish_reason = ""
@@ -1447,7 +1457,7 @@ class StreamExecutor:
                 if not isinstance(raw_event, dict):
                     continue
 
-                if native_terminal_required:
+                if native_call_validation:
                     if anthropic_stream:
                         if raw_event.get("type") == "message_stop":
                             terminal_seen = True
@@ -1520,7 +1530,7 @@ class StreamExecutor:
                         tool_call_ordinals_by_key[key] = tool_call_ordinal
 
                     if (
-                        native_terminal_required
+                        native_call_validation
                         and key not in pending_tool_calls
                         and len(pending_tool_calls) >= self.max_pending_calls
                     ):
@@ -1532,7 +1542,7 @@ class StreamExecutor:
                     )
                     # Parsing a valid JSON prefix is not provider completion.
                     # Keep native calls private until the entire turn terminates.
-                    if emitted is None or native_terminal_required:
+                    if emitted is None or native_call_validation:
                         continue
 
                     ordinal_for_call = tool_call_ordinals_by_key.get(key)
@@ -1550,7 +1560,7 @@ class StreamExecutor:
                         ),
                     )
         except (ConnectionError, OSError, RuntimeError, TimeoutError) as exc:
-            if not native_terminal_required:
+            if not native_call_validation:
                 raise
             yield _interrupted_error(str(exc))
             return
@@ -1575,13 +1585,15 @@ class StreamExecutor:
         for pending_event in _flush_text():
             yield pending_event
 
-        if native_terminal_required:
+        if native_call_validation:
             accepted_reasons = (
                 {"end_turn", "tool_use", "stop_sequence"}
                 if anthropic_stream
                 else {"stop", "tool_calls", "function_call"}
             )
-            if not terminal_seen or finish_reason not in accepted_reasons:
+            if (native_terminal_required and not terminal_seen) or (
+                (native_terminal_required or finish_reason) and finish_reason not in accepted_reasons
+            ):
                 yield _interrupted_error(f"native_stream_incomplete:{finish_reason or 'missing_provider_terminal'}")
                 return
             # Validate every pending call before publishing any executable call.
@@ -1598,7 +1610,7 @@ class StreamExecutor:
                 pending.emitted_signature = ""
 
         for key, pending in pending_tool_calls.items():
-            emitted = self._finalize_stream_tool_call(pending, allow_lenient_repair=not native_terminal_required)
+            emitted = self._finalize_stream_tool_call(pending, allow_lenient_repair=not native_call_validation)
             if emitted is None:
                 continue
 

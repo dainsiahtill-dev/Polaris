@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from polaris.cells.roles.runtime.tests.engineering_support import (
     scripted_provider as scripted_provider,
 )
 from polaris.kernelone.llm.engine.contracts import AIRequest, StreamEventType, TaskType
+from polaris.kernelone.llm.providers import get_provider_manager
 from polaris.kernelone.llm.toolkit.parsers.core import parse_tool_calls
 from polaris.kernelone.llm.toolkit.parsers.native_function import NativeFunctionCallingParser
 from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
@@ -461,3 +463,86 @@ def test_unified_native_only_mode_never_interprets_assistant_text_as_actions() -
     assert len(legacy) == 1
     assert legacy[0].name == "read_file"
     assert parse_tool_calls(text=text, allow_text_fallback=False) == []
+
+
+@pytest.mark.parametrize("protocol", ["openai", "anthropic"])
+@pytest.mark.parametrize("canonical", [False, True])
+async def test_legacy_structured_adapter_clean_iterator_end_preserves_native_calls(
+    protocol: str,
+    canonical: bool,
+    scripted_provider: ScriptedProvider,
+    isolated_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LegacyEventAdapter:
+        async def invoke_stream_events(
+            self, _prompt: str, _model: str, _config: dict[str, Any]
+        ) -> AsyncGenerator[dict[str, Any], None]:
+            for event in _stream_events(protocol, arguments=json.dumps(_ARGS), terminal=None):
+                assert isinstance(event, dict)
+                yield event
+
+    monkeypatch.setattr(get_provider_manager(), "get_provider_instance", lambda _provider_type: LegacyEventAdapter())
+    request = _request()
+    if not canonical:
+        del request.options["messages"]
+        request.context["chat_messages"] = _MESSAGES
+    events = [
+        event
+        async for event in scripted_provider.client(protocol, isolated_workspace, monkeypatch).invoke_stream(request)
+    ]
+    calls = [event.tool_call for event in events if event.type == StreamEventType.TOOL_CALL]
+    errors = [event for event in events if event.type == StreamEventType.ERROR]
+    if canonical:
+        assert not calls
+        assert errors
+    else:
+        assert [call["call_id"] for call in calls if call] == _IDS
+        assert [call["arguments"] for call in calls if call] == [_ARGS, _ARGS]
+        assert not errors
+        assert events[-1].type == StreamEventType.COMPLETE
+
+
+@pytest.mark.parametrize("protocol", ["openai", "anthropic"])
+async def test_builtin_native_http_requires_wire_terminal_for_legacy_request(
+    protocol: str, scripted_provider: ScriptedProvider, isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request = _request()
+    del request.options["messages"]
+    request.context["chat_messages"] = _MESSAGES
+    scripted_provider.enqueue_stream(_stream_events(protocol, arguments=json.dumps(_ARGS), terminal=None))
+    events = [
+        event
+        async for event in scripted_provider.client(protocol, isolated_workspace, monkeypatch).invoke_stream(request)
+    ]
+    assert not [event for event in events if event.type in {StreamEventType.TOOL_CALL, StreamEventType.COMPLETE}]
+    assert any(
+        "missing_provider_terminal" in str(event.error) for event in events if event.type == StreamEventType.ERROR
+    )
+
+
+@pytest.mark.parametrize("protocol", ["openai", "anthropic"])
+async def test_legacy_structured_adapter_incomplete_json_never_becomes_executable(
+    protocol: str, scripted_provider: ScriptedProvider, isolated_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class LegacyEventAdapter:
+        async def invoke_stream_events(
+            self, _prompt: str, _model: str, _config: dict[str, Any]
+        ) -> AsyncGenerator[dict[str, Any], None]:
+            for event in _stream_events(protocol, arguments='{"filename":"unfinished"', terminal=None):
+                assert isinstance(event, dict)
+                yield event
+
+    monkeypatch.setattr(get_provider_manager(), "get_provider_instance", lambda _provider_type: LegacyEventAdapter())
+    request = _request()
+    del request.options["messages"]
+    request.context["chat_messages"] = _MESSAGES
+    events = [
+        event
+        async for event in scripted_provider.client(protocol, isolated_workspace, monkeypatch).invoke_stream(request)
+    ]
+    assert not [event for event in events if event.type in {StreamEventType.TOOL_CALL, StreamEventType.COMPLETE}]
+    errors = [event for event in events if event.type == StreamEventType.ERROR]
+    assert errors
+    evidence = [event.meta for event in errors if event.meta and "interrupted_tool_calls" in event.meta]
+    assert [call["call_id"] for call in evidence[0]["interrupted_tool_calls"]] == _IDS
