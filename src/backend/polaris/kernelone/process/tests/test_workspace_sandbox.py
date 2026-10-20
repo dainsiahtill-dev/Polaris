@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import py_compile
 import shutil
 import socket
 import tempfile
@@ -71,6 +72,26 @@ def test_workspace_write_and_private_cache_work_without_host_environment(sandbox
     assert result.returncode == 0, result.stderr
     assert (sandbox_workspace / "result.txt").read_text(encoding="utf-8") == "source"
     assert not (sandbox_workspace / "entry").exists()
+
+
+def test_python_check_reads_repaired_source_despite_valid_old_workspace_bytecode(sandbox_workspace: Path):
+    source = sandbox_workspace / "calc.py"
+    source.write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    before = source.stat()
+    py_compile.compile(str(source), doraise=True)
+    source.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    # Timestamp-based bytecode validation sees the same timestamp and size.
+    # Every real command must use fresh private cache, even if this old cache
+    # is present and apparently current in an existing project.
+    os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns))
+    (sandbox_workspace / "test_calc.py").write_text(
+        "import unittest\nfrom calc import add\nclass Addition(unittest.TestCase):\n"
+        "    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n",
+        encoding="utf-8",
+    )
+    result = _run(sandbox_workspace, "python3 -m unittest -v")
+    assert result.returncode == 0, result.stderr
+    assert "OK" in result.stderr
 
 
 @pytest.mark.parametrize("via_symlink", [False, True])

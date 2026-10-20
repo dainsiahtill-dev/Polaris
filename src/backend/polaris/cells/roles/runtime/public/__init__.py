@@ -36,6 +36,7 @@ __all__ = [
     "EngineResult",
     "EngineStatus",
     "EngineStrategy",
+    "EngineeringRunService",
     "ExecuteRoleCapabilityInvocationCommandV1",
     "ExecuteRoleSessionCommandV1",
     "ExecuteRoleTaskCommandV1",
@@ -48,6 +49,7 @@ __all__ = [
     "MessageType",
     "OrchestratorSessionState",
     "PathSecurityError",
+    "PermissionScope",
     "PlanSolveEngine",
     "PromptFingerprint",
     "ProtocolBus",
@@ -79,6 +81,8 @@ __all__ = [
     "RoleProfileBinding",
     "RoleProfileRegistry",
     "RolePromptPolicy",
+    "RoleRunCommand",
+    "RoleRunResult",
     "RoleRuntimeChainAssemblyResultV1",
     "RoleRuntimeChainEnvelope",
     "RoleRuntimeChainStepRef",
@@ -100,6 +104,7 @@ __all__ = [
     "RoleTurnEnvelope",
     "RoleTurnRequest",
     "RoleTurnResult",
+    "RunLimits",
     "SeqEventType",
     "SeqProgressDetector",
     "SeqState",
@@ -120,6 +125,7 @@ __all__ = [
     "TerminationReason",
     "ToTEngine",
     "ToolAuthorizationError",
+    "ToolObservation",
     "Worker",
     "WorkerConfig",
     "WorkerPool",
@@ -159,6 +165,11 @@ __all__ = [
     "stream_role_session_command",
 ]
 
+_ENGINEERING_CONTRACT_EXPORTS = frozenset(
+    {"RoleRunCommand", "PermissionScope", "RunLimits", "ToolObservation", "RoleRunResult"}
+)
+_ENGINEERING_CONTRACTS_MODULE = "polaris.cells.roles.runtime.public.contracts.engineering_run"
+_ENGINEERING_SERVICE_MODULE = "polaris.cells.roles.runtime.public.engineering_service"
 _CONTRACTS_MODULE = "polaris.cells.roles.runtime.public.contracts"
 _SERVICE_MODULE = "polaris.cells.roles.runtime.public.service"
 _INTERNAL_CONTINUATION_MODULE = "polaris.cells.roles.runtime.internal.continuation_policy"
@@ -223,7 +234,11 @@ _CONTINUATION_EXPORTS = frozenset({"ContinuationPolicy", "OrchestratorSessionSta
 def __getattr__(name: str) -> Any:  # PEP 562: lazy exports must type as Any, not object
     if name not in __all__:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    if name in _CONTINUATION_EXPORTS:
+    if name in _ENGINEERING_CONTRACT_EXPORTS:
+        module_name = _ENGINEERING_CONTRACTS_MODULE
+    elif name == "EngineeringRunService":
+        module_name = _ENGINEERING_SERVICE_MODULE
+    elif name in _CONTINUATION_EXPORTS:
         module_name = _INTERNAL_CONTINUATION_MODULE
     elif name in _CONTRACT_EXPORTS:
         module_name = _CONTRACTS_MODULE

@@ -55,6 +55,12 @@ class ScriptedProvider:
         self.responses.append((200, "text/event-stream", body.encode("utf-8")))
 
     def client(self, protocol: str, workspace: Path, monkeypatch: pytest.MonkeyPatch) -> ResilientLLMClient:
+        # Replace only configuration for this synthetic model port. Without an
+        # explicit binding, tests can accidentally consume the developer's
+        # configured model or fail under an isolated KernelOne home.
+        from polaris.kernelone.llm.engine import _executor_base
+
+        monkeypatch.setattr(_executor_base, "get_role_model", lambda _role: ("synthetic", "synthetic-model"))
         provider_type = "anthropic_compat" if protocol == "anthropic" else "openai_compat"
         config = {
             "type": provider_type,
@@ -69,8 +75,8 @@ class ScriptedProvider:
         }
         executor = AIExecutor(workspace=str(workspace))
         stream_executor = StreamExecutor(workspace=str(workspace))
-        monkeypatch.setattr(executor, "_get_provider_config", lambda _provider_id: dict(config))
-        monkeypatch.setattr(stream_executor, "_get_provider_config", lambda _provider_id: dict(config))
+        monkeypatch.setattr(AIExecutor, "_get_provider_config", lambda _self, _provider_id: dict(config))
+        monkeypatch.setattr(StreamExecutor, "_get_provider_config", lambda _self, _provider_id: dict(config))
         provider = _EngineProvider(provider_type, executor, stream_executor)
         return ResilientLLMClient(
             [(provider, ProviderConfig(provider_name=provider_type))],

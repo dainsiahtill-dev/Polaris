@@ -163,6 +163,7 @@ def build_workspace_sandbox_argv(
     environment = {
         "HOME": "/sandbox-home",
         "XDG_CACHE_HOME": "/sandbox-cache",
+        "PYTHONPYCACHEPREFIX": "/sandbox-cache/python",
         "POLARIS_SANDBOX_OUTPUT": "/sandbox-output",
         "TMPDIR": "/tmp",
         "PATH": "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin",

@@ -38,7 +38,7 @@ from .resilience import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, AsyncIterator
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class LLMProvider(Protocol):
         """Synchronous-style invoke wrapped as async."""
         ...
 
-    async def invoke_stream(self, request: AIRequest) -> AsyncGenerator[AIStreamEvent, None]:
+    def invoke_stream(self, request: AIRequest) -> AsyncIterator[AIStreamEvent]:
         """Stream invoke, yields AIStreamEvent objects."""
         ...
 

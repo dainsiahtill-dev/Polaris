@@ -157,11 +157,11 @@ Expected: native、正常效果与拒绝/取消反例全部通过；没有 Provi
 
 初始工具面只启用读、列目录、搜索、写文件、精确编辑和执行命令。schema/alias 由现有 ToolSpecRegistry 单次派生；不对整批按 name+args 去重。每个原生调用按声明顺序返回结果或明确错误，首版不并发副作用工具。
 
-- [ ] RED：loopback 模型读取临时 `calc.py`、修复 `add(2, 3)` 的错误实现、真实运行 `python -m unittest`；输入没有任何 contract/hash/OBL，仍须真正改文件并得到退出 0。
-- [ ] RED：越界和控制域写入有明确失败结果，`writes=()` 不因 prompt 中出现路径而扩张；原生未知工具/重复 ID/坏参数不静默跳过。
-- [ ] RED：相同 request_key 不重复创建；更换 workflow/required_checks 得到冲突；第二个 workspace writer 被拒；跨 workspace observe/cancel 拒绝；旧合同模块的 import/构造被哨兵禁止仍能执行。
-- [ ] 按 A 节实现循环和 SQLite。工具派发前记 started，成功/失败后记 observed；文本无 tool call 只结束角色回复。
-- [ ] GREEN 后提交此批。运行记录不得双写旧 task、DEO、ledger 或旧 session store。
+- [x] RED：loopback 模型读取临时 `calc.py`、修复 `add(2, 3)` 的错误实现、真实运行 `python -m unittest`；输入没有任何 contract/hash/OBL，仍须真正改文件并得到退出 0。
+- [x] RED：越界和控制域写入有明确失败结果，`writes=()` 不因 prompt 中出现路径而扩张；原生未知工具/重复 ID/坏参数不静默跳过。
+- [x] RED：相同 request_key 不重复创建；更换 workflow/required_checks 得到冲突；第二个 workspace writer 被拒；跨 workspace observe/cancel 拒绝；旧合同模块的 import/构造被哨兵禁止仍能执行。
+- [x] 按 A 节实现循环和 SQLite。工具派发前记 started，成功/失败后记 observed；文本无 tool call 只结束角色回复。
+- [x] GREEN 后提交此批。运行记录不得双写旧 task、DEO、ledger 或旧 session store。
 
 Run: `rtk proxy python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_engineering_loop.py src/backend/polaris/cells/roles/runtime/tests/test_engineering_session.py src/backend/polaris/cells/roles/runtime/tests/test_engineering_no_legacy_imports.py -q`
 
@@ -334,3 +334,7 @@ Expected: 新生产调用图没有旧准入；历史仍可读；没有无限 dua
 组合验证使用合成 loopback provider，经真实 HTTP/原生 codec 返回调用，再执行真实 bwrap 隔离命令、KFS fsync 日志冷读并回送实际工具结果。当前只证明 Linux/WSL2 的这组技术能力；没有远端模型、工程主循环、真进程重启恢复或 L1–L12 Bench 结论。原 R13 及更早 FAILED/UNKNOWN 保留。
 
 证据保存在独立 worktree 的 `.superpowers/sdd/2026-10-20-polaris-role-agent-refactor/`：`task1-native/`（含 R2）、`task1-sandbox/`、`task1-root-all-v2/`、`task1-independent-review/`。第 2 批从此技术切片继续，不能恢复已归档的旧内核包装原型。
+
+2026-10-20 实施补充：第 1 批首次完整底座检查暴露 4 个旧流适配器兼容失败，已保留失败证据。R3 修复迭代结束与真实协议终态的适用边界后，冻结提交 `84474677f` 在独立 checkout 完整检查通过（368 passed、1 skipped）；没有修改旧测试的验收断言。第 2 批工程循环、单份 SQLite 与公开服务处于独立审查和修复中；尚无真实模型、产品运行或 Bench 交付结论。证据：`.superpowers/sdd/2026-10-20-polaris-role-agent-refactor/task1-release-all-r3/`。
+
+2026-10-20：第 2 批组件切片完成。新 Director 在合成模型配置和真实 HTTP 下读写临时工程，实际运行失败测试、接收结果、继续修复并得到退出 0；模型输入没有旧合同字段。单份 SQLite、真实 flock、显式空权限、原生调用身份、公开默认客户端及禁用旧内核后的实际执行均已验证。主 Agent 最终 98 项通过；独立审查两项 P1 经红绿修复后，最终 29 项通过、16 个源码 hash 一致、未关闭发现 0。资源清理未知时保留写锁；工具效果缺少耐久观察时保留 interrupted/unknown，不重放。证据：`task2-root-final/`、`task2-independent-review/`、`task2-loop/r1/`、`task2-loop/r2/`。尚不包含真实模型、正式验证、真进程冷恢复、产品入口、UI 或 Bench 交付。
