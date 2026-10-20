@@ -288,6 +288,16 @@ async def execute_role_chat_nonstreaming(
         "model": result.model or None,
         "provider": result.provider_id or None,
         "metadata": {
+            **{
+                key: result.metadata[key]
+                for key in (
+                    "context_snapshot_ref",
+                    "final_request_context_audit",
+                    "native_request_observation",
+                    "native_request_observer_errors",
+                )
+                if key in result.metadata
+            },
             "engine_version": "engineering_v2",
             "role_runtime_entrypoint": "roles.runtime.chat_role",
             "source": host_kind,

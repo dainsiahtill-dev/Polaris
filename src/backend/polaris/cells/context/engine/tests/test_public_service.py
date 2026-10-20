@@ -102,9 +102,11 @@ def test_query_final_physical_provider_request_projects_native_anthropic_body(
     )
 
     assert result.ok is True
+    native_messages = native_body["messages"]
+    assert isinstance(native_messages, list)
     assert result.payload["messages"] == [
         {"role": "system", "content": native_body["system"]},
-        *native_body["messages"],
+        *native_messages,
     ]
     assert result.payload["tools"] == native_body["tools"]
     assert result.payload["tool_choice"] == native_body["tool_choice"]
@@ -517,3 +519,55 @@ class TestAnthropomorphicContextV2ContextOSOverlay:
         assert "【Session Continuity】" in payload["anthropomorphic_context"]
         assert payload["context_os_summary"]["adapter_id"] == "code"
         assert payload["context_os_summary"]["current_goal"] == "Fix context.engine continuity overlay"
+
+
+def test_ordinary_native_snapshot_projects_actual_wire_instead_of_semantic_surface(tmp_path: Path) -> None:
+    from polaris.cells.context.engine.public.contracts import QueryFinalProviderRequestAuditV1
+    from polaris.cells.context.engine.public.service import query_final_provider_request_audit
+    from polaris.kernelone.llm.engine.executor import AIExecutor
+
+    body = {
+        "model": "actual-model",
+        "system": "You are Chief Engineer. ACTUAL_NATIVE_SYSTEM.",
+        "messages": [{"role": "user", "content": "actual native user"}],
+        "tools": [
+            {"name": "read_file", "input_schema": {"type": "object", "properties": {"file": {"type": "string"}}}}
+        ],
+        "tool_choice": {"type": "any"},
+        "max_tokens": 128,
+    }
+    ref = AIExecutor._store_context_messages_sync(
+        workspace=str(tmp_path),
+        messages=[{"role": "user", "content": "WRONG SEMANTIC PROJECTION"}],
+        trace_id="native-reader",
+        provider_request={
+            "role": "chief_engineer",
+            "evidence_level": "physical_capture",
+            "execution_qualified": False,
+            "tools": [{"name": "WRONG_SEMANTIC_TOOL"}],
+            "tool_choice": "auto",
+            "response_format": {"type": "WRONG_SEMANTIC_FORMAT"},
+            "final_physical_request": {
+                "endpoint": "http://127.0.0.1/native",
+                "body": body,
+                "transport": {"kind": "native-test"},
+            },
+            "final_request_context_audit": {
+                "audit_scope": "provider_native_wire",
+                "native_protocol": "anthropic_messages",
+            },
+        },
+    )
+    result = query_final_provider_request_audit(
+        QueryFinalProviderRequestAuditV1(workspace=str(tmp_path), context_snapshot_ref=ref)
+    )
+    assert result.ok
+    assert result.payload["final_physical_request_body"] == body
+    assert result.payload["messages"] == [
+        {"role": "system", "content": "You are Chief Engineer. ACTUAL_NATIVE_SYSTEM."},
+        {"role": "user", "content": "actual native user"},
+    ]
+    assert result.payload["tools"] == body["tools"]
+    assert result.payload["tool_choice"] == {"type": "any"}
+    assert result.payload["response_format"] is None
+    assert result.payload["physical_capture_status"] == "available"

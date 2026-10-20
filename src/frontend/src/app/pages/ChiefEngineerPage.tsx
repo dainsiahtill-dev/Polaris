@@ -1,3 +1,5 @@
+import { EngineeringModeBoundary } from '@/app/components/factory/EngineeringRunWorkspace';
+import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
 /**
  * Chief Engineer 工作区页面组件
  *
@@ -16,6 +18,10 @@ import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 
 export interface ChiefEngineerPageProps {
+  engineering?: EngineeringRunBinding;
+  engineeringEnabled?: boolean;
+  onEngineeringModeChange?: (enabled: boolean) => void;
+  onOpenEngineeringContext?: () => void;
   /** 工作区路径 */
   workspace: string;
   /** 引擎状态快照 */
@@ -113,7 +119,7 @@ function resolveChiefEngineerDirectorStartBlockedReason({
 /**
  * Chief Engineer 工作区页面
  */
-export function ChiefEngineerPage({
+function LegacyChiefEngineerPage({
   workspace,
   engineStatus,
   tasks,
@@ -205,4 +211,9 @@ export function ChiefEngineerPage({
       <Toaster position="bottom-right" />
     </ErrorBoundaryClass>
   );
+}
+
+
+export function ChiefEngineerPage(props: ChiefEngineerPageProps) {
+  return <EngineeringModeBoundary enabled={props.engineeringEnabled} binding={props.engineering} onModeChange={props.onEngineeringModeChange} workspace={props.workspace} role="chief_engineer" onBackToMain={props.onBackToMain} onOpenContext={props.onOpenEngineeringContext}><LegacyChiefEngineerPage {...props} /></EngineeringModeBoundary>;
 }

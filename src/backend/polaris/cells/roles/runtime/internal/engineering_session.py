@@ -7,15 +7,17 @@ exclude this directory from both direct writes and command sandbox mounts.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import sqlite3
 import stat
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
@@ -24,6 +26,8 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     RunLimits,
     ToolObservation,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class EngineeringSessionConflictError(ValueError):
@@ -37,7 +41,13 @@ class WorkspaceBusyError(BlockingIOError):
 class EngineeringSessionStore:
     """Persist exactly one workspace's engineering runs; never write legacy state."""
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(
+        self, workspace: Path, *, on_committed_events: Callable[[tuple[dict[str, Any], ...]], None] | None = None
+    ) -> None:
+        self._on_committed_events = on_committed_events
+        self._transaction_events: dict[sqlite3.Connection, list[dict[str, Any]]] = {}
+        self._commit_lock = RLock()
+        self.event_delivery_error: str | None = None
         self.workspace = Path(workspace).expanduser().resolve(strict=True)
         if not self.workspace.is_dir():
             raise ValueError("workspace must be a directory")
@@ -124,14 +134,27 @@ class EngineeringSessionStore:
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
-        with self._connection() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                yield connection
-                connection.commit()
-            except BaseException:
-                connection.rollback()
-                raise
+        # The lock orders post-commit callbacks from capture and runtime threads.
+        # The batch exists only during this call; SQLite owns all durable facts.
+        with self._commit_lock:
+            batch: list[dict[str, Any]] = []
+            with self._connection() as connection:
+                self._transaction_events[connection] = batch
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    yield connection
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
+                finally:
+                    self._transaction_events.pop(connection, None)
+            if batch and self._on_committed_events is not None:
+                try:
+                    self._on_committed_events(tuple(batch))
+                except Exception as error:  # noqa: BLE001 - delivery cannot undo committed effects or cause replay.
+                    self.event_delivery_error = f"{type(error).__name__}: {error}"
+                    logger.error("Committed engineering event delivery failed: %s", self.event_delivery_error)
 
     @staticmethod
     def _json(value: object) -> str:
@@ -237,6 +260,38 @@ class EngineeringSessionStore:
             row[field] = json.loads(row[field])
         return row
 
+    def load_snapshot(self, session_id: str, *, workspace: Path, event_limit: int = 200) -> dict[str, Any]:
+        """Read row, history window and its watermark from one SQLite snapshot."""
+        self._assert_workspace(workspace)
+        if not 1 <= event_limit <= 1000:
+            raise ValueError("event_limit must be between 1 and 1000")
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            row = dict(self._require_run(connection, session_id))
+            if row["workspace"] != str(self.workspace):
+                raise PermissionError("stored engineering session workspace mismatch")
+            last_seq = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(seq),0) FROM events WHERE session_id=?", (session_id,)
+                ).fetchone()[0]
+            )
+            events = connection.execute(
+                "SELECT seq,kind,role,payload,created_at FROM events WHERE session_id=? ORDER BY seq DESC LIMIT ?",
+                (session_id, event_limit),
+            ).fetchall()
+            roles = connection.execute(
+                "SELECT seq,kind,role,payload,created_at FROM events WHERE session_id=? AND kind IN ('role_started','role_finished') ORDER BY seq",
+                (session_id,),
+            ).fetchall()
+        for field in ("required_checks", "scope", "limits", "checks"):
+            row[field] = json.loads(row[field])
+        return {
+            "run": row,
+            "events": [{**dict(event), "payload": json.loads(event["payload"])} for event in reversed(events)],
+            "role_events": [{**dict(event), "payload": json.loads(event["payload"])} for event in roles],
+            "last_seq": last_seq,
+        }
+
     def _append_event(
         self, connection: sqlite3.Connection, session_id: str, *, kind: str, role: str, payload: Mapping[str, object]
     ) -> int:
@@ -246,9 +301,22 @@ class EngineeringSessionStore:
                 "SELECT COALESCE(MAX(seq),0)+1 FROM events WHERE session_id=?", (session_id,)
             ).fetchone()[0]
         )
+        created_at = time.time()
+        encoded = self._json(dict(payload))
         connection.execute(
             "INSERT INTO events VALUES (?,?,?,?,?,?)",
-            (session_id, seq, kind, role, self._json(dict(payload)), time.time()),
+            (session_id, seq, kind, role, encoded, created_at),
+        )
+        self._transaction_events[connection].append(
+            {
+                "session_id": session_id,
+                "workspace": str(self.workspace),
+                "seq": seq,
+                "kind": kind,
+                "role": role,
+                "payload": json.loads(encoded),
+                "created_at": created_at,
+            }
         )
         return seq
 
@@ -531,6 +599,41 @@ class EngineeringSessionStore:
                 "UPDATE runs SET " + ",".join(f"{key}=?" for key in updates) + " WHERE session_id=?",
                 (*updates.values(), session_id),
             )
+            current = dict(self._require_run(connection, session_id))
+            roles = dict.fromkeys(("pm", "chief_engineer", "director", "qa"), "not_called")
+            for event in connection.execute(
+                "SELECT kind,role,payload FROM events WHERE session_id=? AND kind IN ('role_started','role_finished') ORDER BY seq",
+                (session_id,),
+            ):
+                if event["role"] in roles:
+                    roles[event["role"]] = (
+                        "running"
+                        if event["kind"] == "role_started"
+                        else json.loads(event["payload"]).get("status", "unknown")
+                    )
+            state = {
+                key: current[key]
+                for key in ("status", "text", "verification", "workspace_revision", "role", "workflow")
+            }
+            if current["status"] != "running":
+                for role, status in roles.items():
+                    if status == "running":
+                        roles[role] = "unknown" if current["status"] == "completed" else str(current["status"])
+            if current["verification"] == "passed" and current["workspace_revision"] != row["workspace_revision"]:
+                # The historical check remains in SQL, but cannot certify the
+                # newly written revision projected by this exact event.
+                state["verification"] = "unknown"
+            state.update(
+                {
+                    "roles": roles,
+                    "active_roles": [role for role, status in roles.items() if status == "running"]
+                    if current["status"] == "running"
+                    else [],
+                    "checks": json.loads(current["checks"]),
+                    "required_checks": json.loads(current["required_checks"]),
+                }
+            )
+            self._append_event(connection, session_id, kind="run_updated", role=str(current["role"]), payload=state)
 
     @contextmanager
     def acquire_workspace(self, workspace: Path) -> Iterator[None]:

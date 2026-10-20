@@ -6,16 +6,20 @@ import asyncio
 import hashlib
 import json
 import threading
+from collections.abc import AsyncGenerator, Callable, Mapping
 from contextlib import asynccontextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from polaris.infrastructure.llm.providers.anthropic_provider import AnthropicProvider
 from polaris.kernelone.llm.engine.contracts import AIRequest, ModelSpec, TaskType, TokenBudgetDecision
 from polaris.kernelone.llm.engine.executor import AIExecutor
+from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 from polaris.kernelone.llm.engine.native_request_capture import NativeRequestCapturePort
+from polaris.kernelone.llm.engine.prompt_budget import TokenBudgetManager
 from polaris.kernelone.llm.engine.stream.executor import StreamExecutor
 from polaris.kernelone.storage.io_paths import resolve_storage_roots
 
@@ -76,7 +80,11 @@ async def test_ordinary_http_native_body_is_persisted_without_factory_authority(
             return provider
 
     monkeypatch.setattr("polaris.kernelone.llm.engine.executor.get_provider_manager", Manager)
-    executor = AIExecutor(workspace=str(tmp_path), model_catalog=_Catalog(), token_budget=_Budget())
+    executor = AIExecutor(
+        workspace=str(tmp_path),
+        model_catalog=cast(ModelCatalog, _Catalog()),
+        token_budget=cast(TokenBudgetManager, _Budget()),
+    )
     monkeypatch.setattr(
         executor,
         "_get_provider_config",
@@ -129,7 +137,9 @@ async def test_ordinary_http_native_body_is_persisted_without_factory_authority(
         worker.join(timeout=5)
 
 
-def _capture_port(tmp_path: Path) -> tuple[NativeRequestCapturePort, AIRequest]:
+def _capture_port(
+    tmp_path: Path, native_request_observer: Callable[[AIRequest, Mapping[str, Any]], None] | None = None
+) -> tuple[NativeRequestCapturePort, AIRequest]:
     request = AIRequest(
         task_type=TaskType.GENERATION,
         role="director",
@@ -146,6 +156,7 @@ def _capture_port(tmp_path: Path) -> tuple[NativeRequestCapturePort, AIRequest]:
         provider_request={"role": "director", "final_request_context_audit": {}},
         persist=AIExecutor._store_context_messages_sync,
         workspace=str(tmp_path),
+        native_request_observer=native_request_observer,
     )
     return port, request
 
@@ -200,7 +211,7 @@ async def test_stream_cancel_is_recorded_after_response_cleanup(tmp_path: Path) 
     stream = port.dispatch_stream_async(wire_request=_wire(), open_stream=open_stream, consume=consume)
     assert await anext(stream) == "chunk"
     assert request.context["physical_request_capture"]["status"] == "prepared"
-    await stream.aclose()
+    await cast(AsyncGenerator[Any, None], stream).aclose()
     assert order == ["consumer_closed", "response_closed"]
     assert request.context["physical_request_capture"]["status"] == "cancelled"
 
@@ -354,6 +365,7 @@ async def test_ordinary_stream_preserves_native_capture_and_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     observed: list[dict[str, Any]] = []
+    observations: list[dict[str, Any]] = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
@@ -361,7 +373,7 @@ async def test_ordinary_stream_preserves_native_capture_and_cleanup(
             records = [
                 {"type": "message_start", "message": {"usage": {"input_tokens": 11}}},
                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "accepted"}},
-                {"type": "message_delta", "usage": {"output_tokens": 2}},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}},
                 {"type": "message_stop"},
             ]
             payload = "".join("data: " + json.dumps(row) + "\n\n" for row in records).encode("utf-8")
@@ -385,7 +397,12 @@ async def test_ordinary_stream_preserves_native_capture_and_cleanup(
 
     monkeypatch.setattr("polaris.kernelone.llm.providers.get_provider_manager", Manager)
     monkeypatch.setenv("KERNELONE_LIGHTWEIGHT_STREAM_SESSIONS", "0")
-    executor = StreamExecutor(workspace=str(tmp_path), model_catalog=_Catalog(), token_budget=_Budget())
+    executor = StreamExecutor(
+        workspace=str(tmp_path),
+        model_catalog=cast(ModelCatalog, _Catalog()),
+        token_budget=cast(TokenBudgetManager, _Budget()),
+        native_request_observer=lambda _request, observation: observations.append(dict(observation)),
+    )
     monkeypatch.setattr(
         executor,
         "_get_provider_config",
@@ -418,6 +435,10 @@ async def test_ordinary_stream_preserves_native_capture_and_cleanup(
         assert snapshot["provider_request"]["final_physical_request"]["body"] == observed[0]
         assert snapshot["provider_request"]["execution_qualified"] is False
         assert snapshot["provider_request"]["physical_attempt"]["status"] == "completed"
+        assert [item["phase"] for item in observations] == ["prepared", "terminal"]
+        assert observations[-1]["context_snapshot_ref"] == ref
+        assert observations[-1]["usage_status"] == "reported"
+        assert observations[-1]["raw_provider_usage"] == {"output_tokens": 2}
     finally:
         server.shutdown()
         server.server_close()
@@ -466,7 +487,11 @@ async def test_real_invoke_cancel_during_preparation_never_sends(tmp_path, monke
         return result
 
     monkeypatch.setattr(AIExecutor, "_store_context_messages_sync", staticmethod(persist))
-    executor = AIExecutor(workspace=str(tmp_path), model_catalog=_Catalog(), token_budget=_Budget())
+    executor = AIExecutor(
+        workspace=str(tmp_path),
+        model_catalog=cast(ModelCatalog, _Catalog()),
+        token_budget=cast(TokenBudgetManager, _Budget()),
+    )
     monkeypatch.setattr(
         executor,
         "_get_provider_config",
@@ -577,3 +602,123 @@ def test_matching_native_tool_surface_retains_verified_coverage(tmp_path: Path, 
     assert audit["final_request_evidence_coverage"]["pass"]
     assert audit["final_request_evidence_coverage"]["available_tools"] == ["read_file"]
     assert audit["final_request_evidence_coverage"]["missing_required_tools"] == []
+
+
+def test_native_observer_receives_saved_ref_before_terminal_usage(tmp_path: Path) -> None:
+    from polaris.kernelone.llm.engine.contracts import Usage
+
+    observed: list[dict[str, Any]] = []
+
+    def observe(request: AIRequest, observation: Mapping[str, Any]) -> None:
+        item = dict(observation)
+        ref = item["context_snapshot_ref"]
+        runtime = Path(resolve_storage_roots(str(tmp_path)).runtime_root)
+        stored = (runtime / "contexts" / ref[:2] / ref).read_text(encoding="utf-8")
+        assert hashlib.sha256(stored.encode("utf-8")).hexdigest()[:24] == ref
+        assert request.context["context_snapshot_ref"] == ref
+        observed.append(item)
+
+    port, request = _capture_port(tmp_path, observe)
+    result = SimpleNamespace(usage=Usage(prompt_tokens=11, completion_tokens=3, total_tokens=14))
+    assert port.dispatch_sync(wire_request=_wire(), send=lambda _: result) is result
+    assert [item["phase"] for item in observed] == ["prepared", "terminal"]
+    assert [item["status"] for item in observed] == ["prepared", "completed"]
+    assert all(item["dispatch_attempt_count"] == 1 for item in observed)
+    assert all(item["physical_send_count"] is None for item in observed)
+    assert all(item["physical_send_count_status"] == "unknown" for item in observed)
+    assert observed[-1]["usage_status"] == "reported"
+    assert observed[-1]["usage"]["total_tokens"] == 14
+    assert observed[-1]["context_snapshot_ref"] == request.context["context_snapshot_ref"]
+    assert observed[0]["context_snapshot_ref"] != observed[-1]["context_snapshot_ref"]
+
+
+def test_native_observer_failure_does_not_repeat_or_replace_success(tmp_path: Path) -> None:
+    sent: list[str] = []
+
+    def observe(_request: AIRequest, _observation: Mapping[str, Any]) -> None:
+        raise RuntimeError("observation store unavailable")
+
+    port, request = _capture_port(tmp_path, observe)
+
+    def send(_request: Any) -> str:
+        sent.append("sent")
+        return "real result"
+
+    assert port.dispatch_sync(wire_request=_wire(), send=send) == "real result"
+    assert sent == ["sent"]
+    assert request.context["native_request_observer_errors"][-1]["code"] == "native_request_observer_failed"
+    assert request.context["physical_request_capture"]["status"] == "completed"
+
+
+def test_terminal_snapshot_failure_is_unavailable_without_repeating_send(tmp_path: Path) -> None:
+    observed: list[dict[str, Any]] = []
+    port, request = _capture_port(tmp_path, lambda _request, observation: observed.append(dict(observation)))
+    persist = port._persist
+    calls = 0
+
+    def fail_terminal(**kwargs: Any) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("terminal snapshot unavailable")
+        return persist(**kwargs)
+
+    port._persist = fail_terminal
+    sent: list[str] = []
+
+    def send(_request: Any) -> str:
+        sent.append("sent")
+        return "real result"
+
+    assert port.dispatch_sync(wire_request=_wire(), send=send) == "real result"
+    assert sent == ["sent"]
+    assert observed[-1]["phase"] == "terminal"
+    assert observed[-1]["snapshot_status"] == "unavailable"
+    assert observed[-1]["context_snapshot_ref"] is None
+    assert "context_snapshot_ref" not in request.context
+
+
+def test_unreported_usage_stays_unknown_in_native_observation(tmp_path: Path) -> None:
+    from polaris.kernelone.llm.engine.contracts import Usage
+
+    observed: list[dict[str, Any]] = []
+    port, _request = _capture_port(tmp_path, lambda _request, observation: observed.append(dict(observation)))
+    port.dispatch_sync(wire_request=_wire(), send=lambda _: SimpleNamespace(usage=Usage()))
+    assert observed[-1]["usage_status"] == "unknown"
+    assert observed[-1]["usage"] is None
+
+
+def test_new_engine_context_coverage_does_not_require_uncalled_contracts(tmp_path: Path) -> None:
+    port, request = _capture_port(tmp_path)
+    request.context["engine_version"] = "engineering_v2"
+    port.dispatch_sync(wire_request=_wire(), send=lambda _: "ok")
+    coverage = request.context["final_request_context_audit"]["coverage"]
+    assert coverage["pm_contract"] == "not_applicable"
+    assert coverage["chief_engineer_blueprint"] == "not_applicable"
+    assert coverage["original_goal"] == "present"
+    assert "missing_pm_contract" not in str(request.context["final_request_context_audit"].get("context_quality", {}))
+
+
+def test_observer_cannot_replace_materialized_ref_or_role(tmp_path: Path) -> None:
+    def mutate(request: AIRequest, _observation: Mapping[str, Any]) -> None:
+        request.context["context_snapshot_ref"] = "not-a-saved-reference"
+        request.role = "pm"
+
+    port, request = _capture_port(tmp_path, mutate)
+    port.dispatch_sync(wire_request=_wire(), send=lambda _: "ok")
+    assert request.role == "director"
+    evidence = port.final_context_evidence()
+    assert evidence is not None
+    assert request.context["context_snapshot_ref"] == evidence[0]
+
+
+def test_opaque_sdk_observation_keeps_physical_send_count_unknown(tmp_path: Path) -> None:
+    observations: list[dict[str, Any]] = []
+    port, request = _capture_port(tmp_path, lambda _request, observation: observations.append(dict(observation)))
+    wire = _wire()
+    wire["transport"]["kind"] = "openai-python-sdk"
+    port.dispatch_sync(wire_request=wire, send=lambda _: "ok")
+    assert observations[-1]["evidence_level"] == "provider_call_observation"
+    assert observations[-1]["physical_send_count"] is None
+    assert observations[-1]["usage_status"] == "unknown"
+    assert request.context["final_request_context_audit"]["audit_scope"] == "provider_call_observation"

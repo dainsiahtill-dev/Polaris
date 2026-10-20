@@ -1,3 +1,5 @@
+import { EngineeringModeBoundary } from '@/app/components/factory/EngineeringRunWorkspace';
+import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
 /**
  * PM 工作区页面组件
  *
@@ -13,6 +15,10 @@ import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 
 export interface PMPageProps {
+  engineering?: EngineeringRunBinding;
+  engineeringEnabled?: boolean;
+  onEngineeringModeChange?: (enabled: boolean) => void;
+  onOpenEngineeringContext?: () => void;
   /** 工作区路径 */
   workspace: string;
   /** PM 任务列表 */
@@ -79,7 +85,7 @@ export interface PMPageProps {
 /**
  * PM 工作区页面
  */
-export function PMPage({
+function LegacyPMPage({
   workspace,
   tasks,
   pmState,
@@ -161,4 +167,9 @@ export function PMPage({
       <Toaster position="bottom-right" />
     </ErrorBoundaryClass>
   );
+}
+
+
+export function PMPage(props: PMPageProps) {
+  return <EngineeringModeBoundary enabled={props.engineeringEnabled} binding={props.engineering} onModeChange={props.onEngineeringModeChange} workspace={props.workspace} role="pm" onBackToMain={props.onBackToMain} onOpenContext={props.onOpenEngineeringContext}><LegacyPMPage {...props} /></EngineeringModeBoundary>;
 }

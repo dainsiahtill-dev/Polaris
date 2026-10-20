@@ -698,6 +698,7 @@ class TestContextStoreInvokeFailure:
             response = await executor._execute_invoke(request, trace_id="trace-degraded-5")
 
         assert response.ok is True
+        assert request.context is None, "technical normalization changed the caller context"
 
     @staticmethod
     def _build_request() -> Any:

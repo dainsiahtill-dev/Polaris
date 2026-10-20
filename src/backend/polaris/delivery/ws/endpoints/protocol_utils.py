@@ -11,7 +11,10 @@ import logging
 import os
 import re
 
-from polaris.delivery.ws.endpoints.models import V2_CHANNEL_TO_SUBJECT
+from polaris.delivery.ws.runtime_subjects import (
+    V2_CHANNEL_TO_SUBJECT as V2_CHANNEL_TO_SUBJECT,
+    resolve_v2_subject,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,20 +22,6 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # v2 Protocol Channel Mapping Helpers
 # =============================================================================
-
-
-def resolve_v2_subject(workspace_key: str, channel: str) -> str:
-    """Resolve logical channel to JetStream subject.
-
-    Args:
-        workspace_key: Workspace identifier.
-        channel: Logical channel name (e.g., "log.llm").
-
-    Returns:
-        Full JetStream subject path.
-    """
-    base = V2_CHANNEL_TO_SUBJECT.get(channel, channel)
-    return f"hp.runtime.{workspace_key}.{base}"
 
 
 def build_v2_subscription_subjects(workspace_key: str, channels: list[str]) -> list[str]:

@@ -82,6 +82,7 @@ export type ContextPayload = ViewModelPayload;
 // ---------------------------------------------------------------------------
 
 export interface ContextViewerModalProps {
+  initialTab?: ViewerTab;
   contextSnapshotRef: string | null;
   roleId: string;
   onClose: () => void;
@@ -785,7 +786,7 @@ function GroupSection({ role, count, totalTokens, children }: GroupSectionProps)
 // Main component
 // ---------------------------------------------------------------------------
 
-export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, workspace, workerId }: ContextViewerModalProps) {
+export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, workspace, workerId, initialTab = 'messages' }: ContextViewerModalProps) {
   const [content, setContent] = useState<ContextPayload | null>(null);
   const [finalRequest, setFinalRequest] = useState<FinalProviderRequestPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -800,7 +801,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worksp
   // workspace via the ContextOS workspace selector, so this is opt-in —
   // single-tenant desktop flows never see it.
   const [workspaceForbidden, setWorkspaceForbidden] = useState(false);
-  const [activeTab, setActiveTab] = useState<ViewerTab>('messages');
+  const [activeTab, setActiveTab] = useState<ViewerTab>(initialTab);
   const [search, setSearch] = useState('');
   const [groupByRole, setGroupByRole] = useState(false);
   const [allExpanded, setAllExpanded] = useState<null | boolean>(null);

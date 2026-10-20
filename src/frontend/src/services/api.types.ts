@@ -2063,3 +2063,29 @@ export interface RoleRuntimeStatusResponse {
   last_error?: string;
   timestamp?: string;
 }
+
+
+// Engineering v2 owns a distinct run; these fields never impersonate legacy contracts.
+export type EngineeringRole = 'pm' | 'chief_engineer' | 'director' | 'qa';
+export type EngineeringRoleStatus = 'not_called' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'unknown';
+export type EngineeringRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+export type EngineeringVerification = 'passed' | 'failed' | 'not_run' | 'unknown';
+export interface EngineeringCheck {
+  call_id: string; tool: string; ok: boolean; content: string; exit_code: number | null; interrupted: boolean;
+}
+export interface EngineeringEvent {
+  session_id: string; workspace: string; seq: number; role: string; kind: string;
+  payload: Record<string, unknown>; created_at?: number;
+}
+export interface EngineeringRunSnapshot {
+  session_id: string; run_id: string; engine_version: 'engineering_v2'; workspace: string;
+  workflow: 'direct' | 'collaborative'; role: EngineeringRole; status: EngineeringRunStatus;
+  active_roles: string[]; roles: Record<EngineeringRole, EngineeringRoleStatus>; text: string;
+  verification: EngineeringVerification; checks: EngineeringCheck[]; required_checks: string[];
+  permission_profile_id: string | null; resource_url: string; last_seq: number; events: EngineeringEvent[];
+  event_delivery_error?: unknown; native_observation_error?: unknown; truncated_fields?: string[];
+}
+export interface EngineeringStartOptions {
+  instruction: string; workspace: string; workflow?: 'direct' | 'collaborative'; role?: EngineeringRole;
+  permission_profile_id?: string; required_checks?: string[]; request_key?: string;
+}

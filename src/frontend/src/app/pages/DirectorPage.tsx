@@ -1,3 +1,5 @@
+import { EngineeringModeBoundary } from '@/app/components/factory/EngineeringRunWorkspace';
+import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
 /**
  * Director 工作区页面组件
  *
@@ -15,6 +17,10 @@ import type { LogEntry } from '@/types/log';
 import type { RuntimeWorkerState } from '@/app/hooks/useRuntimeStore';
 
 export interface DirectorPageProps {
+  engineering?: EngineeringRunBinding;
+  engineeringEnabled?: boolean;
+  onEngineeringModeChange?: (enabled: boolean) => void;
+  onOpenEngineeringContext?: () => void;
   /** 工作区路径 */
   workspace: string;
   /** 任务列表 */
@@ -116,7 +122,7 @@ function resolveDirectorStartBlockedReason({
 /**
  * Director 工作区页面
  */
-export function DirectorPage({
+function LegacyDirectorPage({
   workspace,
   tasks,
   workers,
@@ -213,4 +219,9 @@ export function DirectorPage({
       <Toaster position="bottom-right" />
     </ErrorBoundaryClass>
   );
+}
+
+
+export function DirectorPage(props: DirectorPageProps) {
+  return <EngineeringModeBoundary enabled={props.engineeringEnabled} binding={props.engineering} onModeChange={props.onEngineeringModeChange} workspace={props.workspace} role="director" onBackToMain={props.onBackToMain} onOpenContext={props.onOpenEngineeringContext}><LegacyDirectorPage {...props} /></EngineeringModeBoundary>;
 }

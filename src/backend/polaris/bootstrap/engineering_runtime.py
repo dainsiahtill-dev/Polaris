@@ -76,6 +76,7 @@ def create_engineering_service(
     """Create one process owner bound to the trusted workspace at construction."""
     workspace = Path(settings.workspace).expanduser().resolve(strict=True)
     _prepare_model_runtime(settings, workspace)
+    from polaris.delivery.ws.engineering_events import publish_engineering_event
 
     def current_profile(row: dict[str, Any]) -> PermissionScope:
         profile_id = row.get("permission_profile_id")
@@ -88,6 +89,7 @@ def create_engineering_service(
         workspace,
         permission_resolver=current_profile,
         writable_output_roots=_roots(workspace, settings.server.engineering_verification_output_roots),
+        event_publisher=publish_engineering_event if settings.nats.enabled else None,
     )
 
 
@@ -115,10 +117,12 @@ def get_engineering_service(owner: Any, *, settings: Settings | None = None) -> 
 
 def observe_engineering_run(service: EngineeringRunService, session_id: str, workspace: Path) -> dict[str, Any]:
     """Project saved facts and fresh checks; untouched roles stay not_called."""
-    row = service.observe(session_id, workspace=workspace)
+    from polaris.delivery.ws.engineering_events import compact_engineering_payload
+
+    row = service.snapshot(session_id, workspace=workspace)
     roles = dict.fromkeys(("pm", "chief_engineer", "director", "qa"), "not_called")
     active_roles: list[str] = []
-    for event in service.store.load_events(session_id):
+    for event in row["role_events"]:
         role = event["role"]
         if role not in roles:
             continue
@@ -132,6 +136,9 @@ def observe_engineering_run(service: EngineeringRunService, session_id: str, wor
                 active_roles.remove(role)
     if row["status"] != "running":
         active_roles = []
+        for role, status in roles.items():
+            if status == "running":
+                roles[role] = "unknown" if row["status"] == "completed" else str(row["status"])
     return {
         "session_id": row["session_id"],
         "run_id": row["session_id"],
@@ -148,6 +155,13 @@ def observe_engineering_run(service: EngineeringRunService, session_id: str, wor
         "required_checks": row["required_checks"],
         "permission_profile_id": row.get("permission_profile_id"),
         "resource_url": f"/v2/engineering/runs/{session_id}",
+        "last_seq": row["last_seq"],
+        "events": [
+            {**event, "payload": compact_engineering_payload(event["kind"], event["payload"])}
+            for event in row["events"]
+        ],
+        "event_delivery_error": row["event_delivery_error"],
+        "native_observation_error": row["native_observation_error"],
     }
 
 

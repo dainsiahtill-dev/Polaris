@@ -561,6 +561,9 @@ class RuntimeSocketManager {
     // Handle RESYNC_REQUIRED - reset cursor
     if (msg.type === "RESYNC_REQUIRED" && msg.protocol === "runtime.v2") {
       this.lastCursor = typeof msg.cursor === "number" ? msg.cursor : 0;
+      // Consumers rehydrate once from their owner snapshot; SQL watermarks
+      // remain separate from this transport cursor.
+      this.dispatchMessageToListeners(message);
       return;
     }
 

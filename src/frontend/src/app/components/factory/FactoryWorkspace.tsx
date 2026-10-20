@@ -1,3 +1,5 @@
+import { EngineeringModeBoundary } from './EngineeringRunWorkspace';
+import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
 /** FactoryWorkspace - 无人值守开发工厂工作区 */
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -35,6 +37,10 @@ import type { LogEntry } from '@/types/log';
 import { TaskStatus, type PmTask } from '@/types/task';
 
 interface FactoryWorkspaceProps {
+  engineering?: EngineeringRunBinding;
+  engineeringEnabled?: boolean;
+  onEngineeringModeChange?: (enabled: boolean) => void;
+  onOpenEngineeringContext?: () => void;
   workspace: string;
   onBackToMain: () => void;
   tasks: PmTask[];
@@ -1241,7 +1247,7 @@ function buildRoleLayers({
   ];
 }
 
-export function FactoryWorkspace({
+function LegacyFactoryWorkspace({
   workspace,
   onBackToMain,
   tasks,
@@ -2681,4 +2687,9 @@ function MetricRow({ label, value, tone }: { label: string; value: string; tone:
       <span className={cn('min-w-0 truncate text-right font-medium', tone)}>{value}</span>
     </div>
   );
+}
+
+
+export function FactoryWorkspace(props: FactoryWorkspaceProps) {
+  return <EngineeringModeBoundary enabled={props.engineeringEnabled} binding={props.engineering} onModeChange={props.onEngineeringModeChange} workspace={props.workspace} role="director" onBackToMain={props.onBackToMain} onOpenContext={props.onOpenEngineeringContext}><LegacyFactoryWorkspace {...props} /></EngineeringModeBoundary>;
 }

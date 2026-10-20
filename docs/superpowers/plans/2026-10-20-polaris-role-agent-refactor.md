@@ -1,6 +1,6 @@
 # PM / CE / Director 工程主线重构 Implementation Plan
 
-> **For agentic workers:** 使用 superpowers:subagent-driven-development 或 superpowers:executing-plans，逐批交付；步骤以复选框跟踪。当前第 1–5 批组件已验证，第 6–8 批未完成；组件通过不代表真实模型、完整新引擎或 Bench 交付。
+> **For agentic workers:** 使用 superpowers:subagent-driven-development 或 superpowers:executing-plans，逐批交付；步骤以复选框跟踪。当前第 1–6 批组件已验证，第 7–8 批未完成；组件通过不代表真实模型、完整新引擎或 Bench 交付。
 
 **Goal:** 保留角色能力，让模型用真实工具推进工程，彻底删除新运行对模型合同、候选 hash、OBL/covers 和语义修补循环的依赖。
 
@@ -248,11 +248,11 @@ Expected: facade 行为一致、诚实分流、无隐藏本地任务路径。
 
 **Interfaces:** 复用 runtime.v2 消息封套与现有单一 transport；新增平台级 `event.engineering` channel，由 backend 事件映射和前端共享 transport 声明。事件内容为 session/seq/workspace/role/kind/payload；不增加第二 WebSocket。
 
-- [ ] RED：tool started/result 与 role start/end 更新页面；PM/CE 未调用不显示已通过；completed 文本不自动变验收通过。
-- [ ] RED：重复 seq、跨 workspace 事件、断线与重新连接使用现有语义；没有 polling fallback。
-- [ ] RED：loopback transport 最终消息、工具 schema、角色身份与 ContextOS 可读快照一致；快照不可读时显示不可用，不发假 ref 或重跑合同修复。
-- [ ] 实现新 projection 和页面数据绑定，删除新 run 的合同覆盖阻塞卡；原始 provider request 由平台记录，不交给模型填写。
-- [ ] GREEN 后提交。Launcher 保持实例运维职责与现有端口/绑定，不参加任务接受判断。
+- [x] RED：tool started/result 与 role start/end 更新页面；PM/CE 未调用不显示已通过；completed 文本不自动变验收通过。
+- [x] RED：重复 seq、跨 workspace 事件、断线与重新连接使用现有语义；没有 polling fallback。
+- [x] RED：loopback transport 最终消息、工具 schema、角色身份与 ContextOS 可读快照一致；快照不可读时显示不可用，不发假 ref 或重跑合同修复。
+- [x] 实现新 projection 和页面数据绑定，删除新 run 的合同覆盖阻塞卡；原始 provider request 由平台记录，不交给模型填写。
+- [x] GREEN 后提交。Launcher 保持实例运维职责与现有端口/绑定，不参加任务接受判断。
 
 Run: `rtk proxy npm test -- src/frontend/src/runtime/engineeringRunProjection.test.ts src/frontend/src/app/components/factory/EngineeringRunWorkspace.test.tsx`
 
@@ -344,3 +344,5 @@ Expected: 新生产调用图没有旧准入；历史仍可读；没有无限 dua
 2026-10-21：第 4 批组件完成，已在主线 `main` 验证。必需检查在源码只读、明确输出目录下真实执行；失败回到同一 Director，已有 PM／CE 建议复用。新 OS 进程恢复保留原 workflow／required_checks，先读取实际文件；原写入未知事实保留，精确当前状态回读单独记录，未重放旧写入；未知命令不自动重跑。原生历史中的无文本工具调用和空工具结果已保留到真实 provider HTTP 请求。主线最终 244 项通过，31 文件质量检查在合入时通过，修正后两文件复查通过；独立审查原 100 个独立用例与 34 份物理请求作为原候选证据保留，两项 P1 修正后另做 6 项限定复核通过。证据位于 `~/.polaris/audit_archives/autonomous-delivery-20261018/engineering-v2-refactor-20261020/`，检查点见 `progress.md` 与 `task4-independent-review/report-final.json`。新 HTTP／CLI／UI、远端模型和 L1–L12 尚待实施验收；未承诺任意故障或不可判外部效果可恢复。
 
 2026-10-21：第 5 批完成有界入口验收。主 Agent 243 项相邻测试通过（62.76 秒），20 文件 Ruff／format／mypy 通过；独立真实 create_app 完整 lifespan、原生 HTTP、冷 OS 恢复和三 CLI 原候选 40 项检查通过，最终 CLI trace 修正另做 4 项复验。单份 SQLite、固定 workspace、当前 host profile 与原 deadline 幂等保持；普通讨论无工程 run，旧 id 不转换。CLI 宿主诊断保留 stderr，stdout 唯一结果；未调用角色仍 not_called。原联合失败 432 PASS／4 FAIL 与类型检查失败保留，未重标为通过；旧配置测试临时目录的祖先 docs 假设限定为合成无 sentinel 夹具，未修改产品查找机制。证据：统一审计目录的 task5-root-adjacent-final、task5-root-quality-r2、task5-independent-review。当前第 6–8 批与真实模型／L1–L12 未完成；默认 CLI 仍待正式验收后切换。
+
+2026-10-21：第 6 批组件验收完成。后端主线程 379 PASS（168.13 秒、1 条既有插件重写警告）；21 文件 Ruff／format／mypy 通过；必需 KernelOne ALL 十二阶段通过（368 PASS／1 SKIP，命令 334.372 秒）。全部 42 修改文件和 8110 后端文件在该次验证中 hash 稳定。随后前端两个 hook／测试文件作为独立 R2 批次修复 resync 在途 GET 与不可用显示，240 项相邻测试、类型和 ESLint 通过；后端文件与 ALL 候选相同，未重跑无变化的后端。原 UI 首失败与 232 PASS 保留；修后独立 10 项复验通过。后端独立 63＋2＋2 项、实际 20／2000-check 跨端复验和聊天 metadata 双 reader 复核通过；没有把推送压缩或快照条目冒充真实 HTTP 次数，未知 usage／成本仍未知。证据根同前述统一审计目录，详见 task6-final-candidate-source-manifest.json、task6-main-release-all、task6-root-joint-final、task6-backend-independent-review/report.json、task6-ui-independent-review/report-final.json。第 7 批先集成原目标必要的当前候选独立 QA／失败反馈；真实浏览器和原 L1-01 零外部代修交付尚未运行。

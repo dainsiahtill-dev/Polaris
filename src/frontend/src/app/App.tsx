@@ -52,6 +52,7 @@ import {
 import { useLiveTaskQueues } from './hooks/useLiveTaskQueues';
 import { useUsageStats } from './hooks/useUsageStats';
 import { useFactory } from '@/hooks/useFactory';
+import { useEngineeringRun } from '@/hooks/useEngineeringRun';
 import { useFactoryBench } from '@/hooks/useFactoryBench';
 import { shouldEnableGlobalBenchObserver } from '@/app/runtimeScope';
 import { getLatestExecutionActivityLog, readEngineRoleDetail } from '@/app/utils/appRuntime';
@@ -257,14 +258,17 @@ function AppContent() {
     ui.isPlanDialogOpen ||
     ui.isLanceDbDialogOpen ||
     ui.showTerminal;
-  const [activeRoleView, setActiveRoleView] = useState<'main' | 'pm' | 'chief_engineer' | 'director' | 'factory' | 'agi' | 'diagnostics' | 'contextos' | 'files'>('main');
+  const [engineeringEnabled, setEngineeringEnabled] = useState(() => new URLSearchParams(window.location.search).get('engine') === 'engineering_v2');
+  const [engineeringWorkspaceBinding] = useState(() => readInitialRuntimeScope().workspace);
+  const [initialEngineeringRun] = useState(() => new URLSearchParams(window.location.search).get('engineering_run') || '');
+  const [activeRoleView, setActiveRoleView] = useState<'main' | 'pm' | 'chief_engineer' | 'director' | 'factory' | 'agi' | 'diagnostics' | 'contextos' | 'files'>(() => new URLSearchParams(window.location.search).get('engine') === 'engineering_v2' ? 'factory' : 'main');
   const [contextSidebarTab, setContextSidebarTab] = useState<ContextTab>('dialogue');
   const [clearingDialogueLogs, setClearingDialogueLogs] = useState(false);
   const { settings, load: loadSettings, update: updateSettings } = useSettings();
   const { notifications, remove: removeNotification, error: notifyError } = useNotifications();
   const settingsWorkspace = settings?.workspace || '';
   const [benchObservedWorkspace, setBenchObservedWorkspace] = useState('');
-  const workspace = benchObservedWorkspace || settingsWorkspace;
+  const workspace = engineeringEnabled ? engineeringWorkspaceBinding || settingsWorkspace : benchObservedWorkspace || settingsWorkspace;
   const internalBenchFlag = String(import.meta.env.VITE_POLARIS_INTERNAL_BENCH ?? '').trim();
   const internalBenchEnabled = internalBenchFlag === '1' || (import.meta.env.DEV && internalBenchFlag !== '0');
   const [progressSnapshot, setProgressSnapshot] = useState<SnapshotPayload | null>(null);
@@ -273,7 +277,7 @@ function AppContent() {
     instance: initialInstanceBinding,
     globalObserverRequested,
   } = useMemo(() => readInitialRuntimeScope(), []);
-  const globalBenchObserverEnabled = shouldEnableGlobalBenchObserver(
+  const globalBenchObserverEnabled = !engineeringEnabled && shouldEnableGlobalBenchObserver(
     internalBenchEnabled, initialWorkspaceBinding, globalObserverRequested, initialInstanceBinding,
   );
 
@@ -354,7 +358,19 @@ function AppContent() {
     retryRunFromCheckpoint: retryFactoryRunFromCheckpoint,
     resumeLatestRun: resumeLatestFactoryRun,
     isLoading: factoryIsLoading,
-  } = useFactory({ workspace });
+  } = useFactory({ workspace, autoResumeLatest: !engineeringEnabled });
+  const engineering = useEngineeringRun({ workspace, sessionId: initialEngineeringRun, enabled: engineeringEnabled });
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (engineeringEnabled) {
+      url.searchParams.set('engine', 'engineering_v2');
+      if (engineering.sessionId) url.searchParams.set('engineering_run', engineering.sessionId);
+      else url.searchParams.delete('engineering_run');
+    } else {
+      url.searchParams.delete('engine'); url.searchParams.delete('engineering_run');
+    }
+    window.history.replaceState(window.history.state, '', url);
+  }, [engineeringEnabled, engineering.sessionId]);
   const factoryBench = useFactoryBench({
     enabled: globalBenchObserverEnabled,
     autoSelect: globalBenchObserverEnabled ? 'newest' : 'none',
@@ -947,6 +963,7 @@ function AppContent() {
   };
 
   const handleBackToMain = () => {
+    if (engineeringEnabled) setEngineeringEnabled(false);
     setActiveRoleView('main');
   };
 
@@ -966,6 +983,10 @@ function AppContent() {
     return (
       <>
         <ChiefEngineerPage
+          engineeringEnabled={engineeringEnabled}
+          engineering={engineering}
+          onEngineeringModeChange={setEngineeringEnabled}
+          onOpenEngineeringContext={() => setActiveRoleView('contextos')}
           workspace={workspace}
           engineStatus={engineStatus}
           tasks={directorWorkspaceTasks}
@@ -1010,6 +1031,10 @@ function AppContent() {
     return (
       <>
         <DirectorPage
+          engineeringEnabled={engineeringEnabled}
+          engineering={engineering}
+          onEngineeringModeChange={setEngineeringEnabled}
+          onOpenEngineeringContext={() => setActiveRoleView('contextos')}
           workspace={workspace}
           onBackToMain={handleBackToMain}
           tasks={directorWorkspaceTasks}
@@ -1056,6 +1081,10 @@ function AppContent() {
     return (
       <>
         <PMPage
+          engineeringEnabled={engineeringEnabled}
+          engineering={engineering}
+          onEngineeringModeChange={setEngineeringEnabled}
+          onOpenEngineeringContext={() => setActiveRoleView('contextos')}
           tasks={pmTasks}
           pmState={snapshot?.pm_state ?? null}
           pmRunning={effectivePmRunning}
@@ -1097,6 +1126,10 @@ function AppContent() {
         notifyError(error.message || '发生未知错误');
       }}>
         <FactoryWorkspace
+          engineeringEnabled={engineeringEnabled}
+          engineering={engineering}
+          onEngineeringModeChange={setEngineeringEnabled}
+          onOpenEngineeringContext={() => setActiveRoleView('contextos')}
           workspace={workspace}
           onBackToMain={handleBackToMain}
           tasks={liveSnapshotTasks}
@@ -1126,7 +1159,7 @@ function AppContent() {
           websocketAttemptCount={attemptCount}
           controlPlaneProjection={controlPlaneProjection}
         />
-        <LlmRuntimeOverlay
+        {!engineeringEnabled && <LlmRuntimeOverlay
           activeView={activeRoleView}
           websocketLive={live}
           websocketReconnecting={reconnecting}
@@ -1145,7 +1178,7 @@ function AppContent() {
           llmStreamEvents={llmStreamEvents}
           processStreamEvents={combinedProcessStreamEvents}
           fileEditEvents={fileEditEvents}
-        />
+        />}
         <Toaster position="bottom-right" />
       </ErrorBoundaryClass>
     );
@@ -1196,8 +1229,11 @@ function AppContent() {
         <div className="polaris-soft-scope size-full flex flex-col bg-bg text-text-main overflow-hidden relative">
           <div className="min-h-0 flex-1">
             <ContextOSWorkspace
+          engineeringEnabled={engineeringEnabled}
+          engineering={engineering}
+          onEngineeringModeChange={setEngineeringEnabled}
               workspace={workspace}
-              onBackToMain={handleBackToMain}
+              onBackToMain={engineeringEnabled ? () => setActiveRoleView('factory') : handleBackToMain}
               onRefresh={handleRefresh}
               live={live}
               reconnecting={reconnecting}

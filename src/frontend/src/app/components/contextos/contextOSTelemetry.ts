@@ -1480,3 +1480,28 @@ export function filterEventsForRole(events: readonly ContextOSEvent[], roleId: s
 export function telemetryRoleHasUsageChannel(telemetry: ContextOSTelemetry, roleId: string): boolean {
   return telemetryRoleTokens(telemetry, roleId) > 0;
 }
+
+
+/** Engineering-native capture observations; never inferred physical HTTP counts. */
+export function engineeringContextRecords(events: import('@/services/api.types').EngineeringEvent[]) {
+  const captures = new Map<string, import('@/services/api.types').EngineeringEvent>();
+  for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
+    if (event.kind !== 'llm_request_observed') continue;
+    const id = typeof event.payload.capture_id === 'string' ? event.payload.capture_id : `event:${event.seq}`;
+    captures.set(id, event);
+  }
+  return [...captures.values()].sort((a, b) => b.seq - a.seq).map((event) => {
+    const payload = event.payload;
+    const audit = payload.audit && typeof payload.audit === 'object' && !Array.isArray(payload.audit) ? payload.audit as Record<string, unknown> : {};
+    const usage = payload.usage && typeof payload.usage === 'object' && !Array.isArray(payload.usage) ? payload.usage as Record<string, unknown> : {};
+    const ref = payload.context_snapshot_ref;
+    const contextSnapshotRef = payload.snapshot_status === 'available' && typeof ref === 'string' && /^[a-f0-9]{24}$/.test(ref) ? ref : null;
+    return {
+      event, audit, usage, contextSnapshotRef,
+      status: typeof payload.status === 'string' ? payload.status : 'unknown',
+      usageStatus: ['reported', 'estimated', 'unknown'].includes(String(payload.usage_status)) ? String(payload.usage_status) : 'unknown',
+      finalRequestTokens: typeof audit.final_request_token_estimate === 'number' ? audit.final_request_token_estimate : null,
+      usageTokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : null,
+    };
+  });
+}

@@ -6,6 +6,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import logging
 import threading
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -26,6 +27,8 @@ from .provider_native_request import (
 
 _Result = TypeVar("_Result")
 _Response = TypeVar("_Response")
+NativeRequestObserver = Callable[[AIRequest, Mapping[str, Any]], None]
+logger = logging.getLogger(__name__)
 
 
 def verified_native_capture_audit(*, request: Any, workspace: str | None) -> dict[str, Any] | None:
@@ -93,6 +96,7 @@ class NativeRequestCapturePort:
         persist: Callable[..., str],
         workspace: str | None,
         prepared_surface: Mapping[str, Any] | None = None,
+        native_request_observer: NativeRequestObserver | None = None,
     ) -> None:
         self._request = request
         self._model_spec = model_spec
@@ -113,6 +117,8 @@ class NativeRequestCapturePort:
         self._prepared_surface = copy.deepcopy(dict(surface)) if surface is not None else None
         self._lock = threading.Lock()
         self._attempts = 0
+        self._capture_id = uuid.uuid4().hex
+        self._observer = native_request_observer
         self._final: tuple[str, dict[str, Any]] | None = None
 
     def _capture(self, wire_request: Mapping[str, Any]) -> tuple[Mapping[str, Any], dict[str, Any]]:
@@ -194,6 +200,27 @@ class NativeRequestCapturePort:
                 audit["semantic_projection_evidence_coverage"] = copy.deepcopy(evidence_coverage)
                 evidence_coverage["pass"] = False
                 evidence_coverage["native_projection_coverage_unverified"] = True
+        if self._request.context.get("engine_version") == "engineering_v2":
+            native_text = json.dumps(body, ensure_ascii=False)
+            goal = str(self._request.input or "").strip()
+            messages = body.get("messages") if isinstance(body.get("messages"), list) else body.get("input")
+            messages = messages if isinstance(messages, list) else []
+            system = body.get("system") or next(
+                (item.get("content") for item in messages if isinstance(item, dict) and item.get("role") == "system"),
+                None,
+            )
+            audit["coverage"] = {
+                "original_goal": "present" if protocol and goal and goal in native_text else "unknown",
+                "role_instruction": "present" if protocol and system else "unknown",
+                "target_context": "unknown" if self._request.context.get("session_id") else "not_applicable",
+                "failure_feedback": "unknown" if self._request.context.get("failure_feedback") else "not_applicable",
+                "pm_contract": "not_applicable",
+                "chief_engineer_blueprint": "not_applicable",
+            }
+            audit["coverage_scope"] = "native_text_presence_only"
+            # New engineering observations do not inherit old contract-admission
+            # quality warnings or manufacture a new coverage verdict.
+            audit.pop("context_quality", None)
         audit["final_physical_wire_hash"] = wire_hash
         if isinstance(audit.get("final_request_evidence_coverage"), dict):
             audit["final_request_evidence_coverage"]["context_snapshot_ref"] = ""
@@ -211,6 +238,7 @@ class NativeRequestCapturePort:
                 execution_qualified=False,
                 final_physical_request=wire,
                 final_physical_wire_hash=wire_hash,
+                native_protocol=protocol or None,
                 final_request_context_audit=audit,
                 physical_attempt=attempt,
             )
@@ -221,17 +249,165 @@ class NativeRequestCapturePort:
                 provider_request["final_request_context_audit"]["observed_provider_call_hash"] = provider_request[
                     "final_request_context_audit"
                 ].pop("final_physical_wire_hash")
-            self._publish(provider_request)
+            observation = self._publish(provider_request)
+        self._notify(observation)
         return frozen, provider_request
 
-    def _publish(self, provider_request: dict[str, Any]) -> None:
+    @staticmethod
+    def _usage_evidence(result: Any) -> dict[str, Any]:
+        """Retain reported/estimated response usage without inventing zero usage."""
+        raw_usage: Any = None
+        usage: Any = result.get("usage") if isinstance(result, Mapping) else getattr(result, "usage", None)
+        for payload in (
+            result if isinstance(result, Mapping) else getattr(result, "data", None),
+            getattr(result, "raw", None),
+        ):
+            if isinstance(payload, Mapping) and isinstance(payload.get("usage"), Mapping):
+                raw_usage = payload["usage"]
+                break
+        if isinstance(usage, Mapping):
+            values = dict(usage)
+        else:
+            serialize = getattr(usage, "to_dict", None)
+            try:
+                values = serialize() if callable(serialize) else {}
+            except (RuntimeError, TypeError, ValueError):
+                values = {}
+        if not isinstance(values, dict):
+            values = {}
+        token_keys = (
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "cached_tokens",
+            "input_tokens",
+            "output_tokens",
+        )
+        known = {
+            key: value
+            for key, value in values.items()
+            if key in token_keys and isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        }
+        reported = {
+            key: value
+            for key, value in (raw_usage.items() if isinstance(raw_usage, Mapping) else ())
+            if key in token_keys and isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        }
+        estimated = values.get("estimated") is True
+        # Usage() is a convenience default, not proof that an unreported call
+        # consumed zero tokens. Explicit raw zero-valued usage remains reported.
+        available = bool(reported) or estimated or any(known.values())
+        return {
+            "usage": {**known, "estimated": estimated} if available else None,
+            "usage_status": "estimated" if estimated else "reported" if available else "unknown",
+            "usage_scope": "dispatch_response",
+            "raw_provider_usage": reported or None,
+        }
+
+    def _observation(self, provider_request: dict[str, Any], ref: str | None) -> dict[str, Any]:
+        attempt = provider_request["physical_attempt"]
+        audit = provider_request["final_request_context_audit"]
+        metric_keys = (
+            "audit_scope",
+            "native_protocol",
+            "message_count",
+            "message_token_estimate",
+            "tool_schema_count",
+            "tool_schema_token_estimate",
+            "response_format_token_estimate",
+            "request_control_token_estimate",
+            "final_request_token_estimate",
+            "context_window_tokens",
+            "context_window_utilization",
+            "coverage",
+        )
+        usage = provider_request.get("usage_observation") or self._usage_evidence(None)
+        return {
+            "schema_version": "llm.native_request_observation.v1",
+            "phase": "prepared" if attempt["status"] == "prepared" else "terminal",
+            "status": attempt["status"],
+            "snapshot_status": "available" if ref else "unavailable",
+            "context_snapshot_ref": ref,
+            "evidence_level": provider_request["evidence_level"],
+            "provider_request_id": attempt["provider_request_id"],
+            "capture_id": self._capture_id,
+            "dispatch_attempt_number": attempt["attempt_number"],
+            "dispatch_attempt_count": attempt["attempt_number"],
+            "dispatch_count_scope": "capture_port",
+            # A dispatch may redirect or hide SDK retries, or may be cancelled
+            # before transport opens. Neither snapshots nor dispatches count sends.
+            "physical_send_count": None,
+            "physical_send_count_status": "unknown",
+            "role": self._request.role,
+            "provider_id": self._model_spec.provider_id,
+            "provider_type": self._model_spec.provider_type,
+            "model": self._model_spec.model,
+            "audit": {key: copy.deepcopy(audit[key]) for key in metric_keys if key in audit},
+            **copy.deepcopy(usage),
+        }
+
+    def _notify(self, observation: dict[str, Any]) -> None:
+        """Audit callbacks cannot grant authority or trigger provider replay."""
+        self._request.context["native_request_observation"] = copy.deepcopy(observation)
+        if self._observer is None:
+            return
+        identity = (self._request.role, self._request.provider_id, self._request.model)
+        protected_keys = (
+            "context_snapshot_ref",
+            "contextSnapshotRef",
+            "physical_request_capture",
+            "final_request_context_audit",
+            "context_snapshot_degraded",
+            "workspace",
+            "session_id",
+            "engine_version",
+            "turn_seq",
+            "call_id",
+        )
+        protected = {
+            key: copy.deepcopy(self._request.context[key]) for key in protected_keys if key in self._request.context
+        }
         try:
-            ref = self._persist(
-                workspace=self._workspace,
-                messages=self._messages,
-                trace_id=self._trace_id,
-                call_id=self._request.context.get("call_id"),
-                provider_request=provider_request,
+            self._observer(self._request, copy.deepcopy(observation))
+        except Exception as exc:  # noqa: BLE001 - non-authoritative observer isolation.
+            diagnostic = {
+                "code": "native_request_observer_failed",
+                "phase": observation["phase"],
+                "error_type": type(exc).__name__,
+            }
+            errors = self._request.context.get("native_request_observer_errors")
+            errors = list(errors) if isinstance(errors, list) else []
+            self._request.context["native_request_observer_errors"] = [*errors[-7:], diagnostic]
+            logger.warning(
+                "Native request observer failed phase=%s error_type=%s", observation["phase"], type(exc).__name__
+            )
+        finally:
+            # The observer consumes host identity and saved evidence; it cannot
+            # replace them while the provider call is still in flight.
+            self._request.role, self._request.provider_id, self._request.model = identity
+            for key in protected_keys:
+                if key in protected:
+                    self._request.context[key] = protected[key]
+                else:
+                    self._request.context.pop(key, None)
+            self._request.context["native_request_observation"] = copy.deepcopy(observation)
+
+    def _publish(self, provider_request: dict[str, Any]) -> dict[str, Any]:
+        identity_keys = ("workspace", "session_id", "engine_version", "turn_seq", "call_id")
+        provider_request["request_identity"] = {
+            key: value
+            for key in identity_keys
+            if isinstance((value := self._request.context.get(key)), (str, int)) and not isinstance(value, bool)
+        }
+        try:
+            ref = validate_context_hash(
+                self._persist(
+                    workspace=self._workspace,
+                    messages=self._messages,
+                    trace_id=self._trace_id,
+                    call_id=self._request.context.get("call_id"),
+                    provider_request=provider_request,
+                )
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             raise RuntimeError("native_request_capture_persist_failed") from exc
@@ -244,10 +420,14 @@ class NativeRequestCapturePort:
         self._request.context["physical_request_capture"] = {
             **provider_request["physical_attempt"],
             "context_snapshot_ref": ref,
+            "snapshot_status": "available",
         }
         self._final = (ref, copy.deepcopy(live_audit))
+        return self._observation(provider_request, ref)
 
-    def _finish(self, provider_request: dict[str, Any], *, status: str, error: BaseException | None = None) -> None:
+    def _finish(
+        self, provider_request: dict[str, Any], *, status: str, error: BaseException | None = None, result: Any = None
+    ) -> None:
         budget = get_provider_invocation_budget()
         stop_reason = budget.stop_reason if budget is not None else ""
         if stop_reason:
@@ -262,8 +442,25 @@ class NativeRequestCapturePort:
         provider_request["physical_attempt"]["status"] = status
         if error is not None:
             provider_request["physical_attempt"]["error_type"] = type(error).__name__
+        provider_request["usage_observation"] = self._usage_evidence(result)
         with self._lock:
-            self._publish(provider_request)
+            try:
+                observation = self._publish(provider_request)
+            except RuntimeError:
+                # HTTP already happened. Audit persistence cannot request another
+                # physical send or leave the preparation ref labelled as final.
+                self._request.context.pop("context_snapshot_ref", None)
+                self._request.context.pop("contextSnapshotRef", None)
+                self._request.context["context_snapshot_degraded"] = {"code": "NATIVE_FINAL_CONTEXT_STORE_FAILED"}
+                self._request.context["physical_request_capture"] = {
+                    **provider_request["physical_attempt"],
+                    "context_snapshot_ref": None,
+                    "snapshot_status": "unavailable",
+                }
+                self._final = None
+                observation = self._observation(provider_request, None)
+                logger.warning("Native terminal snapshot unavailable status=%s", status)
+        self._notify(observation)
 
     def final_context_evidence(self) -> tuple[str, dict[str, Any]] | None:
         with self._lock:
@@ -278,7 +475,7 @@ class NativeRequestCapturePort:
         except BaseException as exc:
             self._finish(provider_request, status="failed", error=exc)
             raise
-        self._finish(provider_request, status="completed")
+        self._finish(provider_request, status="completed", result=result)
         return result
 
     async def dispatch_async(
@@ -292,7 +489,7 @@ class NativeRequestCapturePort:
                 provider_request, status="cancelled" if isinstance(exc, asyncio.CancelledError) else "failed", error=exc
             )
             raise
-        self._finish(provider_request, status="completed")
+        self._finish(provider_request, status="completed", result=result)
         return result
 
     async def dispatch_blocking_async(
@@ -328,11 +525,14 @@ class NativeRequestCapturePort:
         consume: Callable[[_Response], AsyncIterator[_Result]],
     ) -> AsyncIterator[_Result]:
         frozen, provider_request = await self._prepare_async(wire_request)
+        usage_result: Any = None
         try:
             async with open_stream(frozen) as response:
                 stream = consume(response)
                 try:
                     async for item in stream:
+                        if isinstance(item, Mapping) and isinstance(item.get("usage"), Mapping):
+                            usage_result = item
                         yield item
                 finally:
                     close = getattr(stream, "aclose", None)
@@ -345,4 +545,4 @@ class NativeRequestCapturePort:
                 error=exc,
             )
             raise
-        self._finish(provider_request, status="completed")
+        self._finish(provider_request, status="completed", result=usage_result)

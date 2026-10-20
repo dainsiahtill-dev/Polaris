@@ -13,8 +13,8 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from polaris.kernelone.events.final_request_evidence import structured_context_coverage_flags
@@ -355,6 +355,7 @@ class AIExecutor:
         model_catalog: ModelCatalog | None = None,
         token_budget: TokenBudgetManager | None = None,
         final_request_receipt_sink: FinalRequestReceiptSink | None = None,
+        native_request_observer: Callable[[AIRequest, Mapping[str, Any]], None] | None = None,
     ) -> None:
         self.workspace = workspace
         self.telemetry = telemetry
@@ -362,6 +363,7 @@ class AIExecutor:
         self.model_catalog = model_catalog or ModelCatalog(workspace=workspace or ".")
         self.token_budget = token_budget or TokenBudgetManager()
         self.final_request_receipt_sink = final_request_receipt_sink
+        self.native_request_observer = native_request_observer
 
     async def invoke(
         self,
@@ -466,6 +468,7 @@ class AIExecutor:
                 model_catalog=self.model_catalog,
                 token_budget=self.token_budget,
                 final_request_receipt_sink=self.final_request_receipt_sink,
+                native_request_observer=self.native_request_observer,
             )
 
             owned_stream = stream_executor.invoke_stream(
@@ -555,6 +558,10 @@ class AIExecutor:
         physical_dispatch_port: PhysicalProviderDispatchRuntimePort | None = None,
     ) -> AIResponse:
         """执行实际的 LLM 调用"""
+        if not isinstance(request.context, dict):
+            # Preserve the caller's malformed/legacy value while providing the
+            # technical execution path a safe local context container.
+            request = replace(request, context={})
         provider_id = request.provider_id
         model = request.model
 
@@ -831,6 +838,7 @@ class AIExecutor:
                 prepared_surface={key: invoke_cfg.get(key) for key in ("tools", "tool_choice", "response_format")},
                 persist=self._store_context_messages_sync,
                 workspace=self.workspace,
+                native_request_observer=self.native_request_observer,
             )
 
         # Propagate worker_id from caller (request.context) or environment
@@ -1047,9 +1055,9 @@ class AIExecutor:
                 "effective_prompt_sha256": effective_prompt_sha256,
                 "tool_schema_sha256": tool_schema_sha256,
                 "context_snapshot_ref": self._non_empty_str(context.get("context_snapshot_ref")),
-                "context_snapshot_degraded": dict(context_snapshot_degraded)
-                if isinstance(context_snapshot_degraded, dict)
-                else None,
+                "context_snapshot_degraded": (
+                    dict(context_snapshot_degraded) if isinstance(context_snapshot_degraded, dict) else None
+                ),
             },
             "trace_refs": build_final_request_trace_refs(
                 trace_id=trace_id,
@@ -1310,6 +1318,10 @@ class AIExecutor:
             "provider_request_id",
             "telemetry_trace_id",
             "budget_admission_id",
+            "context_snapshot_ref",
+            "native_request_observation",
+            "native_request_observer_errors",
+            "context_snapshot_degraded",
         )
         return {key: value.get(key) for key in keys if value.get(key)}
 

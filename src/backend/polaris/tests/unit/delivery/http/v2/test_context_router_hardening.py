@@ -247,6 +247,11 @@ def test_workspace_query_falls_back_to_kernelone_system_cache(
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg-cache"))
     monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
     monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
+    from polaris.cells.context.engine.public.snapshot_paths import default_kernelone_runtime_root
+
+    # Legacy external snapshots are an explicit fixture opt-in. The default
+    # writer remains the canonical workspace-local runtime, never a dual write.
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(default_kernelone_runtime_root(str(workspace_b))))
     clear_storage_roots_cache()
     hash_key = _seed_context(workspace_b, "B-default-cache", "default-cache-context")
 

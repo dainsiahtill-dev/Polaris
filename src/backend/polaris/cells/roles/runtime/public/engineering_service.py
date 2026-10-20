@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
 from dataclasses import replace
@@ -32,6 +34,7 @@ from polaris.kernelone.llm.engine.resilience import RetryConfig, TimeoutConfig
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 
 _TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
+logger = logging.getLogger(__name__)
 
 
 class _NativeEngineProvider(AIExecutor):
@@ -40,13 +43,22 @@ class _NativeEngineProvider(AIExecutor):
     name = "kernelone_native"
 
 
-def _native_client(workspace: Path, limits: RunLimits) -> ResilientLLMClient:
+def _native_client(
+    workspace: Path,
+    limits: RunLimits,
+    native_request_observer: Callable[[AIRequest, Mapping[str, Any]], None] | None = None,
+) -> ResilientLLMClient:
     # K1 owns model selection and provider timeouts. This one-provider wrapper
     # adds no fallback or retries and cannot shorten a provider's configured
     # deadline. The engineering loop also watches the actual run deadline.
     remaining = max(0.001, limits.deadline - time.time()) if limits.deadline is not None else float("inf")
     return ResilientLLMClient(
-        [(_NativeEngineProvider(workspace=str(workspace)), ProviderConfig(provider_name="kernelone_native"))],
+        [
+            (
+                _NativeEngineProvider(workspace=str(workspace), native_request_observer=native_request_observer),
+                ProviderConfig(provider_name="kernelone_native"),
+            )
+        ],
         default_retry_config=RetryConfig(max_attempts=1),
         default_timeout_config=TimeoutConfig(request_timeout=remaining, total_timeout=remaining),
     )
@@ -68,9 +80,15 @@ class EngineeringRunService:
         client: ResilientLLMClient | None = None,
         permission_resolver: Callable[[dict[str, Any]], PermissionScope] | None = None,
         writable_output_roots: tuple[Path, ...] = (),
+        event_publisher: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
-        self.store = EngineeringSessionStore(self.workspace)
+        self._event_publisher = event_publisher
+        self._publication_loop: asyncio.AbstractEventLoop | None = None
+        self._publication_tail: asyncio.Task[None] | None = None
+        self._publication_error: str | None = None
+        self._native_observation_error: str | None = None
+        self.store = EngineeringSessionStore(self.workspace, on_committed_events=self._committed_events)
         self._client = client
         self._permission_resolver = permission_resolver
         self._writable_output_roots = writable_output_roots
@@ -90,6 +108,95 @@ class EngineeringRunService:
     def _assert_workspace(self, workspace: Path) -> None:
         if Path(workspace).resolve() != self.workspace:
             raise PermissionError("engineering service workspace mismatch")
+
+    @property
+    def event_delivery_error(self) -> str | None:
+        """Report an observed transport gap, without changing execution facts."""
+        return self._publication_error or self.store.event_delivery_error
+
+    def _committed_events(self, events: tuple[dict[str, Any], ...]) -> None:
+        if self._event_publisher is None:
+            return
+        loop = self._publication_loop
+        if loop is None or loop.is_closed():
+            self._publication_error = "Engineering event publication unavailable: no active host event loop"
+            logger.error(self._publication_error)
+            return
+        loop.call_soon_threadsafe(self._queue_committed_events, events)
+
+    def _queue_committed_events(self, events: tuple[dict[str, Any], ...]) -> None:
+        previous = self._publication_tail
+
+        async def publish() -> None:
+            if previous is not None:
+                await previous
+            for event in events:
+                try:
+                    assert self._event_publisher is not None
+                    if not await self._event_publisher(event):
+                        raise RuntimeError("publisher did not acknowledge the committed event")
+                except Exception as error:  # noqa: BLE001 - publication cannot replay a committed execution effect.
+                    self._publication_error = (
+                        f"Engineering event publication failed at {event['session_id']}:{event['seq']}: {error}"
+                    )
+                    logger.error(self._publication_error)
+
+        self._publication_tail = asyncio.create_task(publish(), name="engineering-event-publication")
+
+    async def flush_events(self) -> None:
+        """Join ephemeral publication handles; never recreate or replay effects."""
+        await asyncio.sleep(0)
+        while self._publication_tail is not None:
+            current = self._publication_tail
+            await asyncio.shield(current)
+            if current is self._publication_tail:
+                break
+
+    def record_native_request_observation(self, request: AIRequest, observation: Mapping[str, Any]) -> None:
+        """Bind a host physical-capture observation to the same durable role turn."""
+        context = request.context
+        workspace = Path(str(context.get("workspace", "")))
+        self._assert_workspace(workspace)
+        session_id = str(context.get("session_id", ""))
+        row = self.store.load_run(session_id, workspace=self.workspace)
+        if context.get("engine_version") != self.engine_version or row["engine_version"] != self.engine_version:
+            raise ValueError("native request observation engine mismatch")
+        turn_seq = context.get("turn_seq")
+        if not any(
+            event["seq"] == turn_seq and event["kind"] == "turn_started" and event["role"] == request.role
+            for event in self.store.load_events(session_id)
+        ):
+            raise ValueError("native request observation has no matching host role turn")
+        payload = dict(observation)
+        reference = payload.get("context_snapshot_ref")
+        if reference is not None and (
+            not isinstance(reference, str) or re.fullmatch(r"[0-9a-f]{24}", reference) is None
+        ):
+            payload.pop("context_snapshot_ref", None)
+            payload["snapshot_status"] = "invalid_reference"
+        payload.update({"turn_seq": turn_seq, "call_id": context.get("call_id"), "role": request.role})
+        self.store.append_event(session_id, kind="llm_request_observed", role=str(request.role), payload=payload)
+
+    def _observe_native_request(self, request: AIRequest, observation: Mapping[str, Any]) -> None:
+        try:
+            self.record_native_request_observation(request, observation)
+        except Exception as error:  # noqa: BLE001 - an observation error must not cause a second provider send.
+            self._native_observation_error = f"Native request observation unavailable: {type(error).__name__}: {error}"
+            logger.error(self._native_observation_error)
+
+    def snapshot(self, session_id: str, *, workspace: Path) -> dict[str, Any]:
+        """Expose one committed snapshot for initial and reconnect hydration."""
+        self._assert_workspace(workspace)
+        snapshot = self.store.load_snapshot(session_id, workspace=workspace)
+        row = self._fresh_verification(snapshot["run"])
+        return {
+            **row,
+            "events": snapshot["events"],
+            "role_events": snapshot["role_events"],
+            "last_seq": snapshot["last_seq"],
+            "event_delivery_error": self.event_delivery_error,
+            "native_observation_error": self._native_observation_error,
+        }
 
     def find_request(self, request_key: str, *, workspace: Path) -> dict[str, Any] | None:
         """Read saved request identity through the same workspace owner."""
@@ -156,6 +263,10 @@ class EngineeringRunService:
     def observe(self, session_id: str, *, workspace: Path) -> dict[str, Any]:
         self._assert_workspace(workspace)
         row = self.store.load_run(session_id, workspace=self.workspace)
+        return self._fresh_verification(row)
+
+    def _fresh_verification(self, row: dict[str, Any]) -> dict[str, Any]:
+        session_id = str(row["session_id"])
         if row["verification"] == "passed":
             try:
                 verifier = self._verification(self._scope(row), self._limits(row), asyncio.Event())
@@ -200,6 +311,7 @@ class EngineeringRunService:
         permission_profile_id: str | None = None,
     ) -> str:
         self._assert_workspace(command.workspace)
+        self._publication_loop = asyncio.get_running_loop()
         session_id = self.store.create_run(
             command,
             scope=scope,
@@ -482,6 +594,7 @@ class EngineeringRunService:
             self._shutdown_error = self._shutdown_error or RuntimeError(
                 "engineering shutdown has unresolved physical cleanup; writer locks retained"
             )
+        await self.flush_events()
         if self._shutdown_error is not None:
             raise self._shutdown_error
 
@@ -508,6 +621,7 @@ class EngineeringRunService:
         await asyncio.gather(task, return_exceptions=True)
 
     async def resume(self, session_id: str, *, workspace: Path) -> str:
+        self._publication_loop = asyncio.get_running_loop()
         row = self.observe(session_id, workspace=workspace)
         if row["engine_version"] != self.engine_version:
             raise ValueError("engineering run cannot change engine version on resume")
@@ -777,7 +891,11 @@ class EngineeringRunService:
         drain_error: ProcessTreeDrainError | None = None
         drain_reporting_error: str | None = None
         try:
-            client = self._client if self._client is not None else _native_client(self.workspace, limits)
+            client = (
+                self._client
+                if self._client is not None
+                else _native_client(self.workspace, limits, self._observe_native_request)
+            )
             token = self._owner.set((command, scope, limits, cancel, client))
             try:
                 if collaborative and command.workflow == "collaborative":

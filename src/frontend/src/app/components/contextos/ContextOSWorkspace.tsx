@@ -1,3 +1,5 @@
+import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
+import { engineeringContextRecords } from './contextOSTelemetry';
 /**
  * ContextOS 实时视图 (ContextOS Real-time Dashboard)
  *
@@ -75,6 +77,9 @@ import { ContextViewerModal } from './ContextViewerModal';
 import { ContextStoreStatsPanel } from './ContextStoreStatsPanel';
 
 export interface ContextOSWorkspaceProps {
+  engineeringEnabled?: boolean;
+  engineering?: EngineeringRunBinding;
+  onEngineeringModeChange?: (enabled: boolean) => void;
   workspace: string;
   onBackToMain: () => void;
   onRefresh?: () => void;
@@ -2015,7 +2020,7 @@ function WorkerPanel({
 // 主组件
 // ---------------------------------------------------------------------------
 
-export function ContextOSWorkspace({
+function LegacyContextOSWorkspace({
   workspace,
   onBackToMain,
   onRefresh,
@@ -2644,4 +2649,29 @@ export function ContextOSWorkspace({
       )}
     </div>
   );
+}
+
+
+function EngineeringContextView({ engineering, workspace, onBackToMain }: { engineering: EngineeringRunBinding; workspace: string; onBackToMain: () => void }) {
+  const [selected, setSelected] = useState<{ ref: string; role: string } | null>(null);
+  const rows = useMemo(() => engineeringContextRecords(engineering.projection.events), [engineering.projection.events]);
+  const current = rows[0];
+  return <div className="polaris-soft-scope soft-app-bg flex h-full min-h-0 flex-col text-slate-100" data-testid="engineering-contextos">
+    <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3"><div><button type="button" onClick={onBackToMain} className="mr-4 rounded px-3 py-3 text-sm">返回工程运行</button><span className="text-sm font-semibold">ContextOS · Engineering v2</span></div><button type="button" onClick={() => void engineering.refresh()} disabled={engineering.loading || !engineering.sessionId} className="rounded-lg border border-white/10 px-3 py-3 text-sm disabled:opacity-40">刷新快照</button></header>
+    <main className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
+      <div className="soft-panel-subtle space-y-2 rounded-xl p-4"><p className="break-all font-mono text-xs text-slate-400">{engineering.sessionId || '尚未选择工程运行'}</p><p className="text-sm">{engineering.connected ? '实时连接已建立' : '实时连接已断开；当前显示最后快照'}</p><p data-testid="engineering-current-context" className="text-sm">当前请求快照：{current?.contextSnapshotRef ? '可读取' : '不可用'}</p><p className="text-xs text-slate-400">原生请求观测 {rows.length} 条{engineering.projection.historyWindowed ? '（最近窗口）' : ''}；实际物理发送次数未知。</p>{engineering.error && <p role="alert" className="text-sm text-red-200">{engineering.error}</p>}</div>
+      {!rows.length && <p className="text-sm text-slate-400">尚无原生请求观测；上下文不可用。</p>}
+      {rows.map((row) => <section key={row.event.seq} className="soft-panel-subtle space-y-3 rounded-xl p-4" data-testid={`engineering-context-${row.event.seq}`}>
+        <h2 className="text-sm font-semibold">{row.event.role} · {row.status}</h2><div className="flex flex-wrap gap-3 text-sm"><span>最终请求 token：{row.finalRequestTokens ?? '未知'}</span><span>用量：{row.usageTokens ?? '未知'} · {row.usageStatus === 'reported' ? 'Provider 报告' : row.usageStatus === 'estimated' ? '估算' : '未知'}</span><span>工具 schema：{typeof row.audit.tool_schema_count === 'number' ? row.audit.tool_schema_count : '未知'}</span></div>
+        {row.contextSnapshotRef ? <button type="button" onClick={() => setSelected({ ref: row.contextSnapshotRef!, role: row.event.role })} className="rounded-lg border border-cyan-400/25 px-3 py-3 text-sm text-cyan-100">查看最终请求</button> : <p className="text-sm text-amber-200">此请求快照不可用；不会使用上一轮快照替代。</p>}
+        <details><summary className="cursor-pointer py-2 text-sm text-slate-300">查看请求审计与覆盖度</summary><pre className="whitespace-pre-wrap break-words rounded-lg bg-black/20 p-3 text-xs leading-relaxed text-slate-400">{JSON.stringify(row.audit, null, 2)}</pre></details>
+      </section>)}
+    </main>
+    {selected && <ContextViewerModal initialTab="final-request" contextSnapshotRef={selected.ref} roleId={selected.role} workspace={workspace} onClose={() => setSelected(null)} />}
+  </div>;
+}
+
+export function ContextOSWorkspace(props: ContextOSWorkspaceProps) {
+  if (props.engineeringEnabled && props.engineering) return <EngineeringContextView engineering={props.engineering} workspace={props.workspace} onBackToMain={props.onBackToMain} />;
+  return <LegacyContextOSWorkspace {...props} />;
 }

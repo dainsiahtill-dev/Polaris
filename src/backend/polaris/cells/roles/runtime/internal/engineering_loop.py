@@ -7,7 +7,7 @@ import json
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Literal
 
 from polaris.cells.roles.runtime.internal.engineering_roles import register_consult_tool, role_instruction, role_scope
 from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
@@ -175,7 +175,7 @@ async def run_engineering_loop(
             if (call["turn_seq"], call["call_id"]) not in pending_ancestors
         ]
 
-    def finish(status: str, text: str) -> RoleRunResult:
+    def finish(status: Literal["completed", "failed", "cancelled", "interrupted"], text: str) -> RoleRunResult:
         pending = pending_calls()
         if pending:
             # Dispatch is durable before an effect; only a durable observation
@@ -226,6 +226,8 @@ async def run_engineering_loop(
                     "session_id": command.session_id,
                     "workspace": str(command.workspace),
                     "engine_version": "engineering_v2",
+                    "turn_seq": turn_seq,
+                    "call_id": f"{command.session_id}:{command.role}:{turn_seq}",
                 },
             )
             store.append_event(

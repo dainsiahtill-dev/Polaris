@@ -75,6 +75,16 @@ describe("runtimeSocketManager unsubscribe behavior", () => {
     vi.clearAllMocks();
   });
 
+  it("forwards the existing RESYNC_REQUIRED control without confusing SQL seq and transport cursor", () => {
+    const receive = vi.fn();
+    manager.registerMessageListener({ id: "engineering", channel: "event.engineering", handler: receive });
+    const control = { type: "RESYNC_REQUIRED", protocol: "runtime.v2", cursor: 91823 };
+    socket.onmessage?.(new MessageEvent("message", { data: JSON.stringify(control) }));
+    expect(manager.getLastCursor()).toBe(91823);
+    expect(receive).toHaveBeenCalledWith(control);
+    expect(mockConnectWebSocket).toHaveBeenCalledTimes(1);
+  });
+
   it("does not send UNSUBSCRIBE when only part of ref-count is released", () => {
     manager.subscribeChannels([{ channel: "llm" }, { channel: "llm" }]);
     socket.send.mockClear();

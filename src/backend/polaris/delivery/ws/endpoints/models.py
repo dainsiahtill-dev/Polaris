@@ -7,6 +7,8 @@ This module contains:
 
 from __future__ import annotations
 
+from polaris.delivery.ws.runtime_subjects import V2_CHANNEL_TO_SUBJECT as V2_CHANNEL_TO_SUBJECT
+
 
 class WebSocketSendError(Exception):
     """WebSocket send error with categorization."""
@@ -60,17 +62,6 @@ JOURNAL_CHANNELS: set[str] = {"system", "process", "llm"}
 # v2 Protocol Channel Mapping (logical channel -> JetStream subject)
 # Maps logical channel names to JetStream subjects.
 # Format: hp.runtime.<workspace_key>.<category>.<channel>
-V2_CHANNEL_TO_SUBJECT: dict[str, str] = {
-    "log.system": "log.system",
-    "log.process": "log.process",
-    "log.llm": "log.llm",
-    "event.file_edit": "event.file_edit",
-    "event.task_trace": "event.task_trace",
-    "status.snapshot": "status.snapshot",
-    "status.resident": "status.resident",
-    "status.instances": "status.instances",
-}
-
 RUNTIME_EVENT_SCHEMA_VERSION = "runtime.v2"
 RUNTIME_EVENT_PROTOCOL_VERSION = 2
 

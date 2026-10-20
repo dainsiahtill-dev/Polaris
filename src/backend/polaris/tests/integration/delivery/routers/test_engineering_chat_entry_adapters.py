@@ -72,6 +72,11 @@ async def test_discussion_uses_native_text_without_engineering_run(
         permission_resolver=lambda row: PermissionScope((), (), frozenset(), False),
     )
     app = _app(isolated_workspace, service)
+    from polaris.delivery.http.v2._shared import require_auth as context_auth
+    from polaris.delivery.http.v2.context import router as context_router
+
+    app.include_router(context_router)
+    app.dependency_overrides[context_auth] = lambda: None
 
     def forbidden(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("legacy runtime or global readiness used")
@@ -88,6 +93,11 @@ async def test_discussion_uses_native_text_without_engineering_run(
                 ],
             },
         )
+        assert response.status_code == 200, response.text
+        metadata = response.json()["metadata"]
+        ref = metadata["context_snapshot_ref"]
+        context = await client.get(f"/v2/context/{ref}", params={"workspace": str(isolated_workspace)})
+        final = await client.get(f"/v2/context/{ref}/final-request", params={"workspace": str(isolated_workspace)})
     assert response.status_code == 200, response.text
     assert response.json()["response"] == "先澄清目标，再列风险。"
     assert "run_id" not in response.json()
@@ -96,6 +106,11 @@ async def test_discussion_uses_native_text_without_engineering_run(
     assert not request.get("tools")
     assert not request.get("response_format")
     assert "先讨论风险。" in str(request)
+    assert metadata["engine_version"] == "engineering_v2"
+    assert metadata["native_request_observation"]["context_snapshot_ref"] == ref
+    assert context.status_code == final.status_code == 200
+    assert final.json()["final_physical_request_body"] == request
+    assert final.json()["role"] == "pm"
 
 
 @pytest.mark.asyncio

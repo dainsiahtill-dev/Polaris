@@ -13,6 +13,7 @@ from polaris.cells.context.engine.public import (
     QueryFinalProviderRequestAuditV1,
     query_final_provider_request_audit,
 )
+from polaris.cells.context.engine.public.service import project_final_provider_request_snapshot
 from polaris.cells.context.engine.public.snapshot_paths import context_snapshot_candidates
 from polaris.delivery.http.schemas.context import (
     ContextStoreStatsResponse,
@@ -133,7 +134,7 @@ def get_context_final_request_by_hash(request: Request, hash: str) -> dict[str, 
         )
     )
     if result.ok:
-        return result.payload
+        return dict(result.payload)
 
     status_code = 500
     if result.status == "invalid_ref":
@@ -217,12 +218,17 @@ def get_context_by_hash(request: Request, hash: str) -> dict[str, Any]:
             message="Context snapshot has invalid format",
         )
 
-    messages = payload.get("messages")
+    provider_request = payload.get("provider_request")
+    projection = project_final_provider_request_snapshot(
+        snapshot_payload=payload, provider_request=provider_request if isinstance(provider_request, dict) else {}
+    )
+    messages = projection["messages"] if projection is not None else payload.get("messages")
     message_count = len(messages) if isinstance(messages, list) else 0
     content_str = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
     return {
         "schema_version": payload.get("schema_version", 1),
+        "physical_capture_status": "available" if projection is not None else "unavailable",
         "hash": canonical_hash,
         "trace_id": payload.get("trace_id"),
         "call_id": payload.get("call_id"),

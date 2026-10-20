@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.telemetry import debug_stream as _debug_stream_module
@@ -155,6 +155,7 @@ class StreamExecutor:
         token_budget: TokenBudgetManager | None = None,
         config: StreamConfig | None = None,
         final_request_receipt_sink: Callable[[dict[str, Any]], None] | None = None,
+        native_request_observer: Callable[[AIRequest, Mapping[str, Any]], None] | None = None,
     ) -> None:
         self.workspace = workspace
         self.telemetry = telemetry
@@ -162,6 +163,7 @@ class StreamExecutor:
         self.token_budget = token_budget or TokenBudgetManager()
         self._config = config or StreamConfig.from_env()
         self.final_request_receipt_sink = final_request_receipt_sink
+        self.native_request_observer = native_request_observer
 
     @property
     def config(self) -> StreamConfig:
@@ -431,6 +433,10 @@ class StreamExecutor:
             "provider_request_id",
             "telemetry_trace_id",
             "budget_admission_id",
+            "context_snapshot_ref",
+            "native_request_observation",
+            "native_request_observer_errors",
+            "context_snapshot_degraded",
         )
         return {key: value.get(key) for key in keys if value.get(key)}
 
@@ -993,6 +999,7 @@ class StreamExecutor:
                 prepared_surface={key: invoke_cfg.get(key) for key in ("tools", "tool_choice", "response_format")},
                 persist=AIExecutor._store_context_messages_sync,
                 workspace=self.workspace,
+                native_request_observer=self.native_request_observer,
             )
 
         async def bind_capture(stream: AIStreamGenerator) -> AIStreamGenerator:

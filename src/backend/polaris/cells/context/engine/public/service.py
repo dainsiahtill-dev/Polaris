@@ -185,23 +185,30 @@ def _context_hash_from_ref(context_snapshot_ref: str) -> str:
     return validate_context_hash(token)
 
 
-def _project_final_physical_provider_request(
+def project_final_provider_request_snapshot(
     *,
     snapshot_payload: dict[str, Any],
     provider_request: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Project the exact provider-native body for ContextOS/UI consumers."""
 
-    if snapshot_payload.get("schema_version") != "llm.final_physical_provider_request_context.v1":
+    qualified = snapshot_payload.get("schema_version") == "llm.final_physical_provider_request_context.v1"
+    ordinary = provider_request.get("evidence_level") == "physical_capture"
+    if not qualified and not ordinary:
         return None
     wire = provider_request.get("final_physical_request")
     route = provider_request.get("physical_route_authority")
-    if not isinstance(wire, dict) or not isinstance(route, dict):
+    if not isinstance(wire, dict) or (qualified and not isinstance(route, dict)):
         return None
+    route = route if isinstance(route, dict) else {}
     body = wire.get("body")
     if not isinstance(body, dict):
         return None
-    protocol = str(route.get("native_protocol") or "")
+    audit = provider_request.get("final_request_context_audit")
+    audit = audit if isinstance(audit, dict) else {}
+    protocol = str(
+        route.get("native_protocol") or provider_request.get("native_protocol") or audit.get("native_protocol") or ""
+    )
     if protocol == "anthropic_messages":
         messages_raw = body.get("messages")
         messages = list(messages_raw) if isinstance(messages_raw, list) else []
@@ -216,15 +223,18 @@ def _project_final_physical_provider_request(
     else:
         return None
     tools_raw = body.get("tools")
+    transport = wire.get("transport")
+    transport = transport if isinstance(transport, dict) else {}
     return {
         "messages": messages,
         "tools": list(tools_raw) if isinstance(tools_raw, list) else [],
         "tool_choice": body.get("tool_choice"),
         "response_format": body.get("response_format"),
-        "provider_request_schema_version": route.get("native_request_schema_version"),
+        "provider_request_schema_version": route.get("native_request_schema_version")
+        or provider_request.get("schema_version"),
         "native_protocol": protocol,
         "endpoint": wire.get("endpoint"),
-        "transport_kind": wire.get("transport_kind"),
+        "transport_kind": wire.get("transport_kind") or transport.get("kind"),
         "body": body,
         "wire": wire,
     }
@@ -314,7 +324,7 @@ def query_final_provider_request_audit(
             error_message="Context snapshot does not include provider_request audit evidence.",
         )
 
-    physical_projection = _project_final_physical_provider_request(
+    physical_projection = project_final_provider_request_snapshot(
         snapshot_payload=snapshot_payload,
         provider_request=provider_request,
     )
@@ -356,6 +366,11 @@ def query_final_provider_request_audit(
         context_snapshot_ref=query.context_snapshot_ref,
         payload={
             "schema_version": "context.final_provider_request_audit.v1",
+            "physical_capture_status": "available" if physical_projection is not None else "unavailable",
+            "evidence_level": provider_request.get("evidence_level")
+            or ("qualified_physical_capture" if physical_projection is not None else "semantic_preparation"),
+            "physical_send_count": None,
+            "physical_send_count_status": "unknown",
             "context_hash": context_hash,
             "context_path": str(file_path),
             "storage_source": storage_source,
@@ -401,9 +416,7 @@ def query_factory_run_context_snapshots(
     """Read immutable final-request audit pins for one exact Factory run."""
 
     try:
-        pins = ContextSnapshotAuditPinRepository(workspace=query.workspace).query_factory_run_pins(
-            query.factory_run_id
-        )
+        pins = ContextSnapshotAuditPinRepository(workspace=query.workspace).query_factory_run_pins(query.factory_run_id)
     except (ContextSnapshotAuditPinError, OSError, RuntimeError, ValueError) as exc:
         return FactoryRunContextSnapshotsResultV1(
             ok=False,
