@@ -54,12 +54,14 @@ class ToolCall:
 
     def __post_init__(self) -> None:
         """Validate fields and create immutable arguments copy."""
-        # Auto-generate id if empty (for text-parsed tool calls)
-        if not self.id:
+        # Rejected native calls retain their original invalid identity as
+        # evidence. Only text/valid legacy payloads may receive an automatic ID.
+        rejected_native = self.source in {"openai", "anthropic"} and bool(self.parse_error)
+        if not self.id and not rejected_native:
             import uuid
 
             object.__setattr__(self, "id", f"auto_{uuid.uuid4().hex[:8]}")
-        if not self.name:
+        if not self.name and not rejected_native:
             raise ValueError("ToolCall name cannot be empty")
         if not isinstance(self.arguments, dict):
             raise ValueError("ToolCall arguments must be a dictionary")

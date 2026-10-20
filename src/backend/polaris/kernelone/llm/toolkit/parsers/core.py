@@ -115,6 +115,8 @@ def parse_tool_calls(
     response: dict[str, Any] | None = None,
     provider: str = "auto",
     allowed_tool_names: Iterable[str] | None = None,
+    *,
+    allow_text_fallback: bool = True,
 ) -> list[ToolCall]:
     """Unified tool call parsing entry point.
 
@@ -128,9 +130,11 @@ def parse_tool_calls(
         response: Complete LLM response object (Gemini/Ollama/DeepSeek)
         provider: Provider type hint (openai, anthropic, gemini, ollama, deepseek, xml, auto)
         allowed_tool_names: Optional whitelist of allowed tool names
+        allow_text_fallback: Legacy textual recovery; disable for native-only execution.
 
     Returns:
-        List of parsed tool calls (deduplicated)
+        Native calls in source order with provider identity preserved. Only
+        textual fallback calls are deduplicated by name and arguments.
     """
     results: list[ToolCall] = []
 
@@ -147,25 +151,18 @@ def parse_tool_calls(
     # canonical OpenAI-like shape even when the transport provider is
     # anthropic-compatible.
     if tool_calls:
-        if provider_hint == "anthropic":
-            tool_call_provider_attempts = ("anthropic", "openai")
-        elif provider_hint == "openai":
-            tool_call_provider_attempts = ("openai", "anthropic")
-        else:
-            tool_call_provider_attempts = ("openai", "anthropic")
-
-        for provider_attempt in tool_call_provider_attempts:
-            if provider_attempt == "openai":
+        for call in tool_calls:
+            if call.get("type") == "tool_use":
                 results.extend(
-                    NativeFunctionCallingParser.parse_openai(
-                        tool_calls,
+                    NativeFunctionCallingParser.parse_anthropic(
+                        [call],
                         allowed_tool_names=allowed_tool_names,
                     )
                 )
-            elif provider_attempt == "anthropic":
+            elif call.get("type") == "function" or "function" in call:
                 results.extend(
-                    NativeFunctionCallingParser.parse_anthropic(
-                        tool_calls,
+                    NativeFunctionCallingParser.parse_openai(
+                        [call],
                         allowed_tool_names=allowed_tool_names,
                     )
                 )
@@ -216,15 +213,10 @@ def parse_tool_calls(
                     if deepseek_tools:
                         results.extend(deepseek_tools)
 
-    if not results and text:
-        results.extend(
-            _parse_text_fallback_calls(
-                text,
-                allowed_tool_names=allowed_tool_names,
-            )
-        )
+    if not results and text and allow_text_fallback:
+        return _parse_text_fallback_calls(text, allowed_tool_names=allowed_tool_names)
 
-    return deduplicate_tool_calls(results)
+    return results
 
 
 def extract_tool_calls_and_remainder(

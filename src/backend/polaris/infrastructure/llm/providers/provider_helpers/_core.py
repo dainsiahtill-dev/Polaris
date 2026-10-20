@@ -60,13 +60,14 @@ def build_chat_messages_payload(
     chat_messages: Any,
     prompt: str,
     system_prompt: str | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Build a chat-completions ``messages`` array, preserving real role structure.
 
     ADR-0090 W1.5: weak local models depend heavily on their chat template's
     role anchoring. When the caller supplies a structured ``chat_messages``
-    array, use it (system/user/assistant pass through; tool results become
-    user turns with a marker; consecutive same-role turns merge; supplemental
+    array, use it (native assistant tool calls and their tool results pass
+    through even without text; legacy tool results without an ID become marked
+    user turns; consecutive same-role text turns merge; supplemental
     mid-conversation system turns are downgraded to marked user turns because
     strict templates such as vLLM's reject non-leading system messages).
     Otherwise fall back to the legacy single-user-message flattening.
@@ -79,7 +80,19 @@ def build_chat_messages_payload(
             fallback.insert(0, {"role": "system", "content": str(system_prompt)})
         return fallback
 
-    populated = [item for item in chat_messages if isinstance(item, dict) and str(item.get("content") or "").strip()]
+    # Native calls/results carry history in protocol fields, not necessarily
+    # text. Filtering only content orphans nonempty results and loses empty
+    # results. Keep both for the canonical KernelOne message builder below.
+    populated = [
+        item
+        for item in chat_messages
+        if isinstance(item, dict)
+        and (
+            str(item.get("content") or "").strip()
+            or (str(item.get("role") or "").strip().lower() == "assistant" and item.get("tool_calls"))
+            or (str(item.get("role") or "").strip().lower() == "tool" and item.get("tool_call_id"))
+        )
+    ]
     if not populated:
         return [{"role": "user", "content": prompt}]
     if all(str(item.get("role") or "").strip().lower() in {"system", "assistant"} for item in populated):

@@ -37,6 +37,7 @@ from ._executor_base import (
     planning_output_budget_error,
     provider_type_policy_error,
     resolve_provider_model,
+    resolve_request_messages,
     resolve_requested_output_tokens,
     safe_observability_payload,
 )
@@ -637,7 +638,7 @@ class AIExecutor:
         # W1.5c: the chat template renders tools + message wrappers into the
         # prompt server-side; account for them as a budget deduction so
         # compression targets reflect the REAL window left for prompt text.
-        early_chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
+        early_chat_messages = resolve_request_messages(request.options, request.context)
         payload_overhead = estimate_payload_overhead_tokens(invoke_cfg, early_chat_messages)
         planning_error = planning_output_budget_error(
             request.role, required_output_tokens, model_spec, overhead_tokens=payload_overhead
@@ -664,7 +665,7 @@ class AIExecutor:
         # ADR-0090 W1.5: pass the structured message array through so chat
         # providers can preserve real role anchoring instead of flattening
         # the whole transcript into one user message.
-        chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
+        chat_messages = early_chat_messages
         if budget_decision.compression_applied and budget_decision.compression is not None:
             prompt_input = budget_decision.compression.compressed_input
             request.context["token_budget"] = safe_token_budget
