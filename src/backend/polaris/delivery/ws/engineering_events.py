@@ -31,6 +31,8 @@ def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str,
         selected["payload_omitted"] = True
     elif kind == "message":
         selected = {"payload_omitted": True}
+        if "native_turn_rejection" in payload:
+            selected["native_turn_rejection"] = payload["native_turn_rejection"]
     elif kind == "tool_started":
         arguments = payload.get("arguments", {})
         if isinstance(arguments, dict):

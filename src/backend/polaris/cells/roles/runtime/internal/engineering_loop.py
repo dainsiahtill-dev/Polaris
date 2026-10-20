@@ -27,6 +27,32 @@ from polaris.kernelone.llm.toolkit.parsers.core import parse_tool_calls
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 
 
+class NativeTurnRejectedError(ValueError):
+    """Correctable model output, rejected before any candidate is dispatched."""
+
+    def __init__(self, reason: str, calls: list[Any], terminal: Any) -> None:
+        super().__init__(reason)
+        self.diagnostic = {
+            "reason": reason,
+            "stop_reason": terminal,
+            "tools_dispatched": False,
+            "candidates": [
+                {
+                    "index": index,
+                    "call_id": call.get("id") if isinstance(call, dict) else None,
+                    "tool": (
+                        call.get("function", {}).get("name")
+                        if isinstance(call, dict) and isinstance(call.get("function"), dict)
+                        else call.get("name")
+                        if isinstance(call, dict)
+                        else None
+                    ),
+                }
+                for index, call in enumerate(calls)
+            ],
+        }
+
+
 def _native_calls(response: AIResponse) -> list[ToolCall]:
     """Validate the complete native envelope before any tool can have effects."""
     raw = response.raw
@@ -56,7 +82,7 @@ def _native_calls(response: AIResponse) -> list[ToolCall]:
         raise ValueError("native tool_calls must be a list")
     if terminal in {"tool_calls", "tool_use"} and not calls:
         raise ValueError("native provider announced tools without complete calls")
-    if calls and terminal not in {"tool_calls", "tool_use", "stop", "end_turn"}:
+    if calls and terminal not in {"tool_calls", "tool_use", "stop", "end_turn", "length", "max_tokens"}:
         raise ValueError(f"native tool turn is incomplete: {terminal}")
     identities: set[str] = set()
     for call in calls:
@@ -64,14 +90,23 @@ def _native_calls(response: AIResponse) -> list[ToolCall]:
             raise ValueError("native tool_calls contains a non-object entry")
         if call.get("type") not in {"function", "tool_use"}:
             raise ValueError("native tool_calls contains an unsupported envelope")
+        function = call.get("function") if call["type"] == "function" else call
+        if not isinstance(function, dict) or not isinstance(function.get("name"), str) or not function["name"].strip():
+            raise ValueError("native tool call is missing its function name or envelope")
         identity = call.get("id")
         if not isinstance(identity, str) or not identity.strip() or identity in identities:
+            # Native identity is a protocol responsibility, not a field the
+            # engineering model should repair or reinterpret.
             raise ValueError("native tool turn has a missing, invalid, or duplicate call id")
         identities.add(identity)
+    if terminal in {"length", "max_tokens"}:
+        raise NativeTurnRejectedError(f"native turn is incomplete: {terminal}", calls, terminal)
     parsed = parse_tool_calls(tool_calls=calls, allow_text_fallback=False)
     if len(parsed) != len(calls) or any(call.parse_error for call in parsed):
         detail = "; ".join(call.parse_error for call in parsed if call.parse_error)
-        raise ValueError(f"native tool turn rejected: {detail or 'incomplete parser result'}")
+        raise NativeTurnRejectedError(
+            f"native tool turn rejected: {detail or 'incomplete parser result'}", calls, terminal
+        )
     return parsed
 
 
@@ -278,7 +313,7 @@ async def run_engineering_loop(
                 },
             )
             response = await _invoke(client, request, cancel, limits.deadline)
-            store.append_event(
+            response_seq = store.append_event(
                 command.session_id,
                 kind="provider_response",
                 role=command.role,
@@ -296,10 +331,40 @@ async def run_engineering_loop(
                 return finish("cancelled", "Engineering role cancelled before tool dispatch.")
             if not response.ok:
                 return finish("failed", f"Native provider failed: {response.error or 'unspecified provider error'}")
-            calls = _native_calls(response)
             output_bytes += len(response.output.encode("utf-8"))
             if output_bytes > limits.max_output_bytes:
                 return finish("failed", "Engineering role output budget exceeded before tool dispatch.")
+            try:
+                calls = _native_calls(response)
+            except NativeTurnRejectedError as rejection:
+                diagnostic = {"turn_seq": turn_seq, "provider_response_seq": response_seq, **rejection.diagnostic}
+                message = {
+                    "role": "user",
+                    "content": (
+                        "Your previous native output was rejected before dispatch. No tool from that turn ran; "
+                        "earlier observed tool effects are unchanged. Correct the output and continue the original task "
+                        "using the same available tools and permissions. For truncated output, use shorter complete "
+                        "calls; inspect current files if needed. Rejected candidates below are diagnostic data, "
+                        "not executed actions. Full proposals remain in the provider response.\n"
+                        + json.dumps(diagnostic, ensure_ascii=False)
+                    ),
+                }
+                # One existing SQL message event commits both rejection facts
+                # and the exact recoverable feedback, without orphan tool calls.
+                store.append_event(
+                    command.session_id,
+                    kind="message",
+                    role=command.role,
+                    payload={"message": message, "native_turn_rejection": diagnostic},
+                )
+                messages.append(message)
+                store.append_event(
+                    command.session_id,
+                    kind="turn_finished",
+                    role=command.role,
+                    payload={"turn_seq": turn_seq, "tools_dispatched": False, "output_rejected": True},
+                )
+                continue
             assistant: dict[str, Any] = {"role": "assistant", "content": response.output}
             if calls:
                 assistant["tool_calls"] = [
