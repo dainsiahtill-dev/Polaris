@@ -1,6 +1,6 @@
 # Polaris 完整重构方案：保留角色分工，回到工程工具循环
 
-状态：设计已采用，实施中；第 1–6 批组件已验证，后续批次未完成，尚无新引擎真实 Bench 交付。日期：2026-10-20。
+状态：设计已采用，实施中；第 1–6 批及第 7 批组件已验证，原 L1-01 首次隔离真实交付与资源闭合已通过；其他正式样本、默认切换、第 8 批和 L1–L12 扩域未完成。方案日期：2026-10-20；最新证据：2026-10-21。
 
 本方案采用本轮用户明确的新方向：保留 PM、CE、Director 的专业能力，删除模型维护候选合同、hash、OBL 覆盖图和语义修复补丁的工作。它取代此前“继续收紧旧合同”的重构方向；不把旧流程搬进后台后称为简化。
 
@@ -232,3 +232,5 @@ CLI、聊天中的“执行”动作和工程工作台都进入同一公开服�
 真实浏览器失败同时暴露了原生请求预算丢失：合法浮点值被整数解析回退为 60 秒，且外层任务剩余时间覆盖了 provider 配置。修复复用既有 invocation budget，将配置预算与父截止时间统一传递到 native／resilience；未增加重试或默认超时。最终后端 ALL 十二阶段通过（368 passed、1 skipped，333.118 秒），9366 文件与模型配置稳定；原失败保留。浏览器被动调用栈已证明首次连接补读触发第二次快照读取，后续稳定；该探针不等于正式 E2E 通过。当前仍未运行真实模型原 L1-01、正式比较或默认切换。证据根为 `~/.polaris/audit_archives/autonomous-delivery-20261018/engineering-v2-refactor-20261020/`，见 `task7-native-budget-main-all-r4/`、`task7-backend-independent-review/report-final-r2.json` 与 `task7-browser-impl/private-fixture-causal-r4/`。
 
 2026-10-21 第 7 批组件收尾：最终主线程联合 457 项通过（284.84 秒，命令 290.522 秒），23 个后端改动文件保持一致。浏览器测试仅修正已定位的启动读取计数，独立九组反例通过；冻结 36 个改动路径和 9366 个源文件后，正式组件浏览器用例 exit 0（18.358 秒）。真实 native 写读、WebSocket、当前 ContextOS、刷新不可用及恢复、取消均通过；四个自有端口和所有私有进程关闭，源码及模型配置未变。证据见 task7-root-joint-final-r5、task7-r5-e2e-independent-review、task7-browser-impl/private-fixture-regular-r5。此处 provider 为明确的合成替身，不证明 MiniMax 或原 L1-01 交付；真实任务、默认切换及第 8 批仍未完成。
+
+2026-10-21 首个产品结果：冻结主线 `88524d4f8`、MiniMax-M3 和原验收输入，R02 经正式入口完成全新隔离 L1-01，PM／CE／Director／独立 QA 全部实际运行。依赖与产物由平台合法工具完成，四项实际检查通过；当前 17 份文件 hash 同时匹配 Verifier 和 QA，ProjectOutcome accepted，实例 stopped、无未结工具或进程。run 耗时 374.627 秒，首份源码 40.417 秒；75 次可辨识 dispatch，实际 HTTP 总数和账单仍未知。R01 的系统 home 绑定启动失败及关闭证据完整保留；未改源码或降低 ownership 完成附着。详见[首次 L1-01 完整记录](../history/POLARIS_ENGINEERING_V2_L101_R02_20261021.md)。该事实证明一个项目的闭环，其他样本、默认切换、旧准入退役与扩域仍待完成。
