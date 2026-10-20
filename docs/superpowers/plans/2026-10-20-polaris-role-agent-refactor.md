@@ -203,11 +203,11 @@ Expected: 三角色有真实作用，未调用不伪造，模型无合同维护�
 - 复用同一受控命令执行；最终验证禁止 Director 写入，源码只读，可写目录仅为配置的构建/缓存/临时输出。
 - 持锁记录受管 `workspace_revision`；写操作使既有检查失效。返回文本不是通过证据。
 
-- [ ] RED：真实非零 test/build 保持失败；检查未运行是 not_run；改代码后旧通过不计当前通过；QA 未调用不伪造。
-- [ ] RED：在文件写入后、终态记录前终止新进程；真新进程恢复保留 workflow/required_checks，看到 started 未观察先核文件，不能自动再次写。命令开始但结果未知时禁止自动重跑。
-- [ ] RED：取消在途进程、provider 和后续工具派发；只有实际排空才允许释放锁，不能把 task cancellation 当回滚。
-- [ ] 实现上述最小恢复及验证。检查输出与业务源码的可写域分开；异常保留具体原因。
-- [ ] GREEN 后提交。非幂等外部效果无法确定时返回 interrupted/unknown，不为提高完成率伪造恢复。
+- [x] RED：真实非零 test/build 保持失败；检查未运行是 not_run；改代码后旧通过不计当前通过；QA 未调用不伪造。
+- [x] RED：在文件写入后、终态记录前终止新进程；真新进程恢复保留 workflow/required_checks，看到 started 未观察先核文件，不能自动再次写。命令开始但结果未知时禁止自动重跑。
+- [x] RED：取消在途进程、provider 和后续工具派发；只有实际排空才允许释放锁，不能把 task cancellation 当回滚。
+- [x] 实现上述最小恢复及验证。检查输出与业务源码的可写域分开；异常保留具体原因。
+- [x] GREEN 后提交。非幂等外部效果无法确定时返回 interrupted/unknown，不为提高完成率伪造恢复。
 
 Run: `rtk proxy python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_engineering_verification.py src/backend/polaris/cells/roles/runtime/tests/test_engineering_recovery.py -q`
 
@@ -340,3 +340,5 @@ Expected: 新生产调用图没有旧准入；历史仍可读；没有无限 dua
 2026-10-20：第 2 批组件切片完成。新 Director 在合成模型配置和真实 HTTP 下读写临时工程，实际运行失败测试、接收结果、继续修复并得到退出 0；模型输入没有旧合同字段。单份 SQLite、真实 flock、显式空权限、原生调用身份、公开默认客户端及禁用旧内核后的实际执行均已验证。主 Agent 最终 98 项通过；独立审查两项 P1 经红绿修复后，最终 29 项通过、16 个源码 hash 一致、未关闭发现 0。资源清理未知时保留写锁；工具效果缺少耐久观察时保留 interrupted/unknown，不重放。证据：`task2-root-final/`、`task2-independent-review/`、`task2-loop/r1/`、`task2-loop/r2/`。尚不包含真实模型、正式验证、真进程冷恢复、产品入口、UI 或 Bench 交付。
 
 2026-10-20：第 3 批组件完成。直接任务只运行 Director；完整协作真实执行 PM、CE、Director，咨询一层返回且只读，普通文本建议进入同一任务，失败检查继续由 Director 处理。角色工具 schema 从现有 ToolSpecRegistry 派生；显式空权限保留；冷接续与 resume 共用当前权限校验。主 Agent 最终 135 项通过；独立审查 44 项及专用 HTTP 证据 5 项通过，六文件 SHA 一致、未关闭发现 0。首次撤权重放失败保留。证据：`task3-root-r1-final/`、`task3-roles/r1/`、`task3-independent-review/`。正式验证、进程冷恢复、产品入口与 Bench 尚未完成。
+
+2026-10-21：第 4 批组件完成，已在主线 `main` 验证。必需检查在源码只读、明确输出目录下真实执行；失败回到同一 Director，已有 PM／CE 建议复用。新 OS 进程恢复保留原 workflow／required_checks，先读取实际文件；原写入未知事实保留，精确当前状态回读单独记录，未重放旧写入；未知命令不自动重跑。原生历史中的无文本工具调用和空工具结果已保留到真实 provider HTTP 请求。主线最终 244 项通过，31 文件质量检查在合入时通过，修正后两文件复查通过；独立审查原 100 个独立用例与 34 份物理请求作为原候选证据保留，两项 P1 修正后另做 6 项限定复核通过。证据位于 `~/.polaris/audit_archives/autonomous-delivery-20261018/engineering-v2-refactor-20261020/`，检查点见 `progress.md` 与 `task4-independent-review/report-final.json`。新 HTTP／CLI／UI、远端模型和 L1–L12 尚待实施验收；未承诺任意故障或不可判外部效果可恢复。

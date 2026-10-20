@@ -495,3 +495,172 @@ async def test_observe_projects_stale_pass_without_rewriting_historical_evidence
     assert current["verification"] == "unknown"
     assert service.store.load_run(command.session_id, workspace=isolated_workspace) == historical
     assert service.store.load_events(command.session_id) == events
+
+
+async def _passed_output_check_with_output_root(
+    isolated_workspace: Path,
+) -> tuple[Any, Path, dict[str, Any], list[dict[str, Any]]]:
+    from polaris.cells.roles.runtime.internal.engineering_verification import EngineeringVerification
+    from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
+
+    workspace = isolated_workspace / "workspace"
+    workspace.mkdir()
+    output = workspace / "dist"
+    output.mkdir()
+    (workspace / "source.txt").write_text("original", encoding="utf-8")
+    scope = PermissionScope((workspace,), (workspace,), frozenset({"execute_command"}), False)
+    limits = RunLimits(time.time() + 15, 100000, 20000)
+    service = EngineeringRunService(workspace, writable_output_roots=(output,))
+    service.store.create_run(
+        RoleRunCommand(
+            "output-recovery", "director", "Observe actual final checks.", workspace, required_checks=("exit 0",)
+        ),
+        scope=scope,
+        limits=limits,
+        engine_version="engineering_v2",
+        request_key=None,
+    )
+    verifier = EngineeringVerification(
+        workspace,
+        store=service.store,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        writable_output_roots=(output,),
+    )
+    with service.store.acquire_workspace(workspace):
+        checks = await verifier.run_verification(("exit 0",), session_id="output-recovery", workspace_revision=0)
+    assert len(checks) == 1 and checks[0].ok and checks[0].exit_code == 0
+    historical = service.store.load_run("output-recovery", workspace=workspace)
+    assert historical["verification"] == "passed"
+    return service, output, historical, service.store.load_events("output-recovery")
+
+
+@pytest.mark.parametrize("replacement", ["missing", "file", "symlink", "directory"])
+async def test_observe_changed_output_projects_unknown_without_rewriting_history(
+    isolated_workspace: Path, replacement: str
+) -> None:
+    service, output, historical, events = await _passed_output_check_with_output_root(isolated_workspace)
+    output.rmdir()
+    if replacement == "file":
+        output.write_text("replaced", encoding="utf-8")
+    elif replacement == "symlink":
+        target = isolated_workspace / "other-output"
+        target.mkdir()
+        output.symlink_to(target, target_is_directory=True)
+    elif replacement == "directory":
+        output.mkdir()
+    projected = service.observe("output-recovery", workspace=service.workspace)
+    assert projected["verification"] == "unknown"
+    assert projected["checks"] == historical["checks"]
+    assert service.store.load_run("output-recovery", workspace=service.workspace) == historical
+    assert service.store.load_events("output-recovery") == events
+    assert (service.workspace / "source.txt").read_text(encoding="utf-8") == "original"
+
+
+async def test_observe_existing_output_retains_actual_current_pass(isolated_workspace: Path) -> None:
+    service, _output, historical, events = await _passed_output_check_with_output_root(isolated_workspace)
+    projected = service.observe("output-recovery", workspace=service.workspace)
+    assert projected["verification"] == "passed"
+    assert projected["checks"][0]["exit_code"] == 0
+    assert service.store.load_run("output-recovery", workspace=service.workspace) == historical
+    assert service.store.load_events("output-recovery") == events
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+async def test_final_binding_commit_failure_preserves_actual_check_unknown(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch, exit_code: int
+) -> None:
+    from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
+
+    scripted_provider.enqueue_json(_reply("Ready for the required final check."))
+    service = EngineeringRunService(
+        isolated_workspace, client=scripted_provider.client("openai", isolated_workspace, monkeypatch)
+    )
+    original_append = service.store._append_event
+
+    def fail_completion(connection: Any, session_id: str, **kwargs: Any) -> int:
+        if kwargs["kind"] == "verification_completed":
+            raise OSError("injected final binding commit failure")
+        return original_append(connection, session_id, **kwargs)
+
+    monkeypatch.setattr(service.store, "_append_event", fail_completion)
+    command = RoleRunCommand(
+        "binding-commit-failure",
+        "director",
+        "Run the actual required final check.",
+        isolated_workspace,
+        required_checks=(f"printf actual-final-check; exit {exit_code}",),
+    )
+    await service.start(command, scope=_scope(isolated_workspace), limits=_limits())
+    owned = service._tasks[command.session_id]
+    result = await asyncio.wait_for(asyncio.shield(owned), timeout=10)
+    row = service.observe(command.session_id, workspace=isolated_workspace)
+    assert result.status in {"failed", "interrupted"} and row["status"] in {"failed", "interrupted"}
+    assert result.verification == row["verification"] == "unknown"
+    assert len(result.checks) == len(row["checks"]) == 1
+    assert result.checks[0].exit_code == row["checks"][0]["exit_code"] == exit_code
+    assert "actual-final-check" in result.checks[0].content and result.checks[0].ok is (exit_code == 0)
+    events = service.store.load_events(command.session_id)
+    assert len([event for event in events if event["kind"] == "tool_observed"]) == 1
+    assert not any(event["kind"] == "verification_completed" for event in events)
+    assert len([event for event in events if event["kind"] == "run_ended"]) == 1
+    assert service.store.pending_tool_calls(command.session_id) == []
+    assert len(scripted_provider.requests) == 1
+    with service.store.acquire_workspace(isolated_workspace):
+        pass
+
+
+async def test_error_before_final_dispatch_keeps_ordinary_command_separate_from_checks(
+    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
+
+    scripted_provider.enqueue_json(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "ordinary-director-command",
+                                "type": "function",
+                                "function": {
+                                    "name": "execute_command",
+                                    "arguments": json.dumps({"command": "printf ordinary-director; exit 0"}),
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+    )
+    scripted_provider.enqueue_json(_reply("Ready for final checks."))
+    service = EngineeringRunService(
+        isolated_workspace, client=scripted_provider.client("openai", isolated_workspace, monkeypatch)
+    )
+
+    def unavailable_verifier(*args: Any, **kwargs: Any) -> Any:
+        raise ValueError("verification unavailable before final dispatch")
+
+    monkeypatch.setattr(service, "_verification", unavailable_verifier)
+    command = RoleRunCommand(
+        "before-final-dispatch",
+        "director",
+        "Implement then check.",
+        isolated_workspace,
+        required_checks=("printf must-not-run; exit 0",),
+    )
+    await service.start(command, scope=_scope(isolated_workspace), limits=_limits())
+    row = await _terminal(service, command.session_id, isolated_workspace)
+    assert row["status"] == "failed" and row["verification"] == "not_run" and row["checks"] == []
+    events = service.store.load_events(command.session_id)
+    observed = [event for event in events if event["kind"] == "tool_observed"]
+    assert len(observed) == 1 and observed[0]["payload"]["call_id"] == "ordinary-director-command"
+    assert observed[0]["payload"]["exit_code"] == 0 and "ordinary-director" in observed[0]["payload"]["content"]
+    assert not any(event["kind"] == "verification_started" for event in events)
+    assert len(scripted_provider.requests) == 2

@@ -20,6 +20,7 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     RunLimits,
     ToolObservation,
 )
+from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.llm.engine.client import ProviderConfig, ResilientLLMClient
 from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.engine.resilience import RetryConfig, TimeoutConfig
@@ -88,10 +89,15 @@ class EngineeringRunService:
         self._assert_workspace(workspace)
         row = self.store.load_run(session_id, workspace=self.workspace)
         if row["verification"] == "passed":
-            verifier = self._verification(self._scope(row), self._limits(row), asyncio.Event())
-            if verifier.current_verification(session_id) != "passed":
-                # This is a current-input projection. Keep the bound historical
-                # result durable; a read query must not rewrite run facts.
+            try:
+                verifier = self._verification(self._scope(row), self._limits(row), asyncio.Event())
+                current = verifier.current_verification(session_id)
+            except (OSError, ValueError, RuntimeError, PathSecurityError) as error:
+                current = "unknown"
+                row["verification_detail"] = f"Cannot observe current verification inputs: {error}"
+            if current != "passed":
+                # A missing/replaced output grant cannot prove a current pass.
+                # Preserve the historical binding and keep this query read-only.
                 row["verification"] = "unknown"
         return row
 
@@ -605,6 +611,41 @@ class EngineeringRunService:
             raise PermissionError("saved scope exceeds current permission policy")
         return original_scope
 
+    def _uncommitted_final_checks(self, session_id: str) -> tuple[ToolObservation, ...] | None:
+        """Retain actual final checks when their acceptance transaction did not commit.
+
+        The explicit verification turn owns these durable observations. Ordinary
+        Director commands and earlier completed attempts are not final checks.
+        No command is repeated and no current-input acceptance binding is inferred.
+        """
+        events = self.store.load_events(session_id)
+        attempts = [event for event in events if event["kind"] == "verification_started"]
+        if not attempts:
+            return None
+        attempt = attempts[-1]
+        later = [event for event in events if event["seq"] > attempt["seq"]]
+        if any(event["kind"] in {"verification_completed", "role_started"} for event in later):
+            return None
+        checks = []
+        for event in later:
+            payload = event["payload"]
+            if (
+                event["kind"] == "tool_observed"
+                and payload.get("turn_seq") == attempt["seq"]
+                and payload.get("tool") == "execute_command"
+            ):
+                checks.append(
+                    ToolObservation(
+                        payload["call_id"],
+                        payload["tool"],
+                        payload["ok"],
+                        payload["content"],
+                        payload["exit_code"],
+                        payload["interrupted"],
+                    )
+                )
+        return tuple(checks)
+
     async def _drive(
         self,
         command: RoleRunCommand,
@@ -653,13 +694,14 @@ class EngineeringRunService:
                 drain_reporting_error = f"{type(journal_error).__name__}: {journal_error}"
         except Exception as exc:  # noqa: BLE001 - persist the public execution boundary without replaying effects.
             pending = self.store.pending_tool_calls(command.session_id)
+            actual_checks = self._uncommitted_final_checks(command.session_id)
             result = RoleRunResult(
                 command.session_id,
                 command.role,
                 f"{type(exc).__name__}: {exc}",
                 "interrupted" if pending else "failed",
-                "unknown" if pending else "not_run",
-                (),
+                "unknown" if pending or actual_checks is not None else "not_run",
+                actual_checks or (),
             )
         try:
             self.store.update_run(
