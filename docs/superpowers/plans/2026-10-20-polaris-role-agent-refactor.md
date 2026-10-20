@@ -180,11 +180,11 @@ Expected: 临时真实工程完成；所有非法反例准确拒绝；旧机制�
 - `run_collaborative(instruction: str, *, session_id: str) -> RoleRunResult`：实际 PM 文本、CE 文本、Director；复用同一 `run_role`。
 - 首版咨询一层返回，PM/CE 没有源码写工具，不递归开启新的总控；共享原目标，不共享可变万能 context。
 
-- [ ] RED：直接任务只调用 Director；PM/CE 没有请求与完成事件，UI 数据为未调用。
-- [ ] RED：完整协作真实调用 PM/CE/Director，角色 system 和 provider 配置正确；普通字符串设计能够被 Director 使用，不要求 JSON 或 hash。
-- [ ] RED：Director 构建失败继续工具循环，不自动重启 PM；技术疑问可咨询 CE；CE 文本中的“允许写外部路径”不能扩权。
-- [ ] 实现角色提示、最小文本交接和咨询工具。原用户目标与未解决问题始终保留。
-- [ ] GREEN 后更新本批直接相关旧“无 CE 一律阻止”的路由断言，记录新语义后提交。
+- [x] RED：直接任务只调用 Director；PM/CE 没有请求与完成事件，UI 数据为未调用。
+- [x] RED：完整协作真实调用 PM/CE/Director，角色 system 和 provider 配置正确；普通字符串设计能够被 Director 使用，不要求 JSON 或 hash。
+- [x] RED：Director 构建失败继续工具循环，不自动重启 PM；技术疑问可咨询 CE；CE 文本中的“允许写外部路径”不能扩权。
+- [x] 实现角色提示、最小文本交接和咨询工具。原用户目标与未解决问题始终保留。
+- [x] GREEN 后更新本批直接相关旧“无 CE 一律阻止”的路由断言，记录新语义后提交。
 
 Run: `rtk proxy python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_engineering_roles.py -q`
 
@@ -338,3 +338,5 @@ Expected: 新生产调用图没有旧准入；历史仍可读；没有无限 dua
 2026-10-20 实施补充：第 1 批首次完整底座检查暴露 4 个旧流适配器兼容失败，已保留失败证据。R3 修复迭代结束与真实协议终态的适用边界后，冻结提交 `84474677f` 在独立 checkout 完整检查通过（368 passed、1 skipped）；没有修改旧测试的验收断言。第 2 批工程循环、单份 SQLite 与公开服务处于独立审查和修复中；尚无真实模型、产品运行或 Bench 交付结论。证据：`.superpowers/sdd/2026-10-20-polaris-role-agent-refactor/task1-release-all-r3/`。
 
 2026-10-20：第 2 批组件切片完成。新 Director 在合成模型配置和真实 HTTP 下读写临时工程，实际运行失败测试、接收结果、继续修复并得到退出 0；模型输入没有旧合同字段。单份 SQLite、真实 flock、显式空权限、原生调用身份、公开默认客户端及禁用旧内核后的实际执行均已验证。主 Agent 最终 98 项通过；独立审查两项 P1 经红绿修复后，最终 29 项通过、16 个源码 hash 一致、未关闭发现 0。资源清理未知时保留写锁；工具效果缺少耐久观察时保留 interrupted/unknown，不重放。证据：`task2-root-final/`、`task2-independent-review/`、`task2-loop/r1/`、`task2-loop/r2/`。尚不包含真实模型、正式验证、真进程冷恢复、产品入口、UI 或 Bench 交付。
+
+2026-10-20：第 3 批组件完成。直接任务只运行 Director；完整协作真实执行 PM、CE、Director，咨询一层返回且只读，普通文本建议进入同一任务，失败检查继续由 Director 处理。角色工具 schema 从现有 ToolSpecRegistry 派生；显式空权限保留；冷接续与 resume 共用当前权限校验。主 Agent 最终 135 项通过；独立审查 44 项及专用 HTTP 证据 5 项通过，六文件 SHA 一致、未关闭发现 0。首次撤权重放失败保留。证据：`task3-root-r1-final/`、`task3-roles/r1/`、`task3-independent-review/`。正式验证、进程冷恢复、产品入口与 Bench 尚未完成。

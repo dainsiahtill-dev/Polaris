@@ -256,8 +256,14 @@ class EngineeringSessionStore:
     def append_message(self, session_id: str, *, role: str, message: Mapping[str, object]) -> int:
         return self.append_event(session_id, kind="message", role=role, payload={"message": dict(message)})
 
-    def load_message_history(self, session_id: str) -> list[dict[str, Any]]:
-        return [event["payload"]["message"] for event in self.load_events(session_id) if event["kind"] == "message"]
+    def load_message_history(
+        self, session_id: str, *, role: str | None = None, after_seq: int = 0
+    ) -> list[dict[str, Any]]:
+        return [
+            event["payload"]["message"]
+            for event in self.load_events(session_id)
+            if event["kind"] == "message" and event["seq"] > after_seq and (role is None or event["role"] == role)
+        ]
 
     def record_tool_dispatch(
         self,

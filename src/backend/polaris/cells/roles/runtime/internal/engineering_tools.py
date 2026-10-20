@@ -7,6 +7,7 @@ import contextlib
 import os
 import subprocess
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -42,14 +43,23 @@ def bounded_output(content: str, maximum: int) -> str:
 class EngineeringTools:
     """Session authority is explicit; arguments and model text cannot expand it."""
 
-    def __init__(self, workspace: Path, scope: PermissionScope, limits: RunLimits, cancel: asyncio.Event) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        scope: PermissionScope,
+        limits: RunLimits,
+        cancel: asyncio.Event,
+        *,
+        consult: Callable[[str, str], Awaitable[str]] | None = None,
+    ) -> None:
         self.workspace = workspace.resolve(strict=True)
         self.scope = scope
         self.limits = limits
         self.cancel = cancel
+        self.consult = consult
         self.filesystem = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
-        self.enabled = (
-            frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools) & ENGINEERING_TOOLS
+        self.enabled = frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools) & (
+            ENGINEERING_TOOLS | ({"consult_role"} if consult is not None else set())
         )
         if limits.max_output_bytes <= 0 or limits.max_tool_output_bytes <= 0:
             raise ValueError("engineering output limits must be positive")
@@ -117,6 +127,12 @@ class EngineeringTools:
             if self.cancel.is_set():
                 return ToolObservation(call_id, name, False, "Execution cancelled before dispatch.", None, True)
             self._remaining()
+            if name == "consult_role":
+                self._keys(args, {"role", "question"})
+                role, question = self._text(args, "role"), self._text(args, "question")
+                if role not in {"pm", "chief_engineer"} or self.consult is None:
+                    raise ValueError("consult_role requires PM or Chief Engineer and an active session owner")
+                return self._observation(call_id, name, True, await self.consult(role, question))
             if name == "execute_command":
                 self._keys(args, {"command", "timeout"})
                 command = self._text(args, "command")
