@@ -1,6 +1,7 @@
 """CLI argument parsing and main entry point for loop-pm."""
 
 import argparse
+import asyncio
 import logging
 import os
 import sys
@@ -89,6 +90,9 @@ def create_parser() -> argparse.ArgumentParser:
         prog="loop-pm",
         description="Polaris PM Loop - Project Manager Loop",
     )
+    from polaris.delivery.cli.engineering import add_engineering_arguments
+
+    add_engineering_arguments(parser)
     parser.add_argument(
         "--workspace",
         "-w",
@@ -199,6 +203,17 @@ def main() -> int:
     args = sys.argv[1:]
     parser = create_parser()
     parsed = parser.parse_args(args)
+
+    if parsed.engine == "engineering_v2":
+        from polaris.delivery.cli.engineering import run_engineering_action
+        from polaris.kernelone.fs.encoding import enforce_utf8
+
+        enforce_utf8()
+        if parsed.loop or parsed.run_director or parsed.resume or parsed.iterations != 1:
+            parser.error(
+                "engineering_v2 uses one explicit engineering action; legacy loop/resume flags are unsupported"
+            )
+        return asyncio.run(run_engineering_action(parsed, role="pm"))
 
     # Use lazy imports
     (

@@ -68,6 +68,9 @@ class EngineeringSessionStore:
                 checks TEXT NOT NULL, workspace_revision INTEGER NOT NULL,
                 created_at REAL NOT NULL, updated_at REAL NOT NULL
             )""")
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
+            if "permission_profile_id" not in columns:
+                connection.execute("ALTER TABLE runs ADD COLUMN permission_profile_id TEXT")
             connection.execute("""CREATE TABLE IF NOT EXISTS events (
                 session_id TEXT NOT NULL REFERENCES runs(session_id), seq INTEGER NOT NULL,
                 kind TEXT NOT NULL, role TEXT NOT NULL, payload TEXT NOT NULL, created_at REAL NOT NULL,
@@ -149,6 +152,7 @@ class EngineeringSessionStore:
         limits: RunLimits,
         engine_version: str,
         request_key: str | None,
+        permission_profile_id: str | None = None,
     ) -> str:
         self._assert_workspace(command.workspace)
         if not command.session_id.strip() or not command.instruction.strip():
@@ -179,6 +183,7 @@ class EngineeringSessionStore:
             ),
             "limits": self._json(asdict(limits)),
             "engine_version": engine_version,
+            "permission_profile_id": permission_profile_id,
         }
         with self._transaction() as connection:
             identity_row = connection.execute("SELECT * FROM runs WHERE session_id=?", (command.session_id,)).fetchone()
@@ -215,6 +220,12 @@ class EngineeringSessionStore:
                 tuple(values.values()),
             )
         return command.session_id
+
+    def find_request(self, request_key: str) -> str | None:
+        """Read the existing idempotency owner without creating another run."""
+        with self._connection() as connection:
+            row = connection.execute("SELECT session_id FROM runs WHERE request_key=?", (request_key,)).fetchone()
+        return str(row["session_id"]) if row is not None else None
 
     def load_run(self, session_id: str, *, workspace: Path) -> dict[str, Any]:
         self._assert_workspace(workspace)

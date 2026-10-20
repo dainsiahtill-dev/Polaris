@@ -289,8 +289,32 @@ class LoggingConfig(BaseModel):
         return normalized
 
 
+class EngineeringPermissionProfile(BaseModel):
+    """Host-configured filesystem and command authority; never model supplied."""
+
+    model_config = {"extra": "forbid", "validate_assignment": True}
+
+    read_roots: tuple[str, ...] = (".",)
+    write_roots: tuple[str, ...] = (".",)
+    enabled_tools: frozenset[str] = frozenset(
+        {"read_file", "repo_tree", "repo_rg", "write_file", "edit_file", "execute_command"}
+    )
+    network_allowed: bool = False
+
+
 class ServerConfig(BaseModel):
     """Server/network configuration."""
+
+    model_config = {"validate_assignment": True}
+
+    engineering_permission_profiles: dict[str, EngineeringPermissionProfile] = Field(
+        default_factory=lambda: {"workspace": EngineeringPermissionProfile()}
+    )
+    engineering_default_permission_profile_id: str = "workspace"
+    engineering_run_timeout_seconds: float = Field(default=0, ge=0, allow_inf_nan=False)
+    engineering_max_output_bytes: int = Field(default=1_000_000, gt=0)
+    engineering_max_tool_output_bytes: int = Field(default=64_000, gt=0)
+    engineering_verification_output_roots: tuple[str, ...] = ()
 
     host: str = Field(default="127.0.0.1", description="Server bind host")
     port: int = Field(default=DEFAULT_BACKEND_PORT, description="Server port")

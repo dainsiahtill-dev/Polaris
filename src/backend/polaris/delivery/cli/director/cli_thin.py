@@ -72,6 +72,10 @@ def create_parser() -> argparse.ArgumentParser:
         description="Polaris Director - Thin CLI Adapter",
     )
 
+    from polaris.delivery.cli.engineering import add_engineering_arguments
+
+    add_engineering_arguments(parser)
+
     # Workspace config
     parser.add_argument(
         "--workspace",
@@ -219,6 +223,15 @@ def main() -> int:
     parsed = parser.parse_args(args)
 
     workspace = str(parsed.workspace or os.getcwd())
+
+    if parsed.engine == "engineering_v2":
+        from polaris.delivery.cli.engineering import run_engineering_action
+
+        if parsed.task_command or parsed.iterations != 1 or parsed.max_workers != 1:
+            parser.error(
+                "engineering_v2 uses one explicit engineering action; legacy subcommands/workers are unsupported"
+            )
+        return asyncio.run(run_engineering_action(parsed, role="director"))
 
     if parsed.task_command == "task":
         if getattr(parsed, "task_action", None) != "create":

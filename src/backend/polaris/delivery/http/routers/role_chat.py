@@ -15,14 +15,12 @@ from polaris.cells.llm.dialogue.public import (
     get_registered_roles,
 )
 from polaris.cells.llm.evaluation.public.service import load_llm_test_index
-from polaris.cells.roles.kernel.public.service import get_global_emitter, get_global_llm_cache
 from polaris.delivery.http.auth.roles import UserRole
 from polaris.delivery.http.schemas import (
     AllLLMEventsResponse,
     CacheClearResponse,
     CacheStatsResponse,
     RoleChatPingResponse,
-    RoleChatResponse,
     RoleChatStatusResponse,
     RoleListResponse,
     RoleLLMEventsResponse,
@@ -43,11 +41,7 @@ from ._shared import (
     require_auth,
     require_role,
 )
-from .role_chat_jetstream import (
-    _new_chat_session_id,
-    execute_role_chat_jetstream,
-)
-from .role_runtime_chat import execute_role_chat_nonstreaming
+from .role_runtime_chat import engineering_chat_intent, engineering_chat_workspace, execute_role_chat_nonstreaming
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +238,8 @@ async def get_role_llm_events(
     Returns:
         Events list with categorized stats.
     """
+    from polaris.cells.roles.kernel.public.service import get_global_emitter
+
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, role=role, limit=limit)
     state = get_state(request)
@@ -281,6 +277,8 @@ async def get_all_llm_events(
     workspace: str = "",
 ) -> dict[str, Any]:
     """Get LLM call events across all roles."""
+    from polaris.cells.roles.kernel.public.service import get_global_emitter
+
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, role=role, limit=limit)
     state = get_state(request)
@@ -297,6 +295,8 @@ async def get_all_llm_events(
 @router.get("/v2/role/cache-stats", dependencies=[Depends(require_auth)], response_model=CacheStatsResponse)
 async def get_llm_cache_stats() -> dict[str, Any]:
     """Get LLM cache statistics."""
+    from polaris.cells.roles.kernel.public.service import get_global_llm_cache
+
     cache = get_global_llm_cache()
     return cache.get_stats()
 
@@ -308,6 +308,8 @@ async def get_llm_cache_stats() -> dict[str, Any]:
 )
 async def clear_llm_cache() -> dict[str, Any]:
     """Clear the global LLM cache."""
+    from polaris.cells.roles.kernel.public.service import get_global_llm_cache
+
     cache = get_global_llm_cache()
     cache.clear()
     return {"ok": True, "message": "Cache cleared"}
@@ -336,7 +338,7 @@ def _validate_role(role: str) -> None:
         )
 
 
-@router.post("/v2/role/{role}/chat", dependencies=[Depends(require_auth)], response_model=RoleChatResponse)
+@router.post("/v2/role/{role}/chat", dependencies=[Depends(require_auth)], response_model=None)
 async def role_chat(
     request: Request,
     role: str,
@@ -349,9 +351,6 @@ async def role_chat(
         Response, thinking trace, and model metadata.
     """
     state = get_state(request)
-    workspace = _workspace_for_role_request(state.settings, workspace, payload)
-    scoped_state = _state_for_workspace(state, workspace)
-
     _validate_role(role)
 
     message = str(payload.get("message") or "").strip()
@@ -363,17 +362,6 @@ async def role_chat(
         )
 
     try:
-        ensure_required_roles_ready(scoped_state, default_roles=[role])
-    except StructuredHTTPException:
-        raise
-    except (RuntimeError, ValueError) as exc:
-        raise StructuredHTTPException(
-            status_code=409,
-            code="LLM_NOT_READY",
-            message="LLM runtime not ready",
-        ) from exc
-
-    try:
         result = await execute_role_chat_nonstreaming(
             role=role,
             message=message,
@@ -381,12 +369,16 @@ async def role_chat(
             payload=payload,
             default_domain="general",
             host_kind="role_chat_http",
+            owner=request.app.state,
+            settings=state.settings,
         )
-        return {"ok": True, "workspace": workspace, **result}
-    except (RuntimeError, ValueError) as exc:
+        return {"ok": True, "workspace": str(state.settings.workspace), **result}
+    except (PermissionError, KeyError, RuntimeError, ValueError) as exc:
+        from polaris.bootstrap.engineering_runtime import engineering_error_status
+
         raise StructuredHTTPException(
-            status_code=500,
-            code="GENERATION_FAILED",
+            status_code=engineering_error_status(exc),
+            code="ENGINEERING_CHAT_FAILED",
             message=f"Generation failed: {exc}",
         ) from exc
 
@@ -428,6 +420,18 @@ async def role_chat_jetstream(
     - Authorisation follows the same role-chat policy contract.
     """
     state = get_state(request)
+    try:
+        engineering_chat_workspace(state.settings, workspace, payload)
+        if engineering_chat_intent(payload) == "execute" or payload.get("engine_version") == "engineering_v2":
+            return await role_chat(request, role, payload, workspace)
+    except (PermissionError, ValueError) as exc:
+        from polaris.bootstrap.engineering_runtime import engineering_error_status
+
+        raise StructuredHTTPException(
+            status_code=engineering_error_status(exc), code="ENGINEERING_CHAT_FAILED", message=str(exc)
+        ) from exc
+    from .role_chat_jetstream import _new_chat_session_id, execute_role_chat_jetstream
+
     workspace = _workspace_for_role_request(state.settings, workspace, payload)
     scoped_state = _state_for_workspace(state, workspace)
 

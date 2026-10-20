@@ -93,8 +93,8 @@ class TestPMChatRouter:
         payload: dict[str, Any] = response.json()
         assert payload["error"]["message"] == "message is required"
 
-    async def test_chat_handles_runtime_error(self) -> None:
-        """POST /v2/pm/chat handles RuntimeError with 500."""
+    async def test_chat_handles_runtime_conflict(self) -> None:
+        """Unavailable new runtime is an explicit conflict, with no old fallback."""
         app = _build_app()
         with patch(
             "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
@@ -108,9 +108,9 @@ class TestPMChatRouter:
                     json={"message": "Hello PM"},
                 )
 
-        assert response.status_code == 500
+        assert response.status_code == 409
         payload: dict[str, Any] = response.json()
-        assert payload["error"]["message"] == "Generation failed"
+        assert payload["error"]["message"] == "LLM service unavailable"
 
     async def test_chat_stream_route_is_not_registered(self) -> None:
         """POST /v2/pm/chat/stream must not exist as a second realtime transport."""

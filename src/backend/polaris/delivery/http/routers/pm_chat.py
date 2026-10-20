@@ -56,7 +56,6 @@ async def pm_chat(request: Request, payload: dict[str, Any], workspace: str = ""
         Response, thinking trace, and model metadata.
     """
     state = get_state(request)
-    workspace = _workspace_for_pm_request(state.settings, workspace, payload)
 
     message = str(payload.get("message") or "").strip()
     if not message:
@@ -74,14 +73,18 @@ async def pm_chat(request: Request, payload: dict[str, Any], workspace: str = ""
             payload=payload,
             default_domain="document",
             host_kind="pm_chat_http",
+            owner=request.app.state,
+            settings=state.settings,
         )
         return {"ok": True, **result}
 
-    except (RuntimeError, ValueError) as exc:
+    except (PermissionError, KeyError, RuntimeError, ValueError) as exc:
+        from polaris.bootstrap.engineering_runtime import engineering_error_status
+
         raise StructuredHTTPException(
-            status_code=500,
-            code="ROLE_RESPONSE_ERROR",
-            message="Generation failed",
+            status_code=engineering_error_status(exc),
+            code="ENGINEERING_CHAT_FAILED",
+            message=str(exc),
         ) from exc
 
 

@@ -295,6 +295,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         yield
     finally:
+        engineering_shutdown_error: BaseException | None = None
+        engineering_service = getattr(app.state, "engineering_run_service", None)
+        if engineering_service is not None:
+            try:
+                await engineering_service.shutdown()
+            except BaseException as error:  # noqa: BLE001 - re-raise the owner failure after all host cleanup.
+                engineering_shutdown_error = error
         if factory_run_driver_runtime is not None:
             from polaris.bootstrap.factory_run_driver_runtime import clear_factory_run_driver_runtime
 
@@ -350,6 +357,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             reset_resident_services()
         except (OSError, RuntimeError, ValueError) as exc:
             logger.error("Resident service reset failed during lifespan shutdown: %s", exc, exc_info=True)
+        if engineering_shutdown_error is not None:
+            raise engineering_shutdown_error
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -422,6 +431,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.state.settings = settings
     app.state.app_state = AppState(settings=settings)
+    from polaris.bootstrap.engineering_runtime import get_engineering_service
+
+    get_engineering_service(app.state, settings=settings)
     # Auto-generate token if KERNELONE_TOKEN is not set.  The lifespan
     # handler will also refresh this, but we need a valid token at
     # create_app time so that pre-lifespan test scenarios work.
@@ -471,6 +483,7 @@ def _register_routers(app: FastAPI) -> None:
         conversations,
         court,
         docs,
+        engineering_runs,
         factory,
         files,
         history,
@@ -500,6 +513,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(v2_context.router)
     app.include_router(factory.router)
     app.include_router(control_plane.router)
+    app.include_router(engineering_runs.router)
 
     app.include_router(aggregate_chat.router)
     app.include_router(role_chat.router)

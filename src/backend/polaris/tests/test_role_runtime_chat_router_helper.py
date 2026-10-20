@@ -1,57 +1,24 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from polaris.delivery.http.routers import role_chat_jetstream, role_runtime_chat
 
 
-@pytest.mark.asyncio
-async def test_execute_role_chat_nonstreaming_uses_role_runtime(monkeypatch, tmp_path) -> None:
-    captured: dict[str, Any] = {}
-
-    class FakeRoleRuntimeService:
-        async def execute_role_session(self, command):
-            captured["command"] = command
-            return SimpleNamespace(
-                ok=True,
-                output="runtime response",
-                thinking="runtime thinking",
-                usage={},
-                metadata={"provider_type": "kimi", "model": "kimi-for-coding"},
-            )
-
-    monkeypatch.setattr(role_runtime_chat, "RoleRuntimeService", FakeRoleRuntimeService)
-
-    result = await role_runtime_chat.execute_role_chat_nonstreaming(
-        role="pm",
-        workspace=str(tmp_path),
-        message="plan this",
-        payload={"context": {"session_id": "s1"}, "run_id": "r1"},
-        default_domain="document",
-        host_kind="pm_chat_http",
-    )
-
-    assert result["response"] == "runtime response"
-    assert result["thinking"] == "runtime thinking"
-    assert result["model"] == "kimi-for-coding"
-    assert result["provider"] == "kimi"
-    assert result["metadata"]["role_runtime_entrypoint"] == "roles.runtime.execute_role_session"
-    command = captured["command"]
-    assert command.role == "pm"
-    assert command.workspace == str(tmp_path)
-    assert command.session_id == "s1"
-    assert command.run_id == "r1"
-    assert command.domain == "document"
-    assert command.stream is False
-    assert command.host_kind == "pm_chat_http"
-    assert command.metadata["role_runtime_required"] is True
-    assert command.metadata["cognitive_runtime_required"] is True
-    assert command.metadata["context_os_expected"] is True
-    assert command.metadata["runtime_fallback_used"] is False
-    assert command.metadata["fallback_policy"] == "fail_closed"
-    assert "legacy_fallback_used" not in result["metadata"]
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"intent": "execute"},
+        {"engine_version": "old"},
+        {"intent": ["execute"]},
+        {"execute": True},
+        {"mode": "execute"},
+    ],
+)
+def test_nonstreaming_chat_rejects_ambiguous_engine_intent(payload: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        role_runtime_chat.engineering_chat_intent(payload)
 
 
 @pytest.mark.asyncio

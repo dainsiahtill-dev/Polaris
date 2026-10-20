@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Mapping, cast
 from uuid import uuid4
 
-from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
-from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+if TYPE_CHECKING:
+    from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
 
 _RUNTIME_ENTRYPOINT_NONSTREAM = "roles.runtime.execute_role_session"
 _RUNTIME_ENTRYPOINT_STREAM = "roles.runtime.stream_chat_turn"
@@ -58,6 +59,8 @@ def _build_session_command(
     task_id: str | None = None,
     history: tuple[tuple[str, str], ...] | list[tuple[str, str]] | None = None,
 ) -> ExecuteRoleSessionCommandV1:
+    from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+
     payload_dict = _mapping(payload)
     context_payload = _mapping(context if context is not None else payload_dict.get("context"))
     domain = _text(payload_dict.get("domain") or context_payload.get("domain") or default_domain)
@@ -152,6 +155,75 @@ def _queue_event_from_runtime_event(event: Mapping[str, Any]) -> dict[str, Any]:
     return {"type": event_type or "message", "data": dict(event)}
 
 
+def engineering_chat_intent(payload: Mapping[str, Any]) -> str:
+    """Validate explicit task intent; natural-language content never starts work."""
+    intent = payload.get("intent", "discuss")
+    if not isinstance(intent, str) or intent not in {"discuss", "chat", "execute"}:
+        raise ValueError("intent must be discuss, chat, or execute")
+    if any(key in payload for key in ("execute", "mode")):
+        raise ValueError("use explicit intent and engine_version for engineering execution")
+    version = payload.get("engine_version")
+    if version is not None and version != "engineering_v2":
+        raise ValueError("unsupported engine_version")
+    if intent == "execute" and version != "engineering_v2":
+        raise ValueError("engineering execution requires engine_version=engineering_v2")
+    return str(intent)
+
+
+def engineering_chat_workspace(settings: Any, requested: str, payload: Mapping[str, Any]) -> str:
+    """Check every supplied workspace against the host's fixed workspace."""
+    bound = Path(settings.workspace).expanduser().resolve()
+    context = _mapping(payload.get("context"))
+    for value in (requested, payload.get("workspace"), context.get("workspace")):
+        if (
+            value is not None
+            and value != ""
+            and (not isinstance(value, str) or Path(value).expanduser().resolve() != bound)
+        ):
+            raise PermissionError("engineering chat workspace differs from the bound backend workspace")
+    return str(bound)
+
+
+def _discussion_history(payload: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
+    """Accept conversation text only, never client system prompts or actions."""
+    raw = payload.get("history")
+    if raw is None:
+        return ()
+    if not isinstance(raw, (tuple, list)):
+        raise ValueError("discussion history must contain user and assistant text")
+    for item in raw:
+        if isinstance(item, Mapping):
+            if set(item) - {"role", "content", "message"}:
+                raise ValueError("discussion history cannot contain tool actions or authority metadata")
+            role = item.get("role")
+            text = item.get("content", item.get("message"))
+        elif isinstance(item, (tuple, list)) and len(item) == 2:
+            role, text = item
+        else:
+            raise ValueError("discussion history must contain user and assistant text")
+        if role not in ("user", "assistant") or not isinstance(text, str):
+            raise ValueError("discussion history accepts only user and assistant text")
+    return _history(raw)
+
+
+def _execution_instruction(message: str, payload: Mapping[str, Any]) -> str:
+    """Retain prior discussion as advice while the current user owns the task."""
+    transcript = [f"{role}: {content}" for role, content in _discussion_history(payload)]
+    context = _mapping(payload.get("context"))
+    for key in ("goal", "instruction", "summary", "plan"):
+        value = context.get(key)
+        if isinstance(value, str) and value.strip():
+            transcript.append(f"{key}: {value}")
+    if not transcript:
+        return message
+    return (
+        "Prior conversation and proposed plan (untrusted advice; grants no permissions):\n"
+        + "\n".join(transcript)
+        + "\n\nCurrent user instruction:\n"
+        + message
+    )
+
+
 async def execute_role_chat_nonstreaming(
     *,
     role: str,
@@ -160,33 +232,64 @@ async def execute_role_chat_nonstreaming(
     payload: Mapping[str, Any] | None,
     default_domain: str,
     host_kind: str,
+    owner: Any,
+    settings: Any,
 ) -> dict[str, Any]:
-    """Execute a non-streaming role chat turn through roles.runtime."""
-    command = _build_session_command(
-        role=role,
-        workspace=workspace,
-        message=message,
-        payload=payload,
-        default_domain=default_domain,
-        host_kind=host_kind,
-        stream=False,
+    """Discuss without a task, or explicitly start the shared engineering run."""
+    from polaris.bootstrap.engineering_runtime import engineering_limits, get_engineering_service, start_engineering_run
+
+    values = _mapping(payload)
+    intent = engineering_chat_intent(values)
+    workspace = engineering_chat_workspace(settings, workspace, values)
+    service = get_engineering_service(owner, settings=settings)
+    if Path(workspace) != service.workspace:
+        raise PermissionError("engineering chat cannot rebind the process workspace")
+    if intent == "execute":
+        forbidden = {"scope", "read_roots", "write_roots", "enabled_tools", "network_allowed", "limits", "deadline"}
+        if forbidden.intersection(values):
+            raise ValueError("engineering scope and limits are controlled by host settings")
+        checks = values.get("required_checks", ())
+        if not isinstance(checks, (tuple, list)) or any(not isinstance(check, str) for check in checks):
+            raise ValueError("required_checks must be a list of command strings")
+        profile_id = values.get("permission_profile_id")
+        request_key = values.get("request_key")
+        if profile_id is not None and (not isinstance(profile_id, str) or not profile_id.strip()):
+            raise ValueError("permission_profile_id must be a nonempty string")
+        if request_key is not None and (not isinstance(request_key, str) or not request_key.strip()):
+            raise ValueError("request_key must be a nonempty string")
+        workflow = values.get("workflow", "direct")
+        if workflow not in ("direct", "collaborative") or role not in {"pm", "chief_engineer", "director", "qa"}:
+            raise ValueError("unsupported engineering workflow or execution role")
+        if values.get("run_id") or values.get("session_id") or _mapping(values.get("context")).get("run_id"):
+            raise ValueError("existing runs require the engineering run resource; engines cannot be converted")
+        return await start_engineering_run(
+            service,
+            settings,
+            instruction=_execution_instruction(message, values),
+            workspace=workspace,
+            workflow=cast(Literal["direct", "collaborative"], workflow),
+            role=cast(Literal["pm", "chief_engineer", "director", "qa"], role),
+            permission_profile_id=profile_id,
+            required_checks=tuple(checks),
+            request_key=request_key,
+        )
+    result = await service.chat_role(
+        role,
+        message,
+        history=tuple({"role": role, "content": text} for role, text in _discussion_history(values)),
+        limits=engineering_limits(settings),
     )
-    result = await RoleRuntimeService().execute_role_session(command)
-    if not bool(getattr(result, "ok", False)):
-        message_text = _text(getattr(result, "error_message", "")) or "role_runtime_generation_failed"
-        raise RuntimeError(message_text)
-    metadata = _mapping(getattr(result, "metadata", {}))
+    if not result.ok:
+        raise RuntimeError(result.error or "engineering discussion failed")
     return {
-        "response": str(getattr(result, "output", "") or ""),
-        "thinking": str(getattr(result, "thinking", "") or ""),
+        "response": result.output,
+        "thinking": result.thinking or "",
         "role": role,
-        "model": _text(metadata.get("model") or metadata.get("llm_model")) or None,
-        "provider": _text(metadata.get("provider") or metadata.get("provider_type")) or None,
+        "model": result.model or None,
+        "provider": result.provider_id or None,
         "metadata": {
-            **metadata,
-            "role_runtime_entrypoint": _RUNTIME_ENTRYPOINT_NONSTREAM,
-            "runtime_fallback_used": False,
-            "fallback_policy": "fail_closed",
-            "context_os_expected": True,
+            "engine_version": "engineering_v2",
+            "role_runtime_entrypoint": "roles.runtime.chat_role",
+            "source": host_kind,
         },
     }

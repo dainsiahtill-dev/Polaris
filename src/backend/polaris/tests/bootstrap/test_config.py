@@ -43,7 +43,9 @@ class TestFindWorkspaceRoot:
         with tempfile.TemporaryDirectory() as td:
             sub_dir = Path(td) / "sub"
             sub_dir.mkdir()
-            result = find_workspace_root(sub_dir)
+            # Host ancestors may contain docs/ even though this fixture does not.
+            with patch.object(Path, "is_dir", return_value=False):
+                result = find_workspace_root(sub_dir)
             assert result == sub_dir.resolve()
 
 

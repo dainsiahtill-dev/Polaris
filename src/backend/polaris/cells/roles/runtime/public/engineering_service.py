@@ -12,7 +12,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore, WorkspaceBusyError
+from polaris.cells.roles.runtime.internal.engineering_session import (
+    EngineeringSessionConflictError as EngineeringSessionConflictError,
+    EngineeringSessionStore,
+    WorkspaceBusyError,
+)
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     PermissionScope,
     RoleRunCommand,
@@ -22,6 +26,7 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
 )
 from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.llm.engine.client import ProviderConfig, ResilientLLMClient
+from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, TaskType
 from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.engine.resilience import RetryConfig, TimeoutConfig
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
@@ -72,6 +77,7 @@ class EngineeringRunService:
         self._tasks: dict[str, asyncio.Task[RoleRunResult]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
         self._retained_locks: dict[str, AbstractContextManager[None]] = {}
+        self._shutdown_error: BaseException | None = None
         # Ephemeral execution handles only. The single store owns all role facts.
         self._owner: ContextVar[
             tuple[RoleRunCommand, PermissionScope, RunLimits, asyncio.Event, ResilientLLMClient] | None
@@ -84,6 +90,68 @@ class EngineeringRunService:
     def _assert_workspace(self, workspace: Path) -> None:
         if Path(workspace).resolve() != self.workspace:
             raise PermissionError("engineering service workspace mismatch")
+
+    def find_request(self, request_key: str, *, workspace: Path) -> dict[str, Any] | None:
+        """Read saved request identity through the same workspace owner."""
+        self._assert_workspace(workspace)
+        session_id = self.store.find_request(request_key)
+        return self.observe(session_id, workspace=workspace) if session_id is not None else None
+
+    async def chat_role(
+        self,
+        role: str,
+        message: str,
+        *,
+        history: tuple[dict[str, str], ...] = (),
+        limits: RunLimits | None = None,
+    ) -> AIResponse:
+        """Discuss through native K1 without engineering admission or action tools."""
+        identities = {"pm": "PM", "chief_engineer": "Chief Engineer", "director": "Director", "qa": "QA"}
+        if role not in identities or not message.strip():
+            raise ValueError("a supported role and non-empty message are required")
+        messages = [
+            {
+                "role": "system",
+                "content": f"You are {identities[role]}. Discuss the user's question in ordinary "
+                "text. This discussion has no action tools and creates no engineering task. "
+                "Do not claim files changed, commands ran, or checks passed.",
+            }
+        ]
+        for item in history:
+            if (
+                set(item) - {"role", "content"}
+                or item.get("role") not in {"user", "assistant"}
+                or not isinstance(item.get("content"), str)
+            ):
+                raise ValueError("discussion history accepts only user and assistant text")
+            messages.append({"role": item["role"], "content": item["content"]})
+        messages.append({"role": "user", "content": message})
+        host_limits = limits if limits is not None else RunLimits(None, 1_000_000, 64_000)
+        options: dict[str, Any] = {"messages": messages, "tools": [], "tool_choice": "none"}
+        if host_limits.deadline is not None:
+            remaining = host_limits.deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError("discussion provider deadline exceeded")
+            options["timeout"] = remaining
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role=role,
+            input=message,
+            options=options,
+            context={"workspace": str(self.workspace), "engine_version": self.engine_version},
+        )
+        client = self._client if self._client is not None else _native_client(self.workspace, host_limits)
+        if host_limits.deadline is None:
+            response = await client.invoke(request)
+        else:
+            async with asyncio.timeout(max(0, host_limits.deadline - time.time())):
+                response = await client.invoke(request)
+        if response.ok:
+            from polaris.cells.roles.runtime.internal.engineering_loop import _native_calls
+
+            if _native_calls(response):
+                raise ValueError("discussion provider returned action tool calls")
+        return response
 
     def observe(self, session_id: str, *, workspace: Path) -> dict[str, Any]:
         self._assert_workspace(workspace)
@@ -108,9 +176,16 @@ class EngineeringRunService:
         scope: PermissionScope,
         limits: RunLimits,
         request_key: str | None = None,
+        permission_profile_id: str | None = None,
     ) -> str:
         return await self._start(
-            command, scope=scope, limits=limits, request_key=request_key, cancel=asyncio.Event(), collaborative=True
+            command,
+            scope=scope,
+            limits=limits,
+            request_key=request_key,
+            cancel=asyncio.Event(),
+            collaborative=True,
+            permission_profile_id=permission_profile_id,
         )
 
     async def _start(
@@ -122,15 +197,23 @@ class EngineeringRunService:
         request_key: str | None,
         cancel: asyncio.Event,
         collaborative: bool = False,
+        permission_profile_id: str | None = None,
     ) -> str:
         self._assert_workspace(command.workspace)
         session_id = self.store.create_run(
-            command, scope=scope, limits=limits, engine_version=self.engine_version, request_key=request_key
+            command,
+            scope=scope,
+            limits=limits,
+            engine_version=self.engine_version,
+            request_key=request_key,
+            permission_profile_id=permission_profile_id,
         )
         row = self.observe(session_id, workspace=self.workspace)
         if session_id in self._tasks or row["status"] in _TERMINAL or row["status"] == "running":
             return session_id
         command = self._command(row)
+        if row.get("permission_profile_id") is not None:
+            scope = self._revalidated_scope(row)
         lock = self.store.acquire_workspace(self.workspace)
         try:
             lock.__enter__()
@@ -175,6 +258,12 @@ class EngineeringRunService:
             return await self._run_current_role(command, scope=scope, limits=limits, cancel=cancel, client=client)
         session_id = await self._start(command, scope=scope, limits=limits, request_key=None, cancel=cancel)
         return await self._await_result(session_id, cancel)
+
+    async def wait(self, session_id: str, *, workspace: Path) -> RoleRunResult:
+        """Join the existing owner, including its physical cleanup, without a new run."""
+        self._assert_workspace(workspace)
+        self.observe(session_id, workspace=workspace)
+        return await self._await_result(session_id, asyncio.Event())
 
     async def _await_result(self, session_id: str, cancel: asyncio.Event) -> RoleRunResult:
         task = self._tasks.get(session_id)
@@ -367,6 +456,34 @@ class EngineeringRunService:
             limits=limits,
             cancel=cancel,
         )
+
+    async def shutdown(self) -> None:
+        """Drain this host's actual owners; repeated successful shutdown is inert.
+
+        Owner failures and unknown physical cleanup remain failures. A cancelled
+        host waiter still waits for the existing cancellation path to finish.
+        """
+        owners = tuple(self._tasks.items())
+        for session_id, _task in owners:
+            self._cancellations[session_id].set()
+        for session_id, task in owners:
+            cleanup = asyncio.create_task(self.cancel(session_id, workspace=self.workspace))
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                await asyncio.shield(cleanup)
+                raise
+            if task.cancelled():
+                raise asyncio.CancelledError
+            failure = task.exception()
+            if failure is not None:
+                self._shutdown_error = failure
+        if self._retained_locks:
+            self._shutdown_error = self._shutdown_error or RuntimeError(
+                "engineering shutdown has unresolved physical cleanup; writer locks retained"
+            )
+        if self._shutdown_error is not None:
+            raise self._shutdown_error
 
     async def cancel(self, session_id: str, *, workspace: Path) -> None:
         row = self.observe(session_id, workspace=workspace)
@@ -724,6 +841,7 @@ class EngineeringRunService:
             )
             return result
         except BaseException as journal_error:
+            self._shutdown_error = journal_error
             if drain_error is not None:
                 # Reporting cannot replace the unresolved physical failure.
                 # The outer execution owner retains its workspace writer lock.

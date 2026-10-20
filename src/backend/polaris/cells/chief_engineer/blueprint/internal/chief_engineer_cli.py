@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Chief Engineer (Chief Engineer) Standalone CLI.
 
-Migration note (Task #48 Phase 2):
-    This CLI now routes through RoleRuntimeService instead of the retired
-    ChiefEngineerStandaloneAgent. All execution goes through RoleExecutionKernel.
+Use --engine engineering_v2 for task-free discussion or explicit engineering
+execution. Legacy modes retain their pre-switch behavior until acceptance.
 
 Usage:
     python -m polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli [options]
@@ -14,13 +13,38 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
+from typing import Any
 
-from polaris.cells.roles.runtime.public.service import (
-    RoleRuntimeService,
-    create_role_cli_parser,
-)
+
+def create_role_cli_parser(role: str) -> argparse.ArgumentParser:
+    """Parse the explicit new entry without importing the legacy role runtime."""
+    from polaris.delivery.cli.engineering import add_engineering_arguments
+
+    parser = argparse.ArgumentParser(description=f"Polaris {role} CLI")
+    parser.add_argument("--workspace", default=".")
+    parser.add_argument(
+        "--mode", choices=("tui", "interactive", "oneshot", "autonomous", "server"), default="interactive"
+    )
+    parser.add_argument("--goal", default="")
+    parser.add_argument("--max-iterations", type=int, default=10)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=50000)
+    parser.add_argument("--model", default=None)
+    add_engineering_arguments(parser)
+    return parser
+
+
+def _legacy_role_runtime_service() -> Any:
+    """Lazy compatibility construction, used only by pre-switch legacy modes."""
+    from polaris.cells.roles.runtime.public.service import RoleRuntimeService as LegacyRoleRuntimeService
+
+    return LegacyRoleRuntimeService()
+
+
+RoleRuntimeService = _legacy_role_runtime_service
 
 __frozen__ = True
 
@@ -29,6 +53,11 @@ async def main() -> int:
     """Main entry point for Chief Engineer role agent."""
     parser = create_role_cli_parser("chief_engineer")
     args = parser.parse_args()
+
+    if args.engine == "engineering_v2":
+        from polaris.delivery.cli.engineering import run_engineering_action
+
+        return await run_engineering_action(args, role="chief_engineer")
 
     service = RoleRuntimeService()
 

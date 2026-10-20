@@ -1,6 +1,6 @@
 # PM / CE / Director 工程主线重构 Implementation Plan
 
-> **For agentic workers:** 使用 superpowers:subagent-driven-development 或 superpowers:executing-plans，逐批交付；步骤以复选框跟踪。当前第 1 批技术组件已验证，其余批次未完成；组件通过不代表真实模型、完整新引擎或 Bench 交付。
+> **For agentic workers:** 使用 superpowers:subagent-driven-development 或 superpowers:executing-plans，逐批交付；步骤以复选框跟踪。当前第 1–5 批组件已验证，第 6–8 批未完成；组件通过不代表真实模型、完整新引擎或 Bench 交付。
 
 **Goal:** 保留角色能力，让模型用真实工具推进工程，彻底删除新运行对模型合同、候选 hash、OBL/covers 和语义修补循环的依赖。
 
@@ -227,10 +227,10 @@ Expected: 真进程恢复、真实取消和当前验证对照通过；不宣称�
 - GET `/v2/engineering/runs/{id}`；POST `/{id}/cancel`、`/{id}/resume`。全部读取 A 节同一服务。
 - reply 只包含 session/run ID、`engine_version=engineering_v2`、执行状态、实际活动角色与检查结果；服务器校验 profile，模型不能选权限或改已有 engine。
 
-- [ ] RED：三个入口创建/读取/取消同一种 run；新 run 不出现合同占位，重复请求与跨 workspace 受控。
-- [ ] RED：纯聊天没有暗中创建工程任务；执行聊天必须返回同一 run ID。旧 run 不能直接 resume 到新引擎。
-- [ ] 实现 facade 与 CLI 薄入口；新 ID 请求旧 DTO 时明确不支持/给新链接，不返回伪蓝图或旧 ledger pass。
-- [ ] GREEN 后提交。开发态仍在独立实例上测试，不热替换现有冻结 run。
+- [x] RED：三个入口创建/读取/取消同一种 run；新 run 不出现合同占位，重复请求与跨 workspace 受控。
+- [x] RED：纯聊天没有暗中创建工程任务；执行聊天必须返回同一 run ID。旧 run 不能直接 resume 到新引擎。
+- [x] 实现 facade 与 CLI 薄入口；新 ID 请求旧 DTO 时明确不支持/给新链接，不返回伪蓝图或旧 ledger pass。
+- [x] GREEN 后提交。开发态仍在独立实例上测试，不热替换现有冻结 run。
 
 Run: `rtk proxy python -m pytest src/backend/polaris/delivery/http/tests/test_engineering_runs.py -q`
 
@@ -342,3 +342,5 @@ Expected: 新生产调用图没有旧准入；历史仍可读；没有无限 dua
 2026-10-20：第 3 批组件完成。直接任务只运行 Director；完整协作真实执行 PM、CE、Director，咨询一层返回且只读，普通文本建议进入同一任务，失败检查继续由 Director 处理。角色工具 schema 从现有 ToolSpecRegistry 派生；显式空权限保留；冷接续与 resume 共用当前权限校验。主 Agent 最终 135 项通过；独立审查 44 项及专用 HTTP 证据 5 项通过，六文件 SHA 一致、未关闭发现 0。首次撤权重放失败保留。证据：`task3-root-r1-final/`、`task3-roles/r1/`、`task3-independent-review/`。正式验证、进程冷恢复、产品入口与 Bench 尚未完成。
 
 2026-10-21：第 4 批组件完成，已在主线 `main` 验证。必需检查在源码只读、明确输出目录下真实执行；失败回到同一 Director，已有 PM／CE 建议复用。新 OS 进程恢复保留原 workflow／required_checks，先读取实际文件；原写入未知事实保留，精确当前状态回读单独记录，未重放旧写入；未知命令不自动重跑。原生历史中的无文本工具调用和空工具结果已保留到真实 provider HTTP 请求。主线最终 244 项通过，31 文件质量检查在合入时通过，修正后两文件复查通过；独立审查原 100 个独立用例与 34 份物理请求作为原候选证据保留，两项 P1 修正后另做 6 项限定复核通过。证据位于 `~/.polaris/audit_archives/autonomous-delivery-20261018/engineering-v2-refactor-20261020/`，检查点见 `progress.md` 与 `task4-independent-review/report-final.json`。新 HTTP／CLI／UI、远端模型和 L1–L12 尚待实施验收；未承诺任意故障或不可判外部效果可恢复。
+
+2026-10-21：第 5 批完成有界入口验收。主 Agent 243 项相邻测试通过（62.76 秒），20 文件 Ruff／format／mypy 通过；独立真实 create_app 完整 lifespan、原生 HTTP、冷 OS 恢复和三 CLI 原候选 40 项检查通过，最终 CLI trace 修正另做 4 项复验。单份 SQLite、固定 workspace、当前 host profile 与原 deadline 幂等保持；普通讨论无工程 run，旧 id 不转换。CLI 宿主诊断保留 stderr，stdout 唯一结果；未调用角色仍 not_called。原联合失败 432 PASS／4 FAIL 与类型检查失败保留，未重标为通过；旧配置测试临时目录的祖先 docs 假设限定为合成无 sentinel 夹具，未修改产品查找机制。证据：统一审计目录的 task5-root-adjacent-final、task5-root-quality-r2、task5-independent-review。当前第 6–8 批与真实模型／L1–L12 未完成；默认 CLI 仍待正式验收后切换。

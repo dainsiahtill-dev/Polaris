@@ -248,11 +248,12 @@ class TestRoleChatRouter:
             role="chief_engineer",
             run_id="run-1",
             task_id="task-1",
+            metadata={"workspace": "."},
         )
         emitter = MagicMock()
         emitter.get_events.return_value = [event]
 
-        with patch("polaris.delivery.http.routers.role_chat.get_global_emitter", return_value=emitter):
+        with patch("polaris.cells.roles.kernel.public.service.get_global_emitter", return_value=emitter):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/role/chief_engineer/llm-events?limit=5")
 
@@ -275,7 +276,7 @@ class TestRoleChatRouter:
         emitter = MagicMock()
         emitter.get_events.return_value = []
 
-        with patch("polaris.delivery.http.routers.role_chat.get_global_emitter", return_value=emitter):
+        with patch("polaris.cells.roles.kernel.public.service.get_global_emitter", return_value=emitter):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get(
                     "/v2/role/pm/llm-events?run_id=run-1&task_id=task-1&limit=20",
@@ -301,11 +302,12 @@ class TestRoleChatRouter:
             event_type="llm_call_end",
             role="pm",
             run_id="run-1",
+            metadata={"workspace": "."},
         )
         emitter = MagicMock()
         emitter.get_events.return_value = [event]
 
-        with patch("polaris.delivery.http.routers.role_chat.get_global_emitter", return_value=emitter):
+        with patch("polaris.cells.roles.kernel.public.service.get_global_emitter", return_value=emitter):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/role/llm-events?role=pm&limit=3")
 
@@ -326,7 +328,7 @@ class TestRoleChatRouter:
         cache = MagicMock()
         cache.get_stats.return_value = {"hits": 2, "misses": 1}
 
-        with patch("polaris.delivery.http.routers.role_chat.get_global_llm_cache", return_value=cache):
+        with patch("polaris.cells.roles.kernel.public.service.get_global_llm_cache", return_value=cache):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.get("/v2/role/cache-stats")
 
@@ -339,7 +341,7 @@ class TestRoleChatRouter:
         app = _build_app()
         cache = MagicMock()
 
-        with patch("polaris.delivery.http.routers.role_chat.get_global_llm_cache", return_value=cache):
+        with patch("polaris.cells.roles.kernel.public.service.get_global_llm_cache", return_value=cache):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 response = await client.post("/v2/role/cache-clear")
 
