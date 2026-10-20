@@ -10,6 +10,31 @@ function binding(snapshot: EngineeringRunSnapshot | null = saved): EngineeringRu
   return { projection: snapshot ? hydrateEngineeringRun(newEngineeringProjection('/work', 'r1'), snapshot) : newEngineeringProjection('/work', ''), sessionId: snapshot?.session_id || '', loading: false, pending: null, error: null, discussion: '', discussionMetadata: null, connected: true, reconnecting: false, connectionError: null, start: vi.fn(async () => true), cancel: vi.fn(async () => true), resume: vi.fn(async () => true), refresh: vi.fn(async () => { }), discuss: vi.fn(async () => true) };
 }
 describe('EngineeringRunWorkspace', () => {
+  it.each([['checks_only', '仅检查'], ['independent_qa', '独立QA']])('shows explicit acceptance basis %s without inventing a QA pass', (basis, label) => {
+    render(<EngineeringRunWorkspace workspace="/work" binding={binding({ ...saved, verification: 'passed', require_qa: false, qa_verdict: 'not_run', project_outcome: 'accepted', acceptance_basis: basis } as EngineeringRunSnapshot)} onBackToMain={() => { }} />);
+    expect(screen.getByTestId('engineering-project-outcome')).toHaveTextContent(`已验收（${label}）`);
+    expect(screen.getByTestId('engineering-qa-verdict')).toHaveTextContent('未调用');
+  });
+  it('does not accept a project or pass uncalled QA merely because execution and checks completed', () => {
+    render(<EngineeringRunWorkspace workspace="/work" binding={binding({ ...saved, verification: 'passed', require_qa: true, qa_verdict: 'not_run', project_outcome: 'not_accepted' } as EngineeringRunSnapshot)} onBackToMain={() => { }} />);
+    expect(screen.getByTestId('engineering-verification')).toHaveTextContent('已通过');
+    expect(screen.getByTestId('engineering-qa-verdict')).toHaveTextContent('未调用');
+    expect(screen.getByTestId('engineering-project-outcome')).toHaveTextContent('未验收');
+  });
+  it('shows only an explicit actual QA verdict and project acceptance, and keeps unavailable snapshots unknown', () => {
+    const run = binding({ ...saved, verification: 'passed', roles: { ...saved.roles, qa: 'completed' }, require_qa: true, qa_verdict: 'approved', project_outcome: 'accepted' } as EngineeringRunSnapshot);
+    const view = render(<EngineeringRunWorkspace workspace="/work" binding={run} onBackToMain={() => { }} />);
+    expect(screen.getByTestId('engineering-qa-verdict')).toHaveTextContent('已批准');
+    expect(screen.getByTestId('engineering-project-outcome')).toHaveTextContent('已验收');
+    view.rerender(<EngineeringRunWorkspace workspace="/work" binding={{ ...run, projection: { ...run.projection, error: 'snapshot offline' } }} onBackToMain={() => { }} />);
+    expect(screen.getByTestId('engineering-qa-verdict')).toHaveTextContent('未知');
+    expect(screen.getByTestId('engineering-project-outcome')).toHaveTextContent('未知');
+  });
+  it('keeps missing outcome metadata unknown instead of deriving acceptance from passed checks', () => {
+    render(<EngineeringRunWorkspace workspace="/work" binding={binding({ ...saved, verification: 'passed' })} onBackToMain={() => { }} />);
+    expect(screen.getByTestId('engineering-project-outcome')).toHaveTextContent('未知');
+    expect(screen.getByTestId('engineering-qa-verdict')).toHaveTextContent('未调用');
+  });
   it('shows actual failed checks and tool failures while untouched roles stay not called', () => {
     render(<EngineeringRunWorkspace workspace="/work" binding={binding()} role="director" onBackToMain={() => { }} />);
     expect(screen.getByTestId('engineering-verification')).toHaveTextContent('未通过');

@@ -125,6 +125,7 @@ function manualChunks(id: string): string | undefined {
 
 export default defineConfig({
   root: rootDir,
+  cacheDir: process.env.KERNELONE_VITE_CACHE_DIR || undefined,
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

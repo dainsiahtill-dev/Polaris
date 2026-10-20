@@ -188,7 +188,7 @@ _ANTHROPIC_OPTION_KEYS = (
 )
 
 
-def _timeout_seconds(config: dict[str, Any], default: int) -> int:
+def _timeout_seconds(config: dict[str, Any], default: int) -> float:
     return normalize_timeout_seconds(config.get("timeout"), default=default)
 
 

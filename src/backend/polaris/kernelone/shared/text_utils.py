@@ -9,6 +9,7 @@ Example:
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import time
@@ -346,10 +347,11 @@ def normalize_positive_int(value: Any, default: int = 1) -> int:
     return max(1, result)
 
 
-def normalize_timeout_seconds(value: Any, default: int = 0) -> int:
+def normalize_timeout_seconds(value: Any, default: float = 0) -> float:
     """规范化超时秒数。
 
-    全局语义: <=0 表示禁用。
+    全局语义: 有限值 <=0 表示禁用；保留正数的小数秒。
+    空值、布尔值、非有限值和无效输入使用 default。
 
     Args:
         value: 要规范化的值
@@ -358,11 +360,16 @@ def normalize_timeout_seconds(value: Any, default: int = 0) -> int:
     Returns:
         超时秒数
     """
-    parsed = normalize_int(value, default)
-    return parsed if parsed > 0 else 0
+    try:
+        parsed = float(value) if not isinstance(value, bool) else float(default)
+    except (ValueError, TypeError, OverflowError):
+        parsed = float(default)
+    if not math.isfinite(parsed):
+        parsed = float(default)
+    return parsed if math.isfinite(parsed) and parsed > 0 else 0
 
 
-def timeout_seconds_or_none(value: Any, default: int = 0) -> int | None:
+def timeout_seconds_or_none(value: Any, default: float = 0) -> float | None:
     """返回子进程/请求的超时秒数。
 
     Args:

@@ -307,6 +307,30 @@ _LEGACY_SWEEP_FLAG_NAMES: tuple[str, ...] = (
 
 KERNELONE_FLAG_REGISTRY: dict[str, FlagSpec] = {
     **{name: _legacy_sweep_spec(name) for name in _LEGACY_SWEEP_FLAG_NAMES},
+    "KERNELONE_ENGINEERING_HOST_CONFIG": FlagSpec(
+        name="KERNELONE_ENGINEERING_HOST_CONFIG",
+        default=None,
+        owner="bootstrap.config.Settings",
+        purpose="Loads a strictly validated engineering host JSON file into ServerConfig at startup.",
+        registered_at="2026-10-21",
+        expiry=None,
+    ),
+    "KERNELONE_VITE_CACHE_DIR": FlagSpec(
+        name="KERNELONE_VITE_CACHE_DIR",
+        default=None,
+        owner="frontend.tooling",
+        purpose="Overrides the Vite cache directory for isolated frontend tooling processes.",
+        registered_at="2026-10-21",
+        expiry=None,
+    ),
+    "KERNELONE_INSTANCE_HOME": FlagSpec(
+        name="KERNELONE_INSTANCE_HOME",
+        default=None,
+        owner="instances.runtime_binding",
+        purpose="Selects the existing Instance Registry home for independently launched instance processes.",
+        registered_at="2026-10-21",
+        expiry=None,
+    ),
     "KERNELONE_FIRST_TURN_WRITE": FlagSpec(
         name="KERNELONE_FIRST_TURN_WRITE",
         default="off",

@@ -16,6 +16,9 @@ from typing import Any
 from polaris.kernelone.errors import BudgetExceededError, ErrorCategory, classify_error
 from polaris.kernelone.llm.runtime import normalize_provider_type, resolve_provider_api_key
 from polaris.kernelone.llm.runtime_config import get_role_model, get_role_provider_override
+from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
+
+from .invocation_budget import get_provider_invocation_budget
 
 logger = logging.getLogger(__name__)
 _SENSITIVE_OBSERVABILITY_KEYS = frozenset(
@@ -175,6 +178,17 @@ def build_invoke_config(
     for key in keys:
         if key in options:
             cfg[key] = options[key]
+
+    # A caller timeout remains a per-call override. An enclosing invocation
+    # deadline is a separate, non-extendable cap, never a replacement for the
+    # provider's configured generation budget.
+    if "timeout" in cfg:
+        timeout = normalize_timeout_seconds(cfg["timeout"], default=60)
+        budget = get_provider_invocation_budget()
+        if budget is not None:
+            remaining = budget.remaining()
+            timeout = min(timeout, remaining) if timeout > 0 else remaining
+        cfg["timeout"] = timeout
 
     # Dynamic temperature: resolve from role + phase if available
     if "temperature" not in cfg:

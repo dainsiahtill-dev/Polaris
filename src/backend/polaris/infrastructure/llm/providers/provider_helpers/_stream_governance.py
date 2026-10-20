@@ -416,7 +416,7 @@ async def invoke_stream_with_retry(
     url: str,
     headers: dict[str, str],
     payload: dict[str, Any],
-    timeout_seconds: int,
+    timeout_seconds: float,
     *,
     max_attempts: int = _STREAM_RETRY_MAX_ATTEMPTS,
     retry_delay_seconds: float = _STREAM_RETRY_DELAY_SEC,

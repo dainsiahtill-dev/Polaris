@@ -81,6 +81,10 @@ class EngineeringSessionStore:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
             if "permission_profile_id" not in columns:
                 connection.execute("ALTER TABLE runs ADD COLUMN permission_profile_id TEXT")
+            if "require_qa" not in columns:
+                connection.execute("ALTER TABLE runs ADD COLUMN require_qa INTEGER NOT NULL DEFAULT 0")
+            if "verification_output_roots" not in columns:
+                connection.execute("ALTER TABLE runs ADD COLUMN verification_output_roots TEXT")
             connection.execute("""CREATE TABLE IF NOT EXISTS events (
                 session_id TEXT NOT NULL REFERENCES runs(session_id), seq INTEGER NOT NULL,
                 kind TEXT NOT NULL, role TEXT NOT NULL, payload TEXT NOT NULL, created_at REAL NOT NULL,
@@ -176,6 +180,8 @@ class EngineeringSessionStore:
         engine_version: str,
         request_key: str | None,
         permission_profile_id: str | None = None,
+        require_qa: bool = False,
+        verification_output_roots: tuple[Path, ...] | None = None,
     ) -> str:
         self._assert_workspace(command.workspace)
         if not command.session_id.strip() or not command.instruction.strip():
@@ -207,6 +213,10 @@ class EngineeringSessionStore:
             "limits": self._json(asdict(limits)),
             "engine_version": engine_version,
             "permission_profile_id": permission_profile_id,
+            "require_qa": int(require_qa),
+            "verification_output_roots": self._json([str(root) for root in verification_output_roots])
+            if verification_output_roots is not None
+            else None,
         }
         with self._transaction() as connection:
             identity_row = connection.execute("SELECT * FROM runs WHERE session_id=?", (command.session_id,)).fetchone()
@@ -254,10 +264,15 @@ class EngineeringSessionStore:
         self._assert_workspace(workspace)
         with self._connection() as connection:
             row = dict(self._require_run(connection, session_id))
+            acceptance = self._acceptance(connection, row)
         if row["workspace"] != str(self.workspace):
             raise PermissionError("stored engineering session workspace mismatch")
         for field in ("required_checks", "scope", "limits", "checks"):
             row[field] = json.loads(row[field])
+        row.update(acceptance)
+        row["verification_output_roots"] = (
+            json.loads(row["verification_output_roots"]) if row["verification_output_roots"] is not None else None
+        )
         return row
 
     def load_snapshot(self, session_id: str, *, workspace: Path, event_limit: int = 200) -> dict[str, Any]:
@@ -279,12 +294,17 @@ class EngineeringSessionStore:
                 "SELECT seq,kind,role,payload,created_at FROM events WHERE session_id=? ORDER BY seq DESC LIMIT ?",
                 (session_id, event_limit),
             ).fetchall()
+            acceptance = self._acceptance(connection, row)
             roles = connection.execute(
                 "SELECT seq,kind,role,payload,created_at FROM events WHERE session_id=? AND kind IN ('role_started','role_finished') ORDER BY seq",
                 (session_id,),
             ).fetchall()
         for field in ("required_checks", "scope", "limits", "checks"):
             row[field] = json.loads(row[field])
+        row.update(acceptance)
+        row["verification_output_roots"] = (
+            json.loads(row["verification_output_roots"]) if row["verification_output_roots"] is not None else None
+        )
         return {
             "run": row,
             "events": [{**dict(event), "payload": json.loads(event["payload"])} for event in reversed(events)],
@@ -565,6 +585,71 @@ class EngineeringSessionStore:
             if (row["turn_seq"], row["call_id"]) not in reconciled
         ]
 
+    def _acceptance(self, connection: sqlite3.Connection, row: Mapping[str, Any]) -> dict[str, object]:
+        """Project existing durable checks and QA facts; no separate acceptance ledger."""
+        events = connection.execute(
+            "SELECT seq,kind,payload FROM events WHERE session_id=? AND kind IN ('verification_completed','qa_review_started','qa_review_completed') ORDER BY seq",
+            (row["session_id"],),
+        ).fetchall()
+        verification_seq = 0
+        verification_payload: dict[str, Any] = {}
+        verdict = "not_run"
+        review_binding = None
+        for event in events:
+            payload = json.loads(event["payload"])
+            if event["kind"] == "verification_completed":
+                verification_seq = event["seq"]
+                verification_payload = payload
+            elif event["kind"] == "qa_review_started":
+                verdict = "unknown"
+                review_binding = None
+            else:
+                binding = payload.get("input_binding", {})
+                review_binding = binding
+                verdict = (
+                    payload.get("verdict", "unknown")
+                    if (
+                        binding.get("workspace_revision") == row["workspace_revision"]
+                        and binding.get("verification_seq") == verification_seq
+                    )
+                    else "unknown"
+                )
+        if review_binding is not None and review_binding.get("verification_seq") != verification_seq:
+            verdict = "unknown"
+        required = bool(row["require_qa"])
+        if verdict == "approved" and row["verification"] != "passed":
+            verdict = "unknown"
+        required_checks = json.loads(row["required_checks"])
+        checks = json.loads(row["checks"])
+        evidence = (
+            bool(required_checks)
+            and row["verification"] == "passed"
+            and verification_payload.get("verification") == "passed"
+            and verification_payload.get("workspace_revision") == row["workspace_revision"]
+            and verification_payload.get("input_binding", {}).get("commands") == required_checks
+            and len(checks) == len(required_checks)
+            and all(
+                check.get("ok") is True and check.get("exit_code") == 0 and not check.get("interrupted")
+                for check in checks
+            )
+        )
+        accepted = row["status"] == "completed" and evidence and (not required or verdict == "approved")
+        outcome = (
+            "accepted"
+            if accepted
+            else "rejected"
+            if required and verdict == "rejected"
+            else "unknown"
+            if row["verification"] == "unknown" or (required and verdict == "unknown")
+            else "not_accepted"
+        )
+        return {
+            "require_qa": required,
+            "qa_verdict": verdict,
+            "project_outcome": outcome,
+            "acceptance_basis": ("independent_qa" if required else "checks_only") if accepted else None,
+        }
+
     def update_run(self, session_id: str, **fields: object) -> None:
         allowed = {"status", "text", "verification", "checks", "workspace_revision"}
         if not fields or not fields.keys() <= allowed:
@@ -633,6 +718,7 @@ class EngineeringSessionStore:
                     "required_checks": json.loads(current["required_checks"]),
                 }
             )
+            state.update(self._acceptance(connection, {**current, "verification": state["verification"]}))
             self._append_event(connection, session_id, kind="run_updated", role=str(current["role"]), payload=state)
 
     @contextmanager

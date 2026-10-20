@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import subprocess
 import time
@@ -51,15 +52,19 @@ class EngineeringTools:
         cancel: asyncio.Event,
         *,
         consult: Callable[[str, str], Awaitable[str]] | None = None,
+        review: Callable[[], None] | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
         self.scope = scope
         self.limits = limits
         self.cancel = cancel
         self.consult = consult
+        self.review = review
         self.filesystem = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
         self.enabled = frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools) & (
-            ENGINEERING_TOOLS | ({"consult_role"} if consult is not None else set())
+            ENGINEERING_TOOLS
+            | ({"consult_role"} if consult is not None else set())
+            | ({"report_review"} if review is not None else set())
         )
         if limits.max_output_bytes <= 0 or limits.max_tool_output_bytes <= 0:
             raise ValueError("engineering output limits must be positive")
@@ -127,6 +132,26 @@ class EngineeringTools:
             if self.cancel.is_set():
                 return ToolObservation(call_id, name, False, "Execution cancelled before dispatch.", None, True)
             self._remaining()
+            if name == "report_review":
+                self._keys(args, {"approved", "feedback", "major_findings"})
+                if self.review is None or type(args.get("approved")) is not bool:
+                    raise ValueError("report_review requires an actual QA frame and boolean approved")
+                feedback = self._text(args, "feedback")
+                findings = args.get("major_findings", [])
+                if not isinstance(findings, list) or any(
+                    not isinstance(item, str) or not item.strip() for item in findings
+                ):
+                    raise ValueError("major_findings must contain nonempty text")
+                self.review()
+                return self._observation(
+                    call_id,
+                    name,
+                    True,
+                    json.dumps(
+                        {"approved": args["approved"], "feedback": feedback, "major_findings": findings},
+                        ensure_ascii=False,
+                    ),
+                )
             if name == "consult_role":
                 self._keys(args, {"role", "question"})
                 role, question = self._text(args, "role"), self._text(args, "question")

@@ -2070,6 +2070,8 @@ export type EngineeringRole = 'pm' | 'chief_engineer' | 'director' | 'qa';
 export type EngineeringRoleStatus = 'not_called' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'unknown';
 export type EngineeringRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 export type EngineeringVerification = 'passed' | 'failed' | 'not_run' | 'unknown';
+export type EngineeringQAVerdict = 'not_run' | 'approved' | 'rejected' | 'unknown';
+export type EngineeringProjectOutcome = 'not_accepted' | 'accepted' | 'rejected' | 'unknown';
 export interface EngineeringCheck {
   call_id: string; tool: string; ok: boolean; content: string; exit_code: number | null; interrupted: boolean;
 }
@@ -2084,6 +2086,8 @@ export interface EngineeringRunSnapshot {
   verification: EngineeringVerification; checks: EngineeringCheck[]; required_checks: string[];
   permission_profile_id: string | null; resource_url: string; last_seq: number; events: EngineeringEvent[];
   event_delivery_error?: unknown; native_observation_error?: unknown; truncated_fields?: string[];
+  require_qa?: boolean; qa_verdict?: EngineeringQAVerdict; project_outcome?: EngineeringProjectOutcome;
+  acceptance_basis?: 'checks_only' | 'independent_qa' | null;
 }
 export interface EngineeringStartOptions {
   instruction: string; workspace: string; workflow?: 'direct' | 'collaborative'; role?: EngineeringRole;

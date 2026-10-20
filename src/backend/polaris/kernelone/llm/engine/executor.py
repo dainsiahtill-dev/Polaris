@@ -534,11 +534,18 @@ class AIExecutor:
     def _build_request_resilience(self, request: AIRequest) -> ResilienceManager:
         """基于请求 options 构建弹性策略，确保 timeout/retry 配置生效。"""
         options = request.options if isinstance(request.options, dict) else {}
-        if not options:
+        provider_cfg = self._get_provider_config(request.provider_id) if request.provider_id else {}
+        invoke_cfg = self._build_invoke_config(provider_cfg, options)
+        if not options and "timeout" not in invoke_cfg:
             return self.resilience
 
+        # Use the same canonical provider/caller merge as the physical invoke.
+        # Retry and aggregate-operation options retain their existing semantics.
+        timeout_options = dict(options)
+        if "timeout" in invoke_cfg:
+            timeout_options["timeout"] = invoke_cfg["timeout"]
         try:
-            timeout_config = TimeoutConfig.from_options(options)
+            timeout_config = TimeoutConfig.from_options(timeout_options)
             retry_config = RetryConfig.from_options(options)
         except (TypeError, ValueError, KeyError):
             # options contains invalid/unexpected values; fall back to default resilience manager

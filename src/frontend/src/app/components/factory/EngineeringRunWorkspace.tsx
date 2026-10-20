@@ -31,6 +31,10 @@ export function EngineeringRunWorkspace({ workspace, binding, role = 'director',
   const discussionRef = binding.discussionMetadata?.context_snapshot_ref;
   const readableDiscussionRef = discussionObservation && typeof discussionObservation === 'object' && (discussionObservation as Record<string, unknown>).snapshot_status === 'available' && typeof discussionRef === 'string' && /^[a-f0-9]{24}$/.test(discussionRef) ? discussionRef : null;
   const run = binding.projection.snapshot;
+  const snapshotUnavailable = Boolean(binding.projection.error || binding.projection.snapshotRequiredSeq);
+  const qaVerdict = snapshotUnavailable ? '未知（快照不可用）' : run?.roles.qa === 'not_called' || run?.qa_verdict === 'not_run' ? '未调用' : ({ approved: '已批准', rejected: '已拒绝', unknown: '未知' }[run?.qa_verdict || 'unknown']);
+  const projectOutcome = snapshotUnavailable ? '未知（快照不可用）' : ({ not_accepted: '未验收', accepted: '已验收', rejected: '已拒绝', unknown: '未知（未提供验收结论）' }[run?.project_outcome || 'unknown']);
+  const acceptanceBasis = run?.acceptance_basis === 'checks_only' ? '仅检查' : run?.acceptance_basis === 'independent_qa' ? '独立QA' : '依据未知';
   const busy = Boolean(binding.pending);
   const canStart = !run || run.status !== 'running' && run.status !== 'pending';
   const canCancel = run?.status === 'running' || run?.status === 'pending';
@@ -72,6 +76,8 @@ export function EngineeringRunWorkspace({ workspace, binding, role = 'director',
           <p className="text-xs text-slate-400">运行入口角色：{names[run.role]}</p>
           <p role="status" aria-atomic="true">运行状态：{binding.projection.snapshotRequiredSeq ? '等待完整快照' : statuses[run.status] || '未知'}</p>
           <p data-testid="engineering-verification">验证结果：{binding.projection.snapshotRequiredSeq ? '未知（等待完整快照）' : binding.projection.error ? '未知（快照不可用）' : verification[run.verification] || '未知'}</p>
+          <p data-testid="engineering-qa-verdict">QA 结论：{qaVerdict}{run.require_qa === true ? '（必需）' : ''}</p>
+          <p data-testid="engineering-project-outcome">项目验收：{projectOutcome}{!snapshotUnavailable && run.project_outcome === 'accepted' ? `（${acceptanceBasis}）` : ''}</p>
           <p className="text-xs text-slate-400">实际检查：{binding.projection.snapshotRequiredSeq ? '等待完整快照' : `${run.checks.length} 项`}</p>
           {run.truncated_fields?.length ? <p className="text-xs text-amber-200">当前为截断预览，可刷新快照读取完整记录。</p> : null}
           {run.checks.map((check) => <div key={check.call_id} className={`rounded-lg border p-3 ${check.ok && check.exit_code === 0 ? 'border-emerald-500/20' : 'border-red-500/30'}`}><p className="text-xs text-slate-400">exit {check.exit_code ?? '未知'}{check.interrupted ? ' · 已中断' : ''}</p><pre className="whitespace-pre-wrap text-xs">{check.content}</pre></div>)}

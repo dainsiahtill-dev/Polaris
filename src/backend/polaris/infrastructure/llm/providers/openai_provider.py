@@ -121,11 +121,11 @@ def _strip_structured_tags(text: str) -> str:
     return cleaned.strip()
 
 
-def _timeout_seconds(config: dict[str, Any], default: int) -> int:
+def _timeout_seconds(config: dict[str, Any], default: int) -> float:
     return normalize_timeout_seconds(config.get("timeout"), default=default)
 
 
-def _connect_timeout_seconds(config: dict[str, Any], *, request_timeout: int) -> int:
+def _connect_timeout_seconds(config: dict[str, Any], *, request_timeout: float) -> int:
     """Resolve a bounded connect timeout separate from generation/read timeout."""
 
     default_connect_timeout = min(10, max(1, int(request_timeout or 1)))

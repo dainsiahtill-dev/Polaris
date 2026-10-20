@@ -21,6 +21,7 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
 from polaris.kernelone.llm.contracts.tool import ToolCall
 from polaris.kernelone.llm.engine.client import ResilientLLMClient
 from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, TaskType
+from polaris.kernelone.llm.engine.invocation_budget import invoke_with_budget
 from polaris.kernelone.llm.toolkit.parsers.core import parse_tool_calls
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 
@@ -76,7 +77,10 @@ def _native_calls(response: AIResponse) -> list[ToolCall]:
 async def _invoke(
     client: ResilientLLMClient, request: AIRequest, cancel: asyncio.Event, deadline: float | None
 ) -> AIResponse:
-    worker = asyncio.create_task(client.invoke(request))
+    invocation = client.invoke(request)
+    if deadline is not None:
+        invocation = invoke_with_budget(invocation, max(0.001, deadline - time.time()))
+    worker = asyncio.create_task(invocation)
     cancellation = asyncio.create_task(cancel.wait())
     try:
         timeout = max(0.0, deadline - time.time()) if deadline is not None else None
@@ -118,7 +122,10 @@ async def run_engineering_loop(
     provider body. ContextOS transport-body closure is a separate integration.
     No controller, lock, or second journal is created here.
     """
+    from polaris.cells.roles.runtime.internal.engineering_roles import interpret_review_reports, register_review_tool
+
     register_consult_tool()
+    register_review_tool()
     scope = role_scope(command.role, scope)
     active_dispatch: tuple[int, str] | None = None
 
@@ -127,12 +134,31 @@ async def run_engineering_loop(
             raise ValueError("consultation requires an active tool dispatch")
         return await consult(role, question, *active_dispatch)
 
+    def review_current() -> None:
+        if command.role != "qa" or active_dispatch is None:
+            raise ValueError("report_review requires an active QA dispatch")
+        if not any(
+            event["kind"] == "tool_observed"
+            and event["role"] == "qa"
+            and event["seq"] > frame_seq
+            and (
+                event["payload"].get("tool") == "read_file"
+                or (event["payload"].get("tool") == "repo_rg" and str(event["payload"].get("content", "")).strip())
+            )
+            and event["payload"].get("ok") is True
+            and not event["payload"].get("interrupted")
+            and event["payload"].get("turn_seq", 0) < active_dispatch[0]
+            for event in store.load_events(command.session_id)
+        ):
+            raise ValueError("report_review requires a successful current-frame source read in a previous turn")
+
     tools = EngineeringTools(
         command.workspace,
         scope,
         limits,
         cancel,
         consult=consult_current if consult is not None and command.role == "director" else None,
+        review=review_current if command.role == "qa" else None,
     )
     events = store.load_events(command.session_id)
     starts = [event for event in events if event["kind"] == "role_started" and event["role"] == command.role]
@@ -215,8 +241,6 @@ async def run_engineering_loop(
                 return finish("failed", "Engineering run deadline exceeded.")
             turn_seq = store.append_event(command.session_id, kind="turn_started", role=command.role, payload={})
             options: dict[str, Any] = {"messages": list(messages), "tools": tools.schemas(), "tool_choice": "auto"}
-            if limits.deadline is not None:
-                options["timeout"] = max(0.001, limits.deadline - time.time())
             request = AIRequest(
                 task_type=TaskType.DIALOGUE,
                 role=command.role,
@@ -280,6 +304,7 @@ async def run_engineering_loop(
                     command.session_id, kind="turn_finished", role=command.role, payload={"turn_seq": turn_seq}
                 )
                 return finish("completed", response.output)
+            review_reports: list[dict[str, Any]] = []
             for call in calls:
                 if cancel.is_set():
                     return finish(
@@ -301,6 +326,8 @@ async def run_engineering_loop(
                 store.record_tool_observation(
                     command.session_id, turn_seq=turn_seq, observation=observation, role=command.role
                 )
+                if observation.tool == "report_review" and observation.ok and not observation.interrupted:
+                    review_reports.append(asdict(observation))
                 if (observation.tool in {"write_file", "edit_file"} and observation.ok) or (
                     observation.tool == "execute_command"
                     and (observation.exit_code is not None or observation.interrupted)
@@ -326,6 +353,9 @@ async def run_engineering_loop(
             store.append_event(
                 command.session_id, kind="turn_finished", role=command.role, payload={"turn_seq": turn_seq}
             )
+            if review_reports:
+                _verdict, feedback, _call_id = interpret_review_reports(review_reports)
+                return finish("completed", feedback)
     except asyncio.CancelledError:
         cancel.set()
         return finish("cancelled", "Engineering role cancelled after active execution cleanup.")

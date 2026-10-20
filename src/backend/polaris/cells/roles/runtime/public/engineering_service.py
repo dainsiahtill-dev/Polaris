@@ -30,6 +30,7 @@ from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.llm.engine.client import ProviderConfig, ResilientLLMClient
 from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, TaskType
 from polaris.kernelone.llm.engine.executor import AIExecutor
+from polaris.kernelone.llm.engine.invocation_budget import invoke_with_budget
 from polaris.kernelone.llm.engine.resilience import RetryConfig, TimeoutConfig
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 
@@ -80,6 +81,7 @@ class EngineeringRunService:
         client: ResilientLLMClient | None = None,
         permission_resolver: Callable[[dict[str, Any]], PermissionScope] | None = None,
         writable_output_roots: tuple[Path, ...] = (),
+        require_qa: bool = False,
         event_publisher: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
     ) -> None:
         self.workspace = Path(workspace).resolve()
@@ -91,7 +93,12 @@ class EngineeringRunService:
         self.store = EngineeringSessionStore(self.workspace, on_committed_events=self._committed_events)
         self._client = client
         self._permission_resolver = permission_resolver
-        self._writable_output_roots = writable_output_roots
+        from polaris.cells.roles.runtime.internal.engineering_verification import EngineeringVerification
+
+        self._writable_output_roots = EngineeringVerification.validate_declarations(
+            self.workspace, writable_output_roots
+        )
+        self._require_qa = require_qa
         self._tasks: dict[str, asyncio.Task[RoleRunResult]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
         self._retained_locks: dict[str, AbstractContextManager[None]] = {}
@@ -239,7 +246,6 @@ class EngineeringRunService:
             remaining = host_limits.deadline - time.time()
             if remaining <= 0:
                 raise TimeoutError("discussion provider deadline exceeded")
-            options["timeout"] = remaining
         request = AIRequest(
             task_type=TaskType.DIALOGUE,
             role=role,
@@ -251,8 +257,7 @@ class EngineeringRunService:
         if host_limits.deadline is None:
             response = await client.invoke(request)
         else:
-            async with asyncio.timeout(max(0, host_limits.deadline - time.time())):
-                response = await client.invoke(request)
+            response = await invoke_with_budget(client.invoke(request), max(0.001, host_limits.deadline - time.time()))
         if response.ok:
             from polaris.cells.roles.runtime.internal.engineering_loop import _native_calls
 
@@ -269,7 +274,10 @@ class EngineeringRunService:
         session_id = str(row["session_id"])
         if row["verification"] == "passed":
             try:
-                verifier = self._verification(self._scope(row), self._limits(row), asyncio.Event())
+                scope = self._revalidated_scope(row) if self._permission_resolver is not None else self._scope(row)
+                verifier = self._verification(
+                    scope, self._limits(row), asyncio.Event(), output_roots=self._saved_outputs(row)
+                )
                 current = verifier.current_verification(session_id)
             except (OSError, ValueError, RuntimeError, PathSecurityError) as error:
                 current = "unknown"
@@ -278,6 +286,25 @@ class EngineeringRunService:
                 # A missing/replaced output grant cannot prove a current pass.
                 # Preserve the historical binding and keep this query read-only.
                 row["verification"] = "unknown"
+        if row.get("require_qa") and row.get("qa_verdict") in {"approved", "rejected"}:
+            try:
+                self._revalidated_scope(row)
+                verifier = self._verification(
+                    self._scope(row), self._limits(row), asyncio.Event(), output_roots=self._saved_outputs(row)
+                )
+                decisions = [
+                    event for event in self.store.load_events(session_id) if event["kind"] == "qa_review_completed"
+                ]
+                if (
+                    (row["qa_verdict"] == "approved" and row["verification"] != "passed")
+                    or not decisions
+                    or decisions[-1]["payload"].get("input_binding") != verifier.review_binding(session_id)
+                ):
+                    row["qa_verdict"] = "unknown"
+            except (OSError, ValueError, RuntimeError, PathSecurityError):
+                row["qa_verdict"] = "unknown"
+        if row["verification"] == "unknown" or (row.get("require_qa") and row.get("qa_verdict") == "unknown"):
+            row.update(project_outcome="unknown", acceptance_basis=None)
         return row
 
     async def start(
@@ -312,6 +339,26 @@ class EngineeringRunService:
     ) -> str:
         self._assert_workspace(command.workspace)
         self._publication_loop = asyncio.get_running_loop()
+        from polaris.cells.roles.runtime.internal.engineering_verification import EngineeringVerification
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        if self._require_qa and (
+            command.role != "director"
+            or "report_review" not in {ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools}
+        ):
+            raise PermissionError("required QA needs Director ownership and explicit report_review permission")
+        EngineeringVerification.validate_declarations(
+            self.workspace, self._writable_output_roots, write_roots=scope.write_roots
+        )
+        declared_outputs: tuple[Path, ...] | None = self._writable_output_roots
+        existing_id = self.store.find_request(request_key) if request_key is not None else command.session_id
+        if existing_id is not None:
+            try:
+                existing = self.store.load_run(existing_id, workspace=self.workspace)
+                if existing.get("verification_output_roots") is None and not self._writable_output_roots:
+                    declared_outputs = None
+            except KeyError:
+                pass
         session_id = self.store.create_run(
             command,
             scope=scope,
@@ -319,6 +366,8 @@ class EngineeringRunService:
             engine_version=self.engine_version,
             request_key=request_key,
             permission_profile_id=permission_profile_id,
+            require_qa=self._require_qa,
+            verification_output_roots=declared_outputs,
         )
         row = self.observe(session_id, workspace=self.workspace)
         if session_id in self._tasks or row["status"] in _TERMINAL or row["status"] == "running":
@@ -626,7 +675,9 @@ class EngineeringRunService:
         if row["engine_version"] != self.engine_version:
             raise ValueError("engineering run cannot change engine version on resume")
         original_scope = self._revalidated_scope(row)
-        if session_id in self._tasks or row["status"] == "completed":
+        if session_id in self._tasks or (
+            row["status"] == "completed" and row["verification"] != "unknown" and row.get("qa_verdict") != "unknown"
+        ):
             return session_id
         lock = self.store.acquire_workspace(self.workspace)
         lock.__enter__()
@@ -661,7 +712,21 @@ class EngineeringRunService:
                     for event in events
                     if event["kind"] == "role_finished" and event["payload"].get("frame_seq") == frame["seq"]
                 ]
-                if finished and (frame["role"] == "director" or finished[-1]["payload"].get("status") != "completed"):
+                if (
+                    frame["role"] == "qa"
+                    and row.get("qa_verdict") == "unknown"
+                    and self._pending_review(session_id) is None
+                ):
+                    self.store.continue_role(
+                        session_id,
+                        role="director",
+                        feedback="The current candidate no longer has a valid QA approval. Inspect current inputs and retain committed prior observations; continue the same goal and revalidate before fresh independent review.",
+                    )
+                if (
+                    finished
+                    and frame["role"] != "qa"
+                    and (frame["role"] == "director" or finished[-1]["payload"].get("status") != "completed")
+                ):
                     self.store.continue_role(
                         session_id,
                         role=frame["role"],
@@ -751,7 +816,34 @@ class EngineeringRunService:
                     payload={"turn_seq": pending["turn_seq"], "call_id": pending["call_id"], "reason": str(error)},
                 )
 
-    def _verification(self, scope: PermissionScope, limits: RunLimits, cancel: asyncio.Event) -> Any:
+    def _saved_outputs(self, row: dict[str, Any]) -> tuple[Path, ...]:
+        saved = row.get("verification_output_roots")
+        if saved is None:
+            # Older rows can already carry an exact output declaration in their
+            # durable verification binding. Never infer it from today's host.
+            completed = [
+                event
+                for event in self.store.load_events(str(row["session_id"]))
+                if event["kind"] == "verification_completed"
+            ]
+            saved = (
+                completed[-1]["payload"].get("input_binding", {}).get("scope", {}).get("output_roots", [])
+                if completed
+                else []
+            )
+        roots = tuple(Path(root) for root in saved)
+        if not set(roots) <= set(self._writable_output_roots):
+            raise PermissionError("saved verification output declarations exceed current host policy")
+        return roots
+
+    def _verification(
+        self,
+        scope: PermissionScope,
+        limits: RunLimits,
+        cancel: asyncio.Event,
+        *,
+        output_roots: tuple[Path, ...] | None = None,
+    ) -> Any:
         from polaris.cells.roles.runtime.internal.engineering_verification import EngineeringVerification
 
         return EngineeringVerification(
@@ -760,7 +852,7 @@ class EngineeringRunService:
             scope=scope,
             limits=limits,
             cancel=cancel,
-            writable_output_roots=self._writable_output_roots,
+            writable_output_roots=self._writable_output_roots if output_roots is None else output_roots,
         )
 
     async def _verify_director(
@@ -779,12 +871,23 @@ class EngineeringRunService:
         commands = tuple(saved["required_checks"])
         if not commands:
             return result
-        verifier = self._verification(scope, limits, cancel)
+        verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(saved))
+        pending_review = self._pending_review(command.session_id)
+        resume_review = (
+            pending_review is not None
+            and pending_review["payload"].get("input_binding") == verifier.review_binding(command.session_id)
+            and verifier.current_verification(command.session_id) == "passed"
+        )
         while result.status == "completed":
             revision = int(self.store.load_run(command.session_id, workspace=self.workspace)["workspace_revision"])
-            checks = await verifier.run_verification(
-                commands, session_id=command.session_id, workspace_revision=revision
+            checks = (
+                tuple(ToolObservation(**check) for check in saved["checks"])
+                if resume_review
+                else await verifier.run_verification(
+                    commands, session_id=command.session_id, workspace_revision=revision
+                )
             )
+            resume_review = False
             row = self.store.load_run(command.session_id, workspace=self.workspace)
             verification = row["verification"]
             if verification == "passed":
@@ -797,7 +900,43 @@ class EngineeringRunService:
                     checks=checks,
                 )
             if verification != "failed":
-                return replace(result, verification=verification, checks=checks)
+                result = replace(result, verification=verification, checks=checks)
+                if not saved["require_qa"] or verification != "passed":
+                    return result
+                verdict, feedback = await self._review_qa(
+                    command, scope=scope, limits=limits, cancel=cancel, verifier=verifier
+                )
+                if verdict == "approved":
+                    return result
+                if verdict != "rejected" or cancel.is_set():
+                    return replace(result, status="cancelled" if cancel.is_set() else "interrupted")
+                self.store.continue_role(
+                    command.session_id,
+                    role="director",
+                    feedback="Independent QA rejected the current candidate. Continue the same original goal using actual review findings:\n"
+                    + feedback,
+                )
+                starts = [
+                    event
+                    for event in self.store.load_events(command.session_id)
+                    if event["kind"] == "role_started" and event["role"] == "director"
+                ]
+                result = await self.run_role(
+                    replace(
+                        command, role="director", instruction=starts[-1]["payload"]["instruction"], workflow="direct"
+                    ),
+                    scope=scope,
+                    limits=limits,
+                    cancel=cancel,
+                )
+                if result.status != "completed":
+                    current = self.store.load_run(command.session_id, workspace=self.workspace)
+                    return replace(
+                        result,
+                        verification=current["verification"],
+                        checks=tuple(ToolObservation(**check) for check in current["checks"]),
+                    )
+                continue
             if limits.deadline is not None and time.time() >= limits.deadline:
                 return replace(result, status="failed", verification="failed", checks=checks)
             feedback = (
@@ -832,10 +971,129 @@ class EngineeringRunService:
                 )
         return result
 
+    def _pending_review(self, session_id: str) -> dict[str, Any] | None:
+        pending = None
+        for event in self.store.load_events(session_id):
+            if event["kind"] == "qa_review_started":
+                pending = event
+            elif event["kind"] == "qa_review_completed":
+                pending = None
+        return pending
+
+    async def _review_qa(
+        self,
+        command: RoleRunCommand,
+        *,
+        scope: PermissionScope,
+        limits: RunLimits,
+        cancel: asyncio.Event,
+        verifier: Any,
+    ) -> tuple[str, str]:
+        """Consume only current-frame observed QA reports, independently bound by the host."""
+        from polaris.cells.roles.runtime.internal.engineering_roles import interpret_review_reports
+
+        row = self.store.load_run(command.session_id, workspace=self.workspace)
+        self._revalidated_scope(row)
+        binding = verifier.review_binding(command.session_id)
+        instruction = (
+            "Original user goal:\n"
+            + row["instruction"]
+            + "\n\nCurrent actual required checks (these do not establish semantic correctness):\n"
+            + json.dumps(
+                [
+                    {"command": name, "result": check}
+                    for name, check in zip(row["required_checks"], row["checks"], strict=False)
+                ],
+                ensure_ascii=False,
+            )
+            + "\n\nRead the current relevant implementation using native read tools. Check the original requirements, behavior and actual artifacts, including incomplete or hollow implementations. "
+            "Then submit report_review with a justified decision. Do not treat Director text as evidence."
+        )
+        pending = self._pending_review(command.session_id)
+        reusable = pending is not None and pending["payload"].get("input_binding") == binding
+        if not reusable:
+            self.store.append_event(
+                command.session_id, kind="qa_review_started", role="qa", payload={"input_binding": binding}
+            )
+        events = self.store.load_events(command.session_id)
+        starts = [event for event in events if event["kind"] == "role_started" and event["role"] == "qa"]
+        durable_reports = [
+            event
+            for event in events
+            if reusable
+            and starts
+            and event["seq"] > starts[-1]["seq"]
+            and event["kind"] == "tool_observed"
+            and event["role"] == "qa"
+            and event["payload"].get("tool") == "report_review"
+            and event["payload"].get("ok") is True
+            and not event["payload"].get("interrupted")
+        ]
+        if durable_reports:
+            _verdict, feedback, _call_id = interpret_review_reports([event["payload"] for event in durable_reports])
+            result = RoleRunResult(command.session_id, "qa", feedback, "completed", "not_run", ())
+            self.store.append_event(
+                command.session_id,
+                kind="role_finished",
+                role="qa",
+                payload={
+                    "frame_seq": starts[-1]["seq"],
+                    "status": "completed",
+                    "text": result.text,
+                    "continuation_basis": "durable_native_report",
+                },
+            )
+        else:
+            result = await self.run_role(
+                replace(command, role="qa", instruction=instruction, workflow="direct", required_checks=()),
+                scope=scope,
+                limits=limits,
+                cancel=cancel,
+            )
+        events = self.store.load_events(command.session_id)
+        frame = next(event for event in reversed(events) if event["kind"] == "role_started" and event["role"] == "qa")
+        reports = [
+            event
+            for event in events
+            if event["kind"] == "tool_observed"
+            and event["role"] == "qa"
+            and event["seq"] > frame["seq"]
+            and event["payload"].get("tool") == "report_review"
+            and event["payload"].get("ok") is True
+            and not event["payload"].get("interrupted")
+        ]
+        verdict, feedback = "unknown", result.text
+        report_call_id = None
+        try:
+            self._revalidated_scope(row)
+            if (
+                result.status == "completed"
+                and reports
+                and binding == verifier.review_binding(command.session_id)
+                and verifier.current_verification(command.session_id) == "passed"
+            ):
+                verdict, feedback, report_call_id = interpret_review_reports([event["payload"] for event in reports])
+        except (ValueError, OSError, RuntimeError, PathSecurityError):
+            verdict = "unknown"
+        self.store.append_event(
+            command.session_id,
+            kind="qa_review_completed",
+            role="qa",
+            payload={
+                "verdict": verdict,
+                "feedback": feedback,
+                "frame_seq": frame["seq"],
+                "report_call_id": report_call_id,
+                "input_binding": binding,
+            },
+        )
+        return verdict, feedback
+
     def _revalidated_scope(self, row: dict[str, Any]) -> PermissionScope:
         """Re-admit saved grants against current host policy; never infer authority."""
         if self._permission_resolver is None:
             raise PermissionError("saved execution requires current permission policy")
+        self._saved_outputs(row)
         original_scope = self._scope(row)
         current_scope = self._permission_resolver(row)
         if not self._scope_within(original_scope, current_scope):
@@ -898,7 +1156,58 @@ class EngineeringRunService:
             )
             token = self._owner.set((command, scope, limits, cancel, client))
             try:
-                if collaborative and command.workflow == "collaborative":
+                saved = self.store.load_run(command.session_id, workspace=self.workspace)
+                pending_review = self._pending_review(command.session_id)
+                resume_review = False
+                if saved["require_qa"] and pending_review is not None:
+                    verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(saved))
+                    resume_review = (
+                        pending_review["payload"].get("input_binding") == verifier.review_binding(command.session_id)
+                        and verifier.current_verification(command.session_id) == "passed"
+                    )
+                    if not resume_review:
+                        self.store.append_event(
+                            command.session_id,
+                            kind="qa_review_completed",
+                            role="qa",
+                            payload={
+                                "verdict": "unknown",
+                                "feedback": "Saved QA inputs changed before review closure; historical observations cannot accept the current candidate.",
+                                "input_binding": pending_review["payload"].get("input_binding"),
+                                "report_call_id": None,
+                            },
+                        )
+                        frames = [
+                            event
+                            for event in self.store.load_events(command.session_id)
+                            if event["kind"] == "role_started" and event["role"] == "qa"
+                        ]
+                        if frames:
+                            self.store.append_event(
+                                command.session_id,
+                                kind="role_finished",
+                                role="qa",
+                                payload={
+                                    "frame_seq": frames[-1]["seq"],
+                                    "status": "interrupted",
+                                    "text": "Saved QA inputs changed.",
+                                },
+                            )
+                        self.store.continue_role(
+                            command.session_id,
+                            role="director",
+                            feedback="Current workspace or verification inputs changed after a saved QA attempt. Continue the same goal from committed observations, inspect current files, and revalidate; old QA reports do not apply.",
+                        )
+                if resume_review:
+                    result = RoleRunResult(
+                        command.session_id,
+                        "director",
+                        saved["text"],
+                        "completed",
+                        saved["verification"],
+                        tuple(ToolObservation(**check) for check in saved["checks"]),
+                    )
+                elif collaborative and command.workflow == "collaborative":
                     result = await self.run_collaborative(command.instruction, session_id=command.session_id)
                 else:
                     result = await self.run_role(command, scope=scope, limits=limits, cancel=cancel)

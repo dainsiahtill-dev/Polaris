@@ -272,7 +272,7 @@ Expected: 数据映射、快照与身份测试通过；实际推送与浏览器�
 
 **Interfaces:** Playwright baseURL 必须来自 `ENGINEERING_ACCEPTANCE_URL`，无默认主实例地址，无自动 webServer；独立实例通过现有 Supervisor/Registry 启动。CLI 使用 `--case`、`--timeout`、`--report-dir`，只在内部测试态启用。
 
-- [ ] 先用 loopback 与私有 fixture 运行 RED/GREEN 浏览器用例，确保 WS 进度、取消、错误与未调用角色可见；这些不计真实模型验收。
+- [x] 先用 loopback 与私有 fixture 运行 RED/GREEN 浏览器用例，确保 WS 进度、取消、错误与未调用角色可见；这些不计真实模型验收。
 - [ ] 冻结候选，运行新项目、已有项目修复和复杂协作三类正式样本，真实 provider、工具、测试与入口均实际发生。测试数据来自用户目标或既有 catalog，不是平台生产代码里的业务模板。
 - [ ] 对要求零外部修复的原 L1-01，保留原合同内容/验收标准与完整预算，走正式新入口；legacy 基线只用其冻结版本。harness 不初始化目标 Git、不补依赖、不代执行验收、不写 receipt/ledger。
 - [ ] 观察真实最终请求、工具、测试、必要 QA、进程排空与实例停止；浏览器无刷新看到运行变化，断线诚实显示。
@@ -346,3 +346,5 @@ Expected: 新生产调用图没有旧准入；历史仍可读；没有无限 dua
 2026-10-21：第 5 批完成有界入口验收。主 Agent 243 项相邻测试通过（62.76 秒），20 文件 Ruff／format／mypy 通过；独立真实 create_app 完整 lifespan、原生 HTTP、冷 OS 恢复和三 CLI 原候选 40 项检查通过，最终 CLI trace 修正另做 4 项复验。单份 SQLite、固定 workspace、当前 host profile 与原 deadline 幂等保持；普通讨论无工程 run，旧 id 不转换。CLI 宿主诊断保留 stderr，stdout 唯一结果；未调用角色仍 not_called。原联合失败 432 PASS／4 FAIL 与类型检查失败保留，未重标为通过；旧配置测试临时目录的祖先 docs 假设限定为合成无 sentinel 夹具，未修改产品查找机制。证据：统一审计目录的 task5-root-adjacent-final、task5-root-quality-r2、task5-independent-review。当前第 6–8 批与真实模型／L1–L12 未完成；默认 CLI 仍待正式验收后切换。
 
 2026-10-21：第 6 批组件验收完成。后端主线程 379 PASS（168.13 秒、1 条既有插件重写警告）；21 文件 Ruff／format／mypy 通过；必需 KernelOne ALL 十二阶段通过（368 PASS／1 SKIP，命令 334.372 秒）。全部 42 修改文件和 8110 后端文件在该次验证中 hash 稳定。随后前端两个 hook／测试文件作为独立 R2 批次修复 resync 在途 GET 与不可用显示，240 项相邻测试、类型和 ESLint 通过；后端文件与 ALL 候选相同，未重跑无变化的后端。原 UI 首失败与 232 PASS 保留；修后独立 10 项复验通过。后端独立 63＋2＋2 项、实际 20／2000-check 跨端复验和聊天 metadata 双 reader 复核通过；没有把推送压缩或快照条目冒充真实 HTTP 次数，未知 usage／成本仍未知。证据根同前述统一审计目录，详见 task6-final-candidate-source-manifest.json、task6-main-release-all、task6-root-joint-final、task6-backend-independent-review/report.json、task6-ui-independent-review/report-final.json。第 7 批先集成原目标必要的当前候选独立 QA／失败反馈；真实浏览器和原 L1-01 零外部代修交付尚未运行。
+
+2026-10-21：第 7 批尚未完成。已集成同任务当前候选 QA／否决修复、未来输出目录准入、UI 验收投影、显式绑定的浏览器量具及内部验收 CLI；未切默认。QA 矛盾报告的独立首失败已保留，修后同批／反序／冷恢复／真实修复推进五项独立检查通过。原生预算修复后，主线程冻结候选运行 KernelOne ALL 十二阶段通过（368 PASS／1 SKIP，333.118 秒），9366 源文件及模型配置稳定；R3 原失败仍保留。真实浏览器探针经过真实 native HTTP、工具写读、SQL、WebSocket、ContextOS 与取消，资源已释放；随后只修正量具的初始读取加首次连接补读计数，独立九组反例通过；冻结 R5 的正式组件浏览器用例通过（exit 0，18.358 秒），含刷新失败显示及恢复，四个端口／所有私有进程释放，36／9366 路径及模型配置稳定。最终主线程联合 457 项通过，后端 23 个改动文件稳定；没有修改产品 hook。原 L1-01 的原要求、5400 秒预算和只读验收输入已准备，目标目录及运行尚未创建。后续先完成正式组件浏览器验证并提交主线候选，再启动冻结真实模型运行；不能将上述探针计作 Bench 交付。

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+import json
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal
 
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
@@ -31,7 +33,9 @@ _PROMPTS = {
     "qa": (
         "You are QA, the independent review role. Read the original requirements, available artifacts and actual check "
         "results. Distinguish failures, missing evidence and unverified behavior. You have read-only tools; your text "
-        "does not turn an unrun check into a passed check. "
+        "does not turn an unrun check into a passed check. Read current relevant source using read_file or repo_rg, "
+        "then, when the host exposes report_review, submit report_review(approved, feedback) in a later turn. Explain actual findings; reject hollow or "
+        "incomplete implementations. A major finding prevents approval. Ordinary text alone is not a review decision. "
     ),
 }
 
@@ -44,11 +48,17 @@ def role_instruction(role: str) -> str:
 def role_scope(role: str, scope: PermissionScope) -> PermissionScope:
     """Intersect host authority; a professional review cannot acquire effects."""
     if role == "director":
-        return scope
+        return PermissionScope(
+            scope.read_roots,
+            scope.write_roots,
+            frozenset(name for name in scope.enabled_tools if ToolSpecRegistry.get_canonical(name) != "report_review"),
+            scope.network_allowed,
+        )
     return PermissionScope(
         scope.read_roots,
         (),
-        frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools) & _READ_TOOLS,
+        frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools)
+        & (_READ_TOOLS | ({"report_review"} if role == "qa" else set())),
         False,
     )
 
@@ -81,3 +91,76 @@ def collaborative_instruction(original: str, *, pm_advice: str = "", ce_advice: 
     if ce_advice:
         text += f"\n\nChief Engineer advice (ordinary guidance):\n{ce_advice}"
     return text
+
+
+def register_review_tool() -> None:
+    """A pure native QA judgment, recorded as an ordinary tool observation."""
+    ToolSpecRegistry.register(
+        "report_review",
+        {
+            "aliases": [],
+            "arg_aliases": {},
+            "category": "read",
+            "description": "Submit independent QA judgment after reading current source in a previous turn. No file or command effects.",
+            "arguments": [
+                {"name": "approved", "type": "boolean", "required": True},
+                {"name": "feedback", "type": "string", "required": True},
+                {"name": "major_findings", "type": "array", "items": {"type": "string"}},
+            ],
+        },
+    )
+
+
+def interpret_review_reports(
+    reports: Sequence[Mapping[str, Any]],
+) -> tuple[Literal["approved", "rejected", "unknown"], str, str | None]:
+    """One current-frame judgment: a negative cannot be erased by another report.
+
+    Callers provide the successful durable report observations from this QA
+    invocation. Both live completion and cold recovery use this same fold;
+    distinct native calls remain intact in the journal, including duplicates.
+    """
+    valid: list[tuple[str, dict[str, Any]]] = []
+    malformed = False
+    for observation in reports:
+        try:
+            content = observation.get("content")
+            call_id = observation.get("call_id")
+            if not isinstance(content, str) or not isinstance(call_id, str) or not call_id:
+                raise ValueError("incomplete report observation")
+            report = json.loads(content)
+            if (
+                not isinstance(report, dict)
+                or type(report.get("approved")) is not bool
+                or not isinstance(report.get("feedback"), str)
+                or not report["feedback"].strip()
+                or not isinstance(report.get("major_findings", []), list)
+                or any(not isinstance(item, str) or not item.strip() for item in report.get("major_findings", []))
+            ):
+                raise ValueError("incomplete review judgment")
+            valid.append((call_id, report))
+        except (ValueError, TypeError):
+            malformed = True
+    rejected = [
+        (call_id, report) for call_id, report in valid if not report["approved"] or report.get("major_findings")
+    ]
+    feedback = list(
+        dict.fromkeys(
+            report["feedback"]
+            + (
+                "\nMajor findings: " + json.dumps(report["major_findings"], ensure_ascii=False)
+                if report.get("major_findings")
+                else ""
+            )
+            for _call_id, report in valid
+        )
+    )
+    if malformed:
+        feedback.append(
+            "A successful report observation has no complete readable judgment; it cannot establish approval."
+        )
+    if rejected:
+        return "rejected", "\n\n".join(feedback), rejected[0][0]
+    if not valid or malformed:
+        return "unknown", "\n\n".join(feedback) or "No complete observed QA judgment.", None
+    return "approved", "\n\n".join(feedback), valid[0][0]

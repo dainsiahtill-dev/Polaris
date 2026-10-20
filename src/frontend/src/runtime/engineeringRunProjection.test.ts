@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyEngineeringEvent, hydrateEngineeringRun, newEngineeringProjection } from './engineeringRunProjection';
+import { applyEngineeringEvent, hydrateEngineeringRun, newEngineeringProjection, parseEngineeringSnapshot } from './engineeringRunProjection';
 import type { EngineeringEvent, EngineeringRunSnapshot } from '@/services/api.types';
 export function snapshot(last_seq = 0): EngineeringRunSnapshot {
   return { session_id: 'r1', run_id: 'r1', engine_version: 'engineering_v2', workspace: '/work', workflow: 'direct', role: 'director', status: 'running', active_roles: [], roles: { pm: 'not_called', chief_engineer: 'not_called', director: 'not_called', qa: 'not_called' }, text: '', verification: 'not_run', checks: [], required_checks: [], permission_profile_id: 'none', resource_url: '/v2/engineering/runs/r1', last_seq, events: [] };
@@ -9,6 +9,16 @@ function event(seq: number, kind: string, payload: Record<string, unknown> = {},
 }
 function base() { return hydrateEngineeringRun(newEngineeringProjection('/work', 'r1'), snapshot()); }
 describe('engineeringRunProjection', () => {
+  it('preserves optional QA and outcome facts independently from checks and completion', () => {
+    const saved = { ...snapshot(), status: 'completed', verification: 'passed', require_qa: true, qa_verdict: 'not_run', project_outcome: 'not_accepted' };
+    expect(parseEngineeringSnapshot(saved)).toMatchObject({ verification: 'passed', qa_verdict: 'not_run', project_outcome: 'not_accepted' });
+    const state = applyEngineeringEvent(base(), event(1, 'run_updated', saved));
+    expect(state.snapshot).toMatchObject({ qa_verdict: 'not_run', project_outcome: 'not_accepted' });
+    expect(parseEngineeringSnapshot(snapshot())).not.toHaveProperty('project_outcome');
+  });
+  it.each([{ qa_verdict: 'passed' }, { project_outcome: 'completed' }, { require_qa: 'true' }, { acceptance_basis: 'inferred' }])('rejects unsupported QA/outcome state %o', (invalid) => {
+    expect(() => parseEngineeringSnapshot({ ...snapshot(), ...invalid })).toThrow(/QA|outcome/);
+  });
   it('requests one owner snapshot for an oversized state marker without partially folding checks', () => {
     const state = applyEngineeringEvent(base(), event(2, 'run_updated', { snapshot_required: true, payload_omitted: true, checks_count: 2000, reason: 'required_projection_exceeds_transport_budget' }));
     expect(state.snapshotRequiredSeq).toBe(2);

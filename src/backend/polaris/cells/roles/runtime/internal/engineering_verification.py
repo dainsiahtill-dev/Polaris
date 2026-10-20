@@ -61,33 +61,61 @@ class EngineeringVerification:
         )
 
     def _validate_outputs(self, roots: tuple[Path, ...]) -> tuple[Path, ...]:
+        return self.validate_declarations(
+            self.workspace, roots, write_roots=self.scope.write_roots, require_exists=True
+        )
+
+    @staticmethod
+    def validate_declarations(
+        workspace: Path,
+        roots: tuple[Path, ...],
+        *,
+        write_roots: tuple[Path, ...] | None = None,
+        require_exists: bool = False,
+    ) -> tuple[Path, ...]:
+        """Validate exact future host grants without mkdir or following links."""
         outputs: set[Path] = set()
         for supplied in roots:
             try:
                 candidate = Path(supplied).expanduser().absolute()
-                target = candidate.resolve(strict=True)
+                target = candidate.resolve(strict=require_exists)
                 if (
-                    target == self.workspace
-                    or not target.is_relative_to(self.workspace)
-                    or target.is_relative_to(self.workspace / ".polaris")
-                    or not target.is_dir()
+                    target == workspace
+                    or not target.is_relative_to(workspace)
+                    or target.is_relative_to(workspace / ".polaris")
+                    or (target.exists() and not target.is_dir())
+                    or (require_exists and not target.is_dir())
                     or candidate != target
                 ):
                     raise ValueError("verification output must be a real workspace-local directory below source root")
-                current = self.workspace
-                for part in target.relative_to(self.workspace).parts:
+                current = workspace
+                for part in target.relative_to(workspace).parts:
                     current /= part
                     if current.is_symlink():
                         raise ValueError("verification output cannot traverse symlinks")
-                grants = [Path(root).expanduser().absolute() for root in self.scope.write_roots]
-                if any(grant != grant.resolve(strict=True) for grant in grants):
-                    raise ValueError("verification output original authority cannot traverse symlinks")
-                if not any(target.is_relative_to(grant) for grant in grants):
-                    raise ValueError("verification output exceeds original write authority")
+                if write_roots is not None:
+                    grants = [Path(root).expanduser().absolute() for root in write_roots]
+                    if any(grant != grant.resolve(strict=True) for grant in grants):
+                        raise ValueError("verification output original authority cannot traverse symlinks")
+                    if not any(target.is_relative_to(grant) for grant in grants):
+                        raise ValueError("verification output exceeds original write authority")
                 outputs.add(target)
             except (OSError, RuntimeError) as error:
                 raise ValueError(f"verification output is unavailable: {supplied}") from error
         return tuple(sorted(outputs))
+
+    def review_binding(self, session_id: str) -> dict[str, object]:
+        """Host observations bind a review to exact current inputs, never model IDs."""
+        row = self.store.load_run(session_id, workspace=self.workspace)
+        completed = [event for event in self.store.load_events(session_id) if event["kind"] == "verification_completed"]
+        return {
+            "workspace_revision": row["workspace_revision"],
+            "verification_seq": completed[-1]["seq"] if completed else 0,
+            "required_checks": row["required_checks"],
+            "scope": row["scope"],
+            "profile": self._profile(),
+            "inputs": self._manifest(include_outputs=True),
+        }
 
     def _profile(self) -> dict[str, object]:
         return {

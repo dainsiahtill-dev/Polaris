@@ -546,3 +546,61 @@ async def test_legacy_structured_adapter_incomplete_json_never_becomes_executabl
     assert errors
     evidence = [event.meta for event in errors if event.meta and "interrupted_tool_calls" in event.meta]
     assert [call["call_id"] for call in evidence[0]["interrupted_tool_calls"]] == _IDS
+
+
+@pytest.mark.parametrize("remaining", [None, 5400.0, 30.0])
+async def test_role_callers_pass_host_deadline_without_overriding_provider_timeout(
+    remaining: float | None, tmp_path: Path
+) -> None:
+    import asyncio
+    import time
+
+    from polaris.cells.roles.runtime.internal.engineering_loop import run_engineering_loop
+    from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RoleRunCommand, RunLimits
+    from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
+    from polaris.kernelone.llm.engine.contracts import AIResponse
+    from polaris.kernelone.llm.engine.invocation_budget import get_provider_invocation_budget
+
+    observations: list[tuple[dict[str, Any], float | None]] = []
+
+    class CaptureClient:
+        async def invoke(self, request: AIRequest) -> AIResponse:
+            budget = get_provider_invocation_budget()
+            observations.append((request.options, budget.remaining() if budget is not None else None))
+            return AIResponse.success(
+                output="Read-only final answer.",
+                raw={
+                    "choices": [
+                        {
+                            "message": {"role": "assistant", "content": "Read-only final answer."},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                },
+            )
+
+    limits = RunLimits(time.time() + remaining if remaining is not None else None, 100_000, 16_000)
+    client = CaptureClient()
+    service = EngineeringRunService(tmp_path, client=client)  # type: ignore[arg-type]
+    assert (await service.chat_role("director", "Discuss the budget.", limits=limits)).ok
+    scope = PermissionScope((tmp_path,), (), frozenset(), False)
+    command = RoleRunCommand("budget-producer", "director", "Discuss the budget.", tmp_path)
+    store = EngineeringSessionStore(tmp_path)
+    store.create_run(command, scope=scope, limits=limits, engine_version="engineering_v2", request_key=None)
+    result = await run_engineering_loop(
+        command,
+        scope=scope,
+        limits=limits,
+        cancel=asyncio.Event(),
+        store=store,
+        client=client,  # type: ignore[arg-type]
+    )
+    assert result.status == "completed"
+    assert len(observations) == 2
+    for options, cap in observations:
+        assert "timeout" not in options
+        if remaining is None:
+            assert cap is None
+        else:
+            assert cap is not None and remaining - 2 < cap <= remaining

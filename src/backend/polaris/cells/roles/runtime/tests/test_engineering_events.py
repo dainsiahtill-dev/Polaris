@@ -89,7 +89,7 @@ def _actual_typescript_fold(workspace: Path, fixture: dict[str, Any]) -> dict[st
         "const event=p.engineeringEventFromMessage(f.event);const live=p.applyEngineeringEvent(base,event);\n"
         "const cold=p.hydrateEngineeringRun(p.newEngineeringProjection(f.after.workspace,f.after.session_id),f.after);\n"
         "const duplicate=p.applyEngineeringEvent(live,event);const recovered=p.hydrateEngineeringRun(live,f.after);\n"
-        "console.log(JSON.stringify({eventParsed:!!event,liveError:live.error,liveStatus:live.snapshot.status,liveVerification:live.snapshot.verification,liveChecks:live.snapshot.checks.length,liveRequired:live.snapshot.required_checks.length,liveFailed:live.snapshot.checks.filter(c=>!c.ok&&c.exit_code===1).length,coldError:cold.error,coldStatus:cold.snapshot.status,coldChecks:cold.snapshot.checks.length,coldRequired:cold.snapshot.required_checks.length,snapshotRequiredSeq:live.snapshotRequiredSeq??null,duplicateSnapshotRequiredSeq:duplicate.snapshotRequiredSeq??null,recoveredStatus:recovered.snapshot.status,recoveredChecks:recovered.snapshot.checks.length,recoveredSnapshotRequiredSeq:recovered.snapshotRequiredSeq??null}));\n",
+        "console.log(JSON.stringify({eventParsed:!!event,liveError:live.error,liveStatus:live.snapshot.status,liveVerification:live.snapshot.verification,liveQa:live.snapshot.qa_verdict,liveOutcome:live.snapshot.project_outcome,liveBasis:live.snapshot.acceptance_basis,liveRequireQa:live.snapshot.require_qa,liveChecks:live.snapshot.checks.length,liveRequired:live.snapshot.required_checks.length,liveFailed:live.snapshot.checks.filter(c=>!c.ok&&c.exit_code===1).length,coldError:cold.error,coldStatus:cold.snapshot.status,coldChecks:cold.snapshot.checks.length,coldRequired:cold.snapshot.required_checks.length,snapshotRequiredSeq:live.snapshotRequiredSeq??null,duplicateSnapshotRequiredSeq:duplicate.snapshotRequiredSeq??null,recoveredStatus:recovered.snapshot.status,recoveredChecks:recovered.snapshot.checks.length,recoveredSnapshotRequiredSeq:recovered.snapshotRequiredSeq??null}));\n",
         encoding="utf-8",
     )
     result = subprocess.run(
@@ -629,3 +629,55 @@ async def test_real_private_jetstream_ack_reconnect_and_workspace_filter(
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=3)
+
+
+@pytest.mark.parametrize(
+    ("required", "verdict", "outcome", "basis"),
+    [
+        (True, "approved", "accepted", "independent_qa"),
+        (True, "unknown", "unknown", None),
+        (False, "not_run", "accepted", "checks_only"),
+    ],
+)
+def test_oversize_live_projection_preserves_authoritative_qa_outcome_facts(
+    isolated_workspace: Path,
+    required: bool,
+    verdict: str,
+    outcome: str,
+    basis: str | None,
+) -> None:
+    from polaris.delivery.ws.engineering_events import compact_engineering_payload
+
+    fixture = _oversize_fixture(isolated_workspace, 20, "actual failure " + "x" * 5000)
+    facts = {"require_qa": required, "qa_verdict": verdict, "project_outcome": outcome, "acceptance_basis": basis}
+    fixture["after"].update(facts)
+    fixture["after"].update(status="completed" if outcome == "accepted" else "interrupted", verification="passed")
+    for check in fixture["after"]["checks"]:
+        check.update(ok=True, exit_code=0)
+    raw = {
+        key: value
+        for key, value in fixture["after"].items()
+        if key
+        not in {
+            "events",
+            "last_seq",
+            "workspace",
+            "session_id",
+            "run_id",
+            "engine_version",
+            "resource_url",
+            "permission_profile_id",
+            "event_delivery_error",
+            "native_observation_error",
+        }
+    }
+    fixture["event"]["payload"]["payload"] = compact_engineering_payload("run_updated", raw)
+    result = _actual_typescript_fold(isolated_workspace, fixture)
+    assert result["liveError"] is None, result
+    assert (result["liveRequireQa"], result["liveQa"], result["liveOutcome"], result["liveBasis"]) == (
+        required,
+        verdict,
+        outcome,
+        basis,
+    )
+    assert result["liveChecks"] == result["coldChecks"] == 20

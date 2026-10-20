@@ -20,12 +20,17 @@ from polaris.cells.roles.runtime.public.engineering_service import (
 )
 
 
-def _roots(workspace: Path, configured: tuple[str, ...]) -> tuple[Path, ...]:
+def _roots(workspace: Path, configured: tuple[str, ...], *, future_outputs: bool = False) -> tuple[Path, ...]:
     roots: list[Path] = []
     for raw in configured:
         if not raw.strip():
             raise ValueError("engineering profile roots must be non-empty directory paths")
         path = Path(raw).expanduser()
+        if future_outputs:
+            # The public service validates these exact host declarations. It
+            # never creates them; Director must materialize them with tools.
+            roots.append((workspace / path).absolute() if not path.is_absolute() else path.absolute())
+            continue
         path = (workspace / path).resolve(strict=True) if not path.is_absolute() else path.resolve(strict=True)
         if not path.is_dir():
             raise ValueError(f"engineering profile root is not a directory: {path}")
@@ -40,7 +45,16 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
     profile = settings.server.engineering_permission_profiles.get(profile_id)
     if profile is None:
         raise PermissionError(f"engineering permission profile is unavailable: {profile_id}")
-    supported = {"read_file", "repo_tree", "repo_rg", "write_file", "edit_file", "execute_command", "consult_role"}
+    supported = {
+        "read_file",
+        "repo_tree",
+        "repo_rg",
+        "write_file",
+        "edit_file",
+        "execute_command",
+        "consult_role",
+        "report_review",
+    }
     tools = frozenset(ToolSpecRegistry.get_canonical(name) for name in profile.enabled_tools)
     if tools - supported:
         raise ValueError("engineering profile contains unsupported tools: " + ", ".join(sorted(tools - supported)))
@@ -88,7 +102,10 @@ def create_engineering_service(
     return EngineeringRunService(
         workspace,
         permission_resolver=current_profile,
-        writable_output_roots=_roots(workspace, settings.server.engineering_verification_output_roots),
+        writable_output_roots=_roots(
+            workspace, settings.server.engineering_verification_output_roots, future_outputs=True
+        ),
+        require_qa=settings.server.engineering_require_qa,
         event_publisher=publish_engineering_event if settings.nats.enabled else None,
     )
 
@@ -151,6 +168,10 @@ def observe_engineering_run(service: EngineeringRunService, session_id: str, wor
         "roles": roles,
         "text": row["text"],
         "verification": row["verification"],
+        "require_qa": row["require_qa"],
+        "qa_verdict": row["qa_verdict"],
+        "project_outcome": row["project_outcome"],
+        "acceptance_basis": row["acceptance_basis"],
         "checks": row["checks"],
         "required_checks": row["required_checks"],
         "permission_profile_id": row.get("permission_profile_id"),

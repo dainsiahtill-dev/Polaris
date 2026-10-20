@@ -15,6 +15,8 @@ export function parseEngineeringSnapshot(value: unknown): EngineeringRunSnapshot
     throw new Error('Engineering snapshot watermark unavailable');
   if (!RUN_STATES.has(String(value.status)) || !VERIFICATION.has(String(value.verification)) || !ENGINEERING_ROLES.includes(value.role as EngineeringRole) || !['direct', 'collaborative'].includes(String(value.workflow)))
     throw new Error('Unsupported engineering run state');
+  if (value.require_qa !== undefined && typeof value.require_qa !== 'boolean' || value.qa_verdict !== undefined && !['not_run', 'approved', 'rejected', 'unknown'].includes(String(value.qa_verdict)) || value.project_outcome !== undefined && !['not_accepted', 'accepted', 'rejected', 'unknown'].includes(String(value.project_outcome)) || value.acceptance_basis !== undefined && value.acceptance_basis !== null && !['checks_only', 'independent_qa'].includes(String(value.acceptance_basis)))
+    throw new Error('Engineering QA/outcome state unavailable');
   if (!record(value.roles) || ENGINEERING_ROLES.some((role) => !ROLE_STATES.has(String((value.roles as Record<string, unknown>)[role]))))
     throw new Error('Engineering role state unavailable');
   if (!Array.isArray(value.events) || !Array.isArray(value.checks) || !Array.isArray(value.active_roles) || !Array.isArray(value.required_checks) || typeof value.text !== 'string')
