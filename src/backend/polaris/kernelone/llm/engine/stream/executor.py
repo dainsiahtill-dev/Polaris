@@ -35,6 +35,7 @@ from .._executor_base import (
     planning_output_budget_error,
     provider_type_policy_error,
     resolve_provider_model,
+    resolve_request_messages,
     resolve_requested_output_tokens,
     safe_observability_payload,
 )
@@ -525,12 +526,19 @@ class StreamExecutor:
         except (AttributeError, TypeError, ValueError) as exc:
             logger.debug("[stream-executor] tool argument audit emission failed: %s", exc)
 
-    def _finalize_stream_tool_call(self, accumulator: _ToolCallAccumulator) -> dict[str, Any] | None:
+    def _finalize_stream_tool_call(
+        self, accumulator: _ToolCallAccumulator, *, allow_lenient_repair: bool = True
+    ) -> dict[str, Any] | None:
         # End-of-stream flush is the ONLY emission point for legitimately
         # empty-argument tool calls (ADR-0090 I1): mid-stream an empty dict is
         # always a provisional placeholder awaiting argument deltas.
         payload = self._build_stream_tool_payload(accumulator, allow_provisional_empty_arguments=True)
-        if payload is None and accumulator.tool_name.strip() and accumulator.arguments_buffer.strip():
+        if (
+            allow_lenient_repair
+            and payload is None
+            and accumulator.tool_name.strip()
+            and accumulator.arguments_buffer.strip()
+        ):
             # Last resort at stream end (never mid-stream): the buffer is final,
             # so a bounded lenient repair of almost-valid JSON is safe (ADR-0090).
             from polaris.kernelone.llm.toolkit.parsers.lenient_json import parse_lenient_json_object
@@ -586,7 +594,8 @@ class StreamExecutor:
         provider_type: str,
     ) -> dict[str, Any] | None:
         key = _tool_accumulator_key(tool_call, ordinal)
-        self._enforce_pending_tool_calls_limit(pending_tool_calls)
+        if key not in pending_tool_calls:
+            self._enforce_pending_tool_calls_limit(pending_tool_calls)
         accumulator = pending_tool_calls.setdefault(key, _ToolCallAccumulator())
         accumulator.delta_count += 1
 
@@ -838,7 +847,7 @@ class StreamExecutor:
         if requested_output_tokens > 0:
             invoke_cfg["max_tokens"] = requested_output_tokens
 
-        early_chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
+        early_chat_messages = resolve_request_messages(request.options, request.context)
         payload_overhead = estimate_payload_overhead_tokens(invoke_cfg, early_chat_messages)
         planning_error = planning_output_budget_error(
             request.role, required_output_tokens, model_spec, overhead_tokens=payload_overhead
@@ -865,7 +874,7 @@ class StreamExecutor:
         # ADR-0090 W1.5: pass the structured message array through so chat
         # providers can preserve real role anchoring instead of flattening
         # the whole transcript into one user message.
-        chat_messages = request.context.get("chat_messages") if isinstance(request.context, dict) else None
+        chat_messages = early_chat_messages
         if budget_decision.compression_applied and budget_decision.compression is not None:
             prompt_input = budget_decision.compression.compressed_input
             clamp_prompt_text = prompt_input if isinstance(prompt_input, str) else str(prompt_input)
@@ -1343,6 +1352,42 @@ class StreamExecutor:
         stream_usage_payload: dict[str, Any] | None = None
         pending_text_kind = ""
         pending_text = ""
+        # Governed replay was buffered and terminalized by its existing owner;
+        # preserve its event order. Live native streams need their own terminal.
+        native_terminal_required = not coalesce_replayed_text and provider_type in {
+            "openai",
+            "openai_compat",
+            "anthropic",
+            "anthropic_compat",
+        }
+        anthropic_stream = "anthropic" in provider_type
+        terminal_seen = False
+        finish_reason = ""
+
+        def _interrupted_error(error: str, rejected_call: dict[str, Any] | None = None) -> AIStreamEvent:
+            event = AIStreamEvent.error_event(error)
+            event.meta = {
+                "provider": provider_type,
+                "provider_finish_reason": finish_reason,
+                "interrupted_tool_calls": [
+                    {
+                        "call_id": pending.call_id,
+                        "tool": pending.tool_name,
+                        "arguments_text": pending.arguments_buffer,
+                        "provider_meta": dict(pending.provider_meta),
+                    }
+                    for pending in pending_tool_calls.values()
+                ],
+            }
+            if rejected_call is not None:
+                event.meta["interrupted_tool_calls"].append(
+                    {
+                        "call_id": str(rejected_call.get("call_id") or ""),
+                        "tool": str(rejected_call.get("tool") or ""),
+                        "arguments_text": str(rejected_call.get("arguments_text") or ""),
+                    }
+                )
+            return event
 
         def _text_event(kind: str, text: str) -> AIStreamEvent:
             meta = {"provider": provider_type, "trace_id": trace_id}
@@ -1402,6 +1447,27 @@ class StreamExecutor:
                 if not isinstance(raw_event, dict):
                     continue
 
+                if native_terminal_required:
+                    if anthropic_stream:
+                        if raw_event.get("type") == "message_stop":
+                            terminal_seen = True
+                        delta = raw_event.get("delta")
+                        if isinstance(delta, dict) and delta.get("stop_reason") is not None:
+                            finish_reason = str(delta["stop_reason"])
+                        if raw_event.get("type") == "message" and raw_event.get("stop_reason") is not None:
+                            terminal_seen = True
+                            finish_reason = str(raw_event["stop_reason"])
+                    else:
+                        choices = raw_event.get("choices")
+                        if isinstance(choices, list):
+                            for choice in choices:
+                                if isinstance(choice, dict) and choice.get("finish_reason") is not None:
+                                    terminal_seen = True
+                                    finish_reason = str(choice["finish_reason"])
+                        if raw_event.get("type") == "response.completed":
+                            terminal_seen = True
+                            finish_reason = "stop"
+
                 decoded = adapter.decode_stream_event(raw_event)
                 if decoded is None:
                     continue
@@ -1409,7 +1475,7 @@ class StreamExecutor:
                 if decoded_error:
                     for pending_event in _flush_text():
                         yield pending_event
-                    yield AIStreamEvent.error_event(str(decoded_error))
+                    yield _interrupted_error(str(decoded_error))
                     return
                 decoded_usage = getattr(decoded, "usage", None)
                 if decoded_usage:
@@ -1453,10 +1519,20 @@ class StreamExecutor:
                         tool_call_ordinal += 1
                         tool_call_ordinals_by_key[key] = tool_call_ordinal
 
+                    if (
+                        native_terminal_required
+                        and key not in pending_tool_calls
+                        and len(pending_tool_calls) >= self.max_pending_calls
+                    ):
+                        yield _interrupted_error("native_stream_pending_tool_call_limit_exceeded", tool_call)
+                        return
+
                     emitted = self._accumulate_stream_tool_call(
                         pending_tool_calls, tool_call, ordinal=raw_tool_delta_ordinal, provider_type=provider_type
                     )
-                    if emitted is None:
+                    # Parsing a valid JSON prefix is not provider completion.
+                    # Keep native calls private until the entire turn terminates.
+                    if emitted is None or native_terminal_required:
                         continue
 
                     ordinal_for_call = tool_call_ordinals_by_key.get(key)
@@ -1473,6 +1549,11 @@ class StreamExecutor:
                             trace_id=trace_id,
                         ),
                     )
+        except (ConnectionError, OSError, RuntimeError, TimeoutError) as exc:
+            if not native_terminal_required:
+                raise
+            yield _interrupted_error(str(exc))
+            return
         finally:
             aclose = getattr(stream_iter, "aclose", None)
             if callable(aclose):
@@ -1494,8 +1575,30 @@ class StreamExecutor:
         for pending_event in _flush_text():
             yield pending_event
 
+        if native_terminal_required:
+            accepted_reasons = (
+                {"end_turn", "tool_use", "stop_sequence"}
+                if anthropic_stream
+                else {"stop", "tool_calls", "function_call"}
+            )
+            if not terminal_seen or finish_reason not in accepted_reasons:
+                yield _interrupted_error(f"native_stream_incomplete:{finish_reason or 'missing_provider_terminal'}")
+                return
+            # Validate every pending call before publishing any executable call.
+            for pending in pending_tool_calls.values():
+                try:
+                    arguments = (
+                        json.loads(pending.arguments_buffer) if pending.arguments_buffer else pending.explicit_arguments
+                    )
+                except (TypeError, ValueError):
+                    arguments = None
+                if not pending.call_id.strip() or not pending.tool_name.strip() or not isinstance(arguments, dict):
+                    yield _interrupted_error("native_stream_invalid_tool_call")
+                    return
+                pending.emitted_signature = ""
+
         for key, pending in pending_tool_calls.items():
-            emitted = self._finalize_stream_tool_call(pending)
+            emitted = self._finalize_stream_tool_call(pending, allow_lenient_repair=not native_terminal_required)
             if emitted is None:
                 continue
 

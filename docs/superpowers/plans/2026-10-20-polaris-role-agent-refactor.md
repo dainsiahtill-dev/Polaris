@@ -1,6 +1,6 @@
 # PM / CE / Director 工程主线重构 Implementation Plan
 
-> **For agentic workers:** 实施时使用 superpowers:subagent-driven-development 或 superpowers:executing-plans，逐批交付；步骤以复选框跟踪。本文件是实施计划，当前没有执行其中的生产改动或测试。
+> **For agentic workers:** 使用 superpowers:subagent-driven-development 或 superpowers:executing-plans，逐批交付；步骤以复选框跟踪。当前第 1 批技术组件已验证，其余批次未完成；组件通过不代表真实模型、完整新引擎或 Bench 交付。
 
 **Goal:** 保留角色能力，让模型用真实工具推进工程，彻底删除新运行对模型合同、候选 hash、OBL/covers 和语义修补循环的依赖。
 
@@ -125,7 +125,7 @@ SQLite 只包含 `runs`、`events`、`tool_calls` 三表；工具事件和终态
 - Modify: `src/backend/polaris/kernelone/llm/engine/executor.py`、`engine/stream/executor.py`，仅当实际 native 端口存在缺口。
 - Modify: `src/backend/polaris/kernelone/llm/toolkit/parsers/native_function.py`；`tool_execution/tool_spec_registry.py`，只修明确丢调用或归一化缺口。
 - Create: `src/backend/polaris/kernelone/process/sandbox.py`。
-- Create: `src/backend/polaris/cells/roles/runtime/tests/engineering_support.py`、`test_engineering_primitives.py`。
+- Create: `src/backend/polaris/cells/roles/runtime/tests/engineering_support.py`、`test_engineering_primitives.py`、`test_engineering_native_primitives.py`；隔离专项用例位于 `kernelone/process/tests/test_workspace_sandbox.py`。
 
 **Interfaces:**
 
@@ -135,13 +135,13 @@ SQLite 只包含 `runs`、`events`、`tool_calls` 三表；工具事件和终态
 - 每次命令创建独立 `ProcessTreeRunControl`，底层调用现有 `run_process_tree_safe`；调用方取消后仍等待真实 owner 回收。不能把进程组当 PID namespace。
 - `engineering_support.py` 提供 `scripted_provider`（loopback HTTP）、`isolated_workspace` 和 `private_sandbox` 测试 fixtures；明确这是组件替身，不是真实模型验收。
 
-- [ ] 先写 RED：OpenAI/Anthropic native 往返保留两个相同参数但不同 ID 的调用；中断流不能派发不完整调用；HTTP 错误不能变成功文本。
-- [ ] 先写 RED：文件/shell 对工作区外 sentinel、控制 SQLite、锁、symlink 目标的写入均失败；沙箱内正常写入成功；`setsid` 子进程取消后不能遗留。
-- [ ] 运行目标测试，确认失败在待修技术边界。仅补缺失的纯技术能力；不能导入旧业务内核凑通过。
-- [ ] GREEN 后核对 provider 原生 body 与真实进程收尾。平台缺少 namespace 能力时，明确不支持，不退回无隔离执行。
-- [ ] 独立复核当前技术修改与旧调用兼容后，提交本批互斥变更。
+- [x] 先写 RED：OpenAI/Anthropic native 往返保留两个相同参数但不同 ID 的调用；中断流不能派发不完整调用；HTTP 错误不能变成功文本。
+- [x] 先写 RED：文件/shell 对工作区外 sentinel、控制 SQLite、锁、symlink 目标的写入均失败；沙箱内正常写入成功；`setsid` 子进程取消后不能遗留。
+- [x] 运行目标测试，确认失败在待修技术边界。仅补缺失的纯技术能力；不能导入旧业务内核凑通过。
+- [x] GREEN 后核对 provider 原生 body 与真实进程收尾。平台缺少 namespace 能力时，明确不支持，不退回无隔离执行。
+- [x] 独立复核当前技术修改与旧调用兼容后，提交本批互斥变更。
 
-Run: `rtk proxy python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_engineering_primitives.py -q`
+Run（实施时设置 `PYTHONPATH=src/backend`）：`rtk proxy python -m pytest src/backend/polaris/cells/roles/runtime/tests/test_engineering_primitives.py src/backend/polaris/cells/roles/runtime/tests/test_engineering_native_primitives.py src/backend/polaris/kernelone/process/tests/test_workspace_sandbox.py src/backend/polaris/tests/test_process_tree.py -q`
 
 Expected: native、正常效果与拒绝/取消反例全部通过；没有 Provider/Bench 能力结论。
 
@@ -323,6 +323,14 @@ Expected: 新生产调用图没有旧准入；历史仍可读；没有无限 dua
 
 完成后必须同时交付：可运行的新默认循环、真实三角色协作、工具权限与取消恢复、真实验证/浏览器证据、相同任务比较、旧生产准入删除、规范/图谱同步。只有源码、组件测试或文档完成时，结论仍局限于对应范围。
 
-## E. 本次方案交付检查
+## E. 方案编写时的交付检查（历史）
 
 本次只进行了只读代码定位、历史证据复核、方案编写和独立设计审阅。上述新增文件、接口、测试与命令均为实施目标，未冒充已经存在或执行。没有运行新的 provider、Factory/Bench、产品测试或服务重启。
+
+## F. 实施检查点
+
+2026-10-20：第 1 批技术组件完成。主 Agent 对最终切片运行 89 项检查通过；独立审查另选取 50 个不同用例及真实效果/取消探针，11 条源码/测试 SHA 一致、未关闭发现为零。审查曾复现统一解析入口的协议重复解析和不同 ID 等参去重，两项均在 R2 修复复验。
+
+组合验证使用合成 loopback provider，经真实 HTTP/原生 codec 返回调用，再执行真实 bwrap 隔离命令、KFS fsync 日志冷读并回送实际工具结果。当前只证明 Linux/WSL2 的这组技术能力；没有远端模型、工程主循环、真进程重启恢复或 L1–L12 Bench 结论。原 R13 及更早 FAILED/UNKNOWN 保留。
+
+证据保存在独立 worktree 的 `.superpowers/sdd/2026-10-20-polaris-role-agent-refactor/`：`task1-native/`（含 R2）、`task1-sandbox/`、`task1-root-all-v2/`、`task1-independent-review/`。第 2 批从此技术切片继续，不能恢复已归档的旧内核包装原型。

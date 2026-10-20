@@ -106,26 +106,35 @@ class NativeFunctionCallingParser:
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         for call in tool_calls:
-            if call.get("type") == "function":
-                function = call.get("function", {})
-                name = _parsed_tool_name(function.get("name"))
-                if not name:
-                    continue
-                if allowed and name not in allowed:
-                    continue
-
-                args_str = _function_arguments_payload(function)
-                arguments, parse_error = cls._parse_json_arguments(args_str)
-
-                results.append(
-                    ToolCall(
-                        id=str(call.get("id") or f"openai_{len(results)}"),
-                        name=name,
-                        arguments=arguments,
-                        raw=json.dumps(call, ensure_ascii=False),
-                        parse_error=parse_error,
-                    )
+            # Mixed content arrays can contain Anthropic tool_use/text blocks.
+            # Only an OpenAI-shaped envelope belongs to this decoder; malformed
+            # function envelopes still return explicit rejection evidence.
+            if call.get("type") != "function" and "function" not in call:
+                continue
+            function = call.get("function")
+            function = function if isinstance(function, dict) else {}
+            name = _parsed_tool_name(function.get("name"))
+            call_id = str(call.get("id") or "")
+            arguments, parse_error = cls._parse_json_arguments(_function_arguments_payload(function))
+            errors = [parse_error] if parse_error else []
+            if call.get("type") != "function":
+                errors.append("unsupported native tool call type")
+            if not call_id.strip():
+                errors.append("missing native tool call id")
+            if not name:
+                errors.append("missing native tool name")
+            elif allowed and name not in allowed:
+                errors.append(f"tool not allowed: {name}")
+            results.append(
+                ToolCall(
+                    id=call_id,
+                    source="openai",
+                    name=name,
+                    arguments=arguments,
+                    raw=json.dumps(call, ensure_ascii=False),
+                    parse_error="; ".join(errors) if errors else None,
                 )
+            )
 
         return results
 
@@ -149,24 +158,28 @@ class NativeFunctionCallingParser:
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         for block in tool_calls:
-            if block.get("type") == "tool_use":
-                name = _parsed_tool_name(block.get("name"))
-                if not name:
-                    continue
-                if allowed and name not in allowed:
-                    continue
-
-                arguments, parse_error = cls._parse_json_arguments(block.get("input", {}))
-
-                results.append(
-                    ToolCall(
-                        id=str(block.get("id") or f"anthropic_{len(results)}"),
-                        name=name,
-                        arguments=arguments,
-                        raw=json.dumps(block, ensure_ascii=False),
-                        parse_error=parse_error,
-                    )
+            if block.get("type") != "tool_use":
+                continue
+            name = _parsed_tool_name(block.get("name"))
+            call_id = str(block.get("id") or "")
+            arguments, parse_error = cls._parse_json_arguments(block.get("input", {}))
+            errors = [parse_error] if parse_error else []
+            if not call_id.strip():
+                errors.append("missing native tool call id")
+            if not name:
+                errors.append("missing native tool name")
+            elif allowed and name not in allowed:
+                errors.append(f"tool not allowed: {name}")
+            results.append(
+                ToolCall(
+                    id=call_id,
+                    source="anthropic",
+                    name=name,
+                    arguments=arguments,
+                    raw=json.dumps(block, ensure_ascii=False),
+                    parse_error="; ".join(errors) if errors else None,
                 )
+            )
 
         return results
 

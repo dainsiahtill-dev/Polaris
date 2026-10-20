@@ -145,6 +145,20 @@ def get_provider_config(
         return {}
 
 
+def resolve_request_messages(options: Mapping[str, Any], context: Mapping[str, Any]) -> Any:
+    """Resolve canonical native messages once, retaining legacy callers.
+
+    Explicit native input must never fall back to a flattened prompt or stale
+    context transcript when malformed.
+    """
+    if "messages" in options:
+        messages = options["messages"]
+        if not isinstance(messages, list) or not messages or not all(isinstance(item, dict) for item in messages):
+            raise RuntimeError("native_messages_nonempty_object_list_required")
+        return messages
+    return context.get("chat_messages")
+
+
 def build_invoke_config(
     provider_cfg: dict[str, Any],
     options: dict[str, Any],
