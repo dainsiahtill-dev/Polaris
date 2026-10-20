@@ -11,7 +11,6 @@ import subprocess as subprocess
 import sys as sys
 from typing import Any
 
-from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence as scan_workspace_artifact_quality_evidence,
@@ -132,9 +131,7 @@ async def _phase_quality_repair_loop(
     # progress: r14 changed one TypeScript error into multiple syntax/name
     # errors, yet the old predicate renewed the loop until the hard cap.
     stagnant_attempts = 0
-    seen_error_signatures: set[tuple[str, ...]] = {
-        _artifact_quality_error_signature(artifact_quality_errors)
-    }
+    seen_error_signatures: set[tuple[str, ...]] = {_artifact_quality_error_signature(artifact_quality_errors)}
     for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
         if not artifact_quality_errors:
             break
@@ -157,14 +154,6 @@ async def _phase_quality_repair_loop(
                 ),
             )
         )
-        if _materialization_plan_probe_requires_task_boundary_triage(deterministic_quality_summary):
-            quality_repair_summary = _materialization_task_boundary_triage_summary(
-                deterministic_quality_summary,
-                repair_attempt=repair_attempt,
-                artifact_quality_errors=artifact_quality_errors,
-            )
-            quality_repair_attempts.append(quality_repair_summary)
-            break
         if deterministic_quality_tool_results:
             tool_results.extend(deterministic_quality_tool_results)
             # DEO: plan returns deferred_request only; commit physical writes via kernel followup.
@@ -381,14 +370,6 @@ async def _phase_quality_repair_loop(
                         ),
                     )
                 )
-                if _materialization_plan_probe_requires_task_boundary_triage(deterministic_quality_summary):
-                    quality_repair_summary = _materialization_task_boundary_triage_summary(
-                        deterministic_quality_summary,
-                        repair_attempt=repair_attempt,
-                        artifact_quality_errors=artifact_quality_errors,
-                    )
-                    quality_repair_attempts.append(quality_repair_summary)
-                    break
                 if deterministic_quality_tool_results:
                     tool_results.extend(deterministic_quality_tool_results)
                     committed_writes = await _commit_deferred_materialization_quality_results(
@@ -464,81 +445,6 @@ async def _phase_quality_repair_loop(
         quality_repair_summary,
         write_tool_evidence,
     )
-
-
-def _materialization_task_boundary_triage_summary(
-    summary: dict[str, Any],
-    *,
-    repair_attempt: int,
-    artifact_quality_errors: list[str],
-) -> dict[str, Any]:
-    plan_probe = summary.get("plan_probe_preaudit")
-    plan_probe_payload = dict(plan_probe) if isinstance(plan_probe, dict) else {}
-    raw_evidence = summary.get("interface_discrepancy_evidence")
-    existing_evidence: dict[str, Any] = raw_evidence if isinstance(raw_evidence, dict) else {}
-    source_tools = [
-        str(item)
-        for item in plan_probe_payload.get(
-            "covered_unplannable_source_tools",
-            existing_evidence.get("covered_unplannable_source_tools", []),
-        )
-        if str(item or "").strip()
-    ]
-    covered_count = int(plan_probe_payload.get("covered_unplannable_diagnostic_count") or len(artifact_quality_errors))
-    coverage_gap_count = int(plan_probe_payload.get("coverage_gap_count") or 0)
-    existing_director_retry_allowed = bool(
-        existing_evidence.get("director_retry_allowed")
-        or summary.get("task_boundary_interface_discrepancy_retry_authorized")
-        or summary.get("task_boundary_director_continuation_allowed")
-    )
-    existing_metadata = existing_evidence.get("metadata")
-    receipt_metadata = dict(existing_metadata) if isinstance(existing_metadata, dict) else {}
-    receipt_metadata.update(
-        {
-            "route": "task_boundary_quality_loop",
-            "coverage_gap_count": coverage_gap_count,
-            "repair_attempt": repair_attempt,
-        }
-    )
-    receipt = DirectorInterfaceDiscrepancyReceiptV1.from_mapping(
-        {
-            **existing_evidence,
-            "task_id": str(summary.get("task_id") or summary.get("target_task_id") or "materialization-task"),
-            "source": existing_evidence.get("source") or "roles.adapters.execute_method.materialization_quality_loop",
-            "plan_probe_status": plan_probe_payload.get("status") or existing_evidence.get("plan_probe_status"),
-            "covered_unplannable_source_tools": source_tools,
-            "diagnostics": existing_evidence.get("diagnostics")
-            or [{"message": str(item)} for item in artifact_quality_errors[:20]],
-            "recommended_owner": existing_evidence.get("recommended_owner") or "chief_engineer",
-            "recommended_route": existing_evidence.get("recommended_route") or "pending_design_interface_contract",
-            "llm_fallback_blocked": not existing_director_retry_allowed,
-            "director_retry_allowed": existing_director_retry_allowed,
-            "reason": "coverage_matched_but_unplannable",
-            "metadata": receipt_metadata,
-        }
-    ).to_dict()
-    receipt.update(
-        {
-            "route": "task_boundary_quality_loop",
-            "coverage_gap_count": coverage_gap_count,
-            "covered_unplannable_diagnostic_count": covered_count,
-        }
-    )
-    return {
-        **dict(summary or {}),
-        "stage": "runtime_plan_probe_unplannable",
-        "attempted": True,
-        "attempt": repair_attempt,
-        "success": False,
-        "success_reason": "task_boundary_interface_discrepancy_required",
-        "tool_results": 0,
-        "write_tool_evidence": False,
-        "llm_fallback_blocked": not existing_director_retry_allowed,
-        "director_retry_allowed": existing_director_retry_allowed,
-        "task_boundary_interface_discrepancy_retry_authorized": existing_director_retry_allowed,
-        "residual_error_count": len(artifact_quality_errors),
-        "interface_discrepancy_evidence": receipt,
-    }
 
 
 async def _phase_semantic_quality_repair_loop(
@@ -675,7 +581,6 @@ from ..quality_gate import (  # noqa: E402
     _collect_step_verify_errors as _collect_step_verify_errors,
     _collect_workspace_code_diff as _collect_workspace_code_diff,
     _extract_successful_write_paths as _extract_successful_write_paths,
-    _materialization_plan_probe_requires_task_boundary_triage as _materialization_plan_probe_requires_task_boundary_triage,
     _materialization_quality_scan_paths as _materialization_quality_scan_paths,
     _merge_successful_write_paths as _merge_successful_write_paths,
     _missing_declared_target_files as _missing_declared_target_files,

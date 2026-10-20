@@ -14,6 +14,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.chief_engineer.blueprint.public import (
+    ProjectCompletionContractV1,
+    QueryProjectCompletionContractV1,
+    query_project_completion_contract,
+)
 from polaris.cells.control_plane.run_ledger.public import (
     AppendRunLedgerEventCommandV1,
     AppendToolCallLifecycleEventCommandV1,
@@ -21,9 +26,12 @@ from polaris.cells.control_plane.run_ledger.public import (
     append_tool_call_lifecycle_event,
     build_verified_existing_artifact_lifecycle_receipt,
     evaluate_task_boundary_verdict,
+    stable_hash,
 )
+from polaris.cells.events.fact_stream.public import FactStreamQueryResultV1, QueryFactEventsV1, query_fact_events
 from polaris.cells.runtime.execution_broker.public import (
     RecordProjectArtifactCommandV1,
+    project_verification as broker,
     record_project_artifact,
 )
 from polaris.cells.runtime.task_runtime.public import (
@@ -35,6 +43,7 @@ from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
     scan_workspace_artifact_quality_evidence as scan_workspace_artifact_quality_evidence,
 )
+from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
 
 from ..helpers import (
     _DEFAULT_TASK_LEASE_TTL_SECONDS,
@@ -145,16 +154,15 @@ def _append_receipt_bound_preflight_task_boundary(
     context: Mapping[str, Any],
     target_task_id: str,
     run_id: str,
-    finalize_result: Mapping[str, Any],
+    authority: TaskRuntimeExecutionAttemptAuthorityV1 | None,
     receipt_evidence: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Commit the successful boundary fact for a no-write, receipt-bound retry.
+    """Prove the claimed CE slice before provider-less completion can settle.
 
-    Provider turns append their own TaskBoundary verdict.  A Director retry
-    that completes entirely in existing-scope preflight has no provider turn,
-    so without this projection an older ``mutation_bypass_blocked`` verdict
-    remains latest even after TaskRuntime settles completed.  Only exact,
-    byte-current ProjectArtifactReceiptV1 evidence may close that gap.
+    Artifact receipts alone cannot prove required verification. Read existing
+    owners, preserve each obligation ID (even equal commands), and publish the
+    normal boundary before the caller settles TaskRuntime. A missing or stale
+    proof leaves the claim available to the ordinary Director execution path.
     """
 
     if (
@@ -163,12 +171,23 @@ def _append_receipt_bound_preflight_task_boundary(
         or receipt_evidence.get("authority") != "runtime.execution_broker.project_artifact_receipt.v1"
     ):
         raise ValueError("receipt-bound preflight lacks current project artifact evidence")
-    identity = finalize_result.get("identity")
-    if not isinstance(identity, Mapping):
-        raise ValueError("receipt-bound preflight lacks settled TaskRuntime identity")
-    external_task_id = str(identity.get("external_task_id") or "").strip()
-    if not external_task_id:
-        raise ValueError("receipt-bound preflight lacks external task identity")
+    if type(authority) is not TaskRuntimeExecutionAttemptAuthorityV1:
+        raise ValueError("receipt-bound preflight lacks TaskRuntime authority")
+    assert authority is not None
+    snapshot = authority.snapshot()
+    identity = snapshot.identity
+    workspace = str(Path(adapter.workspace).resolve())
+    if (
+        not snapshot.success
+        or snapshot.closed
+        or identity is None
+        or identity.workspace != workspace
+        or identity.run_id != run_id
+        or str(identity.task_id) != target_task_id
+        or identity.role_id != "director"
+    ):
+        raise ValueError("receipt-bound preflight lacks a current Director claim")
+    external_task_id = identity.external_task_id
     projection = _task_completion_projection_from_context(
         context,
         target_task_id=target_task_id,
@@ -176,7 +195,142 @@ def _append_receipt_bound_preflight_task_boundary(
     if not isinstance(projection, Mapping):
         raise ValueError("receipt-bound preflight lacks task completion projection")
     if _canonical_task_owner_identity(projection.get("task_id")) != _canonical_task_owner_identity(external_task_id):
-        raise ValueError("receipt-bound preflight projection owner does not match settled task")
+        raise ValueError("receipt-bound preflight projection owner does not match claimed task")
+    token = _job_token_from_director_context(context)
+
+    def capture_claims() -> tuple[dict[str, Any], ...]:
+        records: list[dict[str, Any]] = []
+        offset = 0
+        total = None
+        while True:
+            page = query_fact_events(
+                QueryFactEventsV1(
+                    workspace=workspace,
+                    stream="task_runtime.execution",
+                    strict_integrity=True,
+                    limit=1000,
+                    offset=offset,
+                )
+            )
+            if (
+                type(page) is not FactStreamQueryResultV1
+                or (page.workspace, page.stream) != (workspace, "task_runtime.execution")
+                or (total is not None and page.total != total)
+            ):
+                raise ValueError("receipt-bound preflight claim cut changed")
+            total = page.total
+            records.extend(page.events)
+            if not page.next_offset:
+                if len(records) != total:
+                    raise ValueError("receipt-bound preflight claim cut is incomplete")
+                return tuple(records)
+            if page.next_offset <= offset:
+                raise ValueError("receipt-bound preflight claim pagination is invalid")
+            offset = page.next_offset
+
+    claims = capture_claims()
+    claim = None
+    latest = None
+    for record in claims:
+        payload = record.get("payload", {})
+        row = payload.get("task_row_snapshot", {})
+        if str(row.get("id")) != target_task_id:
+            continue
+        latest = row
+        metadata = row.get("metadata", {})
+        runtime = metadata.get("runtime_execution", {})
+        if record.get("event_type") != "claimed" or runtime.get("session_id") != identity.session_id:
+            continue
+        if (
+            record.get("source") != "runtime.task_runtime"
+            or payload.get("workspace") != workspace
+            or payload.get("run_id") != run_id
+            or payload.get("session_id") != identity.session_id
+            or payload.get("attempt") != identity.attempt
+            or row.get("workflow_run_id") != run_id
+            or any(
+                runtime.get(key) != getattr(identity, key)
+                for key in ("task_id", "external_task_id", "session_id", "attempt", "run_id", "role_id", "worker_id")
+            )
+            or metadata.get("task_completion_projection") != projection
+            or _job_token_from_director_context({"metadata": metadata}) != token
+            or payload.get("factory_run_id") != projection.get("run_id")
+            or (payload.get("project_id") or payload.get("factory_bench_project_id")) != projection.get("project_id")
+        ):
+            raise ValueError("receipt-bound preflight immutable claim does not match")
+        claim = record
+    if (
+        claim is None
+        or latest is None
+        or latest.get("status") != "in_progress"
+        or latest.get("metadata", {}).get("runtime_execution", {}).get("session_id") != identity.session_id
+        or not token
+        or not isinstance(token.get("capability_audit"), Mapping)
+        or token["capability_audit"].get("ok") is not True
+        or token["capability_audit"].get("issues")
+        or token.get("run_id") != projection.get("run_id")
+        or token.get("project_id") != projection.get("project_id")
+        or projection.get("projection_hash")
+        != stable_hash({key: value for key, value in projection.items() if key != "projection_hash"})
+    ):
+        raise ValueError("receipt-bound preflight original claim/token is unavailable")
+    contract = query_project_completion_contract(
+        QueryProjectCompletionContractV1(
+            workspace=workspace,
+            project_id=projection["project_id"],
+            run_id=projection["run_id"],
+            contract_hash=projection["project_contract_hash"],
+        )
+    )
+    if type(contract) is not ProjectCompletionContractV1 or external_task_id not in contract.covered_task_ids:
+        raise ValueError("receipt-bound preflight CE contract is invalid")
+    owned = [item for item in contract.obligations.artifacts if item.owner_task_id == external_task_id]
+    verification = [item for item in contract.obligations.verification if item.owner_task_id == external_task_id]
+    command_authorities = [item for item in contract.verification_command_authority if item.task_id == external_task_id]
+    by_hash = {item.authority_hash: item for item in command_authorities}
+    expected_scope = {
+        "schema_version": "polaris.task_completion_projection.v1",
+        "project_contract_id": contract.contract_id,
+        "project_contract_hash": contract.contract_hash,
+        "project_id": contract.project_id,
+        "run_id": contract.run_id,
+        "task_id": external_task_id,
+        "project_kind": contract.project_kind,
+        "completion_predicate_version": contract.completion_predicate_version,
+        "verifier_policy_hash": contract.verifier_policy_hash,
+        "verifier_policy_snapshot_hash": contract.verifier_policy_snapshot_hash,
+        "owned_artifacts": [item.to_dict() for item in owned],
+        "dependency_artifacts": [
+            item.to_dict()
+            for item in contract.obligations.artifacts
+            if item.obligation_id
+            in {value for obligation in verification for value in obligation.covers_obligation_ids}
+            - {owned_item.obligation_id for owned_item in owned}
+        ],
+        "owned_verification": [item.to_dict() for item in verification],
+        "owned_entrypoints": [
+            item.to_dict() for item in contract.obligations.entrypoints if item.owner_task_id == external_task_id
+        ],
+        "verification_command_authority": [item.to_dict() for item in command_authorities],
+        "verification_execution_authority": [
+            {
+                "obligation_id": item.obligation_id,
+                "owner_task_id": item.owner_task_id,
+                "modality": item.modality,
+                "command": item.command,
+                "argv": list(by_hash[item.command_authority_hash].argv),
+                "cwd": by_hash[item.command_authority_hash].cwd,
+                "command_authority_hash": item.command_authority_hash,
+                "covers_obligation_ids": list(item.covers_obligation_ids),
+            }
+            for item in verification
+            if item.applicability != "not_applicable"
+        ],
+    }
+    if any(projection.get(key) != value for key, value in expected_scope.items()) or not str(
+        projection.get("project_contract_ref") or ""
+    ).endswith("#project_completion_contract"):
+        raise ValueError("receipt-bound preflight CE scope does not match claimed projection")
     target_files = [
         str(artifact.get("path") or "").strip()
         for artifact in projection.get("owned_artifacts", ())
@@ -194,19 +348,147 @@ def _append_receipt_bound_preflight_task_boundary(
         or int(receipt_evidence.get("required_artifact_count") or 0) != len(set(target_files))
     ):
         raise ValueError("receipt-bound preflight evidence does not cover exact owned artifacts")
+    reader = WorkspaceReadSnapshot(Path(workspace))
+    artifacts = []
+    for item in owned:
+        if item.applicability != "required":
+            continue
+        query = broker.QueryProjectArtifactReceiptV1(
+            workspace=workspace,
+            project_id=contract.project_id,
+            run_id=contract.run_id,
+            completion_contract_hash=contract.contract_hash,
+            obligation_id=item.obligation_id,
+            owner_task_id=external_task_id,
+            path=item.path,
+        )
+        receipt = broker.query_project_artifact_receipt(query)
+        source = reader.read(Path(workspace) / item.path)
+        if (
+            type(receipt) is not broker.ProjectArtifactReceiptV1
+            or source.status != "readable"
+            or receipt.artifact_hash != source.content_sha256
+            or receipt.receipt_ref not in receipt_refs
+            or any(getattr(receipt, key) != getattr(query, key) for key in query.__dataclass_fields__)
+        ):
+            raise ValueError("receipt-bound preflight artifact receipt is not current")
+        artifacts.append((query, receipt))
+    required = [item for item in verification if item.applicability == "required"]
+    receipts = []
+    for item in required:
+        command = broker.authorize_project_verification_command(
+            broker.ResolveProjectVerificationAuthorityQueryV1(
+                workspace=workspace,
+                project_id=contract.project_id,
+                run_id=contract.run_id,
+                completion_contract_hash=contract.contract_hash,
+                obligation_id=item.obligation_id,
+            )
+        )
+        query = broker.QueryProjectVerificationReceiptV1(
+            **{key: getattr(command, key) for key in broker.QueryProjectVerificationReceiptV1.__dataclass_fields__}
+        )
+        receipt = broker.query_project_verification_receipt(query)
+        if (
+            type(receipt) is not broker.ProjectVerificationReceiptV1
+            or not receipt.receipt_ref
+            or not receipt.receipt_hash
+            or any(
+                getattr(receipt, key) != getattr(query, key)
+                for key in query.__dataclass_fields__
+                if key != "input_artifacts"
+            )
+            or tuple((value.obligation_id, value.path) for value in receipt.input_artifacts)
+            != tuple((value.obligation_id, value.path) for value in query.input_artifacts)
+            or command.command_authority_hash != item.command_authority_hash
+            or (command.owner_task_id, command.modality, command.argv, command.cwd)
+            != (
+                external_task_id,
+                item.modality,
+                by_hash[item.command_authority_hash].argv,
+                by_hash[item.command_authority_hash].cwd,
+            )
+        ):
+            raise ValueError("receipt-bound preflight required verifier receipt is missing or stale")
+        receipts.append((query, receipt))
+    if (
+        claims != capture_claims()
+        or reader.drift_reasons()
+        or any(broker.query_project_artifact_receipt(query) != receipt for query, receipt in artifacts)
+        or any(broker.query_project_verification_receipt(query) != receipt for query, receipt in receipts)
+    ):
+        raise ValueError("receipt-bound preflight current proof changed")
+    present = [name for name, proved in (("code", bool(artifacts)), ("command", bool(receipts))) if proved]
+    policy = token.get("gate_policy", {})
+    declared = policy.get("required_evidence_modalities", policy.get("required_modalities", []))
+    required_modalities = [name for name in declared if name in {"code", "command"}]
+    evidence_refs = [str(claim["event_id"]), *receipt_refs, *[receipt.receipt_ref for _, receipt in receipts]]
+    failed_ids = {receipt.obligation_id for _, receipt in receipts if not receipt.succeeded or receipt.exit_code != 0}
     verdict = evaluate_task_boundary_verdict(
-        workspace=str(getattr(adapter, "workspace", "") or ""),
+        workspace=workspace,
         task_id=external_task_id,
         run_id=run_id,
         target_files=target_files,
         completed_artifacts=target_files,
-        evidence_refs=receipt_refs,
+        required_verifiers=[item.command for item in required],
+        completed_verifiers=[item.command for item in required if item.obligation_id not in failed_ids],
+        failed_required_verifiers=[item.command for item in required if item.obligation_id in failed_ids],
+        required_evidence_modalities=required_modalities,
+        present_evidence_modalities=present,
+        failed_required_evidence_modalities=["command"] if failed_ids else [],
+        evidence_refs=evidence_refs,
     )
-    if verdict.ok is not True or verdict.status != "completed_verified":
-        raise RuntimeError(f"receipt-bound task boundary remained incomplete: {verdict.status}")
     project_id = str(projection.get("project_id") or "").strip()
     if not project_id:
         raise ValueError("receipt-bound preflight lacks project identity")
+    payload = verdict.to_dict()
+    basis = {
+        "source_claim_fact_event_id": claim["event_id"],
+        "source_job_token_hash": stable_hash(token),
+        "task_projection_hash": projection["projection_hash"],
+        "completion_contract_hash": contract.contract_hash,
+        "current_receipt_bindings": [
+            [receipt.obligation_id, receipt.receipt_ref, receipt.receipt_hash, receipt.input_artifact_hash]
+            for _, receipt in receipts
+        ],
+    }
+    # This is an execution result, not a new capability. Preserve the admitted
+    # token and its global QA obligations; the local gate reports proved axes.
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=workspace,
+            run_id=contract.run_id,
+            event={
+                "event_type": "gate_evaluated",
+                "stage": "workspace_validation",
+                "task_id": external_task_id,
+                "factory_run_id": contract.run_id,
+                "project_id": contract.project_id,
+                "job_token": token,
+                "gate_obligation_id": f"{contract.contract_id}:director_completion",
+                "gate_subject_kind": "task",
+                "gate_subject_id": external_task_id,
+                "gate": {
+                    "name": "workspace_validation",
+                    "ok": verdict.ok,
+                    "gate_policy": {"required_evidence_modalities": required_modalities},
+                },
+                "physical_evidence": {
+                    "modalities": {
+                        name: {
+                            "present": True,
+                            "ok": name != "command" or not failed_ids,
+                            "metadata": {"evidence_refs": evidence_refs, **basis},
+                        }
+                        for name in present
+                    },
+                    "metadata": {"source": "director.receipt_bound_preflight", "task_id": external_task_id, **basis},
+                },
+            },
+        )
+    )
+    if verdict.ok is not True or verdict.status != "completed_verified":
+        raise ValueError(f"receipt-bound task boundary remained incomplete: {verdict.status}")
     lifecycle_receipt = build_verified_existing_artifact_lifecycle_receipt(
         run_id=run_id,
         task_id=external_task_id,
@@ -214,7 +496,7 @@ def _append_receipt_bound_preflight_task_boundary(
     )
     append_tool_call_lifecycle_event(
         AppendToolCallLifecycleEventCommandV1(
-            workspace=str(getattr(adapter, "workspace", "") or ""),
+            workspace=workspace,
             run_id=run_id,
             task_id=external_task_id,
             turn_id="",
@@ -225,7 +507,6 @@ def _append_receipt_bound_preflight_task_boundary(
             ok=True,
         )
     )
-    payload = verdict.to_dict()
     append_run_ledger_event(
         AppendRunLedgerEventCommandV1(
             workspace=str(getattr(adapter, "workspace", "") or ""),
@@ -235,14 +516,15 @@ def _append_receipt_bound_preflight_task_boundary(
                 "stage": "task_boundary",
                 "task_id": external_task_id,
                 "run_id": run_id,
+                "factory_run_id": contract.run_id,
+                "project_id": project_id,
                 "task_boundary_verdict": payload,
-                "job_token": {
-                    "run_id": run_id,
-                    "task_id": external_task_id,
-                    "project_id": project_id,
-                    "capability_audit": {"ok": True, "issues": []},
-                    "gate_policy": {},
-                },
+                "task_boundary_completion_basis": basis,
+                # The boundary has child execution coordinates. This legacy
+                # envelope is identity only, with no token ID, grant or audit.
+                # The unchanged admitted capability belongs to its immutable
+                # claim and the Factory proof gate, referenced by the basis.
+                "job_token": {"run_id": run_id, "task_id": external_task_id, "project_id": project_id},
             },
         )
     )

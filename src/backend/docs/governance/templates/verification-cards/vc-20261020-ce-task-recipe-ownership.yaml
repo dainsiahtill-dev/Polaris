@@ -1,0 +1,63 @@
+id: vc-20261020-ce-task-recipe-ownership
+classification: pattern
+status: source_stop_pending_independent_review
+owner: chief_engineer.blueprint
+scope:
+  - polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py
+  - polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py
+  - polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py
+  - polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_01.py
+  - polaris/cells/chief_engineer/blueprint/public/tests/test_semantic_task_recipe_ownership.py
+  - polaris/cells/factory/pipeline/tests/test_ce_missing_task_recipe_guidance.py
+assumptions:
+  - Each semantic task needs its own validated command authority before strict per-task handoff.
+  - Another task's verifier coverage cannot supply this task's command capability.
+  - Ownership alone mandates no particular modality or required applicability; existing optional own recipes remain valid.
+design:
+  - Preserve the complete original canonical validator body under a private implementation name and keep the existing entry point.
+  - After canonical success inspect final command authorities; diagnose missing semantic task ownership before per-task generation.
+  - Combine only indisputable zero-row missing tasks with existing recipe findings; unsafe extra projection preserves the original typed rejection.
+  - Reuse structured missing-row diagnosis and exact immutable task and artifact projection; no model-supplied path or default command grants authority.
+  - Bind source_path length-two missing findings separately from unchanged strict length-three existing-row findings.
+  - Generate mixed provider schema branches for diagnosed existing IDs and fresh missing-owner IDs with their exact artifact scope.
+  - Preserve old recipe owner, applicability, covers and explicit PM commands; generic new recipes may be required or optional and still pass current profile and full normalization.
+  - Reuse existing candidate persistence, cold reads, strict task blueprint and Job Token owners without changing those downstream guards.
+  - Reuse the server-owned Factory recipe guidance in repair requests and mirror the same ownership condition in one initial-request prose clause; no retry, budget, timeout or execution-authority changes.
+pre_mortem:
+  - Adding a gate before canonical validation can hide an existing recipe or preparation error and make the same frozen candidate unrepairable.
+  - Projecting malformed artifact rows while handling a recipe rejection can mask its original typed error.
+  - A single existing-ID enum cannot express a lawful new recipe during a mixed repair.
+  - Retagging a sibling recipe, accepting arbitrary covers or weakening explicit PM bindings would cross task authority.
+verification:
+  - Signed synthetic trusted carrier and real public owner causal RED; existing optional own recipe positive.
+  - Public normalization, Factory diagnosis, emitted provider schema, real patch binding, full compose, private persistence and cold reads.
+  - Missing-only, mixed behavior and bad recipe, and existing missing environment plus missing task owner repaired atomically.
+  - Five frozen sibling recipe rows and owners preserved, strict per-task handoff and exact Job Token write/command projections.
+  - Foreign owner or covers, empty covers, reused and undiagnosed IDs, immutable field drift, stale hashes, malformed rows, explicit empty legacy authority and authenticated commands remain rejected.
+  - Actual local ExecuteRoleTaskCommand capture with canned provider and PM-cutoff characterization ports; no remote model or physical provider-request claim.
+  - Risk-related adjacent regressions and scoped Ruff, format, mypy, YAML, diff and original-validator AST equivalence checks.
+results:
+  - Public portfolio owner causal RED one failed and one passed, then GREEN; original invalid control setup is preserved separately.
+  - Factory missing-row binder causal RED then GREEN; malformed artifact plus recipe rejection causal RED then preserves the original typed failure.
+  - Final 27 focused and 186 adjacent cases passed, 213 total; configured strict mypy passed five Python files.
+  - That 213-case R1 cut is preserved; the initial-request-only R2 adds actual initial ExecuteRoleTaskCommand capture with RED then GREEN and narrow static validation.
+  - R2 initial and repair command captures passed two cases; configured strict mypy passed all six Python files, with Ruff, format, YAML and diff checks passing.
+  - Complete original canonical validator AST matches after reversing only its private implementation name; downstream guards and persistence methods remain unchanged.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r13-ce-task-recipe-implementation/implementation-plan.md
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r13-ce-task-recipe-implementation/red-owner-v2.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r13-ce-task-recipe-implementation/red-binder.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r13-ce-task-recipe-implementation/red-malformed.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r13-ce-task-recipe-implementation/related-v1.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r13-ce-task-recipe-implementation/mypy-v2.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r13-ce-task-recipe-implementation/mechanism-equivalence.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r13-ce-task-recipe-implementation/source-stop.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r13-ce-task-recipe-implementation/initial-command-red.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r13-ce-task-recipe-implementation/initial-repair-green-r2.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r13-ce-task-recipe-implementation/R2-initial-mechanism-equivalence.json
+limits:
+  - Synthetic trusted test issuer with real signatures is not a replay of the original Factory PM chain.
+  - Factory command capture is not a final physical provider request or native acceptance.
+  - Original R12 source, targets, facts, runtime and seals remain immutable; no target command, ALL, native run or main restart.
+  - No downstream task guard, Director, token, permission, snapshot capture or StageResult persistence mechanism changes.
+  - Initial and repair ExecuteRoleTaskCommand captures use explicit characterization PM/cutoff and canned provider ports; neither is a physical provider request or fresh native delivery proof.

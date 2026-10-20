@@ -1,0 +1,33 @@
+id: vc-20261020-normal-boundary-current-proof-recovery
+classification: defect
+status: verified_bounded_independent_review_pending
+owner: factory.pipeline
+scope:
+  - polaris/cells/factory/pipeline/internal/factory_materialization_impl.py
+  - polaris/cells/factory/pipeline/tests/test_normal_boundary_current_proof_recovery.py
+  - polaris/cells/factory/pipeline/tests/test_director_boundary_reprojection.py
+hypotheses:
+  - An execution-time normal verdict can retain missing or failed verifiers after a later successful repair and current Broker verification.
+  - Bare deterministic reprojection copies the previous verifier fields and cannot consume new owner receipts.
+  - The existing complete CE/claim/current-proof carrier can revalidate this normal predecessor without another owner or ledger.
+mechanism:
+  - Reuse the current-evidence revalidation carrier for recorded verification obligations as well as deferred placeholders.
+  - Authenticate the original CE task slice, immutable TaskRuntime claim and every required Broker obligation independently.
+  - Preserve current input hashes, source token binding and the existing locked canonical predecessor CAS.
+  - Keep artifact-only legacy reprojection and rejection of missing, denied or stale current proof.
+  - Persist the complete normal successor while retaining the failed predecessor and make cold replay append no facts.
+verification:
+  - The independent real-owner private module counterexample had 13 artifacts and five current authenticated verifier bindings, with execution already completed.
+  - The original recovery selected a bare command, returned no_change and remained required_verifier_missing.
+  - Fixtures use real public CE persistence, TaskRuntime settlement, Broker verification receipts and Ledger cold reads with an explicitly synthetic test authority port.
+  - No provider or native delivery qualification, target repair, receipt fabrication or capability grant is asserted.
+  - Four focused cases passed, including current per-ID proof, cold idempotence, immutable failed history, stale inputs, denied owner and a missing obligation read.
+  - Nine existing deferred and legacy adjacent cases passed; the one old mocked verifier case was migrated to reject without a CE/current-proof owner and passed separately.
+  - The mocked legacy run now supplies its real metadata field; it no longer expects an authoritative refresh from missing owner evidence.
+  - Ruff, format, configured mypy on three Python files, scoped diff and YAML checks passed.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r09-build-feedback-owner-independent/first-counterexample.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r09-normal-boundary-current-proof-fix/manifest-and-red.json
+remaining:
+  - The existing authority port in these module fixtures is synthetic; fresh native delivery remains unproven.
+  - Original R08 remains FAILED with its immutable facts, artifacts and receipts unchanged.

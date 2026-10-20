@@ -1,0 +1,45 @@
+id: vc-20261019-file-prewrite-negative-settlement
+classification: one_off
+status: component_verified_independent_review_native_pending
+owner: runtime.task_runtime
+problem: File prewrite failures were consumed as command failures, and native argument hashes were compared to normalized arguments.
+assumptions:
+  - A generic failed result, DEAD_LETTER state, error text or unchanged current bytes cannot establish NoEffect.
+  - The actual frozen KernelOne prewrite rejection is produced before writing and carries independently computed actual argument and file hashes.
+  - Native envelope hashes, normalized argument hashes and prospective operation context hashes are separate namespaces.
+  - Resource closure and delivery acceptance remain separate outcomes.
+design:
+  - Consume the exact KernelOne type only after the bound one-use fence, then validate target, prepared baseline, actual input and context bindings.
+  - Persist serialized proof in existing immutable role outcomes and existing recovery and resolution evidence digests.
+  - Restore only inside the strict TaskRuntime operation, inventory, parent and terminal owner chain.
+  - Validate native_arguments against the native envelope and replay normalization from the retained ToolSpec snapshot.
+  - Recompute normalized operation identity against the admitted member; never recapture historical ToolSpecs.
+  - Keep positive process exit codes exclusive to process failures and permit no fabricated file exit code.
+  - Keep generic file errors, partial I/O, exceptions and unproven no-op assertions in recovery with UNKNOWN closure.
+  - Count independently proven terminal negatives separately from reads and positive mutation receipts.
+  - A completed owner may retain a fully validated typed file rejection before a later legal mutation; legacy process failures retain failed-owner requirements.
+evidence:
+  - Exact original R04 cold owner query reproduces barrier bd84a96af775a42e641ef29769f99ccdd0a43bdceec4ee6338e40b904c01184e.
+  - All213 sealed wire files matched and all1240 original workspace files remained unchanged.
+  - RED real canonical and alias file producer cases failed physical_result_failed versus file_prewrite_rejected.
+  - RED resource count case expected no positive effect obligation after an authenticated terminal negative.
+  - Initial focused producer and existing process-negative check passed19 tests.
+  - Extended new scoped tests passed13 including same-owner bad-to-good receipt liveness and generic/partial-I/O UNKNOWN controls.
+  - A independent real completed-owner continuation and the same regression case first reproduced negative_effect_requires_failed_owner; only validated typed file proof receives the completed-owner branch.
+  - Final scoped30 tests passed, including the same completed-owner continuation regression and existing real process-negative controls.
+  - Repository-configured mypy passed all6 owned Python files; Ruff, format, diff and YAML validation passed.
+  - Independent cold reread and original R04 preservation are recorded separately in source STOP evidence.
+pre_mortem:
+  - A copied context hash cannot prove actual physical arguments; use the producer-computed dedicated argument hash namespace.
+  - A JSON dictionary resembling the proof type cannot obtain live producer authority.
+  - Historical R04 has no trusted typed prewrite proof and must retain UNKNOWN.
+  - NoEffect does not grant writes, count as a mutation, qualify QA or turn failed delivery into success.
+verification:
+  - Real private TaskRuntime admit and claim, real Director physical producer, public immutable outcome, failed settlement and cold closure.
+  - Native aliases, forged native and normalized hashes, frozen snapshot corruption, mismatched target and proof context.
+  - Generic failed result, lookalike dictionary, partial I/O and forged live proof remain unresolved.
+  - Same owner continues from typed failed NoEffect into a later legal edit and real committed mutation receipt.
+  - Scoped producer, barrier, adjacent process tests and Ruff, format, mypy and YAML validation before source STOP.
+remaining:
+  - Fresh native execution and delivery qualification are pending root candidate integration.
+  - Original R04 workspace lease and logical release remain UNKNOWN; no facts or receipts are backfilled.

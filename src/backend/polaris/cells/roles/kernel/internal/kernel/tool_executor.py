@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from copy import deepcopy
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.kernel.error_handler import (
@@ -166,6 +167,30 @@ def derive_role_turn_capability_scope(request: RoleTurnRequest) -> tuple[str, ..
     Only request metadata/context_override are considered. Model-supplied tool
     arguments are intentionally ignored here and cannot expand this scope later.
     """
+    token, _explicit = _selected_role_turn_capability_token(request)
+    if token:
+        # The selected token is the write ceiling. Required outputs and read
+        # paths cannot confer write rights; an explicit empty list stays empty.
+        write_keys = (
+            "allowed_write_paths",
+            "authorized_write_paths",
+            "capability_scope",
+            "allowed_scope",
+            "allowed_scope_paths",
+        )
+        ceiling: tuple[str, ...] = ()
+        for key in write_keys:
+            if key in token:
+                ceiling = _normalized_write_scope(token[key])
+                break
+        for constraint_mapping in _capability_authority_mappings(request):
+            # Explicit request write constraints can narrow the token. Planning
+            # target_files and read/lookup projections cannot widen or replace it.
+            for key in write_keys:
+                if key in constraint_mapping:
+                    ceiling = _intersect_write_scopes(ceiling, _normalized_write_scope(constraint_mapping[key]))
+        return ceiling or (_NO_AUTHORIZED_SCOPE_SENTINEL,)
+
     candidates: list[str] = []
     saw_scope_source = False
     for container in (getattr(request, "metadata", None), getattr(request, "context_override", None)):
@@ -231,6 +256,42 @@ def _capability_authority_mappings(request: RoleTurnRequest) -> list[dict[str, A
     return [*roots, *nested]
 
 
+def _selected_role_turn_capability_token(request: RoleTurnRequest) -> tuple[dict[str, Any], bool]:
+    """Use the existing explicit-token-before-envelope precedence everywhere."""
+    mappings = _capability_authority_mappings(request)
+    for mapping in mappings:
+        token = _explicit_capability_token_mapping(mapping)
+        if str(token.get("token_id") or "").strip():
+            return token, True
+    for mapping in mappings:
+        token = _execution_envelope_capability_token(mapping)
+        if str(token.get("token_id") or "").strip():
+            return token, False
+    return {}, False
+
+
+def _normalized_write_scope(paths: Any) -> tuple[str, ...]:
+    """Normalize flat write grants without interpreting nested context hints."""
+    if isinstance(paths, str):
+        paths = [paths]
+    if not isinstance(paths, (list, tuple, set)) or any(not isinstance(path, str) for path in paths):
+        return ()
+    return tuple(dict.fromkeys(path for value in paths if (path := _normalize_scope_path(value))))
+
+
+def _intersect_write_scopes(ceiling: tuple[str, ...], constraint: tuple[str, ...]) -> tuple[str, ...]:
+    # Inputs already passed the one existing path normalizer. Compute the
+    # narrower component range; no filesystem access or new path grammar.
+    narrowed: list[str] = []
+    for allowed in ceiling:
+        for requested in constraint:
+            if allowed in {"*", "**"} or PurePosixPath(requested).is_relative_to(allowed):
+                narrowed.append(requested)
+            elif requested in {"*", "**"} or PurePosixPath(allowed).is_relative_to(requested):
+                narrowed.append(allowed)
+    return tuple(dict.fromkeys(narrowed))
+
+
 def _hash_ref_value(value: Any) -> str:
     mapping = _mapping_from_value(value)
     if mapping is None:
@@ -265,7 +326,7 @@ def _execution_envelope_capability_token(mapping: dict[str, Any]) -> dict[str, A
             "blueprint_hash": _hash_ref_value(envelope.get("ce_blueprint")),
             "execution_envelope_hash": envelope_hash,
             "allowed_paths": authorization.get("allowed_read_paths") or authorization.get("target_files") or (),
-            "allowed_write_paths": authorization.get("allowed_write_paths") or authorization.get("target_files") or (),
+            "allowed_write_paths": authorization.get("allowed_write_paths", authorization.get("target_files", ())),
             "target_files": authorization.get("target_files") or (),
             "allowed_commands": authorization.get("allowed_commands") or (),
             "capability_audit": {"ok": bool(handoff_decision.get("allowed"))},
@@ -312,37 +373,29 @@ def derive_role_turn_capability_token(
     """Derive immutable Job Token evidence for tool receipts."""
 
     authority_mappings = _capability_authority_mappings(request)
-    # A committed JobToken is authoritative.  The execution envelope contains
-    # only a capability reference and must never shadow the full token merely
-    # because it happens to live at a shallower context level.
-    for mapping in authority_mappings:
-        token = _explicit_capability_token_mapping(mapping)
-        evidence = _job_token_evidence(token, capability_scope)
-        if evidence:
-            from polaris.cells.roles.kernel.internal.kernel.verification_command_scope import (
-                derive_bound_verification_command_scope,
-            )
+    token, explicit = _selected_role_turn_capability_token(request)
+    evidence = _job_token_evidence(token, capability_scope)
+    if not evidence or not explicit:
+        return evidence
+    from polaris.cells.roles.kernel.internal.kernel.verification_command_scope import (
+        derive_bound_verification_command_scope,
+    )
 
-            command_scope = derive_bound_verification_command_scope(
-                token=token,
-                task_id=str(request.task_id or ""),
-                authority_mappings=authority_mappings,
-            )
-            if command_scope is not None:
-                evidence["verification_command_scope"] = command_scope
-                evidence["allowed_commands"] = list(dict.fromkeys(row["command"] for row in command_scope))
-            if not evidence.get("execution_envelope_hash"):
-                for envelope_mapping in authority_mappings:
-                    envelope_hash = str(envelope_mapping.get("execution_envelope_hash") or "").strip()
-                    if envelope_hash:
-                        evidence["execution_envelope_hash"] = envelope_hash
-                        break
-            return evidence
-    for mapping in authority_mappings:
-        evidence = _job_token_evidence(_execution_envelope_capability_token(mapping), capability_scope)
-        if evidence:
-            return evidence
-    return {}
+    command_scope = derive_bound_verification_command_scope(
+        token=token,
+        task_id=str(request.task_id or ""),
+        authority_mappings=authority_mappings,
+    )
+    if command_scope is not None:
+        evidence["verification_command_scope"] = command_scope
+        evidence["allowed_commands"] = list(dict.fromkeys(row["command"] for row in command_scope))
+    if not evidence.get("execution_envelope_hash"):
+        for envelope_mapping in authority_mappings:
+            envelope_hash = str(envelope_mapping.get("execution_envelope_hash") or "").strip()
+            if envelope_hash:
+                evidence["execution_envelope_hash"] = envelope_hash
+                break
+    return evidence
 
 
 class KernelToolExecutor:

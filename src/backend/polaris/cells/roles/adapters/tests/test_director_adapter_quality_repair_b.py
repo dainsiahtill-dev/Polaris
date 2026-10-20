@@ -60,7 +60,6 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _extract_task_target_path_candidates,
     _finalize_claimed_execution,
     _handle_claim_required,
-    _materialization_task_boundary_triage_summary,
     _no_write_materialization_retry_needed,
     _no_write_materialization_retry_tool_definitions,
     _pin_file_schema_to_declared_targets,
@@ -86,9 +85,6 @@ from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _build_materialization_quality_workspace_evidence_context,
     _extract_task_interface_contract,
     _go_runtime_smoke_repair_target_files,
-    _materialization_interface_discrepancy_evidence,
-    _materialization_interface_discrepancy_retry_authorized,
-    _materialization_plan_probe_requires_task_boundary_triage,
     _quality_repair_edit_file_tool_definition,
     _quality_repair_execute_command_tool_definition,
     _quality_repair_write_file_tool_definition,
@@ -207,6 +203,7 @@ from ._execution_attempt_helpers import (
     _test_execution_attempt,
     _test_execution_attempt_context,
 )
+
 
 def _install_test_deferred_projection(
     monkeypatch: pytest.MonkeyPatch,
@@ -1753,7 +1750,7 @@ class TestQualityRepairMissingTargetContractB:
 
         (tmp_path / "app").mkdir()
         (tmp_path / "app" / "main.cpp").write_text(
-            'int main(int argc, char**) { return argc > 1 ? 0 : 1; }\n',
+            "int main(int argc, char**) { return argc > 1 ? 0 : 1; }\n",
             encoding="utf-8",
         )
         (tmp_path / "src").mkdir()
@@ -1855,7 +1852,7 @@ class TestQualityRepairMissingTargetContractB:
             f'  File "{test_file}", line 7, in test_harness_exit_zero\n'
             "AssertionError: 1 != 0 : harness failed:\n"
             "FAIL: back == plain at harness.cpp:33\n"
-            "FAIL: revealed == \"hidden note\" at harness.cpp:67\n"
+            'FAIL: revealed == "hidden note" at harness.cpp:67\n'
             "FAIL: !d.can_reveal(id) at harness.cpp:102\n"
             "FAIL: threw at harness.cpp:109"
         )
@@ -1925,7 +1922,7 @@ class TestQualityRepairMissingTargetContractB:
             "Traceback (most recent call last):\n"
             f'  File "{tests_dir / "test_product.py"}", line 7, in test_cpp_unit_runs_and_passes\n'
             "AssertionError: 1 != 0 : cpp_unit failed: FAIL: days_since_1900 baseline "
-            "(Moonlight::days_since_1900(\"2024-01-01\") vs long(45292)) at "
+            '(Moonlight::days_since_1900("2024-01-01") vs long(45292)) at '
             f"{tests_dir / 'cpp_unit.cpp'}:1"
         )
 
@@ -2539,7 +2536,7 @@ class TestQualityRepairMissingTargetContractB:
         # text.
         failure = (
             "--- FAIL: TestTeach_Monotonic (0.00s)\n"
-            '    main_test.go:216: Teach(spark, lower) returned error: invalid affinity level\n'
+            "    main_test.go:216: Teach(spark, lower) returned error: invalid affinity level\n"
             "FAIL\n"
         )
 
@@ -2563,9 +2560,7 @@ class TestQualityRepairMissingTargetContractB:
             "function": {"name": "edit_file"},
         }
         assert adapter.repair_context["metadata"]["tool_contract"]["mutation_required"] is True
-        assert adapter.repair_context["metadata"]["tool_contract"]["mutation_reason"] == (
-            "verifier_test_failure"
-        )
+        assert adapter.repair_context["metadata"]["tool_contract"]["mutation_reason"] == ("verifier_test_failure")
         assert adapter._execution.allowed_tool_names == {"edit_file"}
         assert adapter._execution.allow_patch_fallback is False
 
@@ -2655,8 +2650,7 @@ class TestQualityRepairMissingTargetContractB:
 
         assert summary["repair_target_files"] == [missing, "tests/test_product.py"]
         forced_tools = {
-            item["function"]["name"]
-            for item in adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
+            item["function"]["name"] for item in adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
         }
         assert forced_tools == {"edit_file", "write_file"}
         assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == "required"
@@ -2689,11 +2683,7 @@ class TestQualityRepairMissingTargetContractB:
             "package main_test\nfunc TestTeach_Monotonic(t *testing.T) {}\n",
             encoding="utf-8",
         )
-        failure = (
-            "--- FAIL: TestTeach_Monotonic (0.00s)\n"
-            "    main_test.go:216: invalid affinity level\n"
-            "FAIL\n"
-        )
+        failure = "--- FAIL: TestTeach_Monotonic (0.00s)\n    main_test.go:216: invalid affinity level\nFAIL\n"
 
         _, summary = await _run_materialization_quality_repair_retry(
             _Adapter(),

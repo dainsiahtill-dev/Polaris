@@ -136,10 +136,11 @@ def test_terminal_failed_read_batch_releases_without_future_qa(tmp_path: Path) -
     assert result.passed is False
     assert set(result.missing_required_modalities) == {"qa", "code", "command", "tool_receipt"}
     assert result.failed_required_modalities == ()
-    assert result.expected_effect_count == 1
+    assert result.expected_effect_count == 0
     assert result.effect_receipt_count == 0
-    assert result.open_effect_count == 1
-    assert "effect_receipts_open" in result.blocking_reasons
+    assert result.open_effect_count == 0
+    assert "effect_receipts_open" not in result.blocking_reasons
+    assert "effect_receipt_missing" not in result.blocking_reasons
     assert "required_evidence_missing" in result.blocking_reasons
 
 

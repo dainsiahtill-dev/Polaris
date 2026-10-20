@@ -1,0 +1,43 @@
+id: vc-20261018-formal-project-identity
+classification: pattern
+status: source_stop_pending_independent_review_and_integration
+owner: factory.pipeline
+scope:
+  - polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_01.py
+  - polaris/cells/factory/pipeline/tests/test_formal_project_identity.py
+assumptions:
+  - Formal request metadata project_id is existing run input, not a new registry or permission grant.
+  - A Factory display name is not formal project identity.
+  - Existing PM commit proof and CE frozen carrier remain authority boundaries.
+hypotheses:
+  - The CE portfolio loader ignores admitted project_id and chooses catalog or display name.
+  - One current-input consumer correction preserves project identity into completion and capability without touching task namespaces or verifier policy.
+pre_mortem:
+  - Do not patch RunLedger filters or manufacture receipts to hide the wrong upstream project.
+  - Do not coerce explicit invalid identity or truthiness-fallback to legacy inputs.
+  - Do not let mutable new context rewrite an already frozen CE authority.
+verification:
+  - Formal HTTP input persists through FactoryStore and cold stage reconstruction with exact opaque project ID.
+  - Real PM artifact proof feeds real CE authority and completion/token producers without a catalog seed.
+  - Explicit invalid/conflicting current identity fails before fallback; foreign workspace/run and stale PM proof remain rejected.
+  - No new mutable-catalog identity veto is added; the existing CE public identity-bound project-kind snapshot rejection stays fail-closed.
+  - A real-call witness proves foreign snapshot rejection does not replace the admitted formal project ID.
+  - Legacy no-explicit-project behavior stays bounded and explicit.
+  - Frozen authority and scope cannot be widened by candidate/context arguments.
+  - Ruff, mypy and focused CE/verifier-binding/outcome neighboring tests run.
+limits:
+  - Synthetic module fixtures replace PM role computation/readiness/scheduling; no model or real target command.
+  - M12B task namespace joins and M13 verifier admission are untouched.
+  - R01 FAILED/DRAINING/open-effects UNKNOWN remain unchanged; no recovery or new native run here.
+ruling:
+  - Accepted module scope is a fresh no-catalog formal workspace with persisted identity through real CE/completion/token.
+  - Foreign identity-bound project-kind snapshot compatibility remains unsupported and explicitly rejected by the unchanged CE public owner.
+  - Do not normalize, delete or forge a snapshot to satisfy the carrier; no public contract expansion in this module.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m12a/red.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m12a/final-ruling.xml
+result:
+  final: 50 passed; two synthetic-provider cases deliberately deselected to retain zero model calls
+  mypy: two files; no issues
+  ruff: check and format passed
+  native_and_old_r01: no native run or old namespace control; historical FAILED and resource UNKNOWN retained

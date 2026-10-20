@@ -1,0 +1,24 @@
+id: vc-20261020-package-script-preparation-proof
+classification: pattern
+status: component_verified_independent_review_pending
+owner: control_plane.verifier_policy
+assumptions:
+  - Same-manifest literal build/lint references can be resolved without granting execution.
+  - Whole-manifest policy hashing binds nested script bodies and rejects stale authority on revalidation.
+  - Actual test success and missing-entrypoint feedback remain separate checks.
+pre_mortem:
+  - A permissive package wrapper could admit shell syntax, options, cycles or non-proving leaves.
+  - Resolving entrypoint aliases here could bypass the existing target-file content check.
+verification:
+  - Public-policy private-manifest RED and GREEN without target commands.
+  - Negative references, current-manifest drift, adjacent Node proof and entrypoint tests.
+  - Scoped Ruff, strict mypy and independent review before native admission.
+remaining:
+  - Native execution, QA, project outcome and resource closure remain unproven.
+evidence:
+  - Public policy RED had 5 expected failures and 22 controls passing.
+  - Current focused and adjacent tests passed 132 cases; scoped Ruff and strict mypy passed.
+  - Guarded original R05 V003 policy query now admits the same unmodified script; all 14 input hashes unchanged and zero blocked effects.
+  - Original V004 missing entrypoint remains denied with current-manifest artifact feedback; no original command was executed.
+  - Audit archive is ~/.polaris/audit_archives/autonomous-delivery-20261018/r06-package-script-preparation-proof/.
+  - Independent missing-entrypoint wrapper falsifier exposed v1 admission scope; v2 resolves references only for test modality, preserving entrypoint file checks.

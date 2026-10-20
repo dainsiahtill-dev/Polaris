@@ -6,10 +6,11 @@ import json
 import posixpath
 import re
 import shlex
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, NoReturn
 
 import tomllib
 from polaris.cells.control_plane.run_ledger.public.failure_evidence import FailureClassV1, normalize_failure_class
@@ -513,13 +514,22 @@ class TaskBoundaryVerdictV1:
 
 @dataclass(frozen=True, slots=True)
 class ReprojectTaskBoundaryVerdictCommandV1:
-    """Re-evaluate one immutable task boundary without replaying role work."""
+    """Re-evaluate one immutable task boundary without replaying role work.
+
+    A deferred placeholder requires a normal verdict from Factory's existing
+    CE/current-Broker producer plus its immutable TaskRuntime claim id. Receipt
+    bindings contain (obligation_id, receipt_ref, receipt_hash, input_hash).
+    They are locators, not independent authentication or execution authority.
+    """
 
     workspace: str
     run_id: str
     task_id: str
     expected_content_id: str
     reason: str
+    revalidated_verdict: TaskBoundaryVerdictV1 | None = None
+    source_claim_fact_event_id: str | None = None
+    current_receipt_bindings: tuple[tuple[str, str, str, str], ...] = ()
 
     def __post_init__(self) -> None:
         for field_name in ("workspace", "run_id", "task_id", "reason"):
@@ -531,6 +541,35 @@ class ReprojectTaskBoundaryVerdictCommandV1:
         if not re.fullmatch(r"[0-9a-f]{64}", content_id):
             raise ValueError("expected_content_id must be a 64-character hex content id")
         object.__setattr__(self, "expected_content_id", content_id)
+        if self.revalidated_verdict is None:
+            if self.source_claim_fact_event_id is not None or self.current_receipt_bindings:
+                raise ValueError("task_boundary_revalidation_incomplete")
+            return
+        if type(self.revalidated_verdict) is not TaskBoundaryVerdictV1:
+            raise TypeError("task_boundary_revalidation_exact_verdict_required")
+        claim_id = self.source_claim_fact_event_id
+        if not isinstance(claim_id, str) or not claim_id or claim_id != claim_id.strip():
+            raise ValueError("task_boundary_revalidation_claim_id_required")
+        if type(self.current_receipt_bindings) is not tuple:
+            raise TypeError("task_boundary_revalidation_receipt_bindings_invalid")
+        obligation_ids: set[str] = set()
+        receipt_refs: set[str] = set()
+        for row in self.current_receipt_bindings:
+            if (
+                type(row) is not tuple
+                or len(row) != 4
+                or any(not isinstance(value, str) or not value or value != value.strip() for value in row)
+                or any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in row[2:])
+                or row[0] in obligation_ids
+                or row[1] in receipt_refs
+            ):
+                raise ValueError("task_boundary_revalidation_receipt_bindings_invalid")
+            obligation_ids.add(row[0])
+            receipt_refs.add(row[1])
+        # This is detached input data, not an additional receipt authority.
+        # Factory's existing producer authenticates CE/current Broker evidence;
+        # this owner independently checks its captured claim and complete scope.
+        object.__setattr__(self, "revalidated_verdict", deepcopy(self.revalidated_verdict))
 
 
 @dataclass(frozen=True, slots=True)
@@ -588,6 +627,241 @@ def _task_boundary_reprojection_changed(previous: dict[str, Any], current: dict[
     return any(previous.get(key) != current.get(key) for key in _TASK_BOUNDARY_REPROJECTION_COMPARE_FIELDS)
 
 
+def _validated_task_boundary_revalidation(
+    command: ReprojectTaskBoundaryVerdictCommandV1,
+    source_event: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate normal-boundary data against this owner's immutable claim cut.
+
+    Receipt authentication and current input verification remain with Factory's
+    existing CE/Broker consumer. Locators are not standalone capabilities. This
+    cell checks the original execution identity, complete declared obligations,
+    unchanged claim cut, and deterministic local verdict before persisting it.
+    """
+    from polaris.cells.control_plane.run_ledger.public.contracts import (
+        ControlPlaneRunLedgerV1Error,
+        ReadRunLedgerProjectionQueryV1,
+    )
+    from polaris.cells.control_plane.run_ledger.public.ledger import stable_hash
+    from polaris.cells.control_plane.run_ledger.public.service import (
+        _canonical_qualification_inputs,
+        _capture_strict_fact_stream,
+        _captured_native_task_identity,
+        _validate_native_lineage_session,
+    )
+
+    def reject(code: str) -> NoReturn:
+        raise ControlPlaneRunLedgerV1Error(f"task_boundary_revalidation_{code}")
+
+    normal = command.revalidated_verdict
+    if type(normal) is not TaskBoundaryVerdictV1:
+        reject("required")
+    assert normal is not None
+    workspace = Path(command.workspace).expanduser().resolve()
+    try:
+        task_facts, events, _runs, canonical = _canonical_qualification_inputs(
+            workspace,
+            ReadRunLedgerProjectionQueryV1(workspace=str(workspace), run_id=command.run_id, max_runs=1),
+        )
+        if not any(event.get("content_id") == source_event.get("content_id") for event in events):
+            reject("predecessor_not_canonical")
+        if not any(fact.get("fact_event_id") == command.source_claim_fact_event_id for fact in task_facts):
+            reject("claim_missing")
+        captured = _capture_strict_fact_stream(workspace, "task_runtime.execution")
+        if len(captured) != canonical["captured_heads"]["task_runtime.execution"]:
+            reject("claim_head_drift")
+        claim = next((row for row in captured if row.get("event_id") == command.source_claim_fact_event_id), None)
+        if (
+            not isinstance(claim, dict)
+            or claim.get("event_type") != "claimed"
+            or claim.get("source") != "runtime.task_runtime"
+        ):
+            reject("claim_missing")
+        payload = claim.get("payload")
+        if not isinstance(payload, dict):
+            reject("claim_invalid")
+        assert isinstance(payload, dict)
+        _validate_native_lineage_session(claim, payload)
+        identity = _captured_native_task_identity(claim, payload, workspace)
+        if (
+            identity is None
+            or identity.role_id != "director"
+            or identity.run_id != command.run_id
+            or identity.external_task_id != command.task_id
+        ):
+            reject("claim_identity_mismatch")
+        snapshot = payload.get("task_row_snapshot")
+        metadata = snapshot.get("metadata") if isinstance(snapshot, dict) else None
+        projection = metadata.get("task_completion_projection") if isinstance(metadata, dict) else None
+        if not isinstance(projection, dict):
+            reject("projection_missing")
+        assert isinstance(metadata, dict) and isinstance(projection, dict)
+        factory = str(payload.get("factory_run_id") or "")
+        project = str(payload.get("project_id") or payload.get("factory_bench_project_id") or "")
+        projection_hash = projection.get("projection_hash")
+        contract_hash = projection.get("project_contract_hash")
+        if (
+            not factory
+            or not project
+            or projection.get("schema_version") != "polaris.task_completion_projection.v1"
+            or projection.get("run_id") != factory
+            or projection.get("project_id") != project
+            or projection.get("task_id") != command.task_id
+            or not isinstance(contract_hash, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", contract_hash)
+            or projection_hash
+            != stable_hash({key: value for key, value in projection.items() if key != "projection_hash"})
+        ):
+            reject("projection_identity_mismatch")
+        token = metadata.get("control_plane_job_token", metadata.get("job_token"))
+        policy = token.get("gate_policy") if isinstance(token, dict) else None
+        if (
+            not isinstance(token, dict)
+            or not isinstance(policy, dict)
+            or token.get("run_id") != factory
+            or token.get("project_id") != project
+            or policy.get("project_completion_contract_hash") != contract_hash
+        ):
+            reject("claim_contract_mismatch")
+        predecessor_token = source_event.get("job_token")
+        if (
+            source_event.get("task_id") != command.task_id
+            or source_event.get("run_id") != command.run_id
+            or source_event.get("factory_run_id", factory) != factory
+            or source_event.get("project_id", project) not in (project, command.task_id)
+            or not isinstance(predecessor_token, dict)
+            or predecessor_token.get("run_id") != command.run_id
+            or predecessor_token.get("task_id") != command.task_id
+            or predecessor_token.get("project_id") not in (project, command.task_id)
+        ):
+            reject("predecessor_identity_mismatch")
+        artifact_rows = projection.get("owned_artifacts")
+        verification_rows = projection.get("owned_verification")
+        execution_rows = projection.get("verification_execution_authority")
+        if any(not isinstance(rows, list) for rows in (artifact_rows, verification_rows, execution_rows)):
+            reject("scope_missing")
+        assert (
+            isinstance(artifact_rows, list) and isinstance(verification_rows, list) and isinstance(execution_rows, list)
+        )
+        for rows in (artifact_rows, verification_rows, execution_rows):
+            ids: set[str] = set()
+            for row in rows:
+                if (
+                    not isinstance(row, dict)
+                    or row.get("owner_task_id") != command.task_id
+                    or not isinstance(row.get("obligation_id"), str)
+                    or not row["obligation_id"]
+                    or row["obligation_id"] in ids
+                    or row.get("applicability", "required") not in {"required", "optional", "not_applicable"}
+                ):
+                    reject("scope_invalid")
+                ids.add(row["obligation_id"])
+        required_artifacts = [row for row in artifact_rows if row.get("applicability", "required") == "required"]
+        targets = [row.get("path") for row in required_artifacts]
+        all_targets = [
+            row.get("path") for row in artifact_rows if row.get("applicability", "required") != "not_applicable"
+        ]
+        if any(
+            not isinstance(path, str)
+            or not path
+            or path != _clean_path(path)
+            or PurePosixPath(path).is_absolute()
+            or ".." in PurePosixPath(path).parts
+            for path in all_targets
+        ):
+            reject("artifact_scope_invalid")
+        required_rows = [row for row in verification_rows if row.get("applicability", "required") == "required"]
+        by_id = {row["obligation_id"]: row for row in execution_rows}
+        executable_rows = [row for row in verification_rows if row.get("applicability", "required") != "not_applicable"]
+        if set(by_id) != {row["obligation_id"] for row in executable_rows} or any(
+            by_id[row["obligation_id"]].get("command") != row.get("command") for row in executable_rows
+        ):
+            reject("verifier_scope_invalid")
+        commands: list[str] = []
+        for row in required_rows:
+            value = row.get("command")
+            if not isinstance(value, str) or not value or by_id[row["obligation_id"]].get("command") != value:
+                reject("verifier_scope_invalid")
+            if value not in commands:
+                commands.append(value)
+        binding_ids = {row[0] for row in command.current_receipt_bindings}
+        declared_modalities = policy.get("required_evidence_modalities", policy.get("required_modalities", []))
+        if not isinstance(declared_modalities, (list, tuple)):
+            reject("claim_modalities_invalid")
+        director_modalities = {name for name in declared_modalities if name in {"code", "command"}}
+        if binding_ids != {row["obligation_id"] for row in required_rows} or not {
+            row[1] for row in command.current_receipt_bindings
+        }.issubset(set(normal.evidence_refs)):
+            reject("receipt_scope_incomplete")
+        if (
+            normal.task_id != command.task_id
+            or normal.run_id != command.run_id
+            or not (targets or commands)
+            or set(normal.target_files) != set(targets)
+            or len(normal.target_files) != len(set(targets))
+            or set(normal.required_verifiers) != set(commands)
+            or len(normal.required_verifiers) != len(commands)
+            or not set(targets).issubset(set(normal.completed_artifacts))
+            or not set(normal.completed_artifacts).issubset(set(all_targets))
+            or set(normal.completed_verifiers) != set(commands)
+            or not normal.ok
+            or normal.status != "completed_verified"
+            or normal.missing_required_verifiers
+            or normal.failed_required_verifiers
+            or normal.missing_required_evidence_modalities
+            or normal.failed_required_evidence_modalities
+            or set(normal.required_evidence_modalities) != director_modalities
+            or not director_modalities.issubset(set(normal.present_evidence_modalities))
+        ):
+            reject("normal_scope_incomplete")
+        verdict = evaluate_task_boundary_verdict(
+            workspace=workspace,
+            task_id=command.task_id,
+            run_id=command.run_id,
+            **{
+                name: value
+                for name, value in normal.to_dict().items()
+                if name
+                in {
+                    "target_files",
+                    "completed_artifacts",
+                    "downstream_pending_artifacts",
+                    "blocked_dependencies",
+                    "required_evidence_modalities",
+                    "present_evidence_modalities",
+                    "missing_required_evidence_modalities",
+                    "failed_required_evidence_modalities",
+                    "required_verifiers",
+                    "completed_verifiers",
+                    "missing_required_verifiers",
+                    "failed_required_verifiers",
+                    "tool_dispatch",
+                    "evidence_refs",
+                }
+            },
+        ).to_dict()
+        if not verdict.get("ok"):
+            reject("local_verdict_failed")
+        if captured != _capture_strict_fact_stream(workspace, "task_runtime.execution"):
+            reject("claim_head_drift")
+        basis = {
+            "source_claim_fact_event_id": claim["event_id"],
+            "source_claim_fact_event_seq": claim["seq"],
+            "source_claim_integrity_digest": claim["integrity_digest"],
+            "factory_run_id": factory,
+            "project_id": project,
+            "completion_contract_hash": contract_hash,
+            "task_projection_hash": projection_hash,
+            "current_receipt_bindings": [list(row) for row in sorted(command.current_receipt_bindings)],
+        }
+        basis["revalidation_basis_hash"] = stable_hash({"verdict": verdict, "basis": basis})
+        return verdict, basis
+    except ControlPlaneRunLedgerV1Error:
+        raise
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ControlPlaneRunLedgerV1Error(f"task_boundary_revalidation_claim_invalid:{type(exc).__name__}") from exc
+
+
 def reproject_task_boundary_verdict(
     command: ReprojectTaskBoundaryVerdictCommandV1,
 ) -> TaskBoundaryReprojectionResultV1:
@@ -628,10 +902,32 @@ def reproject_task_boundary_verdict(
 
     reprojection = previous.get("reprojection")
     reprojection_map = reprojection if isinstance(reprojection, dict) else {}
+    source_event: dict[str, Any] | None = None
+    basis: dict[str, Any] = {}
+    if previous_content_id != command.expected_content_id and not (
+        str(reprojection_map.get("source_content_id") or "").strip().lower() == command.expected_content_id
+        and str(reprojection_map.get("reason") or "").strip() == command.reason
+    ):
+        raise ControlPlaneRunLedgerV1Error("task_boundary_reprojection_stale_predecessor")
+    if command.revalidated_verdict is not None:
+        source_event = next(
+            (
+                event
+                for event in _read_execution_control_plane_facts(
+                    workspace=Path(command.workspace).expanduser().resolve(), run_id=command.run_id
+                )
+                if event.get("content_id") == command.expected_content_id
+            ),
+            None,
+        )
+        if source_event is None:
+            raise ControlPlaneRunLedgerV1Error("task_boundary_revalidation_predecessor_missing")
+        verdict, basis = _validated_task_boundary_revalidation(command, source_event)
     if previous_content_id != command.expected_content_id:
         if (
             str(reprojection_map.get("source_content_id") or "").strip().lower() == command.expected_content_id
             and str(reprojection_map.get("reason") or "").strip() == command.reason
+            and reprojection_map.get("revalidation_basis_hash") == basis.get("revalidation_basis_hash")
         ):
             return TaskBoundaryReprojectionResultV1(
                 status="idempotent",
@@ -645,26 +941,31 @@ def reproject_task_boundary_verdict(
         raise ControlPlaneRunLedgerV1Error("task_boundary_reprojection_stale_predecessor")
     if bool(previous.get("ok")):
         raise ControlPlaneRunLedgerV1Error("task_boundary_reprojection_source_already_passed")
-
-    verdict = evaluate_task_boundary_verdict(
-        workspace=command.workspace,
-        task_id=command.task_id,
-        run_id=command.run_id,
-        target_files=previous.get("target_files"),
-        completed_artifacts=previous.get("completed_artifacts"),
-        downstream_pending_artifacts=previous.get("downstream_pending_artifacts"),
-        blocked_dependencies=previous.get("blocked_dependencies"),
-        required_evidence_modalities=previous.get("required_evidence_modalities"),
-        present_evidence_modalities=previous.get("present_evidence_modalities"),
-        missing_required_evidence_modalities=previous.get("missing_required_evidence_modalities"),
-        failed_required_evidence_modalities=previous.get("failed_required_evidence_modalities"),
-        required_verifiers=previous.get("required_verifiers"),
-        completed_verifiers=previous.get("completed_verifiers"),
-        missing_required_verifiers=previous.get("missing_required_verifiers"),
-        failed_required_verifiers=previous.get("failed_required_verifiers"),
-        tool_dispatch=previous.get("tool_dispatch") if isinstance(previous.get("tool_dispatch"), dict) else {},
-        evidence_refs=previous.get("evidence_refs"),
-    ).to_dict()
+    if command.revalidated_verdict is None:
+        if (
+            previous.get("status") == "deferred_followup_required"
+            or previous.get("failure_class") == TaskBoundaryFailureClassV1.DEFERRED_FOLLOWUP_REQUIRED.value
+        ):
+            raise ControlPlaneRunLedgerV1Error("task_boundary_revalidation_required")
+        verdict = evaluate_task_boundary_verdict(
+            workspace=command.workspace,
+            task_id=command.task_id,
+            run_id=command.run_id,
+            target_files=previous.get("target_files"),
+            completed_artifacts=previous.get("completed_artifacts"),
+            downstream_pending_artifacts=previous.get("downstream_pending_artifacts"),
+            blocked_dependencies=previous.get("blocked_dependencies"),
+            required_evidence_modalities=previous.get("required_evidence_modalities"),
+            present_evidence_modalities=previous.get("present_evidence_modalities"),
+            missing_required_evidence_modalities=previous.get("missing_required_evidence_modalities"),
+            failed_required_evidence_modalities=previous.get("failed_required_evidence_modalities"),
+            required_verifiers=previous.get("required_verifiers"),
+            completed_verifiers=previous.get("completed_verifiers"),
+            missing_required_verifiers=previous.get("missing_required_verifiers"),
+            failed_required_verifiers=previous.get("failed_required_verifiers"),
+            tool_dispatch=previous.get("tool_dispatch") if isinstance(previous.get("tool_dispatch"), dict) else {},
+            evidence_refs=previous.get("evidence_refs"),
+        ).to_dict()
     if not _task_boundary_reprojection_changed(previous, verdict):
         return TaskBoundaryReprojectionResultV1(
             status="no_change",
@@ -678,7 +979,7 @@ def reproject_task_boundary_verdict(
 
     # Reprojection changes the verdict, not its project or capability facts.
     # Reuse the immutable predecessor rather than inventing a successful token.
-    source_event = next(
+    source_event = source_event or next(
         (
             event
             for event in _read_execution_control_plane_facts(
@@ -699,6 +1000,7 @@ def reproject_task_boundary_verdict(
         "pm_restart_allowed": False,
         "chief_engineer_restart_allowed": False,
         "director_restart_allowed": False,
+        **basis,
     }
     successor_event = {
         "event_type": "task_boundary_verdict",

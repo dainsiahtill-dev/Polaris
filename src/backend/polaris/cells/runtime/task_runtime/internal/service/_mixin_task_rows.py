@@ -399,7 +399,15 @@ class _TaskRowsMixin(_ServiceMixinBase):
                         normalized,
                         pre_barrier,
                     )
-            if session is not None and not is_terminal_session_status(session.status):
+            # The inactive pre-barrier above authenticates a fulfilled suspended
+            # intent and its exact effect-close proof. Preserve that settled
+            # attempt, including resumable, against its immutable owner fact.
+            # The cancelled task row independently prevents a successor claim.
+            if (
+                session is not None
+                and not is_terminal_session_status(session.status)
+                and not (session.status == "suspended" and self._has_pending_terminal_intent(session))
+            ):
                 session.mark_suspended(reason=cancel_reason, resumable=False)
                 self._write_session_locked(
                     session,

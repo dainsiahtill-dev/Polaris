@@ -7,13 +7,16 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
+    workspace_quality_summary_requires_task_boundary_triage,
+)
 from polaris.cells.roles.adapters.internal.director import quality_gate
 from polaris.cells.roles.adapters.internal.director.quality_gate._language_targets import (
     _resolve_javascript_relative_import_target,
 )
 from polaris.cells.roles.adapters.internal.director.quality_gate._repair_loop import (
     _go_compiler_diagnostic_anchor_files,
-    _materialization_plan_probe_requires_task_boundary_triage,
+    _materialization_probe_is_unplannable,
     _run_materialization_quality_repair_retry,
     _unresolved_import_exporter_paths,
 )
@@ -192,7 +195,7 @@ def test_go_duplicate_secondary_declaration_is_owner_not_assertion() -> None:
     assert _go_compiler_diagnostic_anchor_files(errors) == ["simulator.go", "scene.go"]
 
 
-def test_owned_import_annotation_does_not_bypass_unplannable_interface_gate() -> None:
+def test_owned_import_annotation_does_not_change_readonly_probe_feasibility() -> None:
     summary = {
         "plan_probe_preaudit": {
             "status": "coverage_matched_but_unplannable",
@@ -201,12 +204,13 @@ def test_owned_import_annotation_does_not_bypass_unplannable_interface_gate() ->
         "task_boundary_director_continuation_allowed": True,
         "task_boundary_continuation_reason": "current_task_unresolved_import",
     }
-    assert _materialization_plan_probe_requires_task_boundary_triage(summary) is True
+    assert _materialization_probe_is_unplannable(summary) is True
+    assert workspace_quality_summary_requires_task_boundary_triage(summary) is False
 
 
 @pytest.mark.parametrize("authorized", [False, True])
 @pytest.mark.asyncio
-async def test_missing_export_retry_consumes_existing_interface_authorization(tmp_path: Path, authorized: bool) -> None:
+async def test_missing_export_retry_does_not_require_coverage_authorization(tmp_path: Path, authorized: bool) -> None:
     _write(tmp_path, "src/verify.ts", "export const verify = () => true;\n")
     _write(tmp_path, "tests/verify.test.ts", "import { runVerification } from '../src/verify.js';\n")
     adapter = _RecordingAdapter(tmp_path)
@@ -224,13 +228,11 @@ async def test_missing_export_retry_consumes_existing_interface_authorization(tm
         ["unresolved import symbol 'runVerification' from '../src/verify.js' in tests/verify.test.ts"],
         context=context,
     )
-    if authorized:
-        assert summary.get("llm_fallback_blocked") is not True
-        assert adapter.contexts
-    else:
-        assert summary["stage"] == "runtime_plan_probe_unplannable"
-        assert summary["llm_fallback_blocked"] is True
-        assert adapter.contexts == []
+    assert summary.get("llm_fallback_blocked") is not True
+    assert summary["stage"] == "quality_repair"
+    assert adapter.contexts
+    assert "director_interface_discrepancy_retry" not in adapter.contexts[0]
+    assert context["director_interface_discrepancy_retry"]["authorized"] is authorized
     assert (tmp_path / "src/verify.ts").read_text(encoding="utf-8") == "export const verify = () => true;\n"
 
 

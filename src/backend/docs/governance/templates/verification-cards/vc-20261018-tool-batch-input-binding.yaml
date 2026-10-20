@@ -1,0 +1,41 @@
+id: vc-20261018-tool-batch-input-binding
+classification: pattern
+status: pending_root_and_independent_review
+scope:
+  - polaris/kernelone/tool_execution/contracts.py
+  - polaris/cells/roles/kernel/internal/tool_batch_runtime.py
+  - polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_executor_execute.py
+  - polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_executor_core.py
+  - polaris/kernelone/tool_execution/tests/test_tool_batch_inventory.py
+  - polaris/cells/roles/kernel/tests/test_tool_batch_inventory_admission.py
+assumptions:
+  - ToolBatch declarations and execution groups are representations of one effective invocation inventory.
+  - Group-only execution is legitimate; inventory-only records are legitimate captures but not executable batches.
+  - A frozen Role DTO still contains mutable nested lists and arguments.
+  - Deferred repair keeps inactive rollback members in a separate prepared inventory, not in its forward-only ToolBatch declaration.
+hypotheses:
+  - One registry-free KernelOne JSON-wire check can protect both producer admission and the independent Ledger consumer without a reverse Cell dependency.
+  - An owned batch checked before the first await and DEO preparation prevents contradictory dispatch and later caller mutation from changing the executed input.
+  - Checking the explicit deferred forward projection before preparation retains existing rollback authority and rejects changed forward arguments without new permission flags.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-inputbinding/baseline.patch
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-inputbinding/environment.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-inputbinding/red-runtime.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-inputbinding/red-focused.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-inputbinding/owner-focused.xml
+verification:
+  - The actual contradictory ToolBatchRuntime dispatch first failed the expected refusal test with DID NOT RAISE; private tool IO was the only substituted boundary.
+  - Full arguments, native arguments, names and captured metadata compare by call ID and strict JSON wire, including boolean versus integer and nested sequence distinctions.
+  - Duplicate, missing, extra, nonfinite and non-JSON members fail with bounded stable errors without argument disclosure.
+  - Group-only batches and cross-phase declaration ordering remain supported; inventory-only Runtime execution refuses instead of returning a silent empty result.
+  - Actual main and deferred producer entries reject before the first await or DEO preparation; real private TaskRuntime effect-owner observations remain equal to baseline.
+  - Existing active fixture attempts remain active; this module does not fabricate whole-session settlement.
+  - Runtime and deferred owned-view tests mutate the caller after an await and retain the checked input for execution or preparation.
+architecture:
+  - Same KernelOne package and existing Role runtime entries; no new owner, store, Role DTO, live registry recapture or authority flag.
+  - The separately owned Ledger bucket consumes the shared pure API; this bucket never changes Ledger code.
+  - Existing offered-tool, explicit-empty scope, DEO policy and mutation guards remain authoritative.
+remaining:
+  - Root and independent review are required before component acceptance.
+  - The frontier lead runs the single combined resource gate after both buckets are stopped.
+  - No native admission, provider call, target repair, historical run requalification or final delivery is claimed.

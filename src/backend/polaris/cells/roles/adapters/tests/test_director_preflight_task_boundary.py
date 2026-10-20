@@ -246,10 +246,10 @@ def test_existing_scope_preflight_projects_pending_exec_job_token(
     assert event["physical_evidence"]["metadata"]["runtime_task_id"] == "14"
 
 
-def test_existing_scope_preflight_seals_declared_paths_when_ce_owned_artifacts_empty(
+def test_existing_scope_preflight_keeps_unbound_partial_ce_scope_for_execution(
     monkeypatch: Any,
 ) -> None:
-    """L2-12 TASK-3-foundation: CE owned_artifacts=[] so receipts stay ok=False."""
+    """A partial context and declared paths do not prove an immutable CE claim."""
 
     appended: list[dict[str, Any]] = []
     existing_evidence = {
@@ -300,10 +300,7 @@ def test_existing_scope_preflight_seals_declared_paths_when_ce_owned_artifacts_e
     monkeypatch.setattr(
         preflight_module,
         "_finalize_claimed_execution",
-        lambda *args, **kwargs: {
-            "success": True,
-            "identity": {"external_task_id": "TASK-3-foundation"},
-        },
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unproved scope must not settle")),
     )
     monkeypatch.setattr(
         preflight_module,
@@ -346,11 +343,8 @@ def test_existing_scope_preflight_seals_declared_paths_when_ce_owned_artifacts_e
         state=MaterializationState.from_locals({}, [], [], [], []),
     )
 
-    assert result is not None
-    assert result["success"] is True
-    assert len(appended) == 1
-    assert appended[0]["existing_paths"] == ["requirements.txt"]
-    assert appended[0]["target_task_id"] == "144"
+    assert result is None
+    assert appended == []
 
 
 def test_declared_scope_preflight_binds_content_hash_evidence_refs(

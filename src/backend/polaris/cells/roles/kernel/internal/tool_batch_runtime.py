@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, cast
@@ -47,6 +48,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchReceipt,
     ToolBatch,
     ToolCallId,
+    ToolClassificationV1,
     ToolExecutionMode,
     ToolExecutionResult,
     ToolInvocation,
@@ -57,6 +59,7 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
+from polaris.kernelone.tool_execution.contracts import tool_batch_inventory_error
 
 logger = logging.getLogger(__name__)
 
@@ -771,6 +774,9 @@ class ToolBatchRuntime:
 
         Returns: list[BatchReceipt] - 每个工具调用一个receipt
         """
+        # Nested invocation lists/arguments remain mutable on frozen DTOs.
+        # Check and execute one owned view, never a caller's later mutation.
+        tool_batch = deepcopy(tool_batch)
         effective_context = context if context is not None else self.context
 
         # 优先使用显式分组;若未分组,则按契约推断。
@@ -792,7 +798,8 @@ class ToolBatchRuntime:
                 tool.tool_name
                 for group in execution_plan.values()
                 for tool in group
-                if not tool.classification.registered or tool.classification.canonical_tool_name not in offered
+                if not cast(ToolClassificationV1, tool.classification).registered
+                or cast(ToolClassificationV1, tool.classification).canonical_tool_name not in offered
             }
             if rejected:
                 raise RuntimeError("tool_surface_violation: tool outside offered set: " + ", ".join(sorted(rejected)))
@@ -1039,6 +1046,10 @@ class ToolBatchRuntime:
 
     def _resolve_execution_plan(self, tool_batch: ToolBatch) -> dict[str, list[ToolInvocation]]:
         """解析批次执行计划,严格使用显式分组;禁止按工具名回退。"""
+        wire = tool_batch.model_dump(mode="json") if isinstance(tool_batch, ToolBatch) else tool_batch
+        error = tool_batch_inventory_error(wire, require_execution_groups=True)
+        if error is not None:
+            raise RuntimeError(error)
         parallel_readonly = list(tool_batch.get("parallel_readonly", []))
         readonly_serial = list(tool_batch.get("readonly_serial", []))
         serial_writes = list(tool_batch.get("serial_writes", []))

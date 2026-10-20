@@ -32,6 +32,26 @@ logger = logging.getLogger(__name__)
 DEFAULT_FENCE = ("```", "```")
 TRIPLE_BACKTICKS = "```"
 
+
+def compose_line_range_edit(content: str, start: object, end: object, replacement: object) -> str:
+    """Replace an existing inclusive, one-based range without searching other spans.
+
+    An explicitly empty string deletes the selected lines. Missing/non-string
+    replacement is invalid; whitespace is preserved. This function has no effects.
+    """
+    if type(start) is not int or type(end) is not int:
+        raise ValueError("line-range edit requires integer start and end")
+    if not isinstance(replacement, str):
+        raise ValueError("line-range edit requires an explicit string replacement")
+    lines = content.splitlines(keepends=True)
+    if start < 1 or end < start or end > len(lines):
+        raise ValueError(f"Invalid line range [{start},{end}] (file has {len(lines)} lines)")
+    selected = "".join(lines[start - 1 : end])
+    if replacement and selected.endswith("\n") and not replacement.endswith("\n"):
+        replacement += "\n"
+    return "".join(lines[: start - 1]) + replacement + "".join(lines[end:])
+
+
 # 增强的头部匹配模式 - 支持更多变体
 HEAD_PATTERNS = [
     r"^<{4,9}\s*SEARCH(\[[^\n]+\])$",  # <<<< SEARCH[filename]

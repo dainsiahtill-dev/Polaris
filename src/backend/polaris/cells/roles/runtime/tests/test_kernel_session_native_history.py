@@ -91,8 +91,9 @@ async def test_bridge_actual_factory_and_http_keep_native_observation(
     previous = _result(status)
     batch: dict[str, Any] = dict(previous.batch_receipt or {})
     args = {"path": "src/module.py"} if status == "success" else {"command": "python -m pytest tests/test_module.py"}
-    if history_mode == "complete_only":
-        previous.tool_calls[0]["args"] = dict(args)
+    # Native history comes from committed declarations, never started events.
+    previous.tool_calls[0]["args"] = deepcopy(args)
+    batch["results"][0]["arguments"] = deepcopy(args)
     captured: list[dict[str, Any]] = []
 
     class CaptureInvoker:

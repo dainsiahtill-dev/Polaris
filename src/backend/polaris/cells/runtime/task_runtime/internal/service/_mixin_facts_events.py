@@ -302,7 +302,7 @@ class _FactsEventsMixin(_ServiceMixinBase):
         if appended.appended_seq is not None:
             payload["fact_event_seq"] = int(appended.appended_seq)
         try:
-            published = self._publish_factory_execution_event(payload)
+            published = self._publish_factory_execution_event(payload, session=session)
         except (RuntimeError, ValueError) as exc:
             logger.warning(
                 "Failed to publish task runtime execution event %s: %s",
@@ -519,7 +519,12 @@ class _FactsEventsMixin(_ServiceMixinBase):
             },
         )
 
-    def _publish_factory_execution_event(self, payload: dict[str, Any]) -> bool:
+    def _publish_factory_execution_event(
+        self,
+        payload: dict[str, Any],
+        *,
+        session: TaskExecutionSession | None = None,
+    ) -> bool:
         factory_run_id = str(payload.get("factory_run_id") or "").strip()
         if not factory_run_id:
             return False
@@ -542,10 +547,31 @@ class _FactsEventsMixin(_ServiceMixinBase):
             director_run_id = str(event_payload.get("run_id") or "").strip()
             if director_run_id and director_run_id != factory_run_id:
                 event_payload["director_run_id"] = director_run_id
+            # The transition's session is the role authority. Free text and
+            # task metadata cannot turn an unclaimed event into Director work.
+            role_id = "unknown"
+            if (
+                session is not None
+                and str(payload.get("task_id") or "") == str(session.task_id)
+                and payload.get("session_id") == session.session_id
+                and payload.get("run_id") == session.run_id
+                and isinstance(session.role_id, str)
+            ):
+                role_id = session.role_id.strip().lower()
+            role_projections = {
+                "pm": ("pm_planning", "PM"),
+                "chief_engineer": ("chief_engineer_review", "Chief Engineer review"),
+                "director": ("director_dispatch", "Director"),
+                "qa": ("quality_gate", "QA"),
+            }
+            stage, label = role_projections.get(role_id, ("", "Runtime"))
             event_payload["type"] = "task_runtime_execution"
-            event_payload["stage"] = "director_dispatch"
+            event_payload["role"] = role_id if role_id in role_projections else "unknown"
+            event_payload.pop("stage", None)
+            if stage:
+                event_payload["stage"] = stage
             event_payload["message"] = (
-                f"Director task {event_payload.get('task_id') or '<unknown>'} "
+                f"{label} task {event_payload.get('task_id') or '<unknown>'} "
                 f"{event_payload.get('event_type') or 'updated'}"
             )
             envelope = {

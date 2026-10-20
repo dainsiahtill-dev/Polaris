@@ -94,7 +94,7 @@ def test_post_settle_refresh_reuses_real_owned_boundary_and_preserves_failure_ob
         return value
 
     executor = SimpleNamespace(workspace=tmp_path, _canonical_factory_projection=projection)
-    run = SimpleNamespace(id="factory-boundary-parent")
+    run = SimpleNamespace(id="factory-boundary-parent", metadata={})
     prior = evaluate_canonical_factory_authority(projection(run, {}))
     assert prior.director_stage_authorized is False
 
@@ -105,7 +105,10 @@ def test_post_settle_refresh_reuses_real_owned_boundary_and_preserves_failure_ob
 
     assert bool(recovered and recovered.director_stage_authorized) is authorized
     assert final["latest_by_task"]["TASK-FOREIGN"]["status"] == "missing_entrypoint_target"
-    if runtime_state == "in_progress":
+    if runtime_state == "in_progress" or failed_verifiers:
+        # This legacy query-port fixture has no authenticated CE/current
+        # verifier owner. Failed verification cannot be refreshed into current
+        # proof by replaying its old fields; the original failed fact remains.
         assert final["verdict_count"] == 2
     else:
         assert final["verdict_count"] == 3

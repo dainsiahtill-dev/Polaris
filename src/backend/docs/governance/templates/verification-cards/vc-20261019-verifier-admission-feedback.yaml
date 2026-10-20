@@ -1,0 +1,22 @@
+id: vc-20261019-verifier-admission-feedback
+classification: pattern
+status: source_integrated_pending_independent_review
+problem: Artifact profile denials lose typed source evidence before original-owner repair.
+assumptions:
+  - Policy denial is preserved; admission observation cannot authorize execution or serve as a receipt.
+  - Current CE contract and confined source bytes are revalidated before feedback.
+  - Original-owner repair retains TaskRuntime, JobToken, DEO, rollback and verifier gates.
+evidence:
+  first_loss: polaris/bootstrap/project_completion_diagnostics_owner.py
+  consumer: polaris/cells/factory/pipeline/internal/factory_materialization_impl.py
+pre_mortem:
+  - Mutable or stale metadata could redirect feedback; exact types, identities and current SHA are required.
+  - Missing verifier coverage could deadlock legal artifact repair; delivery qualification still requires physical receipts.
+verification:
+  - polaris/cells/control_plane/verifier_policy/tests/test_verifier_command_profile_declaration.py
+  - polaris/cells/factory/verification_guard/tests/test_project_verification_admission_observation.py
+  - polaris/tests/unit/bootstrap/test_project_completion_diagnostics_owner.py
+  - polaris/cells/factory/pipeline/tests/test_materialization_admission_feedback_route.py
+limits:
+  - Local scripted provider and physical runner fixtures are not native qualification.
+  - Security, identity, integrity, unknown and empty scope remain fail-closed.

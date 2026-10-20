@@ -3048,6 +3048,16 @@ async def _apply_workspace_quality_llm_repairs(
             "target_files": target_files[:80],
         },
     }
+    # Retire the old coverage-derived retry authorization protocol. Actual
+    # execution authority remains the original task envelope and JobToken.
+    for key in ("director_interface_discrepancy_retry", "task_boundary_interface_discrepancy_retry"):
+        repair_context.pop(key, None)
+    legacy_metadata = repair_context.get("metadata")
+    if isinstance(legacy_metadata, dict):
+        clean_metadata = dict(legacy_metadata)
+        for key in ("director_interface_discrepancy_retry", "task_boundary_interface_discrepancy_retry"):
+            clean_metadata.pop(key, None)
+        repair_context["metadata"] = clean_metadata
     if inbound_regression_guards:
         repair_context["director_quality_repair"]["regression_guard_errors"] = inbound_regression_guards
     if inbound_candidate_rejections:
@@ -3080,15 +3090,10 @@ async def _apply_workspace_quality_llm_repairs(
         repair_context["chief_engineer_blueprint_evidence"] = blueprint_text
         repair_context["factory_workspace_quality_repair"]["ce_blueprint_artifact"] = blueprint_artifact
     if interface_discrepancy_evidence:
-        repair_context["director_interface_discrepancy_retry"] = {
-            "authorized": executor._workspace_quality_interface_discrepancy_allows_director_retry(
-                interface_discrepancy_evidence
-            ),
-            "recommended_owner": interface_discrepancy_evidence.get("recommended_owner"),
-            "recommended_route": interface_discrepancy_evidence.get("recommended_route"),
-            "reason": interface_discrepancy_evidence.get("reason"),
-            "interface_discrepancy_evidence": interface_discrepancy_evidence,
-        }
+        interface_discrepancy_evidence = executor._workspace_quality_interface_discrepancy_evidence(
+            {"interface_discrepancy_evidence": interface_discrepancy_evidence}
+        )
+    if interface_discrepancy_evidence:
         repair_context["factory_task_boundary_interface_discrepancy"] = interface_discrepancy_evidence
         repair_context["factory_workspace_quality_repair"]["interface_discrepancy_evidence"] = (
             interface_discrepancy_evidence
@@ -3500,11 +3505,7 @@ async def _apply_workspace_quality_llm_repairs(
     normalized_summary.setdefault("attempted", True)
     normalized_summary.setdefault("task_id", repair_task_id)
     if interface_discrepancy_evidence:
-        authorized_retry = executor._workspace_quality_interface_discrepancy_allows_director_retry(
-            interface_discrepancy_evidence
-        )
         normalized_summary.setdefault("interface_discrepancy_evidence", interface_discrepancy_evidence)
-        normalized_summary["task_boundary_interface_discrepancy_retry_authorized"] = authorized_retry
         metadata_raw = interface_discrepancy_evidence.get("metadata")
         interface_metadata = dict(metadata_raw) if isinstance(metadata_raw, Mapping) else {}
         owner_evidence = interface_metadata.get("task_boundary_owner_evidence")
@@ -4170,13 +4171,6 @@ async def _run_workspace_quality_checks_in_session(
                         value = cached_deterministic_context.get(key)
                         if value is not None:
                             round_summary[key] = value
-                if str(round_plan_probe.get("status") or "") == "coverage_matched_but_unplannable":
-                    round_summary.update(
-                        {
-                            "stage": "runtime_plan_probe_unplannable",
-                            "success_reason": "task_boundary_interface_discrepancy_required",
-                        }
-                    )
             else:
                 record_round_start("deterministic_repair")
                 round_repair_results, round_summary = await executor._apply_workspace_quality_deterministic_repairs(

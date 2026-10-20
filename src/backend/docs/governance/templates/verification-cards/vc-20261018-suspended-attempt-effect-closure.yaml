@@ -1,0 +1,33 @@
+id: vc-20261018-suspended-attempt-effect-closure
+classification: defect
+status: pending_independent_review
+scope:
+  - polaris/cells/runtime/task_runtime/internal/execution_effect_closure.py
+  - polaris/cells/runtime/task_runtime/public/execution_effect_closure.py
+assumptions:
+  - TaskRuntime is the sole attempt owner; suspended task state remains pending and resumable.
+  - A successor is a distinct session and cannot replace historical effect proof.
+  - Existing V1 suspended facts have their own transition/idempotency protocol independent from embedded settlement intent.
+hypotheses:
+  - Completed/failed-only observation hides genuine fulfilled suspended-attempt settlement.
+  - Existing canonical claim, suspended fact, validated intent and strict DEO proof suffice without a new fact or producer change.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/resource-read-closure-research/resource-terminal-research/report.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13-attempt-closure/red.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13-attempt-closure/adjacent.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13-attempt-closure/implementation.json
+verification:
+  - polaris/cells/runtime/task_runtime/public/tests/test_historical_execution_effect_closure.py
+  - Real public create, claim, suspended settlement and cold-process query before/after distinct successor.
+  - Current live authority cannot borrow historical proof; task stays resumable.
+  - Missing or forged proof, fact keys, identity and registry evidence fail closed.
+  - Missing historical owner projection remains UNKNOWN after a later successful attempt.
+architecture:
+  - Consumer-only exact attempt operational closure; no task completion, new registry, fact or execution authority.
+  - Reuse fulfilled terminal intent, strict owner history and DEO closure validation.
+  - Existing completed/failed observation is unchanged.
+remaining:
+  - Historical r01 remains FAILED and DRAINING; no old fact is modified or auto-released.
+  - Combined adjacent gate is 209 passed and 1 failed; all 52 scoped historical-owner cases passed.
+  - The summary_only Ledger assertion also fails with exact pre-M13 modules and pre-M12B service bytes; its semantics remain outside this module.
+  - Native product delivery and integration qualification require separate evidence.

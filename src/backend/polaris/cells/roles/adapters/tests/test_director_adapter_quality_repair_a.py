@@ -60,7 +60,6 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _extract_task_target_path_candidates,
     _finalize_claimed_execution,
     _handle_claim_required,
-    _materialization_task_boundary_triage_summary,
     _no_write_materialization_retry_needed,
     _no_write_materialization_retry_tool_definitions,
     _pin_file_schema_to_declared_targets,
@@ -86,9 +85,6 @@ from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _build_materialization_quality_workspace_evidence_context,
     _extract_task_interface_contract,
     _go_runtime_smoke_repair_target_files,
-    _materialization_interface_discrepancy_evidence,
-    _materialization_interface_discrepancy_retry_authorized,
-    _materialization_plan_probe_requires_task_boundary_triage,
     _quality_repair_edit_file_tool_definition,
     _quality_repair_execute_command_tool_definition,
     _quality_repair_write_file_tool_definition,
@@ -525,16 +521,17 @@ class TestQualityRepairMissingTargetContractA:
         )
 
         assert tool_results == []
-        assert llm_calls == []
-        assert summary["stage"] == "runtime_plan_probe_unplannable"
-        assert summary["success_reason"] == "task_boundary_interface_discrepancy_required"
-        assert summary["interface_discrepancy_evidence"]["covered_unplannable"] is True
+        # A feasible local implementation edit is decided by the governed
+        # Director tools, never by read-only deterministic composability.
+        assert len(llm_calls) == 1
+        assert summary["stage"] == "quality_repair"
+        assert not summary.get("interface_discrepancy_evidence")
         assert summary["write_tool_evidence"] is False
         repaired = (tmp_path / "src" / "verify.ts").read_text(encoding="utf-8")
         assert repaired == "export const verify = () => true;\n"
 
     @pytest.mark.asyncio
-    async def test_quality_repair_interface_discrepancy_retry_requires_final_request_evidence(
+    async def test_quality_repair_retires_coverage_derived_retry_authorization(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path,
@@ -654,15 +651,12 @@ class TestQualityRepairMissingTargetContractA:
             changed_files=["src/verify.ts", "tests/verify.test.ts"],
         )
 
-        assert "interface_discrepancy_context" in adapter.repair_context["required_evidence"]
-        assert (
-            adapter.repair_context["director_interface_discrepancy_retry"]["recommended_route"]
-            == "director_retry_with_interface_discrepancy_context"
-        )
-        evidence = adapter.repair_context["director_interface_discrepancy_retry"]["interface_discrepancy_evidence"]
-        assert evidence["director_retry_allowed"] is True
-        assert evidence["interface_delta"]["contract_present"] is True
-        assert evidence["triage_summary"]["reason"] == "director_local_retry_with_interface_delta"
+        assert "director_interface_discrepancy_retry" not in adapter.repair_context
+        assert "task_boundary_interface_discrepancy_retry" not in adapter.repair_context
+        assert "interface_discrepancy_context" not in adapter.repair_context.get("required_evidence", [])
+        assert adapter.repair_context["run_id"] == "run-interface-discrepancy-retry"
+        assert adapter.repair_context["task"]["target_files"] == task["target_files"]
+        assert retry_context["director_interface_discrepancy_retry"]["authorized"] is True
 
     @pytest.mark.asyncio
     async def test_quality_repair_skips_llm_when_factory_deadline_is_too_close(self, tmp_path) -> None:

@@ -1295,43 +1295,6 @@ async def _run_materialization_quality_repair_retry(
     )
     if deterministic_quality_left_source_targets:
         deterministic_quality_can_short_circuit = False
-    if _materialization_plan_probe_requires_task_boundary_triage(deterministic_quality_summary):
-        summary = dict(deterministic_quality_summary or {})
-        task_boundary_discrepancy_evidence = _materialization_interface_discrepancy_evidence(
-            task=task,
-            plan_probe=dict(summary.get("plan_probe_preaudit") or {}),
-            repair_target_files=repair_target_files,
-            artifact_quality_errors=repair_quality_errors,
-        )
-        if _materialization_interface_discrepancy_retry_authorized(
-            context=context,
-            evidence=task_boundary_discrepancy_evidence,
-        ):
-            summary["task_boundary_director_continuation_allowed"] = True
-            summary["task_boundary_interface_discrepancy_retry_authorized"] = True
-            summary["interface_discrepancy_evidence"] = task_boundary_discrepancy_evidence
-        else:
-            summary.update(
-                {
-                    "stage": "runtime_plan_probe_unplannable",
-                    "attempted": True,
-                    "attempt": repair_attempt,
-                    "success": False,
-                    "success_reason": "task_boundary_interface_discrepancy_required",
-                    "tool_results": len(deterministic_quality_tool_results),
-                    "write_tool_evidence": False,
-                    "missing_target_files": missing_target_files[:12],
-                    "runtime_smoke_target_files": runtime_smoke_target_files[:12],
-                    "semantic_quality_target_files": semantic_quality_target_files[:12],
-                    "explicit_quality_target_files": explicit_quality_target_files[:12],
-                    "repair_target_files": repair_target_files[:12],
-                    "rotated_repair_targets": rotate_repair_targets,
-                    "interface_discrepancy_evidence": task_boundary_discrepancy_evidence,
-                    "llm_fallback_blocked": True,
-                    "task_boundary_director_continuation_allowed": False,
-                }
-            )
-            return deterministic_quality_tool_results, summary
     if (
         deterministic_quality_tool_results
         and has_successful_write_tool(deterministic_quality_tool_results)
@@ -1426,6 +1389,16 @@ async def _run_materialization_quality_repair_retry(
             "workspace_quality_evidence": workspace_quality_evidence,
         },
     }
+    # Retire the old coverage-derived retry authorization protocol. Actual
+    # execution authority remains the original task envelope and JobToken.
+    for key in ("director_interface_discrepancy_retry", "task_boundary_interface_discrepancy_retry"):
+        repair_context.pop(key, None)
+    legacy_metadata = repair_context.get("metadata")
+    if isinstance(legacy_metadata, dict):
+        clean_metadata = dict(legacy_metadata)
+        for key in ("director_interface_discrepancy_retry", "task_boundary_interface_discrepancy_retry"):
+            clean_metadata.pop(key, None)
+        repair_context["metadata"] = clean_metadata
     if regression_guard_errors:
         repair_context["director_quality_repair"]["regression_guard_errors"] = [
             _format_quality_error_for_repair_prompt(error) for error in regression_guard_errors
@@ -1479,26 +1452,6 @@ async def _run_materialization_quality_repair_retry(
         repair_context["director_quality_repair"]["task_boundary_scope_filter"] = task_scope_filter_evidence
     if task_boundary_discrepancy_evidence:
         repair_context["director_quality_repair"]["interface_discrepancy_evidence"] = task_boundary_discrepancy_evidence
-        interface_retry_context = {
-            "authorized": True,
-            "recommended_owner": task_boundary_discrepancy_evidence.get("recommended_owner"),
-            "recommended_route": task_boundary_discrepancy_evidence.get("recommended_route"),
-            "reason": task_boundary_discrepancy_evidence.get("reason"),
-            "interface_discrepancy_evidence": task_boundary_discrepancy_evidence,
-        }
-        repair_context["director_interface_discrepancy_retry"] = interface_retry_context
-        repair_context["task_boundary_interface_discrepancy_retry"] = interface_retry_context
-    if (
-        task_boundary_discrepancy_evidence
-        or isinstance(repair_context.get("director_interface_discrepancy_retry"), dict)
-        or isinstance(repair_context.get("task_boundary_interface_discrepancy_retry"), dict)
-    ):
-        raw_required_evidence = repair_context.get("required_evidence")
-        required_evidence_source = raw_required_evidence if isinstance(raw_required_evidence, list) else []
-        required_evidence = [str(item) for item in required_evidence_source if str(item or "").strip()]
-        if "interface_discrepancy_context" not in required_evidence:
-            required_evidence.append("interface_discrepancy_context")
-        repair_context["required_evidence"] = required_evidence
     if repair_target_files:
         repair_context["repair_target_files"] = repair_target_files[:12]
         # Provider-native tool schemas remain registry-faithful, so turn-local
@@ -1776,8 +1729,10 @@ async def _run_materialization_quality_repair_retry(
             "deadline_decision": deadline_decision,
         }
     )
+    plan_probe = deterministic_quality_summary.get("plan_probe_preaudit")
+    if isinstance(plan_probe, dict):
+        summary["plan_probe_preaudit"] = dict(plan_probe)
     if task_boundary_discrepancy_evidence:
-        summary["task_boundary_interface_discrepancy_retry_authorized"] = True
         summary["interface_discrepancy_evidence"] = task_boundary_discrepancy_evidence
     if task_scope_filter_evidence:
         summary["task_boundary_scope_filter"] = task_scope_filter_evidence
@@ -1900,23 +1855,11 @@ def _quality_repair_deadline_decision(context: dict[str, Any], requested_timeout
     }
 
 
-def _materialization_plan_probe_requires_task_boundary_triage(summary: dict[str, Any]) -> bool:
+def _materialization_probe_is_unplannable(summary: dict[str, Any]) -> bool:
+    """Read-only feasibility classification; never CE, scope or execution authority."""
     plan_probe = summary.get("plan_probe_preaudit")
     if not isinstance(plan_probe, dict):
         return False
-    if bool(summary.get("task_boundary_director_continuation_allowed")):
-        # Ordinary import-path/symbol adaptation retains its existing local
-        # continuation. A runtime-classified missing-export contract gap must
-        # still pass the explicit interface retry authorization below.
-        missing_export_discrepancy = any(
-            "missing_export" in str(source_tool or "")
-            for source_tool in plan_probe.get("covered_unplannable_source_tools") or []
-        )
-        if not (
-            summary.get("task_boundary_continuation_reason") == "current_task_unresolved_import"
-            and missing_export_discrepancy
-        ):
-            return False
     if str(plan_probe.get("status") or "") != "coverage_matched_but_unplannable":
         return False
     if bool(plan_probe.get("plannable_source_tools")):
@@ -1937,14 +1880,12 @@ def _annotate_current_task_missing_target_continuation(
 ) -> dict[str, Any]:
     """Allow Director continuation for missing files owned by the current task.
 
-    ``coverage_matched_but_unplannable`` is still a hard triage signal for
-    interface discrepancies. Missing declared target files are different: they
-    are incomplete materialization within the current task boundary, so the
-    adapter should continue through the governed Director repair turn rather
-    than treat the probe as a CE contract amendment.
+    Preserve existing diagnostic target annotations for compatibility. Planner
+    feasibility never grants execution authority or requires CE triage; all
+    writes still use the current task scope and governed tool boundary.
     """
 
-    if not _materialization_plan_probe_requires_task_boundary_triage(summary):
+    if not _materialization_probe_is_unplannable(summary):
         return summary
     workspace = str(workspace_full or "").strip()
     if not workspace:
@@ -2129,7 +2070,7 @@ def _annotate_current_task_unresolved_import_continuation(
     edit of the current task's importer.
     """
 
-    if not _materialization_plan_probe_requires_task_boundary_triage(summary):
+    if not _materialization_probe_is_unplannable(summary):
         return summary
     importer_paths = _unresolved_import_importer_paths(
         artifact_quality_errors, artifact_quality_issues, workspace_full=workspace_full
@@ -2146,119 +2087,6 @@ def _annotate_current_task_unresolved_import_continuation(
     if out_of_scope_importers:
         updated["task_boundary_continuation_deferred_target_files"] = out_of_scope_importers[:12]
     return updated
-
-
-def _materialization_interface_discrepancy_evidence(
-    *,
-    task: dict[str, Any],
-    plan_probe: dict[str, Any],
-    repair_target_files: list[str],
-    artifact_quality_errors: list[str],
-) -> dict[str, Any]:
-    task_interface_contract = _extract_task_interface_contract(task)
-    recommended_owner = "director" if task_interface_contract else "chief_engineer"
-    recommended_route = (
-        "director_retry_with_interface_discrepancy_context"
-        if recommended_owner == "director"
-        else "pending_design_interface_contract"
-    )
-    director_retry_allowed = recommended_owner == "director"
-    interface_delta = {
-        "schema_version": "director.interface_delta.v1",
-        "contract_present": bool(task_interface_contract),
-        "contract_keys": sorted(str(key) for key in task_interface_contract),
-        "diagnostic_paths": repair_target_files[:12],
-        "artifact_quality_errors": artifact_quality_errors[:8],
-        "diagnostic_count": len(plan_probe.get("covered_unplannable_diagnostics") or []),
-    }
-    triage_summary = {
-        "schema_version": "director.interface_discrepancy_triage.v1",
-        "recommended_owner": recommended_owner,
-        "recommended_route": recommended_route,
-        "contract_present": bool(task_interface_contract),
-        "director_retry_allowed": director_retry_allowed,
-        "llm_fallback_blocked": not director_retry_allowed,
-        "macro_blueprint_regeneration_allowed": False,
-        "triage_policy": "ce_contract_if_missing_else_director_local_repair",
-        "reason": "director_local_retry_with_interface_delta"
-        if director_retry_allowed
-        else "task_interface_contract_missing",
-    }
-    receipt: dict[str, Any] = DirectorInterfaceDiscrepancyReceiptV1(
-        task_id=str(task.get("id") or task.get("task_id") or task.get("external_task_id") or "materialization-task"),
-        source="roles.adapters.materialization_quality_gate",
-        plan_probe_status=str(plan_probe.get("status") or ""),
-        diagnostics=tuple(
-            item
-            for item in list(plan_probe.get("covered_unplannable_diagnostics") or [])[:20]
-            if isinstance(item, dict)
-        ),
-        source_tools=tuple(str(item) for item in plan_probe.get("covered_unplannable_source_tools") or []),
-        recommended_owner=recommended_owner,
-        recommended_route=recommended_route,
-        task_interface_contract_present=bool(task_interface_contract),
-        llm_fallback_blocked=not director_retry_allowed,
-        director_retry_allowed=director_retry_allowed,
-        interface_delta=interface_delta,
-        triage_summary=triage_summary,
-        metadata={
-            "route": "task_boundary_quality_loop",
-            "coverage_gap_count": int(plan_probe.get("coverage_gap_count") or 0),
-            "repair_target_files": repair_target_files[:12],
-            "artifact_quality_errors": artifact_quality_errors[:8],
-            "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
-        },
-    ).to_dict()
-    receipt.update(
-        {
-            "route": "task_boundary_quality_loop",
-            "coverage_gap_count": int(plan_probe.get("coverage_gap_count") or 0),
-            "repair_target_files": repair_target_files[:12],
-            "artifact_quality_errors": artifact_quality_errors[:8],
-            "task_interface_contract_keys": sorted(str(key) for key in task_interface_contract),
-        }
-    )
-    return receipt
-
-
-def _materialization_interface_discrepancy_retry_authorized(
-    *,
-    context: dict[str, Any],
-    evidence: dict[str, Any],
-) -> bool:
-    """Return true only when the caller explicitly routes this gap to Director.
-
-    ``covered_unplannable`` means the runtime catalog recognized the diagnostic
-    family but could not safely compose a patch for the current file state. That
-    must stay fail-closed unless the task-boundary controller has already
-    classified the discrepancy as an implementation-local Director retry.
-    """
-
-    raw_authorization = context.get("director_interface_discrepancy_retry")
-    if not isinstance(raw_authorization, dict):
-        raw_authorization = context.get("task_boundary_interface_discrepancy_retry")
-    if not isinstance(raw_authorization, dict) or not bool(raw_authorization.get("authorized")):
-        return False
-    raw_authorized_evidence = raw_authorization.get("interface_discrepancy_evidence")
-    authorized_evidence = raw_authorized_evidence if isinstance(raw_authorized_evidence, dict) else {}
-    owner = str(
-        raw_authorization.get("recommended_owner")
-        or authorized_evidence.get("recommended_owner")
-        or evidence.get("recommended_owner")
-        or ""
-    ).strip()
-    route = str(
-        raw_authorization.get("recommended_route")
-        or authorized_evidence.get("recommended_route")
-        or evidence.get("recommended_route")
-        or ""
-    ).strip()
-    reason = str(
-        raw_authorization.get("reason") or authorized_evidence.get("reason") or evidence.get("reason") or ""
-    ).strip()
-    if reason != "coverage_matched_but_unplannable":
-        return False
-    return owner == "director" and route == "director_retry_with_interface_discrepancy_context"
 
 
 def _extract_task_interface_contract(task: dict[str, Any]) -> dict[str, Any]:
@@ -2748,9 +2576,7 @@ __all__ = [
     "_filter_materialization_quality_errors_for_repair_targets",
     "_go_compiler_diagnostic_anchor_files",
     "_has_scaffold_marker_quality_error",
-    "_materialization_interface_discrepancy_evidence",
-    "_materialization_interface_discrepancy_retry_authorized",
-    "_materialization_plan_probe_requires_task_boundary_triage",
+    "_materialization_probe_is_unplannable",
     "_ordered_materialization_quality_repair_target_candidates",
     "_quality_repair_deadline_decision",
     "_resolve_quality_repair_timeout_seconds",

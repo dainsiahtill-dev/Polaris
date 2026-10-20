@@ -66,7 +66,7 @@ class ExecutionEffectTerminalFailureObservationV1:
     resolution_evidence_hash: str
     dead_letter_event_id: str
     dead_letter_version: int
-    exit_code: int
+    exit_code: int | None
     physical_failure_hash: str
     owner_result_hash: str
     owner_raw_result_hash: str
@@ -76,6 +76,7 @@ class ExecutionEffectTerminalFailureObservationV1:
     parent_close_version: int
     owner_terminal_event_id: str
     owner_terminal_event_seq: int
+    failure_kind: str = "physical_result_failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +98,9 @@ class ExecutionEffectClosureObservationV1:
 def query_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> ExecutionEffectClosureObservationV1:
     """Observe one current or historical attempt without granting execution.
 
+    Closed means this exact attempt has no unresolved effects. A genuinely
+    settled suspended attempt can be closed while its task remains resumable;
+    this grants neither task completion nor successor execution authority.
     The owner authenticates terminal history from its canonical FactStream;
     callers provide query identities only. A successor cannot erase an older
     attempt's effects. Unknown, active, or damaged owner evidence blocks

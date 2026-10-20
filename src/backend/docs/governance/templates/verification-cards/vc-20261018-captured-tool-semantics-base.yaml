@@ -1,0 +1,37 @@
+id: vc-20261018-captured-tool-semantics-base
+classification: extraction
+status: pending_independent_review
+scope:
+  - polaris/kernelone/tool_execution/captured_tool_semantics.py
+  - polaris/cells/roles/kernel/public/turn_contracts.py
+assumptions:
+  - KernelOne owns pure captured semantic interpretation; Role retains public enums, DTOs and producer identity.
+  - Snapshot constructor recomputation alone cannot validate hashes supplied by persisted owner wire.
+hypotheses:
+  - The existing Role pure semantic and snapshot consistency blocks can be reused below Cells without behavior or serialization changes.
+  - Exact typed wire restoration and all four provided hash comparisons preserve existing immutable captured evidence.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14p-tool-semantics-base/original-source.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14p-tool-semantics-base/design.md
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14p-tool-semantics-base/red-complete.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14p-tool-semantics-base/wire-red.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14p-tool-semantics-base/adjacent-final.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14p-tool-semantics-base/implementation.json
+verification:
+  - Baseline and candidate public Role producer use the same semantic matrix in separate processes; original bytes load before any Polaris import.
+  - Compare exact classification, invocation and TurnOutcome wire bytes, enum/class identities, normalization and old error codes.
+  - Reconstruct original persisted snapshot wire in a cold process, comparing original four hashes and exact typed roundtrip.
+  - Unknown, mixed and malformed category/categories/effect_type values remain conservative errors.
+  - Registration, aliases, registry drift, synthetic names, raw binding and full classification rederive guards remain unchanged.
+  - Base imports no Cells and never reads the current registry; immutable snapshot semantics remain single source.
+architecture:
+  - Same existing KernelOne package, no new Cell/store/DTO/state owner or dependency edge.
+  - Role changes are limited to two private delegates; full public class and enum identities remain in Role.
+  - Ledger consumption is deferred to the next reviewed module, avoiding a Cell dependency cycle.
+remaining:
+  - Final nine-file adjacent gate has 283 passed and zero failed or errors; new base and Role cases account for 94.
+  - Exact-original-module and candidate outputs are byte-identical; 27 original owner-wire records cold-restore without changed invocation/outcome bytes.
+  - Initial 17 Role test failures were incorrect new test expectations for error classifications; corrected prewrite baseline has 45 passed.
+  - Initial 19 missing-API RED cases establish feature existence, not an old classifier bug.
+  - Independent exact-SHA parity review required before component closure.
+  - No native delivery, provider call, historical r01 requalification or resource release is claimed.

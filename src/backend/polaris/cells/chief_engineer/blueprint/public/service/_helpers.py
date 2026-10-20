@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.kernelone.tasks.task_tokens import normalize_task_token
@@ -17,6 +17,7 @@ from ...internal.architecture_decisions import (
 )
 from ...internal.blueprint_persistence import BlueprintPersistence
 from ..contracts import (
+    ArtifactSemanticRoleV1,
     ChiefEngineerBlueprintErrorV1,
     ProjectCompletionContractV1,
     QueryBlueprintProvenanceV1,
@@ -136,7 +137,13 @@ def _is_ce_production_source_path(path: str, *, allowed_source_suffixes: tuple[s
     ) and not _is_ce_test_topology_path(path)
 
 
-def _ce_delegated_artifact_roles(required_source_kinds: tuple[str, ...]) -> frozenset[str]:
+def _ce_delegated_artifact_roles(
+    required_source_kinds: tuple[str, ...], *, planning_contract_version: str = ""
+) -> frozenset[str]:
+    if planning_contract_version == "pm.task_intent.v1":
+        # Modern intent delegates technical topology, not legacy source-kind
+        # hints. Keep the typed artifact vocabulary and admission identical.
+        return frozenset(get_args(ArtifactSemanticRoleV1))
     kinds = set(required_source_kinds)
     roles: set[str] = set()
     if kinds.intersection({"domain_modules", "public_api", "public_headers"}):
@@ -183,7 +190,8 @@ def _ce_topology_authorizes_artifact(
         return bool(
             normalized == path
             and normalized.split("/")[0].casefold() not in {".git", ".polaris"}
-            and semantic_role in {"source", "entrypoint", "test", "manifest", "config", "docs"}
+            and semantic_role
+            in _ce_delegated_artifact_roles(required_source_kinds, planning_contract_version=planning_contract_version)
         )
     if semantic_role not in _ce_delegated_artifact_roles(required_source_kinds):
         return False
@@ -481,21 +489,14 @@ def query_blueprint_provenance(
     target_file_set = set(target_files)
     missing_pm_targets = [path for path in expected_target_files if path not in target_file_set]
     completion_owner_by_path = (
-        {
-            obligation.path: obligation.owner_task_id
-            for obligation in completion_contract.obligations.artifacts
-        }
+        {obligation.path: obligation.owner_task_id for obligation in completion_contract.obligations.artifacts}
         if completion_contract is not None
         else {}
     )
     delegated_pm_targets = {
-        path
-        for path in missing_pm_targets
-        if completion_owner_by_path.get(path) not in {None, "", task_id}
+        path for path in missing_pm_targets if completion_owner_by_path.get(path) not in {None, "", task_id}
     }
-    unresolved_missing_pm_targets = [
-        path for path in missing_pm_targets if path not in delegated_pm_targets
-    ]
+    unresolved_missing_pm_targets = [path for path in missing_pm_targets if path not in delegated_pm_targets]
     if unresolved_missing_pm_targets:
         raise ChiefEngineerBlueprintErrorV1(
             "blueprint provenance target_files dropped required PM artifacts",
@@ -1787,8 +1788,11 @@ def _contract_completeness(
         "semantic_alignment": semantic_alignment,
         "semantic_blockers": semantic_blockers,
         "depth_contract_ready": not advisory_missing_fields,
-        "requires": [*(["context_files", "verification_commands"] if verification_only else ["target_files"]),
-                     "acceptance_criteria", "execution_checklist"],
+        "requires": [
+            *(["context_files", "verification_commands"] if verification_only else ["target_files"]),
+            "acceptance_criteria",
+            "execution_checklist",
+        ],
         "advisory_requires": ["delivery_plan_document", "delivery_depth_contract"],
     }
 

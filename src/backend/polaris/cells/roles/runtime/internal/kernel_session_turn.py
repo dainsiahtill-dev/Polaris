@@ -21,7 +21,7 @@ from polaris.cells.roles.kernel.public.llm_caller_contracts import (
     clamp_role_execution_timeout_to_deadline,
     prepare_role_session_continuation_policy,
 )
-from polaris.cells.roles.kernel.public.turn_contracts import TurnContinuationMode
+from polaris.cells.roles.kernel.public.turn_contracts import ToolExecutionResult, TurnContinuationMode
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     ContentChunkEvent,
@@ -38,11 +38,16 @@ from polaris.kernelone.audit.context_os_prompt import (
     find_control_plane_prompt_content_hits,
     normalize_control_plane_prompt_key,
 )
+from polaris.kernelone.context.contracts import ContextSource
 from polaris.kernelone.context.prompt_safety import (
+    TOOL_OBSERVATION_SOURCES_KEY,
+    bind_tool_observation_source,
     format_tool_failure_summary,
     parse_tool_failure_summary,
+    project_tool_result_data,
     prompt_safe_tool_failure_summary,
 )
+from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
 from polaris.kernelone.quality import (
     ArtifactQualityEvidence,
     artifact_quality_issue_raw,
@@ -53,28 +58,15 @@ from polaris.kernelone.quality import (
     scan_workspace_artifact_quality_evidence,
 )
 from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
+from polaris.kernelone.tool_execution.captured_tool_semantics import (
+    classify_captured_tool_semantics,
+    restore_captured_tool_spec_snapshot,
+)
 
 
 def _transcript_data_plane(value: Any) -> Any:
     """Keep tool observations while excluding execution and receipt authority."""
-    if isinstance(value, Mapping):
-        excluded = {
-            "effect_receipt",
-            "effect_receipt_commit",
-            "director_policy",
-            "authorization",
-            "execution_envelope",
-            "execution_attempt_authority",
-            "job_token",
-            "job_token_id",
-            "job_token_set",
-            "job_token_set_hash",
-            "claim_grant",
-            "claim_grant_hash",
-            "capability_token",
-        }
-        return {str(key): item for key, item in value.items() if str(key) not in excluded}
-    return value
+    return project_tool_result_data(value)
 
 
 def _feedback_text_is_private(value: str) -> bool:
@@ -227,6 +219,115 @@ def _committed_transcript_messages(results: list[RoleTurnResult]) -> list[dict[s
             messages.append({"role": "assistant", "content": "", "tool_calls": native_calls})
             messages.extend(tool_messages)
     return messages
+
+
+def _committed_transcript_sources(results: list[RoleTurnResult], *, role: str) -> tuple[ContextSource, ...]:
+    """Bind ordinary native data only after checking the committed inventory.
+
+    Legacy values without the original inventory remain unbound. The binding is
+    derived again after cold recovery; it is never an additional durable fact.
+    """
+    sources: list[ContextSource] = []
+    for result in results:
+        commit = result.metadata.get("turn_commit_receipt")
+        outcome = result.metadata.get("turn_outcome")
+        execution = outcome.get("execution") if isinstance(outcome, Mapping) else None
+        if (
+            not isinstance(commit, Mapping)
+            or not commit.get("turn_id")
+            or commit.get("validation_passed") is not True
+            or not isinstance(outcome, Mapping)
+            or not isinstance(execution, Mapping)
+        ):
+            continue
+        batch = result.batch_receipt or {}
+        receipt = execution.get("receipt")
+        invocations = execution.get("invocations")
+        if (
+            outcome.get("turn_id") != commit["turn_id"]
+            or not isinstance(receipt, Mapping)
+            or receipt.get("batch_id") != batch.get("batch_id")
+            or not isinstance(invocations, list)
+        ):
+            raise RuntimeError("committed_tool_observation_inventory_mismatch")
+        try:
+            committed_rows = receipt.get("results")
+            projected_rows = batch.get("results")
+            if not isinstance(committed_rows, list) or not isinstance(projected_rows, list):
+                raise ValueError("receipt_results_not_list")
+            # The committed owner serializer fills optional defaults omitted by
+            # event projections. Canonicalize both through that same strict DTO;
+            # unknown fields and real result/effect differences remain errors.
+            committed_results = [
+                ToolExecutionResult.model_validate(row, strict=True).model_dump(mode="python") for row in committed_rows
+            ]
+            projected_results = [
+                ToolExecutionResult.model_validate(row, strict=True).model_dump(mode="python") for row in projected_rows
+            ]
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("committed_tool_observation_inventory_mismatch") from exc
+        if committed_results != projected_results:
+            raise RuntimeError("committed_tool_observation_inventory_mismatch")
+        originals = {item.get("call_id"): item for item in invocations if isinstance(item, Mapping)}
+        calls = {item.get("call_id"): item for item in result.tool_calls if isinstance(item, Mapping)}
+        rows = batch.get("results", [])
+        row_ids = [item.get("call_id") for item in rows if isinstance(item, Mapping)]
+        if len(originals) != len(invocations) or len(set(row_ids)) != len(rows) or set(row_ids) != set(originals):
+            raise RuntimeError("committed_tool_observation_inventory_mismatch")
+        messages = _committed_transcript_messages([result])
+        slots = {item.get("tool_call_id"): item for item in messages if item.get("role") == "tool"}
+        for row in rows:
+            invocation = originals[row["call_id"]]
+            call = calls.get(row["call_id"])
+            arguments = invocation.get("arguments")
+            if (
+                not isinstance(arguments, Mapping)
+                or call is None
+                or call.get("args") != arguments
+                or call.get("tool") != invocation.get("tool_name")
+                or row.get("tool_name") != invocation.get("tool_name")
+            ):
+                raise RuntimeError("committed_tool_observation_arguments_mismatch")
+            native = invocation.get("native_arguments")
+            classification = invocation.get("classification")
+            if row.get("status") != "success" or not isinstance(native, Mapping):
+                continue
+            snapshot = restore_captured_tool_spec_snapshot(
+                json.loads(json.dumps(classification.get("snapshot"), ensure_ascii=False, allow_nan=False))
+                if isinstance(classification, Mapping)
+                else None
+            )
+            if snapshot is None or not snapshot.registered or snapshot.canonical_tool_name != row["tool_name"]:
+                raise RuntimeError("committed_tool_observation_native_arguments_mismatch")
+            semantics = classify_captured_tool_semantics(snapshot)
+            if semantics.error_code is not None:
+                raise RuntimeError("committed_tool_observation_native_arguments_mismatch")
+            # Replay the captured decoder contract, never a caller-supplied flag.
+            # Read invocations preserve native mappings without write defaults.
+            decoded_arguments = (
+                normalize_tool_arguments_from_snapshot(snapshot, native)
+                if semantics.normalization_required
+                else dict(native)
+            )
+            if decoded_arguments != dict(arguments):
+                raise RuntimeError("committed_tool_observation_native_arguments_mismatch")
+            slot = slots.get(row["call_id"])
+            if slot is None:
+                raise RuntimeError("committed_tool_observation_slot_missing")
+            sources.append(
+                bind_tool_observation_source(
+                    source_id=f"{commit['turn_id']}:{row['call_id']}",
+                    role=role,
+                    tool_name=row["tool_name"],
+                    call_id=row["call_id"],
+                    arguments=arguments,
+                    native_arguments=native,
+                    result=row.get("result"),
+                    content=slot["content"],
+                    snapshot_hash=snapshot.snapshot_hash,
+                )
+            )
+    return tuple(sources)
 
 
 def _failed_batch_feedback_summary(batch_receipt: Mapping[str, Any] | None) -> str:
@@ -653,10 +754,14 @@ class KernelSessionTurnBridge:
         # The kernel assembly reconstructs current authority messages. The
         # session's prior native observations have one producer below.
         context.pop("_transaction_kernel_prebuilt_messages", None)
+        context.pop(TOOL_OBSERVATION_SOURCES_KEY, None)
         if context.get("_roles_kernel_committed_session_continuation") is TurnContinuationMode.AUTO_CONTINUE:
             transcript = _committed_transcript_messages(self.results)
             if transcript:
                 context["_transaction_kernel_prebuilt_messages"] = transcript
+                context[TOOL_OBSERVATION_SOURCES_KEY] = _committed_transcript_sources(
+                    self.results, role=self.command.role
+                )
         remaining_seconds = self.command.timeout_seconds
         if self.deadline is not None:
             remaining = self.deadline - time.monotonic()

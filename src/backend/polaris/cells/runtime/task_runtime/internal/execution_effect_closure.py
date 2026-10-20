@@ -8,7 +8,15 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from polaris.cells.director.runtime.public import hash_directed_effect_arguments
+from polaris.cells.director.runtime.public import (
+    DirectedEffectImmutableMapV1,
+    DirectedEffectImmutableSequenceV1,
+    hash_directed_effect_arguments,
+)
+from polaris.cells.director.runtime.public.directed_effect_policy_contracts import (
+    DirectorEffectPolicyOperationSubjectV1,
+    hash_director_effect_policy_operation_subject,
+)
 from polaris.cells.events.fact_stream.public import (
     FactPayloadReferenceV1,
     FactStreamError,
@@ -33,6 +41,7 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
     DirectedEffectOperationResultV1,
     DirectedEffectParentRegistryIdentityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
+    TaskRuntimeExecutionFactV1,
 )
 from polaris.cells.runtime.task_runtime.public.execution_effect_closure import (
     ExecutionEffectClosureObservationV1,
@@ -41,8 +50,14 @@ from polaris.cells.runtime.task_runtime.public.execution_effect_closure import (
     QueryExecutionEffectClosuresV1,
     QueryExecutionEffectClosureV1,
 )
+from polaris.kernelone.editing.contracts import EditPrewriteRejectionV1, hash_edit_prewrite_arguments
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
 from polaris.kernelone.storage import resolve_workspace_runtime_identity
+from polaris.kernelone.tool_execution.captured_tool_semantics import (
+    classify_captured_tool_semantics,
+    restore_captured_tool_spec_snapshot,
+)
 
 
 def observe_execution_effect_closure(query: QueryExecutionEffectClosureV1) -> ExecutionEffectClosureObservationV1:
@@ -81,12 +96,20 @@ def _observe_execution_effect_closure(
             return refused("session_identity_mismatch")
         owner_events = _read_owner_events(query.workspace) if owner_history is None else owner_history
         current_matches = isinstance(current_session, dict) and _session_matches_identity(current_session, identity)
-        if current_matches and isinstance(current_session, dict) and not _terminal(current_session):
+        if (
+            current_matches
+            and isinstance(current_session, dict)
+            and not _terminal(current_session)
+            and current_session.get("status") != "suspended"
+        ):
             return refused("session_not_terminal", active=True)
         terminal = _owner_terminal_session(owner_events, identity, attempt)
         if terminal is None:
+            terminal = _owner_suspended_attempt_session(owner_events, identity, attempt)
+        if terminal is None:
             return refused("owner_terminal_fact_missing")
         session, owner_terminal = terminal
+        suspended_attempt = session.get("status") == "suspended"
         removal_witness = None
         # The current attempt retains its strict disk guard. A historical query
         # requires a real successor claim; a foreign replacement session cannot
@@ -102,6 +125,10 @@ def _observe_execution_effect_closure(
                 return refused("terminal_owner_session_mismatch")
         elif not _owner_session_known(owner_events, current_session, query.workspace, attempt.task_id):
             return refused("session_identity_mismatch")
+        elif suspended_attempt and not _suspended_successor_known(
+            owner_events, session, owner_terminal, current_session, query.workspace
+        ):
+            return refused("suspended_successor_identity_mismatch")
         current_identity = _attempt_from_session(query.workspace, session)
         validation = validate_fulfilled_terminal_intent(TaskExecutionSession.from_dict(session), current_identity)
         if isinstance(validation, DirectedEffectSettlementPreBarrierVerdictV1):
@@ -164,8 +191,8 @@ def _observe_execution_effect_closure(
                 if aggregate.state == "ABORTED":
                     continue
                 if aggregate.state == "DEAD_LETTER":
-                    if session.get("status") != "failed":
-                        return refused("negative_effect_requires_failed_owner")
+                    if not _terminal(session):
+                        return refused("negative_effect_requires_terminal_owner")
                     if role_owner_events is None:
                         role_owner_events = _read_role_owner_events(
                             query.workspace,
@@ -189,6 +216,8 @@ def _observe_execution_effect_closure(
                     )
                     if failure is None:
                         return refused("terminal_failure_proof_missing_or_invalid")
+                    # A fully proven failed operation is closed independently
+                    # of the final task result; its negative evidence remains.
                     terminal_failures.append(failure)
                     continue
                 if aggregate.state != "CLOSED_BY_PARENT":
@@ -257,7 +286,15 @@ def _observe_execution_effect_closure(
         ).encode("utf-8")
         return ExecutionEffectClosureObservationV1(
             "closed",
-            "terminal_no_effect_closure_observed" if no_parent else "terminal_effect_closure_observed",
+            (
+                "settled_suspended_no_effect_closure_observed"
+                if suspended_attempt and no_parent
+                else "settled_suspended_effect_closure_observed"
+                if suspended_attempt
+                else "terminal_no_effect_closure_observed"
+                if no_parent
+                else "terminal_effect_closure_observed"
+            ),
             attempt,
             tuple(receipts),
             tuple(refs),
@@ -592,6 +629,108 @@ def _owner_terminal_session(
     return result if attempt.lease_expires_at in known_leases else None
 
 
+def _settled_fact_protocol_matches(event: Mapping[str, Any]) -> bool:
+    """Validate the existing V1 fact key, independently from session intent identity."""
+    payload = event["payload"]
+    metadata = event["metadata"]
+    transition = payload.get("transition_id")
+    if not isinstance(transition, str) or not transition:
+        return False
+    try:
+        fact = TaskRuntimeExecutionFactV1.from_payload(transition_id=transition, payload=payload)
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        fact.to_record() == payload
+        and metadata.get("idempotency_key") == fact.idempotency_key
+        and metadata.get("task_id") == fact.task_id
+        and event.get("correlation_id") == payload.get("session_id") == metadata.get("correlation_id")
+        and payload.get("session_id")
+        == payload.get("task_row_snapshot", {}).get("metadata", {}).get("runtime_execution", {}).get("session_id")
+    )
+
+
+def _owner_suspended_attempt_session(
+    events: tuple[Mapping[str, Any], ...],
+    identity: DirectedEffectParentRegistryIdentityV1,
+    attempt: TaskRuntimeExecutionAttemptIdentityV1,
+) -> tuple[dict[str, Any], Mapping[str, Any]] | None:
+    """Authenticate settled attempt effects without declaring its task completed.
+
+    V1 suspended facts intentionally project pending task state and may use a
+    fresh fact transition ID. The embedded session's independently bound intent
+    is validated by the common observation path, followed by strict DEO proof.
+    """
+    claims: list[Mapping[str, Any]] = []
+    candidates: list[tuple[dict[str, Any], Mapping[str, Any]]] = []
+    known_leases: set[Any] = set()
+    for event in events:
+        session = _event_session(event, attempt.workspace)
+        if session is None or not _session_matches_identity(session, identity):
+            continue
+        known_leases.add(session.get("lease_expires_at"))
+        metadata = session.get("metadata")
+        if isinstance(metadata, Mapping):
+            known_leases.add(metadata.get("settlement_identity_lease_expires_at"))
+        payload = event["payload"]
+        if (
+            event.get("event_type") == "claimed"
+            and session.get("status") == "active"
+            and payload.get("attempt") == session.get("attempt")
+            and _settled_fact_protocol_matches(event)
+        ):
+            claims.append(event)
+        if (
+            event.get("event_type") != "suspended"
+            or session.get("status") != "suspended"
+            or session.get("resumable") is not True
+            or not session.get("released_at")
+            or not session.get("terminal_transition_id")
+            or payload.get("terminal") is not False
+            or payload.get("status") != "pending"
+            or payload.get("execution_state") != "pending"
+            or payload["task_row_snapshot"].get("status") != "pending"
+            or payload.get("attempt") != session.get("attempt")
+            or not _settled_fact_protocol_matches(event)
+        ):
+            continue
+        if not any(claim["seq"] < event["seq"] for claim in claims):
+            continue
+        candidates.append((dict(session), event))
+    if len(candidates) != 1 or attempt.lease_expires_at not in known_leases:
+        return None
+    return candidates[0]
+
+
+def _suspended_successor_known(
+    events: tuple[Mapping[str, Any], ...],
+    suspended: Mapping[str, Any],
+    owner_fact: Mapping[str, Any],
+    current: Mapping[str, Any],
+    workspace: str,
+) -> bool:
+    """Require real, monotone successor claims rather than a foreign replacement."""
+    reachable = {suspended["session_id"]: suspended["attempt"]}
+    for event in events:
+        if event.get("seq", 0) <= owner_fact["seq"] or event.get("event_type") != "claimed":
+            continue
+        session = _event_session(event, workspace)
+        if (
+            session is None
+            or session.get("task_id") != suspended.get("task_id")
+            or session.get("external_task_id") != suspended.get("external_task_id")
+            or session.get("status") != "active"
+            or not _settled_fact_protocol_matches(event)
+        ):
+            continue
+        metadata = session.get("metadata")
+        previous = metadata.get("previous_session_id") if isinstance(metadata, Mapping) else None
+        attempt_number = session.get("attempt")
+        if previous in reachable and type(attempt_number) is int and attempt_number > reachable[previous]:
+            reachable[session["session_id"]] = attempt_number
+    return current.get("session_id") in reachable
+
+
 def _owner_session_known(
     events: tuple[Mapping[str, Any], ...], current: Mapping[str, Any], workspace: str, task_id: int
 ) -> bool:
@@ -728,6 +867,121 @@ def _registry_absent(
             and details.get("storage_path") == f"runtime/events/{token}.jsonl"
         )
     )
+
+
+def _negative_arguments_items(arguments: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+    def freeze(value: Any) -> Any:
+        if isinstance(value, dict):
+            return DirectedEffectImmutableMapV1(tuple((key, freeze(item)) for key, item in value.items()))
+        if isinstance(value, list):
+            return DirectedEffectImmutableSequenceV1(tuple(freeze(item) for item in value))
+        return value
+
+    return tuple((key, freeze(value)) for key, value in arguments.items())
+
+
+def _negative_operation_binding_matches(arguments: dict[str, Any], attempt: Any, binding: Any, member: Any) -> bool:
+    try:
+        subject = DirectorEffectPolicyOperationSubjectV1(
+            workspace=attempt.workspace,
+            turn_id=binding.correlation.turn_id,
+            batch_id=binding.correlation.batch_id,
+            tool_call_id=member.tool_call_id,
+            inventory_ordinal=member.ordinal,
+            normalized_tool_name=member.normalized_tool_name,
+            normalized_arguments=_negative_arguments_items(arguments),
+            effect_type=member.effect_type,
+            execution_mode=member.execution_mode,
+            prospective_operation_hash=member.intended_effect_fingerprint,
+        )
+        operation_hash = hash_director_effect_policy_operation_subject(subject)
+        return (
+            operation_hash
+            == member.intended_effect_fingerprint
+            == member.policy_verdict_hash
+            == member.expected_receipt_binding_hash
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _negative_invocation_matches(
+    invocation: Mapping[str, Any], native: Mapping[str, Any], member: Any, attempt: Any, binding: Any
+) -> bool:
+    """Keep native hashes and captured normalized arguments in separate domains."""
+    arguments = invocation.get("arguments")
+    if (
+        not isinstance(arguments, dict)
+        or invocation.get("tool_name") != member.normalized_tool_name
+        or not _negative_operation_binding_matches(arguments, attempt, binding, member)
+    ):
+        return False
+    native_arguments = invocation.get("native_arguments", arguments)
+    if not isinstance(native_arguments, dict) or native.get("arguments_hash") != _canonical_sha256(native_arguments):
+        return False
+    classification = invocation.get("classification")
+    snapshot_record = classification.get("snapshot") if isinstance(classification, Mapping) else None
+    if snapshot_record is None:
+        # Legacy outcomes retain their original exact-argument rule. They cannot
+        # acquire alias migration merely by adding an observation field.
+        return native.get("tool_name") == member.normalized_tool_name and native_arguments == arguments
+    snapshot = restore_captured_tool_spec_snapshot(snapshot_record)
+    if snapshot is None or not snapshot.registered or not isinstance(classification, Mapping):
+        return False
+    semantics = classify_captured_tool_semantics(snapshot)
+    if not (
+        snapshot.raw_tool_name
+        == invocation.get("raw_tool_name")
+        == native.get("tool_name")
+        == classification.get("raw_tool_name")
+        and snapshot.canonical_tool_name == member.normalized_tool_name == classification.get("canonical_tool_name")
+        and classification.get("registered") is True
+        and semantics.effect_type == classification.get("effect_type") == invocation.get("effect_type") == "write"
+        and semantics.execution_mode
+        == classification.get("execution_mode")
+        == invocation.get("execution_mode")
+        == "write_serial"
+        and semantics.normalization_required is classification.get("normalization_required") is True
+        and semantics.error_code is classification.get("error_code") is None
+    ):
+        return False
+    try:
+        return _canonical_sha256(
+            normalize_tool_arguments_from_snapshot(snapshot, native_arguments)
+        ) == _canonical_sha256(arguments)
+    except (TypeError, ValueError):
+        return False
+
+
+def _file_prewrite_proof(
+    physical: Mapping[str, Any], arguments: dict[str, Any], attempt: Any, binding: Any, member: Any
+) -> EditPrewriteRejectionV1 | None:
+    """Restore a serialized proof only inside its authenticated owner chain."""
+    value = physical.get("prewrite_rejection")
+    if not isinstance(value, dict) or member.normalized_tool_name != "edit_blocks":
+        return None
+    try:
+        proof = EditPrewriteRejectionV1(
+            reason_code=value["reason_code"],
+            target_path=value["target_path"],
+            normalized_operation_hash=value["normalized_operation_hash"],
+            arguments_hash=value["arguments_hash"],
+            before_sha256=value["before_sha256"],
+            after_sha256=value["after_sha256"],
+            write_started=value["write_started"],
+        )
+        if (
+            asdict(proof) != value
+            or proof.arguments_hash != hash_edit_prewrite_arguments(arguments)
+            or proof.target_path != arguments.get("file")
+            or physical.get("physical_error") != proof.reason_code
+            or proof.normalized_operation_hash != member.intended_effect_fingerprint
+            or not _negative_operation_binding_matches(arguments, attempt, binding, member)
+        ):
+            return None
+        return proof
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return None
 
 
 def _observe_terminal_failure(
@@ -886,11 +1140,8 @@ def _observe_terminal_failure(
         if len(calls) != 1 or len(native) != 1:
             continue
         arguments = calls[0].get("arguments")
-        if (
-            not isinstance(arguments, dict)
-            or calls[0].get("tool_name") != member.normalized_tool_name
-            or native[0].get("tool_name") != member.normalized_tool_name
-            or native[0].get("arguments_hash") != _canonical_sha256(arguments)
+        if not isinstance(arguments, dict) or not _negative_invocation_matches(
+            calls[0], native[0], member, attempt, binding
         ):
             continue
         physical = row.get("result")
@@ -902,6 +1153,20 @@ def _observe_terminal_failure(
         ref = descriptor.get("resolution_evidence_ref")
         context = ref.removeprefix("dead-letter://director/") if isinstance(ref, str) else ""
         code = physical.get("exit_code")
+        failure_kind = physical.get("failure_kind")
+        prewrite = (
+            _file_prewrite_proof(physical, arguments, attempt, binding, member)
+            if failure_kind == "file_prewrite_rejected"
+            else None
+        )
+        valid_failure = (
+            prewrite is not None and code is None
+            if failure_kind == "file_prewrite_rejected"
+            else failure_kind == "physical_result_failed"
+            and member.normalized_tool_name == "execute_command"
+            and type(code) is int
+            and code > 0
+        )
         if (
             row.get("status") not in {"error", "failed", "cancelled"}
             or row.get("tool_name") != member.normalized_tool_name
@@ -910,10 +1175,8 @@ def _observe_terminal_failure(
             or row.get("effect_receipt") is not None
             or row.get("effect_receipt_commit") is not None
             or physical.get("schema_version") != "roles.adapters.directed_effect_physical_failure.v1"
-            or physical.get("failure_kind") != "physical_result_failed"
+            or not valid_failure
             or physical.get("error_code") != "deo_physical_execution_failed"
-            or type(code) is not int
-            or code <= 0
             or not isinstance(physical.get("physical_error"), str)
             or len(context) != 64
             or any(c not in "0123456789abcdef" for c in context)
@@ -928,11 +1191,21 @@ def _observe_terminal_failure(
         ):
             continue
         evidence = (
-            ("context_id", context),
-            ("failure_kind", "physical_result_failed"),
-            ("result_type", "dict"),
-            ("physical_error", physical["physical_error"][:400]),
-            ("physical_error_type", str(physical.get("physical_error_type") or "")[:80]),
+            (
+                ("context_id", context),
+                ("failure_kind", "file_prewrite_rejected"),
+                ("prewrite_rejection_hash", _canonical_sha256(asdict(prewrite))),
+                ("physical_executor_invoked", True),
+                ("write_started", False),
+            )
+            if prewrite is not None
+            else (
+                ("context_id", context),
+                ("failure_kind", "physical_result_failed"),
+                ("result_type", "dict"),
+                ("physical_error", physical["physical_error"][:400]),
+                ("physical_error_type", str(physical.get("physical_error_type") or "")[:80]),
+            )
         )
         if (
             hash_directed_effect_arguments(evidence) != recovery.descriptor.get("recovery_evidence_hash")
@@ -956,6 +1229,7 @@ def _observe_terminal_failure(
                 dead_letter_event_id=dead.event_id,
                 dead_letter_version=dead.version,
                 exit_code=code,
+                failure_kind=str(failure_kind),
                 physical_failure_hash=_canonical_sha256(physical),
                 owner_result_hash=_canonical_sha256({k: v for k, v in row.items() if k != "execution_time_ms"}),
                 owner_raw_result_hash=_canonical_sha256({k: v for k, v in raw_row.items() if k != "execution_time_ms"}),

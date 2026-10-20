@@ -1,0 +1,46 @@
+id: vc-20261020-repair-plannability-authority-separation
+classification: pattern
+status: source_stop_pending_independent_review
+owner: roles.adapters
+scope:
+  - polaris/cells/roles/adapters/internal/director/quality_gate/_repair_loop.py
+  - polaris/cells/roles/adapters/internal/director/quality_gate/__init__.py
+  - polaris/cells/roles/adapters/internal/director/execute_method/_phases_quality.py
+  - polaris/cells/roles/adapters/internal/director/execute_method/__init__.py
+  - polaris/cells/factory/pipeline/internal/factory_workspace_quality_evidence.py
+  - polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py
+assumptions:
+  - Read-only coverage and patch composability cannot establish CE ownership or execution authority.
+  - An unplannable deterministic repair can proceed to the existing governed Director dialogue.
+  - Actual task scope, exporter ownership, provenance, JobToken and Gateway checks remain authoritative.
+  - Dispatch progress alone does not establish mutation, verifier success or receipt-bound completion.
+design:
+  - Remove both outer quality-loop and inner retry exits based only on planner feasibility.
+  - Remove synthesis of interface discrepancies and retry authorization from coverage reports.
+  - Preserve the existing read-only plan probe in repair summary projections.
+  - Migrate Factory predicates and no-commit cache projections to the same authority distinction.
+  - Preserve actual scope-owner discrepancy evidence and defer foreign targets through existing owners.
+  - Keep original tool recipes, command authority, attempt budgets and proof-bound completion unchanged.
+pre_mortem:
+  - Removing a genuine exporter or scope rejection would widen authority.
+  - A canned callback could be misreported as a physical provider call or committed repair.
+  - A stale coverage-derived authorization annotation could survive in a later repair context.
+  - Full tool and failure-feedback contracts could accidentally change while deleting adjacent code.
+verification:
+  - Adapter dispatch and Factory classifier causal RED before the production patch.
+  - Same-scoped canned adapter dispatch with original failure feedback and retained read-only probe.
+  - Real Gateway and TaskRuntime claim reject explicit empty and foreign write scopes without effects.
+  - Actual scope exporter evidence still requires task-boundary triage.
+  - Existing task-scope, malformed authority and owned importer regression controls.
+  - Real current-owner proof rebuilds a normal task boundary and remains idempotent after cold retry.
+  - Scoped Ruff, format, mypy, diff and YAML checks.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-build-feedback-independent-audit/proposal-nine-point.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-build-feedback-independent-audit/red-causal-adapter-seam.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-build-feedback-independent-audit/baseline-representative.log
+limits:
+  - Original R08 native plan-probe detail was not persisted and remains UNKNOWN.
+  - The historical public probe reconstruction is read-only replay, not original native evidence.
+  - Canned adapter dispatch does not prove a physical LLM request or a repaired artifact receipt.
+  - The broad adjacent run contained failures; only two representative failures were replayed on all six baseline sources.
+  - No original target, runtime, acceptance command, remote provider, configuration or native run was changed.

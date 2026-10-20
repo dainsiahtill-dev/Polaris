@@ -1,0 +1,8 @@
+# Keep this documentation package visible despite the root reports/ ignore.
+!reports/
+reports/*
+!reports/polaris-history-experience.md
+!reports/polaris-history-sources.html
+!reports/polaris-history-document-catalogue.md
+!reports/polaris-history-document-catalogue.json
+!reports/polaris-history-evidence.json

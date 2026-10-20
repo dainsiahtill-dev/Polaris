@@ -13,8 +13,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.editing.editblock_engine import compose_line_range_edit
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_guards import (
     _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO,
     _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES,
@@ -27,6 +29,13 @@ from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_io import (
 
 if TYPE_CHECKING:
     from polaris.kernelone.llm.toolkit.executor.core import AgentAccelToolExecutor
+
+
+@dataclass
+class _StagedLineRanges:
+    original: str
+    current: str
+    spans: list[tuple[int, int, int]] = field(default_factory=list)
 
 
 def _is_placeholder_search_text(search_text: str) -> bool:
@@ -348,6 +357,8 @@ def _synthesize_line_range_block(
     start: Any,
     end: Any,
     replacement: Any,
+    *,
+    staged_content: dict[str, _StagedLineRanges] | None = None,
 ) -> tuple[str | None, dict[str, Any] | None]:
     """Build a SEARCH/REPLACE block from a line range (weak-model affordance).
 
@@ -367,7 +378,11 @@ def _synthesize_line_range_block(
     if not self._kernel_fs.workspace_is_file(rel):
         return None, {"ok": False, "error": f"Path is not a file: {file}"}
     try:
-        content = self._kernel_fs.workspace_read_text(rel, encoding="utf-8")
+        content = (
+            staged_content[rel].original
+            if staged_content is not None and rel in staged_content
+            else self._kernel_fs.workspace_read_text(rel, encoding="utf-8")
+        )
     except (OSError, UnicodeDecodeError) as exc:
         return None, {"ok": False, "error": f"Failed to read {file}: {exc}"}
 
@@ -382,19 +397,22 @@ def _synthesize_line_range_block(
             "ok": False,
             "error": f"Invalid line range [{start_no},{end_no}] for {file} (file has {total} lines).",
         }
-    end_no = min(end_no, total)
+    if end_no > total:
+        return None, {
+            "ok": False,
+            "error": f"Invalid line range [{start_no},{end_no}] for {file} (file has {total} lines).",
+        }
     search_text = "".join(lines[start_no - 1 : end_no])
 
-    repl = "" if replacement is None else str(replacement)
-    if not repl.strip():
+    if not isinstance(replacement, str):
         return None, {
             "ok": False,
             "error": (
-                f"line-range edit for {file}[{start_no}:{end_no}] has no replacement code. "
-                "Provide the new code for those lines via 'replace' (or 'new_text'/'content')."
+                f"line-range edit for {file}[{start_no}:{end_no}] requires an explicit string replacement. "
+                "An empty string deletes the selected lines."
             ),
-            "suggestion": "Pass the actual replacement source for the range; an empty replacement is rejected.",
         }
+    repl = replacement
     requested_removed_lines = end_no - start_no + 1
     if (
         total > requested_removed_lines
@@ -421,7 +439,7 @@ def _synthesize_line_range_block(
             }
 
     # Preserve the trailing-newline shape of the replaced slice.
-    if search_text.endswith("\n") and not repl.endswith("\n"):
+    if repl and search_text.endswith("\n") and not repl.endswith("\n"):
         repl = repl + "\n"
     removed_lines = end_no - start_no + 1
     added_lines = len(repl.splitlines())
@@ -448,8 +466,25 @@ def _synthesize_line_range_block(
     # line. This newline is a pure delimiter: ``_synthesize_line_range_search``
     # below strips it back off at apply time so the bytes matched against / written
     # to the file are unchanged.
-    search_body = search_text if search_text.endswith("\n") else search_text + "\n"
-    repl_body = repl if repl.endswith("\n") else repl + "\n"
+    # A range identifies offsets, not the first matching copy of its SEARCH
+    # text. Wrap the exact composed whole preimage so duplicate lines cannot
+    # redirect an edit to an earlier occurrence.
+    staged = staged_content.get(rel) if staged_content is not None else None
+    current_content = staged.current if staged is not None else content
+    spans = staged.spans if staged is not None else []
+    if any(start_no <= prior_end and end_no >= prior_start for prior_start, prior_end, _ in spans):
+        return None, {"ok": False, "error": "Overlapping line ranges in one JSON edit payload are ambiguous"}
+    shift = sum(delta for _, prior_end, delta in spans if prior_end < start_no)
+    new_content = compose_line_range_edit(current_content, start_no + shift, end_no + shift, replacement)
+    if staged_content is not None:
+        if staged is None:
+            staged = _StagedLineRanges(original=content, current=current_content)
+            staged_content[rel] = staged
+        delta = len(new_content.splitlines(keepends=True)) - len(current_content.splitlines(keepends=True))
+        staged.spans.append((start_no, end_no, delta))
+        staged.current = new_content
+    search_body = current_content if current_content.endswith("\n") else current_content + "\n"
+    repl_body = new_content if not new_content or new_content.endswith("\n") else new_content + "\n"
     block = f"<<<< SEARCH:{file}\n{search_body}====\n{repl_body}>>>> REPLACE\n"
     return block, None
 
@@ -570,6 +605,7 @@ def _synthesize_blocks_from_json_payload(
     if not items:
         return None, None
     synthesized: list[str] = []
+    staged_content: dict[str, _StagedLineRanges] = {}
     for item in items:
         if not isinstance(item, dict):
             return None, None
@@ -613,6 +649,7 @@ def _synthesize_blocks_from_json_payload(
                         nested_start,
                         nested_end,
                         nested_replacement,
+                        staged_content=staged_content,
                     )
                     if err is not None:
                         return None, err
@@ -641,7 +678,9 @@ def _synthesize_blocks_from_json_payload(
             (item[key] for key in _JSON_EDIT_REPLACE_KEYS if item.get(key) is not None),
             None,
         )
-        block, err = _synthesize_line_range_block(self, item_file, start, end, replacement)
+        block, err = _synthesize_line_range_block(
+            self, item_file, start, end, replacement, staged_content=staged_content
+        )
         if err is not None:
             return None, err
         synthesized.append(block or "")

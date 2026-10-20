@@ -245,68 +245,16 @@ def _classify_captured_snapshot(
 def _validate_captured_effective_spec_semantics(
     snapshot: CapturedToolSpecSnapshotV1,
 ) -> _CapturedEffectiveSpecSemanticsV1:
-    """Classify category fields together, rejecting ambiguous captured semantics."""
-    from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
+    """Adapt KernelOne captured semantics to the unchanged Role contract."""
+    from polaris.kernelone.tool_execution.captured_tool_semantics import classify_captured_tool_semantics
 
-    effective_spec = frozen_node_to_value(snapshot.canonical_effective_spec)
-    if not isinstance(effective_spec, dict):
+    semantics = classify_captured_tool_semantics(snapshot)
+    if semantics.error_code is not None:
         return _invalid_captured_effective_spec_semantics()
-
-    semantic_values: set[str] = set()
-    category = effective_spec.get("category")
-    if category is not None:
-        if not isinstance(category, str):
-            return _invalid_captured_effective_spec_semantics()
-        semantic_values.add(category.strip().lower())
-
-    categories = effective_spec.get("categories")
-    if categories is not None:
-        if not isinstance(categories, list) or not all(isinstance(value, str) for value in categories):
-            return _invalid_captured_effective_spec_semantics()
-        semantic_values.update(value.strip().lower() for value in categories)
-
-    effect_type = effective_spec.get("effect_type")
-    if effect_type is not None:
-        if not isinstance(effect_type, str):
-            return _invalid_captured_effective_spec_semantics()
-        semantic_values.add(effect_type.strip().lower())
-
-    semantic_effects = {
-        "read": ToolEffectType.READ,
-        "write": ToolEffectType.WRITE,
-        "async": ToolEffectType.ASYNC,
-        "exec": ToolEffectType.WRITE,
-        "execute": ToolEffectType.WRITE,
-        "delete": ToolEffectType.WRITE,
-        "mutation": ToolEffectType.WRITE,
-        "mutate": ToolEffectType.WRITE,
-    }
-    if not semantic_values or any(value not in semantic_effects for value in semantic_values):
-        return _invalid_captured_effective_spec_semantics()
-
-    effects = {semantic_effects[value] for value in semantic_values}
-    if len(effects) != 1:
-        return _invalid_captured_effective_spec_semantics()
-
-    resolved_effect = effects.pop()
-    if resolved_effect is ToolEffectType.READ:
-        return _CapturedEffectiveSpecSemanticsV1(
-            effect_type=ToolEffectType.READ,
-            execution_mode=ToolExecutionMode.READONLY_PARALLEL,
-            normalization_required=False,
-            error_code=None,
-        )
-    if resolved_effect is ToolEffectType.ASYNC:
-        return _CapturedEffectiveSpecSemanticsV1(
-            effect_type=ToolEffectType.ASYNC,
-            execution_mode=ToolExecutionMode.ASYNC_RECEIPT,
-            normalization_required=True,
-            error_code=None,
-        )
     return _CapturedEffectiveSpecSemanticsV1(
-        effect_type=ToolEffectType.WRITE,
-        execution_mode=ToolExecutionMode.WRITE_SERIAL,
-        normalization_required=True,
+        effect_type=ToolEffectType(semantics.effect_type),
+        execution_mode=ToolExecutionMode(semantics.execution_mode),
+        normalization_required=semantics.normalization_required,
         error_code=None,
     )
 
@@ -335,31 +283,12 @@ def _classification_matches_captured_snapshot(classification: ToolClassification
     if not isinstance(snapshot, CapturedToolSpecSnapshotV1):
         return False
     try:
-        from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
+        from polaris.kernelone.tool_execution.captured_tool_semantics import captured_tool_spec_snapshot_is_consistent
 
         if classification.raw_tool_name != snapshot.raw_tool_name:
             return False
-        canonical_snapshot = CapturedToolSpecSnapshotV1(
-            raw_tool_name=snapshot.raw_tool_name,
-            canonical_tool_name=snapshot.canonical_tool_name,
-            registered=snapshot.registered,
-            canonical_effective_spec=snapshot.canonical_effective_spec,
-            canonical_name_view=snapshot.canonical_name_view,
-            alias_binding_view=snapshot.alias_binding_view,
-        )
-        if canonical_snapshot != snapshot:
+        if not captured_tool_spec_snapshot_is_consistent(snapshot):
             return False
-        if snapshot.registered:
-            canonical_names = frozen_node_to_value(snapshot.canonical_name_view)
-            alias_bindings = frozen_node_to_value(snapshot.alias_binding_view)
-            if (
-                not isinstance(canonical_names, list)
-                or not all(isinstance(name, str) for name in canonical_names)
-                or snapshot.canonical_tool_name not in canonical_names
-                or not isinstance(alias_bindings, dict)
-                or alias_bindings.get(snapshot.raw_tool_name) != snapshot.canonical_tool_name
-            ):
-                return False
         return classification == _classify_captured_snapshot(classification.raw_tool_name, snapshot)
     except (AttributeError, TypeError, ValueError):
         return False

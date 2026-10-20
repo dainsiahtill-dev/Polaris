@@ -742,6 +742,7 @@ def _scan_file_evidence(
     """Return legacy and typed artifact-quality findings for one file."""
 
     suffix = full_path.suffix.lower()
+    repository_metadata = full_path.name == ".gitignore"
     source_map = full_path.name.lower().endswith(
         (".js.map", ".mjs.map", ".cjs.map", ".jsx.map", ".css.map", ".d.ts.map", ".d.mts.map", ".d.cts.map")
     )
@@ -752,6 +753,7 @@ def _scan_file_evidence(
         if (
             not deferred_checks
             and not source_map
+            and not repository_metadata
             and suffix not in {".py", ".json", ".html", ".htm", ".go", ".md", ".markdown"}
             and full_path.name.lower() not in {"cargo.toml", "go.mod"}
         ):
@@ -846,6 +848,17 @@ def _scan_file_evidence(
 
     errors: list[str] = []
     issues: list[ArtifactQualityIssue] = []
+    if pure_static and repository_metadata:
+        issues.append(
+            ArtifactQualityIssue(
+                code="non_executable_repository_metadata",
+                message="Repository metadata covered by snapshot and contamination checks; no executable syntax verdict.",
+                path=relative_path,
+                severity="info",
+                source="file_artifact_scanner",
+                metadata={"artifact_kind": "repository_metadata", "execution_qualified": False},
+            )
+        )
     if pure_static and suffix in {".md", ".markdown"}:
         issues.append(
             ArtifactQualityIssue(

@@ -1,0 +1,43 @@
+id: vc-20261020-broker-quiet-stream-evidence
+classification: one_off
+status: source_stop_pending_independent_review
+owner: runtime.execution_broker
+scope:
+  - polaris/cells/runtime/execution_broker/internal/service.py
+  - polaris/cells/runtime/execution_broker/tests/test_log_drain_quiet_interval.py
+assumptions:
+  - A quiet process interval does not prove EOF or authorize cancelling its output iterator.
+  - Snapshot output fallback cannot recover a missing suffix once a prefix has been logged.
+design:
+  - Keep one pending stream read across the existing one-second idle checks.
+  - Consume each completed read once before scheduling its successor.
+  - On every drain exit cancel and await the pending read, then close the iterator before final log and registry cleanup.
+  - Report iterator-close exceptions through a structured error with exception information while still closing the log and removing the drain registry entry.
+  - Preserve terminal-idle and diagnostic wall caps, ordered off-loop UTF-8 log writes, execution status and receipt authority.
+pre_mortem:
+  - Cancelling each idle read closes the generator and loses later assertions.
+  - Closing an iterator before its pending read settles can raise generator-already-running and leak cleanup.
+  - Reusing a completed failed read can loop on the same exception.
+verification:
+  - Production drain prefix followed by 1.134006 seconds of silence and a late assertion; empty snapshot result prevents fallback.
+  - No-gap output, natural EOF, stream failure, explicit cancellation, terminal-idle and diagnostic-cap cleanup.
+  - Isolated private generic subprocess output through the public broker, including stdout and stderr after silence.
+  - Real public verifier runner and sandbox with synthetic authority, sealed failed receipt with exact output hash, and public persisted-receipt query without another process.
+  - Relevant existing broker log, service, verifier-feedback and cancellation tests; scoped Ruff, format, mypy, YAML and diff.
+results:
+  - Production causal RED preserved one gap failure and one no-gap pass; the earlier fixture enum error is not causal evidence.
+  - The preserved first cut passed eight focused tests plus existing adjacent log, service, feedback, receipt and cancellation tests, 75 cases total.
+  - The final cut adds a causal close-failure observability test and reruns the focused log and service regression scope.
+  - Ruff, format, configured strict mypy for both Python files, YAML and scoped diff checks passed.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r12-broker-stream-implementation/plan-and-manifest.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r12-broker-stream-implementation/red-causal-v2.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r12-broker-stream-implementation/green-related.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r12-broker-stream-implementation/static-results.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r12-broker-stream-implementation/source-stop.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r12-broker-stream-implementation/R2/source-stop.json
+limits:
+  - Synthetic fixtures establish component evidence, not full L1 delivery, physical QA or a fresh Factory acceptance.
+  - No original target commands or runtime, ledger, lease, receipt, authorization or model changes.
+  - Main backend remains running without restart; old R11 evidence remains immutable.
+  - The independent audit identified a pre-existing alternate KernelOne asyncio pump full-queue cancellation risk; this three-file component fix does not change that producer.

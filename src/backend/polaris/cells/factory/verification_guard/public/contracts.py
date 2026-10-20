@@ -692,8 +692,7 @@ class RunProjectCompletionEvidenceBatchCommandV1:
         if type(self.obligation_ids) is not tuple or not self.obligation_ids:
             raise TypeError("obligation_ids must be a non-empty exact tuple")
         obligation_ids = tuple(
-            _require_exact_token(f"obligation_ids[{index}]", value)
-            for index, value in enumerate(self.obligation_ids)
+            _require_exact_token(f"obligation_ids[{index}]", value) for index, value in enumerate(self.obligation_ids)
         )
         if len(set(obligation_ids)) != len(obligation_ids):
             raise ValueError("obligation_ids must be unique")
@@ -1133,11 +1132,108 @@ class ProjectCompletionOwnerObservationPortV1(Protocol):
         ...
 
 
-class ProjectCompletionOwnerObservationV1Error(ValueError):
-    """Typed fail-closed owner-binding error."""
+@dataclass(frozen=True, slots=True)
+class ProjectVerificationAdmissionObservationV1:
+    """Current artifact admission failure; grants no effect or receipt authority."""
 
-    def __init__(self, error_code: str, message: str) -> None:
+    workspace: str
+    project_id: str
+    run_id: str
+    completion_contract_hash: str
+    obligation_id: str
+    owner_task_id: str
+    modality: str
+    argv: tuple[str, ...]
+    cwd: str
+    command_authority_hash: str
+    policy_error_code: str
+    failure_domain: str
+    cause: str
+    source_path: str
+    source_sha256: str
+    source_snapshot_kind: str
+    target_path: str | None = field(default=None, kw_only=True)
+    authorized: bool = field(default=False, init=False)
+    execution_started: bool = field(default=False, init=False)
+    receipt_ref: None = field(default=None, init=False)
+    execution_authority: bool = field(default=False, init=False)
+    authoritative_receipt: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        for name in (
+            "workspace",
+            "project_id",
+            "run_id",
+            "completion_contract_hash",
+            "obligation_id",
+            "owner_task_id",
+            "modality",
+            "cwd",
+            "command_authority_hash",
+            "policy_error_code",
+            "failure_domain",
+            "cause",
+            "source_path",
+            "source_sha256",
+            "source_snapshot_kind",
+        ):
+            value = getattr(self, name)
+            if type(value) is not str:
+                raise TypeError(f"{name} must be an exact string")
+            _require_exact_token(name, value, max_length=4096 if name == "workspace" else 256)
+        for name in ("completion_contract_hash", "command_authority_hash", "source_sha256"):
+            _require_sha256(name, getattr(self, name))
+        if type(self.argv) is not tuple or not 1 <= len(self.argv) <= 128:
+            raise TypeError("argv must be a non-empty immutable tuple")
+        for operand in self.argv:
+            if type(operand) is not str:
+                raise TypeError("argv operands must be exact strings")
+            _require_exact_token("argv operand", operand, max_length=2048)
+        for name in ("cwd", "source_path"):
+            value = _require_exact_token(name, getattr(self, name), max_length=1024)
+            if name == "cwd" and value == ".":
+                continue
+            if "\\" in value or value.startswith("/") or any(part in {"", ".", ".."} for part in value.split("/")):
+                raise ValueError(f"{name} must be canonical workspace-relative")
+        if (self.modality, self.policy_error_code, self.failure_domain, self.cause, self.source_snapshot_kind) not in {
+            (
+                "test",
+                "non_proving_package_script",
+                "artifact_profile",
+                "package_test_script_not_proving",
+                "confined_readable_regular_utf8",
+            ),
+            (
+                "entrypoint",
+                "untrusted_package_script",
+                "artifact_profile",
+                "package_entrypoint_target_missing",
+                "confined_readable_regular_utf8",
+            ),
+        }:
+            raise ValueError("unsupported artifact admission observation")
+        if self.cause == "package_entrypoint_target_missing":
+            value = _require_exact_token("target_path", self.target_path, max_length=1024)
+            if "\\" in value or value.startswith("/") or any(part in {"", ".", ".."} for part in value.split("/")):
+                raise ValueError("target_path must be canonical workspace-relative")
+        elif self.target_path is not None:
+            raise ValueError("test script admission must not declare a missing entrypoint target")
+
+
+class ProjectCompletionOwnerObservationV1Error(ValueError):
+    """Typed fail-closed owner-binding error, optionally carrying non-authority feedback."""
+
+    def __init__(
+        self,
+        error_code: str,
+        message: str,
+        *,
+        admission_failure: ProjectVerificationAdmissionObservationV1 | None = None,
+    ) -> None:
         self.error_code = _require_exact_token("error_code", error_code)
+        if admission_failure is not None and type(admission_failure) is not ProjectVerificationAdmissionObservationV1:
+            raise TypeError("admission_failure must be an exact public admission observation")
+        self.admission_failure = admission_failure
         super().__init__(message)
 
 

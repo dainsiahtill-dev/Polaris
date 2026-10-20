@@ -15,8 +15,9 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, get_args
 
 from jsonschema import Draft202012Validator
 
@@ -48,6 +49,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     validate_director_handoff_from_payload,
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
+    VerificationModalityV1,
     _issue_chief_engineer_portfolio_authority_carrier,
 )
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
@@ -75,6 +77,7 @@ from polaris.kernelone.llm.budget_policy import (
     OUTPUT_BUDGET_CONTEXT_KEYS,
     chief_engineer_portfolio_output_tokens,
 )
+from polaris.kernelone.storage import resolve_storage_roots
 
 from .. import (
     factory_director_dispatch_impl as director_dispatch_impl,
@@ -210,6 +213,51 @@ class _Mixin02:
                     for diagnostic in diagnostics:
                         collection = diagnostic.get("collection")
                         path = diagnostic.get("source_path")
+                        if path == ["obligations", "verification"] and collection == "verification":
+                            owners = diagnostic.get("delegated_owner_task_ids")
+                            artifacts = diagnostic.get("required_artifacts")
+                            generic = diagnostic.get("missing_task_recipe") is True
+                            if (
+                                diagnostic.get("error_code") != "missing_required_verification_recipe"
+                                or "obligation_id" in diagnostic
+                                or diagnostic.get("guidance_only") is not True
+                                or diagnostic.get("execution_authority") is not False
+                                or not isinstance(owners, list)
+                                or not owners
+                                or any(owner not in candidate.task_ids for owner in owners)
+                                or len(owners) != len(set(owners))
+                                or not isinstance(artifacts, list)
+                                or any(
+                                    not isinstance(row, dict)
+                                    or not isinstance(row.get("obligation_id"), str)
+                                    or not row["obligation_id"]
+                                    or not isinstance(row.get("path"), str)
+                                    or not row["path"]
+                                    or row.get("owner_task_id") not in candidate.task_ids
+                                    for row in artifacts
+                                )
+                                or (
+                                    generic
+                                    and (
+                                        owners != [diagnostic.get("owner_task_id")]
+                                        or diagnostic.get("modality") is not None
+                                        or diagnostic.get("allowed_recipe_modalities")
+                                        != list(get_args(VerificationModalityV1))
+                                        or diagnostic.get("allowed_recipe_applicabilities") != ["required", "optional"]
+                                        or not isinstance(diagnostic.get("existing_obligation_ids"), list)
+                                        or any(
+                                            not isinstance(value, str) or not value
+                                            for value in diagnostic["existing_obligation_ids"]
+                                        )
+                                    )
+                                )
+                                or (not generic and diagnostic.get("modality") not in get_args(VerificationModalityV1))
+                            ):
+                                return None
+                            recipe_diagnostics.append(dict(diagnostic))
+                            codes.append("chief_engineer.verification_recipe.missing")
+                            operations.append("verification_recipe_upsert")
+                            continue
                         if (
                             collection not in {"verification", "entrypoints"}
                             or not isinstance(path, list)
@@ -276,6 +324,78 @@ class _Mixin02:
             verification_recipe_diagnostics=tuple(recipe_diagnostics),
         )
 
+    def _capture_chief_engineer_semantic_patch_proposal(
+        self,
+        *,
+        result: RoleExecutionResultV1,
+        candidate: ChiefEngineerSemanticRepairCandidateV1,
+        diagnosis: ChiefEngineerSemanticRepairDiagnosisV1,
+        repair_round: int | None,
+    ) -> dict[str, Any]:
+        """Retain decoded evidence before binding; this grants no execution authority."""
+        metadata = dict(result.metadata or {})
+        audit = metadata.get("final_request_context_audit")
+        audit = audit if isinstance(audit, Mapping) else {}
+        identity = audit.get("request_identity")
+        identity = identity if isinstance(identity, Mapping) else {}
+        context_ref = metadata.get("context_snapshot_ref")
+        if "context_snapshot_ref" not in metadata:
+            coverage = audit.get("final_request_evidence_coverage")
+            context_ref = coverage.get("context_snapshot_ref") if isinstance(coverage, Mapping) else None
+        if not isinstance(context_ref, str) or re.fullmatch(r"[0-9a-f]{24}", context_ref) is None:
+            context_ref = None
+        evidence: dict[str, Any] = {
+            "schema_version": "factory.chief_engineer.semantic_patch_proposal_snapshot.v1",
+            "capture_status": "UNKNOWN",
+            "factory_run_id": candidate.run_id,
+            "candidate_hash": candidate.candidate_hash,
+            "diagnosis_hash": diagnosis.diagnosis_hash,
+            "repair_round": repair_round,
+            "context_snapshot_ref": context_ref,
+            "request_identity": {
+                key: identity.get(key) if isinstance(identity.get(key), str) else None
+                for key in ("run_id", "turn_id", "call_id", "request_freeze_id")
+            },
+            # No authenticated native envelope is carried by RoleExecutionResult.
+            # Canonical decoded JSON cannot reconstruct either native hash.
+            "native_raw_call_hash": None,
+            "native_arguments_hash": None,
+            "proposal_canonical_sha256": None,
+            "snapshot_ref": None,
+            "snapshot_sha256": None,
+            "byte_count": None,
+        }
+        try:
+            raw_patch = metadata.get("structured_output")
+            if not isinstance(raw_patch, Mapping):
+                raise TypeError("decoded semantic proposal is unavailable")
+            proposal = deepcopy(dict(raw_patch))
+            proposal_raw = json.dumps(
+                proposal, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode("utf-8")
+            evidence["proposal_canonical_sha256"] = hashlib.sha256(proposal_raw).hexdigest()
+            envelope = {**evidence, "decoded_proposal": proposal}
+            for key in ("capture_status", "snapshot_ref", "snapshot_sha256", "byte_count"):
+                envelope.pop(key)
+            raw = json.dumps(
+                envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode("utf-8")
+            runtime_root = Path(resolve_storage_roots(str(self.workspace)).runtime_root)
+            store = pkg().FactoryStore(runtime_root / "factory")
+            snapshot = store.persist_stage_artifact_snapshot(candidate.run_id, hashlib.sha256(raw).hexdigest(), raw)
+            evidence.update(
+                capture_status="PERSISTED",
+                snapshot_ref=snapshot.logical_ref,
+                snapshot_sha256=snapshot.raw_sha256,
+                byte_count=snapshot.byte_count,
+            )
+        except (OSError, TypeError, ValueError, RuntimeError) as exc:
+            # Retention never becomes a semantic success or logging gate.
+            evidence["failure_code"] = str(getattr(exc, "code", type(exc).__name__))
+        # StageResult linking is separate: a crash before its persistence can
+        # leave an unlinked immutable snapshot, whose linkage remains UNKNOWN.
+        return evidence
+
     def _compose_chief_engineer_semantic_repair_result(
         self,
         *,
@@ -284,12 +404,16 @@ class _Mixin02:
         diagnosis: ChiefEngineerSemanticRepairDiagnosisV1,
         tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
         authority_carrier: object | None = None,
+        repair_round: int | None = None,
     ) -> RoleExecutionResultV1:
         """Parse, CAS-compose, then fully validate one provider patch."""
 
         if not result.ok:
             return result
         raw_patch = dict(result.metadata or {}).get("structured_output")
+        proposal_evidence = self._capture_chief_engineer_semantic_patch_proposal(
+            result=result, candidate=candidate, diagnosis=diagnosis, repair_round=repair_round
+        )
         try:
             if not isinstance(raw_patch, Mapping):
                 raise TypeError("semantic repair structured_output must be an object")
@@ -309,20 +433,25 @@ class _Mixin02:
                 after.candidate, tasks=tasks, authority_carrier=authority_carrier
             )
         except (TypeError, ValueError) as exc:
-            return cast(
-                RoleExecutionResultV1,
-                self._chief_engineer_post_validation_repair_result(
-                    prior_result=result,
-                    output_errors=[
-                        (f"chief_engineer.semantic_patch_invalid:{type(exc).__name__}:{str(exc).strip()}")[
-                            :_CHIEF_ENGINEER_SCHEMA_REPAIR_ERROR_MAX_CHARS
-                        ]
-                    ],
-                ),
+            rejected = self._chief_engineer_post_validation_repair_result(
+                prior_result=result,
+                output_errors=[
+                    (f"chief_engineer.semantic_patch_invalid:{type(exc).__name__}:{str(exc).strip()}")[
+                        :_CHIEF_ENGINEER_SCHEMA_REPAIR_ERROR_MAX_CHARS
+                    ]
+                ],
+            )
+            return replace(
+                rejected,
+                metadata={
+                    **rejected.metadata,
+                    "chief_engineer_semantic_patch_proposal": proposal_evidence,
+                },
             )
         metadata = dict(result.metadata or {})
         metadata.update(
             {
+                "chief_engineer_semantic_patch_proposal": proposal_evidence,
                 "structured_output": dict(after.candidate),
                 "chief_engineer_semantic_repair_receipt": receipt.to_dict(),
                 "chief_engineer_semantic_repair_patch_hash": patch.patch_hash,
@@ -818,16 +947,22 @@ class _Mixin02:
             "obligations.entrypoints must describe application entrypoints with entrypoint-compatible commands; "
             "verification-only recipes belong in obligations.verification with a policy-supported modality. "
             "Original required user build/test commands remain required verification with their exact bindings. "
+            "Each semantic PM task needs at least one of its own profile-compatible CE recipes before handoff; "
+            "another task's coverage never supplies this task's command authority. No particular modality is "
+            "mandated by ownership, and an existing optional own recipe also satisfies this ownership condition. "
             "Use source collection/path, expected_modality and allowed_recipe_modalities/collections from policy "
             "diagnostics; never weaken a profile to accept the wrong collection. Preserve owner_task_id, use "
             "valid unique obligation_id values and correct affected references. A scoped patch cannot remove "
             "or relocate rows unless its current result schema explicitly permits that operation. "
-            "For missing_required_verification_recipe, add the diagnosed required modality to "
+            "For missing_required_verification_recipe with a specific modality, add that required modality to "
             "obligations.verification using a required artifact and its authorized owner from required_artifacts. "
             "A PM-delegated owner supplies a CE-authored profile-validated recipe; missing a proposal does not "
             "mean PM delegation is absent. Choose concrete argv/cwd without model-generated authority fields for "
             "server binding, preserving explicit PM constraints and every other required row. The diagnostic "
             "does not supply or authorize a command; owners without delegation still need committed PM authority. "
+            "When missing_task_recipe is true, choose a supported modality and required or optional applicability, "
+            "add a new unique ID for exactly the diagnosed missing owner, and cover only its listed artifacts. "
+            "Do not change a sibling's owner or an undiagnosed recipe, or introduce a freeform path. "
             "Delegated task IDs: "
             + json.dumps(delegated, ensure_ascii=False)
             + "\nAuthenticated explicit PM command bindings: "
@@ -1054,14 +1189,10 @@ class _Mixin02:
             operation_guidance: list[str] = []
             if enabled_operations & {"artifact_upsert", "entrypoint_upsert"}:
                 operation_guidance.append(
-                    "Preserve every immutable field in upsert_identity_policy for an existing ID. "
-                    "If an immutable field differs, use a new unique obligation_id; never repurpose an old ID."
+                    "Preserve every immutable field in upsert_identity_policy for an existing ID."
                 )
             if "entrypoint_upsert" in enabled_operations:
-                operation_guidance.append(
-                    "For a diagnosed entrypoint replacement, use entrypoint_remove_obligation_ids only for the "
-                    "obsolete exact ID and provide a same-owner, same-kind entrypoint_upsert atomically."
-                )
+                operation_guidance.append(str(provider_patch_context["entrypoint_replacement_rule"]))
             if "artifact_upsert" in enabled_operations:
                 operation_guidance.append(
                     "A new test artifact must use its owner's allowed_source_suffixes and authorized scope."
@@ -1442,6 +1573,7 @@ class _Mixin02:
                     diagnosis=semantic_diagnosis,
                     tasks=portfolio_tasks,
                     authority_carrier=authority_carrier,
+                    repair_round=repair_round,
                 )
             should_settle, heartbeat_failure = repair_scope.begin_settlement()
             if not should_settle or repair_scope.execution_attempt is None:
@@ -1517,6 +1649,7 @@ class _Mixin02:
         """Create one CE project portfolio and project task-level handoffs."""
 
         logger.info("Executing Chief Engineer project review for run %s", run.id)
+        semantic_patch_proposals: list[dict[str, Any]] = []
         authority_port = self._factory_role_evidence_cutoff_port(context)
         synced_plan_source = self._ensure_pm_plan_contract_available()
         self._enrich_pm_plan_contract_artifact("tasks/plan.json")
@@ -1586,11 +1719,12 @@ class _Mixin02:
                 start_metadata = start_metadata_raw if isinstance(start_metadata_raw, Mapping) else {}
                 local_rework_raw = start_metadata.get("chief_engineer_local_rework_evidence")
                 local_rework_evidence = local_rework_raw if isinstance(local_rework_raw, Mapping) else None
-                portfolio_tasks = self._chief_engineer_portfolio_tasks(pm_tasks)
+                portfolio_tasks = self._chief_engineer_portfolio_tasks(pm_tasks, request_context=context)
                 portfolio_context = self._chief_engineer_portfolio_context(
                     pm_tasks,
                     run_id=run.id,
                     failure_feedback=local_rework_evidence,
+                    request_context=context,
                 )
             except (TypeError, ValueError) as exc:
                 stage_signals.append(
@@ -1748,7 +1882,7 @@ class _Mixin02:
                 semantic_repair_candidate: ChiefEngineerSemanticRepairCandidateV1 | None = None
                 semantic_repair_diagnosis: ChiefEngineerSemanticRepairDiagnosisV1 | None = None
                 try:
-                    objective = self._chief_engineer_portfolio_objective(pm_tasks)
+                    objective = self._chief_engineer_portfolio_objective(pm_tasks, request_context=context)
                     ce_runtime_task_id, ce_execution_attempt = self._claim_chief_engineer_execution_attempt(
                         run_id=run.id,
                         portfolio_task_id=portfolio_task_id,
@@ -2057,6 +2191,23 @@ class _Mixin02:
                             prompt_profile_identity=primary_prompt_profile_identity,
                             authority_carrier=portfolio_authority_carrier,
                         )
+                        if semantic_repair_candidate is not None and semantic_repair_diagnosis is not None:
+                            proposal_evidence = dict(ce_result.metadata or {}).get(
+                                "chief_engineer_semantic_patch_proposal"
+                            )
+                            semantic_patch_proposals.append(
+                                deepcopy(dict(proposal_evidence))
+                                if isinstance(proposal_evidence, Mapping)
+                                else {
+                                    "capture_status": "UNKNOWN",
+                                    "repair_round": repair_round,
+                                    "candidate_hash": semantic_repair_candidate.candidate_hash,
+                                    "diagnosis_hash": semantic_repair_diagnosis.diagnosis_hash,
+                                    "snapshot_ref": None,
+                                    "snapshot_sha256": None,
+                                    "byte_count": None,
+                                }
+                            )
                         if ce_result.error_code == "chief_engineer.semantic_repair_authority_infeasible":
                             if stage_signals and stage_signals[-1] is repair_signal:
                                 stage_signals.pop()
@@ -2739,6 +2890,7 @@ class _Mixin02:
                 "responsible_layer": "chief_engineer" if stage_status == "failed" else "",
                 "root_cause_hint": root_cause_hint,
                 "recoverable": failure_recoverable if stage_status == "failed" else False,
+                "chief_engineer_semantic_patch_proposals": semantic_patch_proposals,
             },
         )
 

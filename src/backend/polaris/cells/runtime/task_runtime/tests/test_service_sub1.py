@@ -1029,7 +1029,8 @@ def test_execution_event_does_not_fabricate_fact_event_seq_on_publish_failure(
     workspace.mkdir(parents=True, exist_ok=True)
     service = _create_bootstrapped_task_runtime_service(workspace)
 
-    def fail_publish(_payload: dict[str, object]) -> bool:
+    def fail_publish(_payload: dict[str, object], *, session: TaskExecutionSession | None = None) -> bool:
+        assert session is None
         raise RuntimeError("publish down")
 
     monkeypatch.setattr(service, "_publish_factory_execution_event", fail_publish)

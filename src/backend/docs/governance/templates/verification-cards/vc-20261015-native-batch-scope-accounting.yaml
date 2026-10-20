@@ -1,0 +1,42 @@
+id: vc-20261015-native-batch-scope-accounting
+classification: defect
+status: component_verified
+scope:
+  - polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_executor_execute.py
+  - polaris/cells/roles/kernel/internal/kernel/tool_executor.py
+assumptions:
+  - The existing JobToken selector and actual TaskRuntime/DEO/gateway remain authority owners.
+  - Required target files and read paths do not grant writes.
+  - Typed request write constraints may narrow a token but cannot enlarge it.
+hypotheses:
+  - H1: A generated-prompt filename prefilter silently removes authorized hidden files and unauthorized native members before execution accounting.
+  - H2: Unioning context write paths into committed token evidence allows context to expand the actual capability.
+  - H3: Envelope truthiness fallback reinterprets explicit empty writes as target-file grants.
+  - H4: Recursive write-scope coercion can promote nested read hints from malformed grants into writes.
+evidence:
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m10-native-tool-lifecycle/design-causal-red.json
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m10-native-tool-lifecycle/actual-parent-path-filter.json
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m10-native-tool-lifecycle/repo-red.xml
+  - /home/dains/.polaris/audit_archives/full-architecture-delivery-20261014/m10-native-tool-lifecycle/repo-runtime-red.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/scope-red.xml
+verification:
+  - polaris/cells/roles/kernel/tests/test_job_token_scope_precedence.py
+  - polaris/cells/roles/runtime/tests/test_native_batch_scope_accounting.py
+  - A real public HTTP/Runtime/TaskRuntime/DEO batch preserves all three native IDs.
+  - Authorized hidden and ordinary outputs have actual distinct write receipts; an unowned seed member has an explicit denied result and no file.
+  - Wider context cannot enlarge the selected JobToken; explicit empty or absent token write permissions remain denied even with required targets.
+  - A narrower typed request write constraint remains effective.
+  - Missing, foreign and stale TaskRuntime owners raise their exact typed preflight codes with zero provider I/O and unchanged output bytes.
+  - Existing read permissions and approved verifier command behavior are verified separately from write scope.
+  - Serialized output of the public execution-envelope producer preserves explicit empty writes through the kernel consumer.
+  - Legacy envelopes fall back to target_files only when the write key is absent; explicit null or malformed grants fail closed.
+  - Write grants and narrowing constraints accept flat strings or string collections, never nested read/context hints.
+architecture:
+  - Reuse the existing token selector, path normalizer and canonical policy guards; no new public DTO, scope registry or authorization source.
+  - Path intersection operates on already normalized component ranges without filesystem access.
+  - Native inventory remains intact until genuine per-member policy outcomes; no synthetic effect receipts.
+  - Prompt filename mentions remain guidance and cannot become a second write authority.
+remaining:
+  - Original full native arguments remain unknown; generic content is used only in controlled private experiments.
+  - No original missing receipt is backfilled and no original target is modified.
+  - Remote-model native delivery and official integration gates remain separate from these component checks.

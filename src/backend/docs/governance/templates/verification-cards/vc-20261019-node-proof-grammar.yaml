@@ -1,0 +1,38 @@
+id: vc-20261019-node-proof-grammar
+classification: pattern
+status: component_verified_delivery_pending
+owner: control_plane.verifier_policy
+assumptions:
+  - One internal parser validates direct Node tests, package Node tests and readonly diagnostics.
+  - Exactly one --test and at most one literal --import tsx or --import=tsx precede test operands.
+  - Preloaded tests require an explicit confined supported-suffix file or glob; bare node --test remains supported.
+  - Options and preload values are case-sensitive; argv, cwd and outer package command authority remain unchanged.
+  - Existing JS application entrypoints and success-dependent build/lint composition retain their separate behavior.
+  - Parsing grants no spawn capability and proves neither dependency resolution nor physical test execution.
+evidence:
+  - Public-policy RED used private manifest and executable-identity fixtures; 44 failed and 19 passed.
+  - Initial direct/package and prefix feedback GREEN had 78 passes.
+  - Adjacent existing feedback RED exposed an operand-index compatibility regression; preserve the option index.
+  - Final Ruff check and format check passed; strict mypy found no issues in all five owned Python files.
+  - Final focused policy run passed 237 tests; seven names were deselected by the physical-test filter.
+  - The one nonphysical content-hash test caught by that filter passed separately; six physical Node/npm cases remain unrun.
+  - Audit archive is ~/.polaris/audit_archives/autonomous-delivery-20261018/m16-node-proof-grammar/.
+pre_mortem:
+  - A package-only permissive parser could admit arbitrary preloads, eval or custom reporters.
+  - Parsing options after the first test operand could confuse application arguments with Node options.
+  - Case folding tsx or rewriting argv could authorize a different request from the CE contract.
+  - Grammar acceptance cannot replace manifest/executable identity, input closure, broker, capability or proof checks.
+verification:
+  - Run Ruff check and format check on the five owned Python files, then strict mypy.
+  - Run focused verifier-policy tests once after final static checks, excluding actual Node/npm process tests.
+  - Preserve exact commands, cwd, private environment, results, scoped patch and six file hashes in the audit archive.
+official_basis:
+  - https://nodejs.org/download/release/v22.23.2/docs/api/cli.html#synopsis
+  - https://nodejs.org/download/release/v22.23.2/docs/api/cli.html#--importmodule
+  - https://nodejs.org/download/release/v22.23.2/docs/api/typescript.html#full-typescript-support
+  - https://nodejs.org/download/release/v22.23.2/docs/api/test.html#running-tests-from-the-command-line
+remaining:
+  - No target installation, Node/npm test process, tsx module resolution or broker launch was performed.
+  - Existing proof evaluation and manifest/executable/contract binding code remain authoritative and unchanged.
+  - Fresh isolated full role-chain execution, independent QA, ProjectOutcome and resource release remain pending.
+  - Broad architecture/release gates were intentionally not repeated under the authorized lean verification scope.

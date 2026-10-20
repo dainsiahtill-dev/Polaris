@@ -1,0 +1,40 @@
+id: vc-20261020-artifact-reuse-settlement
+classification: pattern
+status: source_stop_pending_independent_review
+owner: control_plane.run_ledger
+scope:
+  - polaris/cells/control_plane/run_ledger/public/settlement_barrier.py
+  - polaris/cells/control_plane/run_ledger/tests/test_artifact_reuse_settlement.py
+design:
+  - Consume the existing public no-dispatch artifact-reuse lifecycle with its authentic empty turn id.
+  - Pass the same already-validated terminal owner observations into the private canonical inventory validator.
+  - Allow an empty turn only through the unchanged strict artifact-reuse predicate.
+  - Retain nonempty run and task identities and exact turn type and trimming checks.
+  - Preserve complete canonical inventory, unique fact identities, hashes, receipt counts and raw projection agreement.
+  - Keep dispatch, caller markers, pending work and missing or foreign owner proof closed to resource release.
+  - Separate safe resource closure from failed QA and delivery acceptance.
+assumptions:
+  - A provider-free preflight has no native turn and must not manufacture one.
+  - Artifact receipt authority is established by the existing producer; this consumer adds no Broker query or authority service.
+pre_mortem:
+  - A generic nonempty-turn condition can reject a valid public reuse producer before its strict semantic branch runs.
+  - Allowing every empty turn would hide unproven dispatches.
+  - Passing caller flags instead of the same owner observations would create another authority path.
+verification:
+  - Real public TaskRuntime terminal, public reuse builder, durable Ledger append and public settlement query RED to GREEN.
+  - A failed private run closes and allows release while passed remains false.
+  - Ordinary dispatch, forged reuse shape, invalid or duplicate refs, counts and provider or batch hashes remain rejected.
+  - Missing, active, unknown, foreign, stale and duplicate owner identities remain rejected.
+  - Missing, extra and duplicate inventory, phantom turn and projection hash drift remain rejected.
+  - Independent exact captured R07 fullfold replay uses the original recorded typed observations without rewriting original facts.
+  - Focused adjacent tests plus scoped Ruff, format, mypy, YAML and diff checks.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-artifact-reuse-settlement-fix/plan-and-manifest.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-artifact-reuse-settlement-fix/red-public-owner-builder.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-artifact-reuse-settlement-fix/green-public-owner-builder.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-artifact-reuse-settlement-fix/green-related-final.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-artifact-reuse-settlement-fix/static-final-results.json
+limits:
+  - No public DTO, permission, task or target changes; no new store, polling, forced lease release or command replay.
+  - A read-only current projection does not rewrite historical R07 FAILED, Ledger or lease facts.
+  - Component checks and resource release do not establish QA or delivery success.

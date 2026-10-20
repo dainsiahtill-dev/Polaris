@@ -1,0 +1,46 @@
+id: vc-20261020-repository-metadata-coverage
+classification: one_off
+status: component_verified_native_pending
+owner: factory.pipeline
+problem: Repository metadata blocked real verifiers, and deferred task boundaries lacked a complete current-proof completion path.
+assumptions:
+  - Only the exact canonical .gitignore basename is covered repository metadata.
+  - Metadata coverage does not prove syntax, source line counts, executable quality or delivery.
+  - Unknown extensions and source-like names require their existing semantic analysis.
+design:
+  - Reuse KernelOne file artifact evidence and preserve confined UTF-8 snapshot, contamination, size, symlink and drift checks.
+  - Add one non-executable repository metadata issue after the existing file content checks.
+  - Keep metadata in CE-required inventory and actual verifier input hash closure.
+  - Keep all actual verifier commands, authority policy and owner receipt requirements unchanged.
+  - Leave Factory collector coverage and real Broker execution as the completion frontier.
+  - Rebuild deferred boundary requirements only from current public CE contract and the original strict TaskRuntime claimed fact.
+  - Reuse native validation full-slice projection hashing instead of a new scope or authorization parser.
+  - Query current sealed artifact receipts and independently compare confined snapshot hashes.
+  - Authorize and query each verifier obligation independently, retaining distinct IDs even when commands coincide.
+  - Requery all current receipt owners and immutable claim cut before the existing normal evaluator and public CAS reprojection.
+  - Persist normal requirements and exact claim/contract/projection/receipt-input basis through the existing Ledger owner; preserve original deferred facts.
+pre_mortem:
+  - Broad suffix exemptions would hide unknown executable source; only exact basename classification is allowed.
+  - Metadata cannot count as source, satisfy minimum source lines or replace required verifiers.
+  - A prior receipt is invalid when metadata that belongs to its input closure changes.
+  - Empty deferred requirements, a caller dictionary or a self-reported successful verdict cannot be completion authority.
+  - Missing or failed receipts, foreign task or child scope, stale hashes and changing fact cuts cannot append completion.
+  - Distinct verifier obligation IDs cannot collapse merely because their argv and cwd coincide.
+verification:
+  - RED public static scan and real Factory collector both reproduce unsupported_source for exact metadata.
+  - Exact and nested metadata, supported TypeScript, unknown extension and disguised .gitignore.ts controls.
+  - Invalid UTF-8, links, truncation and concurrent snapshot drift preserve incomplete coverage.
+  - Real private CE contract, Broker build and test receipts preserve successful and failed command outcomes.
+  - Cold current receipt query rejects input changes to metadata; no original native project commands execute.
+  - Focused and adjacent scanner tests passed63; source/static evidence is separate from native qualification.
+  - Real generic private CE and TaskRuntime producers, Broker commands and artifact receipts exercise normal 13-artifact/5-verifier completion.
+  - Existing Factory recovery consumer invokes the validated normal carrier, followed by real public Ledger CAS and cold idempotent retry.
+  - Failure, stale source, foreign owner and lookalike receipt controls leave immutable boundary facts unchanged.
+  - Five legacy collector tests fail identically with the original baseline collector; module AST comparison proves no collector changes.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-repository-metadata-coverage-fix/red-causal.txt
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-repository-metadata-coverage-fix/green-adjacent-final.txt
+remaining:
+  - Root integrated candidate gates and a fresh native execution remain pending.
+  - Normal TaskBoundary persistence belongs to the independently owned Ledger migration.
+  - Actual QA, ProjectOutcome and fresh native delivery remain unrun and unqualified.

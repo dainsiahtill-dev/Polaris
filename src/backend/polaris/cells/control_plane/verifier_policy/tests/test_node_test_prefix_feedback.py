@@ -1,4 +1,4 @@
-"""Node test prefix diagnostics explain proposals without admitting them."""
+"""Node prefix diagnostics and classification share the bounded proof grammar."""
 
 from __future__ import annotations
 
@@ -12,11 +12,9 @@ from polaris.cells.control_plane.verifier_policy.tests.test_verifier_command_pro
 @pytest.mark.parametrize(
     "prefix",
     [
-        ["--import", "tsx"],
-        ["--import=tsx"],
         ["--loader", "ts-node/esm"],
         ["--require", "ts-node/register"],
-        ["--test-reporter=tap"],
+        ["--unknown-option"],
     ],
 )
 def test_preposed_node_options_remain_denied_with_exact_argument_feedback(tmp_path: Path, prefix: list[str]) -> None:
@@ -43,6 +41,44 @@ def test_original_native_test_forms_keep_classification(tmp_path: Path, argv: tu
         "node.test_runner",
         "",
     )
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [["--import", "tsx"], ["--import=tsx"], ["--test-reporter=tap"], ["--test-reporter", "tap"]],
+)
+def test_supported_prefix_feedback_never_rewrites_or_grants_execution(tmp_path: Path, prefix: list[str]) -> None:
+    argv = ("node", *prefix, "--test", "tests/Rules.test.ts")
+    feedback = policy.get_verifier_command_profile_feedback(workspace=str(tmp_path), modality="test", argv=argv)
+    assert feedback["profile_id"] == "node.test_runner"
+    assert feedback["error_code"] == ""
+    assert feedback["execution_authority"] is False
+    assert "rejected_argument" not in feedback
+    assert policy.classify_verifier_command_profile(workspace=str(tmp_path), modality="test", argv=argv) == (
+        "node.test_runner",
+        "",
+    )
+
+
+@pytest.mark.parametrize(
+    "argv,index,reason",
+    [
+        (("node", "--import", "TSX", "--test", "tests/input.ts"), 1, "unsupported_preload"),
+        (("node", "--test", "--import"), 2, "missing_argument_value"),
+        (("node", "--import=tsx", "--test"), 1, "explicit_test_path_required"),
+        (("node", "--test", "--import=tsx", "--import=tsx", "tests/input.ts"), 3, "duplicate_argument"),
+        (("node", "--test", "tests/input.ts", "--import=tsx"), 3, "option_after_test_path"),
+    ],
+)
+def test_feedback_reports_exact_shared_parser_rejection(
+    tmp_path: Path, argv: tuple[str, ...], index: int, reason: str
+) -> None:
+    feedback = policy.get_verifier_command_profile_feedback(workspace=str(tmp_path), modality="test", argv=argv)
+    assert feedback["argument_index"] == index
+    assert feedback["rejected_argument"] == argv[index]
+    assert feedback["reason_code"] == reason
+    assert feedback["candidate_profile_id"] == "node.test_runner"
+    assert not policy.evaluate_verifier_command_policy(_query(tmp_path, argv)).authorized
 
 
 def test_application_test_argument_does_not_turn_entrypoint_into_runner_feedback(tmp_path: Path) -> None:

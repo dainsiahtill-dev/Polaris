@@ -26,6 +26,7 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     EntrypointKindV1,
     EntrypointObligationV1,
     ObligationApplicabilityV1,
+    VerificationModalityV1,
 )
 
 from ._helpers import (
@@ -46,7 +47,9 @@ from ._portfolio import (
 def _delegated_artifact_roles(task: ChiefEngineerPortfolioTaskV1) -> frozenset[str]:
     if task.topology_authority != "chief_engineer":
         return frozenset()
-    return _ce_delegated_artifact_roles(task.required_source_kinds)
+    return _ce_delegated_artifact_roles(
+        task.required_source_kinds, planning_contract_version=task.planning_contract_version
+    )
 
 
 def _task_delegates_artifact(*, task: ChiefEngineerPortfolioTaskV1, semantic_role: str, path: str) -> bool:
@@ -1349,16 +1352,26 @@ def _compose_verification_recipe_rows(
                 for item in diagnosis.verification_recipe_diagnostics
                 if item["collection"] == "verification"
                 and len(item["source_path"]) == 2
-                and item.get("modality") == row["modality"]
+                and (
+                    item.get("modality") == row["modality"]
+                    or (
+                        item.get("missing_task_recipe") is True
+                        and row["modality"] in item.get("allowed_recipe_modalities", ())
+                    )
+                )
                 and row["owner_task_id"] in (item.get("delegated_owner_task_ids") or [item.get("owner_task_id")])
             ]
-            if not missing_findings or row["applicability"] != "required":
+            if not missing_findings or not any(
+                row["applicability"]
+                in (("required", "optional") if item.get("missing_task_recipe") is True else ("required",))
+                for item in missing_findings
+            ):
                 raise ValueError("new verification recipe is not a diagnosed required recipe")
             for missing in missing_findings:
                 if "argv" in missing and (row["argv"], row["cwd"]) != (missing["argv"], missing["cwd"]):
                     raise ValueError("new verification recipe changes authenticated explicit PM command")
                 artifact_ids = {item["obligation_id"] for item in missing.get("required_artifacts", ())}
-                if artifact_ids and (
+                if (artifact_ids or missing.get("missing_task_recipe") is True) and (
                     not row["covers_obligation_ids"] or not set(row["covers_obligation_ids"]).issubset(artifact_ids)
                 ):
                     raise ValueError("new verification recipe coverage is outside diagnosed required artifacts")
@@ -1465,7 +1478,10 @@ def project_chief_engineer_semantic_repair_provider_context(
         {path for row in task_authority.values() for path in cast(list[str], row["expandable_scope_paths"])}
     )
     delegated_topology_task_ids = sorted(
-        task.task_id for task in tasks if task.topology_authority == "chief_engineer" and task.required_source_kinds
+        task.task_id
+        for task in tasks
+        if task.topology_authority == "chief_engineer"
+        and (task.planning_contract_version == "pm.task_intent.v1" or task.required_source_kinds)
     )
     delegated_artifact_roles = sorted({role for task in tasks for role in _delegated_artifact_roles(task)})
     expandable_test_scope_paths = sorted(
@@ -1550,12 +1566,7 @@ def project_chief_engineer_semantic_repair_provider_context(
     identity_policy = cast(dict[str, Any], projection["upsert_identity_policy"])
     allowed = set(diagnosis.allowed_operations)
     if "verification_recipe_upsert" in allowed:
-        diagnosed = _diagnosed_recipe_rows(candidate.candidate, diagnosis)
-        current["verification"] = [
-            deepcopy(row)
-            for row in _rows("verification", sections["verification"])
-            if ("verification", str(row.get("obligation_id"))) in diagnosed
-        ]
+        current["verification"] = deepcopy(sections["verification"])
         projection["verification_recipe_diagnostics"] = _project_recipe_repair_diagnostics(diagnosis)
         projection["verification_recipe_repair_policy"] = (
             "Upsert only diagnosed verification obligation IDs. Preserve owner_task_id, applicability and "
@@ -1564,8 +1575,12 @@ def project_chief_engineer_semantic_repair_provider_context(
             "policy-diagnosed modality. current_argv_allowed_recipe_modalities describes only the old argv; "
             "the requested modality's advertised new argv alternatives remain valid repair proposals. "
             "Omit command_authority_hash: the server binds it. Never remove an "
-            "environment preparation recipe or an authenticated explicit PM command. Add a new required "
-            "recipe only for a missing_required_verification_recipe finding and its delegated owner/artifacts. "
+            "environment preparation recipe or an authenticated explicit PM command. Add a new recipe only "
+            "for a missing_required_verification_recipe finding and its delegated owner/artifacts. A finding "
+            "with a specific modality requires that modality and required applicability. "
+            "For missing_task_recipe=true, add a new unique ID for that exact missing task using any supported "
+            "modality and required or optional applicability; cover only its listed artifacts. Existing IDs in "
+            "the finding are readonly and cannot be reused for a different owner. "
             "A composed draft grants no execution authority; complete schema and canonical gates still apply."
         )
     if "artifact_upsert" in allowed:
@@ -1629,16 +1644,11 @@ def project_chief_engineer_semantic_repair_provider_context(
             "entrypoint_upsert. Unknown ids and removals without a replacement fail closed."
         )
         if diagnosis.verification_recipe_diagnostics:
-            diagnosed = _diagnosed_recipe_rows(candidate.candidate, diagnosis)
-            current["entrypoints"] = [
-                deepcopy(row)
-                for row in current_entrypoints
-                if ("entrypoints", str(row.get("obligation_id"))) in diagnosed
-            ]
             projection["removable_entrypoint_obligation_ids"] = []
             projection["entrypoint_replacement_rule"] = (
-                "For diagnosed command recipe failures, preserve obligation_id, owner, kind, source/runtime "
-                "paths and applicability. Correct only command through entrypoint_upserts; no removal is allowed."
+                "Upsert only diagnosed entrypoint obligation IDs. Preserve obligation_id, owner, kind, "
+                "source/runtime paths and applicability. Correct only command through entrypoint_upserts; "
+                "no new identity or removal is allowed."
             )
             projection["verification_recipe_diagnostics"] = _project_recipe_repair_diagnostics(diagnosis)
     if "behavior_invariant_upsert" in allowed:
@@ -1671,6 +1681,28 @@ def project_chief_engineer_semantic_repair_provider_context(
     if "task_behavior_ref_replace" in allowed:
         current["behavior_invariants"] = deepcopy(sections["behavior_invariants"])
         current["task_behavior_refs"] = deepcopy(sections["task_behavior_refs"])
+    if diagnosis.verification_recipe_diagnostics:
+        # Mixed operation groups may add readonly completion context. Finalize
+        # mutable recipe targets after every group has contributed its context.
+        diagnosed = _diagnosed_recipe_rows(candidate.candidate, diagnosis)
+        for collection, operation in (
+            ("verification", "verification_recipe_upsert"),
+            ("entrypoints", "entrypoint_upsert"),
+        ):
+            if operation in allowed:
+                current[collection] = [
+                    deepcopy(row)
+                    for row in _rows(collection, sections[collection])
+                    if (collection, str(row.get("obligation_id"))) in diagnosed
+                ]
+        if "entrypoint_upsert" in allowed:
+            policy = identity_policy["entrypoint_upsert"]
+            policy["existing_identities"] = {
+                row_id: row
+                for row_id, row in policy["existing_identities"].items()
+                if ("entrypoints", row_id) in diagnosed
+            }
+            policy["new_identity_rule"] = projection["entrypoint_replacement_rule"]
     return projection
 
 
@@ -2119,9 +2151,9 @@ def compose_chief_engineer_semantic_repair(
     effective_artifact_remap = dict(artifact_group_remap)
     effective_artifact_remap.update(depth_split_remap)
     if effective_artifact_remap:
-        for invariant in invariants:
-            invariant["covered_obligation_ids"] = _expand_obligation_refs(
-                invariant.get("covered_obligation_ids"),
+        for invariant_row in invariants:
+            invariant_row["covered_obligation_ids"] = _expand_obligation_refs(
+                invariant_row.get("covered_obligation_ids"),
                 remap=effective_artifact_remap,
             )
     known_invariant_ids = {row["invariant_id"] for row in invariants}
@@ -2382,7 +2414,7 @@ def build_chief_engineer_semantic_repair_patch_schema(
                         "obligation_id": {"type": "string", "minLength": 1},
                         "modality": {
                             "type": "string",
-                            "enum": ["environment_prep", "build", "test", "lint", "entrypoint"],
+                            "enum": list(get_args(VerificationModalityV1)),
                         },
                         "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
                         "cwd": {"type": "string", "minLength": 1},
@@ -2437,6 +2469,54 @@ def build_chief_engineer_semantic_repair_patch_schema(
                 "type": "string",
                 "enum": sorted({row["obligation_id"] for row in findings}),
             }
+        elif recipes is not None and findings:
+            branches = []
+            for finding in findings:
+                item_schema = deepcopy(recipes["items"])
+                fields = item_schema["properties"]
+                if len(finding["source_path"]) == 3:
+                    fields["obligation_id"] = {"const": finding["obligation_id"]}
+                    fields["owner_task_id"] = {"const": finding["owner_task_id"]}
+                else:
+                    owners = finding.get("delegated_owner_task_ids") or [finding.get("owner_task_id")]
+                    fields["owner_task_id"] = {"type": "string", "enum": owners}
+                    generic = finding.get("missing_task_recipe") is True
+                    fields["modality"] = {
+                        "type": "string",
+                        "enum": finding["allowed_recipe_modalities"] if generic else [finding["modality"]],
+                    }
+                    fields["applicability"] = {
+                        "type": "string",
+                        "enum": ["required", "optional"] if generic else ["required"],
+                    }
+                    if finding.get("existing_obligation_ids"):
+                        fields["obligation_id"]["not"] = {"enum": finding["existing_obligation_ids"]}
+                    artifact_ids = [row["obligation_id"] for row in finding.get("required_artifacts", ())]
+                    if artifact_ids or generic:
+                        fields["covers_obligation_ids"] = {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {"type": "string", "enum": artifact_ids},
+                        }
+                branches.append(item_schema)
+            recipes["items"] = {"anyOf": branches}
+        if diagnosis.verification_recipe_diagnostics:
+            entrypoints = schema["properties"].get("entrypoint_upserts")
+            if entrypoints is not None:
+                entrypoint_ids = sorted(
+                    {
+                        row["obligation_id"]
+                        for row in diagnosis.verification_recipe_diagnostics
+                        if row["collection"] == "entrypoints" and len(row["source_path"]) == 3
+                    }
+                )
+                if entrypoint_ids:
+                    entrypoints["items"]["properties"]["obligation_id"] = {"type": "string", "enum": entrypoint_ids}
+                else:
+                    entrypoints["maxItems"] = 0
+            removals = schema["properties"].get("entrypoint_remove_obligation_ids")
+            if removals is not None:
+                removals["maxItems"] = 0
     return schema
 
 

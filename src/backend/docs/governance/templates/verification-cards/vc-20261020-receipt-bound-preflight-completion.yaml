@@ -1,0 +1,44 @@
+id: vc-20261020-receipt-bound-preflight-completion
+classification: defect
+status: verified_bounded_fresh_native_pending
+scope:
+  - polaris/cells/roles/adapters/internal/director/execute_method/_claim.py
+  - polaris/cells/roles/adapters/internal/director/execute_method/_phases_materialization.py
+  - polaris/cells/control_plane/run_ledger/public/task_boundary.py
+  - polaris/cells/factory/pipeline/internal/factory_materialization_impl.py
+  - polaris/cells/roles/adapters/tests/test_receipt_bound_preflight_completion.py
+  - polaris/cells/roles/adapters/tests/test_director_preflight_task_boundary.py
+  - polaris/cells/control_plane/run_ledger/tests/test_deferred_boundary_revalidation.py
+hypotheses:
+  - Current artifact receipts alone cannot complete a CE task that requires command verification.
+  - Settling TaskRuntime before boundary proof can leave completed facts after append failure.
+  - Optional verification must remain optional in both normal and deferred consumers.
+mechanism:
+  - Bind the exact live Director attempt to its strict immutable claimed fact and original token.
+  - Recheck the complete claimed CE slice against the persisted public CE completion owner.
+  - Query current artifact receipts and every required verification obligation through the existing Broker owner.
+  - Keep equal command strings distinct by obligation ID and receipt hash/input hash.
+  - Recheck current inputs and owner receipts before publishing the normal boundary and settling completed.
+  - Missing, failed, stale or foreign proof leaves the same claim available to existing Director execution and repair.
+  - Preserve optional scope and validate its declaration without requiring an optional receipt.
+  - Record the real proof on the existing Factory workspace_validation gate with the unchanged original token.
+  - Keep child boundary coordinates as identity only, with immutable claim ref, original token hash and receipt bindings.
+  - Project proved code and command modalities through existing physical_evidence; global QA remains independently required.
+  - Use the existing append owner's atomic gate revision allocation for one stable CE contract/task obligation.
+  - Preserve failed command evidence as failed, then supersede its outcome only with fresh current proof while keeping the old Fact readable.
+  - Add no ledger, controller, execution capability, verifier invocation or target-specific repair.
+verification:
+  - Python 3.12 real-owner RED wrote completed without any required command receipt.
+  - Generic private fixtures use real CE persistence, TaskRuntime claims, Broker artifact and command receipts, and public Ledger cold reads.
+  - No completion, receipt, capability audit or typed verifier result is mocked as successful.
+  - Eight real-owner cases cover current required proof, duplicate commands, optional scope, missing/failed/stale/foreign proof, old claim and append failure.
+  - The selected adjacent cut passed 41 cases; its one old partial-CE success-stub expectation was intentionally migrated to no shortcut/no finalization and passed.
+  - The same failed-to-fresh-pass fixture exposed missing gate revision identity; adding the existing explicit obligation/subject metadata closed that producer gap.
+  - Extra direct controls cover immutable claimed modalities and optional deferred bindings; original gate history remains unchanged.
+  - Current native qualification and independent QA are not asserted by component fixtures.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-receipt-bound-preflight-completion-fix/baseline.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-receipt-bound-preflight-completion-fix/red.json
+remaining:
+  - Final causal, adjacent and static results are recorded in the module SOURCE_STOP report.
+  - Historical R07 remains FAILED with independent QA unexecuted and logical resource release unproven.

@@ -324,3 +324,119 @@ def test_shared_snapshot_rejects_legacy_head_change(tmp_path: Path, monkeypatch:
     observations = owner.query_committed_turn_receipts(tmp_path, lifecycle_receipts=[lifecycle] * 2)
     assert changed and all(item.status == "unknown" for item in observations)
     assert all(item.reason == "owner_legacy_snapshot_changed" for item in observations)
+
+
+async def _actual_layout_resource_control(root: Path, *, product_ok: bool):
+    """Real private read/owner evidence; the product gate is an explicit test control."""
+    from polaris.cells.control_plane.run_ledger.tests.test_committed_readonly_batch_layouts import (
+        _actual_read_batch_owner,
+    )
+
+    data = await _actual_read_batch_owner(root, reordered=True, mixed_serializers=True)
+    attempt = data["attempt"]
+    factory = "factory-layout-resource-control"
+    assert bind_runtime_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(
+            workspace=str(root),
+            task_id=str(attempt.task_id),
+            factory_run_id=factory,
+        )
+    ).ok
+    assert settle_task_runtime_execution_attempt_typed(
+        SettleTaskRuntimeExecutionAttemptCommandV1(
+            workspace=str(root),
+            identity=attempt,
+            outcome="completed" if product_ok else "failed",
+            summary="private controlled product outcome",
+        )
+    ).success
+    owner = query_execution_effect_closure(QueryExecutionEffectClosureV1(str(root), attempt))
+    assert owner.status == "closed" and owner.receipts == owner.terminal_failures == ()
+    append_tool_call_lifecycle_event(
+        AppendToolCallLifecycleEventCommandV1(
+            workspace=str(root),
+            run_id=attempt.run_id,
+            task_id=attempt.external_task_id,
+            turn_id=data["lifecycle"]["turn_id"],
+            role="director",
+            project_id="private-layout-project",
+            lifecycle_receipt=data["lifecycle"],
+        )
+    )
+    required = [] if product_ok else ["qa"]
+    append_run_ledger_event(
+        AppendRunLedgerEventCommandV1(
+            workspace=str(root),
+            run_id=attempt.run_id,
+            event={
+                "event_type": "gate_evaluated",
+                "run_id": attempt.run_id,
+                "stage": "qa_verifier",
+                "gate": {
+                    "name": "private_product_control",
+                    "ok": product_ok,
+                    "summary": "private controlled product gate",
+                },
+                "job_token": {
+                    "run_id": attempt.run_id,
+                    "project_id": "private-layout-project",
+                    "capability_audit": {"ok": True, "issues": []},
+                    "gate_policy": {"required_evidence_modalities": required, "enabled_evidence_modalities": required},
+                },
+                # No transport mirror: resource proof must come from immutable owner.
+                "physical_evidence": {"batch_receipt": {}},
+            },
+        )
+    )
+    observed = query_committed_turn_receipts(root, lifecycle_receipts=[data["lifecycle"]])
+    assert len(observed) == 1 and observed[0].status == "observed", observed
+    return factory, data
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("product_ok", [False, True])
+async def test_real_parallel_layout_resources_and_controlled_product_outcome(tmp_path: Path, product_ok: bool) -> None:
+    import json
+    from dataclasses import asdict
+
+    factory, data = await _actual_layout_resource_control(tmp_path, product_ok=product_ok)
+    result = query_factory_settlement_barrier(tmp_path, factory)
+    # Engineering observation only: this file is not a platform fact source.
+    (tmp_path / "resource-count-observation.json").write_text(
+        json.dumps(
+            {
+                "controlled_product_ok": product_ok,
+                "acceptance_policy": [] if product_ok else ["qa"],
+                "actual_read_calls": len(data["calls"]),
+                "owner_ref_hashes": data["lifecycle"]["batch_receipt_refs"],
+                "barrier": asdict(result),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    assert result.release_allowed is True and result.closed is True, result
+    assert result.passed is product_ok, result
+    assert result.effect_receipt_count == 0
+    if not product_ok:
+        assert "qa" in result.missing_required_modalities
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["committed_read", "task_owner"])
+async def test_same_parallel_child_refs_cannot_replace_missing_parent_or_task_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing: str,
+) -> None:
+    from polaris.cells.control_plane.run_ledger.public import service
+
+    factory, _ = await _actual_layout_resource_control(tmp_path, product_ok=True)
+    before = service.query_factory_settlement_barrier(tmp_path, factory)
+    assert before.release_allowed is True
+    if missing == "committed_read":
+        monkeypatch.setattr(service, "query_committed_turn_receipts", lambda *args, **kwargs: ())
+    else:
+        monkeypatch.setattr(service, "_terminal_execution_effect_observations", lambda *args, **kwargs: ())
+    result = service.query_factory_settlement_barrier(tmp_path, factory)
+    assert result.release_allowed is False and result.closed is False and result.passed is False, result

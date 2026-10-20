@@ -1,0 +1,32 @@
+id: vc-20261020-cancelled-suspended-session-preservation
+classification: defect
+status: verified_bounded_independent_review_pending
+owner: runtime.task_runtime
+scope:
+  - polaris/cells/runtime/task_runtime/internal/service/_mixin_task_rows.py
+  - polaris/cells/runtime/task_runtime/tests/test_cancelled_suspended_session_preservation.py
+hypotheses:
+  - Factory row cancellation rewrites resumable on an already fulfilled suspended execution session.
+  - The unchanged strict closure consumer correctly rejects that mismatch with the immutable owner suspension fact.
+  - A cancelled task row prevents further claims independently of its preserved execution checkpoint.
+mechanism:
+  - Preserve a fulfilled suspended session only after the existing strict inactive pre-barrier validates its terminal intent and directed-effect proof.
+  - Append the real cancelled task-row fact without rewriting the settled execution-session proof.
+  - Keep pending, unknown or damaged effect evidence fail-closed.
+  - Do not change global terminal definitions, closure consumers, lease state or historical facts.
+verification:
+  - Real private TaskRuntime claim, typed suspension, Factory-facing cancellation and public strict closure.
+  - Current identity and original session bytes, not only historical successor observation.
+  - Cold cancelled claim refusal, repeated cancellation idempotence and unchanged historical fact prefix.
+  - Explicit unknown child-effect and corrupted proof negative controls.
+  - Only the existing nonauthoritative realtime publish-false seam is substituted in focused tests.
+  - The causal test first failed with terminal_owner_session_mismatch, then four focused cases passed.
+  - Nineteen current causal and directly adjacent cases passed, including inactive-writer and exact terminal-intent controls.
+  - Ruff check and format, configured mypy on two Python files, scoped diff and YAML checks passed.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r09-cancelled-suspended-owner-audit/nine-point-proposal.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r09-cancelled-suspended-owner-fix/manifest-and-plan.json
+remaining:
+  - Original R09 stays FAILED with its original open logical barrier and DRAINING lease.
+  - Private module evidence does not qualify fresh native delivery or realtime transport.
+  - The earlier audit prototype blocked four NATS connection attempts; those are preserved as setup limits, not transport qualification.

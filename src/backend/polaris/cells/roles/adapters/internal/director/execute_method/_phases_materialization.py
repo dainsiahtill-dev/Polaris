@@ -501,6 +501,30 @@ def _phase_existing_scope_preflight(
         and preflight_can_accept_existing_scope
         and not preflight_quality_errors
     ):
+        task_boundary_verdict = None
+        if board_claim_applied and project_artifact_receipt_evidence:
+            try:
+                task_boundary_verdict = _append_receipt_bound_preflight_task_boundary(
+                    adapter,
+                    context=context,
+                    target_task_id=target_task_id,
+                    run_id=run_id,
+                    authority=task_execution_attempt_authority,
+                    receipt_evidence=preflight_existing_contract_evidence.get("project_artifact_receipt_evidence", {}),
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                decision_signals.append(
+                    {
+                        "code": "director.existing_scope_preflight_required_proof_unavailable",
+                        "severity": "info",
+                        "detail": str(exc),
+                    }
+                )
+                # The existing provider path retains the same claim and can
+                # execute or repair. Never settle completed before this proof.
+                return None
+        elif board_claim_applied and _task_completion_projection_from_context(context, target_task_id=target_task_id):
+            return None
         completion_metadata: dict[str, Any] = {
             "adapter_result": {
                 "tools_executed": 0,
@@ -576,19 +600,7 @@ def _phase_existing_scope_preflight(
             # after every owner row already completed. Provider-less
             # preflight must still seal the receipt-bound TaskBoundary.
             try:
-                if project_artifact_receipt_evidence:
-                    task_boundary_verdict = _append_receipt_bound_preflight_task_boundary(
-                        adapter,
-                        context=context,
-                        target_task_id=target_task_id,
-                        run_id=run_id,
-                        finalize_result=finalize_result,
-                        receipt_evidence=preflight_existing_contract_evidence.get(
-                            "project_artifact_receipt_evidence",
-                            {},
-                        ),
-                    )
-                else:
+                if task_boundary_verdict is None:
                     task_boundary_verdict = _append_declared_scope_preflight_task_boundary(
                         adapter,
                         context=context,

@@ -1,11 +1,11 @@
-"""Owned target inventory cannot substitute for explicit local repair routing."""
+"""Read-only planner feasibility never supplies task ownership authority."""
 
 from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
     workspace_quality_summary_requires_task_boundary_triage,
 )
 
 
-def test_unauthed_named_unplannable_targets_require_existing_triage() -> None:
+def test_named_unplannable_targets_do_not_require_synthetic_triage() -> None:
     assert (
         workspace_quality_summary_requires_task_boundary_triage(
             {
@@ -14,11 +14,11 @@ def test_unauthed_named_unplannable_targets_require_existing_triage() -> None:
                 "plan_probe_preaudit": {"status": "coverage_matched_but_unplannable", "plannable_source_tools": []},
             }
         )
-        is True
+        is False
     )
 
 
-def test_explicit_local_retry_authorization_does_not_reenter_triage() -> None:
+def test_retired_retry_annotation_does_not_change_feasibility_semantics() -> None:
     assert (
         workspace_quality_summary_requires_task_boundary_triage(
             {

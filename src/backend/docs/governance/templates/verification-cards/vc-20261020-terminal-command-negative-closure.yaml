@@ -1,0 +1,40 @@
+id: vc-20261020-terminal-command-negative-closure
+classification: pattern
+status: source_stop_pending_independent_review
+owner: runtime.task_runtime
+scope:
+  - polaris/cells/runtime/task_runtime/internal/execution_effect_closure.py
+  - polaris/cells/runtime/task_runtime/public/tests/test_completed_owner_command_failure_closure.py
+design:
+  - Reuse the existing strict terminal owner predicate and immutable DEO plus role outcome proof.
+  - Keep the entire _observe_terminal_failure validation unchanged.
+  - Separate an authenticated terminal failed operation from the final completed, cancelled or failed task outcome.
+  - Preserve the aggregate reason and expose failed operation closure through existing terminal_failures, original nonzero exit and owner references.
+  - Retain successful continuation receipts separately; a failed command never becomes NoEffect or success.
+  - Keep active, unproved, recovery-pending, timeout-shaped, foreign and stale evidence closed to resource release.
+  - Preserve read-only observation without writing a projection, ledger event or lease transition.
+assumptions:
+  - A fully verified terminal negative command result proves an ended operation, not command success or unchanged files.
+  - A later valid same-owner effect can finish a task without erasing the earlier failed operation.
+pre_mortem:
+  - Checking only DEAD_LETTER or a caller boolean would confuse missing evidence with terminal owner proof.
+  - Requiring a final failed task would leave already completed and quiescent effect history logically open.
+  - Ignoring earlier attempts after a reset would erase outstanding resources.
+verification:
+  - Real private failed CLI followed by the same owner's legal write receipt and public completed or failed settlement.
+  - Real V2 and V3 owner producers with original exit codes and separate positive and negative effect observations.
+  - Active owner, recovery-pending, timeout-shaped, generic false, foreign provenance and stale terminal proof rejection.
+  - Direct existing negative closure and file prewrite tests plus scoped Ruff, format, mypy, YAML and diff checks.
+  - Guarded original R07 cold projection with namespace hashes unchanged; historical FAILED and draining lease remain untouched.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-terminal-command-closure-fix/plan-and-manifest.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-terminal-command-closure-fix/red-causal.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-terminal-command-closure-fix/green-related-final.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-terminal-command-closure-fix/static-results.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-terminal-command-closure-fix/original-closure-cold-read-private.json
+limits:
+  - No command replay on the original project, permission changes, source normalization changes or new authority service.
+  - Operational closure is separate from QA, evidence policy and delivery qualification.
+  - A new read-only projection never rewrites the original run's historical barrier or lease.
+  - A new cancelled-session producer is unverified; unsupported DTO and cross-attempt cancellation fixture attempts are preserved separately, never counted as causal RED or acceptance.
+  - R07 all nine execution attempts close under the new observer, but its aggregate barrier remains open at a separate strict dispatch consumer; this component does not claim complete resource release.

@@ -107,7 +107,11 @@ def _preview_edit_blocks_content(
     require_change policy denies empty mutations instead of inventing content.
     """
 
-    from polaris.kernelone.editing.editblock_engine import apply_edit_blocks, parse_edit_blocks
+    from polaris.kernelone.editing.editblock_engine import (
+        apply_edit_blocks,
+        compose_line_range_edit,
+        parse_edit_blocks,
+    )
 
     raw_blocks = (
         values.get("blocks")
@@ -124,6 +128,10 @@ def _preview_edit_blocks_content(
         blocks_text = "\n".join(str(item or "") for item in raw_blocks)
     else:
         blocks_text = str(raw_blocks or "")
+    if "start" in values or "end" in values:
+        if blocks_text.strip():
+            raise ValueError("edit_blocks cannot combine a line range and SEARCH/REPLACE blocks")
+        return compose_line_range_edit(old_content, values.get("start"), values.get("end"), values.get("replace"))
     if not blocks_text.strip():
         return old_content
     normalized_target = str(target_path or "").replace("\\", "/").strip().lstrip("./")
@@ -1181,8 +1189,7 @@ class _DirectorEffectPolicySnapshotPort:
             # target, exception type, and message.  Without this evidence r17 made
             # 30 valid native writes look like model-generated blank content.
             logger.warning(
-                "Director effect write-policy preview failed tool=%s target=%s "
-                "error_type=%s error=%s",
+                "Director effect write-policy preview failed tool=%s target=%s error_type=%s error=%s",
                 request.normalized_tool_name,
                 target_state.target_path,
                 type(exc).__name__,

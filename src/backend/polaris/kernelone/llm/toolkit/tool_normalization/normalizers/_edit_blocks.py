@@ -146,7 +146,7 @@ def _coerce_line_range_mapping(entry: dict[str, Any]) -> dict[str, Any] | None:
     replace_value = _first_value(entry, _LINE_RANGE_REPLACE_KEYS)
     if start is None or end is None or start > end:
         return None
-    if not isinstance(replace_value, str) or not replace_value.strip():
+    if not isinstance(replace_value, str):
         return None
     result: dict[str, Any] = {
         "start": start,
@@ -275,7 +275,7 @@ def _coerce_tuple_line_range_args(value: str) -> dict[str, Any] | None:
     end = _coerce_positive_int(end_value)
     if start is None or end is None or start > end:
         return None
-    if not isinstance(replace_value, str) or not replace_value.strip():
+    if not isinstance(replace_value, str):
         return None
     return {
         "file": file_value.strip(),

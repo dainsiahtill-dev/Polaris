@@ -19,6 +19,7 @@ from typing import Any
 from polaris.cells.control_plane.verifier_policy.internal.trusted_command_profiles import (
     describe_builtin_command_profile,
     evaluate_builtin_proof,
+    matches_node_test_runner,
     resolve_builtin_profile,
 )
 from polaris.cells.control_plane.verifier_policy.public.contracts import (
@@ -177,7 +178,50 @@ def _node_script_name(argv: tuple[str, ...]) -> str:
     return ""
 
 
-def _node_script_content_evidence(query: EvaluateVerifierCommandPolicyQueryV1) -> tuple[str, str]:
+def _missing_node_entrypoint_artifact_metadata(
+    query: EvaluateVerifierCommandPolicyQueryV1,
+    *,
+    manifest_path: Path,
+    manifest_bytes: bytes,
+    script: str,
+    tokens: tuple[str, ...],
+    raw_target: str,
+) -> tuple[tuple[str, str], ...]:
+    """Describe a confined missing target; never relax its command denial."""
+    if (
+        query.modality != "entrypoint"
+        or not tokens
+        or tokens[0] != "node"
+        or any(character in script for character in ";&|`$<>\n\r")
+        or not _node_script_matches_proof_runner(query.modality, tokens)
+    ):
+        return ()
+    from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
+
+    reader = WorkspaceReadSnapshot(query.workspace)
+    source = reader.read(manifest_path)
+    if source.status != "readable" or source.content_sha256 != hashlib.sha256(manifest_bytes).hexdigest():
+        return ()
+    try:
+        target, witness = reader.confined_path(reader.root / query.cwd / raw_target)
+    except (OSError, RuntimeError, ValueError):
+        return ()
+    if witness is not None or reader.drift_reasons():
+        return ()
+    return (
+        ("schema_version", "verifier.artifact_admission_failure.v1"),
+        ("failure_domain", "artifact_profile"),
+        ("cause", "package_entrypoint_target_missing"),
+        ("source_path", Path(source.path).relative_to(reader.root).as_posix()),
+        ("source_sha256", source.content_sha256),
+        ("source_snapshot_kind", "confined_readable_regular_utf8"),
+        ("target_path", target.relative_to(reader.root).as_posix()),
+    )
+
+
+def _node_script_content_evidence(
+    query: EvaluateVerifierCommandPolicyQueryV1,
+) -> tuple[str, str, tuple[tuple[str, str], ...]]:
     """Bind package-script authority to current manifest/runner bytes.
 
     A package script may prepare a build before running tests, or invoke a
@@ -189,17 +233,17 @@ def _node_script_content_evidence(query: EvaluateVerifierCommandPolicyQueryV1) -
 
     script_name = _node_script_name(query.argv)
     if not script_name:
-        return "", ""
+        return "", "", ()
     manifest_path = Path(query.workspace) / query.cwd / "package.json"
     try:
         raw = manifest_path.read_bytes()
         manifest = json.loads(raw.decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return "", "untrusted_package_script"
+        return "", "untrusted_package_script", ()
     scripts = manifest.get("scripts") if isinstance(manifest, dict) else None
     script = scripts.get(script_name) if isinstance(scripts, dict) else None
     if not isinstance(script, str) or not script.strip():
-        return "", "untrusted_package_script"
+        return "", "untrusted_package_script", ()
     normalized = " ".join(script.casefold().split())
     no_op_prefixes = ("echo ", "true", "exit 0", ":", "printf ")
     no_op_tokens = ("--collect-only", "--watch", "--watchall", "--fix")
@@ -208,48 +252,107 @@ def _node_script_content_evidence(query: EvaluateVerifierCommandPolicyQueryV1) -
         or normalized.startswith(no_op_prefixes)
         or any(token in normalized for token in no_op_tokens)
     ):
-        return "", "non_proving_package_script"
+        metadata: tuple[tuple[str, str], ...] = ()
+        # Only benign no-runner declarations are actionable artifact feedback.
+        # Watch flags, shell syntax and unknown interpreter options remain hard denials.
+        try:
+            benign_tokens = tuple(shlex.split(script, posix=True))
+        except ValueError:
+            benign_tokens = ()
+        if (
+            query.modality == "test"
+            and benign_tokens
+            and benign_tokens[0].casefold() in {"echo", "printf", "true", ":", "exit"}
+            and not any(character in script for character in ";&|`$<>\n\r")
+            and (benign_tokens[0].casefold() != "exit" or benign_tokens == ("exit", "0"))
+        ):
+            from polaris.kernelone.quality.interface_ledger import WorkspaceReadSnapshot
+
+            reader = WorkspaceReadSnapshot(Path(query.workspace))
+            source = reader.read(manifest_path)
+            if (
+                source.status == "readable"
+                and source.content_sha256 == hashlib.sha256(raw).hexdigest()
+                and not reader.drift_reasons()
+            ):
+                metadata = (
+                    ("schema_version", "verifier.artifact_admission_failure.v1"),
+                    ("failure_domain", "artifact_profile"),
+                    ("cause", "package_test_script_not_proving"),
+                    ("source_path", Path(source.path).relative_to(reader.root).as_posix()),
+                    ("source_sha256", source.content_sha256),
+                    ("source_snapshot_kind", "confined_readable_regular_utf8"),
+                )
+        return "", "non_proving_package_script", metadata
     try:
         lexer = shlex.shlex(script, posix=True, punctuation_chars=";&|")
         lexer.whitespace_split = True
         lexer.commenters = ""
         tokens = tuple(lexer)
     except ValueError:
-        return "", "non_proving_package_script"
+        return "", "non_proving_package_script", ()
     direct_node_script_hash = ""
     if (
         tokens
         and Path(tokens[0].replace("\\", "/")).name.casefold() == "node"
-        and not (query.modality == "test" and len(tokens) >= 2 and tokens[1] == "--test")
+        and not (query.modality == "test" and matches_node_test_runner(tokens))
     ):
         if query.modality not in {"test", "entrypoint"} or len(tokens) < 2 or tokens[1].startswith("-"):
-            return "", "non_proving_package_script"
+            return "", "non_proving_package_script", ()
         raw_target = tokens[1].replace("\\", "/")
         target = Path(raw_target)
         if target.is_absolute() or ".." in target.parts or target.suffix.casefold() not in {".js", ".mjs", ".cjs"}:
-            return "", "untrusted_package_script"
+            return "", "untrusted_package_script", ()
         workspace = Path(query.workspace).expanduser().resolve()
         cwd = workspace if query.cwd == "." else (workspace / query.cwd).resolve()
         target_path = (cwd / target).resolve()
         if not _is_within(target_path, workspace) or not target_path.is_file():
-            return "", "untrusted_package_script"
+            metadata = _missing_node_entrypoint_artifact_metadata(
+                query,
+                manifest_path=manifest_path,
+                manifest_bytes=raw,
+                script=script,
+                tokens=tokens,
+                raw_target=raw_target,
+            )
+            return "", "untrusted_package_script", metadata
         try:
             direct_node_script_hash = hashlib.sha256(target_path.read_bytes()).hexdigest()
         except OSError:
-            return "", "untrusted_package_script"
-    if not _node_script_matches_proof_runner(query.modality, tokens):
-        return "", "non_proving_package_script"
-    return _stable_hash(
-        {
-            "domain": "control_plane.verifier_policy.node_package_script.v1",
-            "manifest_sha256": hashlib.sha256(raw).hexdigest(),
-            "direct_node_script_sha256": direct_node_script_hash,
-        }
-    ), ""
+            return "", "untrusted_package_script", ()
+    if not _node_script_matches_proof_runner(
+        query.modality,
+        tokens,
+        scripts=scripts if query.modality == "test" else None,
+        active_scripts=frozenset({script_name}),
+    ):
+        return "", "non_proving_package_script", ()
+    return (
+        _stable_hash(
+            {
+                "domain": "control_plane.verifier_policy.node_package_script.v1",
+                "manifest_sha256": hashlib.sha256(raw).hexdigest(),
+                "direct_node_script_sha256": direct_node_script_hash,
+            }
+        ),
+        "",
+        (),
+    )
 
 
-def _node_script_matches_proof_runner(modality: str, tokens: tuple[str, ...]) -> bool:
-    """Recognize proof runners and success-dependent preparation commands."""
+def _node_script_matches_proof_runner(
+    modality: str,
+    tokens: tuple[str, ...],
+    *,
+    scripts: dict[str, Any] | None = None,
+    active_scripts: frozenset[str] = frozenset(),
+) -> bool:
+    """Recognize proof runners and current-manifest build/lint preparation.
+
+    References resolve only while proving preparation, so this cannot bypass
+    direct Node entrypoint file checks. The caller hashes the whole manifest;
+    nested bodies therefore share its existing current-input binding.
+    """
 
     if not tokens or any(token in {";", "||", "|", "&"} for token in tokens):
         return False
@@ -259,10 +362,39 @@ def _node_script_matches_proof_runner(modality: str, tokens: tuple[str, ...]) ->
         return (
             bool(preparation and remainder)
             and (
-                _node_script_matches_proof_runner("build", preparation)
-                or _node_script_matches_proof_runner("lint", preparation)
+                _node_script_matches_proof_runner("build", preparation, scripts=scripts, active_scripts=active_scripts)
+                or _node_script_matches_proof_runner(
+                    "lint", preparation, scripts=scripts, active_scripts=active_scripts
+                )
             )
-            and _node_script_matches_proof_runner(modality, remainder)
+            and _node_script_matches_proof_runner(modality, remainder, scripts=scripts, active_scripts=active_scripts)
+        )
+    if tokens[0] in {"npm", "pnpm", "yarn", "bun"}:
+        if modality not in {"build", "lint"} or scripts is None or len(tokens) != 3:
+            return False
+        if tokens[1] not in {"run", "run-script"}:
+            return False
+        script_name = tokens[2]
+        if (
+            not script_name
+            or not script_name.isascii()
+            or not script_name[0].isalnum()
+            or not all(character.isalnum() or character in "_.:-" for character in script_name)
+            or script_name in active_scripts
+        ):
+            return False
+        script = scripts.get(script_name)
+        if not isinstance(script, str) or not script.strip() or any(character in script for character in "\n\r`$<>"):
+            return False
+        try:
+            lexer = shlex.shlex(script, posix=True, punctuation_chars=";&|")
+            lexer.whitespace_split = True
+            lexer.commenters = ""
+            child_tokens = tuple(lexer)
+        except ValueError:
+            return False
+        return _node_script_matches_proof_runner(
+            modality, child_tokens, scripts=scripts, active_scripts=active_scripts | {script_name}
         )
     executable = Path(tokens[0].replace("\\", "/")).name.casefold()
     arguments = tuple(item.casefold() for item in tokens[1:])
@@ -272,7 +404,7 @@ def _node_script_matches_proof_runner(modality: str, tokens: tuple[str, ...]) ->
     ):
         return False
     if executable == "node":
-        if modality == "test" and arguments and arguments[0] == "--test":
+        if modality == "test" and matches_node_test_runner(tokens):
             return True
         return (
             modality in {"test", "entrypoint"}
@@ -689,6 +821,7 @@ def _rejected_command_policy(
     *,
     error_code: str,
     detail: str,
+    artifact_failure_metadata: tuple[tuple[str, str], ...] = (),
 ) -> VerifierCommandPolicyDecisionV1:
     return VerifierCommandPolicyDecisionV1(
         authorized=False,
@@ -702,6 +835,7 @@ def _rejected_command_policy(
         executable_realpath="",
         executable_hash="",
         policy_decision_hash="",
+        artifact_failure_metadata=artifact_failure_metadata,
     )
 
 
@@ -870,12 +1004,13 @@ def evaluate_verifier_command_policy(
         modality=query.modality, argv=query.argv, cwd=query.cwd, policy=policy
     )
     custom_content_hash = ""
-    package_script_evidence_hash, package_script_error = _node_script_content_evidence(query)
+    package_script_evidence_hash, package_script_error, artifact_failure_metadata = _node_script_content_evidence(query)
     if profile_id and package_script_error:
         return _rejected_command_policy(
             query,
             error_code=package_script_error,
             detail="package script is absent, mutable-only, watch-mode, or non-proving",
+            artifact_failure_metadata=artifact_failure_metadata,
         )
     if profile_id.startswith("custom_script:"):
         profile_id, custom_error, custom_content_hash = _custom_script_profile(query, policy)

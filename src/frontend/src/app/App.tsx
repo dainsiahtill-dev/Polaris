@@ -221,10 +221,24 @@ function isFactoryRunScopedToBenchWorkDir(run: unknown, benchWorkDir: string): b
   return runWorkspace === normalizedBenchWorkDir || runWorkspace.startsWith(`${normalizedBenchWorkDir}/`);
 }
 
-function readInitialWorkspaceBinding(): string {
-  if (typeof window === 'undefined') return '';
-  const params = new URLSearchParams(window.location.search);
-  return String(params.get('workspace') || params.get('polarisWorkspace') || '').trim();
+function readInitialRuntimeScope() {
+  const params = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search);
+  const readBinding = (...values: unknown[]): string => values.find(
+    (value): value is string => typeof value === 'string' && Boolean(value.trim()),
+  )?.trim() || '';
+  return {
+    workspace: readBinding(
+      params.get('workspace'), params.get('polarisWorkspace'),
+      import.meta.env.VITE_POLARIS_WORKSPACE, import.meta.env.VITE_WORKSPACE,
+    ),
+    instance: readBinding(
+      params.get('instance'), params.get('instanceId'), params.get('polarisInstance'),
+      import.meta.env.VITE_POLARIS_INSTANCE_ID,
+    ),
+    globalObserverRequested: readBinding(
+      params.get('globalObserver') ?? import.meta.env.VITE_POLARIS_GLOBAL_BENCH_OBSERVER,
+    ) === '1',
+  };
 }
 
 function AppContent() {
@@ -254,8 +268,14 @@ function AppContent() {
   const internalBenchFlag = String(import.meta.env.VITE_POLARIS_INTERNAL_BENCH ?? '').trim();
   const internalBenchEnabled = internalBenchFlag === '1' || (import.meta.env.DEV && internalBenchFlag !== '0');
   const [progressSnapshot, setProgressSnapshot] = useState<SnapshotPayload | null>(null);
-  const initialWorkspaceBinding = useMemo(() => readInitialWorkspaceBinding(), []);
-  const globalBenchObserverEnabled = shouldEnableGlobalBenchObserver(internalBenchEnabled, initialWorkspaceBinding);
+  const {
+    workspace: initialWorkspaceBinding,
+    instance: initialInstanceBinding,
+    globalObserverRequested,
+  } = useMemo(() => readInitialRuntimeScope(), []);
+  const globalBenchObserverEnabled = shouldEnableGlobalBenchObserver(
+    internalBenchEnabled, initialWorkspaceBinding, globalObserverRequested, initialInstanceBinding,
+  );
 
   const handleBenchWorkspaceChange = useCallback(
     (nextWorkspace: string) => {
@@ -300,7 +320,7 @@ function AppContent() {
   } = useRuntime({
     roles: ['pm', 'chief_engineer', 'director', 'qa'],
     workspace,
-    includeInternalBench: internalBenchEnabled,
+    includeInternalBench: globalBenchObserverEnabled,
     tailLines: RUNTIME_CONTEXT_HISTORY_TAIL_LINES,
   });
   const {

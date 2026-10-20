@@ -1,0 +1,58 @@
+id: vc-20261020-contextos-bound-tool-observation
+classification: pattern
+status: source_stop_pending_independent_review
+owner: roles.runtime
+scope:
+  - polaris/kernelone/context/prompt_safety.py
+  - polaris/kernelone/audit/context_os_prompt.py
+  - polaris/cells/roles/runtime/internal/kernel_session_turn.py
+  - polaris/cells/roles/kernel/internal/llm_caller/request_preparer.py
+  - polaris/cells/roles/kernel/internal/llm_caller/response_types.py
+design:
+  - Reuse ContextSource for private observation provenance derived from committed native inventory and receipts.
+  - Bind each exact final native call/result occurrence and independently hash normalized arguments, native arguments and raw results.
+  - Use an immutable source digest and producer-owned private object reference; caller flags and copied metadata do not attest data.
+  - Keep ordinary command descriptors and literal source text as observation data without granting execution authority.
+  - Recursively remove existing authority-bearing result slots; retain strict metadata and unbound legacy auditing.
+  - Normalize the existing control_plane_job_token alias and consume verified indices in both weak content scans.
+  - Structurally failed results cannot acquire a successful-data binding despite an outer success label.
+  - Carry sources only in runtime-private preparation fields, never provider payloads or a new durable store.
+  - Preserve full native exchanges when semantic retry appends its current-user instruction.
+  - Regenerate cold provenance from original committed facts rather than replaying effects.
+  - Compare event and committed result rows through the same strict ToolExecutionResult serializer; omitted defaults are not inventory drift.
+  - Re-derive normalization semantics from the verified captured ToolSpec and replay the actual decoder branch; registered reads retain exact native mappings.
+  - Keep original run failures and delivery evidence separate from component verification.
+assumptions:
+  - A successful command result timeout_seconds describes execution and is not a control-plane budget instruction.
+  - Literal source code may contain authority key names without becoming an authority object.
+  - ContextSource metadata remains mutable, so final consumers must validate the sealed fields and original object identity.
+  - The original native argument namespace must not be replaced with normalized arguments or an operation hash.
+pre_mortem:
+  - Trusting a tool-role string or prompt_safe flag would allow forged provenance.
+  - Indexing only by call_id would silently lose reused occurrences.
+  - Flattening a retry to role/content would destroy its native argument/result correlation.
+  - A runtime-private carrier could leak through a generic prompt or persistence serializer.
+  - Literal receipt equality could reject owner-generated defaults and stop an otherwise authorized same-owner continuation.
+  - Unconditionally normalizing read observations could invent defaults that the captured decoder intentionally did not add.
+verification:
+  - Real session bridge, captured ToolSpec normalization, final request preparation and native serializer for command and source data.
+  - Cold JSON inventory regeneration, input drift and duplicate occurrence controls.
+  - Real sparse-event producer serialization, denied mixed batch, subsequent same-owner read/write, actual effect receipt and completed boundary.
+  - Result/status/call/batch/duration/effect-commit drift and undeclared fields remain rejected after typed normalization.
+  - Captured normalization semantics are re-derived rather than trusted from a caller flag; write aliases retain distinct native and normalized argument namespaces.
+  - Caller source, metadata mutation, foreign identity and actual control metadata remain rejected.
+  - Actual Factory semantic retry preserves native correlation and private fields remain absent from serialized provider context.
+  - Read-only original R05 payload owner re-audit with an external-write guard; original facts remain unchanged.
+  - Focused causal and relevant adjacent tests plus scoped Ruff, format, mypy and diff checks.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-context-quality-audit/proposal-nine-point.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-context-quality-audit/red-owner-to-final-request.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-context-quality-audit/retry-causal-red.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-context-quality-audit/original-owner-readonly-reaudit.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r07-runtime-continuation-audit/proposal-nine-point.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r07-runtime-continuation-audit/producer-consumer-baseline.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r07-runtime-continuation-audit/native-input-semantics-red.json
+limits:
+  - No command permission, target, model, original criteria or Factory boundary policy changes.
+  - Unbound legacy data retains strict auditing; no broad tool-role exemption or global keyword whitelist.
+  - Conditional re-audit is not a new native call, QA result or delivery qualification.

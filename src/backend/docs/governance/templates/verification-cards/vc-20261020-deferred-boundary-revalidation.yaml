@@ -1,0 +1,51 @@
+id: vc-20261020-deferred-boundary-revalidation
+classification: defect
+status: verified_bounded_atomic_cas_fresh_native_pending
+scope:
+  - polaris/cells/control_plane/run_ledger/public/service.py
+  - polaris/cells/control_plane/run_ledger/public/task_boundary.py
+  - polaris/cells/control_plane/run_ledger/tests/test_deferred_boundary_revalidation.py
+hypotheses:
+  - A pre-append predecessor read alone permits a newer same-task boundary to be overwritten by pending old completion.
+  - A governed-followup verdict deliberately has no complete artifact or verifier obligations.
+  - Re-evaluating that placeholder alone can append an empty completed_verified successor.
+  - The existing Factory producer must supply a normal verdict from complete CE and current Broker evidence.
+mechanism:
+  - Compare the canonical same-task predecessor inside the existing projection flock callback immediately before Fact append.
+  - Permit an identical durable canonical Fact to restore its projection or repeat idempotently without appending a new Fact.
+  - Preserve the existing partial-tail Fact proof and unrelated task or ordinary event progress.
+  - Extend the existing ReprojectTaskBoundaryVerdictCommandV1 with optional typed normal verdict, immutable claim id and receipt locator/hash/input-hash bindings.
+  - Keep the data carrier separate from authority; Factory authenticates CE and actual current Broker receipts through its existing public owner queries.
+  - Ledger independently reuses strict captured TaskRuntime identity and child-owner constraints and verifies the complete immutable CE task slice.
+  - Reject unbound deferred reprojection, foreign or incomplete scope and stale predecessor or changed retry basis.
+  - Persist complete normal obligations and claim/contract/projection/receipt basis while retaining the immutable predecessor token and failed history.
+  - Keep old non-deferred deterministic reprojection compatible.
+  - Do not add a CE/Broker reverse dependency, controller, ledger, execution capability, model call or verifier command.
+verification:
+  - The original public deferred producer and durable reprojection reproduced empty completed_verified before changes.
+  - New regression first failed because deferred reprojection did not reject.
+  - Two real TaskRuntime producer controls showed that a selected claim alone must not bypass foreign Factory/project constraints; the implementation reuses the existing strict consumer.
+  - Initial pre-atomic cut passed 54 cases; independent real interleaving falsified its provisional CAS acceptance, which remains historical.
+  - Current cut passed 22 focused, 38 existing TaskBoundary and 10 existing Fact/projection recovery cases together (70 passed).
+  - Configured mypy passed for all three changed Python files; Ruff check and format check passed.
+  - Same-task interleaving RED became GREEN; unrelated task and ordinary event progress remained GREEN.
+  - Missing projection and partial-tail recovery reuse the same durable Fact; retry after a newer boundary appends no duplicate Fact.
+  - The locked callback reuses the existing strict canonical authority loader, including owner, sequence and semantic validation.
+  - Scoped git diff and Card YAML checks passed.
+  - C owns the separate real CE/current-Broker integration and source STOP evidence.
+ownership:
+  - control_plane.run_ledger owns CAS, immutable claim/scope validation and canonical verdict persistence.
+  - factory.pipeline remains the existing CE and Broker observation producer; the carrier itself is not authentication.
+  - Root explicitly extended A to service.py for the existing locked append closure; Factory consumer and metadata scanner belong to C.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-bc-independent-review/deferred-reprojection-falsifier.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-deferred-boundary-revalidation-fix/baseline-and-plan.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-deferred-boundary-revalidation-fix/red-empty.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-deferred-boundary-revalidation-fix/red-owner-conflict.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-c-review-a/interleaving-falsifier.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-deferred-boundary-revalidation-fix/atomic-v2/red-cas.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-deferred-boundary-revalidation-fix/atomic-v2/red-canonical-authority.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r06-deferred-boundary-revalidation-fix/atomic-v2/final-current.log
+remaining:
+  - Synthetic module fixtures do not qualify fresh native delivery or QA.
+  - Original R05 remains FAILED and its facts, receipts and target files are immutable.

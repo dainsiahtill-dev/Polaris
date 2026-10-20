@@ -1,0 +1,48 @@
+id: vc-20261019-reexecution-declaration-ledger
+classification: defect
+status: verified_bounded_fresh_native_pending
+scope:
+  - polaris/cells/control_plane/run_ledger/public/service.py
+  - polaris/cells/control_plane/run_ledger/tests/test_reexecution_declaration_identity.py
+hypotheses:
+  - TaskRuntime reset/import emits a row declaration with deliberately empty run/session identity.
+  - The strict Ledger consumer incorrectly treated that declaration as an execution claim.
+  - Projectless CE coordination constrains the same Factory without declaring a conflicting project.
+mechanism:
+  - Complete the existing declaration consumer for the eleven real session=None producer kinds.
+  - Keep schema, transition, full snapshot, task, workspace, factory and project identity checks.
+  - Require reset/import clean pending or blocked state, zero attempts and absent execution authority.
+  - Preserve historical session snapshots on other row/dependency declarations.
+  - Exclude declarations from child/session/alias authority; only real execution facts qualify a child.
+  - Preserve all failed attempts and require a legitimate new claim after reset or persisted import.
+  - Resolve captured owners once to one Factory and at most one explicit project for every later token/owner check.
+  - Reject different or mixed known/unknown Factories and two explicit different projects.
+  - An unspecified CE project cannot lend its task alias to the selected project.
+  - No new public contract, state owner, controller, permission, fallback or fact write.
+verification:
+  - Real public TaskRuntime reset/import and dependency producers reproduce three strict cold-query failures before the fix.
+  - Initial reset-only cut passed seventeen causal and 101 selected tests; those results remain historical.
+  - Real projectless CE plus scoped Director repair reproduced the next ownership conflict before the scope extension; three incompatible scope controls passed.
+  - Current twenty-one causal cases cover cold recovery/new claim, immutable failure history, dependency families, historical session snapshots, contradictory resets and compatible/incompatible owner constraints.
+  - Current causal plus adjacent strict identity, native CP project, canonical projection and owner publication run passed 105 tests.
+  - Ruff check/format and mypy passed for both changed Python files.
+  - Exact original R04 reset records 158 and 203 now classify as declarations without rewriting either fact.
+  - Full original read-only strict replay now reads 246 TaskRuntime and 62 CP facts; old frozen code still reproduces the reset identity error.
+  - Query availability is ready while run_projection.ok, integrity_ok and outcome_ok remain false; reading is not delivery qualification.
+  - Original 1240-file namespace and FAILED/DRAINING/release_allowed=false remain unchanged; original/shared write guard recorded zero attempts.
+ownership:
+  - Existing control_plane.run_ledger consumes runtime.task_runtime public facts through events.fact_stream.
+  - No graph, ownership, side-effect, descriptor or public DTO boundary changed.
+  - Producer inventory is bounded; future owner event families must explicitly migrate this consumer.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r04-reset-lineage-fix/baseline.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r04-reset-lineage-fix/producer-interface-inventory.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r04-reset-lineage-fix/red-causal-command.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r04-reset-lineage-fix/red-scope-v2-command.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r04-reset-lineage-fix/green-adjacent-v2-command.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r04-reset-lineage-fix/original-r04-readonly-replay-v2.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r04-reset-lineage-fix/original-r04-exact-reset-record-replay.json
+remaining:
+  - Current original-run Ledger policy reports missing qa/code/command and failed tool_receipt; independent Broker receipts remain a separate evidence surface.
+  - R04 remains FAILED with QA not run and logical resource release unproven.
+  - Module fixtures and pure record replay do not prove native delivery or independent QA.

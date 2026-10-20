@@ -1,0 +1,37 @@
+id: vc-20261020-ce-semantic-patch-proposal-snapshot
+classification: pattern
+status: source_stop
+owner: factory.pipeline
+scope:
+  - polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py
+assumptions:
+  - Decoded provider proposals must remain identifiable before CAS rebinding and compose rejection.
+  - Existing FactoryStore immutable snapshots can retain nonauthoritative proposal evidence.
+  - A native argument hash cannot be reconstructed from canonical decoded JSON.
+mechanism:
+  - Deep-copy exact decoded proposal before binding or composition.
+  - Use existing persist_stage_artifact_snapshot and existing StageResult metadata persistence.
+  - Retain all round locators with candidate, diagnosis, request identity and canonical proposal hash.
+  - Storage failure is UNKNOWN with no locator and never changes the original semantic result.
+pre_mortem:
+  - Saving only post-bind patches loses original provider provenance echoes and rejected proposals.
+  - Copying all metadata could leak control-plane tokens or mislabel proposal artifacts as accepted authority.
+  - Artifact persistence followed by stage-link loss is an unlinked UNKNOWN window, not atomic crash recovery.
+verification:
+  - Real private FactoryStore, successful and rejected composition, two rounds and cold snapshot reads.
+  - Wrong hash, ref, count and run refuse; failure injection leaves semantic result unchanged.
+  - Scoped related tests and Ruff, format, mypy, diff and YAML.
+limits:
+  - Snapshot evidence does not grant CE, tool, receipt, QA or accepted-project authority.
+  - Original R10 patch bodies remain UNKNOWN; no historical reconstruction claim.
+  - No precompose save_run or new store, ledger, retry budget or logging gate.
+evidence:
+  - All21newfocused cases passed in the final181-case related regression set.
+  - Related181cases passed13.29s; scoped Ruff, format, mypy5files, diff and YAML passed.
+  - Original causal RED and private fixture setup failures remain preserved in the audit implementation directory.
+  - No ALL or fresh native execution is claimed; root owns integration and acceptance.
+capture_boundaries:
+  - Snapshot and cold-reader tests use real private FactoryStore and real public compiler/composer.
+  - Two-round StageResult test uses existing explicit synthetic PM/cutoff and canned provider metadata.
+  - StageResult serialization uses the existing service metadata shape and real FactoryStore save/get cold reads.
+  - Snapshot commit and StageResult link persistence remain separate; unlinked snapshot state is UNKNOWN.

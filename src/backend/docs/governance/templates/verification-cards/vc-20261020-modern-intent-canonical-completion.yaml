@@ -1,0 +1,40 @@
+id: vc-20261020-modern-intent-canonical-completion
+classification: pattern
+status: source_stop
+owner: chief_engineer.blueprint
+scope:
+  - polaris/cells/chief_engineer/blueprint/public/service/_helpers.py
+  - polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py
+  - polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py
+assumptions:
+  - Typed modern PM intent delegates topology without legacy required_source_kinds.
+  - A declared source entrypoint and its canonical artifact roster must agree.
+  - Assets are a typed artifact role and required assets cannot vanish during normalization.
+  - Planner advice and runtime output locators do not grant source path authority.
+mechanism:
+  - Reuse the existing shared role policy for modern admission and feedback projection.
+  - Project only already-authorized explicit source-entrypoint declarations into the existing canonical artifact builder.
+  - Preserve required obligations or return explicit owner diagnostics without permission expansion.
+  - Retain explicit PM scope, known owners, protected paths, legacy semantics and verifier proof grammar.
+pre_mortem:
+  - Updating feedback alone would leave accepted task targets incomplete.
+  - Adding runtime paths or advisory paths would widen authority incorrectly.
+  - Dropping required assets or changing verifier coverage policy would hide an incomplete candidate.
+verification:
+  - Full normalization with the existing synthetic trusted issuer and an unchanged typed verifier recipe patch except build-to-lint correction.
+  - Fourteen required artifacts including CLI source and two assets; five original verifier obligations and PM identity remain.
+  - Protected, foreign, explicit PM scope, legacy and runtime-only negative controls.
+  - Six focused cases passed; the existing public build naturally persisted a private portfolio with actual target/scope/ownership14.
+  - The necessary adjacent seven-file CE set passed189 tests.
+  - Existing canonical coverage remains policy-owned; raw references are not assumed identical to normalized references.
+  - Final six focused cases passed after an alpha-only local rename; scoped Ruff, format, mypy, diff and YAML checks passed.
+  - Read-only independent R1 actual-candidate full normalization, private public-build and cold revalidation passed; independent R2 inverse-alpha source and AST comparison passed.
+limits:
+  - Trusted fixture issuer is synthetic; no original Factory PM lineage replay is claimed.
+  - No provider, native acceptance, original target command/repair, new authority owner or retry budget.
+  - Private public-build fixture writes blueprint/completion owner artifacts; zero original-native writes does not mean all fixture disk writes are zero.
+  - PM empty scope lists represent topology delegation, not explicit empty execution permissions; Gateway capability semantics are untouched.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r09-ce-scope-repair-audit/implementation-20261020/manifest.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r09-ce-scope-repair-audit/pure-input-experiment-v2-result.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r09-ce-scope-repair-audit/implementation-20261020/SOURCE_STOP/report.json

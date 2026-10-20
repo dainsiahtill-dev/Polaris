@@ -207,3 +207,63 @@ def test_explicit_relative_hyphen_filename_keeps_file_entrypoint_and_registered_
         "",
     )
     assert policy.evaluate_verifier_command_policy(_query(tmp_path, argv)).authorized
+
+
+def test_nonproving_package_test_keeps_denial_and_current_confined_source_witness(tmp_path: Path) -> None:
+    body = '{"scripts":{"test":"echo verification is not configured"}}\n'
+    (tmp_path / "package.json").write_text(body, encoding="utf-8")
+    decision = policy.evaluate_verifier_command_policy(_query(tmp_path, ("npm", "test")))
+    assert decision.authorized is False
+    assert decision.error_code == "non_proving_package_script"
+    assert decision.policy_decision_hash == ""
+    assert dict(decision.artifact_failure_metadata) == {
+        "schema_version": "verifier.artifact_admission_failure.v1",
+        "failure_domain": "artifact_profile",
+        "cause": "package_test_script_not_proving",
+        "source_path": "package.json",
+        "source_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        "source_snapshot_kind": "confined_readable_regular_utf8",
+    }
+    assert type(decision.artifact_failure_metadata) is tuple
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "echo no runner && exit 0",
+        "echo 'unterminated",
+        "node --eval=process.exit(0)",
+        "node --test --watch",
+        "node --unknown-loader tests/main.js",
+    ],
+)
+def test_unsafe_unknown_or_malformed_package_denial_never_emits_artifact_feedback(tmp_path: Path, script: str) -> None:
+    import json
+
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": script}}), encoding="utf-8")
+    decision = policy.evaluate_verifier_command_policy(_query(tmp_path, ("npm", "test")))
+    assert decision.authorized is False and decision.artifact_failure_metadata == ()
+
+
+def test_package_failure_metadata_cannot_be_mutable_or_retagged_as_authorized(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"echo no runner"}}', encoding="utf-8")
+    decision = policy.evaluate_verifier_command_policy(_query(tmp_path, ("npm", "test")))
+    assert decision.artifact_failure_metadata
+    with pytest.raises((TypeError, ValueError)):
+        replace(decision, authorized=True)
+    with pytest.raises((TypeError, ValueError)):
+        replace(decision, artifact_failure_metadata=list(decision.artifact_failure_metadata))
+    with pytest.raises((TypeError, ValueError)):
+        replace(decision, artifact_failure_metadata=(*decision.artifact_failure_metadata, ("cause", "other")))
+    with pytest.raises((TypeError, ValueError)):
+        replace(
+            decision, artifact_failure_metadata=(*decision.artifact_failure_metadata, ("execution_authority", "true"))
+        )
+
+
+def test_linked_manifest_never_gets_actionable_artifact_witness(tmp_path: Path) -> None:
+    external = tmp_path.parent / (tmp_path.name + "-external-package.json")
+    external.write_text('{"scripts":{"test":"echo no runner"}}', encoding="utf-8")
+    (tmp_path / "package.json").symlink_to(external)
+    decision = policy.evaluate_verifier_command_policy(_query(tmp_path, ("npm", "test")))
+    assert decision.authorized is False and decision.artifact_failure_metadata == ()

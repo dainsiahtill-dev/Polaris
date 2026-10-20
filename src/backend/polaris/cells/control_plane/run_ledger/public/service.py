@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -63,6 +64,7 @@ from polaris.cells.events.fact_stream.public import (
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1,
     TASK_RUNTIME_EXECUTION_STREAM_V1,
+    TaskRuntimeExecutionAttemptIdentityV1,
 )
 from polaris.infrastructure.log_pipeline.jetstream_publisher import get_log_jetstream_publisher
 from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_roots
@@ -1004,15 +1006,81 @@ def _capture_strict_fact_stream(workspace: Path, stream: str) -> list[dict[str, 
 
 
 _TASK_ROW_DECLARATION_KINDS = frozenset(
-    {"created", "materialized", "factory_run_bound", "updated", "runtime_reset_removed"}
+    {
+        "created",
+        "materialized",
+        "factory_run_bound",
+        "updated",
+        "runtime_reset_removed",
+        "reexecution_reset",
+        "reexecution_imported",
+        "dependencies_unblocked",
+        "dependency_blockers_refreshed",
+        "reverse_dependency_linked",
+        "downstream_dependency_reblocked",
+    }
 )
+
+
+def _validate_canonical_reexecution_declaration(payload: dict[str, Any], kind: str) -> None:
+    """Require the owner's clean preexecution projection, never a new claim.
+
+    Reset/import remove session files and execution metadata before augmenting
+    the pending/blocked row. Other declaration kinds may legitimately retain
+    historical session metadata, so these restrictions apply only here.
+    """
+    snapshot = payload["task_row_snapshot"]
+    metadata = snapshot["metadata"]
+    runtime = metadata.get("runtime_execution") or {}
+    blockers = snapshot.get("blocked_by")
+    expected_status = "blocked" if blockers else "pending"
+    if (
+        not isinstance(blockers, list)
+        or snapshot.get("blockedBy") != blockers
+        or payload.get("status") != expected_status
+        or payload.get("execution_state") != expected_status
+        or snapshot.get("raw_status") != expected_status
+        or payload.get("run_id") != ""
+        or payload.get("session_id") != ""
+        or any(type(payload.get(field)) is not int or payload[field] != 0 for field in ("attempt", "resume_count"))
+        or any(
+            payload.get(field) != ""
+            for field in ("resume_state", "lease_expires_at", "last_heartbeat_at", "claimed_by", "last_claimed_by")
+        )
+        or payload.get("resume_available") is not False
+        or any(snapshot.get(field) != "" for field in ("assignee", "claimed_by", "last_claimed_by", "result_summary"))
+        or any(
+            field not in snapshot or snapshot[field] is not None
+            for field in ("started_at", "completed_at", "claimed_at", "error_message")
+        )
+        or snapshot.get("resume_state") != ""
+        or snapshot.get("resume_available") is not False
+        or snapshot.get("session_id")
+        or any(metadata.get(field) for field in ("session_id", "claimed_at", "claim_attempt"))
+        or set(runtime) - {"effective_status", "raw_status", "resume_available", "resume_state"}
+        or runtime.get("effective_status") != expected_status
+        or runtime.get("raw_status") != expected_status
+        or runtime.get("resume_available") is not False
+        or runtime.get("resume_state") != ""
+    ):
+        raise ValueError("canonical_lineage_declaration_reexecution_invalid")
+    details = payload["details"]
+    if (
+        not isinstance(details.get("source"), str)
+        or not details["source"].strip()
+        or (kind == "reexecution_reset" and not details.get("previous_status"))
+        or (kind == "reexecution_imported" and not isinstance(details.get("source_task_dir"), str))
+    ):
+        raise ValueError("canonical_lineage_declaration_reexecution_invalid")
 
 
 def _canonical_task_row_declaration(row: dict[str, Any], payload: dict[str, Any], workspace: Path) -> bool:
     """Validate producer-shaped row declarations without granting execution.
 
-    TaskRuntime emits these kinds with session=None. A retained workflow run
-    and snapshot session describe row history, not a new execution claim.
+    These are the complete session=None producer kinds in TaskRuntime's row,
+    dependency and recovery owners. New producer kinds must migrate this
+    consumer explicitly. A retained workflow run and snapshot session describe
+    row history, not a new execution claim.
     Compact historical execution records lack the producer's declaration
     fields; they retain the original strict execution-identity checks.
     Source/workspace/scope and digest fences belong to the caller.
@@ -1116,6 +1184,8 @@ def _canonical_task_row_declaration(row: dict[str, Any], payload: dict[str, Any]
         or snapshot.get("status") != "removed"
     ):
         raise ValueError("canonical_lineage_declaration_reset_invalid")
+    if kind in {"reexecution_reset", "reexecution_imported"}:
+        _validate_canonical_reexecution_declaration(payload, kind)
     return True
 
 
@@ -1147,6 +1217,87 @@ def _validate_native_lineage_session(row: dict[str, Any], payload: dict[str, Any
         raise ValueError("canonical_lineage_task_identity_invalid")
 
 
+def _captured_native_task_identity(
+    row: dict[str, Any],
+    payload: dict[str, Any],
+    workspace: Path,
+) -> TaskRuntimeExecutionAttemptIdentityV1 | None:
+    """Recover both task namespaces from the already verified native fact cut.
+
+    This is a historical identity witness, not a live lease or capability. Row
+    declarations and compact legacy facts cannot introduce external aliases.
+    """
+    if payload.get("schema_version") != TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1:
+        return None
+    if row.get("event_type") not in {
+        "claimed",
+        "claim_renewed",
+        "heartbeat_renewed",
+        "completed",
+        "failed",
+        "cancelled",
+        "suspended",
+    }:
+        return None
+    snapshot = payload.get("task_row_snapshot")
+    metadata = snapshot.get("metadata") if isinstance(snapshot, dict) else None
+    runtime = metadata.get("runtime_execution") if isinstance(metadata, dict) else None
+    if not isinstance(snapshot, dict) or not isinstance(metadata, dict) or not isinstance(runtime, dict):
+        raise ValueError("canonical_lineage_native_identity_missing")
+    external = runtime.get("external_task_id")
+    if not isinstance(external, str) or external != external.strip():
+        raise ValueError("canonical_lineage_external_identity_invalid")
+    try:
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=payload["workspace"],
+            task_id=runtime["task_id"],
+            external_task_id=external,
+            session_id=runtime["session_id"],
+            attempt=runtime["attempt"],
+            role_id=runtime["role_id"],
+            worker_id=runtime["worker_id"],
+            run_id=runtime["run_id"],
+            lease_expires_at=runtime["lease_expires_at"],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("canonical_lineage_native_identity_invalid") from exc
+    # Heartbeats deliberately omit static task fields. Their typed runtime
+    # session and fact envelope still have to agree below; an explicitly
+    # supplied workflow identity must match even on a heartbeat.
+    snapshot_run_matches = snapshot.get("workflow_run_id") == identity.run_id or (
+        row.get("event_type") == "heartbeat_renewed" and "workflow_run_id" not in snapshot
+    )
+    if (
+        Path(identity.workspace).resolve() != workspace
+        or str(identity.task_id) != payload.get("task_id")
+        or type(snapshot.get("id")) is not int
+        or snapshot["id"] != identity.task_id
+        or not snapshot_run_matches
+        or identity.run_id != payload.get("run_id")
+        or identity.session_id != payload.get("session_id")
+        or identity.attempt != payload.get("attempt")
+    ):
+        raise ValueError("canonical_lineage_native_identity_mismatch")
+    factory = payload.get("factory_run_id") or ""
+    project = payload.get("project_id") or payload.get("factory_bench_project_id") or ""
+    for scope in (snapshot, metadata, runtime):
+        if scope.get("workspace") and Path(str(scope["workspace"])).resolve() != workspace:
+            raise ValueError("canonical_lineage_workspace_mismatch")
+        if scope.get("factory_run_id") and scope["factory_run_id"] != factory:
+            raise ValueError("canonical_lineage_factory_identity_mismatch")
+        for field in ("project_id", "factory_bench_project_id"):
+            if scope.get(field) and scope[field] != project:
+                raise ValueError("canonical_lineage_project_identity_mismatch")
+        for field in ("run_id", "workflow_run_id"):
+            if scope.get(field) and scope[field] != identity.run_id:
+                raise ValueError("canonical_lineage_run_identity_mismatch")
+        if scope.get("session_id") and scope["session_id"] != identity.session_id:
+            raise ValueError("canonical_lineage_session_identity_mismatch")
+        if "external_task_id" in scope and scope["external_task_id"] != identity.external_task_id:
+            raise ValueError("canonical_lineage_external_identity_mismatch")
+    return identity
+
+
 def _canonical_qualification_inputs(
     workspace: Path,
     query: ReadRunLedgerProjectionQueryV1,
@@ -1165,6 +1316,9 @@ def _canonical_qualification_inputs(
     task_facts: list[dict[str, Any]] = []
     owners: dict[str, set[tuple[str, str]]] = {}
     child_tasks: dict[str, set[str]] = {}
+    token_owners: dict[tuple[str, str], str] = {}
+    task_aliases: dict[tuple[str, str], str] = {}
+    session_owners: dict[str, tuple[str, str, str, int, str, str]] = {}
     for row in captured[TASK_RUNTIME_EXECUTION_STREAM_V1]:
         payload = row.get("payload")
         if not isinstance(payload, dict):
@@ -1197,8 +1351,30 @@ def _canonical_qualification_inputs(
         task_id = str(payload.get("task_id") or "").strip()
         if task_id and (row.get("metadata") or {}).get("task_id") != task_id:
             raise ValueError("canonical_lineage_task_identity_invalid")
-        if task_id:
-            child_tasks.setdefault(run_id, set()).add(task_id)
+        tokens = [task_id] if task_id else []
+        identity = _captured_native_task_identity(row, payload, workspace)
+        if identity is not None:
+            owner_key = (run_id, task_id)
+            previous_alias = task_aliases.setdefault(owner_key, identity.external_task_id)
+            session_owner = (
+                run_id,
+                task_id,
+                identity.external_task_id,
+                identity.attempt,
+                identity.role_id,
+                identity.worker_id,
+            )
+            if (
+                previous_alias != identity.external_task_id
+                or session_owners.setdefault(identity.session_id, session_owner) != session_owner
+            ):
+                raise ValueError("canonical_lineage_alias_identity_conflict")
+            if identity.external_task_id:
+                tokens.append(identity.external_task_id)
+        for identity_token in tokens:
+            if token_owners.setdefault((run_id, identity_token), task_id) != task_id:
+                raise ValueError("canonical_lineage_alias_identity_ambiguous")
+            child_tasks.setdefault(run_id, set()).add(identity_token)
         projected = dict(payload)
         projected.update(fact_event_id=row["event_id"], fact_event_seq=row["seq"], fact_stream=streams[0])
         projected.setdefault("project_id", project)
@@ -1207,8 +1383,15 @@ def _canonical_qualification_inputs(
     if _has_factory_project_scope(query) and not children:
         raise ValueError("canonical_factory_child_lineage_missing")
     for child in children:
-        if len(owners[child]) != 1:
+        # Projectless coordination constrains the Factory without declaring a
+        # different project. Only the matching execution facts above qualify
+        # children/aliases. Resolve once so every later token/owner check uses
+        # the same effective scope, independent of captured set iteration.
+        factories = {factory for factory, _project in owners[child]}
+        projects = {project for _factory, project in owners[child] if project}
+        if len(factories) != 1 or len(projects) > 1:
             raise ValueError("canonical_factory_child_lineage_conflict")
+        owners[child] = {(next(iter(factories)), next(iter(projects), ""))}
     run_ids = _unique_run_ids((query.run_id, *children))
     events: list[dict[str, Any]] = []
     for row in captured[_EXECUTION_CONTROL_PLANE_STREAM]:
@@ -1232,6 +1415,33 @@ def _canonical_qualification_inputs(
             if recorded_workspace and Path(recorded_workspace).resolve() != workspace:
                 raise ValueError("canonical_control_plane_workspace_mismatch")
         event_task = str(event.get("task_id") or token_map.get("task_id") or "").strip()
+        native_lifecycle_task_owner = (
+            event.get("event_type") == "tool_call_lifecycle"
+            and run_id in children
+            and event_task in child_tasks.get(run_id, set())
+            and event.get("task_id") == event_task
+            and token_map.get("task_id") == event_task
+            and (run_id, token_owners.get((run_id, event_task), "")) in task_aliases
+        )
+        owner_factory, owner_project = next(iter(owners[run_id])) if native_lifecycle_task_owner else ("", "")
+        if native_lifecycle_task_owner:
+            for project_scope in (event, token_map, row.get("metadata") or {}):
+                if project_scope.get("project_id") not in (None, "", owner_project, event_task):
+                    raise ValueError("canonical_control_plane_project_mismatch")
+        # A supplied Factory capability keeps its authority run. The lifecycle
+        # event and fact envelope keep the child execution run. Only captured
+        # native ancestry can relate those two identities; no token is changed.
+        parent_token_run = (
+            native_lifecycle_task_owner
+            and bool(owner_factory and owner_project)
+            and token_map.get("run_id") == owner_factory
+            and token_map.get("project_id") == owner_project
+        )
+        for scope in (event, token_map, row.get("metadata") or {}):
+            if scope.get("task_id") and scope["task_id"] != event_task:
+                raise ValueError("canonical_control_plane_task_identity_mismatch")
+            if scope.get("run_id") and scope["run_id"] != run_id and not (scope is token_map and parent_token_run):
+                raise ValueError("canonical_control_plane_run_identity_mismatch")
         if run_id in children and event_task and event_task not in child_tasks.get(run_id, set()):
             raise ValueError("canonical_control_plane_task_mismatch")
         boundary = event.get("task_boundary_verdict")
@@ -1255,19 +1465,25 @@ def _canonical_qualification_inputs(
         ):
             raise ValueError("canonical_task_boundary_identity_mismatch")
         if query.project_id and _event_project_id(event) != query.project_id:
-            # TaskBoundary's native token project is its exact task, while
-            # TaskRuntime owns the catalog/factory ancestry. Only this schema
-            # may use that task-level boundary, proven by the captured lineage.
-            native_boundary = (
-                event.get("event_type") == "task_boundary_verdict"
-                and run_id in children
+            # Native task receipts can carry a task-scoped token project.
+            # TaskRuntime owns their catalog ancestry; never infer that ancestry
+            # from task spelling, mutable rows or a different child/session.
+            native_task_scope = (
+                run_id in children
                 and event_task in child_tasks.get(run_id, set())
                 and event.get("task_id") == event_task
                 and token_map.get("task_id") == event_task
                 and token_map.get("run_id") == run_id
                 and _event_project_id(event) == event_task
             )
-            if not native_boundary:
+            native_boundary = native_task_scope and event.get("event_type") == "task_boundary_verdict"
+            native_lifecycle = (
+                native_task_scope
+                and event.get("event_type") == "tool_call_lifecycle"
+                and (run_id, token_owners.get((run_id, event_task), "")) in task_aliases
+                and event.get("project_id", query.project_id) in (query.project_id, event_task)
+            )
+            if not (native_boundary or native_lifecycle):
                 raise ValueError("canonical_control_plane_project_mismatch")
         projected = dict(event)
         projected.update(fact_event_id=row["event_id"], fact_event_seq=row["seq"], fact_stream=streams[1])
@@ -1538,8 +1754,13 @@ def _terminal_execution_effect_observations(workspace: Path, facts: list[dict[st
         if attempt.run_id != fact.get("run_id") or str(attempt.task_id) != str(row.get("id")):
             continue
         key = (
-            attempt.task_id, attempt.external_task_id, attempt.session_id, attempt.attempt,
-            attempt.role_id, attempt.worker_id, attempt.run_id,
+            attempt.task_id,
+            attempt.external_task_id,
+            attempt.session_id,
+            attempt.attempt,
+            attempt.role_id,
+            attempt.worker_id,
+            attempt.run_id,
         )
         attempts[key] = attempt
     return query_execution_effect_closures(QueryExecutionEffectClosuresV1(str(workspace), tuple(attempts.values())))
@@ -1843,6 +2064,54 @@ def append_run_ledger_event(command: AppendRunLedgerEventCommandV1) -> RunLedger
         )
 
     def append_canonical_fact(canonical_event: dict[str, Any]) -> tuple[str, Any]:
+        # The projection owner invokes this callback while holding its existing
+        # same-run flock. Compare and append in that transaction, never before
+        # acquiring it. Other tasks and ordinary events do not change this CAS.
+        if event_type == "task_boundary_verdict" and "task_boundary_reprojection" in canonical_event:
+            from polaris.cells.control_plane.run_ledger.public.ledger import _event_content_payload
+
+            reprojection = canonical_event.get("task_boundary_reprojection")
+            verdict = canonical_event.get("task_boundary_verdict")
+            task_id = canonical_event.get("task_id")
+            if (
+                not isinstance(reprojection, dict)
+                or reprojection.get("schema_version") != "polaris.task_boundary_reprojection.v1"
+                or not isinstance(verdict, dict)
+                or verdict.get("reprojection") != reprojection
+                or not isinstance(task_id, str)
+                or not task_id
+                or verdict.get("task_id") != task_id
+                or not isinstance(reprojection.get("source_content_id"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", reprojection["source_content_id"])
+            ):
+                raise ControlPlaneRunLedgerV1Error("task_boundary_reprojection_source_invalid")
+            current_events: list[dict[str, Any]] = []
+            same_fact = False
+            for authority in _load_run_ledger_fact_authorities(
+                workspace=workspace, run_id=command.run_id, ledger=ledger
+            ):
+                existing = authority.canonical_event
+                current_events.append(existing)
+                if existing.get("append_id") == canonical_event.get("append_id") and existing.get(
+                    "content_id"
+                ) == canonical_event.get("content_id"):
+                    if _event_content_payload(existing) != _event_content_payload(canonical_event):
+                        raise ControlPlaneRunLedgerV1Error("task_boundary_reprojection_same_fact_mismatch")
+                    same_fact = True
+            if not same_fact:
+                latest = next(
+                    (
+                        item
+                        for item in reversed(current_events)
+                        if item.get("event_type") == "task_boundary_verdict" and item.get("task_id") == task_id
+                    ),
+                    None,
+                )
+                if latest is None or latest.get("content_id") != reprojection["source_content_id"]:
+                    raise ControlPlaneRunLedgerV1Error("task_boundary_reprojection_stale_predecessor")
+            # Identical durable Facts keep the existing idempotent append path.
+            # This also restores a missing projection after Fact commit; the
+            # existing partial-tail proof branch remains independently intact.
         fact_receipt = append_fact_event(
             AppendFactEventCommandV1(
                 workspace=str(workspace),

@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, get_args
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 from polaris.cells.orchestration.pm_planning.public.artifact_contracts import GeneratedOutputV1
@@ -38,6 +38,7 @@ from ..contracts import (
     ProjectKindAuthorityV1,
     QueryProjectCompletionContractV1,
     VerificationCommandAuthorityV1,
+    VerificationModalityV1,
     VerificationObligationV1,
     shared_behavior_contract_hash,
 )
@@ -1089,6 +1090,7 @@ class _PortfolioArtifactProjection:
     entrypoint_rows: tuple[dict[str, Any], ...]
     artifact_id_remap: dict[str, str]
     dropped_unauthorized_artifact_ids: set[str]
+    unauthorized_required_artifacts: tuple[dict[str, Any], ...]
     delegated_path_owners: dict[str, set[str]]
     owners_for_path: Callable[[str], set[str]]
     unique_terminal_owner: Callable[[str], str | None]
@@ -1111,7 +1113,9 @@ def _project_portfolio_artifact_rows(
 
     def task_delegates(task_id: str, source_kind: str) -> bool:
         task = delegated_topology_tasks.get(task_id)
-        return task is not None and source_kind in task.required_source_kinds
+        return task is not None and (
+            source_kind in task.required_source_kinds or (is_task_intent(task) and source_kind == "entrypoint")
+        )
 
     def canonical_delegated_python_entrypoint(
         row: Mapping[str, Any],
@@ -1248,6 +1252,49 @@ def _project_portfolio_artifact_rows(
         normalized_pre_authority_entrypoints.append(normalized_row)
     entrypoint_rows = tuple(normalized_pre_authority_entrypoints)
 
+    # The explicit source of a modern delegated entrypoint is one delivery
+    # fact, not a second roster that the provider must manually synchronize.
+    # Admit it only through the existing task/role/path authority. Advisory
+    # scope suggestions and generated runtime locators do not participate.
+    declared_paths = {str(row.get("path") or "") for row in artifact_rows}
+    used_ids = {str(row.get("obligation_id") or "") for row in (*artifact_rows, *entrypoint_rows)}
+    for row in entrypoint_rows:
+        source_path = str(row.get("source_path") or "")
+        owner = delegated_topology_tasks.get(str(row.get("owner_task_id") or ""))
+        if (
+            row["applicability"] == "not_applicable"
+            or not source_path
+            or source_path in declared_paths
+            or owner is None
+            or not is_task_intent(owner)
+            or not _ce_topology_authorizes_artifact(
+                topology_authority=owner.topology_authority,
+                planning_contract_version=owner.planning_contract_version,
+                required_source_kinds=owner.required_source_kinds,
+                allowed_source_suffixes=owner.allowed_source_suffixes,
+                semantic_role="entrypoint",
+                path=source_path,
+            )
+            or (owner.scope_paths and not _task_authorizes_completion_path(task=owner, path=source_path))
+        ):
+            continue
+        obligation_id = source_path
+        while obligation_id in used_ids:
+            obligation_id = f"artifact-delegated-entrypoint-{projected_entrypoint_index:03d}"
+            projected_entrypoint_index += 1
+        artifact_rows = (
+            *artifact_rows,
+            {
+                "obligation_id": obligation_id,
+                "path": source_path,
+                "semantic_role": "entrypoint",
+                "applicability": row["applicability"],
+                "owner_task_id": owner.task_id,
+            },
+        )
+        declared_paths.add(source_path)
+        used_ids.add(obligation_id)
+
     artifact_rows = _project_delegated_cpp_header_companions(
         artifact_rows,
         delegated_public_header_task_ids=frozenset(
@@ -1364,6 +1411,9 @@ def _project_portfolio_artifact_rows(
     # missing exact PM target. Owner lies on authorized paths stay
     # fail-closed below.
     dropped_unauthorized_artifact_ids: set[str] = set()
+    unauthorized_required_artifacts: list[dict[str, Any]] = []
+    modern_tasks = {task.task_id for task in tasks if is_task_intent(task)}
+    known_tasks = {task.task_id for task in tasks}
     kept_artifact_rows: list[dict[str, Any]] = []
     for row in artifact_rows:
         if row["applicability"] == "not_applicable":
@@ -1374,6 +1424,12 @@ def _project_portfolio_artifact_rows(
             kept_artifact_rows.append(dict(row))
             continue
         dropped_unauthorized_artifact_ids.add(str(row["obligation_id"]))
+        if row["applicability"] == "required" and (
+            row.get("owner_task_id") in modern_tasks or (modern_tasks and row.get("owner_task_id") not in known_tasks)
+        ):
+            unauthorized_required_artifacts.append(
+                {"obligation_id": row["obligation_id"], "path": path, "owner_task_id": row.get("owner_task_id")}
+            )
     required_artifact_paths = {
         str(row["path"]) for row in kept_artifact_rows if row["applicability"] != "not_applicable"
     }
@@ -1490,6 +1546,7 @@ def _project_portfolio_artifact_rows(
         entrypoint_rows=entrypoint_rows,
         artifact_id_remap=artifact_id_remap,
         dropped_unauthorized_artifact_ids=dropped_unauthorized_artifact_ids,
+        unauthorized_required_artifacts=tuple(unauthorized_required_artifacts),
         delegated_path_owners=delegated_path_owners,
         owners_for_path=owners_for_path,
         unique_terminal_owner=unique_terminal_owner,
@@ -1738,7 +1795,150 @@ def _normalized_entrypoint_obligation(row: Mapping[str, Any]) -> EntrypointOblig
         ) from exc
 
 
+def _missing_semantic_task_recipe_diagnostics(
+    command: BuildChiefEngineerBlueprintPortfolioCommandV1,
+    requirements: Mapping[str, Any],
+    *,
+    carrier: _ChiefEngineerPortfolioAuthorityCarrierV1,
+    recipe_owner_task_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Explain missing task capability using the same immutable artifact scope."""
+    missing = [task for task in command.tasks if is_task_intent(task) and task.task_id not in recipe_owner_task_ids]
+    if not missing:
+        return []
+    obligations = requirements.get("obligations")
+    if not isinstance(obligations, Mapping):
+        return []  # The ordinary structural validator owns malformed collections.
+    raw_rows: dict[str, list[dict[str, Any]]] = {}
+    for name in ("artifacts", "entrypoints", "verification"):
+        rows = obligations.get(name)
+        if not isinstance(rows, list) or any(not isinstance(row, Mapping) for row in rows):
+            return []
+        raw_rows[name] = [dict(row) for row in rows]
+    projection = _project_portfolio_artifact_rows(
+        tasks=command.tasks,
+        artifact_rows=tuple(raw_rows["artifacts"]),
+        entrypoint_rows=tuple(raw_rows["entrypoints"]),
+        command_authorities=carrier.verification_command_authority,
+        project_missing_pm_targets=True,
+    )
+    existing_ids = sorted(
+        {
+            row["obligation_id"]
+            for rows in raw_rows.values()
+            for row in rows
+            if isinstance(row.get("obligation_id"), str) and row["obligation_id"]
+        }
+    )
+    return [
+        {
+            "error_code": "missing_required_verification_recipe",
+            "missing_task_recipe": True,
+            "collection": "verification",
+            "source_path": ["obligations", "verification"],
+            "owner_task_id": task.task_id,
+            "owner_task_ids": [task.task_id],
+            "delegated_owner_task_ids": [task.task_id] if task.verification_authority == "chief_engineer" else [],
+            "modality": None,
+            "allowed_recipe_modalities": list(get_args(VerificationModalityV1)),
+            "allowed_recipe_applicabilities": ["required", "optional"],
+            "allowed_recipe_collections": ["verification"],
+            "existing_obligation_ids": existing_ids,
+            "required_artifacts": [
+                {"obligation_id": row["obligation_id"], "path": row["path"], "owner_task_id": row["owner_task_id"]}
+                for row in projection.artifact_rows
+                if row["applicability"] != "not_applicable"
+                and (
+                    row["owner_task_id"] == task.task_id
+                    or projection.transitively_depends_on(task.task_id, str(row["owner_task_id"]))
+                )
+            ],
+            "repair_hint": (
+                "This semantic task needs its own policy-compatible argv/cwd recipe before handoff. "
+                "Add a new unique verification ID owned by this task, covering only the listed artifact IDs. "
+                "No specific modality is required; existing optional own capabilities also satisfy task ownership. "
+                "Preserve every other recipe's identity, owner, applicability, covers and explicit PM bindings."
+            ),
+            "guidance_only": True,
+            "execution_authority": False,
+        }
+        for task in missing
+    ]
+
+
 def _normalize_portfolio_completion_contract(
+    command: BuildChiefEngineerBlueprintPortfolioCommandV1,
+    requirements: Mapping[str, Any],
+    *,
+    carrier: _ChiefEngineerPortfolioAuthorityCarrierV1,
+    check_depth: bool = True,
+) -> _NormalizedPortfolioCompletion:
+    """Retain canonical validation and diagnose task capability before handoff."""
+    try:
+        normalized = _normalize_portfolio_completion_contract_impl(
+            command, requirements, carrier=carrier, check_depth=check_depth
+        )
+    except ChiefEngineerBlueprintErrorV1 as exc:
+        if not exc.details.get("verification_recipe_diagnostics"):
+            raise
+        # Declared owners only suppress redundant findings in this rejected
+        # draft. They never become validated command authority.
+        raw = requirements.get("obligations", {})
+        declared_owners = {
+            row.get("owner_task_id")
+            for collection in ("verification", "entrypoints")
+            for row in (raw.get(collection, []) if isinstance(raw, Mapping) else [])
+            if isinstance(row, Mapping)
+            and isinstance(row.get("owner_task_id"), str)
+            and row.get("applicability") != "not_applicable"
+        }
+        try:
+            missing = _missing_semantic_task_recipe_diagnostics(
+                command,
+                requirements,
+                carrier=carrier,
+                recipe_owner_task_ids={item.task_id for item in carrier.verification_command_authority}
+                | {owner for owner in declared_owners if isinstance(owner, str)},
+            )
+        except (ChiefEngineerBlueprintErrorV1, KeyError, TypeError, ValueError):
+            # Extra findings cannot replace an already-authoritative rejection
+            # when the rejected draft has no safely projectable artifact scope.
+            missing = []
+        if missing:
+            raise _portfolio_contract_error(
+                str(exc) + "; semantic PM task is missing its own CE verifier recipe",
+                code="invalid_project_completion_contract",
+                details={
+                    **exc.details,
+                    "repair_operation": "verification_recipe_upsert",
+                    "verification_recipe_diagnostics": [
+                        *exc.details["verification_recipe_diagnostics"],
+                        *missing,
+                    ],
+                },
+            ) from exc
+        raise
+    missing = _missing_semantic_task_recipe_diagnostics(
+        command,
+        requirements,
+        carrier=carrier,
+        recipe_owner_task_ids={item.task_id for item in normalized.command_authorities},
+    )
+    if missing:
+        raise _portfolio_contract_error(
+            "semantic PM task is missing its own CE verifier recipe",
+            code="invalid_project_completion_contract",
+            details={
+                "repair_operation": "verification_recipe_upsert"
+                if any(row["delegated_owner_task_ids"] for row in missing)
+                else None,
+                "verification_recipe_diagnostics": missing,
+            },
+        )
+    return normalized
+
+
+def _normalize_portfolio_completion_contract_impl(
     command: BuildChiefEngineerBlueprintPortfolioCommandV1,
     requirements: Mapping[str, Any],
     *,
@@ -1829,6 +2029,13 @@ def _normalize_portfolio_completion_contract(
             entrypoint_rows=entrypoint_rows,
             command_authorities=tuple(command_authorities),
         )
+        if artifact_projection.unauthorized_required_artifacts:
+            raise _portfolio_contract_error(
+                "required completion artifacts lack PM owner or delegated scope authority; "
+                f"artifacts={list(artifact_projection.unauthorized_required_artifacts)!r}",
+                code="invalid_project_completion_contract",
+                details={"unauthorized_required_artifacts": list(artifact_projection.unauthorized_required_artifacts)},
+            )
         artifact_rows = artifact_projection.artifact_rows
         entrypoint_rows = artifact_projection.entrypoint_rows
         artifact_id_remap = artifact_projection.artifact_id_remap

@@ -1,4 +1,5 @@
 import type { FoundationContent } from './schema';
+import { historyExperiencePaper, historyExperienceTopics } from './historyExperience';
 
 export const foundationContent: FoundationContent = {
   "title": "Polaris 底座原理",
@@ -6,6 +7,7 @@ export const foundationContent: FoundationContent = {
   "reviewedOn": "2026-10-14",
   "basis": "当前工作区源码与封存执行证据；设计、默认接入、运行结果分别讨论。",
   "topics": [
+    ...historyExperienceTopics,
     {
       "id": "overview",
       "title": "从决策到工程结果",
@@ -342,6 +344,7 @@ export const foundationContent: FoundationContent = {
     }
   ],
   "papers": [
+    historyExperiencePaper,
     {
       "id": "system",
       "title": "Polaris：生成式决策与可审计工程执行之间的系统协议",

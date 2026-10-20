@@ -479,7 +479,9 @@ class QAAdapter(BaseRoleAdapter):
             "regression_detection",
         ]
 
-    def _build_qa_blueprint_evidence(self, context: dict[str, Any]) -> dict[str, Any]:
+    def _build_qa_blueprint_evidence(
+        self, context: dict[str, Any], *, source_context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Read exact CE-owned semantic artifacts; never grant execution scope."""
         from polaris.cells.chief_engineer.blueprint.public import (
             GetBlueprintStatusQueryV1,
@@ -493,8 +495,26 @@ class QAAdapter(BaseRoleAdapter):
         review = context.get("chief_engineer_blueprint") or context.get("ce_blueprint")
         if not isinstance(review, dict) or not isinstance(review.get("blueprints"), list):
             return {}
-        run_id = str(context.get("run_id") or "")
-        if not run_id or review.get("factory_run_id") != run_id:
+        # Rebinding a QA turn preserves its execution identity, not the local
+        # Factory-owned lookup coordinate. Read that coordinate from the original
+        # orchestration context without copying its authority into model data.
+        source = context if source_context is None else source_context
+        if not isinstance(source, dict):
+            raise ValueError("qa_blueprint_run_binding_invalid")
+        metadata = source.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        declared = [owner["factory_run_id"] for owner in (source, metadata) if "factory_run_id" in owner]
+        coordinates = declared if declared else [source.get("run_id")]
+        if (
+            any(
+                type(value) is not str or not value or any(character.isspace() for character in value)
+                for value in coordinates
+            )
+            or len(set(coordinates)) != 1
+        ):
+            raise ValueError("qa_blueprint_run_binding_invalid")
+        run_id = coordinates[0]
+        if review.get("factory_run_id") != run_id:
             raise ValueError("qa_blueprint_run_binding_invalid")
         tasks = {
             str(task.get("task_id") or task.get("id")): task
@@ -612,7 +632,7 @@ class QAAdapter(BaseRoleAdapter):
             )
             llm_context["target"] = prompt_target
             llm_context["context_evidence_slots"] = _qa_review_evidence_slots(llm_context, source_evidence)
-            blueprint_evidence = self._build_qa_blueprint_evidence(llm_context)
+            blueprint_evidence = self._build_qa_blueprint_evidence(llm_context, source_context=context)
             if blueprint_evidence:
                 llm_context["context_evidence_slots"]["ce_blueprint"] = blueprint_evidence
                 for key in (

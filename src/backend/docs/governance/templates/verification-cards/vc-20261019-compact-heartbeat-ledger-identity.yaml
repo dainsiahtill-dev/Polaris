@@ -1,0 +1,30 @@
+id: vc-20261019-compact-heartbeat-ledger-identity
+classification: defect
+status: verified_bounded_native_pending
+scope:
+  - polaris/cells/control_plane/run_ledger/public/service.py
+  - polaris/cells/control_plane/run_ledger/tests/test_compact_heartbeat_identity.py
+hypotheses:
+  - TaskRuntime intentionally omits static workflow identity from compact heartbeat snapshots.
+  - The strict captured reader can honor that omission while requiring exact typed session and fact identities.
+mechanism:
+  - Only heartbeat_renewed may omit snapshot.workflow_run_id.
+  - Explicit null, empty and foreign workflow values still reject.
+  - Full claimed or terminal snapshots retain the original required workflow identity.
+  - Workspace, task, session, attempt, runtime run and captured alias checks remain unchanged.
+  - No live TaskBoard fallback, historical fact rewrite, lease or permission grant.
+verification:
+  - Actual public TaskRuntime claim, heartbeat and settlement producers reproduce the strict reader mismatch.
+  - Causal RED has two failing legitimate heartbeat cases and eleven passing identity rejection controls.
+  - GREEN has 71 passing new and adjacent strict identity, canonical projection and owner publication checks.
+  - Exact original R02 native fact bytes replay as accepted after repair; explicit foreign identity still rejects.
+  - Original native fact SHA256 remains 02a571c9605d8d6d1daffeaa5ebe1d4ec65d4b074144341028504f9d9a864b3e.
+  - Scoped production mypy and Ruff checks pass; formatting changes no semantics.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-heartbeat-ledger-fix/red-causal-command.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-heartbeat-ledger-fix/green-adjacent-command.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-heartbeat-ledger-fix/native-replay/heartbeat-strict-reader-reproduction.json
+remaining:
+  - Private module fixtures do not prove native delivery, independent QA or ProjectOutcome production.
+  - R02 remains FAILED; its existing receipts, facts and resource verdicts are unchanged.
+  - A fresh frozen isolated L1-01 must exercise the repaired reader in the product chain.

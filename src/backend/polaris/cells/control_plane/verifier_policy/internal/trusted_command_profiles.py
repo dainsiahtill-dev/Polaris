@@ -106,37 +106,75 @@ _BUILTIN_COMMAND_MODALITIES = ("environment_prep", "build", "test", "lint", "ent
 
 
 def _is_node_test_runner_argv(argv: tuple[str, ...]) -> bool:
-    return _exe(argv) == "node" and len(argv) >= 2 and argv[1] == _NODE_TEST_FLAG
+    return len(argv) >= 2 and _exe(argv) == "node" and argv[1].startswith("-") and _NODE_TEST_FLAG in argv[1:]
 
 
 def _node_test_argument_rejection(argv: tuple[str, ...]) -> tuple[int | None, str]:
-    """One existing grammar feeds both classification and readonly explanation."""
-    if not _is_node_test_runner_argv(argv):
-        if len(argv) > 1 and argv[1].startswith("-") and all(argv[1] != form[0] for form in _NODE_TEST_REPORTER_FORMS):
-            return 1, "unsupported_argument"
-        return 1, "test_flag_position"
-    index = 2
+    """Parse the bounded proof subset without rewriting or case-folding argv.
+
+    Node options precede test operands. Only the literal tsx preload and TAP
+    reporter are supported; acceptance never proves module resolution or tests.
+    """
+    seen_options: set[str] = set()
+    preload_index: int | None = None
+    has_test_path = False
+    index = 1
     while index < len(argv):
-        matched = next((form for form in _NODE_TEST_REPORTER_FORMS if argv[index : index + len(form)] == form), None)
-        if matched is not None:
-            index += len(matched)
-            continue
         operand = argv[index]
         if operand.startswith("-"):
-            return index, "unsupported_argument"
+            if has_test_path:
+                return index, "option_after_test_path"
+            option, separator, value = operand.partition("=")
+            if option in seen_options:
+                return index, "duplicate_argument"
+            if operand == _NODE_TEST_FLAG:
+                seen_options.add(option)
+                index += 1
+                continue
+            if option not in {"--import", "--test-reporter"}:
+                return index, "unsupported_argument"
+            option_index = index
+            if not separator:
+                if index + 1 >= len(argv) or argv[index + 1].startswith("-"):
+                    return index, "missing_argument_value"
+                index += 1
+                value = argv[index]
+            if not value:
+                return index, "missing_argument_value"
+            if option == "--import":
+                if value != "tsx":
+                    return option_index, "unsupported_preload"
+                preload_index = option_index
+            elif value != "tap":
+                return option_index, "unsupported_test_reporter"
+            seen_options.add(option)
+            index += 1
+            continue
         test_path = PurePath(operand.replace("\\", "/"))
         if test_path.is_absolute() or ".." in test_path.parts or any(character in operand for character in ":;$&|`\\"):
             return index, "unsafe_test_path"
         if test_path.suffix.casefold() not in _NODE_TEST_PATH_SUFFIXES:
             return index, "unsupported_test_path_suffix"
+        has_test_path = True
         index += 1
+    if _NODE_TEST_FLAG not in seen_options:
+        return 1, "test_flag_position"
+    if preload_index is not None and not has_test_path:
+        return preload_index, "explicit_test_path_required"
     return None, ""
+
+
+def matches_node_test_runner(argv: tuple[str, ...]) -> bool:
+    """Shared strict Node test recognition for direct and package proposals."""
+    return bool(argv) and _exe(argv) == "node" and _node_test_argument_rejection(argv)[0] is None
 
 
 def _node_test_accepted_shape() -> str:
     forms = " | ".join(" ".join(form) for form in _NODE_TEST_REPORTER_FORMS)
     return (
-        f"node {_NODE_TEST_FLAG} [{forms}] [workspace-relative test file/glob ...]; "
+        f"node {_NODE_TEST_FLAG} [--import tsx | --import=tsx] [{forms}] [workspace-relative test file/glob ...]; "
+        "known options may precede --test, all before test operands; one --test, at most one preload/reporter; "
+        "tsx requires an explicit test file/glob; "
         f"suffixes: {', '.join(sorted(_NODE_TEST_PATH_SUFFIXES))}"
     )
 
@@ -170,7 +208,11 @@ def _node_profile_candidates(modality: str) -> list[dict[str, object]]:
             (
                 _node_test_accepted_shape(),
                 [("node", _NODE_TEST_FLAG)]
-                + [("node", _NODE_TEST_FLAG, *form, "tests/example.test.js") for form in _NODE_TEST_REPORTER_FORMS],
+                + [("node", _NODE_TEST_FLAG, *form, "tests/example.test.js") for form in _NODE_TEST_REPORTER_FORMS]
+                + [
+                    ("node", "--import", "tsx", _NODE_TEST_FLAG, "tests/example.test.ts"),
+                    ("node", _NODE_TEST_FLAG, "--import=tsx", "tests/example.test.ts"),
+                ],
             )
         )
     if modality in {"build", "lint"}:
@@ -233,13 +275,7 @@ def describe_builtin_command_profile(modality: str, argv: tuple[str, ...]) -> di
             "Examples describe planning syntax only. Declare and materialize the selected workspace files, "
             "package scripts and dependencies; runtime still validates their contents, identity and proof."
         )
-    if not _is_node_test_runner_argv(argv) and not (
-        modality == "test"
-        and _exe(argv) == "node"
-        and len(argv) >= 3
-        and argv[1].startswith("-")
-        and _NODE_TEST_FLAG in argv[2:]
-    ):
+    if not _is_node_test_runner_argv(argv):
         return feedback
     if modality != "test":
         candidates.extend(_node_profile_candidates("test"))
@@ -255,8 +291,8 @@ def describe_builtin_command_profile(modality: str, argv: tuple[str, ...]) -> di
                 "reason_code": reason_code,
                 "reason": f"Argument {index} {argv[index]!r} is outside the current {_NODE_TEST_PROFILE_ID} grammar "
                 f"({reason_code}).",
-                "materialization_note": "If tests need transpilation, explicitly declare compilation and test artifacts "
-                "or authored JavaScript tests. Do not invent output paths; actual execution still validates inputs and proof.",
+                "materialization_note": "Explicitly declare the selected test artifacts and dependencies. "
+                "Only the literal tsx preload is supported; actual execution still validates inputs, identity and proof.",
             }
         )
     elif modality != "test":
@@ -266,9 +302,8 @@ def describe_builtin_command_profile(modality: str, argv: tuple[str, ...]) -> di
 
 def _node_profile(modality: str, argv: tuple[str, ...]) -> str:
     executable = _exe(argv)
-    if modality == "test" and _is_node_test_runner_argv(argv):
-        index, _reason = _node_test_argument_rejection(argv)
-        return _NODE_TEST_PROFILE_ID if index is None else ""
+    if modality == "test" and matches_node_test_runner(argv):
+        return _NODE_TEST_PROFILE_ID
     if executable == "node" and modality == "entrypoint" and len(argv) >= 2:
         entrypoint_path = PurePath(argv[1].replace("\\", "/"))
         if (

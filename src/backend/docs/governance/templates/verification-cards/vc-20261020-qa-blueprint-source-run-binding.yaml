@@ -1,0 +1,42 @@
+id: vc-20261020-qa-blueprint-source-run-binding
+classification: pattern
+status: source_stop_pending_independent_review
+owner: roles.adapters
+scope:
+  - polaris/cells/roles/adapters/internal/qa_adapter.py
+  - polaris/cells/roles/adapters/tests/test_qa_blueprint_source_run_binding.py
+assumptions:
+  - QA execution run, Director candidate source and Factory CE artifact owner are separate coordinates.
+  - The original orchestration context supplies the Factory coordinate for local CE public queries.
+  - Rebound QA evidence is data and cannot authorize a Factory identity from the review itself.
+design:
+  - Add a private source_context argument to the existing QA blueprint evidence builder.
+  - Pass the original parent from execute without copying it into provider data.
+  - Require all explicit direct and metadata Factory IDs to be nonempty well-formed strings and agree.
+  - Preserve legacy lookup only when the original parent run and CE review Factory ID match.
+  - Use one selected Factory coordinate for status, provenance and completion contract queries.
+  - Retain PM, task, blueprint ID, path, hash, portfolio and read-snapshot drift checks.
+  - Keep QA execution binding, current source evidence, capability scope and Factory admission ContextVar untouched.
+  - Reuse authenticated CE evidence for JSON repair and re-read public owners for cold reconstruction.
+pre_mortem:
+  - Selecting the review Factory ID as authority would accept a foreign semantic artifact.
+  - String coercion or fallback after an explicit empty value would hide a broken parent binding.
+  - Fixing one query while leaving another on the child run would retain the same ownership mismatch.
+  - Copying parent authority into evidence data would break the control-plane boundary.
+verification:
+  - Real private admitted PM commit and CE public portfolio, persistence, provenance and completion owners.
+  - Causal execute RED before any canned provider callback, followed by judgement and JSON repair evidence assembly.
+  - Direct, metadata, equal dual declaration and matching legacy Factory bindings with unchanged child identity.
+  - JSON cold input and new adapter reconstruct identical evidence without changing source files.
+  - Missing, empty, malformed, conflicting and foreign Factory declarations reject before public lookup.
+  - PM, path, hash, portfolio, review-owner and task-owner tampering remain rejected.
+  - Relevant QA source slots, independent verdict and pure adapter regression tests plus scoped static checks.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-qa-blueprint-binding-audit/proposal-nine-point.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r08-qa-blueprint-binding-audit/implementation-20261020/red-causal.log
+limits:
+  - The original complete R07 QA context was not persisted; the historical minimal reconstruction is not a full request replay.
+  - PM computation, readiness and observation transport use existing private fixture doubles; semantic owners remain real.
+  - Canned QA output and real evidence-message preparation are local assembly checks, not complete provider qualification.
+  - Typed Factory admission attribution remains with the existing process-local authority owner; no new carrier or fact source.
+  - No remote provider, native acceptance, target repair, original runtime writes, command scope change or QA success claim.

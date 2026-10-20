@@ -10,13 +10,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.control_plane.run_ledger.public.committed_turn_receipts import CommittedTurnReceiptObservationV1
 from polaris.cells.control_plane.run_ledger.public.directed_effect_receipt_validation import (
     directed_effect_receipt_v2_errors,
 )
 from polaris.cells.control_plane.run_ledger.public.ledger import stable_hash
+from polaris.cells.control_plane.run_ledger.public.tool_lifecycle import project_tool_lifecycle_event
 from polaris.cells.runtime.task_runtime.public.contracts import TaskRuntimeExecutionAttemptIdentityV1
 from polaris.cells.runtime.task_runtime.public.execution_effect_closure import ExecutionEffectClosureObservationV1
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
@@ -218,6 +219,9 @@ def _task_key_matches_terminal_ids(task_key: str, terminal_task_ids: set[str]) -
 def _lifecycle_counts(
     run_projection: Mapping[str, Any],
     task_runtime_facts: Sequence[Mapping[str, Any]],
+    *,
+    proven_closed_readonly_dispatch_count: int = 0,
+    proven_closed_terminal_negative_dispatch_count: int = 0,
 ) -> _LifecycleCounts:
     latest_task_facts = _latest_task_facts(task_runtime_facts)
     task_states = {task_id: _task_state(fact) for task_id, fact in latest_task_facts.items()}
@@ -241,7 +245,22 @@ def _lifecycle_counts(
         and not _task_key_matches_terminal_ids(str(task_key), terminal_task_ids)
     }
     open_tool_keys = missing_tool_keys | active_tool_keys
-    expected_effect_count = _non_negative_int(lifecycle.get("dispatched_tool_calls_count"))
+    dispatched_count = _non_negative_int(lifecycle.get("dispatched_tool_calls_count"))
+    readonly_count = (
+        proven_closed_readonly_dispatch_count
+        if type(proven_closed_readonly_dispatch_count) is int
+        and 0 <= proven_closed_readonly_dispatch_count <= dispatched_count
+        else 0
+    )
+    terminal_negative_count = (
+        proven_closed_terminal_negative_dispatch_count
+        if type(proven_closed_terminal_negative_dispatch_count) is int
+        and 0 <= proven_closed_terminal_negative_dispatch_count <= dispatched_count - readonly_count
+        else 0
+    )
+    # Verified terminal negatives neither need mutation receipts nor count as
+    # reads. Only the complete owner analysis may remove this obligation.
+    expected_effect_count = dispatched_count - readonly_count - terminal_negative_count
     effect_receipt_count = _non_negative_int(lifecycle.get("effect_receipt_count"))
     return _LifecycleCounts(
         task_count=len(latest_task_facts),
@@ -487,6 +506,15 @@ def _negative_terminal_result_matches(
     physical = _mapping(result.get("result"))
     recovery = _mapping(physical.get("effect_recovery"))
     code = physical.get("exit_code")
+    failure_kind = physical.get("failure_kind")
+    valid_failure = (
+        failure_kind == "file_prewrite_rejected" and code is None and result.get("tool_name") == "edit_blocks"
+    ) or (
+        failure_kind == "physical_result_failed"
+        and result.get("tool_name") == "execute_command"
+        and type(code) is int
+        and code > 0
+    )
     if (
         result.get("status") not in {"error", "failed", "cancelled"}
         or result.get("effect_receipt") is not None
@@ -494,9 +522,7 @@ def _negative_terminal_result_matches(
         or result.get("directed_effect_claim_status") != "claimed"
         or result.get("directed_effect_mutation_status") != "failed"
         or physical.get("schema_version") != "roles.adapters.directed_effect_physical_failure.v1"
-        or physical.get("failure_kind") != "physical_result_failed"
-        or type(code) is not int
-        or code <= 0
+        or not valid_failure
     ):
         return False
     matching = [
@@ -516,6 +542,7 @@ def _negative_terminal_result_matches(
         and failure.resolution_evidence_ref == recovery.get("resolution_evidence_ref")
         and failure.resolution_evidence_hash == recovery.get("resolution_evidence_hash")
         and failure.exit_code == code
+        and failure.failure_kind == failure_kind
         and failure.physical_failure_hash == stable_hash(dict(physical))
         and failure.owner_result_hash == stable_hash({k: v for k, v in result.items() if k != "execution_time_ms"})
         and (
@@ -565,6 +592,141 @@ def _terminal_execution_owners_are_closed(
     return observed == expected
 
 
+def _lifecycle_batch_witness_key(receipt: Mapping[str, Any], *, workspace: str) -> tuple[Any, ...] | None:
+    """Identify a bound batch proof independently from projection annotations."""
+    refs = receipt.get("batch_receipt_refs")
+    if not refs:
+        return None
+    if not isinstance(refs, list | tuple):
+        raise ValueError("batch witness references must be a sequence")
+    scope = tuple(receipt.get(field) for field in ("run_id", "task_id", "turn_id"))
+    identities = tuple((_mapping(ref).get("batch_id"), _mapping(ref).get("receipt_hash")) for ref in refs)
+    if any(
+        type(value) is not str or not value or value.strip() != value
+        for value in (*scope, *(v for pair in identities for v in pair))
+    ):
+        raise ValueError("batch witness identity missing")
+    validated_refs = cast(tuple[tuple[str, str], ...], identities)
+    if any(len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest) for _, digest in validated_refs):
+        raise ValueError("batch witness digest malformed")
+    if len(set(validated_refs)) != len(validated_refs):
+        raise ValueError("batch witness reference collision")
+    return (workspace, *scope, validated_refs)
+
+
+def _canonical_cleanup_lifecycle_events(
+    events: Sequence[Any],
+    ledger_facts: Sequence[Mapping[str, Any]],
+    *,
+    committed_turn_receipts: Sequence[CommittedTurnReceiptObservationV1],
+    workspace: str,
+    effect_closures: Sequence[ExecutionEffectClosureObservationV1] = (),
+) -> list[Mapping[str, Any]] | None:
+    """Bind the complete dispatch inventory before consuming derived fields."""
+    identity_fields = ("append_id", "content_id", "run_id", "task_id")
+    canonical: dict[tuple[str, ...], dict[str, Any]] = {}
+    try:
+        for fact in ledger_facts:
+            if fact.get("event_type") != "tool_call_lifecycle":
+                continue
+            identity = tuple(fact.get(field) for field in identity_fields)
+            if any(type(value) is not str or not value or value.strip() != value for value in identity):
+                return None
+            receipt = _mapping(fact.get("tool_call_lifecycle_receipt"))
+            if (
+                receipt.get("schema_version") != "tool_call_lifecycle_receipt.v1"
+                or type(receipt.get("ok")) is not bool
+                or any(
+                    type(receipt.get(field)) is not int or receipt[field] < 0
+                    for field in (
+                        "native_tool_calls_count",
+                        "decoded_tool_calls_count",
+                        "dispatched_tool_calls_count",
+                        "tool_result_count",
+                        "effect_receipt_count",
+                    )
+                )
+                or any(
+                    type(receipt.get(field)) is not str
+                    or not receipt[field]
+                    or receipt[field].strip() != receipt[field]
+                    for field in ("run_id", "task_id")
+                )
+                or type(receipt.get("turn_id")) is not str
+                or receipt["turn_id"].strip() != receipt["turn_id"]
+                or (
+                    not receipt["turn_id"]
+                    and not _closed_artifact_receipt_reuse(receipt, effect_closures, workspace=workspace)
+                )
+                or any(
+                    field in receipt and type(receipt[field]) is not bool
+                    for field in (
+                        "dropped",
+                        "text_fallback_requested",
+                        "parser_attempted",
+                        "native_tool_surface_absent_because_text_fallback",
+                    )
+                )
+            ):
+                return None
+            expected = project_tool_lifecycle_event(receipt, append_id=fact["append_id"], content_id=fact["content_id"])
+            key = tuple(expected[field] for field in identity_fields)
+            # The compatibility normalizer must not repair a malformed current
+            # witness or change its raw identity into a different ledger scope.
+            if key != identity or stable_hash(receipt) != stable_hash(expected["receipt"]) or key in canonical:
+                return None
+            canonical[key] = expected
+        observed: set[tuple[str, ...]] = set()
+        consumed_witnesses: set[tuple[Any, ...]] = set()
+        resolved: list[Mapping[str, Any]] = []
+        for raw_event in events:
+            event = _mapping(raw_event)
+            receipt = _mapping(event.get("receipt"))
+            if "append_id" in event or "content_id" in event:
+                key = tuple(event.get(field) for field in identity_fields)
+                bound = canonical.get(key)
+                if bound is None or key in observed or "receipt" not in event or not set(event) <= set(bound):
+                    return None
+                # Hash comparison preserves JSON types: False is not integer0.
+                # Missing row fields are rederived; present contradictions reject.
+                if stable_hash(event) != stable_hash({field: bound[field] for field in event}):
+                    return None
+                witness = _lifecycle_batch_witness_key(bound["receipt"], workspace=workspace)
+                if witness is not None:
+                    if witness in consumed_witnesses:
+                        return None
+                    consumed_witnesses.add(witness)
+                observed.add(key)
+                resolved.append(bound)
+                continue
+            # Historical compact rows have no lifecycle schema/count inputs.
+            # Only their already-existing strict immutable readonly owner proof
+            # supplies the missing dispatch obligation; never default it to zero.
+            if set(event) != {"status", "dispatched_tool_calls_count", "receipt"} or set(receipt) != {
+                "run_id",
+                "task_id",
+                "turn_id",
+                "batch_receipt_refs",
+            }:
+                return None
+            batch = _observed_readonly_batch(receipt, committed_turn_receipts, workspace=workspace)
+            if (
+                batch is None
+                or type(event["dispatched_tool_calls_count"]) is not int
+                or event["dispatched_tool_calls_count"] != len(batch["results"])
+                or event["status"] not in {"failed", "dropped", "dispatched", "ok"}
+            ):
+                return None
+            witness = _lifecycle_batch_witness_key(receipt, workspace=workspace)
+            if witness is None or witness in consumed_witnesses:
+                return None
+            consumed_witnesses.add(witness)
+            resolved.append(event)
+        return resolved if observed == set(canonical) else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _terminal_failure_has_closed_dispatches(
     task_runtime_facts: Sequence[Mapping[str, Any]],
     run_projection: Mapping[str, Any],
@@ -574,6 +736,27 @@ def _terminal_failure_has_closed_dispatches(
     committed_turn_receipts: Sequence[CommittedTurnReceiptObservationV1] = (),
     workspace: str = "",
 ) -> bool:
+    """Keep the existing bool closeout contract over the shared strict analysis."""
+    closed, _ = _terminal_dispatch_closure_analysis(
+        task_runtime_facts,
+        run_projection,
+        ledger_facts,
+        effect_closures,
+        committed_turn_receipts=committed_turn_receipts,
+        workspace=workspace,
+    )
+    return closed
+
+
+def _terminal_dispatch_closure_analysis(
+    task_runtime_facts: Sequence[Mapping[str, Any]],
+    run_projection: Mapping[str, Any],
+    ledger_facts: Sequence[Mapping[str, Any]],
+    effect_closures: Sequence[ExecutionEffectClosureObservationV1] = (),
+    *,
+    committed_turn_receipts: Sequence[CommittedTurnReceiptObservationV1] = (),
+    workspace: str = "",
+) -> tuple[bool, int]:
     """Prove terminal resource closeout independently of product acceptance.
 
     Read denials have no effect receipt because policy prevented execution.
@@ -585,29 +768,24 @@ def _terminal_failure_has_closed_dispatches(
 
     states = [_task_state(fact) for fact in _latest_task_facts(task_runtime_facts).values()]
     if not states or any(state not in _TERMINAL_TASK_STATES for state in states):
-        return False
+        return False, 0
     lifecycle = _mapping(run_projection.get("tool_lifecycle"))
     events = lifecycle.get("events", ())
     if not _terminal_execution_owners_are_closed(task_runtime_facts, effect_closures, workspace=workspace):
-        return False
+        return False, 0
     if not isinstance(events, Sequence) or isinstance(events, (str, bytes, bytearray)):
-        return False
-    # Every projected dispatch must bind its unique canonical ledger event.
-    # Product failures, summary counts and caller flags grant no resource proof.
-    canonical_receipts: dict[tuple[Any, ...], list[Any]] = {}
-    for fact in ledger_facts:
-        if fact.get("event_type") == "tool_call_lifecycle" and fact.get("append_id") and fact.get("content_id"):
-            key = tuple(fact.get(name) for name in ("append_id", "content_id", "run_id", "task_id"))
-            canonical_receipts.setdefault(key, []).append(fact.get("tool_call_lifecycle_receipt"))
-    if any(
-        canonical_receipts.get(
-            tuple(_mapping(event).get(name) for name in ("append_id", "content_id", "run_id", "task_id"))
-        )
-        != [_mapping(event).get("receipt")]
-        for event in events
-        if _mapping(event).get("append_id") or _mapping(event).get("content_id")
-    ):
-        return False
+        return False, 0
+    canonical_events = _canonical_cleanup_lifecycle_events(
+        events,
+        ledger_facts,
+        committed_turn_receipts=committed_turn_receipts,
+        workspace=workspace,
+        effect_closures=effect_closures,
+    )
+    if canonical_events is None:
+        return False, 0
+    events = canonical_events
+    proven_readonly_dispatch_count = 0
     batches: dict[str, list[Mapping[str, Any]]] = {}
     for fact in ledger_facts:
         batch = _mapping(_mapping(fact.get("physical_evidence")).get("batch_receipt"))
@@ -617,18 +795,18 @@ def _terminal_failure_has_closed_dispatches(
     # Unknown execution owners remain resources, even when a transport batch
     # happens to contain only read results.
     if any(closure.status != "closed" for closure in effect_closures):
-        return False
+        return False, 0
     for raw_event in events:
         event = _mapping(raw_event)
         receipt = _mapping(event.get("receipt"))
         dispatched = _non_negative_int(event.get("dispatched_tool_calls_count"))
         if not receipt or _clean_string(event.get("status")).lower() in _ACTIVE_LIFECYCLE_STATES:
-            return False
+            return False, 0
         if dispatched == 0:
             if workspace and _closed_artifact_receipt_reuse(receipt, effect_closures, workspace=workspace):
                 continue
             if receipt.get("dispatch_status") not in {"failed", "dropped"}:
-                return False
+                return False, 0
             # A pre-dispatch failure may have an otherwise valid empty decode.
             # Its ok flag is not an effect: require zero physical obligations.
             if receipt.get("ok") is not False and (
@@ -647,7 +825,7 @@ def _terminal_failure_has_closed_dispatches(
                 or receipt.get("batch_receipt_refs")
                 or receipt.get("native_tool_call_envelope_refs")
             ):
-                return False
+                return False, 0
             continue
         candidates = batches.get(_clean_string(receipt.get("turn_id")), [])
         committed_readonly = False
@@ -657,13 +835,13 @@ def _terminal_failure_has_closed_dispatches(
                 candidates = [observed_batch]
                 committed_readonly = True
         if len(candidates) != 1:
-            return False
+            return False, 0
         batch = candidates[0]
         refs = receipt.get("batch_receipt_refs")
         if not isinstance(refs, Sequence) or not any(
             _clean_string(_mapping(ref).get("batch_id")) == _clean_string(batch.get("batch_id")) for ref in refs
         ):
-            return False
+            return False, 0
         results = batch.get("results")
         raw_results = batch.get("raw_results")
         if (
@@ -673,7 +851,7 @@ def _terminal_failure_has_closed_dispatches(
             or len(raw_results) != len(results)
             or any(type(row) is not dict for row in (*results, *raw_results))
         ):
-            return False
+            return False, 0
         # Typed read results add optional error/effect_receipt=None where raw
         # results omit them. Only those empty top-level fields and duration are
         # projection details. Non-null errors/effects, unknown fields and every
@@ -687,14 +865,14 @@ def _terminal_failure_has_closed_dispatches(
                 ) and not _negative_terminal_result_matches(
                     typed_row, receipt, effect_closures, workspace=workspace, raw_result=raw_row
                 ):
-                    return False
+                    return False, 0
         except (TypeError, ValueError):
-            return False
+            return False, 0
         if batch.get("pending_async_count") != 0 or batch.get("has_pending_async") is not False:
-            return False
+            return False, 0
         successes = sum(_mapping(item).get("status") == "success" for item in results)
         if batch.get("success_count") != successes or batch.get("failure_count") != dispatched - successes:
-            return False
+            return False, 0
         call_ids: set[str] = set()
         for raw_result in results:
             result = _mapping(raw_result)
@@ -705,17 +883,17 @@ def _terminal_failure_has_closed_dispatches(
                 or call_id in call_ids
                 or result.get("status") not in {"success", "error", "failed", "cancelled"}
             ):
-                return False
+                return False, 0
             call_ids.add(call_id)
             if spec is None:
-                return False
+                return False, 0
             if spec.is_write_tool() or spec.is_exec_tool():
                 if _negative_terminal_result_matches(result, receipt, effect_closures, workspace=workspace):
                     continue
                 effect = _mapping(result.get("effect_receipt"))
                 commit = _mapping(result.get("effect_receipt_commit"))
                 if directed_effect_receipt_v2_errors(effect, commit, prefix="closure") != ():
-                    return False
+                    return False, 0
                 # Legacy transport batches can wrap several DEO parent batches.
                 # Operational closure binds the immutable owner receipt below;
                 # transport/invocation mismatches remain delivery failures.
@@ -723,7 +901,7 @@ def _terminal_failure_has_closed_dispatches(
                     call_id,
                     spec.canonical_name,
                 ):
-                    return False
+                    return False, 0
                 matching = [
                     observed
                     for closure in effect_closures
@@ -747,10 +925,10 @@ def _terminal_failure_has_closed_dispatches(
                     )
                 ]
                 if len(matching) != 1:
-                    return False
+                    return False, 0
                 continue
             if not spec.is_read_tool():
-                return False
+                return False, 0
             if result.get("status") == "success" and not any(
                 closure.status == "closed"
                 and closure.execution_attempt.workspace == workspace
@@ -758,7 +936,7 @@ def _terminal_failure_has_closed_dispatches(
                 and closure.execution_attempt.external_task_id == receipt.get("task_id")
                 for closure in effect_closures
             ):
-                return False
+                return False, 0
             if any(
                 result.get(key) is not None
                 for key in (
@@ -768,17 +946,18 @@ def _terminal_failure_has_closed_dispatches(
                     "directed_effect_mutation_status",
                 )
             ):
-                return False
+                return False, 0
+            proven_readonly_dispatch_count += 1
         if batch.get("effect_receipts") != [item["effect_receipt"] for item in results if item.get("effect_receipt")]:
-            return False
+            return False, 0
         envelopes = receipt.get("native_tool_call_envelope_refs")
         if (
             isinstance(envelopes, Sequence)
             and envelopes
             and {_clean_string(_mapping(item).get("call_id")) for item in envelopes} != call_ids
         ):
-            return False
-    return True
+            return False, 0
+    return True, proven_readonly_dispatch_count
 
 
 def project_factory_settlement_barrier(
@@ -807,7 +986,24 @@ def project_factory_settlement_barrier(
     missing_required_modalities = tuple(
         modality for modality in _string_tuple(policy.get("missing_required_modalities")) if modality not in failed_set
     )
-    counts = _lifecycle_counts(run_projection, task_runtime_facts)
+    # The same complete owner proof supplies both closure and the count of
+    # reads that require no mutation receipt. Counts never grant release.
+    terminal_resources_closed, proven_readonly_dispatch_count = _terminal_dispatch_closure_analysis(
+        task_runtime_facts,
+        run_projection,
+        ledger_facts,
+        effect_closures,
+        committed_turn_receipts=committed_turn_receipts,
+        workspace=query.workspace,
+    )
+    counts = _lifecycle_counts(
+        run_projection,
+        task_runtime_facts,
+        proven_closed_readonly_dispatch_count=proven_readonly_dispatch_count,
+        proven_closed_terminal_negative_dispatch_count=(
+            sum(len(closure.terminal_failures) for closure in effect_closures) if terminal_resources_closed else 0
+        ),
+    )
     gate_count = _non_negative_int(run_projection.get("gate_count"))
     failed_gates = run_projection.get("failed_gates")
     failed_gate_count = (
@@ -844,16 +1040,6 @@ def project_factory_settlement_barrier(
         failed_required_modalities=failed_required_modalities,
         counts=counts,
         run_projection=run_projection,
-    )
-    # Acceptance evidence can fail or remain missing after resources settle.
-    # Its presence must never bypass strict owner/dispatch closure either.
-    terminal_resources_closed = _terminal_failure_has_closed_dispatches(
-        task_runtime_facts,
-        run_projection,
-        ledger_facts,
-        effect_closures,
-        committed_turn_receipts=committed_turn_receipts,
-        workspace=query.workspace,
     )
     closed = bool(scope_found and counts.open_count == 0 and terminal_resources_closed)
     if scope_found and counts.open_count == 0 and not terminal_resources_closed:

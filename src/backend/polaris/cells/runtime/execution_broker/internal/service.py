@@ -43,7 +43,7 @@ from polaris.kernelone.trace import create_task_with_context, get_logger
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import AsyncIterator, Iterable
 
 _logger = get_logger(__name__)
 
@@ -645,7 +645,7 @@ class ExecutionBrokerService:
     async def _drain_stream_to_log(self, handle: ExecutionHandle, log_path: str) -> None:
         """Drain process output to log file until the process stream closes.
 
-        Uses per-chunk timeout (max 1 second between chunks) to prevent permanent blocking.
+        Checks idle state every second without cancelling the pending stream read.
         An optional env-configured wall-clock cap is available for diagnostics tests,
         but production drains for the subprocess lifetime.
 
@@ -674,6 +674,8 @@ class ExecutionBrokerService:
         deadline = loop.time() + max_seconds if max_seconds is not None else None
         terminal_idle_started_at: float | None = None
         emitted_process_lines = 0
+        stream_iter: AsyncIterator[Any] | None = None
+        pending_read: asyncio.Future[Any] | None = None
 
         try:
             start_snapshot = handle.snapshot()
@@ -687,8 +689,8 @@ class ExecutionBrokerService:
             if isinstance(args, list):
                 log.write_line(f"[execution_broker] command={_format_args_for_log(str(item) for item in args)}\n")
             await log.flush()
-            # Use iterator approach with per-chunk timeout
-            # This ensures we don't block forever on stream()
+            # One pending read survives quiet intervals; cancelling an idle
+            # __anext__ would close the generator and lose later process output.
             stream_iter = handle.stream().__aiter__()
             while True:
                 timeout = 1.0
@@ -702,14 +704,10 @@ class ExecutionBrokerService:
                         break
                     timeout = min(remaining, 1.0)
 
-                try:
-                    chunk = await asyncio.wait_for(
-                        stream_iter.__anext__(),
-                        timeout=timeout,
-                    )
-                except StopAsyncIteration:
-                    break
-                except asyncio.TimeoutError:
+                if pending_read is None:
+                    pending_read = asyncio.ensure_future(stream_iter.__anext__())
+                done, _ = await asyncio.wait({pending_read}, timeout=timeout)
+                if not done:
                     # No data this interval: persist whatever is buffered so the log
                     # stays live, then evaluate the terminal-idle cutoff.
                     await log.flush()
@@ -727,6 +725,12 @@ class ExecutionBrokerService:
                     else:
                         terminal_idle_started_at = None
                     continue
+
+                completed_read, pending_read = pending_read, None
+                try:
+                    chunk = completed_read.result()
+                except StopAsyncIteration:
+                    break
 
                 if not chunk.line:
                     continue
@@ -750,6 +754,23 @@ class ExecutionBrokerService:
                 error_type=type(exc).__name__,
             )
         finally:
+            if pending_read is not None:
+                pending_read.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await pending_read
+            if stream_iter is not None:
+                close_stream = getattr(stream_iter, "aclose", None)
+                if close_stream is not None:
+                    try:
+                        await close_stream()
+                    except Exception as exc:
+                        _logger.error(
+                            "execution_broker.log_drain.stream_close_failed",
+                            execution_id=execution_id,
+                            error=str(exc),
+                            error_type=type(exc).__name__,
+                            exc_info=True,
+                        )
             with contextlib.suppress(Exception):
                 snapshot = await _wait_for_terminal_snapshot(
                     handle,

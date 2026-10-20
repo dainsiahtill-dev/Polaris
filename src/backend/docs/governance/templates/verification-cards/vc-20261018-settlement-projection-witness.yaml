@@ -1,0 +1,53 @@
+id: vc-20261018-settlement-projection-witness
+classification: defect
+status: pending_independent_review
+scope:
+  - polaris/cells/control_plane/run_ledger/public/settlement_barrier.py
+assumptions:
+  - Existing canonical lifecycle receipts and append/content identities remain the sole ledger witness.
+  - project_tool_lifecycle_event is the sole derived-row producer, not a raw input validator.
+  - Resource closeout is independent from product acceptance and does not require all tasks failed.
+hypotheses:
+  - Receipt membership alone allows contradictory derived rows and missing dispatch inventory to activate cleanup.
+  - Type-sensitive receipt-derived row consistency plus unique total inventory binding closes the gap without a new fact source.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-projection-witness/prepared-report.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-projection-witness/original-source.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-projection-witness/red-original.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-projection-witness/red-compact-duplicate.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-projection-witness/adjacent-stop-final.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-projection-witness/implementation.json
+verification:
+  - Unchanged existing summary_only RED before production edits.
+  - Present derived count/flag/status/hash/ref/native/identity contradictions fail closed, including boolean versus integer.
+  - Missing derived row fields may rederive only from an exact canonical receipt; explicitly malformed raw witness fields cannot coerce to authority.
+  - Applicable current lifecycle inventory has unique total canonical/projected binding; missing, duplicate or foreign rows reject.
+  - Compact legacy compatibility requires the already-existing strict committed-read owner proof and cannot rescue current contradictions or reuse the same scoped identity/ref witness twice.
+  - Actual private no-effect-read owner closeout remains valid for failed and completed terminal tasks while product passed stays false.
+  - Same prior M13 eleven-file adjacent gate plus focused new controls, Ruff, mypy and diff-scope verification.
+architecture:
+  - Same Cell consumer only; reuse public lifecycle projector and existing immutable owner observations.
+  - No counter authority, new DTO/store, producer changes or target commands.
+remaining:
+  - V1 253PASS remains historical and was independently falsified by two actual proof-reuse counterexamples.
+  - V2 exact prior eleven-file inventory has 257PASS and zero failed/errors, including all 60 scoped cases.
+  - Original independent proof-reuse tests have 2PASS against the final V2 source.
+  - Mypy has no issues in the production file; Ruff check and format check pass.
+  - Independent exact-SHA review and integrated native qualification remain pending.
+  - Historical r01 remains FAILED; no native qualification or old resource release is authorized here.
+
+v2_review_revision:
+  preserved_v1: /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-projection-witness/v1-frozen/manifest.json
+  independent_red: /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-independent/proof-reuse.xml
+  hypothesis: Consume validated semantic scope and exact ordered batch reference tuples once across canonical and compact rows.
+  constraints:
+    - Non-authoritative reference annotations cannot change proof identity.
+    - Exact canonical raw receipt and projection consistency remain required.
+    - Distinct reference tuples are not collapsed merely because TurnID matches.
+    - No new proof authority, fact store, DTO or M14 change.
+  verification_status: 257PASS and original independent 2PASS; pending independent V2 review
+  evidence:
+    - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-projection-witness/v2/red-independent.xml
+    - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-projection-witness/v2/green-independent-final.xml
+    - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-projection-witness/v2/adjacent-typed-final.xml
+    - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m13b-projection-witness/v2/implementation.json

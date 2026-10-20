@@ -48,6 +48,10 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolInvocation,
     _infer_effect_type,
 )
+from polaris.kernelone.llm.toolkit.tool_normalization import (
+    looks_like_patch_like_write_content,
+    normalize_tool_arguments_from_snapshot,
+)
 from polaris.kernelone.tools.tool_kinds import DEPRECATED_WRITE_TOOLS
 
 # Preserve historical logger identity (former single-module __name__).
@@ -254,6 +258,7 @@ class _PreparedDirectedEffectDispatchV1:
     # Soft-denied members (call_id, tool_name, error_code) that must not abort
     # siblings. Empty when every mutation authorized.
     dropped_members: tuple[tuple[str, str, str], ...] = ()
+    pending_cohorts: tuple[tuple[ToolInvocation, ...], ...] = ()
 
 
 def _is_mutation_for_speculative_routing(
@@ -687,7 +692,7 @@ def fill_single_target_line_range_edit_blocks(
             continue
         has_file = any(str(arguments.get(key) or "").strip() for key in _FILE_ARGUMENT_KEYS)
         has_line_range = arguments.get("start") is not None and arguments.get("end") is not None
-        has_replacement = any(str(arguments.get(key) or "").strip() for key in _LINE_RANGE_REPLACEMENT_KEYS)
+        has_replacement = any(isinstance(arguments.get(key), str) for key in _LINE_RANGE_REPLACEMENT_KEYS)
         if has_file or not (has_line_range and has_replacement):
             filled.append(invocation)
             continue
@@ -991,7 +996,7 @@ _MUTATION_PATH_ARGUMENT_KEYS: tuple[str, ...] = (
 def _mutation_target_path_key(invocation: ToolInvocation) -> str | None:
     """Return a collapse key for file mutations, or None for pathless tools."""
 
-    arguments = invocation.arguments if isinstance(getattr(invocation, "arguments", None), dict) else {}
+    arguments = _mutation_canonical_arguments(invocation)
     for key in _MUTATION_PATH_ARGUMENT_KEYS:
         raw = arguments.get(key)
         if not isinstance(raw, str) or not raw.strip():
@@ -1002,10 +1007,41 @@ def _mutation_target_path_key(invocation: ToolInvocation) -> str | None:
     return None
 
 
+def _mutation_canonical_arguments(invocation: ToolInvocation) -> dict[str, Any]:
+    classification = invocation.classification
+    if classification is None:
+        return {}
+    try:
+        return dict(normalize_tool_arguments_from_snapshot(classification.snapshot, invocation.arguments))
+    except (TypeError, ValueError):
+        # The real guard reports malformed input. It must never become a
+        # guessed path or a last-write-wins optimization here.
+        return {}
+
+
+def _serial_mutation_cohorts(mutations: list[ToolInvocation]) -> tuple[tuple[ToolInvocation, ...], ...]:
+    """Preserve declared order, giving each target at most one mutation per cohort."""
+    cohorts: list[tuple[ToolInvocation, ...]] = []
+    current: list[ToolInvocation] = []
+    paths: set[str] = set()
+    for invocation in mutations:
+        path = _mutation_target_path_key(invocation)
+        if path is not None and path in paths:
+            cohorts.append(tuple(current))
+            current = []
+            paths = set()
+        current.append(invocation)
+        if path is not None:
+            paths.add(path)
+    if current:
+        cohorts.append(tuple(current))
+    return tuple(cohorts)
+
+
 def _collapse_last_write_wins_mutations(
     mutations: list[ToolInvocation],
 ) -> tuple[list[ToolInvocation], list[tuple[str, str, str]]]:
-    """Keep the last mutation per target path; soft-drop superseded earlier writes.
+    """Collapse only independent whole-file replacements of the same target.
 
     R192/M03: L1-01 r12 sealed a 12-member write batch, committed 11 receipts,
     then denied the Nth claim with ``deo_current_policy_evidence_unavailable``
@@ -1014,15 +1050,29 @@ def _collapse_last_write_wins_mutations(
     preserves model intent while keeping DEO claim baselines coherent.
     """
 
-    last_index_by_path: dict[str, int] = {}
-    pathless_indexes: list[int] = []
+    groups: dict[str, list[int]] = {}
     for index, invocation in enumerate(mutations):
         path_key = _mutation_target_path_key(invocation)
-        if path_key is None:
-            pathless_indexes.append(index)
-        else:
-            last_index_by_path[path_key] = index
-    keep_indexes = set(last_index_by_path.values()) | set(pathless_indexes)
+        if path_key is not None:
+            groups.setdefault(path_key, []).append(index)
+    keep_indexes = set(range(len(mutations)))
+    for indexes in groups.values():
+        if len(indexes) < 2:
+            continue
+        full_replacements = True
+        for index in indexes:
+            invocation = mutations[index]
+            arguments = _mutation_canonical_arguments(invocation)
+            content = arguments.get("content")
+            if (
+                invocation.tool_name != "write_file"
+                or not isinstance(content, str)
+                or looks_like_patch_like_write_content(content)
+            ):
+                full_replacements = False
+                break
+        if full_replacements:
+            keep_indexes.difference_update(indexes[:-1])
     collapsed: list[ToolInvocation] = []
     dropped: list[tuple[str, str, str]] = []
     for index, invocation in enumerate(mutations):

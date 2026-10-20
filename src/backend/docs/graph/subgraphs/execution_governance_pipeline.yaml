@@ -136,6 +136,10 @@ relations:
     to: factory.verification_guard
     type: queries
     contract: QueryProjectCompletionDiagnosticsV1
+  - from: factory.pipeline
+    to: factory.verification_guard
+    type: queries
+    contract: ProjectVerificationAdmissionObservationV1
   - from: factory.verification_guard
     to: runtime.execution_broker
     type: commands

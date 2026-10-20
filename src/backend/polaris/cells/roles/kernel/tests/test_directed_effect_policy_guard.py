@@ -838,12 +838,12 @@ async def test_mutation_batch_authorizes_exact_post_collapse_inventory(
         {
             "call_id": "write-1",
             "tool_name": "write_file",
-            "arguments": {"path": "src/a.py"},
+            "arguments": {"path": "src/a.py", "content": "first = 1\n"},
         },
         {
             "call_id": "write-2",
             "tool_name": "write_file",
-            "arguments": {"path": "src/a.py"},
+            "arguments": {"path": "src/a.py", "content": "last = 2\n"},
         },
     ]
 

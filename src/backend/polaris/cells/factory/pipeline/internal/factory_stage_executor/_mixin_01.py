@@ -769,9 +769,74 @@ class _Mixin01:
         self._write_json_artifact(blueprint_path, payload)
         return True
 
+    def _chief_engineer_portfolio_delivery_depth_contract(
+        self,
+        task: dict[str, Any],
+        *,
+        request_context: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Reuse the quality consumer's current-contract validation for CE context."""
+        current = dict(request_context or {})
+        current_metadata = current.get("metadata")
+        current_metadata = current_metadata if isinstance(current_metadata, dict) else {}
+        current_present = any("delivery_depth_contract" in source for source in (current, current_metadata))
+        task_context = deepcopy(task)
+        task_metadata = task_context.get("metadata")
+        task_metadata = task_metadata if isinstance(task_metadata, dict) else {}
+        task_present = any("delivery_depth_contract" in source for source in (task_context, task_metadata))
+        for key in ("factory_run_id", "project_id"):
+            if key not in task_context:
+                task_context[key] = current.get(key) or current_metadata.get(key)
+        task_contract = (
+            self._workspace_quality._load_delivery_depth_level_contract(task_context) if task_present else None
+        )
+        sources: tuple[dict[str, Any], ...]
+        if current_present:
+            selected = self._workspace_quality._load_delivery_depth_level_contract(current)
+            if selected is None and task_contract is not None:
+                descriptive = next(
+                    source["delivery_depth_contract"]
+                    for source in (current, current_metadata)
+                    if "delivery_depth_contract" in source
+                )
+                selected = {**task_contract, **descriptive, "minimums": dict(task_contract["minimums"])}
+            if selected is not None and task_contract is not None:
+                if (
+                    selected.get("level") is not None
+                    and task_contract.get("level") is not None
+                    and selected["level"] != task_contract["level"]
+                ) or any(
+                    key in selected["minimums"] and selected["minimums"][key] != value
+                    for key, value in task_contract["minimums"].items()
+                ):
+                    raise ValueError("conflicting current and PM task delivery-depth contracts")
+                selected = {**selected, "minimums": {**selected["minimums"], **task_contract["minimums"]}}
+            sources = (current, current_metadata)
+        elif task_present:
+            selected = task_contract
+            sources = (task_context, task_metadata)
+        else:
+            # Only absent current/task contracts may use the established legacy
+            # catalog projection. Never repair an invalid explicit contract from it.
+            self._inject_catalog_delivery_depth_contract(task_context)
+            selected = self._workspace_quality._load_delivery_depth_level_contract(task_context)
+            sources = (task_context,)
+        if selected is not None:
+            return deepcopy(selected)
+        return next(
+            (
+                deepcopy(source["delivery_depth_contract"])
+                for source in sources
+                if isinstance(source.get("delivery_depth_contract"), dict)
+            ),
+            {},
+        )
+
     def _chief_engineer_portfolio_tasks(
         self,
         pm_tasks: list[dict[str, Any]],
+        *,
+        request_context: Mapping[str, Any] | None = None,
     ) -> tuple[ChiefEngineerPortfolioTaskV1, ...]:
         """Project validated PM facts into the CE portfolio contract."""
 
@@ -802,8 +867,9 @@ class _Mixin01:
                 if isinstance(metadata.get("required_source_kinds"), (list, tuple))
                 else ()
             )
-            raw_depth_contract = task.get("delivery_depth_contract") or metadata.get("delivery_depth_contract")
-            delivery_depth_contract = dict(raw_depth_contract) if isinstance(raw_depth_contract, Mapping) else {}
+            delivery_depth_contract = self._chief_engineer_portfolio_delivery_depth_contract(
+                task, request_context=request_context
+            )
             primary_language = (
                 str(task.get("language") or delivery_depth_contract.get("language") or "").strip().lower()
             )
@@ -875,6 +941,7 @@ class _Mixin01:
         *,
         run_id: str,
         failure_feedback: Mapping[str, Any] | None = None,
+        request_context: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Build one structured final-request evidence payload for all PM tasks.
 
@@ -892,7 +959,16 @@ class _Mixin01:
         seen_targets: set[str] = set()
         seen_scope: set[str] = set()
         for index, task in enumerate(pm_tasks, start=1):
+            depth_contract = self._chief_engineer_portfolio_delivery_depth_contract(
+                task, request_context=request_context
+            )
             task_context = self._task_blueprint_context(task, run_id=run_id, index=index)
+            task_context["delivery_depth_contract"] = depth_contract
+            for key in ("level_contract", "behavior_contract"):
+                if key in depth_contract:
+                    task_context[key] = deepcopy(depth_contract[key])
+                elif isinstance(task_context.get(key), Mapping) and "minimums" in task_context[key]:
+                    task_context.pop(key)
             task_targets = self._task_string_list(task, "target_files")
             task_scope = self._task_string_list(task, "scope_paths") or task_targets
             for path in task_targets:
@@ -959,7 +1035,12 @@ class _Mixin01:
             context["chief_engineer_local_rework"] = True
         return context
 
-    def _chief_engineer_portfolio_objective(self, pm_tasks: list[dict[str, Any]]) -> str:
+    def _chief_engineer_portfolio_objective(
+        self,
+        pm_tasks: list[dict[str, Any]],
+        *,
+        request_context: Mapping[str, Any] | None = None,
+    ) -> str:
         """Return a natural-language project design objective for one CE call."""
 
         task_lines = [
@@ -968,17 +1049,8 @@ class _Mixin01:
         ]
         depth_minimums: dict[str, int] = {}
         for task in pm_tasks:
-            raw_metadata = task.get("metadata")
-            metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
-            raw_contract = task.get("delivery_depth_contract") or metadata.get("delivery_depth_contract")
-            contract = raw_contract if isinstance(raw_contract, Mapping) else {}
-            candidate_minimums = contract.get("minimums")
-            minimums = candidate_minimums if isinstance(candidate_minimums, Mapping) else {}
-            for key in ("min_prod_files", "min_test_files"):
-                try:
-                    value = max(0, int(minimums.get(key) or 0))
-                except (TypeError, ValueError):
-                    continue
+            contract = self._chief_engineer_portfolio_delivery_depth_contract(task, request_context=request_context)
+            for key, value in contract.get("minimums", {}).items():
                 depth_minimums[key] = max(depth_minimums.get(key, 0), value)
         depth_clause = ""
         if depth_minimums:
@@ -992,6 +1064,9 @@ class _Mixin01:
             "Define the artifacts and verification needed for Director to begin. Add cross-task interfaces only "
             "where coupling requires them. Preserve PM observable acceptance and explicit constraints; resolve "
             "CE-delegated topology and command recipes before execution. "
+            "Each semantic PM task that delegates verification to Chief Engineer must own at least one valid "
+            "command recipe, in verification or entrypoints, with required or optional applicability; use any "
+            "supported modality and never borrow a sibling task's command authority. "
             "Product requirements, observable acceptance and explicit constraints are already included in the "
             "attached PM contracts; they do not imply an additional requirements file. Bind only declared "
             "authorized context_files or existing target files as read prerequisites. A new artifact does not "
@@ -1124,12 +1199,35 @@ class _Mixin01:
 
         catalog_snapshot = self._chief_engineer_catalog_snapshot()
         catalog_project_id = str(catalog_snapshot.get("project_id") or "").strip()
-        # ``FactoryConfig.name`` is a human-facing run label (the HTTP/bench
-        # caller commonly sets it to ``Factory Run - pm``), not project
-        # identity authority.  Prefer the catalog identity captured after PM
-        # artifact revalidation; retain the display-name fallback only for
-        # legacy/non-catalog workspaces.
-        project_id = catalog_project_id or str(run.config.name)
+        # The persisted admitted request and direct run metadata are current
+        # Factory input. Neither a display label nor an external catalog may
+        # replace an explicitly declared current project identity.
+        start_request = run.metadata.get("factory_start_request", {})
+        if not isinstance(start_request, Mapping):
+            raise RuntimeError("chief_engineer_project_completion_project_id_invalid_start_request")
+        start_metadata = start_request.get("metadata", {})
+        if not isinstance(start_metadata, Mapping):
+            raise RuntimeError("chief_engineer_project_completion_project_id_invalid_start_metadata")
+        current_project_ids: list[str] = []
+        for source in (start_metadata, run.metadata):
+            if "project_id" not in source:
+                continue
+            declared = source["project_id"]
+            if type(declared) is not str or not declared or declared != declared.strip():
+                raise RuntimeError("chief_engineer_project_completion_project_id_invalid")
+            current_project_ids.append(declared)
+        if current_project_ids and "factory_start_request" in run.metadata:
+            admitted_workspace = start_request.get("workspace")
+            if (
+                type(admitted_workspace) is not str
+                or not admitted_workspace
+                or Path(admitted_workspace).resolve() != self.workspace.resolve()
+            ):
+                raise RuntimeError("chief_engineer_project_completion_project_workspace_mismatch")
+        if current_project_ids and any(value != current_project_ids[0] for value in current_project_ids[1:]):
+            raise RuntimeError("chief_engineer_project_completion_project_id_conflict")
+        # Compatibility for runs without any explicit current project input.
+        project_id = current_project_ids[0] if current_project_ids else catalog_project_id or str(run.config.name)
         if not project_id or project_id != project_id.strip():
             raise RuntimeError("chief_engineer_project_completion_project_id_missing")
         if any(unicodedata.category(character).startswith("C") for character in project_id):
@@ -1168,7 +1266,27 @@ class _Mixin01:
         if type(committed_pm_tasks_raw) is not list or committed_pm_tasks_raw != pm_tasks:
             raise RuntimeError("chief_engineer_project_completion_pm_document_mismatch")
         committed_pm_tasks = cast(list[dict[str, Any]], committed_pm_tasks_raw)
-        committed_portfolio_tasks = self._chief_engineer_portfolio_tasks(committed_pm_tasks)
+        # Rebuild with the admitted request owned by this same durable store,
+        # including on cold recovery. Caller metadata cannot replace that input.
+        persisted_run = await factory_store.get_run(run.id)
+        if persisted_run is None:
+            raise RuntimeError("chief_engineer_project_completion_current_run_missing")
+        persisted_start_request = persisted_run.metadata.get("factory_start_request", {})
+        if not isinstance(persisted_start_request, Mapping):
+            raise RuntimeError("chief_engineer_project_completion_project_id_invalid_start_request")
+        persisted_start_metadata = persisted_start_request.get("metadata", {})
+        if not isinstance(persisted_start_metadata, Mapping):
+            raise RuntimeError("chief_engineer_project_completion_project_id_invalid_start_metadata")
+        committed_request_context = {
+            "factory_run_id": run.id,
+            "project_id": project_id,
+            "metadata": dict(persisted_start_metadata),
+        }
+        if "delivery_depth_contract" in run.metadata:
+            committed_request_context["delivery_depth_contract"] = deepcopy(run.metadata["delivery_depth_contract"])
+        committed_portfolio_tasks = self._chief_engineer_portfolio_tasks(
+            committed_pm_tasks, request_context=committed_request_context
+        )
         if committed_portfolio_tasks != portfolio_tasks:
             raise RuntimeError("chief_engineer_project_completion_pm_path_authority_mismatch")
         if proof.task_ids != expected_task_ids:

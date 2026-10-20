@@ -16,6 +16,8 @@ from weakref import WeakSet
 
 from polaris.cells.director.runtime.public import DirectorRepairEffectV1
 from polaris.infrastructure.storage import LocalFileSystemAdapter
+from polaris.kernelone.editing.contracts import EditPrewriteRejectionV1, hash_edit_prewrite_arguments
+from polaris.kernelone.editing.editblock_engine import compose_line_range_edit
 from polaris.kernelone.events.file_event_broadcaster import (
     broadcast_file_written,
     calculate_patch,
@@ -180,9 +182,7 @@ def _precommit_declared_local_include_guard(
         return {"ok": True}
 
     normalized_scope = {
-        str(item or "").replace("\\", "/").strip("/")
-        for item in (allowed_scope or ())
-        if str(item or "").strip()
+        str(item or "").replace("\\", "/").strip("/") for item in (allowed_scope or ()) if str(item or "").strip()
     }
     source_parent = Path(rel_path.replace("\\", "/")).parent
     missing: list[str] = []
@@ -216,8 +216,7 @@ def _precommit_declared_local_include_guard(
         }
         workspace_owns_namespace = any((workspace / root).is_dir() for root in namespace_roots)
         scope_owns_namespace = any(
-            any(item == root or item.startswith(f"{root}/") for root in namespace_roots)
-            for item in normalized_scope
+            any(item == root or item.startswith(f"{root}/") for root in namespace_roots) for item in normalized_scope
         )
         if workspace_owns_namespace or scope_owns_namespace:
             missing.append(token)
@@ -570,11 +569,7 @@ class DirectorToolExecutor:
         self._assert_physical_execution_authority()
         normalized_scope = tuple(
             sorted(
-                {
-                    str(item or "").replace("\\", "/").strip("/")
-                    for item in authorized_scope
-                    if str(item or "").strip()
-                }
+                {str(item or "").replace("\\", "/").strip("/") for item in authorized_scope if str(item or "").strip()}
             )
         )
         target = None
@@ -682,7 +677,8 @@ class DirectorToolExecutor:
         *,
         task_id: str = "",
         repair_effect: DirectorRepairEffectV1 | None = None,
-    ) -> dict[str, Any]:
+        prewrite_operation_hash: str | None = None,
+    ) -> dict[str, Any] | EditPrewriteRejectionV1:
         """执行指定工具"""
         self._assert_physical_execution_authority()
         workspace_path = Path(self.workspace).resolve()
@@ -717,6 +713,7 @@ class DirectorToolExecutor:
                 workspace_path,
                 task_id=task_id,
                 repair_effect=repair_effect,
+                prewrite_operation_hash=prewrite_operation_hash,
             )
         elif tool_name == "delete_file":
             return self._tool_delete_file(
@@ -988,7 +985,8 @@ class DirectorToolExecutor:
         *,
         task_id: str = "",
         repair_effect: DirectorRepairEffectV1 | None = None,
-    ) -> dict[str, Any]:
+        prewrite_operation_hash: str | None = None,
+    ) -> dict[str, Any] | EditPrewriteRejectionV1:
         """Apply SEARCH/REPLACE edit_blocks through Director policy + write path (R179)."""
 
         from polaris.kernelone.editing.editblock_engine import apply_edit_blocks, parse_edit_blocks
@@ -1023,9 +1021,6 @@ class DirectorToolExecutor:
             blocks_text = "\n".join(str(item or "") for item in raw_blocks)
         else:
             blocks_text = str(raw_blocks or "")
-        if not blocks_text.strip():
-            return {"ok": False, "error": "edit_blocks requires non-empty blocks"}
-
         try:
             target = (workspace / file_path).resolve()
             if workspace not in target.parents and target != workspace:
@@ -1042,26 +1037,71 @@ class DirectorToolExecutor:
             if not target.is_file():
                 return {"ok": False, "error": f"Path is not a file: {file_path}"}
 
-            content = (
-                guarded_snapshot.content.decode("utf-8")
-                if guarded_snapshot is not None
-                else target.read_text(encoding="utf-8")
-            )
+            content_bytes = guarded_snapshot.content if guarded_snapshot is not None else target.read_bytes()
+            content = content_bytes.decode("utf-8")
             rel_path = target.relative_to(workspace).as_posix()
-            blocks = parse_edit_blocks(blocks_text, default_filepath=rel_path)
-            if not blocks:
-                return {"ok": False, "error": "edit_blocks: no valid SEARCH/REPLACE blocks parsed"}
-            scoped = []
-            for block in blocks:
-                block_path = str(block.filepath or "").replace("\\", "/").strip().lstrip("./")
-                if not block_path or block_path == rel_path:
-                    scoped.append(block)
-            if not scoped:
-                return {"ok": False, "error": f"edit_blocks: no blocks target {rel_path}"}
-            applied = apply_edit_blocks({rel_path: content}, scoped, fuzzy=True)
-            new_content = str(applied.get(rel_path, content))
+
+            def reject_before_write(reason: str, error: str) -> dict[str, Any] | EditPrewriteRejectionV1:
+                # Only this known, effect-free validation branch can produce a
+                # typed proof. A failed/drifting observation stays ambiguous.
+                if prewrite_operation_hash is not None:
+                    try:
+                        after_bytes = target.read_bytes()
+                        if after_bytes == content_bytes:
+                            return EditPrewriteRejectionV1(
+                                reason_code=reason,
+                                target_path=rel_path,
+                                normalized_operation_hash=prewrite_operation_hash,
+                                arguments_hash=hash_edit_prewrite_arguments(args),
+                                before_sha256=sha256(content_bytes).hexdigest(),
+                                after_sha256=sha256(after_bytes).hexdigest(),
+                            )
+                    except (OSError, TypeError, UnicodeError, ValueError):
+                        pass
+                return {"ok": False, "error": error}
+
+            if "start" in args or "end" in args:
+                try:
+                    if blocks_text.strip():
+                        raise ValueError("edit_blocks cannot combine a line range and SEARCH/REPLACE blocks")
+                    new_content = compose_line_range_edit(
+                        content, args.get("start"), args.get("end"), args.get("replace")
+                    )
+                except ValueError as exc:
+                    return reject_before_write("edit_blocks_invalid_line_range", str(exc))
+                removed_lines = int(args["end"]) - int(args["start"]) + 1
+                if (
+                    removed_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
+                    and len(str(args["replace"]).splitlines()) <= removed_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO
+                ):
+                    return reject_before_write(
+                        "edit_blocks_invalid_line_range", "edit_blocks: destructive line-range shrink"
+                    )
+                blocks_applied = 1
+            else:
+                if not blocks_text.strip():
+                    return reject_before_write("edit_blocks_invalid_blocks", "edit_blocks requires non-empty blocks")
+                try:
+                    blocks = parse_edit_blocks(blocks_text, default_filepath=rel_path)
+                    scoped = [
+                        block
+                        for block in blocks
+                        if not str(block.filepath or "").replace("\\", "/").strip().lstrip("./")
+                        or str(block.filepath or "").replace("\\", "/").strip().lstrip("./") == rel_path
+                    ]
+                    if not scoped:
+                        return reject_before_write(
+                            "edit_blocks_invalid_blocks", "edit_blocks: no valid SEARCH/REPLACE blocks parsed"
+                        )
+                    applied = apply_edit_blocks({rel_path: content}, scoped, fuzzy=True)
+                    new_content = str(applied.get(rel_path, content))
+                except (RuntimeError, TypeError, ValueError) as exc:
+                    return reject_before_write("edit_blocks_invalid_blocks", str(exc))
+                blocks_applied = len(scoped)
             if new_content == content:
-                return {"ok": False, "error": "edit_blocks: no content change after apply"}
+                return reject_before_write(
+                    "edit_blocks_no_content_change", "edit_blocks: no content change after apply"
+                )
 
             json_config_result = _validate_or_repair_json_config_content(rel_path=rel_path, content=new_content)
             if not json_config_result.get("ok"):
@@ -1142,7 +1182,7 @@ class DirectorToolExecutor:
             return {
                 "ok": True,
                 "file": rel_path,
-                "blocks_applied": len(scoped),
+                "blocks_applied": blocks_applied,
                 "before_sha256": sha256(content.encode("utf-8")).hexdigest(),
                 "after_sha256": sha256(final_content.encode("utf-8")).hexdigest(),
                 "broadcast_ok": bool(write_result.get("broadcast_ok")),
@@ -1228,9 +1268,7 @@ class DirectorToolExecutor:
                 json_config_result.get("content") if json_config_result.get("content") is not None else new_content
             )
             old_lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
-            new_lines = final_content.count("\n") + (
-                1 if final_content and not final_content.endswith("\n") else 0
-            )
+            new_lines = final_content.count("\n") + (1 if final_content and not final_content.endswith("\n") else 0)
             if (
                 old_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
                 and new_lines <= old_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO

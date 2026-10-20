@@ -3,9 +3,208 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import re
+import weakref
+from collections import defaultdict, deque
+from collections.abc import Mapping, Sequence
 from typing import Any
+
+from polaris.kernelone.context.contracts import ContextSource
+
+TOOL_OBSERVATION_SOURCES_KEY = "_transaction_kernel_tool_observation_sources"
+_TOOL_OBSERVATION_ISSUER = object()
+
+# These are authority-bearing result slots already excluded by native history.
+# Literal source/diagnostic strings are data, including strings naming these slots.
+_TOOL_RESULT_AUTHORITY_KEYS = frozenset(
+    {
+        "effect_receipt",
+        "effect_receipt_commit",
+        "director_policy",
+        "authorization",
+        "execution_envelope",
+        "execution_attempt_authority",
+        "job_token",
+        "job_token_id",
+        "job_token_set",
+        "job_token_set_hash",
+        "claim_grant",
+        "claim_grant_hash",
+        "capability_token",
+        "control_plane_job_token",
+    }
+)
+
+
+def _observation_digest(value: Any) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def project_tool_result_data(value: Any) -> Any:
+    """Remove structured authority recursively without rewriting literal tool data."""
+    from polaris.kernelone.audit.context_os_prompt import normalize_control_plane_prompt_key
+
+    if isinstance(value, Mapping):
+        return {
+            str(key): project_tool_result_data(item)
+            for key, item in value.items()
+            if normalize_control_plane_prompt_key(key) not in _TOOL_RESULT_AUTHORITY_KEYS
+        }
+    if isinstance(value, list | tuple):
+        return [project_tool_result_data(item) for item in value]
+    return value
+
+
+def _contains_tool_authority(value: Any) -> bool:
+    from polaris.kernelone.audit.context_os_prompt import normalize_control_plane_prompt_key
+
+    if isinstance(value, Mapping):
+        return any(
+            normalize_control_plane_prompt_key(key) in _TOOL_RESULT_AUTHORITY_KEYS or _contains_tool_authority(item)
+            for key, item in value.items()
+        )
+    return isinstance(value, list | tuple) and any(_contains_tool_authority(item) for item in value)
+
+
+def bind_tool_observation_source(
+    *,
+    source_id: str,
+    role: str,
+    tool_name: str,
+    call_id: str,
+    arguments: Mapping[str, Any],
+    native_arguments: Mapping[str, Any],
+    result: Any,
+    content: str,
+    snapshot_hash: str,
+    raw_call_hash: str | None = None,
+) -> ContextSource:
+    """Seal one owner-joined native observation; this grants no execution authority.
+
+    The private seal binds the exact ContextSource object and detached values.
+    A caller-created data-plane flag, copied metadata, or serialized source is not
+    an attestation. Cold recovery regenerates sources from committed invocations.
+    """
+    observation = json.loads(content)
+    if observation != {"status": "success", "result": project_tool_result_data(result)}:
+        raise ValueError("tool_observation_result_mismatch")
+    if _contains_tool_authority(observation):
+        raise ValueError("tool_observation_authority_leak")
+    if _payload_indicates_failure(observation):
+        raise ValueError("tool_observation_failed_result")
+    binding = {
+        "source_id": source_id,
+        "role": role,
+        "tool_name": tool_name,
+        "call_id": call_id,
+        "arguments_hash": _observation_digest(dict(arguments)),
+        "arguments_json": json.dumps(dict(arguments), ensure_ascii=False, sort_keys=True, allow_nan=False),
+        "native_arguments_hash": _observation_digest(dict(native_arguments)),
+        "native_arguments_json": json.dumps(
+            dict(native_arguments), ensure_ascii=False, sort_keys=True, allow_nan=False
+        ),
+        "result_hash": _observation_digest(result),
+        "content_hash": _observation_digest(content),
+        "result_json": json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False),
+        "snapshot_hash": snapshot_hash,
+        "raw_call_hash": raw_call_hash,
+    }
+    source = ContextSource(
+        source_type="committed_tool_observation",
+        source_id="tool-observation:" + _observation_digest(binding),
+        role=role,
+        text=content,
+        tokens=max(1, len(content) // 4),
+        importance=1.0,
+        metadata={**binding, "_issuer": _TOOL_OBSERVATION_ISSUER},
+    )
+    source.metadata["_owner_ref"] = weakref.ref(source)
+    return source
+
+
+def validate_tool_observation_sources(
+    messages: Sequence[Mapping[str, Any]],
+    sources: Sequence[ContextSource],
+    *,
+    role: str,
+) -> tuple[set[int], list[str]]:
+    """Match each private source to one actual native call/result occurrence."""
+    if not sources:
+        return set(), []
+    available: dict[tuple[str, str, str, str], deque[ContextSource]] = defaultdict(deque)
+    errors: list[str] = []
+    for source in sources:
+        if (
+            type(source) is not ContextSource
+            or type(source.metadata) is not dict
+            or source.metadata.get("_issuer") is not _TOOL_OBSERVATION_ISSUER
+        ):
+            errors.append("tool_observation_source_unowned")
+            continue
+        owner = source.metadata.get("_owner_ref")
+        if type(owner) is not weakref.ReferenceType or owner() is not source or source.role != role:
+            errors.append("tool_observation_source_drift")
+            continue
+        binding = source.metadata
+        sealed = {key: value for key, value in binding.items() if key not in {"_issuer", "_owner_ref"}}
+        try:
+            valid = (
+                source.source_type == "committed_tool_observation"
+                and source.source_id == "tool-observation:" + _observation_digest(sealed)
+                and source.role == binding.get("role")
+                and _observation_digest(source.text) == binding.get("content_hash")
+                and all(
+                    _observation_digest(json.loads(binding[f"{kind}_json"])) == binding[f"{kind}_hash"]
+                    for kind in ("arguments", "native_arguments", "result")
+                )
+            )
+        except (TypeError, ValueError, KeyError):
+            valid = False
+        if not valid:
+            errors.append("tool_observation_source_drift")
+            continue
+        key = (binding["call_id"], binding["tool_name"], binding["arguments_hash"], binding["content_hash"])
+        available[key].append(source)
+    pending: dict[str, deque[tuple[str, str]]] = defaultdict(deque)
+    source_keys = set(available)
+    matched: set[int] = set()
+    for index, message in enumerate(messages):
+        if message.get("role") == "assistant":
+            for call in message.get("tool_calls") or ():
+                if not isinstance(call, Mapping) or not isinstance(call.get("function"), Mapping):
+                    errors.append("tool_observation_native_call_malformed")
+                    continue
+                function = call.get("function") or {}
+                try:
+                    arguments = json.loads(function.get("arguments", "{}"))
+                    digest = _observation_digest(arguments)
+                except (TypeError, ValueError):
+                    continue
+                pending[str(call.get("id") or "")].append((str(function.get("name") or ""), digest))
+        elif message.get("role") == "tool":
+            call_id = str(message.get("tool_call_id") or "")
+            if not pending[call_id]:
+                continue
+            name, digest = pending[call_id].popleft()
+            if name != message.get("name"):
+                continue
+            content = str(message.get("content") or "")
+            key = (call_id, name, digest, _observation_digest(content))
+            if available.get(key):
+                source = available[key].popleft()
+                if _contains_tool_authority(json.loads(source.text)):
+                    errors.append("tool_observation_authority_leak")
+                else:
+                    matched.add(index)
+            elif key in source_keys:
+                errors.append("tool_observation_occurrence_mismatch")
+    if any(available.values()):
+        errors.append("tool_observation_final_slot_mismatch")
+    return matched, errors
+
 
 _TOOL_FAILURE_PROMPT_TOKENS = (
     "director_write_policy_denied",

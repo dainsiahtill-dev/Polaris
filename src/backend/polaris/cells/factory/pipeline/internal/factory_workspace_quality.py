@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.benchmark.factory_audit import check_workspace_delivery_depth_contract
+from polaris.kernelone.benchmark.factory_depth_contract import extract_level_contract_minimums
 from polaris.kernelone.process import (
     ProcessTreeCancelledError,
     ProcessTreeDrainError,
@@ -251,7 +252,19 @@ class WorkspaceQualityRunner:
             default=True,
         ):
             return None
-        level_contract = self._load_delivery_depth_level_contract()
+        try:
+            level_contract = self._load_delivery_depth_level_contract(context)
+        except ValueError as exc:
+            detail = str(exc)
+            return {
+                "command": ["delivery_depth_contract"],
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": "",
+                "stderr_tail": detail,
+                "error": f"delivery_depth_contract_invalid: {detail}",
+                "error_code": "delivery_depth_contract_invalid",
+            }
         if level_contract is None:
             return None
         passed, detail = check_workspace_delivery_depth_contract(
@@ -274,7 +287,91 @@ class WorkspaceQualityRunner:
             },
         }
 
-    def _load_delivery_depth_level_contract(self) -> dict[str, Any] | None:
+    def _current_delivery_depth_level_contract(self, raw: Any, context: dict[str, Any]) -> dict[str, Any] | None:
+        """Validate the current run input without coercing or consulting legacy files."""
+        if not isinstance(raw, dict) or not raw:
+            raise ValueError("current delivery-depth contract must be a nonempty object")
+        if raw.get("schema_version", "polaris.delivery_depth_contract.v1") != "polaris.delivery_depth_contract.v1":
+            raise ValueError("unsupported current delivery-depth contract schema")
+        nested = raw.get("level_contract", {})
+        if not isinstance(nested, dict):
+            raise ValueError("current level_contract must be an object")
+        if nested.get("schema_version") not in (
+            None,
+            "factory-bench.level_contract.v1",
+            "polaris.delivery_depth_contract.v1",
+        ):
+            raise ValueError("unsupported current level contract schema")
+        metadata = context.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        expected_identities = {
+            "workspace": str(self.workspace.resolve()),
+            "factory_run_id": context.get("factory_run_id") or metadata.get("factory_run_id"),
+            "project_id": context.get("project_id") or metadata.get("project_id"),
+        }
+        for projection in (raw, nested):
+            for key, expected in expected_identities.items():
+                declared = projection.get(key)
+                if declared in (None, ""):
+                    continue
+                if not isinstance(declared, str) or not expected:
+                    raise ValueError(f"current contract {key} identity is unavailable or invalid")
+                actual = str(Path(declared).resolve()) if key == "workspace" else declared
+                if actual != expected:
+                    raise ValueError(f"current contract {key} identity mismatch")
+        minimums: dict[str, int] = {}
+        supported_minimums = extract_level_contract_minimums(None)
+        for projection in (nested, raw):
+            if "minimums" not in projection:
+                continue
+            declared_minimums = projection["minimums"]
+            if not isinstance(declared_minimums, dict) or not declared_minimums:
+                raise ValueError("current contract minimums must be a nonempty object")
+            for key, value in declared_minimums.items():
+                if key not in supported_minimums or type(value) is not int or value < 0:
+                    raise ValueError(f"invalid current delivery-depth minimum: {key}")
+                if key in minimums and minimums[key] != value:
+                    raise ValueError(f"conflicting current delivery-depth minimum: {key}")
+                minimums[key] = value
+        levels = [projection["level"] for projection in (raw, nested) if "level" in projection]
+        if any(type(level) is not int or level < 1 for level in levels):
+            raise ValueError("current delivery-depth level must be a positive integer")
+        if levels and any(level != levels[0] for level in levels):
+            raise ValueError("conflicting current delivery-depth levels")
+        if not minimums:
+            descriptive = any(
+                isinstance(raw.get(key), dict) and raw[key]
+                for key in ("product_intent", "behavior_contract", "acceptance_contract")
+            )
+            if descriptive and not levels and "level_contract" not in raw:
+                return None
+            raise ValueError("current delivery-depth quantitative contract has no minimums")
+        return {**nested, **raw, "minimums": minimums, **({"level": levels[0]} if levels else {})}
+
+    def _load_delivery_depth_level_contract(self, context: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        context = context if context is not None else {}
+        metadata = context.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        current = [
+            self._current_delivery_depth_level_contract(source["delivery_depth_contract"], context)
+            for source in (context, metadata)
+            if "delivery_depth_contract" in source
+        ]
+        if current:
+            first = current[0]
+            if any(
+                (item is None) != (first is None)
+                or (
+                    item is not None
+                    and first is not None
+                    and (item.get("level"), item["minimums"]) != (first.get("level"), first["minimums"])
+                )
+                for item in current[1:]
+            ):
+                raise ValueError("conflicting current delivery-depth contract projections")
+            return first
+        # Legacy input compatibility only: never merge a catalog file into a
+        # present current-run contract or use it to recover an invalid one.
         catalog_path = self.workspace / ".polaris" / "catalog_contract.json"
         try:
             payload = json.loads(catalog_path.read_text(encoding="utf-8"))

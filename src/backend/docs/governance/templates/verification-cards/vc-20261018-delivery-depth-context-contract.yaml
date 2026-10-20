@@ -1,0 +1,44 @@
+id: vc-20261018-delivery-depth-context-contract
+classification: pattern
+status: source_stop_pending_independent_review_and_integration
+owner: factory.pipeline
+scope:
+  - polaris/cells/factory/pipeline/internal/factory_workspace_quality.py
+  - polaris/cells/factory/pipeline/tests/test_delivery_depth_context_contract.py
+assumptions:
+  - The existing persisted FactoryStartRequest metadata and rebuilt stage context bind the current run input.
+  - WorkspaceQualityRunner is the existing static delivery-depth consumer; no new fact owner or journal is needed.
+  - Original declared minimums and native verifier/QA requirements must remain unchanged.
+  - Descriptive-only platform contracts have no quantitative minimums; they must not invent a default level gate.
+hypotheses:
+  - Formal current context metadata reaches the quality stage but is ignored by the catalog-file-only loader.
+  - Selecting and validating the current platform contract at this consumer closes the gap without target input writes.
+  - Legacy file compatibility is safe only when both formal contract keys are absent; explicit invalid current inputs cannot fall back.
+pre_mortem:
+  - Fixing the requirements builder or writing catalog files externally would hide the consumer defect.
+  - Truthiness fallback would reinterpret explicit empty contracts as permission to consume a different file.
+  - Coercing invalid numbers or mixing projections could weaken the original declared contract.
+  - A mock of the static checker could make an ignored contract look exercised.
+verification:
+  - Real static checker fails an empty private workspace under current L1 minimums without any catalog file.
+  - Formal HTTP request handler persists metadata through actual FactoryStore; restored request and rebuilt quality context enforce the same minimums.
+  - Explicit empty, malformed or contradictory current contract produces an explicit failed result with no legacy fallback.
+  - Optional workspace/run/project bindings reject stale or foreign claims.
+  - No formal quantitative contract leaves ordinary project behavior unchanged; descriptive-only input never falls back to catalog.
+  - Legacy catalog-only input remains a read-only compatibility path when no formal contract is present.
+  - Ruff, mypy and focused pytest gates must run before source STOP.
+limits:
+  - Private synthetic module fixtures only; scheduler and remote readiness are isolated, no actual provider role execution.
+  - No target dependency installation, target runnable acceptance, service restart or ledger fabrication.
+  - Native remote provider, real QA, project Outcome and resource release remain root integration/acceptance work.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m11/red.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m11/final36.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m11/related-baseline-v2.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m11/implementation.json
+result:
+  new_component_tests: 36 passed
+  related: 3 passed; one existing fixture run-keyword failure independently reproduced with exact prewrite consumer bytes
+  mypy: two files; no issues
+  ruff: check and format passed
+  integration_and_native: not run by author; root owns independent review and integration

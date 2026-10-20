@@ -208,7 +208,6 @@ from ._phases_materialization import (
     _project_repair_revalidation_summary,
 )
 from ._phases_quality import (
-    _materialization_task_boundary_triage_summary,
     _phase_quality_repair_loop,
     _phase_semantic_quality_repair_loop,
 )
@@ -258,7 +257,6 @@ from ..quality_gate import (  # noqa: E402  (deferred for circular-import safety
     _is_node_runtime_source_path as _is_node_runtime_source_path,
     _is_recoverable_no_write_mutation_contract_error_text as _is_recoverable_no_write_mutation_contract_error_text,
     _is_recoverable_no_write_mutation_contract_exception as _is_recoverable_no_write_mutation_contract_exception,
-    _materialization_plan_probe_requires_task_boundary_triage as _materialization_plan_probe_requires_task_boundary_triage,
     _materialization_quality_scan_paths as _materialization_quality_scan_paths,
     _materialization_quality_scan_paths_with_package_manifest as _materialization_quality_scan_paths_with_package_manifest,
     _merge_successful_write_paths as _merge_successful_write_paths,

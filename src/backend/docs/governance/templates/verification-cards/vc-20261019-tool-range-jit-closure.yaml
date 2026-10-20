@@ -1,0 +1,52 @@
+id: vc-20261019-tool-range-jit-closure
+classification: pattern
+status: source_stop_pending_independent_review
+owner: roles.kernel
+scope:
+  - polaris/kernelone/editing/contracts.py
+  - polaris/kernelone/editing/editblock_engine.py
+  - polaris/kernelone/llm/toolkit/tool_normalization/normalizers/_edit_blocks.py
+  - polaris/kernelone/llm/toolkit/executor/handlers/filesystem_editblocks.py
+  - polaris/cells/roles/adapters/internal/director/execution_tools.py
+  - polaris/cells/roles/adapters/internal/director/directed_effect_policy_snapshot.py
+  - polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_helpers.py
+  - polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_executor_core.py
+  - polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_executor_execute.py
+design:
+  - Reuse one pure KernelOne exact-offset composer for policy preview and physical line-range edits.
+  - Preserve explicit empty replacement as deletion; missing replacement remains invalid.
+  - Keep malformed SEARCH/REPLACE input failed without bypassing its parser.
+  - Produce a typed prewrite rejection only after known validation and observed unchanged bytes.
+  - Bind actual physical arguments separately from native arguments and prepared operation identity.
+  - Retain safe whole-file replacement collapse; preserve partial edits in original order.
+  - Prepare dependent cohorts only after actual committed predecessor receipts using existing TaskRuntime parent rollover.
+  - Freeze the complete original declaration before any effect and account for every decoded call.
+  - Preserve unknown admission or dispatch outcomes and refuse cold replay without proof.
+assumptions:
+  - A later partial mutation does not supersede earlier partial changes.
+  - One prepare-time preimage cannot authorize later same-path mutations after a prior write.
+  - TaskRuntime public admission remains the only parent rollover authority.
+  - Explicit empty capability scope never defaults to a target path.
+pre_mortem:
+  - Converting missing values to empty would silently delete content.
+  - Synthesized substring search could edit an earlier duplicate line.
+  - Retaining partial calls against one stale sealed baseline would fail after the first write.
+  - A generic failed result cannot prove that a write never started.
+  - A cold replay must not repeat a previously committed physical effect.
+verification:
+  - Real gateway, policy, TaskRuntime, fence, physical mutation and receipt owners with no provider invocation.
+  - Exact bounds, empty, whitespace, EOF and duplicate-line composition cases.
+  - Actual range replacement and deletion receipts with before and after hashes.
+  - Two same-path partial commits with a fresh dependent preimage and durable parent rollover.
+  - Invalid input before admission, explicit empty scope and unchanged bytes for typed rejections.
+  - Receipt observation loss, preimage drift and cold replay cannot admit or repeat later effects.
+  - Selected adjacent normalizer, Toolkit, Director tool and DEO checks plus scoped Ruff, format and mypy.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r04-tool-range-closure/nine-point-design.md
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r04-tool-range-closure/proposal.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r04-tool-range-closure/corrected-normalization-frozen-red-result.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r04-tool-range-closure/two-partials-result.json
+limits:
+  - Component evidence is not fresh native delivery qualification.
+  - Original R04 failure and logical resource release UNKNOWN remain unchanged.
+  - No model, catalog, target, acceptance, service or lifecycle changes are authorized here.

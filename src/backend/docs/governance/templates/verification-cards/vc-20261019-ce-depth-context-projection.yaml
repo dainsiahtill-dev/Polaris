@@ -1,0 +1,60 @@
+id: vc-20261019-ce-depth-context-projection
+classification: pattern
+status: source_stop_pending_independent_review
+owner: factory.pipeline
+scope:
+  - polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_01.py
+  - polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py
+  - polaris/cells/factory/pipeline/tests/test_ce_portfolio_depth_context_projection.py
+design:
+  - Pass the existing current stage context through the CE objective, prompt and typed-task builders.
+  - Reuse WorkspaceQualityRunner current-contract validation within the same Cell.
+  - Keep the immutable PM contract unchanged and preserve every declared quantitative and descriptive field.
+  - Add no catalog, fact owner, gate, provider call or target mutation.
+assumptions:
+  - A missing task-local contract does not imply zero current-run minimums.
+  - Explicit zero, absent, descriptive-only and invalid contracts have distinct meanings.
+  - Runtime ports in the stage context are opaque; only selected contract data may be deep-copied.
+hypotheses:
+  - The CE objective computed zeros from raw PM tasks while the formal run input carried the original minimums.
+  - Sharing strict current selection across all three CE projections removes that contradiction.
+pre_mortem:
+  - Reading another catalog or inferring numbers from prose would invent a second authority.
+  - Dropping required evidence, anti-hollow conditions or product intent would narrow the original contract.
+  - Deep-copying the full stage context would fail on live runtime ports.
+  - Descriptive-only current context must not erase an explicit quantitative PM task contract.
+verification:
+  - Focused objective, prompt and typed-task equality for every original declared minimum.
+  - Actual Factory-to-runtime command capture without provider I/O.
+  - Explicit zeros and partial minimums remain exact; absence advertises no authoritative zero clause.
+  - Malformed and conflicting current/task projections reject before the CE request.
+  - Legacy catalog compatibility remains limited to absent current/task contracts.
+  - Sealed failed-run PM/start inputs replay through the real resolver in a separate private workspace.
+  - Ruff check/format and bounded mypy for the three owned source/test files.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-ce-depth-context-fix/sourceSTOP/recorded-r02-red-replay.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-ce-depth-context-fix/sourceSTOP/recorded-r02-green-replay.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-ce-depth-context-fix/sourceSTOP/red.log
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-ce-depth-context-fix/sourceSTOP/report.json
+limits:
+  - Source/component proof only; the original fresh run remains failed.
+  - No target runnable acceptance, new model call, service restart or final delivery claim.
+process_timing:
+  - The diagnosis, before hashes, RED replay and initial failing tests were recorded before production edits.
+  - This verification card was materialized after the initial patch when the final governance check confirmed the pattern-card requirement.
+
+r03_consumer_migration:
+  status: design_recorded_before_current_fix
+  cause: Committed PM authority rederivation omitted the same admitted current depth context passed to the initial DTO builder.
+  current_owner: run.metadata.factory_start_request.metadata.delivery_depth_contract
+  mechanism: Reuse the existing strict resolver and unchanged full DTO equality with persisted admitted metadata at the actual authority consumer.
+  assumptions:
+    - A caller or cold retry must not reconstruct from run.metadata as if it were admitted request metadata.
+    - The immutable PM document remains unchanged and its stage proof is revalidated by the real loader.
+    - Explicit current projection conflicts remain rejected; no missing field is filled from model prose.
+  verification:
+    - Real FactoryStore PM commit and artifact proof reach the actual authority loader with all nine original minimums.
+    - Cold reload of the persisted run reconstructs the same DTOs and authority without process cache.
+    - Tampered PM and conflicting current contracts still reject before CE provider I/O.
+    - Original R03 full authority replay is read-only component evidence; R03 itself remains failed.
+  prior_test_limit: The old Factory-to-runtime capture isolated authority with a stub and did not prove the immutable authority gate.

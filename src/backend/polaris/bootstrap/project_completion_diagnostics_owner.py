@@ -58,6 +58,7 @@ from polaris.cells.factory.verification_guard.public.contracts import (
     ProjectEntrypointObligationObservationV1,
     ProjectKindAuthorityObservationV1,
     ProjectRepairCoverageV1,
+    ProjectVerificationAdmissionObservationV1,
     ProjectVerificationCommandAuthorityObservationV1,
     ProjectVerificationObligationObservationV1,
 )
@@ -477,13 +478,68 @@ class ProjectCompletionOwnerObservationAdapter:
         )
         if (
             type(policy_decision) is not VerifierCommandPolicyDecisionV1
-            or not policy_decision.authorized
             or policy_decision.normalized_argv != intent.argv
             or policy_decision.normalized_cwd != intent.cwd
+            or policy_decision.input_obligation_ids
+            != tuple(sorted(item.obligation_id for item in intent.input_artifacts))
         ):
-            raise _fail(
-                "project_verification_command_policy_rejected",
-                getattr(policy_decision, "detail", "Verifier command policy rejected the command"),
+            raise _fail("project_verification_command_policy_rejected", "Verifier command policy identity is invalid")
+        if policy_decision.authorized is not True:
+            failure = None
+            if policy_decision.authorized is False and policy_decision.artifact_failure_metadata:
+                metadata = dict(policy_decision.artifact_failure_metadata)
+                entrypoint_failure_bound = True
+                if metadata.get("cause") == "package_entrypoint_target_missing":
+                    verifier = next(
+                        (
+                            row
+                            for row in ce_contract.obligations.verification
+                            if row.obligation_id == query.obligation_id
+                        ),
+                        None,
+                    )
+                    entrypoints = [
+                        row
+                        for row in ce_contract.obligations.entrypoints
+                        if verifier is not None
+                        and row.obligation_id in verifier.covers_obligation_ids
+                        and row.applicability != "not_applicable"
+                        and row.owner_task_id == intent.owner_task_id
+                        and row.runtime_path == metadata.get("target_path")
+                        and row.command == verifier.command
+                        and any(
+                            artifact.path == row.source_path
+                            and artifact.owner_task_id == intent.owner_task_id
+                            and artifact.applicability != "not_applicable"
+                            for artifact in ce_contract.obligations.artifacts
+                        )
+                    ]
+                    entrypoint_failure_bound = intent.modality == "entrypoint" and len(entrypoints) == 1
+                failure = (
+                    ProjectVerificationAdmissionObservationV1(
+                        workspace=query.workspace,
+                        project_id=query.project_id,
+                        run_id=query.run_id,
+                        completion_contract_hash=query.completion_contract_hash,
+                        obligation_id=query.obligation_id,
+                        owner_task_id=intent.owner_task_id,
+                        modality=intent.modality,
+                        argv=intent.argv,
+                        cwd=intent.cwd,
+                        command_authority_hash=intent.command_authority_hash,
+                        policy_error_code=policy_decision.error_code,
+                        failure_domain=metadata["failure_domain"],
+                        cause=metadata["cause"],
+                        source_path=metadata["source_path"],
+                        source_sha256=metadata["source_sha256"],
+                        source_snapshot_kind=metadata["source_snapshot_kind"],
+                        target_path=metadata.get("target_path"),
+                    )
+                    if entrypoint_failure_bound
+                    else None
+                )
+            raise ProjectCompletionOwnerObservationV1Error(
+                "project_verification_command_policy_rejected", policy_decision.detail, admission_failure=failure
             )
         execution_policy_hash = _canonical_hash(policy_payload)
         authority_revision = _canonical_hash(

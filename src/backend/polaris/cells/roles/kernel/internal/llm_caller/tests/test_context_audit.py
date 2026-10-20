@@ -28,12 +28,16 @@ async def test_ce_prebuilt_preparation_audits_source_and_actual_wire(
     from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
         build_final_request_context_audit_for_request,
     )
+    from polaris.cells.roles.kernel.internal.llm_caller.context_audit._payloads import _ce_required_command_row_coverage
     from polaris.cells.roles.kernel.tests.test_context_gateway_integration import _prepare_ce_boundary
     from polaris.infrastructure.llm.providers.openai_provider import _build_openai_payload
 
     profile, prepared, capture = await _prepare_ce_boundary(tmp_path, genuine=genuine, decoy_role=decoy_role)
-    chat_messages = prepared.ai_request.context["chat_messages"]
-    assert all(set(item) == {"role", "content"} for item in chat_messages)
+    # Exercise the role/content-only wire while retaining the richer prepared
+    # source. Production native fields are not stripped to satisfy this fixture.
+    chat_messages = [
+        {"role": item["role"], "content": item["content"]} for item in prepared.ai_request.context["chat_messages"]
+    ]
     wire = _build_openai_payload(
         prompt=prepared.input_text,
         model=profile.model,
@@ -41,6 +45,7 @@ async def test_ce_prebuilt_preparation_audits_source_and_actual_wire(
         stream=False,
         config={**prepared.request_options, "chat_messages": chat_messages},
     )
+    assert all(set(item) == {"role", "content"} for item in wire["messages"])
     # Empty request role verifies the existing profile-derived CE policy.
     active = replace(
         prepared.ai_request,
@@ -52,6 +57,15 @@ async def test_ce_prebuilt_preparation_audits_source_and_actual_wire(
     )
     audit = build_final_request_context_audit_for_request(ai_request=active, prepared=prepared, profile=profile)
     coverage = audit["final_request_evidence_coverage"]["ce_required_command_authority"]
+    wire_coverage = _ce_required_command_row_coverage(
+        active,
+        active.context["chat_messages"],
+        role_id=profile.role_id,
+        source_messages=prepared.messages,
+    )
+    assert wire_coverage["pass"] is genuine
+    assert wire_coverage["included_rows"] == (capture["required_rows"] if genuine else [])
+    capture["serialized_wire_coverage"] = wire_coverage
     capture.update(serialized_body=wire, audit=audit, active_chat_messages=active.context["chat_messages"])
     (tmp_path / "ce-audit-boundary.json").write_text(
         json.dumps(capture, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -61,9 +75,25 @@ async def test_ce_prebuilt_preparation_audits_source_and_actual_wire(
     assert coverage["included_rows"] == (capture["required_rows"] if genuine else [])
     if genuine:
         # Final body substitution must fail even while prepared source remains intact.
-        active.context["chat_messages"] = [{"role": "system", "content": "ordinary"}, chat_messages[-1]]
-        failed = build_final_request_context_audit_for_request(ai_request=active, prepared=prepared, profile=profile)
-        assert failed["final_request_evidence_coverage"]["ce_required_command_authority"]["pass"] is False
+        from polaris.cells.roles.kernel.internal.context_gateway.gateway_helpers import CE_COMMAND_TABLE_START
+
+        missing = [{"role": "system", "content": "ordinary"}, {"role": "user", "content": "Plan committed PM tasks."}]
+        missing_wire = _build_openai_payload(
+            prompt=prepared.input_text,
+            model=profile.model,
+            api_path="/v1/chat/completions",
+            stream=False,
+            config={**prepared.request_options, "chat_messages": missing},
+        )
+        assert all(CE_COMMAND_TABLE_START not in item["content"] for item in missing_wire["messages"])
+        active.context["chat_messages"] = missing_wire["messages"]
+        failed = _ce_required_command_row_coverage(
+            active,
+            missing_wire["messages"],
+            role_id=profile.role_id,
+            source_messages=prepared.messages,
+        )
+        assert failed["pass"] is False
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,11 @@ from polaris.cells.events.fact_stream.public import (
     query_segmented_fact_ledger_head,
 )
 from polaris.kernelone.storage import resolve_workspace_runtime_identity
+from polaris.kernelone.tool_execution.captured_tool_semantics import (
+    classify_captured_tool_semantics,
+    restore_captured_tool_spec_snapshot,
+)
+from polaris.kernelone.tool_execution.contracts import tool_batch_inventory_error
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 _STREAM = "roles.kernel.turn_outcomes"
@@ -116,6 +121,69 @@ def _receipt_serializations(receipt: dict[str, Any]) -> tuple[list[dict[str, Any
             singles.append(single)
         layouts.append(singles)
     return tuple(layouts)
+
+
+def _matching_receipt_layouts(
+    receipt: dict[str, Any], observed_refs: tuple[tuple[str, str], ...]
+) -> list[list[dict[str, Any]]]:
+    """Prove complete known serializers with actual witnessed component IDs."""
+    layouts = _receipt_serializations(receipt)
+    matches = [
+        layout for layout in layouts if tuple((item["batch_id"], stable_hash(item)) for item in layout) == observed_refs
+    ]
+    count = len(receipt["results"])
+    if len(observed_refs) == count:
+        singletons: dict[tuple[int, str], dict[str, Any]] = {}
+        for layout in layouts:
+            if len(layout) == count and all(len(item["results"]) == 1 for item in layout):
+                for index, item in enumerate(layout):
+                    singletons[(index, stable_hash(item))] = item
+        selected: list[dict[str, Any]] = []
+        indices: list[int] = []
+        for batch_id, digest in observed_refs:
+            candidates: dict[tuple[int, str], dict[str, Any]] = {}
+            for (index, _), item in singletons.items():
+                candidate = {**item, "batch_id": batch_id}
+                if stable_hash(candidate) == digest:
+                    candidates[(index, stable_hash(candidate))] = candidate
+            if len(candidates) != 1:
+                break
+            (index, _), candidate = next(iter(candidates.items()))
+            indices.append(index)
+            selected.append(candidate)
+        # merge_batch_receipts retains original receipt order and first ID.
+        # Declaration order may differ, but the receipt/ref inventory may not.
+        if indices == list(range(count)) and selected[0]["batch_id"] == receipt["batch_id"]:
+            matches.append(selected)
+    return list({stable_hash(layout): layout for layout in matches}.values())
+
+
+def _validate_captured_read_classification(
+    invocation: dict[str, Any], classification: dict[str, Any], *, required: bool
+) -> None:
+    """Use the owner's frozen snapshot; never recapture historical ToolSpecs."""
+    if "snapshot" not in classification:
+        _require(not required, "owner_parallel_snapshot_missing")
+        return
+    snapshot = restore_captured_tool_spec_snapshot(classification["snapshot"])
+    _require(snapshot is not None and snapshot.registered is True, "owner_captured_snapshot_invalid")
+    assert snapshot is not None
+    _require(
+        snapshot.raw_tool_name == invocation["raw_tool_name"] == classification.get("raw_tool_name")
+        and snapshot.canonical_tool_name == invocation["tool_name"] == classification.get("canonical_tool_name"),
+        "owner_captured_snapshot_binding_mismatch",
+    )
+    semantics = classify_captured_tool_semantics(snapshot)
+    _require(
+        semantics.effect_type == classification.get("effect_type") == invocation.get("effect_type") == "read"
+        and semantics.execution_mode
+        == classification.get("execution_mode")
+        == invocation.get("execution_mode")
+        == "readonly_parallel"
+        and semantics.normalization_required is classification.get("normalization_required") is False
+        and semantics.error_code is classification.get("error_code") is None,
+        "owner_captured_semantics_mismatch",
+    )
 
 
 def _observe_owner(
@@ -248,6 +316,7 @@ def _observe_owner(
         and type(results) is list
         and type(raw_results) is list
         and len(results) == len(raw_results) == dispatched
+        and type(lifecycle.get("tool_result_count")) is int
         and lifecycle.get("tool_result_count") == dispatched,
         "owner_result_count_mismatch",
     )
@@ -268,11 +337,6 @@ def _observe_owner(
             row.get("status") in {"success", "error", "failed", "cancelled", "timeout", "aborted"},
             "owner_result_nonterminal",
         )
-        spec = ToolSpecRegistry.get(ToolSpecRegistry.get_canonical(str(row.get("tool_name") or "")))
-        _require(
-            spec is not None and spec.is_read_tool() and not spec.is_write_tool() and not spec.is_exec_tool(),
-            "owner_result_not_readonly",
-        )
         _require(
             all(
                 row.get(key) is None
@@ -285,7 +349,9 @@ def _observe_owner(
             ),
             "owner_result_has_effect",
         )
-        _require(_result_identity(row) == _result_identity(raw), "owner_result_mirror_mismatch")
+        _require(
+            stable_hash(_result_identity(row)) == stable_hash(_result_identity(raw)), "owner_result_mirror_mismatch"
+        )
         _require(
             set(_result_identity(row)) <= {"call_id", "tool_name", "status", "result", "error"},
             "owner_result_unknown_field",
@@ -300,34 +366,63 @@ def _observe_owner(
     )
     decision = _mapping(outcome.get("decision"))
     decision_batch = _mapping(decision.get("tool_batch"))
+    declared = decision_batch.get("invocations")
+    logical_batch_id = decision_batch.get("batch_id")
     invocations = execution.get("invocations")
     _require(
         decision.get("turn_id") == turn_id
         and decision.get("kind") == "tool_batch"
-        and decision_batch.get("batch_id") == batch_id,
+        and type(logical_batch_id) is str
+        and bool(logical_batch_id),
         "owner_decision_identity_mismatch",
     )
+    inventory_error = tool_batch_inventory_error(decision.get("tool_batch"))
+    _require(inventory_error is None, inventory_error or "owner_invocation_inventory_mismatch")
     _require(
-        type(invocations) is list
-        and len(invocations) == dispatched
-        and decision_batch.get("invocations") == invocations,
+        type(declared) is list
+        and len(declared) == dispatched
+        and all(type(item) is dict for item in declared)
+        and type(invocations) is list
+        and len(invocations) == dispatched,
         "owner_invocation_mismatch",
     )
+    declared = cast(list[dict[str, Any]], declared)
+    invocations = cast(list[dict[str, Any]], invocations)
     batches = execution.get("invocation_batches")
     _require(
         type(batches) is list
         and len(batches) == 1
         and type(batches[0]) is dict
-        and batches[0].get("batch_id") == batch_id
-        and batches[0].get("invocations") == invocations,
+        and batches[0].get("batch_id") == logical_batch_id
+        and stable_hash(batches[0].get("invocations")) == stable_hash(declared),
         "owner_invocation_batch_mismatch",
     )
-    invocations = cast(list[dict[str, Any]], invocations)
+    declared_calls = [item.get("call_id") for item in declared]
+    _require(
+        all(type(call) is str and bool(call) for call in declared_calls) and len(set(declared_calls)) == dispatched,
+        "owner_invocation_identity_collision",
+    )
+    declared_by_call = {item["call_id"]: item for item in declared}
+    for invocation, call in zip(invocations, calls, strict=True):
+        _require(
+            type(invocation) is dict
+            and invocation.get("call_id") == call
+            and call in declared_by_call
+            and stable_hash(invocation) == stable_hash(declared_by_call[call]),
+            "owner_invocation_mismatch",
+        )
+    reordered = declared_calls != calls
+    if reordered:
+        _require(
+            all(item.get("execution_mode") == "readonly_parallel" for item in declared)
+            and not any(decision_batch.get(field) for field in ("readonly_serial", "serial_writes", "async_receipts")),
+            "owner_invocation_order_not_parallel",
+        )
     envelopes = _mapping(decision.get("metadata")).get("native_tool_call_envelopes")
     _require(
         type(envelopes) is list
         and len(envelopes) == dispatched
-        and lifecycle.get("native_tool_call_envelope_refs") == envelopes,
+        and stable_hash(lifecycle.get("native_tool_call_envelope_refs")) == stable_hash(envelopes),
         "owner_native_envelope_mismatch",
     )
     envelopes = cast(list[dict[str, Any]], envelopes)
@@ -344,16 +439,20 @@ def _observe_owner(
     # when a historical producer omitted provider correlation. It supplies no
     # delivery acceptance. Present conflicting bindings remain unknown.
     _require(provider_binding_missing or provider_binding_qualified, "owner_provider_response_mismatch")
-    for index, (invocation, envelope, result) in enumerate(zip(invocations, envelopes, results, strict=True)):
+    results_by_call = {row["call_id"]: row for row in results}
+    for index, (invocation, envelope) in enumerate(zip(declared, envelopes, strict=True)):
+        result = results_by_call[invocation["call_id"]]
         _require(type(invocation) is dict and type(envelope) is dict, "owner_invocation_shape_mismatch")
         classification = _mapping(invocation.get("classification"))
-        spec = ToolSpecRegistry.get(ToolSpecRegistry.get_canonical(invocation.get("tool_name", "")))
         _require(
             invocation.get("call_id") == result["call_id"] == envelope.get("call_id")
             and invocation.get("tool_name") == result["tool_name"]
-            and spec is not None
+            and type(invocation.get("tool_name")) is str
+            and bool(invocation["tool_name"])
+            and type(invocation.get("raw_tool_name")) is str
+            and bool(invocation["raw_tool_name"])
             and classification.get("registered") is True
-            and classification.get("canonical_tool_name") == spec.canonical_name
+            and classification.get("raw_tool_name") == invocation.get("raw_tool_name")
             and classification.get("effect_type") == invocation.get("effect_type") == "read"
             and classification.get("execution_mode") == invocation.get("execution_mode")
             and invocation.get("execution_mode") in {"readonly_parallel", "readonly_serial"}
@@ -363,20 +462,40 @@ def _observe_owner(
         native_arguments = invocation.get("native_arguments")
         _require(
             type(native_arguments) is dict
-            and native_arguments == invocation.get("arguments")
+            and stable_hash(native_arguments) == stable_hash(invocation.get("arguments"))
             and classification.get("normalization_required") is False
             and envelope.get("schema_version") == "native_tool_call_envelope.v1"
+            and type(envelope.get("index")) is int
             and envelope.get("index") == index
             and envelope.get("tool_name") == invocation.get("raw_tool_name")
             and stable_hash(native_arguments) == envelope.get("arguments_hash"),
             "owner_native_arguments_mismatch",
         )
+        _validate_captured_read_classification(invocation, classification, required=reordered)
+        if "snapshot" not in classification:
+            # Old owners lack frozen ToolSpec evidence. Retain their original
+            # restrictive registry checks; never recapture complete snapshots.
+            spec = ToolSpecRegistry.get(ToolSpecRegistry.get_canonical(invocation["tool_name"]))
+            _require(
+                spec is not None
+                and spec.is_read_tool()
+                and not spec.is_write_tool()
+                and not spec.is_exec_tool()
+                and classification.get("canonical_tool_name") == spec.canonical_name,
+                "owner_result_not_readonly",
+            )
     refs = lifecycle.get("batch_receipt_refs")
     _require(
         type(refs) is list
         and bool(refs)
         and all(
-            type(ref) is dict and set(ref) == {"batch_id", "receipt_hash"} and ref["batch_id"] == batch_id
+            type(ref) is dict
+            and set(ref) == {"batch_id", "receipt_hash"}
+            and type(ref["batch_id"]) is str
+            and bool(ref["batch_id"])
+            and type(ref["receipt_hash"]) is str
+            and len(ref["receipt_hash"]) == 64
+            and all(char in "0123456789abcdef" for char in ref["receipt_hash"])
             for ref in refs
         ),
         "owner_receipt_ref_shape_mismatch",
@@ -384,15 +503,16 @@ def _observe_owner(
     refs = cast(list[dict[str, Any]], refs)
     observed_refs = tuple((ref["batch_id"], ref["receipt_hash"]) for ref in refs)
     _require(len(set(observed_refs)) == len(observed_refs), "owner_receipt_ref_collision")
-    matches = [
-        layout
-        for layout in _receipt_serializations(receipt)
-        if tuple((batch_id, stable_hash(item)) for item in layout) == observed_refs
-    ]
+    matches = _matching_receipt_layouts(receipt, observed_refs)
     _require(bool(matches), "owner_receipt_ref_hash_mismatch")
-    if lifecycle.get("batch_receipt_hash"):
+    list_hash = lifecycle.get("batch_receipt_hash")
+    if list_hash is not None and not (type(list_hash) is str and list_hash == ""):
         _require(
-            any(stable_hash(layout) == lifecycle["batch_receipt_hash"] for layout in matches),
+            type(list_hash) is str and len(list_hash) == 64 and all(char in "0123456789abcdef" for char in list_hash),
+            "owner_batch_receipt_hash_malformed",
+        )
+        _require(
+            any(stable_hash(layout) == list_hash for layout in matches),
             "owner_batch_receipt_hash_mismatch",
         )
     event_id = record.get("event_id")

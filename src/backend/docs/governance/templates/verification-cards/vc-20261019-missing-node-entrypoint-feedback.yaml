@@ -1,0 +1,25 @@
+id: vc-20261019-missing-node-entrypoint-feedback
+classification: pattern
+status: source_integrated_pending_independent_review
+problem: A missing CE-declared Node runtime target loses artifact feedback at command admission.
+evidence:
+  native_counterexample: factory_8778283042cf
+  denied_obligation: verification-authority-entrypoint-001
+  first_loss: polaris/cells/control_plane/verifier_policy/public/service.py
+  typed_carrier: polaris/cells/factory/verification_guard/public/contracts.py
+  collector: polaris/cells/factory/pipeline/internal/factory_materialization_impl.py
+assumptions:
+  - The original failed run and its receipts remain immutable.
+  - A missing target is denied and unexecuted, with no command receipt or execution authority.
+  - Stable confined UTF-8 manifest bytes and an exact current CE source/runtime/owner binding permit feedback only.
+  - Existing Director TaskRuntime, JobToken, DEO/CAS, candidate rollback and Broker revalidation own repair effects.
+pre_mortem:
+  - Unknown filesystem state, links, traversal, shell wrappers, preloads and unsupported interpreter options remain hard denials.
+  - Stale source SHA, foreign owner/target/contract or empty write scope cannot authorize a repair call.
+  - A model cannot resolve the failure by silently rewriting the CE runtime path or copying unowned build output.
+verification:
+  - polaris/cells/control_plane/verifier_policy/tests/test_missing_node_entrypoint_feedback.py
+  - polaris/cells/factory/pipeline/tests/test_missing_entrypoint_admission_feedback_route.py
+limits:
+  - Provider and build-process fixtures are synthetic; module success is not native delivery qualification.
+  - Current independent QA, authoritative ProjectOutcome and resource closure remain separate requirements.

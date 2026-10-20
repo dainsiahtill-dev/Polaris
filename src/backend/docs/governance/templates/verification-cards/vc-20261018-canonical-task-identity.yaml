@@ -1,0 +1,35 @@
+id: vc-20261018-canonical-task-identity
+classification: pattern
+status: source_stop_pending_independent_review
+owner: control_plane.run_ledger
+scope:
+  - polaris/cells/control_plane/run_ledger/public/service.py
+  - polaris/cells/control_plane/run_ledger/tests/test_canonical_task_identity.py
+assumptions:
+  - TaskRuntime numeric row ID and external CE label are distinct identities carried by the same persisted native attempt.
+  - Stable digest-verified captured facts are the authority; mutable task and session mirrors are not queried.
+hypotheses:
+  - Strict qualification discarded the explicit external identity before comparing CP task labels.
+  - Recovering the existing public attempt identity from native captured snapshots permits exact joins without changing verdicts.
+pre_mortem:
+  - No prefix stripping, global alias registry, mutable row fallback or fabricated receipt.
+  - Declarations and compact legacy facts cannot introduce external aliases.
+  - Foreign child/session/workspace/factory and ambiguous aliases must remain rejected.
+verification:
+  - Actual public TaskRuntime creation, claim and terminal settlement plus real CP lifecycle and failed TaskBoundary producers persist into a cold strict query.
+  - Both TASK-1 and opaque labels join numeric row1 while required_verifier_missing and ok=false remain unchanged.
+  - Conflicting event, token, envelope and nested-boundary identities fail closed.
+  - Session, numeric row, external alias and owner scope contradictions fail closed.
+  - Repeated identical owner evidence is accepted; contradictory mutable mirrors do not affect the captured query.
+  - Focused, existing canonical, public service, committed turn receipts, TaskRuntime public contracts and execution session tests run.
+limits:
+  - Private synthetic task content; no provider, real target command or product control.
+  - Project identity, verifier admission, resource closure and UI are outside this module.
+  - Historical r01 failure and resource uncertainty remain preserved.
+  - No claim of native delivery or 18-file integration or KernelOne ALL qualification.
+  - Existing unrelated service.py tuple formatting delta is preserved and compared with exact prewrite bytes; changed region and new test are formatter-clean.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m12b/red.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m12b/final-adjacent.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m12b/format-baseline-comparison.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m12b/implementation.json

@@ -1,0 +1,228 @@
+{
+  "title": "历史经验报告",
+  "verified_at": "2026-10-20T07:27:29.429234+00:00",
+  "scope": "Documentation delivery only. No Factory, Bench, LLM, or product acceptance was executed.",
+  "report_sha256": "aec2efcb5c257d174a757b553bcec67b62319e59d50f78f718db35d9a965b229",
+  "chapters": 10,
+  "cases": 68,
+  "cited_sources": 67,
+  "catalogued_documents": 1285,
+  "duplicate_groups": 23,
+  "frontend_checks": [
+    {
+      "command": "rtk proxy npm test -- src/frontend/src/app/launcher/foundation/FoundationWorkspace.test.tsx src/frontend/src/app/launcher/foundation/MarkdownArticle.test.tsx src/frontend/src/app/launcher/LauncherFoundation.test.tsx",
+      "exit_code": 0,
+      "test_files": 3,
+      "passed": 10
+    },
+    {
+      "command": "rtk proxy npm run typecheck",
+      "exit_code": 0
+    },
+    {
+      "command": "rtk proxy npx vite build --config src/frontend/vite.config.ts --outDir /tmp/polaris-history-build-final-20261020",
+      "exit_code": 0,
+      "modules": 4502,
+      "warning": "Existing large bundle warning retained; no gate change.",
+      "built_report_matches_source": true
+    },
+    {
+      "command": "rtk proxy git diff --check -- src/frontend/src/app/launcher/foundation/content.ts docs/history",
+      "exit_code": 0
+    }
+  ],
+  "browser": {
+    "url": "http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-report",
+    "chapter_checks": [
+      {
+        "chapter": 1,
+        "title": "历史 · 01 阅读结论",
+        "characters": 1433,
+        "url": "http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-1"
+      },
+      {
+        "chapter": 2,
+        "title": "历史 · 02 历代演进",
+        "characters": 1974,
+        "url": "http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-2"
+      },
+      {
+        "chapter": 3,
+        "title": "历史 · 03 架构经验",
+        "characters": 1980,
+        "url": "http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-3"
+      },
+      {
+        "chapter": 4,
+        "title": "历史 · 04 踩坑案例",
+        "characters": 26630,
+        "url": "http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-4"
+      },
+      {
+        "chapter": 5,
+        "title": "历史 · 05 验证边界",
+        "characters": 5423,
+        "url": "http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-5"
+      },
+      {
+        "chapter": 6,
+        "title": "历史 · 06 研发方法",
+        "characters": 1485,
+        "url": "http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-6"
+      },
+      {
+        "chapter": 7,
+        "title": "历史 · 07 文档阅读",
+        "characters": 3113,
+        "url": "http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-7"
+      },
+      {
+        "chapter": 8,
+        "title": "历史 · 08 后续顺序",
+        "characters": 765,
+        "url": "http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-8"
+      },
+      {
+        "chapter": 9,
+        "title": "历史 · 09 验收交接",
+        "characters": 1300,
+        "url": "http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-9"
+      },
+      {
+        "chapter": 10,
+        "title": "历史 · 10 最终认识与来源",
+        "characters": 7789,
+        "url": "http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-10"
+      }
+    ],
+    "assets": [
+      {
+        "name": "polaris-history-experience.md",
+        "status": 200,
+        "bytes": 111315
+      },
+      {
+        "name": "polaris-history-sources.html",
+        "status": 200,
+        "bytes": 474476
+      },
+      {
+        "name": "polaris-history-document-catalogue.md",
+        "status": 200,
+        "bytes": 231514
+      },
+      {
+        "name": "polaris-history-document-catalogue.json",
+        "status": 200,
+        "bytes": 491108
+      },
+      {
+        "name": "polaris-history-evidence.json",
+        "status": 200,
+        "bytes": 603612
+      }
+    ],
+    "viewports": [
+      {
+        "width": 1440,
+        "document": 1440,
+        "readerWidth": 1192,
+        "readerScroll": 1192
+      },
+      {
+        "width": 768,
+        "document": 768,
+        "readerWidth": 520,
+        "readerScroll": 520
+      },
+      {
+        "width": 390,
+        "document": 390,
+        "readerWidth": 390,
+        "readerScroll": 390
+      }
+    ],
+    "reload_keeps_topic": true,
+    "source_navigation": {
+      "url": "http://127.0.0.1:59977/reports/polaris-history-sources.html#s001",
+      "status": 200,
+      "fragment_exists": true
+    },
+    "download": {
+      "filename": "历史经验报告.md",
+      "bytes": 111315,
+      "sha256": "aec2efcb5c257d174a757b553bcec67b62319e59d50f78f718db35d9a965b229",
+      "matches_source": true
+    },
+    "mobile_reading_title_box": {
+      "x": 18,
+      "y": 0.359375,
+      "width": 354,
+      "height": 33.796875
+    },
+    "mobile_tables": {
+      "width": 390,
+      "document": 390,
+      "readerWidth": 390,
+      "readerScroll": 390
+    },
+    "page_errors": [],
+    "request_failures": [],
+    "console_errors": [],
+    "status": "PASS_DOCUMENT_DELIVERY_ONLY"
+  },
+  "browser_fixture_correction": {
+    "first_attempt": "Selector matched both the paper title and the Markdown title.",
+    "fix": "Scoped selector to .foundation-paper > h3; no product fix required.",
+    "verified_again": true
+  },
+  "editorial_reviews": [
+    {
+      "task": "H1",
+      "status_before_editorial_fixes": "review_complete_with_citation_fixes",
+      "summary": "早期12案例的核心摘要有原文支持，未发现把设计/历史失败写成当前通过、把旧RAMDISK/TurnEngine规则当当前执行规范、或把3月文档日期冒称Git提交事实。发现3组来源摘录缺口（4处重要措辞）与1处可收窄语言；均可最小修正。",
+      "review_sha256": "c4e628ac6bf2eecc61d9d1b0507b6d79272f0bbd1f6d65f0253d18746fb2a52a",
+      "corrections_applied": true,
+      "followup_product_run": false
+    },
+    {
+      "task": "H2",
+      "status_before_editorial_fixes": "passed_with_nonblocking_citation_fixes",
+      "summary": "中期事实与证据口径通过，无P0/P1事实问题。3处P2摘录覆盖可最小补齐；报告未扩大历史成功。",
+      "review_sha256": "14e794cce01ca5f2a3a8d0fa3f1116543726a803c154ca3293655595bf9dbd76",
+      "corrections_applied": true,
+      "followup_product_run": false
+    },
+    {
+      "task": "H3",
+      "status_before_editorial_fixes": "PASS_WITH_MINOR_DOCUMENTATION_REVISIONS",
+      "summary": "近期30案例、M01—M16含子模块表、R10与第8章主事实准确。R10未达QA和初次拒绝可能正确均明确；七旧wire未知与R10四份闭合分开；Factory容量/F35、ContextOS静态CAS/RunLedger动态CAS分属不同owner。24个近期来源的当前SHA与快照、所有所载摘录行逐行匹配。发现两组引用缺结果原件、一个权限措辞歧义和一个下一步范围澄清；不构成今日源码缺陷认证。",
+      "review_sha256": "5a5e9bddcacb05271ed2d7dc99e0dec8c52e70ffb17c6199d8bb3ae142ffc0c2",
+      "corrections_applied": true,
+      "followup_product_run": false
+    }
+  ],
+  "preservation": {
+    "baseline_dirty_files": 173,
+    "baseline_files_removed": [],
+    "changed_during_task_not_edited_by_this_task": [
+      "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+      "src/frontend/src/app/launcher/foundation/papers/00-system-paper.zh.md",
+      "src/frontend/src/app/launcher/foundation/papers/tools.zh.md",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_ce_recipe_repair_scope_guidance.py"
+    ],
+    "product_content_registration": "Only Foundation content registration was added.",
+    "preexisting_dirty_files_edited_by_this_task": []
+  },
+  "artifact_hashes": {
+    "src/frontend/src/app/launcher/foundation/papers/04-history-experience-report.zh.md": "aec2efcb5c257d174a757b553bcec67b62319e59d50f78f718db35d9a965b229",
+    "src/frontend/public/reports/polaris-history-experience.md": "aec2efcb5c257d174a757b553bcec67b62319e59d50f78f718db35d9a965b229",
+    "src/frontend/public/reports/polaris-history-document-catalogue.md": "6d31b3d621558a206b6e15a24a31342e1f563169d53b5fa06bf72d3217cdbb5e",
+    "src/frontend/public/reports/polaris-history-document-catalogue.json": "58eff3c162e5ab352969217c5e08a341e7bea2473aae690e29af2269b7f9e827",
+    "src/frontend/public/reports/polaris-history-sources.html": "eadaa98fd7c4f61f970eb98f68eb7ec55695be1ce375203d4bac5af1a7ba05f0"
+  },
+  "documentation_assets_version_control": {
+    "ignored": false,
+    "scope": "Five explicit report assets permitted by src/frontend/public/.gitignore; other reports remain ignored."
+  }
+}

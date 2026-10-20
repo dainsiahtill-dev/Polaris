@@ -1,0 +1,38 @@
+id: vc-20261019-captured-native-lifecycle-scope
+classification: defect
+status: component_verified_native_pending
+scope:
+  - polaris/cells/control_plane/run_ledger/public/service.py
+  - polaris/cells/control_plane/run_ledger/tests/test_native_lifecycle_task_project.py
+problem:
+  - Strict cold reading original R02 exposed incomplete native lifecycle identity migration.
+  - Some lifecycle tokens carry task-scoped project identity; supplied Factory tokens retain parent authority run beside child execution run.
+hypotheses:
+  - Captured typed TaskRuntime task aliases and unique Factory ancestry can relate these existing namespaces without rewriting facts or tokens.
+  - Every explicit event, token and metadata identity must remain consistent with that ancestry.
+mechanism:
+  - Only tool_call_lifecycle with an exact captured native task owner receives the additional namespace interpretation.
+  - Compact legacy lineage cannot introduce lifecycle alias or parent-token authority.
+  - Supplied Factory token run must equal captured parent and its project must equal captured catalog project.
+  - Event and fact envelope keep the child execution run; all other explicit run and task identities remain exact.
+  - Explicit foreign event or metadata project cannot be masked by token field precedence.
+  - Existing task-boundary compatibility and rejection checks remain unchanged.
+  - No live TaskBoard fallback, token mutation, fact rewrite, execution permission or success grant.
+verification:
+  - Public native task producer and lifecycle append reproduce task-project RED one fail and six passing rejection controls.
+  - Supplied parent token reproduces RED one fail and four passing rejection controls.
+  - Initial combined current and adjacent identity run passed 57 cases.
+  - Independent review falsified explicit event-project precedence; that exact case failed before repair.
+  - Final affected 13-case file passes including foreign project, task, parent, wrong event and compact-only negatives.
+  - Original stopped R02 strict cold read consumes 83 TaskRuntime and 10 CP facts and remains failed, with all 14 original fact-file hashes unchanged.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-task-project-scope-fix/design.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-task-project-scope-fix/parent-green-command.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-task-project-scope-fix/independent-counterexample/result.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-task-project-scope-fix/review-green-command.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/r02-task-project-scope-fix/original-r02-parent-cold-read-result.json
+process_timing:
+  - Design and causal RED evidence preceded mechanism edits; this card was materialized after those bounded experiments.
+remaining:
+  - R02 remains FAILED and its ProjectOutcome was not produced; cold readability is not native reacceptance.
+  - Current native execution, independent QA, outcome consistency and resource closure require a fresh frozen L1-01.

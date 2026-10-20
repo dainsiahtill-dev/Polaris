@@ -64,6 +64,7 @@ depends_on:
 - roles.adapters
 - control_plane.run_ledger
 - control_plane.verifier_policy
+- factory.verification_guard
 - control_plane.verifier_execution
 - runtime.projection
 - director.runtime

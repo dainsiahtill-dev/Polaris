@@ -1,0 +1,40 @@
+id: vc-20261019-task-runtime-event-role
+classification: one_off
+status: component_verified_native_browser_pending
+owner: runtime.task_runtime
+problem: R02 CE execution task events were published as Director events.
+assumptions:
+  - TaskExecutionSession.role_id is the existing execution-role authority.
+  - The exact task_id, session_id and run_id bind the session to the published transition.
+  - Sessionless events have no execution-role authority and stay neutral.
+  - Typed role projection changes no grant, task state, fact stream, envelope identity or cursor.
+design:
+  - Pass the caller's existing TaskExecutionSession to the private event publisher.
+  - Publish canonical PM, chief_engineer, director or QA role, stage and human message.
+  - Preserve existing Director stage/message and legacy run correlation fields.
+  - Never infer execution role from message, task subject, free metadata or run-id text.
+  - Unknown, malformed or mismatched session identity projects unknown with no Factory stage.
+  - Keep the compact row-snapshot boundary and existing JetStream callback unchanged.
+evidence:
+  - R02 browser frames 25-28 label CE task2 as Director; actual CE call_start is frame33.
+  - Publisher lines545-550 unconditionally assign director_dispatch and Director task text.
+  - Existing TaskRuntime caller already owns the concrete session before fact append/publish.
+  - Actual CE producer RED failed on director_dispatch; final focused producer and adjacent check passed18 tests.
+  - Ruff check and format passed on four owned Python files; diff check and this YAML parse passed.
+  - Repository-configured mypy passed production, new tests and the TaskRuntime callback test file.
+  - The roles-kernel callback test file retains23 diagnostics at identical baseline lines/codes under shadow-file replay.
+  - Strict mypy retains only the same two production baseline diagnostics; no suppressions were added.
+  - The two legacy test publisher callbacks now accept the optional session keyword; no carrier was added.
+pre_mortem:
+  - Reading a newer session would mislabel an older transition; use the caller's bound session.
+  - Copying payload role or task title would let free text create role identity.
+  - Dropping the current compact projection could overflow the NATS frame budget.
+  - Header Idle/progress estimates are separate observations and remain outside this change.
+verification:
+  - RED actual create/bind/claim producer for CE through an intercepted JetStream publisher callback.
+  - GREEN same producer for PM, CE, Director and QA; neutral unknown and mismatched identities.
+  - Run focused producer tests plus existing publication/projection adjacent tests once.
+  - Run scoped Ruff, format and mypy; root runs candidate gate after all writers stop.
+remaining:
+  - New fresh browser push and delivery acceptance are pending; no live synthetic events.
+  - R02 failed delivery and broader header/progress projections remain unresolved here.

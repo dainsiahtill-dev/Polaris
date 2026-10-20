@@ -24,6 +24,11 @@ from polaris.cells.events.fact_stream.public import (
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
 )
+from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
+    workspace_quality_interface_discrepancy_evidence,
+    workspace_quality_repair_summary_projection,
+    workspace_quality_summary_requires_task_boundary_triage,
+)
 from polaris.cells.roles.adapters.internal.director import (
     execute_method as execute_method_module,
     quality_gate as quality_gate_module,
@@ -35,16 +40,15 @@ from polaris.cells.roles.adapters.internal.director.adapter import (
     _prepare_role_dialogue_context,
 )
 from polaris.cells.roles.adapters.internal.director.execute_method import (
-    _materialization_task_boundary_triage_summary,
     execute_director_task,
 )
 from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _build_materialization_quality_failure_evidence_context,
     _build_materialization_quality_workspace_evidence_context,
     _extract_task_interface_contract,
-    _materialization_interface_discrepancy_evidence,
-    _materialization_interface_discrepancy_retry_authorized,
-    _materialization_plan_probe_requires_task_boundary_triage,
+)
+from polaris.cells.roles.adapters.internal.director.quality_gate._repair_loop import (
+    _materialization_probe_is_unplannable,
 )
 from polaris.cells.roles.adapters.internal.director.runtime_repair_tool_adapter import (
     run_runtime_repair_with_director_tools,
@@ -578,63 +582,48 @@ def test_extract_task_interface_contract_accepts_ce_module_interface_contract_al
     assert _extract_task_interface_contract({"metadata": {"module_interface_contract": contract}}) == contract
 
 
-def test_materialization_interface_discrepancy_uses_module_interface_contract_for_director_route() -> None:
-    evidence = _materialization_interface_discrepancy_evidence(
-        task={
-            "id": "TASK-2",
-            "metadata": {
-                "module_interface_contract": {
-                    "exports": {"src/models/weather.py": ["WeatherSnapshot"]},
-                    "consumes": {"src/engine/forecast.py": ["WeatherSnapshot"]},
-                }
-            },
-        },
-        plan_probe={
+def test_module_interface_contract_does_not_mint_authority_from_readonly_probe() -> None:
+    contract = {
+        "exports": {"src/models/weather.py": ["WeatherSnapshot"]},
+        "consumes": {"src/engine/forecast.py": ["WeatherSnapshot"]},
+    }
+    assert _extract_task_interface_contract({"metadata": {"module_interface_contract": contract}}) == contract
+    summary = {
+        "repair_target_files": ["src/engine/forecast.py"],
+        "plan_probe_preaudit": {
             "status": "coverage_matched_but_unplannable",
             "covered_unplannable_source_tools": ["deterministic_python_missing_export_repair"],
-            "covered_unplannable_diagnostics": [
-                {"path": "src/engine/forecast.py", "message": "module has no exported member"}
-            ],
+            "covered_unplannable_diagnostic_count": 1,
         },
-        repair_target_files=["src/engine/forecast.py"],
-        artifact_quality_errors=["module has no exported member"],
-    )
-
-    assert evidence["task_interface_contract_present"] is True
-    assert evidence["recommended_owner"] == "director"
-    assert evidence["recommended_route"] == "director_retry_with_interface_discrepancy_context"
-    assert evidence["director_retry_allowed"] is True
-    assert evidence["llm_fallback_blocked"] is False
-    assert evidence["interface_delta"]["contract_present"] is True
-    assert evidence["triage_summary"]["reason"] == "director_local_retry_with_interface_delta"
-    assert "exports" in evidence["task_interface_contract_keys"]
-
-
-def test_materialization_interface_discrepancy_retry_authorization_accepts_standard_and_legacy_keys() -> None:
-    evidence = {
-        "reason": "coverage_matched_but_unplannable",
-        "recommended_owner": "director",
-        "recommended_route": "director_retry_with_interface_discrepancy_context",
     }
+    assert _materialization_probe_is_unplannable(summary) is True
+    assert workspace_quality_interface_discrepancy_evidence(summary) == {}
+    assert workspace_quality_summary_requires_task_boundary_triage(summary) is False
 
-    assert _materialization_interface_discrepancy_retry_authorized(
-        context={
-            "director_interface_discrepancy_retry": {
-                "authorized": True,
-                "interface_discrepancy_evidence": evidence,
-            }
-        },
-        evidence=evidence,
+
+def test_retired_retry_flags_cannot_override_actual_scope_owner_conflict() -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate._scope_scan import (
+        _semantic_exporter_scope_discrepancy_evidence,
     )
-    assert _materialization_interface_discrepancy_retry_authorized(
-        context={
-            "task_boundary_interface_discrepancy_retry": {
-                "authorized": True,
-                "interface_discrepancy_evidence": evidence,
-            }
-        },
-        evidence=evidence,
+
+    scope = {"deferred": True, "out_of_scope_repair_target_files": ["src/foreign.py"]}
+    evidence = _semantic_exporter_scope_discrepancy_evidence(
+        task={"id": "TASK-2", "target_files": ["tests/consumer.py"]},
+        semantic_exporter_targets=["src/foreign.py"],
+        repair_target_files=["tests/consumer.py"],
+        artifact_quality_errors=["foreign exporter requires its actual owner"],
+        task_scope_filter_evidence=scope,
     )
+    for key in ("director_interface_discrepancy_retry", "task_boundary_interface_discrepancy_retry"):
+        summary = {
+            "repair_target_files": ["tests/consumer.py"],
+            "task_boundary_scope_filter": scope,
+            "interface_discrepancy_evidence": evidence,
+            key: {"authorized": True, "recommended_owner": "director"},
+        }
+        assert workspace_quality_summary_requires_task_boundary_triage(summary) is True
+        assert workspace_quality_interface_discrepancy_evidence(summary) == evidence
+        assert evidence["llm_fallback_blocked"] is True
 
 
 def test_materialization_quality_repair_prompt_includes_interface_discrepancy_context_json() -> None:
@@ -677,50 +666,22 @@ def test_materialization_quality_repair_prompt_includes_interface_discrepancy_co
     assert "director_local_retry_with_interface_delta" in message
 
 
-def test_materialization_task_boundary_triage_summary_preserves_director_retry_evidence() -> None:
-    source_evidence = {
-        "schema_version": "director.interface_discrepancy_receipt.v1",
+def test_readonly_probe_projection_preserves_observation_without_retry_authorization() -> None:
+    summary = {
         "task_id": "TASK-2",
-        "reason": "coverage_matched_but_unplannable",
-        "recommended_owner": "director",
-        "recommended_route": "director_retry_with_interface_discrepancy_context",
-        "director_retry_allowed": True,
-        "llm_fallback_blocked": False,
-        "interface_delta": {
-            "schema_version": "director.interface_delta.v1",
-            "requested_symbols": ["WeatherKind"],
-            "actual_public_symbols_by_path": {"src/models/weather.py": ["WeatherReport"]},
+        "plan_probe_preaudit": {
+            "status": "coverage_matched_but_unplannable",
+            "covered_unplannable_source_tools": ["deterministic_python_missing_export_repair"],
+            "covered_unplannable_diagnostic_count": 1,
         },
-        "triage_summary": {
-            "schema_version": "director.interface_discrepancy_triage.v1",
-            "reason": "director_local_retry_with_interface_delta",
-        },
-        "metadata": {"interface_delta_available": True},
+        "task_boundary_interface_discrepancy_retry_authorized": True,
     }
-    summary = _materialization_task_boundary_triage_summary(
-        {
-            "task_id": "TASK-2",
-            "plan_probe_preaudit": {
-                "status": "coverage_matched_but_unplannable",
-                "covered_unplannable_source_tools": ["deterministic_python_missing_export_repair"],
-                "covered_unplannable_diagnostic_count": 1,
-            },
-            "task_boundary_interface_discrepancy_retry_authorized": True,
-            "interface_discrepancy_evidence": source_evidence,
-        },
-        repair_attempt=2,
-        artifact_quality_errors=["module has no exported member WeatherKind"],
-    )
-
-    assert summary["director_retry_allowed"] is True
-    assert summary["llm_fallback_blocked"] is False
-    assert summary["task_boundary_interface_discrepancy_retry_authorized"] is True
-    receipt = summary["interface_discrepancy_evidence"]
-    assert receipt["director_retry_allowed"] is True
-    assert receipt["llm_fallback_blocked"] is False
-    assert receipt["interface_delta"]["requested_symbols"] == ["WeatherKind"]
-    assert receipt["triage_summary"]["reason"] == "director_local_retry_with_interface_delta"
-    assert receipt["metadata"]["repair_attempt"] == 2
+    projected = workspace_quality_repair_summary_projection(summary)
+    assert projected["task_id"] == "TASK-2"
+    assert projected["plan_probe_preaudit"] == summary["plan_probe_preaudit"]
+    assert projected["task_boundary_triage_required"] is False
+    assert "task_boundary_interface_discrepancy_retry_authorized" not in projected
+    assert "interface_discrepancy_evidence" not in projected
 
 
 def test_materialization_plan_probe_triage_allows_current_task_missing_target_continuation(
@@ -757,7 +718,8 @@ def test_materialization_plan_probe_triage_allows_current_task_missing_target_co
     assert summary["task_boundary_continuation_reason"] == "current_task_missing_targets"
     assert summary["task_boundary_continuation_route"] == "director_retry_with_missing_target_context"
     assert summary["task_boundary_continuation_target_files"] == ["src/main.ts"]
-    assert _materialization_plan_probe_requires_task_boundary_triage(summary) is False
+    assert _materialization_probe_is_unplannable(summary) is True
+    assert workspace_quality_summary_requires_task_boundary_triage(summary) is False
 
 
 def test_materialization_plan_probe_triage_allows_current_task_unresolved_import_continuation(
@@ -801,10 +763,11 @@ def test_materialization_plan_probe_triage_allows_current_task_unresolved_import
     assert summary["task_boundary_continuation_reason"] == "current_task_unresolved_import"
     assert summary["task_boundary_continuation_route"] == "director_retry_with_interface_discrepancy_context"
     assert summary["task_boundary_continuation_target_files"] == ["src/main.py", "src/radio.py"]
-    assert _materialization_plan_probe_requires_task_boundary_triage(summary) is False
+    assert _materialization_probe_is_unplannable(summary) is True
+    assert workspace_quality_summary_requires_task_boundary_triage(summary) is False
 
 
-def test_materialization_plan_probe_triage_stays_fail_closed_without_current_missing_targets() -> None:
+def test_readonly_unplannable_probe_without_targets_does_not_decide_scope() -> None:
     summary = {
         "plan_probe_preaudit": {
             "status": "coverage_matched_but_unplannable",
@@ -813,7 +776,8 @@ def test_materialization_plan_probe_triage_stays_fail_closed_without_current_mis
         }
     }
 
-    assert _materialization_plan_probe_requires_task_boundary_triage(summary) is True
+    assert _materialization_probe_is_unplannable(summary) is True
+    assert workspace_quality_summary_requires_task_boundary_triage(summary) is False
 
 
 def test_director_actual_interface_injection_defaults_on(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2000,7 +1964,7 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
 
 
 @pytest.mark.asyncio
-async def test_phase_quality_repair_loop_stops_on_plan_probe_task_boundary_triage(
+async def test_phase_quality_repair_loop_continues_after_readonly_unplannable_probe(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2010,6 +1974,7 @@ async def test_phase_quality_repair_loop_stops_on_plan_probe_task_boundary_triag
         "src/main.ts(10,12): error TS2339: Property 'stallId' does not exist on type 'Stall'."
     ]
     deterministic_inputs: list[list[str]] = []
+    retry_inputs: list[dict[str, Any]] = []
 
     def fake_collect_materialization_quality_errors(*args: Any, **kwargs: Any) -> list[str]:
         return list(artifact_errors)
@@ -2028,8 +1993,10 @@ async def test_phase_quality_repair_loop_stops_on_plan_probe_task_boundary_triag
             },
         }
 
-    async def fail_if_llm_retry_called(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        raise AssertionError("covered_unplannable task-boundary diagnostics must not enter LLM retry grind")
+    async def record_retry_dispatch(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        # Dispatch seam only: no physical provider, mutation or receipt is claimed.
+        retry_inputs.append(kwargs)
+        return [], {"stage": "quality_repair", "attempted": True, "success": False, "write_tool_evidence": False}
 
     monkeypatch.setattr(
         execute_method_module, "_collect_materialization_quality_errors", fake_collect_materialization_quality_errors
@@ -2049,7 +2016,7 @@ async def test_phase_quality_repair_loop_stops_on_plan_probe_task_boundary_triag
     monkeypatch.setattr(
         execute_method_module, "_run_materialization_quality_public_boundary", fake_deterministic_quality_repair
     )
-    monkeypatch.setattr(execute_method_module, "_run_materialization_quality_repair_retry", fail_if_llm_retry_called)
+    monkeypatch.setattr(execute_method_module, "_run_materialization_quality_repair_retry", record_retry_dispatch)
 
     quality_repair_attempts: list[dict[str, Any]] = []
 
@@ -2077,30 +2044,25 @@ async def test_phase_quality_repair_loop_stops_on_plan_probe_task_boundary_triag
     )
 
     assert residual_errors == artifact_errors
-    assert deterministic_inputs == [artifact_errors]
+    assert retry_inputs
+    assert len(retry_inputs) == execute_method_module._QUALITY_REPAIR_STAGNATION_LIMIT
+    assert deterministic_inputs == [artifact_errors] * len(retry_inputs)
+    assert all(item["run_id"] == "run-1" and item["target_task_id"] == "task-1" for item in retry_inputs)
     assert state.tool_results == []
     assert write_evidence is False
-    assert summary is not None
-    assert summary["stage"] == "runtime_plan_probe_unplannable"
-    assert summary["llm_fallback_blocked"] is True
-    assert summary["success_reason"] == "task_boundary_interface_discrepancy_required"
-    assert summary["interface_discrepancy_evidence"]["schema_version"] == "director.interface_discrepancy_receipt.v1"
-    assert (
-        summary["interface_discrepancy_evidence"]["source"]
-        == "roles.adapters.execute_method.materialization_quality_loop"
-    )
-    assert summary["interface_discrepancy_evidence"]["plan_probe_status"] == "coverage_matched_but_unplannable"
-    assert quality_repair_attempts == [summary]
+    assert summary is not None and summary["stage"] == "quality_repair"
+    assert not summary.get("interface_discrepancy_evidence")
+    assert len(quality_repair_attempts) == len(retry_inputs)
 
 
-def test_plan_probe_task_boundary_triage_is_cross_language() -> None:
+def test_readonly_unplannable_probe_classification_is_cross_language() -> None:
     for source_tool in (
         "deterministic_go_missing_symbol_repair",
         "deterministic_rust_wrong_crate_path_repair",
         "deterministic_cpp_include_path_repair",
         "deterministic_typescript_member_alias_repair",
     ):
-        assert execute_method_module._materialization_plan_probe_requires_task_boundary_triage(
+        assert _materialization_probe_is_unplannable(
             {
                 "plan_probe_preaudit": {
                     "status": "coverage_matched_but_unplannable",
@@ -2112,7 +2074,7 @@ def test_plan_probe_task_boundary_triage_is_cross_language() -> None:
             }
         )
 
-    assert not execute_method_module._materialization_plan_probe_requires_task_boundary_triage(
+    assert not _materialization_probe_is_unplannable(
         {
             "plan_probe_preaudit": {
                 "status": "covered_plannable",
@@ -2122,7 +2084,7 @@ def test_plan_probe_task_boundary_triage_is_cross_language() -> None:
             }
         }
     )
-    assert not execute_method_module._materialization_plan_probe_requires_task_boundary_triage(
+    assert not _materialization_probe_is_unplannable(
         {
             "plan_probe_preaudit": {
                 "status": "coverage_matched_but_unplannable",

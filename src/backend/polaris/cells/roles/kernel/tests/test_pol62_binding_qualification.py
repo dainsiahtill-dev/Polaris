@@ -949,7 +949,7 @@ def test_actual_preparer_gate_pin_and_lifecycle_feed_public_qualification(
     # The send port is a local fixture; no Provider/network invocation occurs.
     assert gate.dispatch_sync(wire_request=_wire_request(gate), send=lambda _request: "local-result") == "local-result"
     service = TaskRuntimeService(str(tmp_path))
-    monkeypatch.setattr(service, "_publish_factory_execution_event", lambda _payload: True)
+    monkeypatch.setattr(service, "_publish_factory_execution_event", lambda _payload, *, session=None: True)
     row = service.create_task_row(
         subject="Gate fixture", metadata={"factory_run_id": "factory-run-1", "factory_bench_project_id": "P1"}
     )

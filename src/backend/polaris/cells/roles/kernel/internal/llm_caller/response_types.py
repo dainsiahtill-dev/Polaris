@@ -11,6 +11,7 @@ from typing import Any
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleFrozenSemanticRequestV1,
 )
+from polaris.kernelone.context.contracts import ContextSource
 
 from ..structured_output_transport import StructuredOutputTransportPlan
 from .factory_dispatch_propagation import FactorySemanticDispatchPropagationPort
@@ -131,6 +132,7 @@ class PreparedLLMRequest:
         repr=False,
         compare=False,
     )
+    tool_observation_sources: tuple[ContextSource, ...] = field(default=(), repr=False, compare=False)
 
     def __post_init__(self) -> None:
         frozen = self.factory_semantic_request

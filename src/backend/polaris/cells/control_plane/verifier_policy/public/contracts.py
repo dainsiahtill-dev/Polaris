@@ -230,6 +230,51 @@ class VerifierCommandPolicyDecisionV1:
     executable_realpath: str
     executable_hash: str
     policy_decision_hash: str
+    artifact_failure_metadata: tuple[tuple[str, str], ...] = field(default=(), kw_only=True)
+
+    def __post_init__(self) -> None:
+        metadata = self.artifact_failure_metadata
+        if type(metadata) is not tuple or any(type(pair) is not tuple or len(pair) != 2 for pair in metadata):
+            raise TypeError("artifact_failure_metadata must be immutable string pairs")
+        if not metadata:
+            return
+        if self.authorized is not False:
+            raise ValueError("artifact failure metadata requires an exact denied artifact profile")
+        values: dict[str, str] = {}
+        for key, value in metadata:
+            key = _exact_token("artifact_failure_metadata key", key)
+            value = _exact_token("artifact_failure_metadata value", value, max_bytes=1024)
+            if key in values:
+                raise ValueError("duplicate artifact failure metadata key")
+            values[key] = value
+        keys = {
+            "schema_version",
+            "failure_domain",
+            "cause",
+            "source_path",
+            "source_sha256",
+            "source_snapshot_kind",
+        }
+        if values.get("cause") == "package_entrypoint_target_missing":
+            keys.add("target_path")
+        if set(values) != keys:
+            raise ValueError("unknown or missing artifact failure metadata keys")
+        if (values["schema_version"], values["failure_domain"], values["source_snapshot_kind"]) != (
+            "verifier.artifact_admission_failure.v1",
+            "artifact_profile",
+            "confined_readable_regular_utf8",
+        ) or (self.error_code, values["cause"]) not in {
+            ("non_proving_package_script", "package_test_script_not_proving"),
+            ("untrusted_package_script", "package_entrypoint_target_missing"),
+        }:
+            raise ValueError("unsupported artifact failure metadata")
+        _sha256("source_sha256", values["source_sha256"])
+        for field_name in ("source_path", "target_path"):
+            if field_name not in values:
+                continue
+            source = values[field_name]
+            if "\\" in source or source.startswith("/") or any(part in {"", ".", ".."} for part in source.split("/")):
+                raise ValueError(f"{field_name} must be canonical workspace-relative")
 
 
 @dataclass(frozen=True)

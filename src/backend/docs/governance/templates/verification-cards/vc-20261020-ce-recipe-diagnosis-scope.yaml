@@ -1,0 +1,36 @@
+id: vc-20261020-ce-recipe-diagnosis-scope
+classification: pattern
+status: source_stop
+owner: chief_engineer.blueprint
+scope:
+  - polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py
+  - polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py
+assumptions:
+  - Exact owner-issued recipe diagnosis binds mutable collection and obligation identity.
+  - Behavior reference context does not grant permission to mutate otherwise valid recipes.
+  - Provider context, final schema and Factory guidance must describe the same repair scope.
+mechanism:
+  - Finalize recipe row filtering after mixed operation context is assembled.
+  - Bind entrypoint recipe schema identity and removal limits to the existing diagnosis.
+  - Reuse the existing bound replacement rule in Factory guidance.
+  - Preserve composer, PM scope, permissions, verifier grammar, coverage and legacy replacement.
+pre_mortem:
+  - Filtering too early permits a later mixed group to overwrite the recipe subset.
+  - An empty enum would make the provider schema invalid.
+  - Removing readonly obligation identities would make behavior references unnecessarily unrepairable.
+  - Treating a synthetic sibling echo as original model output would invent native evidence.
+verification:
+  - New focused mixed-operation context and final-schema causal tests first fail, then pass.
+  - Local Factory command guidance capture; explicitly no physical provider claim.
+  - Public full normalization accepts diagnosed repair and preserves untouched siblings.
+  - Undiagnosed changes, removals, ownership and CAS guards remain strict.
+  - Necessary adjacent tests and scoped Ruff, format, mypy, diff and YAML.
+limits:
+  - Original two native patch argument bodies remain UNKNOWN.
+  - Synthetic trusted issuer validates module behavior without claiming original Factory PM lineage.
+  - No target commands, native replay, model changes or new evidence owner.
+evidence:
+  - All21newfocused cases passed in the final181-case related regression set.
+  - Related181cases passed13.29s; scoped Ruff, format, mypy5files, diff and YAML passed.
+  - Original causal RED and private fixture setup failures remain preserved in the audit implementation directory.
+  - No ALL or fresh native execution is claimed; root owns integration and acceptance.

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any
 
 from polaris.cells.control_plane.run_ledger.public import (
@@ -25,7 +26,6 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     extract_invocation_tool_name,
     extract_target_file_from_invocation_args,
     extract_target_files_from_message,
-    filter_out_of_scope_write_invocations,
     filter_scope_paths_for_explicit_targets,
     receipts_have_stale_edit_failure,
     resolve_mutation_target_guard_violation,
@@ -65,6 +65,7 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnId,
 )
 from polaris.cells.roles.kernel.public.turn_events import TurnPhaseEvent
+from polaris.kernelone.tool_execution.contracts import tool_batch_inventory_error
 from polaris.kernelone.tools.tool_kinds import is_write_tool_name
 
 from ._helpers import (
@@ -238,9 +239,19 @@ class _ToolBatchExecuteMixin:
     ) -> dict:
         """执行工具批次。"""
 
-        tool_batch = decision.get("tool_batch")
+        # Bind the caller's complete declaration before path rewriting, the
+        # first await, idempotency reuse, or durable DEO preparation.
+        tool_batch = deepcopy(decision.get("tool_batch"))
         if not tool_batch:
             raise ValueError("TOOL_BATCH decision missing tool_batch")
+        wire = tool_batch.model_dump(mode="json") if isinstance(tool_batch, ToolBatch) else tool_batch
+        error = tool_batch_inventory_error(wire, require_execution_groups=True)
+        if error is not None:
+            raise RuntimeError(error)
+        if isinstance(decision, TurnDecision):
+            decision = decision.model_copy(update={"tool_batch": tool_batch})
+        else:
+            decision = {**decision, "tool_batch": tool_batch}
 
         turn_id = str(decision.get("turn_id", ""))
         batch_seq = ledger.tool_batch_count
@@ -327,18 +338,9 @@ class _ToolBatchExecuteMixin:
                 }
             )
         write_file_autofill_evidence = diff_write_file_autofill_evidence(invocations_before_write_fill, invocations)
-        invocations, dropped_out_of_scope_writes = filter_out_of_scope_write_invocations(
-            latest_user_request,
-            invocations,
-            additional_allowed_targets=tuple(single_target_candidates),
-            additional_allowed_scopes=tuple(single_scope_candidates),
-        )
-        if dropped_out_of_scope_writes:
-            reason = (
-                f"mutation write target drift sanitized; dropped_out_of_scope={list(dropped_out_of_scope_writes)[:6]}"
-            )
-            logger.warning("%s turn_id=%s", reason, turn_id)
-            ledger.record_mutation_guard_warning(reason=reason, user_request=latest_user_request)
+        # Preserve the native inventory. The real gateway/DEO policy must
+        # produce an outcome for every member, including denied paths. Prompt
+        # filename extraction is guidance, never a second authorization source.
 
         # --- READ-WRITE BARRIER LOGIC ---
         # Platform tool contracts can explicitly allow read + write in the same
@@ -736,7 +738,9 @@ class _ToolBatchExecuteMixin:
                     reason="mutation_markers_detected_but_no_write_tool",
                     user_request=latest_user_request,
                 )
-        if requires_mutation:
+        if requires_mutation and not self.directed_effect_required:
+            # Legacy semantic validation is not a grant. Governed execution
+            # uses the immutable token and actual per-member DEO policy below.
             violation = resolve_mutation_target_guard_violation(
                 latest_user_request,
                 invocations,
@@ -1091,14 +1095,19 @@ class _ToolBatchExecuteMixin:
         # 对未命中的 invocation 走 authoritative batch 执行
         dropped_member_ids: set[str] = set()
         dropped_member_rows: list[tuple[str, str, str]] = []
+        dependent_dispatch_error: str | None = None
+        pending_member_ids: set[str] = set()
         if prepared_directed_effect is not None:
             dropped_member_rows = list(prepared_directed_effect.dropped_members)
             dropped_member_ids = {call_id for call_id, _tool, _code in dropped_member_rows}
+            pending_member_ids = {
+                item.call_id for cohort in prepared_directed_effect.pending_cohorts for item in cohort
+            }
         if replay_invocations:
 
             def _keep_for_dispatch(inv: Any) -> bool:
                 call_id = str(inv.get("call_id") or "")
-                return call_id not in dropped_member_ids
+                return call_id not in dropped_member_ids and call_id not in pending_member_ids
 
             replay_batch = ToolBatch(
                 batch_id=tool_batch.get("batch_id", BatchId(f"{turn_id}_replay")),
@@ -1134,6 +1143,22 @@ class _ToolBatchExecuteMixin:
                 allowed_tool_names=allowed_tool_names,
             )
             receipts_as_dicts.extend(normalize_batch_receipts(receipts))
+            if prepared_directed_effect is not None and prepared_directed_effect.pending_cohorts:
+                (
+                    dependent_receipts,
+                    dependent_drops,
+                    dependent_dispatch_error,
+                ) = await self._execute_dependent_effect_cohorts(
+                    prepared=prepared_directed_effect,
+                    first_receipts=normalize_batch_receipts(receipts),
+                    workspace=workspace,
+                    turn_id=turn_id,
+                    batch_id=str(tool_batch.get("batch_id") or f"{turn_id}_batch"),
+                    cancel_token=batch_cancel_token,
+                    allowed_tool_names=allowed_tool_names,
+                )
+                receipts_as_dicts.extend(dependent_receipts)
+                dropped_member_rows.extend(dependent_drops)
 
         # R140/R86: every non-dispatched DEO member remains visible. Genuine
         # policy denials are tool errors; benign last-write-wins supersession is
@@ -1237,6 +1262,8 @@ class _ToolBatchExecuteMixin:
             provider_response_hash=str(metadata.get("provider_response_hash") or ""),
             metadata=metadata,
         )
+        if dependent_dispatch_error is not None:
+            raise RuntimeError(dependent_dispatch_error)
         if invocations and receipts_as_dicts and not _batch_has_authoritative_success(receipts_as_dicts):
             merged_failed_receipt = _merge_batch_receipts(receipts_as_dicts) or {}
             failure_error_types = batch_write_failure_error_types(merged_failed_receipt)
@@ -1491,7 +1518,9 @@ class _ToolBatchExecuteMixin:
                 decision=decision,
                 receipts=receipts_as_dicts,
                 ledger=ledger,
-                handoff_reason="async_operation" if pending_async_count else str(metadata.get("handoff_reason") or "unknown"),
+                handoff_reason="async_operation"
+                if pending_async_count
+                else str(metadata.get("handoff_reason") or "unknown"),
                 handoff_source="async_pending_receipt" if pending_async_count else "decision_handoff_receipt",
             )
             if stream:
@@ -1505,7 +1534,9 @@ class _ToolBatchExecuteMixin:
                 state_machine,
                 ledger,
                 workflow_context=workflow_context,
-                handoff_reason="async_operation" if pending_async_count else str(metadata.get("handoff_reason") or "unknown"),
+                handoff_reason="async_operation"
+                if pending_async_count
+                else str(metadata.get("handoff_reason") or "unknown"),
                 batch_receipt=merged_batch_receipt,
             )
 

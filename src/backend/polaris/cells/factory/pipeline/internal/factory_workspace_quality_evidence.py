@@ -16,7 +16,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.director.runtime.public.contracts import DirectorInterfaceDiscrepancyReceiptV1
 from polaris.kernelone.quality import owner_task_retry_handoff_requests_from_scope_payload
 from polaris.kernelone.tools.tool_kinds import WRITE_TOOLS
 
@@ -289,37 +288,28 @@ def workspace_quality_repair_evidence(repair_results: list[dict[str, Any]]) -> l
 
 
 def workspace_quality_summary_requires_task_boundary_triage(summary: dict[str, Any]) -> bool:
-    if bool(summary.get("task_boundary_interface_discrepancy_retry_authorized")):
-        return False
-    # The adapter requires explicit local retry routing for this stage. Named
-    # owned files are repair inventory, not that authorization; skipping triage
-    # here makes ordinary fallback repeat the same pre-provider rejection.
-    stage = str(summary.get("stage") or "").strip()
-    if stage == "runtime_plan_probe_unplannable":
-        return True
-    owned_repair_targets = [
-        str(item or "").strip().replace("\\", "/")
-        for item in (summary.get("repair_target_files") or [])
-        if str(item or "").strip()
-    ]
-    if owned_repair_targets:
-        # Live L2-14 TASK-3: E0061 Reef::new arity in tests/product.rs matched
-        # line_suggestion but was unplannable. The current task already owns
-        # that file; this is Director LLM work, not CE interface triage.
-        return False
-    evidence = summary.get("interface_discrepancy_evidence")
-    if (
-        isinstance(evidence, dict)
-        and str(evidence.get("reason") or "") == "coverage_matched_but_unplannable"
-        and not bool(evidence.get("director_retry_allowed"))
-    ):
-        return True
-    plan_probe = summary.get("plan_probe_preaudit")
-    if not isinstance(plan_probe, dict):
-        return False
-    return str(plan_probe.get("status") or "").strip() == "coverage_matched_but_unplannable" and not bool(
-        plan_probe.get("plannable_source_tools")
+    """Only existing scope-owner evidence can require ownership triage.
+
+    Coverage and patch composability are read-only observations, not evidence
+    that CE's contract or the current task's execution authority is invalid.
+    """
+    raw_evidence = summary.get("interface_discrepancy_evidence")
+    evidence = raw_evidence if isinstance(raw_evidence, dict) else {}
+    raw_metadata = evidence.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_scope = (
+        evidence.get("task_scope_filter")
+        or metadata.get("task_scope_filter")
+        or summary.get("task_boundary_scope_filter")
     )
+    scope = raw_scope if isinstance(raw_scope, dict) else {}
+    if not bool(scope.get("deferred")) or not scope.get("out_of_scope_repair_target_files"):
+        return False
+    if evidence.get("plan_probe_status") == "scope_owner_conflict":
+        return True
+    # An owned diagnostic subset can continue while foreign targets remain
+    # deferred. Its tools still consume the original task capability scope.
+    return not bool(summary.get("repair_target_files"))
 
 
 def workspace_quality_latest_task_boundary_scope_filter(repair: Mapping[str, Any]) -> dict[str, Any]:
@@ -1665,170 +1655,14 @@ def workspace_quality_interface_discrepancy_evidence(
     summary: dict[str, Any],
     artifact_quality_errors: list[str] | None = None,
 ) -> dict[str, Any]:
-    raw_evidence = summary.get("interface_discrepancy_evidence")
-    evidence: dict[str, Any] = dict(raw_evidence) if isinstance(raw_evidence, dict) else {}
-    plan_probe = summary.get("plan_probe_preaudit")
-    plan_probe_payload = plan_probe if isinstance(plan_probe, dict) else {}
-    covered_unplannable_source_tools = [
-        str(item)
-        for item in plan_probe_payload.get(
-            "covered_unplannable_source_tools",
-            evidence.get("covered_unplannable_source_tools", []),
-        )
-        if str(item or "").strip()
-    ]
-    if not evidence:
-        evidence = {
-            "schema_version": "director.interface_discrepancy_receipt.v1",
-            "route": "task_boundary_quality_loop",
-            "plan_probe_status": str(plan_probe_payload.get("status") or ""),
-            "covered_unplannable_source_tools": covered_unplannable_source_tools,
-            "covered_unplannable_diagnostic_count": int(
-                plan_probe_payload.get("covered_unplannable_diagnostic_count") or 0
-            ),
-            "coverage_gap_count": int(plan_probe_payload.get("coverage_gap_count") or 0),
-            "reason": "coverage_matched_but_unplannable",
-        }
-    diagnostic_blob = "\n".join(
-        [
-            json.dumps(plan_probe_payload, ensure_ascii=False, sort_keys=True),
-            json.dumps(evidence, ensure_ascii=False, sort_keys=True),
-            *[str(item or "") for item in artifact_quality_errors or []],
-        ]
-    ).lower()
-    cross_artifact_markers = (
-        "unresolved import",
-        "unresolved relative import",
-        "cannot find module",
-        "has no exported member",
-        "module has no exported member",
-        "does not provide an export",
-        "sibling module does not define",
-        "is not exported",
-        "undefined:",
-        "undefined symbol",
-        "unresolved external symbol",
-        "undefined reference",
-        "cannot find symbol",
-        "cannot find type",
-        "could not find",
-        "no such file or directory",
-        "file not found for module",
-        "unresolved import `",
-        "no `",
-        "not found in",
-        "was not declared in this scope",
-        "no member named",
-        "has no member named",
-        "ts2305",
-        "ts2306",
-        "ts2307",
-        "ts2459",
-        "e0432",
-        "e0583",
-        "e0761",
-    )
-    local_implementation_markers = (
-        "ts2322",
-        "ts2339",
-        "ts2345",
-        "ts2552",
-        "property ",
-        "does not exist on type",
-        "cannot find name",
-        "type ",
-        "is not assignable to type",
-    )
-    raw_owner_evidence = summary.get("task_boundary_owner_evidence")
-    owner_evidence = dict(raw_owner_evidence) if isinstance(raw_owner_evidence, Mapping) else {}
-    owner_target_files = _dedupe_workspace_repair_paths(owner_evidence.get("owner_target_files") or [])
-    diagnostic_target_files = _dedupe_workspace_repair_paths(owner_evidence.get("diagnostic_target_files") or [])
-    in_scope_diagnostic_target_files = _dedupe_workspace_repair_paths(
-        owner_evidence.get("in_scope_diagnostic_target_files") or []
-    )
-    claimed_task_subset_allows_director_retry = (
-        str(owner_evidence.get("source") or "") == "task_runtime_execution_attempt"
-        and bool(str(owner_evidence.get("task_id") or "").strip())
-        and bool(owner_target_files)
-        and bool(diagnostic_target_files)
-        and bool(in_scope_diagnostic_target_files)
-        and set(in_scope_diagnostic_target_files).issubset(set(diagnostic_target_files))
-        and set(in_scope_diagnostic_target_files).issubset(set(owner_target_files))
-        and bool(owner_evidence.get("director_local_repair_allowed"))
-    )
-    cross_artifact = any(marker in diagnostic_blob for marker in cross_artifact_markers)
-    local_implementation = any(marker in diagnostic_blob for marker in local_implementation_markers)
-    if claimed_task_subset_allows_director_retry:
-        # An import/symbol diagnostic can cross module files without crossing
-        # the current Director authority.  A verifier payload may contain paths
-        # from several tasks; repair only this claim's in-scope subset, then
-        # re-run the verifier so the residual selects the next owner.  This
-        # never authorizes writes outside ``owner_target_files``.
-        recommended_owner = "director"
-        recommended_route = "director_retry_with_interface_discrepancy_context"
-        cross_artifact_route = "director_repair_within_claimed_task"
-    elif cross_artifact:
-        recommended_owner = "chief_engineer"
-        recommended_route = "pending_design_interface_contract"
-        cross_artifact_route = "contract_amendment_request"
-    elif local_implementation:
-        recommended_owner = "director"
-        recommended_route = "director_retry_with_interface_discrepancy_context"
-        cross_artifact_route = "director_repair_within_contract"
-    else:
-        recommended_owner = str(evidence.get("recommended_owner") or "chief_engineer")
-        recommended_route = str(evidence.get("recommended_route") or "pending_design_interface_contract")
-        cross_artifact_route = (
-            "director_repair_within_contract" if recommended_owner == "director" else "contract_amendment_request"
-        )
-    director_retry_allowed = (
-        recommended_owner == "director" and recommended_route == "director_retry_with_interface_discrepancy_context"
-    )
-    plan_probe_status = str(evidence.get("plan_probe_status") or plan_probe_payload.get("status") or "")
-    covered_unplannable_diagnostic_count = int(
-        plan_probe_payload.get(
-            "covered_unplannable_diagnostic_count",
-            evidence.get("covered_unplannable_diagnostic_count") or 0,
-        )
-        or 0
-    )
-    coverage_gap_count = int(plan_probe_payload.get("coverage_gap_count", evidence.get("coverage_gap_count") or 0) or 0)
-    metadata_raw = evidence.get("metadata")
-    metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
-    metadata.update(
-        {
-            "route": "task_boundary_quality_loop",
-            "cross_artifact_route": cross_artifact_route,
-            "coverage_gap_count": coverage_gap_count,
-            "task_boundary_owner_evidence": owner_evidence,
-        }
-    )
-    canonical = DirectorInterfaceDiscrepancyReceiptV1.from_mapping(
-        {
-            **evidence,
-            "task_id": str(
-                summary.get("task_id") or summary.get("target_task_id") or summary.get("run_id") or "workspace-quality"
-            ),
-            "source": evidence.get("source") or "factory.pipeline.workspace_quality",
-            "plan_probe_status": plan_probe_status,
-            "covered_unplannable_source_tools": covered_unplannable_source_tools,
-            "recommended_owner": recommended_owner,
-            "recommended_route": recommended_route,
-            "director_retry_allowed": director_retry_allowed,
-            "llm_fallback_blocked": not director_retry_allowed,
-            "reason": "coverage_matched_but_unplannable",
-            "metadata": metadata,
-        },
-    ).to_dict()
-    canonical.update(
-        {
-            "route": "task_boundary_quality_loop",
-            "cross_artifact_route": cross_artifact_route,
-            "coverage_gap_count": coverage_gap_count,
-            "covered_unplannable_diagnostic_count": covered_unplannable_diagnostic_count,
-        }
-    )
-    return canonical
+    """Preserve real scope discrepancy evidence; never synthesize it from coverage."""
+    del artifact_quality_errors
+    if not workspace_quality_summary_requires_task_boundary_triage(summary):
+        return {}
+    evidence = summary.get("interface_discrepancy_evidence")
+    if not isinstance(evidence, dict) or not evidence:
+        return {}
+    return dict(evidence)
 
 
 def workspace_quality_interface_discrepancy_allows_director_retry(evidence: dict[str, Any]) -> bool:
@@ -1881,7 +1715,6 @@ def workspace_quality_repair_summary_projection(
         "rotated_repair_targets",
         "task_boundary_scope_filter",
         "task_boundary_owner_evidence",
-        "task_boundary_interface_discrepancy_retry_authorized",
         "deferred_owner_rebind",
         "plan_probe_preaudit",
         "interface_discrepancy_evidence",
@@ -1895,7 +1728,7 @@ def workspace_quality_repair_summary_projection(
         task_boundary_triage_required = workspace_quality_summary_requires_task_boundary_triage(summary)
         projected["task_boundary_triage_required"] = task_boundary_triage_required
         if task_boundary_triage_required:
-            projected["triage_stage"] = "runtime_plan_probe_unplannable"
+            projected["triage_stage"] = "task_boundary_scope_conflict"
             projected["interface_discrepancy_evidence"] = workspace_quality_interface_discrepancy_evidence(
                 summary,
                 artifact_quality_errors,

@@ -34,6 +34,7 @@ def _query(workspace: Path, argv: tuple[str, ...]) -> EvaluateVerifierCommandPol
 @pytest.mark.parametrize("case,expected", [("passing", True), ("failing", False), ("empty", False)])
 def test_actual_direct_node_runner_preserves_physical_test_verdict(tmp_path: Path, case: str, expected: bool) -> None:
     assert shutil.which("node"), "real Node is required for this execution regression"
+    argv: tuple[str, ...]
     if case != "empty":
         test_path = tmp_path / "tests" / "example.test.mjs"
         test_path.parent.mkdir()
@@ -78,6 +79,10 @@ def test_actual_direct_node_runner_preserves_physical_test_verdict(tmp_path: Pat
         ("node", "--test", "tests/input.mjs", "tests/edge_cases.ts"),
         ("node", "--test", "--test-reporter=tap", "tests/input.mjs"),
         ("node", "--test", "--test-reporter", "tap", "tests/input.mjs"),
+        ("node", "--import", "tsx", "--test", "tests/input.ts"),
+        ("node", "--import=tsx", "--test", "tests/input.ts"),
+        ("node", "--test", "--import", "tsx", "tests/input.ts"),
+        ("node", "--test", "--import=tsx", "tests/input.ts"),
     ],
 )
 def test_declared_node_runner_shape_matches_runtime_policy(tmp_path: Path, argv: tuple[str, ...]) -> None:
@@ -103,6 +108,10 @@ def test_declared_node_runner_shape_matches_runtime_policy(tmp_path: Path, argv:
         ("node", "--test", "C:/foreign/input.mjs"),
         ("node", "--test", "tests/input.py"),
         ("node", "--test", "tests/input.mjs", ";", "sh"),
+        ("node", "--import=tsx", "--test"),
+        ("node", "--test", "--import=TSX", "tests/input.ts"),
+        ("node", "--test", "--import=tsx/esm", "tests/input.ts"),
+        ("node", "--test", "tests/input.ts", "--import=tsx"),
     ],
 )
 def test_direct_runner_rejects_execution_flags_and_foreign_operands(tmp_path: Path, argv: tuple[str, ...]) -> None:
@@ -124,6 +133,21 @@ def test_model_like_or_incomplete_tap_text_cannot_prove_direct_tests(output: byt
     assert (
         evaluate_verifier_proof(
             profile_id="node.test_runner", modality="test", exit_code=0, timed_out=False, output_bytes=output
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize("exit_code,timed_out", [(0, False), (1, False), (0, True)])
+def test_accepted_preload_grammar_still_requires_physical_proof(exit_code: int, timed_out: bool) -> None:
+    """Synthetic output checks proof semantics; this does not execute tsx."""
+    assert (
+        evaluate_verifier_proof(
+            profile_id="node.test_runner",
+            modality="test",
+            exit_code=exit_code,
+            timed_out=timed_out,
+            output_bytes=b"",
         )
         is False
     )

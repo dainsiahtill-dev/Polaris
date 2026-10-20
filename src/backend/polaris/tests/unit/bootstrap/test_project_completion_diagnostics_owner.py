@@ -899,3 +899,55 @@ def test_cross_bound_or_stale_verifier_claims_remain_missing(
     )
 
     assert observation.evidence == ()
+
+
+def test_real_policy_artifact_denial_survives_bootstrap_without_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from polaris.cells.control_plane.verifier_policy.public import evaluate_verifier_command_policy
+
+    body = '{"scripts":{"test":"echo verification is not configured"}}\n'
+    (tmp_path / "package.json").write_text(body, encoding="utf-8")
+    contract = _patch_owners(monkeypatch, tmp_path)
+    authority = VerificationCommandAuthorityV1(task_id="task-2", modality="test", argv=("npm", "test"))
+    verifier = replace(
+        next(row for row in contract.obligations.verification if row.modality == "test"),
+        command=authority.command,
+        command_authority_hash=authority.authority_hash,
+    )
+    obligations = replace(
+        contract.obligations,
+        artifacts=(
+            *contract.obligations.artifacts,
+            ArtifactObligationV1("artifact.manifest", "package.json", "manifest", "required", "task-2"),
+        ),
+        verification=tuple(verifier if row.modality == "test" else row for row in contract.obligations.verification),
+    )
+    contract = replace(
+        contract,
+        obligations=obligations,
+        verification_command_authority=tuple(
+            authority if row.modality == "test" else row for row in contract.verification_command_authority
+        ),
+    )
+    monkeypatch.setattr(adapter_module, "query_project_completion_contract", lambda query: contract)
+    monkeypatch.setattr(adapter_module, "read_run_ledger_projection", lambda query: _ledger(contract))
+    monkeypatch.setattr(adapter_module, "evaluate_verifier_command_policy", evaluate_verifier_command_policy)
+    with pytest.raises(ProjectCompletionOwnerObservationV1Error) as caught:
+        authorize_project_verification_command(
+            ResolveProjectVerificationAuthorityQueryV1(
+                workspace=str(tmp_path),
+                project_id=contract.project_id,
+                run_id=contract.run_id,
+                completion_contract_hash=contract.contract_hash,
+                obligation_id=verifier.obligation_id,
+            )
+        )
+    assert caught.value.error_code == "project_verification_command_policy_rejected"
+    observation = caught.value.admission_failure
+    assert observation is not None
+    assert observation.policy_error_code == "non_proving_package_script"
+    assert observation.source_sha256 == hashlib.sha256(body.encode("utf-8")).hexdigest()
+    assert observation.owner_task_id == "task-2" and observation.argv == ("npm", "test")
+    assert observation.command_authority_hash == authority.authority_hash
+    assert observation.execution_started is False and observation.receipt_ref is None

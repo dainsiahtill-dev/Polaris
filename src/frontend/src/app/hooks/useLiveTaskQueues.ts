@@ -64,37 +64,58 @@ function normalizeTask(task: PmTask): PmTask {
   };
 }
 
-function readMetadataString(task: PmTask, key: string): string {
-  const metadata = task.metadata && typeof task.metadata === 'object'
-    ? task.metadata
-    : null;
-  const value = metadata?.[key];
-  return typeof value === 'string' ? value.trim() : '';
+function normalizeTaskIdentity(value: unknown): string | null {
+  // Missing optional identity is empty; malformed JSON values remain invalid
+  // so another Director hint cannot turn them into an authorized projection.
+  if (value === undefined || value === null) return '';
+  return typeof value === 'string' ? value.trim().toLowerCase() : null;
 }
 
-export function getTaskAssignee(task: PmTask): string {
+function getTaskAssignees(task: PmTask): (string | null)[] {
+  const metadata = task.metadata || {};
   const candidates = [
     task.assigned_to,
     task.assignedTo,
     task.assignee,
-    readMetadataString(task, 'assigned_to'),
-    readMetadataString(task, 'assignedTo'),
-    readMetadataString(task, 'assignee'),
+    metadata.assigned_to,
+    metadata.assignedTo,
+    metadata.assignee,
   ];
 
-  const match = candidates
-    .map((value) => String(value || '').trim())
-    .find((value) => value.length > 0);
+  return candidates
+    .map(normalizeTaskIdentity)
+    .filter((value) => value !== '');
+}
 
-  return String(match || '').toLowerCase();
+export function getTaskAssignee(task: PmTask): string {
+  return getTaskAssignees(task)[0] || '';
 }
 
 export function isDirectorAssignedTask(task: PmTask): boolean {
-  const assignee = getTaskAssignee(task);
-  if (!assignee) {
-    return false;
-  }
-  return assignee === 'director' || assignee.includes('director');
+  const assignees = getTaskAssignees(task);
+  return assignees.length > 0 && assignees.every((assignee) => assignee !== null && /^(?:lead\s+)?director$/.test(assignee));
+}
+
+function isDirectorRuntimeTask(task: PmTask): boolean {
+  const record = task as PmTask & Record<string, unknown>;
+  const metadata = task.metadata || {};
+  const execution = metadata.runtime_execution && typeof metadata.runtime_execution === 'object'
+    ? metadata.runtime_execution as Record<string, unknown>
+    : {};
+  const roles = [
+    record.role,
+    record.role_id,
+    metadata.role,
+    metadata.role_id,
+    execution.role,
+    execution.role_id,
+  ].map(normalizeTaskIdentity).filter((value) => value !== '');
+
+  // Shared TaskRuntime rows include CE/PM/QA work. Conflicting or unknown
+  // explicit roles cannot become Director work through a legacy assignment.
+  if (roles.some((role) => role !== 'director')) return false;
+  if (getTaskAssignees(task).length) return isDirectorAssignedTask(task);
+  return roles.length > 0;
 }
 
 export function splitTaskQueues(
@@ -109,7 +130,7 @@ export function splitTaskQueues(
 
   return {
     pmTasks,
-    directorTasks: normalizedRealtimeTasks,
+    directorTasks: normalizedRealtimeTasks.filter(isDirectorRuntimeTask),
     directorTaskSource: 'realtime',
     isDirectorRealtimeConnected: Boolean(directorRealtime.isConnected),
     isDirectorRealtimeReady,

@@ -98,11 +98,11 @@ def test_line_range_edit_via_new_text_alias(tmp_path: Path) -> None:
     assert "return bytes(self.content)" in (tmp_path / "response.py").read_text(encoding="utf-8")
 
 
-def test_line_range_empty_replacement_rejected(tmp_path: Path) -> None:
+def test_line_range_missing_replacement_rejected(tmp_path: Path) -> None:
     ex = _executor(tmp_path)
-    result = _handle_edit_blocks(ex, file="response.py", start=2, end=3, replace="   ")
+    result = _handle_edit_blocks(ex, file="response.py", start=2, end=3)
     assert result.get("ok") is False
-    assert "no replacement code" in result.get("error", "").lower()
+    assert "explicit string replacement" in result.get("error", "").lower()
 
 
 def test_line_range_invalid_range_rejected(tmp_path: Path) -> None:

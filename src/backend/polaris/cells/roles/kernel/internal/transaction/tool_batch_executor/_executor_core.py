@@ -8,10 +8,11 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import replace
 from typing import Any, NoReturn
 
-from polaris.cells.director.runtime.public import DirectedEffectImmutableItemsV1
+from polaris.cells.director.runtime.public import DirectedEffectImmutableItemsV1, hash_directed_effect_arguments
 from polaris.cells.roles.kernel.internal.deferred_repair_effects import (
     DeferredRepairEffectSynthesizer,
     DeferredRequestReplayFence,
@@ -22,6 +23,7 @@ from polaris.cells.roles.kernel.internal.directed_effect_lifecycle import (
 from polaris.cells.roles.kernel.internal.directed_effect_policy_guard import (
     DirectedEffectAuthoritativePolicyGuardRequestV1,
     DirectedEffectPolicyGuardResultV1,
+    _immutable_arguments,
 )
 from polaris.cells.roles.kernel.internal.speculation.models import CancelToken
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
@@ -67,13 +69,16 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 )
 from polaris.cells.roles.kernel.public.turn_events import ErrorEvent, TurnEvent, TurnPhaseEvent
 from polaris.cells.runtime.task_runtime.public import (
+    GetDirectedEffectOperationQueryV1,
     TaskRuntimeExecutionAttemptAuthoritySnapshotV1,
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
     TaskRuntimeExecutionAttemptValidationVerdictV1,
     ValidateTaskRuntimeExecutionAttemptQueryV1,
+    get_directed_effect_operation,
     validate_task_runtime_execution_attempt,
 )
+from polaris.kernelone.tool_execution.contracts import tool_batch_inventory_error
 
 from ._helpers import (
     _DEO_PREPARE_LOCK_RETRY_ATTEMPTS,
@@ -90,6 +95,7 @@ from ._helpers import (
     _PreparedDirectedEffectDispatchV1,
     _RecoverableDirectedEffectDenialError,
     _seal_deo_abort_tool_lifecycle,
+    _serial_mutation_cohorts,
     logger,
 )
 
@@ -300,6 +306,7 @@ class _ToolBatchExecutorCore:
         turn_id: str,
         batch_id: str,
         preserve_same_path_inventory: bool = False,
+        expected_prior_target_hashes: Mapping[str, str] | None = None,
     ) -> tuple[list[ToolInvocation], _PreparedDirectedEffectDispatchV1 | None]:
         """Authorize and seal every mutation before any member of the batch executes."""
 
@@ -320,6 +327,12 @@ class _ToolBatchExecutorCore:
         path_superseded_drops: list[tuple[str, str, str]] = []
         if not preserve_same_path_inventory:
             mutations, path_superseded_drops = _collapse_last_write_wins_mutations(mutations)
+        pending_cohorts: tuple[tuple[ToolInvocation, ...], ...] = ()
+        if self.directed_effect_required and not preserve_same_path_inventory:
+            cohorts = _serial_mutation_cohorts(mutations)
+            if len(cohorts) > 1:
+                mutations = list(cohorts[0])
+                pending_cohorts = cohorts[1:]
         if not mutations:
             # All mutations were pathless-empty or collapsed away; fail closed.
             first_error = path_superseded_drops[0][2] if path_superseded_drops else "directed_effect_policy_denied"
@@ -388,6 +401,16 @@ class _ToolBatchExecutorCore:
                     )
                 )
                 continue
+            target = verdict.snapshot.baseline_target_state_evidence
+            expected_hash = (expected_prior_target_hashes or {}).get(target.target_path)
+            if expected_hash is not None and target.before_content_hash != expected_hash:
+                # The prior result is backed by a committed TaskRuntime receipt.
+                # Fresh policy evidence must still observe its exact postimage.
+                self._validate_directed_effect_feedback_attempt(workspace)
+                raise _RecoverableDirectedEffectDenialError(
+                    ((invocation.call_id, invocation.tool_name, "deo_dependent_preimage_mismatch"),),
+                    tuple(canonical),
+                )
             candidates.append(
                 DirectedEffectLifecycleCandidateV1(
                     preflight=verdict.preflight,
@@ -462,7 +485,179 @@ class _ToolBatchExecutorCore:
             batch=prepared.prepared_batch,
             restrictions_by_call_id=tuple(restrictions),
             dropped_members=tuple(dropped_members),
+            pending_cohorts=pending_cohorts,
         )
+
+    @staticmethod
+    def _committed_cohort_targets(
+        prepared: _PreparedDirectedEffectDispatchV1,
+        receipts: list[dict[str, Any]],
+    ) -> dict[str, str] | None:
+        """Require owner-persisted commits before admitting dependent mutations."""
+        if any(code != "deo_same_path_superseded_by_later_write" for _, _, code in prepared.dropped_members):
+            return None
+        rows = {
+            str(row.get("call_id") or ""): row
+            for receipt in normalize_batch_receipts(receipts)
+            for row in (receipt.get("raw_results") or receipt.get("results") or [])
+            if isinstance(row, dict)
+        }
+        targets: dict[str, str] = {}
+        batch = prepared.batch
+        for prepared_member in batch.prepared_members:
+            member = prepared_member.member
+            row = rows.get(member.tool_call_id, {})
+            value = row.get("result")
+            if row.get("status") != "success" or not isinstance(value, dict):
+                return None
+            commit = row.get("effect_receipt_commit") or value.get("effect_receipt_commit")
+            receipt = row.get("effect_receipt") or value.get("effect_receipt")
+            if (
+                not isinstance(commit, dict)
+                or commit.get("state") != "RECEIPT_COMMITTED"
+                or not isinstance(receipt, dict)
+                or receipt.get("tool_call_id") != member.tool_call_id
+            ):
+                return None
+            physical_value = {
+                key: item for key, item in value.items() if key not in {"effect_receipt", "effect_receipt_commit"}
+            }
+            receipt_value = {key: item for key, item in receipt.items() if key not in {"receipt_hash", "receipt_id"}}
+            if hash_directed_effect_arguments(_immutable_arguments(physical_value)) != receipt.get(
+                "physical_result_hash"
+            ) or hash_directed_effect_arguments(_immutable_arguments(receipt_value)) != receipt.get("receipt_hash"):
+                return None
+            observed = get_directed_effect_operation(
+                GetDirectedEffectOperationQueryV1(
+                    workspace=batch.execution_attempt.workspace,
+                    task_id=batch.execution_attempt.task_id,
+                    execution_attempt=batch.execution_attempt,
+                    parent_binding=batch.parent_binding,
+                    tool_call_id=member.tool_call_id,
+                    effect_id=member.effect_id,
+                )
+            )
+            snapshot = observed.snapshot
+            if (
+                not observed.ok
+                or snapshot is None
+                or str(getattr(snapshot.state, "value", snapshot.state))
+                not in {"RECEIPT_COMMITTED", "CLOSED_BY_PARENT"}
+                or commit.get("receipt_hash") != receipt.get("receipt_hash")
+                or commit.get("receipt_ref") != receipt.get("receipt_id")
+                or commit.get("receipt_binding_hash") != member.expected_receipt_binding_hash
+                or receipt.get("receipt_binding_hash") != member.expected_receipt_binding_hash
+                or receipt.get("operation_id") != snapshot.operation.operation_id
+                or receipt.get("receipt_outcome") != "succeeded"
+                or commit.get("receipt_outcome") != "succeeded"
+            ):
+                return None
+            bound = prepared_member.policy_binding.bound_snapshot
+            if bound is None:
+                return None
+            target = bound.snapshot.baseline_target_state_evidence
+            if not target.is_no_file_state:
+                after = value.get("after_sha256")
+                if not isinstance(after, str) or len(after) != 64 or any(c not in "0123456789abcdef" for c in after):
+                    return None
+                targets[target.target_path] = after
+        return targets
+
+    async def _execute_dependent_effect_cohorts(
+        self,
+        *,
+        prepared: _PreparedDirectedEffectDispatchV1,
+        first_receipts: list[dict[str, Any]],
+        workspace: str,
+        turn_id: str,
+        batch_id: str,
+        cancel_token: CancelToken | None,
+        allowed_tool_names: set[str] | None,
+    ) -> tuple[list[dict[str, Any]], list[tuple[str, str, str]], str | None]:
+        """Use existing admission/dispatch owners for dependent serial cohorts.
+
+        No new state is stored here. TaskRuntime parent admission closes only a
+        receipt-complete predecessor; repeated/cold admission remains fail-closed.
+        """
+        receipts: list[dict[str, Any]] = []
+        dropped: list[tuple[str, str, str]] = []
+        previous = prepared
+        previous_receipts = first_receipts
+        expected_targets: dict[str, str] = {}
+        error: str | None = None
+        for ordinal, cohort in enumerate(prepared.pending_cohorts, 1):
+            phase = "predecessor"
+            current = None
+            try:
+                committed = self._committed_cohort_targets(previous, previous_receipts)
+                if committed is None:
+                    raise RuntimeError("deo_dependent_predecessor_not_committed")
+                expected_targets.update(committed)
+                if cancel_token is not None and cancel_token.cancelled:
+                    raise RuntimeError("deo_dependent_batch_cancelled")
+                cohort_id = f"{batch_id}:jit:{ordinal}"
+                phase = "admission"
+                canonical, current = await self._prepare_directed_effect_dispatch(
+                    invocations=list(cohort),
+                    workspace=workspace,
+                    turn_id=turn_id,
+                    batch_id=cohort_id,
+                    expected_prior_target_hashes=expected_targets,
+                )
+                if current is None or current.pending_cohorts:
+                    raise RuntimeError("deo_dependent_cohort_not_prepared")
+                denied = {row[0] for row in current.dropped_members}
+                dispatch = [item for item in canonical if item.call_id not in denied]
+                batch = ToolBatch(
+                    batch_id=cohort_id,
+                    invocations=dispatch,
+                    serial_writes=[item for item in dispatch if item.execution_mode is ToolExecutionMode.WRITE_SERIAL],
+                    async_receipts=[
+                        item for item in dispatch if item.execution_mode is ToolExecutionMode.ASYNC_RECEIPT
+                    ],
+                )
+                phase = "dispatch"
+                result = await self._build_tool_batch_runtime(
+                    workspace, turn_id=turn_id, cancel_token=cancel_token, prepared_directed_effect=current
+                ).execute_batch(batch, TurnId(turn_id), allowed_tool_names=allowed_tool_names)
+                previous_receipts = normalize_batch_receipts(result)
+                receipts.extend(previous_receipts)
+                dropped.extend(current.dropped_members)
+                previous = current
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                error = str(exc) or "deo_dependent_dispatch_failed"
+                if isinstance(exc, _RecoverableDirectedEffectDenialError):
+                    phase = "predecessor"
+                # A failure after admission may have claimed or changed bytes.
+                # Preserve UNKNOWN for this cohort; never invent failedNoEffect.
+                if phase != "predecessor":
+                    uncertain = [
+                        {
+                            "call_id": item.call_id,
+                            "tool_name": item.tool_name,
+                            "status": "error",
+                            "result": {"error": error},
+                            "error": error,
+                            "directed_effect_claim_status": "unknown",
+                            "directed_effect_mutation_status": "unknown",
+                        }
+                        for item in cohort
+                    ]
+                    receipts.append(
+                        {
+                            "batch_id": f"{batch_id}:jit:{ordinal}",
+                            "turn_id": turn_id,
+                            "results": uncertain,
+                            "raw_results": uncertain,
+                            "success_count": 0,
+                            "failure_count": len(uncertain),
+                        }
+                    )
+                remaining_start = ordinal - 1 if phase == "predecessor" else ordinal
+                for remaining in prepared.pending_cohorts[remaining_start:]:
+                    dropped.extend((item.call_id, item.tool_name, error) for item in remaining)
+                break
+        return receipts, dropped, error
 
     def _validate_directed_effect_feedback_attempt(self, workspace: str) -> None:
         """Require the same live owner before continuing a no-effect denial.
@@ -703,18 +898,36 @@ class _ToolBatchExecutorCore:
         """Execute at most one visible, non-recursive deferred repair batch."""
 
         execution_attempt = self.directed_effect_execution_attempt
-        followup = build_deferred_repair_followup(
-            receipts_as_dicts,
-            primary_batch_id=primary_batch_id,
-            turn_id=turn_id,
-            expected_workspace=workspace,
-            expected_task_id=(execution_attempt.external_task_id if execution_attempt is not None else ""),
-            expected_execution_attempt=execution_attempt,
-            synthesizer=self._deferred_repair_synthesizer,
-            command_synthesizer=getattr(self, "_deferred_command_synthesizer", None),
+        followup = deepcopy(
+            build_deferred_repair_followup(
+                receipts_as_dicts,
+                primary_batch_id=primary_batch_id,
+                turn_id=turn_id,
+                expected_workspace=workspace,
+                expected_task_id=(execution_attempt.external_task_id if execution_attempt is not None else ""),
+                expected_execution_attempt=execution_attempt,
+                synthesizer=self._deferred_repair_synthesizer,
+                command_synthesizer=getattr(self, "_deferred_command_synthesizer", None),
+            )
         )
         if followup is None:
             return []
+        dispatch_wire = followup.dispatch_batch.model_dump(mode="json")
+        error = tool_batch_inventory_error(dispatch_wire, require_execution_groups=True)
+        if error is not None:
+            raise RuntimeError(error)
+        # The sealed repair inventory also contains inactive rollback members.
+        # Compare only the existing explicit forward selection, not a caller-
+        # supplied exception to complete ToolBatch inventory binding.
+        forward_wire = dict(dispatch_wire)
+        forward_wire["invocations"] = [
+            invocation.model_dump(mode="json")
+            for invocation in followup.inventory_invocations
+            if str(invocation.call_id) in followup.forward_call_ids
+        ]
+        error = tool_batch_inventory_error(forward_wire, require_execution_groups=True)
+        if error is not None:
+            raise RuntimeError(error)
         try:
             inventory_invocations, followup_prepared = await self._prepare_directed_effect_dispatch(
                 invocations=list(followup.inventory_invocations),

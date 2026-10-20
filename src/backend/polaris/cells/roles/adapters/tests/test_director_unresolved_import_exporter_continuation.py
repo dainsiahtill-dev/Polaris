@@ -7,9 +7,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
+    workspace_quality_summary_requires_task_boundary_triage,
+)
 from polaris.cells.roles.adapters.internal.director import quality_gate as quality_gate_module
 from polaris.cells.roles.adapters.internal.director.quality_gate._repair_loop import (
-    _materialization_plan_probe_requires_task_boundary_triage,
+    _materialization_probe_is_unplannable,
 )
 
 
@@ -64,7 +67,8 @@ def test_unresolved_import_continuation_uses_in_scope_exporter_module(
     assert summary["task_boundary_director_continuation_allowed"] is True
     assert summary["task_boundary_continuation_reason"] == "current_task_unresolved_import"
     assert summary["task_boundary_continuation_target_files"] == ["src/engine/forecast.py"]
-    assert _materialization_plan_probe_requires_task_boundary_triage(summary) is False
+    assert _materialization_probe_is_unplannable(summary) is True
+    assert workspace_quality_summary_requires_task_boundary_triage(summary) is False
 
 
 def test_execute_method_quality_helper_annotates_unresolved_import_continuation(
@@ -113,7 +117,8 @@ def test_execute_method_quality_helper_annotates_unresolved_import_continuation(
     assert summary["task_boundary_director_continuation_allowed"] is True
     assert summary["task_boundary_continuation_reason"] == "current_task_unresolved_import"
     assert summary["task_boundary_continuation_target_files"] == ["src/__init__.py"]
-    assert _materialization_plan_probe_requires_task_boundary_triage(summary) is False
+    assert _materialization_probe_is_unplannable(summary) is True
+    assert workspace_quality_summary_requires_task_boundary_triage(summary) is False
 
 
 def test_unresolved_import_errors_outside_write_scope_are_deferred(

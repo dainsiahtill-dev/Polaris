@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -45,6 +47,7 @@ from polaris.cells.runtime.task_runtime.public import (
     dead_letter_directed_effect_operation,
     mark_directed_effect_recovery_pending,
 )
+from polaris.kernelone.editing.contracts import EditPrewriteRejectionV1, hash_edit_prewrite_arguments
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +108,7 @@ def _failed(
     physical_error: str = "",
     physical_error_type: str = "",
     physical_result: Mapping[str, object] | None = None,
+    prewrite_rejection: EditPrewriteRejectionV1 | None = None,
 ) -> DirectedEffectMutationPortResultV1:
     """Build a failed mutation result with nested physical-error evidence.
 
@@ -131,6 +135,8 @@ def _failed(
         exit_code = physical_result.get("exit_code")
         if type(exit_code) is int:
             detail["exit_code"] = exit_code
+    if prewrite_rejection is not None:
+        detail["prewrite_rejection"] = asdict(prewrite_rejection)
     recovery_result = _recovery_tool_result(recovery)
     if recovery_result is not None:
         thawed = {key: _thaw_value(value) for key, value in recovery_result.payload}
@@ -717,6 +723,7 @@ class _DirectorDirectedEffectMutationPort:
                 _thaw_arguments(prepared.arguments),
                 task_id=prepared.context.claim_grant.execution_attempt.external_task_id,
                 repair_effect=(prepared.repair_binding.effect if prepared.repair_binding is not None else None),
+                prewrite_operation_hash=prepared.context.bound_snapshot.snapshot.normalized_operation_hash,
             )
         except Exception as exc:  # noqa: BLE001 - every post-consume failure must enter durable recovery
             recovery = _attempt_physical_effect_recovery(
@@ -739,11 +746,65 @@ class _DirectorDirectedEffectMutationPort:
                 physical_error=str(exc),
                 physical_error_type=type(exc).__name__,
             )
+        if type(raw_result) is EditPrewriteRejectionV1:
+            baseline = prepared.context.bound_snapshot.snapshot.baseline_target_state_evidence
+            try:
+                canonical = EditPrewriteRejectionV1(
+                    reason_code=raw_result.reason_code,
+                    target_path=raw_result.target_path,
+                    normalized_operation_hash=raw_result.normalized_operation_hash,
+                    arguments_hash=raw_result.arguments_hash,
+                    before_sha256=raw_result.before_sha256,
+                    after_sha256=raw_result.after_sha256,
+                    write_started=raw_result.write_started,
+                )
+                bound = (
+                    canonical == raw_result
+                    and prepared.tool_name == "edit_blocks"
+                    and not baseline.is_no_file_state
+                    and raw_result.target_path == baseline.target_path
+                    and raw_result.before_sha256 == baseline.before_content_hash
+                    and raw_result.normalized_operation_hash
+                    == prepared.context.bound_snapshot.snapshot.normalized_operation_hash
+                    and raw_result.arguments_hash == hash_edit_prewrite_arguments(_thaw_arguments(prepared.arguments))
+                )
+                proof_hash = hashlib.sha256(
+                    json.dumps(
+                        asdict(canonical), sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+                    ).encode("utf-8")
+                ).hexdigest()
+            except (AttributeError, TypeError, ValueError):
+                bound = False
+                proof_hash = hashlib.sha256(b"{}").hexdigest()
+            recovery = _attempt_physical_effect_recovery(
+                prepared.context,
+                reason="physical file validation rejected before writing"
+                if bound
+                else "prewrite proof binding mismatch",
+                evidence=(
+                    ("context_id", prepared.context.context_id),
+                    ("failure_kind", "file_prewrite_rejected" if bound else "prewrite_proof_binding_mismatch"),
+                    ("prewrite_rejection_hash", proof_hash),
+                    ("physical_executor_invoked", True),
+                    ("write_started", False),
+                ),
+                terminalize_declared_failure=bound,
+                terminal_reason="validated file rejection before physical write",
+            )
+            return None, _failed(
+                recovery,
+                failure_kind="file_prewrite_rejected" if bound else "prewrite_proof_binding_mismatch",
+                physical_error=str(getattr(raw_result, "reason_code", "invalid_prewrite_proof")),
+                physical_error_type="edit_prewrite_rejection",
+                prewrite_rejection=canonical if bound else None,
+            )
         if not isinstance(raw_result, Mapping) or raw_result.get("ok") is not True:
             nested_error = ""
             nested_type = ""
             if isinstance(raw_result, Mapping):
-                nested_error = str(raw_result.get("error") or raw_result.get("message") or raw_result.get("stderr") or "").strip()
+                nested_error = str(
+                    raw_result.get("error") or raw_result.get("message") or raw_result.get("stderr") or ""
+                ).strip()
                 nested_type = str(raw_result.get("error_type") or "").strip()
             recovery = _attempt_physical_effect_recovery(
                 prepared.context,
@@ -755,7 +816,12 @@ class _DirectorDirectedEffectMutationPort:
                     ("physical_error", nested_error[:400]),
                     ("physical_error_type", nested_type[:80]),
                 ),
-                terminalize_declared_failure=True,
+                terminalize_declared_failure=(
+                    prepared.tool_name == "execute_command"
+                    and isinstance(raw_result, Mapping)
+                    and type(raw_result.get("exit_code")) is int
+                    and raw_result["exit_code"] > 0
+                ),
             )
             return None, _failed(
                 recovery,
@@ -768,15 +834,15 @@ class _DirectorDirectedEffectMutationPort:
             reason = str(raw_result.get("reason") or "physical mutation produced no effect").strip()
             recovery = _attempt_physical_effect_recovery(
                 prepared.context,
-                reason="physical executor returned a proven no-effect result after fence consumption",
+                reason="physical executor returned an unproven no-effect assertion after fence consumption",
                 evidence=(
                     ("context_id", prepared.context.context_id),
                     ("failure_kind", "physical_result_no_effect"),
                     ("no_effect_reason", reason[:200]),
                     ("physical_executor_invoked", True),
                 ),
-                terminalize_declared_failure=True,
-                terminal_reason="physical mutation produced no effect",
+                terminalize_declared_failure=False,
+                terminal_reason="physical mutation effect remains unproven",
             )
             return None, _failed(
                 recovery,

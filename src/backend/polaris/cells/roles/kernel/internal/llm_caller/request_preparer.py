@@ -44,6 +44,7 @@ from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_me
 from polaris.kernelone.audit.task_write_guidance import project_task_write_guidance, render_task_write_guidance
 from polaris.kernelone.context.context_os.decision_log import build_context_result_id
 from polaris.kernelone.context.projection_engine import is_empty_run_card_message
+from polaris.kernelone.context.prompt_safety import TOOL_OBSERVATION_SOURCES_KEY
 from polaris.kernelone.events.final_request_evidence import (
     FINAL_REQUEST_EVIDENCE_ANCHOR_SCHEMA,
     FINAL_REQUEST_EVIDENCE_PROMPT_ANCHOR_SCHEMA,
@@ -1324,12 +1325,22 @@ class LLMRequestPreparer:
             else {}
         )
         context_sources = tuple(str(item) for item in (getattr(context_result, "context_sources", ()) or ()))
+        raw_observation_sources = override.get(TOOL_OBSERVATION_SOURCES_KEY) if isinstance(override, dict) else None
+        observation_sources = (
+            tuple(raw_observation_sources)
+            if isinstance(raw_observation_sources, list | tuple)
+            else (raw_observation_sources,)
+            if raw_observation_sources is not None
+            else ()
+        )
         context_os_audit = audit_context_os_prompt_messages(
             messages=messages,
             context_sources=context_sources,
             metadata=context_metadata,
             current_user_instruction=str(getattr(context, "message", "") or ""),
             expected=True,
+            tool_observation_sources=observation_sources,
+            tool_observation_role=canonical_role,
         )
         capability_profile_ref = context_metadata.get("capability_profile_ref")
         source_projection_id = str(context_metadata.get("projection_id") or "").strip()
@@ -1482,6 +1493,7 @@ class LLMRequestPreparer:
                 route_fallback_authorization_json=str(getattr(profile, "route_fallback_authorization_json", "") or ""),
             )
         return PreparedLLMRequest(
+            tool_observation_sources=observation_sources,
             messages=messages,
             input_text=input_text,
             context_result=context_result,
@@ -1614,6 +1626,8 @@ class LLMRequestPreparer:
             metadata=context_metadata,
             current_user_instruction=str(messages[-1].get("content") or "") if messages else "",
             expected=True,
+            tool_observation_sources=prepared.tool_observation_sources,
+            tool_observation_role=canonical_role,
         )
         final_prompt_digest = str(context_os_audit.get("prompt_digest") or "").strip()
         if not final_prompt_digest:
@@ -1869,15 +1883,19 @@ class LLMRequestPreparer:
         if not isinstance(raw_messages, list):
             return
 
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         for item in raw_messages:
             if not isinstance(item, dict):
                 continue
             content = str(item.get("content") or "")
-            if not content.strip():
+            if not content.strip() and not any(
+                item.get(key) for key in ("tool_calls", "function_call", "tool_call_id")
+            ):
                 continue
             role = str(item.get("role") or "").strip().lower() or "user"
-            messages.append({"role": role, "content": content})
+            message = deepcopy(item)
+            message.update(role=role, content=content)
+            messages.append(message)
 
         if not messages:
             return

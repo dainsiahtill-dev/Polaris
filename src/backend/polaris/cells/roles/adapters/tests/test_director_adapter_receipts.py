@@ -60,7 +60,6 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _extract_task_target_path_candidates,
     _finalize_claimed_execution,
     _handle_claim_required,
-    _materialization_task_boundary_triage_summary,
     _no_write_materialization_retry_needed,
     _no_write_materialization_retry_tool_definitions,
     _pin_file_schema_to_declared_targets,
@@ -86,9 +85,6 @@ from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _build_materialization_quality_workspace_evidence_context,
     _extract_task_interface_contract,
     _go_runtime_smoke_repair_target_files,
-    _materialization_interface_discrepancy_evidence,
-    _materialization_interface_discrepancy_retry_authorized,
-    _materialization_plan_probe_requires_task_boundary_triage,
     _quality_repair_edit_file_tool_definition,
     _quality_repair_execute_command_tool_definition,
     _quality_repair_write_file_tool_definition,
@@ -167,6 +163,7 @@ from ._execution_attempt_helpers import (
     _test_execution_attempt,
     _test_execution_attempt_context,
 )
+
 
 def _install_test_deferred_projection(
     monkeypatch: pytest.MonkeyPatch,
@@ -247,8 +244,6 @@ def _run_test_materialization_quality_repair_schedule(
         execution_attempt=_test_execution_attempt(workspace, task_id),
     )
     return _project_deferred_repair_results_for_test(workspace, results), summary
-
-
 
 
 class TestDirectorAdapterCognitiveRuntimeReceipt:
@@ -825,14 +820,22 @@ class TestDirectorAdapterCognitiveRuntimeReceipt:
 
 
 def test_pol77_director_keeps_generated_expectations_outside_write_boundary(tmp_path):
-    row = {"path": "dist/main.js", "inputs": [{"task_id": "TASK-1", "path": "src/main.ts"}],
-           "build": {"argv": ["npm", "run", "build"], "cwd": "."}}
+    row = {
+        "path": "dist/main.js",
+        "inputs": [{"task_id": "TASK-1", "path": "src/main.ts"}],
+        "build": {"argv": ["npm", "run", "build"], "cwd": "."},
+    }
     adapter = DirectorAdapter(workspace=str(tmp_path))
     context = {}
     adapter._promote_task_contract_to_runtime_context(
-        task={"target_files": ["src/main.ts"], "scope_paths": ["src"],
-              "context_files": ["package.json"], "generated_outputs": [row]},
-        context=context, workspace=str(tmp_path),
+        task={
+            "target_files": ["src/main.ts"],
+            "scope_paths": ["src"],
+            "context_files": ["package.json"],
+            "generated_outputs": [row],
+        },
+        context=context,
+        workspace=str(tmp_path),
     )
     assert context["target_files"] == ["src/main.ts"]
     assert context["scope_paths"] == ["src"]

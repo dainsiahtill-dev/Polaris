@@ -24,6 +24,67 @@ from polaris.kernelone.tool_execution.validators import (
 )
 
 
+def tool_batch_inventory_error(batch_wire: object, *, require_execution_groups: bool = False) -> str | None:
+    """Compare one declared/partitioned inventory without normalizing or authorizing it.
+
+    Callers supply detached JSON wire values. Inventory-only captures and
+    group-only execution are distinct supported forms. When both forms are
+    present, each call must occur exactly once with the complete same payload;
+    phase order is not declaration order. No registry or Role object is read.
+    """
+
+    def is_json(value: object) -> bool:
+        if value is None or type(value) in {str, bool, int}:
+            return True
+        if type(value) is float:
+            return math.isfinite(value)
+        if type(value) is list:
+            return all(is_json(item) for item in value)
+        if type(value) is dict:
+            return all(type(key) is str and is_json(item) for key, item in value.items())
+        return False
+
+    try:
+        if type(require_execution_groups) is not bool or type(batch_wire) is not dict or not is_json(batch_wire):
+            return "tool_batch_inventory_invalid_wire"
+        declared = batch_wire.get("invocations", [])
+        partitions = [
+            batch_wire.get(name, [])
+            for name in ("parallel_readonly", "readonly_serial", "serial_writes", "async_receipts")
+        ]
+        if type(declared) is not list or any(type(group) is not list for group in partitions):
+            return "tool_batch_inventory_invalid_wire"
+        grouped = [item for group in partitions for item in group]
+        inventories: list[dict[str, str]] = []
+        for members in (declared, grouped):
+            inventory: dict[str, str] = {}
+            for member in members:
+                if type(member) is not dict:
+                    return "tool_batch_inventory_invalid_wire"
+                call_id = member.get("call_id")
+                if type(call_id) is not str or not call_id or call_id.strip() != call_id:
+                    return "tool_batch_inventory_invalid_wire"
+                if call_id in inventory:
+                    return "tool_batch_inventory_duplicate_call_id"
+                inventory[call_id] = json.dumps(
+                    member, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+                )
+            inventories.append(inventory)
+        expected, actual = inventories
+        if expected and not actual and require_execution_groups:
+            return "tool_batch_inventory_execution_groups_missing"
+        if expected and actual:
+            if expected.keys() - actual.keys():
+                return "tool_batch_inventory_member_missing"
+            if actual.keys() - expected.keys():
+                return "tool_batch_inventory_member_extra"
+            if any(actual[call_id] != payload for call_id, payload in expected.items()):
+                return "tool_batch_inventory_member_mismatch"
+        return None
+    except (TypeError, ValueError, RecursionError):
+        return "tool_batch_inventory_invalid_wire"
+
+
 def _tool_spec_registry() -> Any:
     """Import the registry lazily to keep snapshot contracts dependency-free."""
     from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry

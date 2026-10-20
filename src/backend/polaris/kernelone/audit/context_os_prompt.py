@@ -10,13 +10,17 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from polaris.kernelone.context.contracts import ContextSource
 
 CONTROL_PLANE_PROMPT_KEYS = frozenset(
     {
         "_transaction_kernel_forced_tool_choice",
         "_transaction_kernel_forced_tool_definitions",
         "_transaction_kernel_prebuilt_messages",
+        "_transaction_kernel_tool_observation_sources",
         "allowed_provider_ids",
         "allowed_provider_types",
         "allowed_scope",
@@ -293,9 +297,12 @@ def _find_content_hits(
     messages: Sequence[Mapping[str, Any]],
     *,
     current_user_instruction: str = "",
+    bound_tool_indices: set[int] | None = None,
 ) -> list[str]:
     hits: list[str] = []
-    for message in messages:
+    for index, message in enumerate(messages):
+        if bound_tool_indices and index in bound_tool_indices:
+            continue
         content = _message_content(message)
         if not content:
             continue
@@ -308,9 +315,13 @@ def _find_content_hits(
     return _dedupe(hits)
 
 
-def _find_raw_tool_failure_receipt_hits(messages: Sequence[Mapping[str, Any]]) -> list[str]:
+def _find_raw_tool_failure_receipt_hits(
+    messages: Sequence[Mapping[str, Any]], *, bound_tool_indices: set[int] | None = None
+) -> list[str]:
     hits: list[str] = []
-    for message in messages:
+    for index, message in enumerate(messages):
+        if bound_tool_indices and index in bound_tool_indices:
+            continue
         role = _message_role(message)
         if role not in {"assistant", "tool", "tool_result"}:
             continue
@@ -432,6 +443,8 @@ def audit_context_os_prompt_messages(
     metadata: Mapping[str, Any] | None = None,
     current_user_instruction: str = "",
     expected: bool = False,
+    tool_observation_sources: Sequence[ContextSource] = (),
+    tool_observation_role: str = "",
 ) -> dict[str, Any]:
     """Audit LLM-ready messages generated from ContextOS.
 
@@ -444,6 +457,8 @@ def audit_context_os_prompt_messages(
     Returns:
         A JSON-serializable audit payload.
     """
+    from polaris.kernelone.context.prompt_safety import validate_tool_observation_sources
+
     normalized_messages = [dict(item) for item in messages if isinstance(item, Mapping)]
     source_tags = _dedupe(str(item) for item in context_sources)
     metadata_payload = dict(metadata or {})
@@ -452,12 +467,18 @@ def audit_context_os_prompt_messages(
     prebuilt_from_transaction_kernel = bool(metadata_payload.get("prebuilt_projection_messages"))
     state_first_projected = state_first_from_sources or state_first_from_metadata or prebuilt_from_transaction_kernel
 
+    bound_tool_indices, binding_errors = validate_tool_observation_sources(
+        normalized_messages, tool_observation_sources, role=tool_observation_role
+    )
     metadata_key_hits = _find_metadata_key_hits(normalized_messages)
     content_hits = _find_content_hits(
         normalized_messages,
         current_user_instruction=current_user_instruction,
+        bound_tool_indices=bound_tool_indices,
     )
-    raw_tool_failure_receipt_hits = _find_raw_tool_failure_receipt_hits(normalized_messages)
+    raw_tool_failure_receipt_hits = _find_raw_tool_failure_receipt_hits(
+        normalized_messages, bound_tool_indices=bound_tool_indices
+    )
     empty_content_count = sum(1 for item in normalized_messages if not _message_content(item).strip())
     receipt_ref_count = sum(1 for item in normalized_messages if "receipt_refs" in item)
     role_counts = _count_roles(normalized_messages)
@@ -475,6 +496,7 @@ def audit_context_os_prompt_messages(
         and data_plane_non_empty
         and current_user_final
         and current_user_preserved
+        and not binding_errors
     )
 
     return {
@@ -502,6 +524,8 @@ def audit_context_os_prompt_messages(
             "receipt_ref_count": int(receipt_ref_count),
             "raw_tool_failure_receipt_absent": bool(raw_tool_failure_receipt_absent),
             "raw_tool_failure_receipt_hits": raw_tool_failure_receipt_hits,
+            "bound_tool_observation_count": len(bound_tool_indices),
+            "tool_observation_binding_errors": binding_errors,
         },
         "current_user_instruction": {
             "provided": bool(str(current_user_instruction or "").strip()),
@@ -514,6 +538,7 @@ def audit_context_os_prompt_messages(
             "raw_tool_failure_receipt_absent": bool(raw_tool_failure_receipt_absent),
             "current_user_final": bool(current_user_final),
             "current_user_instruction_preserved": bool(current_user_preserved),
+            "bound_tool_observations_valid": not binding_errors,
         },
     }
 

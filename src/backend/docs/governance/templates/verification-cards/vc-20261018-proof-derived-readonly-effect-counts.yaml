@@ -1,0 +1,33 @@
+id: vc-20261018-proof-derived-readonly-effect-counts
+classification: defect
+status: verified_bounded_native_pending
+scope:
+  - polaris/cells/control_plane/run_ledger/public/settlement_barrier.py
+  - polaris/cells/control_plane/run_ledger/tests/test_settlement_readonly_effect_counts.py
+  - polaris/cells/control_plane/run_ledger/tests/test_terminal_failure_cleanup.py
+hypotheses:
+  - Dispatch counts include reads and cannot alone represent mutation receipt obligations.
+  - The existing complete strict owner closure proof can also count non-mutating reads without granting release through counters.
+mechanism:
+  - Reuse the same strict analysis once; incomplete proof returns false and zero readonly credit.
+  - Preserve all original closure predicates and bool helper compatibility.
+  - Preserve raw dispatch/result rows, owner refs, physical effect receipts and closed/passed formulas.
+  - Only completed strictly proven readonly members reduce mutation effect obligations.
+  - Physical negative mutation failures are not proof of no effects and receive no readonly credit.
+verification:
+  - Causal RED two failed readonly count controls and four passing owner-negative controls.
+  - GREEN six current public-query cases with real private owners, including normal and failed-QA controls.
+  - Adjacent five-file run has 152 passed plus one legacy assertion requiring reads to count as mutation obligations.
+  - That single legacy assertion was migrated to zero readonly debt while all failed QA and missing evidence assertions remain, then rerun passed.
+  - Critical predicate source and closed/passed formulas are unchanged; see mechanism-equivalence.json.
+  - Ruff format/check and scoped production mypy passed.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14b-effect-counts/red.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14b-effect-counts/green.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14b-effect-counts/adjacent.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14b-effect-counts/legacy-contract.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14b-effect-counts/mechanism-equivalence.json
+remaining:
+  - Product outcome controls are explicitly synthetic; empty-policy success is not native acceptance.
+  - No target command, dependency preparation, provider request or prior native resource release was performed here.
+  - Fresh isolated L1-01 delivery and resource closure remain required.

@@ -262,7 +262,7 @@ def test_hold_llm_when_crate_rewrite_is_still_plannable_without_mutation() -> No
     )
 
 
-def test_authorized_owned_unplannable_test_residual_does_not_repeat_triage() -> None:
+def test_unplannable_test_residual_does_not_synthesize_ownership_triage() -> None:
     from polaris.cells.factory.pipeline.internal.factory_workspace_quality_evidence import (
         workspace_quality_summary_requires_task_boundary_triage,
     )
@@ -292,7 +292,7 @@ def test_authorized_owned_unplannable_test_residual_does_not_repeat_triage() -> 
                 },
             }
         )
-        is True
+        is False
     )
 
 

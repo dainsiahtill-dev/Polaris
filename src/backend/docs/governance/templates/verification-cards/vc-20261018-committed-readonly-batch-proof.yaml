@@ -1,0 +1,48 @@
+id: vc-20261018-committed-readonly-batch-proof
+classification: defect
+status: scoped_consumer_verified_integration_pending
+scope:
+  - polaris/cells/control_plane/run_ledger/public/committed_turn_receipts.py
+assumptions:
+  - Immutable committed outcomes own complete result/raw rows; real lifecycle references bind explicit component batch IDs and full SHA witnesses.
+  - Original decision inventory and executable groups must agree by complete typed JSON payload, before readonly observation.
+  - Captured execution.invocation_batches are inventory snapshots, not executable plans.
+  - Resource closure never supplies product acceptance or write effect receipts for reads.
+hypotheses:
+  - Existing complete known serializers independently selected per component prove the entire original component list without a new carrier.
+  - Complete owner captured snapshots and pure KernelOne semantics classify historical reads independently of the current registry.
+  - Shared KernelOne tool_batch_inventory_error applied to the original raw decision rejects authenticated contradictory historical owners.
+evidence:
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-committed-readonly/original-source.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-committed-readonly/accepted-known-serializer-probe.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-committed-readonly/v1-frozen/manifest.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-independent/partition-counterexample.json
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-committed-readonly/v2/design.md
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-committed-readonly/v2/red-historical-inventory.xml
+  - /home/dains/.polaris/audit_archives/autonomous-delivery-20261018/m14-committed-readonly/v2/implementation.json
+verification:
+  - Actual ToolBatchRuntime, production merge and outcome commit precede public cold-process query; only private synthetic read I/O is substituted.
+  - Actual gather returns declaration order; legal readonly_parallel receipt collection permutation remains an explicit seam.
+  - Logical batch identity, native declaration indices, complete typed inputs, captured classification, provider correlation and raw result mirror remain bound.
+  - Genuine per-component IDs and SHA witnesses form a unique complete bijection and match the entire original-list hash.
+  - Unknown, missing, duplicate, stale, foreign or altered refs, arguments, snapshots, native indices and result types remain unknown.
+  - Legacy V2/V3 bytes, inventory-only capture and restrictive missing-snapshot validation remain compatible; current registry never reclassifies complete captured history.
+  - A labeled historical contradictory owner rejects without regenerating an invalid physical dispatch; matching, reversed group order and inventory-only controls remain valid.
+  - Real closed TaskRuntime owners and committed read proof support controlled failed cleanup without product acceptance; missing owner or proof blocks.
+  - Controlled success and failure resource-count contradictions are recorded separately without a metric change.
+architecture:
+  - Existing Run Ledger readonly consumer reuses pure KernelOne primitives; no reverse Role Cell dependency, copied inventory rules, new store or carrier.
+  - Consumer validates original raw decision tool_batch with capture-compatible default; execution.invocation_batches are never passed as execution plans.
+  - No settlement, count, TaskRuntime, target, config, model, provider, historical fact or native-control changes in consumer v2.
+producer_prerequisite:
+  - M14P captured semantics base accepted by root with independent parity.
+  - Concurrent producer bucket A owns shared inventory primitive and Runtime/pre-durable admission; consumer does not own those files.
+legacy_evidence:
+  - M14 v1 focused 91 and adjacency 366 passed, but independent actual same-batch partition contradiction blocked acceptance; original evidence remains frozen.
+  - Consumer v2 causal RED has seven rejected-layout assertions failing as observed and three legitimate controls passing on v1 consumer.
+frozen_resource_test_sha256: 02fb7b188ca6e60b77a9c78b82d4223b778b74ce74bbdff7c097bbebc4f6d2ee
+remaining:
+  - Consumer causal RED seven failures and three controls became ten GREEN; focused consumer compatibility gate has 79 passes.
+  - Static validation, combined producer-consumer adjacency results and independent review are recorded in the linked v2 implementation report.
+  - Independent acceptance and native integration remain separate.
+  - No fresh native product qualification or historical R01 requalification/release is claimed.
