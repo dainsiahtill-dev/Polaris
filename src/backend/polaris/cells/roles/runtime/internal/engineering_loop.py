@@ -17,6 +17,7 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     RoleRunCommand,
     RoleRunResult,
     RunLimits,
+    ToolObservation,
 )
 from polaris.kernelone.llm.contracts.tool import ToolCall
 from polaris.kernelone.llm.engine.client import ResilientLLMClient
@@ -112,6 +113,7 @@ async def run_engineering_loop(
     store: EngineeringSessionStore,
     client: ResilientLLMClient,
     consult: Callable[[str, str, int, str], Awaitable[str]] | None = None,
+    verify: Callable[[tuple[str, ...], int, str], Awaitable[ToolObservation]] | None = None,
     pending_ancestors: frozenset[tuple[int, str]] = frozenset(),
     project_run: bool = True,
     purpose: str = "role",
@@ -122,10 +124,15 @@ async def run_engineering_loop(
     provider body. ContextOS transport-body closure is a separate integration.
     No controller, lock, or second journal is created here.
     """
-    from polaris.cells.roles.runtime.internal.engineering_roles import interpret_review_reports, register_review_tool
+    from polaris.cells.roles.runtime.internal.engineering_roles import (
+        interpret_review_reports,
+        register_review_tool,
+        register_verification_tool,
+    )
 
     register_consult_tool()
     register_review_tool()
+    register_verification_tool()
     scope = role_scope(command.role, scope)
     active_dispatch: tuple[int, str] | None = None
 
@@ -133,6 +140,11 @@ async def run_engineering_loop(
         if consult is None or active_dispatch is None:
             raise ValueError("consultation requires an active tool dispatch")
         return await consult(role, question, *active_dispatch)
+
+    async def verify_current(commands: tuple[str, ...]) -> ToolObservation:
+        if verify is None or active_dispatch is None or command.role != "director":
+            raise ValueError("verify_project requires an active Director dispatch")
+        return await verify(commands, *active_dispatch)
 
     def review_current() -> None:
         if command.role != "qa" or active_dispatch is None:
@@ -159,6 +171,7 @@ async def run_engineering_loop(
         cancel,
         consult=consult_current if consult is not None and command.role == "director" else None,
         review=review_current if command.role == "qa" else None,
+        verify=verify_current if verify is not None and command.role == "director" else None,
     )
     events = store.load_events(command.session_id)
     starts = [event for event in events if event["kind"] == "role_started" and event["role"] == command.role]

@@ -192,6 +192,28 @@ def test_changed_requirements_fail_before_instance_or_post(tmp_path: Path) -> No
     assert not inputs.workspace.exists()
 
 
+def test_frozen_empty_user_recipe_delegates_actual_check_selection_to_authorized_agent(tmp_path: Path) -> None:
+    """A goal-only request must reach the same formal API, without harness-selected recipes."""
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    inputs.checks_file.write_text("[]\n", encoding="utf-8")
+    host = json.loads(inputs.host_config_file.read_text(encoding="utf-8"))
+    host["permission_profiles"]["acceptance"]["enabled_tools"].append("verify_project")
+    inputs.host_config_file.write_text(json.dumps(host), encoding="utf-8")
+    inputs = replace(
+        inputs,
+        checks_sha256=hashlib.sha256(inputs.checks_file.read_bytes()).hexdigest(),
+        host_config_sha256=hashlib.sha256(inputs.host_config_file.read_bytes()).hexdigest(),
+    )
+    supervisor = FakeSupervisor()
+    http = FakeHTTP(inputs.workspace)
+    result = module.launch(inputs, supervisor=supervisor, http_factory=lambda _binding: http)
+    assert result["harness_status"] == "LAUNCHED"
+    assert http.calls[0][2]["required_checks"] == []
+    assert inputs.requirements_file.read_text(encoding="utf-8") in http.calls[0][2]["instruction"]
+    assert not inputs.workspace.exists()
+
+
 def test_uncertain_post_is_retained_without_retry_or_stop(tmp_path: Path) -> None:
     module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
     inputs = _inputs(module, tmp_path)

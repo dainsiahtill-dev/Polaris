@@ -2084,6 +2084,7 @@ export interface EngineeringRunSnapshot {
   workflow: 'direct' | 'collaborative'; role: EngineeringRole; status: EngineeringRunStatus;
   active_roles: string[]; roles: Record<EngineeringRole, EngineeringRoleStatus>; text: string;
   verification: EngineeringVerification; checks: EngineeringCheck[]; required_checks: string[];
+  verification_commands?: string[];
   permission_profile_id: string | null; resource_url: string; last_seq: number; events: EngineeringEvent[];
   event_delivery_error?: unknown; native_observation_error?: unknown; truncated_fields?: string[];
   require_qa?: boolean; qa_verdict?: EngineeringQAVerdict; project_outcome?: EngineeringProjectOutcome;

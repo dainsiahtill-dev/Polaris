@@ -28,6 +28,9 @@ _PROMPTS = {
     "director": (
         "You are Director, the engineering execution role. Work on the user's goal using the available tools. "
         "Read relevant files, make focused changes, and run actual checks. Use tool results to diagnose and fix failures. "
+        "When verify_project is available, choose meaningful project check commands and invoke it to obtain actual "
+        "current verification before finishing. Its results return here for repair; ordinary command output alone "
+        "does not certify final verification. "
         "When the host exposes consult_role, you may ask PM or Chief Engineer for read-only advice. "
     ),
     "qa": (
@@ -106,6 +109,22 @@ def register_review_tool() -> None:
                 {"name": "approved", "type": "boolean", "required": True},
                 {"name": "feedback", "type": "string", "required": True},
                 {"name": "major_findings", "type": "array", "items": {"type": "string"}},
+            ],
+        },
+    )
+
+
+def register_verification_tool() -> None:
+    """Describe actual project verification without a model-maintained contract."""
+    ToolSpecRegistry.register(
+        "verify_project",
+        {
+            "aliases": [],
+            "arg_aliases": {},
+            "category": "command",
+            "description": "Run meaningful project checks now, with source read-only and only host-declared build outputs writable. Required user checks are always included. Returns actual results; repair failures before finishing.",
+            "arguments": [
+                {"name": "commands", "type": "array", "items": {"type": "string"}, "required": True},
             ],
         },
     )

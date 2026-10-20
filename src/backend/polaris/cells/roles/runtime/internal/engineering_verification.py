@@ -11,19 +11,61 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import stat
 from pathlib import Path
 from typing import Any
 
 from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
-from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools
+from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools, bounded_output
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RunLimits, ToolObservation
 from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.fs.runtime import KernelFileSystem
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+
+def verification_observation(call_id: str, payload: dict[str, Any], max_output_bytes: int) -> ToolObservation:
+    """Project a durable Verifier completion, never a model's claimed verdict."""
+    status = payload.get("verification", "unknown")
+    binding = payload.get("input_binding", {})
+    commands = binding.get("commands", [])
+    checks = payload.get("checks", [])
+    if status not in {"passed", "failed", "not_run", "unknown"}:
+        status = "unknown"
+    if status == "passed" and (
+        not commands
+        or not isinstance(checks, list)
+        or len(checks) != len(commands)
+        or any(
+            not isinstance(check, dict)
+            or check.get("ok") is not True
+            or check.get("exit_code") != 0
+            or check.get("interrupted")
+            for check in checks
+        )
+    ):
+        status = "unknown"
+    if max_output_bytes <= 0:
+        raise ValueError("verification output limit must be positive")
+    summary = {
+        "verification": status,
+        "verification_commands": commands,
+        "checks": checks,
+        "workspace_revision": payload.get("workspace_revision"),
+        "attempt_seq": binding.get("attempt_seq"),
+        "detail": payload.get("detail", ""),
+    }
+    return ToolObservation(
+        call_id,
+        "verify_project",
+        status == "passed",
+        bounded_output(json.dumps(summary, ensure_ascii=False), max_output_bytes),
+        None,
+        status == "unknown",
+    )
 
 
 class EngineeringVerification:
@@ -108,6 +150,8 @@ class EngineeringVerification:
         """Host observations bind a review to exact current inputs, never model IDs."""
         row = self.store.load_run(session_id, workspace=self.workspace)
         completed = [event for event in self.store.load_events(session_id) if event["kind"] == "verification_completed"]
+        # The immutable completion already binds its effective commands. Keep
+        # this shape compatible with existing, unchanged QA candidates.
         return {
             "workspace_revision": row["workspace_revision"],
             "verification_seq": completed[-1]["seq"] if completed else 0,
@@ -203,11 +247,16 @@ class EngineeringVerification:
         return source
 
     async def run_verification(
-        self, commands: tuple[str, ...], *, session_id: str, workspace_revision: int
+        self,
+        commands: tuple[str, ...],
+        *,
+        session_id: str,
+        workspace_revision: int,
+        requested_by: tuple[int, str] | None = None,
     ) -> tuple[ToolObservation, ...]:
         """Record dispatch, execute read-only checks, then project their bound result."""
         observations: list[ToolObservation] = []
-        binding: dict[str, object] = {
+        binding: dict[str, Any] = {
             "commands": list(commands),
             "workspace_revision": workspace_revision,
             "scope": self._profile(),
@@ -224,25 +273,44 @@ class EngineeringVerification:
             )
 
         run = self.store.load_run(session_id, workspace=self.workspace)
+        if requested_by is not None:
+            if not self.store._valid_commands(commands, allow_empty=False):
+                raise ValueError("verify_project requires nonempty command strings")
+            granted = {ToolSpecRegistry.get_canonical(name) for name in self.scope.enabled_tools}
+            if not {"verify_project", "execute_command"} <= granted:
+                raise PermissionError("verify_project and execute_command require explicit host permission")
+            binding["commands"] = self.store._merge_commands(run["required_checks"], commands)
+            binding["requested_by"] = list(requested_by)
         if not commands:
             record("not_run", "No final checks declared.")
             return ()
         if (
             type(workspace_revision) is not int
             or run["workspace_revision"] != workspace_revision
-            or list(commands) != run["required_checks"]
+            or (requested_by is None and list(commands) != run["verification_commands"])
             or any(not isinstance(command, str) or not command.strip() or "\0" in command for command in commands)
         ):
+            if requested_by is not None:
+                raise ValueError("Final checks or requested workspace revision do not match this run.")
             record("unknown", "Final checks or requested workspace revision do not match this run.")
             return ()
+        manifest_error = None
         try:
             binding["source_manifest"] = self._manifest(include_outputs=False)
         except (OSError, ValueError, RuntimeError, PathSecurityError) as error:
-            record("unknown", f"Cannot bind final-check inputs: {error}")
-            return ()
-        turn_seq = self.store.append_event(
-            session_id, kind="verification_started", role="director", payload={"input_binding": binding}
+            manifest_error = error
+        binding = self.store.begin_verification(
+            session_id,
+            commands=commands,
+            workspace_revision=workspace_revision,
+            input_binding=binding,
+            requested_by=requested_by,
         )
+        turn_seq = int(binding["attempt_seq"])
+        commands = tuple(binding["commands"])
+        if manifest_error is not None:
+            record("unknown", f"Cannot bind final-check inputs: {manifest_error}")
+            return ()
         try:
             for index, command in enumerate(commands):
                 if self.cancel.is_set():
@@ -298,25 +366,34 @@ class EngineeringVerification:
             record("unknown", f"Final-check observation is uncertain: {error}")
         return tuple(observations)
 
-    def current_verification(self, session_id: str) -> str:
-        """Project historical observations only when their actual inputs remain current."""
+    def current_completed_result(self, session_id: str) -> dict[str, Any] | None:
+        """Return complete real passed/failed evidence only for the current candidate."""
         run = self.store.load_run(session_id, workspace=self.workspace)
-        if run["verification"] != "passed":
-            return str(run["verification"])
+        if run["verification"] not in {"passed", "failed"}:
+            return None
         completed = [event for event in self.store.load_events(session_id) if event["kind"] == "verification_completed"]
         if not completed:
-            return "unknown"
+            return None
         payload = completed[-1]["payload"]
         binding = payload.get("input_binding", {})
         if (
-            payload.get("verification") != "passed"
+            payload.get("verification") != run["verification"]
             or payload.get("workspace_revision") != run["workspace_revision"]
-            or binding.get("commands") != run["required_checks"]
+            or binding.get("commands") != run["verification_commands"]
             or binding.get("scope") != self._profile()
-            or not run["required_checks"]
+            or not run["verification_commands"]
+            or not self.store.verification_completion_is_observed(session_id, payload)
         ):
-            return "unknown"
+            return None
         try:
-            return "passed" if binding.get("result_manifest") == self._manifest(include_outputs=True) else "unknown"
+            return payload if binding.get("result_manifest") == self._manifest(include_outputs=True) else None
         except (OSError, ValueError, RuntimeError, PathSecurityError):
-            return "unknown"
+            return None
+
+    def current_verification(self, session_id: str) -> str:
+        """Project historical observations only when their actual inputs remain current."""
+        run = self.store.load_run(session_id, workspace=self.workspace)
+        if run["verification"] not in {"passed", "failed"}:
+            return str(run["verification"])
+        completed = self.current_completed_result(session_id)
+        return str(completed["verification"]) if completed is not None else "unknown"

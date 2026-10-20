@@ -54,6 +54,7 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
         "execute_command",
         "consult_role",
         "report_review",
+        "verify_project",
     }
     tools = frozenset(ToolSpecRegistry.get_canonical(name) for name in profile.enabled_tools)
     if tools - supported:
@@ -174,6 +175,7 @@ def observe_engineering_run(service: EngineeringRunService, session_id: str, wor
         "acceptance_basis": row["acceptance_basis"],
         "checks": row["checks"],
         "required_checks": row["required_checks"],
+        "verification_commands": row["verification_commands"],
         "permission_profile_id": row.get("permission_profile_id"),
         "resource_url": f"/v2/engineering/runs/{session_id}",
         "last_seq": row["last_seq"],

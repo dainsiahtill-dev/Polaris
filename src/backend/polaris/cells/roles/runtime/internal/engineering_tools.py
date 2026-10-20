@@ -53,6 +53,7 @@ class EngineeringTools:
         *,
         consult: Callable[[str, str], Awaitable[str]] | None = None,
         review: Callable[[], None] | None = None,
+        verify: Callable[[tuple[str, ...]], Awaitable[ToolObservation]] | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
         self.scope = scope
@@ -60,11 +61,18 @@ class EngineeringTools:
         self.cancel = cancel
         self.consult = consult
         self.review = review
+        self.verify = verify
         self.filesystem = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
         self.enabled = frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools) & (
             ENGINEERING_TOOLS
             | ({"consult_role"} if consult is not None else set())
             | ({"report_review"} if review is not None else set())
+            | (
+                {"verify_project"}
+                if verify is not None
+                and "execute_command" in {ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools}
+                else set()
+            )
         )
         if limits.max_output_bytes <= 0 or limits.max_tool_output_bytes <= 0:
             raise ValueError("engineering output limits must be positive")
@@ -132,6 +140,20 @@ class EngineeringTools:
             if self.cancel.is_set():
                 return ToolObservation(call_id, name, False, "Execution cancelled before dispatch.", None, True)
             self._remaining()
+            if name == "verify_project":
+                self._keys(args, {"commands"})
+                commands = args.get("commands")
+                if (
+                    not isinstance(commands, list)
+                    or not commands
+                    or any(
+                        not isinstance(command, str) or not command.strip() or "\0" in command for command in commands
+                    )
+                ):
+                    raise ValueError("verify_project requires a nonempty list of nonempty command strings without NUL")
+                if self.verify is None:
+                    raise ValueError("verify_project requires the active Director session owner")
+                return await self.verify(tuple(commands))
             if name == "report_review":
                 self._keys(args, {"approved", "feedback", "major_findings"})
                 if self.review is None or type(args.get("approved")) is not bool:

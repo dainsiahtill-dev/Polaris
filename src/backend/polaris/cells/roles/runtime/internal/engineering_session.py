@@ -18,7 +18,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, cast
 
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     PermissionScope,
@@ -263,13 +263,16 @@ class EngineeringSessionStore:
     def load_run(self, session_id: str, *, workspace: Path) -> dict[str, Any]:
         self._assert_workspace(workspace)
         with self._connection() as connection:
+            connection.execute("BEGIN")
             row = dict(self._require_run(connection, session_id))
             acceptance = self._acceptance(connection, row)
+            commands = self._verification_commands(connection, row)
         if row["workspace"] != str(self.workspace):
             raise PermissionError("stored engineering session workspace mismatch")
         for field in ("required_checks", "scope", "limits", "checks"):
             row[field] = json.loads(row[field])
         row.update(acceptance)
+        row["verification_commands"] = commands
         row["verification_output_roots"] = (
             json.loads(row["verification_output_roots"]) if row["verification_output_roots"] is not None else None
         )
@@ -295,6 +298,7 @@ class EngineeringSessionStore:
                 (session_id, event_limit),
             ).fetchall()
             acceptance = self._acceptance(connection, row)
+            commands = self._verification_commands(connection, row)
             roles = connection.execute(
                 "SELECT seq,kind,role,payload,created_at FROM events WHERE session_id=? AND kind IN ('role_started','role_finished') ORDER BY seq",
                 (session_id,),
@@ -302,6 +306,7 @@ class EngineeringSessionStore:
         for field in ("required_checks", "scope", "limits", "checks"):
             row[field] = json.loads(row[field])
         row.update(acceptance)
+        row["verification_commands"] = commands
         row["verification_output_roots"] = (
             json.loads(row["verification_output_roots"]) if row["verification_output_roots"] is not None else None
         )
@@ -402,23 +407,288 @@ class EngineeringSessionStore:
         role: str,
     ) -> None:
         with self._transaction() as connection:
-            self._require_run(connection, session_id)
-            row = connection.execute(
-                "SELECT tool,status FROM tool_calls WHERE session_id=? AND turn_seq=? AND call_id=?",
-                (session_id, turn_seq, observation.call_id),
-            ).fetchone()
-            if row is None or row["tool"] != observation.tool:
-                raise ValueError("tool observation has no matching dispatch")
-            if row["status"] != "started":
-                raise ValueError("tool dispatch was already observed")
-            payload = asdict(observation)
+            self._record_tool_observation(connection, session_id, turn_seq=turn_seq, observation=observation, role=role)
+
+    def _record_tool_observation(
+        self, connection: sqlite3.Connection, session_id: str, *, turn_seq: int, observation: ToolObservation, role: str
+    ) -> None:
+        self._require_run(connection, session_id)
+        row = connection.execute(
+            "SELECT tool,status FROM tool_calls WHERE session_id=? AND turn_seq=? AND call_id=?",
+            (session_id, turn_seq, observation.call_id),
+        ).fetchone()
+        if row is None or row["tool"] != observation.tool:
+            raise ValueError("tool observation has no matching dispatch")
+        if row["status"] != "started":
+            raise ValueError("tool dispatch was already observed")
+        payload = asdict(observation)
+        connection.execute(
+            "UPDATE tool_calls SET status='observed',observation=?,observed_at=? WHERE session_id=? AND turn_seq=? AND call_id=?",
+            (self._json(payload), time.time(), session_id, turn_seq, observation.call_id),
+        )
+        self._append_event(
+            connection, session_id, kind="tool_observed", role=role, payload={"turn_seq": turn_seq, **payload}
+        )
+
+    @staticmethod
+    def _valid_commands(commands: object, *, allow_empty: bool = True) -> bool:
+        return (
+            isinstance(commands, (list, tuple))
+            and (allow_empty or bool(commands))
+            and all(isinstance(command, str) and command.strip() and "\0" not in command for command in commands)
+        )
+
+    @staticmethod
+    def _merge_commands(required: list[str], selected: list[str] | tuple[str, ...]) -> list[str]:
+        commands = list(required)
+        for command in selected:
+            if command not in commands:
+                commands.append(command)
+        return commands
+
+    def _verification_commands(self, connection: sqlite3.Connection, row: Mapping[str, Any] | sqlite3.Row) -> list[str]:
+        required = json.loads(row["required_checks"])
+        selected = connection.execute(
+            "SELECT payload FROM events WHERE session_id=? AND kind='verification_started' ORDER BY seq DESC LIMIT 1",
+            (row["session_id"],),
+        ).fetchone()
+        if selected is None:
+            return required
+        commands = json.loads(selected["payload"]).get("input_binding", {}).get("commands")
+        if not self._valid_commands(commands) or list(commands[: len(required)]) != required:
+            raise ValueError("saved verification commands do not preserve original required checks")
+        return list(commands)
+
+    def _has_pending_tools(
+        self, connection: sqlite3.Connection, session_id: str, *, ignore: tuple[int, str] | None = None
+    ) -> bool:
+        reconciled = {
+            (payload["turn_seq"], payload["call_id"])
+            for event in connection.execute(
+                "SELECT payload FROM events WHERE session_id=? AND kind='tool_reconciled'", (session_id,)
+            )
+            for payload in (json.loads(event["payload"]),)
+        }
+        return any(
+            (row["turn_seq"], row["call_id"]) != ignore and (row["turn_seq"], row["call_id"]) not in reconciled
+            for row in connection.execute(
+                "SELECT turn_seq,call_id FROM tool_calls WHERE session_id=? AND status='started'", (session_id,)
+            )
+        )
+
+    def _verification_parent(
+        self, connection: sqlite3.Connection, session_id: str, requested_by: object, commands: list[str]
+    ) -> sqlite3.Row | None:
+        if (
+            not isinstance(requested_by, (list, tuple))
+            or len(requested_by) != 2
+            or type(requested_by[0]) is not int
+            or requested_by[0] < 1
+            or not isinstance(requested_by[1], str)
+            or not requested_by[1]
+        ):
+            return None
+        parent = connection.execute(
+            "SELECT * FROM tool_calls WHERE session_id=? AND turn_seq=? AND call_id=?",
+            (session_id, *requested_by),
+        ).fetchone()
+        if parent is None or parent["tool"] != "verify_project":
+            return None
+        arguments = json.loads(parent["arguments"])
+        if set(arguments) != {"commands"} or not self._valid_commands(arguments["commands"], allow_empty=False):
+            return None
+        required = json.loads(self._require_run(connection, session_id)["required_checks"])
+        if self._merge_commands(required, arguments["commands"]) != commands:
+            return None
+        event = connection.execute(
+            "SELECT role,payload FROM events WHERE session_id=? AND kind='tool_started' ORDER BY seq", (session_id,)
+        ).fetchall()
+        if not any(
+            item["role"] == "director"
+            and json.loads(item["payload"]).get("turn_seq") == requested_by[0]
+            and json.loads(item["payload"]).get("call_id") == requested_by[1]
+            for item in event
+        ):
+            return None
+        return parent
+
+    def begin_verification(
+        self,
+        session_id: str,
+        *,
+        commands: tuple[str, ...],
+        workspace_revision: int,
+        input_binding: Mapping[str, object],
+        requested_by: tuple[int, str] | None = None,
+    ) -> dict[str, Any]:
+        """Commit accepted selection and invalidate old current evidence before effects."""
+        if not self._valid_commands(commands, allow_empty=requested_by is None):
+            raise ValueError("verification commands must be nonempty command strings")
+        with self._transaction() as connection:
+            row = self._require_run(connection, session_id)
+            if type(workspace_revision) is not int or row["workspace_revision"] != workspace_revision:
+                raise ValueError("verification workspace revision changed")
+            effective = (
+                self._merge_commands(json.loads(row["required_checks"]), commands)
+                if requested_by is not None
+                else list(commands)
+            )
+            if requested_by is not None:
+                parent = self._verification_parent(connection, session_id, requested_by, effective)
+                if parent is None or parent["status"] != "started":
+                    raise ValueError("verification requires its exact active Director tool dispatch")
+                if any(
+                    json.loads(event["payload"]).get("input_binding", {}).get("requested_by") == list(requested_by)
+                    for event in connection.execute(
+                        "SELECT payload FROM events WHERE session_id=? AND kind='verification_started'", (session_id,)
+                    )
+                ):
+                    raise ValueError("verification dispatch already has an attempt; recover its durable result")
+            elif effective != self._verification_commands(connection, row):
+                raise ValueError("verification commands do not match saved checks")
+            if self._has_pending_tools(connection, session_id, ignore=requested_by):
+                raise ValueError("unobserved tool effects block new verification")
+            attempt = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(seq),0)+1 FROM events WHERE session_id=?", (session_id,)
+                ).fetchone()[0]
+            )
+            binding = {
+                **input_binding,
+                "commands": effective,
+                "workspace_revision": workspace_revision,
+                "attempt_seq": attempt,
+            }
+            if requested_by is not None:
+                binding["requested_by"] = list(requested_by)
             connection.execute(
-                "UPDATE tool_calls SET status='observed',observation=?,observed_at=? WHERE session_id=? AND turn_seq=? AND call_id=?",
-                (self._json(payload), time.time(), session_id, turn_seq, observation.call_id),
+                "UPDATE runs SET verification='not_run',checks='[]',updated_at=? WHERE session_id=?",
+                (time.time(), session_id),
             )
+            current = dict(self._require_run(connection, session_id))
+            summary = self._acceptance(connection, current, verification_starting=True)
             self._append_event(
-                connection, session_id, kind="tool_observed", role=role, payload={"turn_seq": turn_seq, **payload}
+                connection,
+                session_id,
+                kind="verification_started",
+                role="director",
+                payload={
+                    "input_binding": binding,
+                    "verification_commands": effective,
+                    "verification": "not_run",
+                    "checks": [],
+                    **summary,
+                },
             )
+        return binding
+
+    def _completion_observed(self, connection: sqlite3.Connection, session_id: str, payload: Mapping[str, Any]) -> bool:
+        """Check exact attempt identities, never borrow a previous call-id receipt."""
+        binding = payload.get("input_binding", {})
+        checks = payload.get("checks", [])
+        commands = binding.get("commands", [])
+        if not self._valid_commands(commands, allow_empty=False) or not isinstance(checks, list):
+            return False
+        attempt = binding.get("attempt_seq")
+        if attempt is None and checks:
+            # Read-only compatibility for old completed Verifier events.
+            parts = str(checks[0].get("call_id", "")).split("-")
+            if len(parts) == 3 and parts[0] == "verification" and parts[1].isdigit():
+                attempt = int(parts[1])
+        if type(attempt) is not int or attempt < 1:
+            return False
+        started = connection.execute(
+            "SELECT payload FROM events WHERE session_id=? AND seq=? AND kind='verification_started'",
+            (session_id, attempt),
+        ).fetchone()
+        if started is None:
+            return False
+        start_binding = json.loads(started["payload"]).get("input_binding", {})
+        if any(binding.get(key) != value for key, value in start_binding.items()):
+            return False
+        children = connection.execute(
+            "SELECT * FROM tool_calls WHERE session_id=? AND turn_seq=?", (session_id, attempt)
+        ).fetchall()
+        if len(children) != len(checks) or len(checks) > len(commands):
+            return False
+        by_id = {child["call_id"]: child for child in children}
+        for index, (command, check) in enumerate(zip(commands, checks, strict=False)):
+            child = by_id.get(f"verification-{attempt}-{index}")
+            if (
+                not isinstance(check, dict)
+                or child is None
+                or child["tool"] != "execute_command"
+                or child["status"] != "observed"
+                or child["call_id"] != check.get("call_id")
+                or json.loads(child["arguments"]).get("command") != command
+                or json.loads(child["observation"]) != check
+            ):
+                return False
+        status = payload.get("verification")
+        if status in {"passed", "failed"}:
+            if len(checks) != len(commands) or any(c.get("exit_code") is None or c.get("interrupted") for c in checks):
+                return False
+            passed = all(c.get("ok") is True and c.get("exit_code") == 0 for c in checks)
+            if (status == "passed") != passed:
+                return False
+        return True
+
+    def verification_completion_is_observed(self, session_id: str, payload: Mapping[str, Any]) -> bool:
+        with self._connection() as connection:
+            return self._completion_observed(connection, session_id, payload)
+
+    def reconcile_verification_calls(self, session_id: str, *, max_output_bytes: int) -> None:
+        """Recover only durable composite responses; never execute or infer a check."""
+        from polaris.cells.roles.runtime.internal.engineering_verification import verification_observation
+
+        with self._transaction() as connection:
+            self._require_run(connection, session_id)
+            completed = connection.execute(
+                "SELECT seq,payload FROM events WHERE session_id=? AND kind='verification_completed' ORDER BY seq",
+                (session_id,),
+            ).fetchall()
+            for event in completed:
+                payload = json.loads(event["payload"])
+                binding = payload.get("input_binding", {})
+                requested_by = binding.get("requested_by")
+                parent = self._verification_parent(connection, session_id, requested_by, binding.get("commands", []))
+                if parent is None or not self._completion_observed(connection, session_id, payload):
+                    continue
+                observation = verification_observation(parent["call_id"], payload, max_output_bytes)
+                if parent["status"] == "started":
+                    self._record_tool_observation(
+                        connection, session_id, turn_seq=parent["turn_seq"], observation=observation, role="director"
+                    )
+                elif parent["status"] != "observed" or json.loads(parent["observation"]) != asdict(observation):
+                    continue
+                messages = connection.execute(
+                    "SELECT payload FROM events WHERE session_id=? AND kind='message' AND seq>?",
+                    (session_id, parent["turn_seq"]),
+                ).fetchall()
+                present = False
+                for message in messages:
+                    value = json.loads(message["payload"]).get("message", {})
+                    if value.get("tool_call_id") == parent["call_id"]:
+                        with suppress(ValueError, TypeError):
+                            present = json.loads(value.get("content", "")) == asdict(observation)
+                        if present:
+                            break
+                if not present:
+                    self._append_event(
+                        connection,
+                        session_id,
+                        kind="message",
+                        role="director",
+                        payload={
+                            "turn_seq": parent["turn_seq"],
+                            "recovery_basis": "durable_verification_completed",
+                            "message": {
+                                "role": "tool",
+                                "tool_call_id": parent["call_id"],
+                                "content": self._json(asdict(observation)),
+                            },
+                        },
+                    )
 
     def record_verification(
         self,
@@ -437,33 +707,21 @@ class EngineeringSessionStore:
             row = self._require_run(connection, session_id)
             current = row["workspace_revision"] == workspace_revision
             projected = verification if current else "unknown"
-            if projected == "passed":
-                required = json.loads(row["required_checks"])
-                if not required or input_binding.get("commands") != required or len(checks) != len(required):
-                    raise ValueError("passed verification requires every saved check")
-                for command, check in zip(required, checks, strict=True):
-                    durable = connection.execute(
-                        "SELECT arguments,observation FROM tool_calls WHERE session_id=? AND call_id=? AND status='observed'",
-                        (session_id, check.call_id),
-                    ).fetchall()
-                    if (
-                        not check.ok
-                        or check.exit_code != 0
-                        or check.interrupted
-                        or not any(
-                            json.loads(item["arguments"]).get("command") == command
-                            and json.loads(item["observation"]) == asdict(check)
-                            for item in durable
-                        )
-                    ):
-                        raise ValueError("passed verification requires actual matching observed commands")
+            commands = self._verification_commands(connection, row)
+            if projected in {"passed", "failed"} and (
+                not commands or input_binding.get("commands") != commands or len(checks) != len(commands)
+            ):
+                raise ValueError("passed verification requires every saved check")
             payload = {
                 "workspace_revision": workspace_revision,
                 "verification": projected,
                 "detail": detail if current else "Workspace revision changed during verification.",
                 "input_binding": dict(input_binding),
                 "checks": [asdict(check) for check in checks],
+                "verification_commands": list(cast(list[str], input_binding.get("commands", commands))),
             }
+            if projected in {"passed", "failed"} and not self._completion_observed(connection, session_id, payload):
+                raise ValueError("verification requires actual matching observed commands from its exact attempt")
             connection.execute(
                 "UPDATE runs SET verification=?,checks=?,updated_at=? WHERE session_id=?",
                 (projected, self._json(payload["checks"]), time.time(), session_id),
@@ -585,19 +843,24 @@ class EngineeringSessionStore:
             if (row["turn_seq"], row["call_id"]) not in reconciled
         ]
 
-    def _acceptance(self, connection: sqlite3.Connection, row: Mapping[str, Any]) -> dict[str, object]:
+    def _acceptance(
+        self, connection: sqlite3.Connection, row: Mapping[str, Any], *, verification_starting: bool = False
+    ) -> dict[str, object]:
         """Project existing durable checks and QA facts; no separate acceptance ledger."""
         events = connection.execute(
-            "SELECT seq,kind,payload FROM events WHERE session_id=? AND kind IN ('verification_completed','qa_review_started','qa_review_completed') ORDER BY seq",
+            "SELECT seq,kind,payload FROM events WHERE session_id=? AND kind IN ('verification_started','verification_completed','qa_review_started','qa_review_completed') ORDER BY seq",
             (row["session_id"],),
         ).fetchall()
         verification_seq = 0
+        start_seq = 0
         verification_payload: dict[str, Any] = {}
         verdict = "not_run"
         review_binding = None
         for event in events:
             payload = json.loads(event["payload"])
-            if event["kind"] == "verification_completed":
+            if event["kind"] == "verification_started":
+                start_seq = event["seq"]
+            elif event["kind"] == "verification_completed":
                 verification_seq = event["seq"]
                 verification_payload = payload
             elif event["kind"] == "qa_review_started":
@@ -616,10 +879,12 @@ class EngineeringSessionStore:
                 )
         if review_binding is not None and review_binding.get("verification_seq") != verification_seq:
             verdict = "unknown"
+        if (verification_starting or start_seq > verification_seq) and verdict != "not_run":
+            verdict = "unknown"
         required = bool(row["require_qa"])
         if verdict == "approved" and row["verification"] != "passed":
             verdict = "unknown"
-        required_checks = json.loads(row["required_checks"])
+        required_checks = self._verification_commands(connection, row)
         checks = json.loads(row["checks"])
         evidence = (
             bool(required_checks)
@@ -632,6 +897,7 @@ class EngineeringSessionStore:
                 check.get("ok") is True and check.get("exit_code") == 0 and not check.get("interrupted")
                 for check in checks
             )
+            and not self._has_pending_tools(connection, str(row["session_id"]))
         )
         accepted = row["status"] == "completed" and evidence and (not required or verdict == "approved")
         outcome = (
@@ -716,6 +982,7 @@ class EngineeringSessionStore:
                     else [],
                     "checks": json.loads(current["checks"]),
                     "required_checks": json.loads(current["required_checks"]),
+                    "verification_commands": self._verification_commands(connection, current),
                 }
             )
             state.update(self._acceptance(connection, {**current, "verification": state["verification"]}))

@@ -24,6 +24,36 @@ def _reply(provider: ScriptedProvider, text: str = "Actual role reply.") -> None
     provider.enqueue_json({"choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]})
 
 
+def _checked_artifact_reply(provider: ScriptedProvider) -> None:
+    """Replace only model decisions; file effects and project verification stay real."""
+    command = "python3 -c \"from pathlib import Path; assert Path('artifact.txt').read_text(encoding='utf-8')=='2'\""
+    provider.enqueue_json(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": identity,
+                                "type": "function",
+                                "function": {"name": name, "arguments": json.dumps(arguments)},
+                            }
+                            for identity, name, arguments in [
+                                ("write-artifact", "write_file", {"file": "artifact.txt", "content": "2"}),
+                                ("check-artifact", "verify_project", {"commands": [command]}),
+                            ]
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+    )
+    _reply(provider)
+
+
 def _settings(workspace: Path, profiles: dict[str, Any] | None = None) -> Settings:
     server: dict[str, Any] = {}
     if profiles is not None:
@@ -73,8 +103,8 @@ async def test_http_create_read_same_run_and_idempotency(
 ) -> None:
     app = _app(_settings(isolated_workspace), scripted_provider, monkeypatch)
     app.state.settings.server.engineering_run_timeout_seconds = 10
-    _reply(scripted_provider)
-    body = {"instruction": "Explain current goal", "workspace": str(isolated_workspace), "request_key": "same"}
+    _checked_artifact_reply(scripted_provider)
+    body = {"instruction": "Create and verify artifact2.", "workspace": str(isolated_workspace), "request_key": "same"}
     async with _client(app) as client:
         first = await client.post("/v2/engineering/runs", json=body)
         assert first.status_code == 200, first.text
@@ -92,13 +122,16 @@ async def test_http_create_read_same_run_and_idempotency(
         )
         row = await _terminal(client, session_id)
         assert row["engine_version"] == "engineering_v2"
-        assert row["verification"] == "not_run"
+        assert row["verification"] == "passed" and row["project_outcome"] == "accepted"
+        assert row["required_checks"] == [] and len(row["verification_commands"]) == 1
+        assert len(row["checks"]) == 1 and row["checks"][0]["exit_code"] == 0
+        assert (isolated_workspace / "artifact.txt").read_text(encoding="utf-8") == "2"
         assert row["roles"]["director"] == "completed"
         assert row["roles"]["pm"] == row["roles"]["chief_engineer"] == row["roles"]["qa"] == "not_called"
         assert "blueprint" not in row and "ledger" not in row
         conflict = await client.post("/v2/engineering/runs", json={**body, "required_checks": ["python3 -V"]})
         assert conflict.status_code == 409
-    assert len(scripted_provider.requests) == 1
+    assert len(scripted_provider.requests) == 2
 
 
 async def test_workspace_body_query_and_mutated_settings_cannot_rebind_owner(
@@ -302,10 +335,16 @@ async def test_public_wait_joins_existing_owner_without_creating_second_run(
     settings = _settings(isolated_workspace)
     app = _app(settings, scripted_provider, monkeypatch)
     service = app.state.engineering_run_service
-    _reply(scripted_provider)
-    row = await start_engineering_run(service, settings, instruction="explain", workspace=isolated_workspace)
+    _checked_artifact_reply(scripted_provider)
+    row = await start_engineering_run(
+        service, settings, instruction="Create and verify artifact2.", workspace=isolated_workspace
+    )
     result = await service.wait(row["session_id"], workspace=isolated_workspace)
     assert result.status == "completed" and result.session_id == row["session_id"]
+    assert result.verification == "passed" and result.checks[0].exit_code == 0
+    assert (isolated_workspace / "artifact.txt").read_text(encoding="utf-8") == "2"
+    with sqlite3.connect(service.store.database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
 
 
 async def test_profile_identity_conflicts_even_for_equal_scope(

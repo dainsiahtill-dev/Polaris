@@ -9,6 +9,53 @@ function event(seq: number, kind: string, payload: Record<string, unknown> = {},
 }
 function base() { return hydrateEngineeringRun(newEngineeringProjection('/work', 'r1'), snapshot()); }
 describe('engineeringRunProjection', () => {
+  it('derives legacy verification commands without changing the original ordered checks', () => {
+    const original = { ...snapshot(), required_checks: ['npm test', 'npm test', 'npm run build'] };
+    const parsed = parseEngineeringSnapshot(original);
+    expect(parsed).toMatchObject({ required_checks: ['npm test', 'npm test', 'npm run build'], verification_commands: ['npm test', 'npm test', 'npm run build'] });
+    expect(original).not.toHaveProperty('verification_commands');
+  });
+  it('preserves selected commands from live updates when the user supplied no checks', () => {
+    let state = applyEngineeringEvent(base(), event(1, 'run_updated', { verification_commands: ['npm test', 'npm run build'] }));
+    expect(state.snapshot).toMatchObject({ required_checks: [], verification_commands: ['npm test', 'npm run build'], verification: 'not_run', checks: [] });
+    state = applyEngineeringEvent(state, event(2, 'run_updated', { status: 'completed' }));
+    expect(state.snapshot).toMatchObject({ verification_commands: ['npm test', 'npm run build'], verification: 'not_run', checks: [] });
+  });
+  it('shows a new verification attempt without retaining previous check evidence', () => {
+    const oldCheck = { call_id: 'old', tool: 'execute_command', ok: true, content: 'old success', exit_code: 0, interrupted: false };
+    const previous = hydrateEngineeringRun(base(), { ...snapshot(), verification: 'passed', checks: [oldCheck] });
+    const state = applyEngineeringEvent(previous, event(1, 'verification_started', { verification_commands: ['npm run build'] }));
+    expect(state.snapshot).toMatchObject({ verification_commands: ['npm run build'], verification: 'not_run', checks: [] });
+  });
+  it.each([
+    { owner: { qa_verdict: 'unknown', project_outcome: 'unknown', acceptance_basis: null }, expected: { qa_verdict: 'unknown', project_outcome: 'unknown', acceptance_basis: null } },
+    { owner: { qa_verdict: 'not_run', project_outcome: 'not_accepted', acceptance_basis: null }, expected: { qa_verdict: 'not_run', project_outcome: 'not_accepted', acceptance_basis: null } },
+    { owner: {}, expected: { qa_verdict: 'unknown', project_outcome: 'unknown', acceptance_basis: null } },
+  ])('invalidates prior acceptance at verification start using owner facts or unknown legacy state %o', ({ owner, expected }) => {
+    const previous = hydrateEngineeringRun(base(), { ...snapshot(), verification: 'passed', require_qa: true, roles: { ...snapshot().roles, qa: 'completed' }, qa_verdict: 'approved', project_outcome: 'accepted', acceptance_basis: 'independent_qa' });
+    const state = applyEngineeringEvent(previous, event(1, 'verification_started', { ...owner, verification_commands: ['npm run build'] }));
+    expect(state.snapshot).toMatchObject({ ...expected, require_qa: true, verification: 'not_run', checks: [] });
+    expect(previous.snapshot).toMatchObject({ qa_verdict: 'approved', project_outcome: 'accepted', acceptance_basis: 'independent_qa' });
+  });
+  it.each([
+    { verification_commands: ['npm test'], input_binding: { commands: ['stale command'] } },
+    { input_binding: { commands: ['npm test'] } },
+  ])('pairs completed verification evidence with owner command order %o', (commands) => {
+    const check = { call_id: 'native-check', tool: 'execute_command', ok: false, content: 'test failed', exit_code: 1, interrupted: false };
+    const state = applyEngineeringEvent(base(), event(1, 'verification_completed', { ...commands, verification: 'failed', checks: [check] }));
+    expect(state.snapshot).toMatchObject({ required_checks: [], verification_commands: ['npm test'], verification: 'failed', checks: [check] });
+  });
+  it('retains original check labels for legacy verification events without command metadata', () => {
+    const previous = hydrateEngineeringRun(base(), { ...snapshot(), required_checks: ['python -m pytest'] });
+    const state = applyEngineeringEvent(previous, event(1, 'verification_completed', { verification: 'passed', checks: [] }));
+    expect(state.snapshot).toMatchObject({ required_checks: ['python -m pytest'], verification_commands: ['python -m pytest'] });
+  });
+  it.each(['npm test', ['npm test', 2], null])('rejects malformed authoritative command labels %o', (verification_commands) => {
+    expect(() => parseEngineeringSnapshot({ ...snapshot(), verification_commands })).toThrow(/verification command/i);
+    const state = applyEngineeringEvent(base(), event(1, 'verification_completed', { verification: 'passed', verification_commands, checks: [] }));
+    expect(state.error).toMatch(/verification command/i);
+    expect(state.snapshot?.verification).toBe('not_run');
+  });
   it('preserves optional QA and outcome facts independently from checks and completion', () => {
     const saved = { ...snapshot(), status: 'completed', verification: 'passed', require_qa: true, qa_verdict: 'not_run', project_outcome: 'not_accepted' };
     expect(parseEngineeringSnapshot(saved)).toMatchObject({ verification: 'passed', qa_verdict: 'not_run', project_outcome: 'not_accepted' });

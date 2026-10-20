@@ -298,7 +298,7 @@ class EngineeringPermissionProfile(BaseModel):
     read_roots: tuple[str, ...] = (".",)
     write_roots: tuple[str, ...] = (".",)
     enabled_tools: frozenset[str] = frozenset(
-        {"read_file", "repo_tree", "repo_rg", "write_file", "edit_file", "execute_command"}
+        {"read_file", "repo_tree", "repo_rg", "write_file", "edit_file", "execute_command", "verify_project"}
     )
     network_allowed: bool = False
 

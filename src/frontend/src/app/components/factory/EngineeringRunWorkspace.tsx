@@ -31,6 +31,7 @@ export function EngineeringRunWorkspace({ workspace, binding, role = 'director',
   const discussionRef = binding.discussionMetadata?.context_snapshot_ref;
   const readableDiscussionRef = discussionObservation && typeof discussionObservation === 'object' && (discussionObservation as Record<string, unknown>).snapshot_status === 'available' && typeof discussionRef === 'string' && /^[a-f0-9]{24}$/.test(discussionRef) ? discussionRef : null;
   const run = binding.projection.snapshot;
+  const verificationCommands = run?.verification_commands ?? run?.required_checks ?? [];
   const snapshotUnavailable = Boolean(binding.projection.error || binding.projection.snapshotRequiredSeq);
   const qaVerdict = snapshotUnavailable ? '未知（快照不可用）' : run?.roles.qa === 'not_called' || run?.qa_verdict === 'not_run' ? '未调用' : ({ approved: '已批准', rejected: '已拒绝', unknown: '未知' }[run?.qa_verdict || 'unknown']);
   const projectOutcome = snapshotUnavailable ? '未知（快照不可用）' : ({ not_accepted: '未验收', accepted: '已验收', rejected: '已拒绝', unknown: '未知（未提供验收结论）' }[run?.project_outcome || 'unknown']);
@@ -62,7 +63,7 @@ export function EngineeringRunWorkspace({ workspace, binding, role = 'director',
           <label className="block text-sm" htmlFor="engineering-workflow">协作方式</label>
           <select id="engineering-workflow" value={workflow} onChange={(event) => setWorkflow(event.target.value as 'direct' | 'collaborative')} disabled={role !== 'director'} className="w-full rounded-lg border border-white/15 bg-slate-950 p-3 text-sm"><option value="direct">当前角色直接处理</option>{role === 'director' && <option value="collaborative">PM、Chief Engineer、Director 协作</option>}</select>
           <label htmlFor="engineering-checks" className="block text-sm">验证命令</label>
-          <textarea id="engineering-checks" value={checks} onChange={(event) => setChecks(event.target.value)} rows={3} placeholder="可选；每行一条，不填写则显示未运行验证" className="w-full rounded-lg border border-white/15 bg-slate-950/50 p-3 font-mono text-xs outline-none focus:border-emerald-400" />
+          <textarea id="engineering-checks" value={checks} onChange={(event) => setChecks(event.target.value)} rows={3} placeholder="可选；每行一条。留空由 Agent 选择并执行验证命令" className="w-full rounded-lg border border-white/15 bg-slate-950/50 p-3 font-mono text-xs outline-none focus:border-emerald-400" />
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => void binding.discuss(role, instruction)} disabled={busy || !instruction.trim()} className="rounded-lg border border-white/15 px-3 py-3 text-sm disabled:opacity-40">讨论方案</button>
             <button type="button" disabled={busy || !canStart || !instruction.trim()} onClick={() => void binding.start({ instruction: instruction.trim(), role, workflow: role === 'director' ? workflow : 'direct', required_checks: checks.split('\n').map((line) => line.trim()).filter(Boolean) })} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-medium hover:bg-emerald-500 disabled:opacity-40">{binding.pending === 'start' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}{binding.pending === 'start' ? '启动中…' : '开始执行'}</button>
@@ -80,7 +81,7 @@ export function EngineeringRunWorkspace({ workspace, binding, role = 'director',
           <p data-testid="engineering-project-outcome">项目验收：{projectOutcome}{!snapshotUnavailable && run.project_outcome === 'accepted' ? `（${acceptanceBasis}）` : ''}</p>
           <p className="text-xs text-slate-400">实际检查：{binding.projection.snapshotRequiredSeq ? '等待完整快照' : `${run.checks.length} 项`}</p>
           {run.truncated_fields?.length ? <p className="text-xs text-amber-200">当前为截断预览，可刷新快照读取完整记录。</p> : null}
-          {run.checks.map((check) => <div key={check.call_id} className={`rounded-lg border p-3 ${check.ok && check.exit_code === 0 ? 'border-emerald-500/20' : 'border-red-500/30'}`}><p className="text-xs text-slate-400">exit {check.exit_code ?? '未知'}{check.interrupted ? ' · 已中断' : ''}</p><pre className="whitespace-pre-wrap text-xs">{check.content}</pre></div>)}
+          {run.checks.map((check, index) => <div key={check.call_id} className={`rounded-lg border p-3 ${check.ok && check.exit_code === 0 ? 'border-emerald-500/20' : 'border-red-500/30'}`}><p className="break-all font-mono text-xs text-slate-300">{verificationCommands[index] ?? '验证命令未知'}</p><p className="text-xs text-slate-400">exit {check.exit_code ?? '未知'}{check.interrupted ? ' · 已中断' : ''}</p><pre className="whitespace-pre-wrap text-xs">{check.content}</pre></div>)}
           {Boolean(run.event_delivery_error) && <p role="alert" className="text-amber-200">实时事件不可用：{text(run.event_delivery_error)}</p>}
           {Boolean(run.native_observation_error) && <p role="alert" className="text-amber-200">原生上下文观测不可用：{text(run.native_observation_error)}</p>}
         </div>}

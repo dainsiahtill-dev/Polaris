@@ -27,7 +27,9 @@ export function parseEngineeringSnapshot(value: unknown): EngineeringRunSnapshot
     throw new Error('Engineering verifier evidence unavailable');
   if (value.active_roles.some((role) => typeof role !== 'string') || value.required_checks.some((check) => typeof check !== 'string'))
     throw new Error('Engineering role/check evidence unavailable');
-  return value as unknown as EngineeringRunSnapshot;
+  if (value.verification_commands !== undefined && (!Array.isArray(value.verification_commands) || value.verification_commands.some((command) => typeof command !== 'string')))
+    throw new Error('Engineering verification command evidence unavailable');
+  return { ...value, verification_commands: value.verification_commands ?? value.required_checks } as unknown as EngineeringRunSnapshot;
 }
 export interface EngineeringProjection {
   workspace: string;
@@ -63,8 +65,15 @@ function fold(saved: EngineeringRunSnapshot, event: EngineeringEvent): Engineeri
     const status = ROLE_STATES.has(String(payload.status)) ? payload.status : 'unknown';
     return { ...saved, roles: { ...saved.roles, [event.role]: status }, active_roles: saved.active_roles.filter((role) => role !== event.role) } as EngineeringRunSnapshot;
   }
-  if (event.kind === 'verification_completed' && VERIFICATION.has(String(payload.verification))) {
-    return { ...saved, verification: payload.verification, checks: Array.isArray(payload.checks) ? payload.checks : saved.checks } as EngineeringRunSnapshot;
+  if (event.kind === 'verification_started' || event.kind === 'verification_completed' && VERIFICATION.has(String(payload.verification))) {
+    const inputBinding = record(payload.input_binding) ? payload.input_binding : {};
+    const commands = payload.verification_commands !== undefined ? payload.verification_commands : inputBinding.commands !== undefined ? inputBinding.commands : saved.verification_commands ?? saved.required_checks;
+    const acceptance = event.kind === 'verification_started' ? {
+      qa_verdict: payload.qa_verdict !== undefined ? payload.qa_verdict : 'unknown',
+      project_outcome: payload.project_outcome !== undefined ? payload.project_outcome : 'unknown',
+      acceptance_basis: payload.acceptance_basis !== undefined ? payload.acceptance_basis : null,
+    } : {};
+    return parseEngineeringSnapshot({ ...saved, ...acceptance, verification_commands: commands, verification: event.kind === 'verification_started' ? 'not_run' : payload.verification, checks: event.kind === 'verification_started' ? [] : Array.isArray(payload.checks) ? payload.checks : saved.checks });
   }
   return saved;
 }

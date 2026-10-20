@@ -60,12 +60,16 @@ def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str,
 
     has_checks = "checks" in selected
     has_required_checks = "required_checks" in selected
+    has_verification_commands = "verification_commands" in selected
     checks = selected.pop("checks", None)
     required_checks = selected.pop("required_checks", None)
+    verification_commands = selected.pop("verification_commands", None)
     projected: dict[str, Any] = bounded(selected, "payload")
     if has_required_checks:
         # Commands and observation identities are evidence, not text previews.
         projected["required_checks"] = required_checks
+    if has_verification_commands:
+        projected["verification_commands"] = verification_commands
 
     def check_previews(maximum: int, *, essential_only: bool = False) -> Any:
         if not isinstance(checks, (tuple, list)):
@@ -124,6 +128,8 @@ def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str,
         }
         if has_required_checks:
             projected["required_checks"] = required_checks
+        if has_verification_commands:
+            projected["verification_commands"] = verification_commands
         projected["payload_omitted"] = True
         for maximum in (1024, 256, 64):
             if has_checks:
@@ -139,6 +145,9 @@ def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str,
             "payload_omitted": True,
             "checks_count": len(checks) if isinstance(checks, (tuple, list)) else None,
             "required_checks_count": len(required_checks) if isinstance(required_checks, (tuple, list)) else None,
+            "verification_commands_count": len(verification_commands)
+            if isinstance(verification_commands, (tuple, list))
+            else None,
             "reason": "required_projection_exceeds_transport_budget",
         }
     return projected

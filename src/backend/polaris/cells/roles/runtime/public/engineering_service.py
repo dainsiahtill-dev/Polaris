@@ -485,6 +485,7 @@ class EngineeringRunService:
                 store=self.store,
                 client=client,
                 consult=self._consult_dispatch,
+                verify=self._verify_dispatch,
                 pending_ancestors=self._pending_ancestors.get(),
                 # Only _drive owns run terminal state, including final checks.
                 project_run=False,
@@ -504,6 +505,45 @@ class EngineeringRunService:
             )
         finally:
             self._pending_ancestors.reset(token)
+
+    async def _verify_dispatch(self, commands: tuple[str, ...], turn_seq: int, call_id: str) -> ToolObservation:
+        """Let the active Director request actual checks within unchanged host grants."""
+        from polaris.cells.roles.runtime.internal.engineering_verification import verification_observation
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        owner = self._owner.get()
+        if owner is None or self._active_role.get() != "director":
+            raise ValueError("verify_project requires the active Director session owner")
+        command, scope, limits, cancel, _client = owner
+        row = self.store.load_run(command.session_id, workspace=self.workspace)
+        if self._permission_resolver is not None:
+            scope = self._revalidated_scope(row)
+        enabled = {ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools}
+        if not {"verify_project", "execute_command"} <= enabled:
+            raise PermissionError("verify_project and execute_command must both be granted by the host")
+        if cancel.is_set():
+            raise asyncio.CancelledError
+        if limits.deadline is not None and time.time() >= limits.deadline:
+            raise ValueError("engineering run deadline exceeded")
+        verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(row))
+        requested_by = (turn_seq, call_id)
+        await verifier.run_verification(
+            commands,
+            session_id=command.session_id,
+            workspace_revision=int(row["workspace_revision"]),
+            requested_by=requested_by,
+        )
+        completed = [
+            event["payload"]
+            for event in self.store.load_events(command.session_id)
+            if event["kind"] == "verification_completed"
+            and event["payload"].get("input_binding", {}).get("requested_by") == list(requested_by)
+        ]
+        if not completed:
+            # Keep the already-journaled parent pending. Observed child exits
+            # cannot replace a missing durable final input binding or permit replay.
+            raise RuntimeError("verify_project has no matching durable verification completion")
+        return verification_observation(call_id, completed[-1], limits.max_tool_output_bytes)
 
     async def consult_role(self, role: Literal["pm", "chief_engineer"], question: str, *, session_id: str) -> str:
         """Return one read-only answer within the current Director's owned run."""
@@ -685,6 +725,9 @@ class EngineeringRunService:
         try:
             # Acquiring the real OS lock first prevents a second interpreter
             # from reconciling effects while their physical owner is alive.
+            self.store.reconcile_verification_calls(
+                session_id, max_output_bytes=self._limits(row).max_tool_output_bytes
+            )
             await self._reconcile_writes(row, scope=original_scope)
             unresolved = self.store.pending_tool_calls(session_id)
             if unresolved:
@@ -868,9 +911,28 @@ class EngineeringRunService:
         if result.role != "director" or result.status != "completed":
             return result
         saved = self.store.load_run(command.session_id, workspace=self.workspace)
-        commands = tuple(saved["required_checks"])
-        if not commands:
-            return result
+        commands = tuple(saved["verification_commands"])
+        while not commands:
+            from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+            enabled = {ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools}
+            if not {"verify_project", "execute_command"} <= enabled or cancel.is_set():
+                return result
+            if limits.deadline is not None and time.time() >= limits.deadline:
+                return replace(result, status="failed")
+            result = await self._continue_director(
+                command,
+                "No current project verification has been executed. Continue the original goal: "
+                "choose meaningful actual project checks and call verify_project. "
+                "Inspect and repair their actual failures; a text completion is not delivery evidence.",
+                scope=scope,
+                limits=limits,
+                cancel=cancel,
+            )
+            if result.status != "completed":
+                return result
+            saved = self.store.load_run(command.session_id, workspace=self.workspace)
+            commands = tuple(saved["verification_commands"])
         verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(saved))
         pending_review = self._pending_review(command.session_id)
         resume_review = (
@@ -879,14 +941,41 @@ class EngineeringRunService:
             and verifier.current_verification(command.session_id) == "passed"
         )
         while result.status == "completed":
-            revision = int(self.store.load_run(command.session_id, workspace=self.workspace)["workspace_revision"])
-            checks = (
-                tuple(ToolObservation(**check) for check in saved["checks"])
-                if resume_review
-                else await verifier.run_verification(
+            current = self.store.load_run(command.session_id, workspace=self.workspace)
+            commands = tuple(current["verification_commands"])
+            revision = int(current["workspace_revision"])
+            completed = verifier.current_completed_result(command.session_id)
+            if resume_review or completed is not None:
+                checks = tuple(ToolObservation(**check) for check in current["checks"])
+            else:
+                previous = next(
+                    (
+                        event["payload"]
+                        for event in reversed(self.store.load_events(command.session_id))
+                        if event["kind"] == "verification_completed"
+                    ),
+                    None,
+                )
+                uncertain = previous is not None and previous.get("verification") == "unknown"
+                if current["verification"] == "unknown" or uncertain:
+                    # A resumed text reply is not a new decision to repeat an
+                    # uncertain check. Invalidating candidate evidence with a
+                    # write/ordinary command does not erase that durable fact.
+                    # Only a new explicit native verification can replace it.
+                    return replace(
+                        result,
+                        status="interrupted",
+                        verification="unknown",
+                        checks=tuple(
+                            ToolObservation(**check)
+                            for check in (
+                                previous["checks"] if uncertain and previous is not None else current["checks"]
+                            )
+                        ),
+                    )
+                checks = await verifier.run_verification(
                     commands, session_id=command.session_id, workspace_revision=revision
                 )
-            )
             resume_review = False
             row = self.store.load_run(command.session_id, workspace=self.workspace)
             verification = row["verification"]
@@ -910,21 +999,10 @@ class EngineeringRunService:
                     return result
                 if verdict != "rejected" or cancel.is_set():
                     return replace(result, status="cancelled" if cancel.is_set() else "interrupted")
-                self.store.continue_role(
-                    command.session_id,
-                    role="director",
-                    feedback="Independent QA rejected the current candidate. Continue the same original goal using actual review findings:\n"
+                result = await self._continue_director(
+                    command,
+                    "Independent QA rejected the current candidate. Continue the same original goal using actual review findings:\n"
                     + feedback,
-                )
-                starts = [
-                    event
-                    for event in self.store.load_events(command.session_id)
-                    if event["kind"] == "role_started" and event["role"] == "director"
-                ]
-                result = await self.run_role(
-                    replace(
-                        command, role="director", instruction=starts[-1]["payload"]["instruction"], workflow="direct"
-                    ),
                     scope=scope,
                     limits=limits,
                     cancel=cancel,
@@ -952,16 +1030,7 @@ class EngineeringRunService:
                     ensure_ascii=False,
                 )
             )
-            self.store.continue_role(command.session_id, role="director", feedback=feedback)
-            starts = [
-                event
-                for event in self.store.load_events(command.session_id)
-                if event["kind"] == "role_started" and event["role"] == "director"
-            ]
-            actual_command = replace(
-                command, role="director", instruction=starts[-1]["payload"]["instruction"], workflow="direct"
-            )
-            result = await self.run_role(actual_command, scope=scope, limits=limits, cancel=cancel)
+            result = await self._continue_director(command, feedback, scope=scope, limits=limits, cancel=cancel)
             if result.status != "completed":
                 current = self.store.load_run(command.session_id, workspace=self.workspace)
                 return replace(
@@ -970,6 +1039,29 @@ class EngineeringRunService:
                     checks=tuple(ToolObservation(**check) for check in current["checks"]),
                 )
         return result
+
+    async def _continue_director(
+        self,
+        command: RoleRunCommand,
+        feedback: str,
+        *,
+        scope: PermissionScope,
+        limits: RunLimits,
+        cancel: asyncio.Event,
+    ) -> RoleRunResult:
+        """Reopen the same task with its native history, advice and actual feedback."""
+        self.store.continue_role(command.session_id, role="director", feedback=feedback)
+        starts = [
+            event
+            for event in self.store.load_events(command.session_id)
+            if event["kind"] == "role_started" and event["role"] == "director"
+        ]
+        return await self.run_role(
+            replace(command, role="director", instruction=starts[-1]["payload"]["instruction"], workflow="direct"),
+            scope=scope,
+            limits=limits,
+            cancel=cancel,
+        )
 
     def _pending_review(self, session_id: str) -> dict[str, Any] | None:
         pending = None
@@ -1002,7 +1094,7 @@ class EngineeringRunService:
             + json.dumps(
                 [
                     {"command": name, "result": check}
-                    for name, check in zip(row["required_checks"], row["checks"], strict=False)
+                    for name, check in zip(row["verification_commands"], row["checks"], strict=False)
                 ],
                 ensure_ascii=False,
             )
@@ -1248,6 +1340,17 @@ class EngineeringRunService:
                 actual_checks or (),
             )
         try:
+            if result.status != "completed":
+                current = self.store.load_run(command.session_id, workspace=self.workspace)
+                if current["verification"] != "not_run":
+                    # Native verification can finish inside the role before a
+                    # cancellation/provider error ends that role. Keep its real
+                    # durable facts; the role reply does not own check results.
+                    result = replace(
+                        result,
+                        verification=current["verification"],
+                        checks=tuple(ToolObservation(**check) for check in current["checks"]),
+                    )
             self.store.update_run(
                 command.session_id,
                 status=result.status,

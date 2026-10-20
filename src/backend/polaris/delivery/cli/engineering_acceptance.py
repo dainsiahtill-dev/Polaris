@@ -177,10 +177,9 @@ def build_launch_plan(inputs: LaunchInputs) -> dict[str, Any]:
     if (
         not requirements.strip()
         or not isinstance(checks, list)
-        or not checks
-        or any(not isinstance(check, str) or not check.strip() for check in checks)
+        or any(not isinstance(check, str) or not check.strip() or "\0" in check for check in checks)
     ):
-        raise ValueError("original requirements and nonempty unchanged required commands are mandatory")
+        raise ValueError("original requirements and an unchanged user command list are mandatory")
     host = json.loads(_frozen(inputs.host_config_file, inputs.host_config_sha256, "host config").decode("utf-8"))
     if not isinstance(host, dict) or set(host) - _HOST_KEYS:
         raise ValueError("host config has unsupported fields")
@@ -567,6 +566,7 @@ def _platform_fields(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             "project_outcome",
             "acceptance_basis",
             "required_checks",
+            "verification_commands",
             "checks",
             "last_seq",
         )
@@ -600,9 +600,15 @@ def _observed_result(binding: dict[str, Any], snapshot: dict[str, Any], client: 
                 {"context_snapshot_ref": ref, "status": "unavailable", "error_type": type(error).__name__}
             )
     check_results = snapshot.get("checks")
+    commands = snapshot.get("verification_commands", snapshot.get("required_checks"))
+    required = binding["plan"]["required_checks"]
     checks_present = (
-        isinstance(check_results, list)
-        and len(check_results) == len(binding["plan"]["required_checks"])
+        isinstance(commands, list)
+        and bool(commands)
+        and all(isinstance(command, str) and command.strip() and "\0" not in command for command in commands)
+        and commands[: len(required)] == required
+        and isinstance(check_results, list)
+        and len(check_results) == len(commands)
         and all(
             isinstance(item, dict)
             and item.get("ok") is True
