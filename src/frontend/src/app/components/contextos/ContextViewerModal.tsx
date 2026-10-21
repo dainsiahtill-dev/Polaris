@@ -625,6 +625,19 @@ function ContextMissingState({ details }: { details: ContextMissingDetails | nul
   );
 }
 
+function coverageBadge(value: unknown) {
+  if (value === true || value === 'present') {
+    return { label: 'PASS', className: 'bg-emerald-500/10 text-emerald-300' };
+  }
+  if (value === false || value === 'missing') {
+    return { label: 'MISS', className: 'bg-red-500/10 text-red-300' };
+  }
+  if (value === 'not_applicable') {
+    return { label: 'N/A', className: 'bg-slate-500/10 text-slate-300' };
+  }
+  return { label: 'UNKNOWN', className: 'bg-amber-500/10 text-amber-300' };
+}
+
 function FinalRequestPanel({
   payload,
   loading,
@@ -703,17 +716,17 @@ function FinalRequestPanel({
         <div className="rounded border border-white/[0.06] bg-black/20 p-2">
           <div className="mb-2 text-[10px] font-medium text-text-muted">Coverage Flags</div>
           <div className="flex flex-wrap gap-1.5">
-            {Object.entries(coverage).map(([key, ok]) => (
-              <span
-                key={key}
-                className={cn(
-                  'rounded px-1.5 py-0.5 font-mono text-[9px]',
-                  ok ? 'bg-emerald-500/10 text-emerald-300' : 'bg-red-500/10 text-red-300',
-                )}
-              >
-                {ok ? 'PASS' : 'MISS'} {key}
-              </span>
-            ))}
+            {Object.entries(coverage).map(([key, value]) => {
+              const badge = coverageBadge(value);
+              return (
+                <span
+                  key={key}
+                  className={cn('rounded px-1.5 py-0.5 font-mono text-[9px]', badge.className)}
+                >
+                  {badge.label} {key}
+                </span>
+              );
+            })}
           </div>
           {missingCoverage.length > 0 && (
             <div className="mt-2 text-[10px] text-red-300">

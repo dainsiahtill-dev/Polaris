@@ -97,11 +97,11 @@ class _BudgetManager:
         ("pm", 60000, 65536, 1000000, False, False, 60000, None),
         ("chief_engineer", 64000, 65536, 1000000, False, False, 64000, None),
         ("chief_engineer", 1536, 32768, 1000000, False, False, 1536, None),
-        ("chief_engineer", 60000, 32768, 1000000, False, False, None, "model_limit_exceeded"),
-        ("pm", 60000, 32768, 1000000, False, False, None, "model_limit_exceeded"),
-        ("chief_engineer", 60000, 65536, 60032, False, False, None, "context_window_exceeded"),
-        ("chief_engineer", 60000, 65536, 60200, True, False, None, "pinned_system_context_changed"),
-        ("chief_engineer", 60000, 65536, 60200, False, True, None, "pinned_requirement_context_changed"),
+        ("chief_engineer", 60000, 32768, 1000000, False, False, 32768, None),
+        ("pm", 60000, 32768, 1000000, False, False, 32768, None),
+        ("chief_engineer", 60000, 65536, 60032, False, False, "window", None),
+        ("chief_engineer", 60000, 65536, 60200, True, False, "window", None),
+        ("chief_engineer", 60000, 65536, 60200, False, True, "window", None),
         ("director", 60000, 32768, 1000000, False, False, 32768, None),
         ("qa", 60000, 32768, 1000000, False, False, 32768, None),
     ],
@@ -179,14 +179,20 @@ async def test_planning_stream_budget_at_serialized_transport(
     else:
         assert not [event.error for event in events if event.error]
         assert events[-1].type.value == "complete"
-        assert len(wires) == 1 and wires[0]["max_tokens"] == want
+        assert len(wires) == 1
+        budget = request.context["generation_budget"]
+        if want == "window":
+            assert 0 < wires[0]["max_tokens"] < requested
+            assert "context_window_headroom" in budget["adjustment_reasons"]
+        else:
+            assert wires[0]["max_tokens"] == want
         assert wires[0]["messages"] == messages
-        assert receipts[0]["payload"]["final_max_tokens"] == want
+        assert receipts[0]["payload"]["final_max_tokens"] == wires[0]["max_tokens"] == budget["effective_output_tokens"]
 
 
 @pytest.mark.parametrize(
     "cap,window,diagnostic",
-    [(65536, 1000000, None), (32768, 1000000, "model_limit_exceeded"), (65536, 60032, "context_window_exceeded")],
+    [(65536, 1000000, None), (32768, 1000000, None), (65536, 60032, None)],
 )
 async def test_initial_ce_engineering_native_request_budget_matches_actual_transport(
     tmp_path: Path,
@@ -261,7 +267,7 @@ async def test_initial_ce_engineering_native_request_budget_matches_actual_trans
         request = scripted_provider.requests[0]
         assert request["path"] == "/v1/chat/completions"
         wire = request["body"]
-        assert wire["max_tokens"] == 60000
+        assert wire["max_tokens"] <= min(60000, cap)
         assert "Chief Engineer" in wire["messages"][0]["content"]
         assert command.instruction in str(wire["messages"])
         assert [event["payload"]["phase"] for event in observations] == ["prepared", "terminal"]
@@ -275,7 +281,10 @@ async def test_initial_ce_engineering_native_request_budget_matches_actual_trans
             assert captured["role"] == "chief_engineer"
             physical = captured["final_physical_request"]["body"]
             assert physical == wire
-            assert physical["max_tokens"] == 60000
+            assert (
+                physical["max_tokens"]
+                == captured["final_request_context_audit"]["generation_budget"]["effective_output_tokens"]
+            )
             assert stored["messages"] == wire["messages"]
             assert physical["tools"] == wire["tools"]
             assert {tool["function"]["name"] for tool in physical["tools"]} == {"repo_tree"}

@@ -39,12 +39,12 @@ def test_compress_chat_messages_noops_when_messages_fit_exact_budget() -> None:
     [
         ("pm", 65536, 1000000, 60000, None),
         ("chief_engineer", 65536, 1000000, 60000, None),
-        ("pm", 32768, 1000000, None, "planning_output_budget_model_limit_exceeded"),
-        ("chief_engineer", 32768, 1000000, None, "planning_output_budget_model_limit_exceeded"),
-        ("pm", 65536, 60032, None, "planning_output_budget_context_window_exceeded"),
-        ("chief_engineer", 65536, 60032, None, "planning_output_budget_context_window_exceeded"),
-        ("pm", 65536, 60200, None, "planning_output_budget_context_window_exceeded"),
-        ("chief_engineer", 65536, 60200, None, "planning_output_budget_context_window_exceeded"),
+        ("pm", 32768, 1000000, 32768, None),
+        ("chief_engineer", 32768, 1000000, 32768, None),
+        ("pm", 65536, 60032, "window", None),
+        ("chief_engineer", 65536, 60032, "window", None),
+        ("pm", 65536, 60200, "window", None),
+        ("chief_engineer", 65536, 60200, "window", None),
         ("director", 32768, 1000000, 32768, None),
         ("qa", 32768, 1000000, 32768, None),
     ],
@@ -99,5 +99,12 @@ async def test_planning_budget_at_actual_http_boundary(tmp_path, monkeypatch, ro
         assert diagnostic in str(response.error)
     else:
         assert response.ok, response.error
-        assert len(wires) == 1 and wires[0]["max_tokens"] == want
+        assert len(wires) == 1
+        if want == "window":
+            budget = request.context["generation_budget"]
+            assert wires[0]["max_tokens"] == budget["effective_output_tokens"] < 60000
+            assert "context_window_headroom" in budget["adjustment_reasons"]
+            assert wires[0]["messages"] == request.context["chat_messages"]
+        else:
+            assert wires[0]["max_tokens"] == want
         assert requirement in "\n".join(message["content"] for message in wires[0]["messages"])

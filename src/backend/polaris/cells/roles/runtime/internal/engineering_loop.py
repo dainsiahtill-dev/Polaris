@@ -72,12 +72,16 @@ def _native_calls(response: AIResponse) -> list[ToolCall]:
             raise ValueError("native provider response has no assistant message")
         calls = message.get("tool_calls", [])
         terminal = choice.get("finish_reason")
-    elif "content" in raw:
-        blocks = raw["content"]
+    elif "content" in raw or raw.get("stop_reason") == "max_tokens":
+        terminal = raw.get("stop_reason")
+        blocks = raw.get("content")
+        if blocks is None and terminal == "max_tokens":
+            # Some compatible providers omit an unfinished content block at
+            # the output boundary. No call exists to dispatch or replay.
+            raise NativeTurnRejectedError(f"native turn is incomplete: {terminal}", [], terminal)
         if not isinstance(blocks, list) or any(not isinstance(block, dict) for block in blocks):
             raise ValueError("native provider content must be an object list")
         calls = [block for block in blocks if block.get("type") == "tool_use"]
-        terminal = raw.get("stop_reason")
     else:
         raise ValueError("unsupported native provider response envelope")
     if not isinstance(calls, list):

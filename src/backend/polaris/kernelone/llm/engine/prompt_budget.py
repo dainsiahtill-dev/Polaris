@@ -559,8 +559,10 @@ class TokenBudgetManager:
             requested = int(model_spec.max_output_tokens or 0)
         if requested <= 0:
             requested = self.min_output_tokens
-        requested = max(self.min_output_tokens, requested)
-        return min(requested, max_context_tokens - 1)
+        # A maximum generation ceiling is not a promise to consume that many
+        # tokens. Keep the existing minimum response reserve for prompt
+        # admission; the final structured-payload clamp allocates actual output.
+        return min(requested, self.min_output_tokens, max_context_tokens - 1)
 
     def _hard_trim(self, text: str, target_tokens: int) -> str:
         """最终兜底：硬截断。"""

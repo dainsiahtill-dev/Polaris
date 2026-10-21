@@ -339,6 +339,11 @@ class NativeRequestCapturePort:
             # New engineering observations do not inherit old contract-admission
             # quality warnings or manufacture a new coverage verdict.
             audit.pop("context_quality", None)
+        generation = audit.get("generation_budget")
+        if isinstance(generation, dict) and generation and protocol:
+            audit["generation_budget_matches_wire"] = type(audit.get("output_token_limit")) is int and audit[
+                "output_token_limit"
+            ] == generation.get("effective_output_tokens")
         audit["final_physical_wire_hash"] = wire_hash
         if isinstance(audit.get("final_request_evidence_coverage"), dict):
             audit["final_request_evidence_coverage"]["context_snapshot_ref"] = ""
@@ -369,6 +374,10 @@ class NativeRequestCapturePort:
                 ].pop("final_physical_wire_hash")
             observation = self._publish(provider_request)
         self._notify(observation)
+        if audit.get("generation_budget_matches_wire") is False:
+            error = RuntimeError("output_budget_wire_mismatch")
+            self._finish(provider_request, status="failed", error=error)
+            raise error
         return frozen, provider_request
 
     @staticmethod
@@ -428,6 +437,9 @@ class NativeRequestCapturePort:
         metric_keys = (
             "audit_scope",
             "native_protocol",
+            "generation_budget",
+            "output_token_limit",
+            "generation_budget_matches_wire",
             "message_count",
             "message_token_estimate",
             "tool_schema_count",

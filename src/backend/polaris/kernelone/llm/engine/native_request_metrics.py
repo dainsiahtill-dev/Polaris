@@ -123,6 +123,7 @@ def provider_native_request_metrics(
     metrics: dict[str, Any] = {
         "audit_scope": "provider_native_wire",
         "native_protocol": protocol,
+        "output_token_limit": body.get("max_output_tokens" if protocol == "openai_responses" else "max_tokens"),
         "message_count": len(native_messages),
         "message_chars": message_chars,
         "message_token_estimate": message_tokens,

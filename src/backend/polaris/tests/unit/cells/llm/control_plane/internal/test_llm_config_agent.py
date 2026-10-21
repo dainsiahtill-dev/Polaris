@@ -423,7 +423,7 @@ class TestHRAgent:
 
         result = agent._tool_update_llm_config(
             role="pm",
-            provider_cfg={"max_tokens": 999999},
+            provider_cfg={"max_tokens": 1_000_001},
         )
         assert result["ok"] is False
         assert result["error"] == "invalid_provider_cfg"
@@ -513,10 +513,12 @@ class TestProviderCfgValidation:
         _validate_provider_cfg({"unknown_key": 1, "api_key": "secret"})
 
     def test_validate_max_tokens_range(self) -> None:
+        _validate_provider_cfg({"max_tokens": 524_288})
+        _validate_provider_cfg({"max_tokens": 1_000_000})
         with pytest.raises(ValueError, match="between 1 and"):
             _validate_provider_cfg({"max_tokens": 0})
         with pytest.raises(ValueError, match="between 1 and"):
-            _validate_provider_cfg({"max_tokens": 100_000})
+            _validate_provider_cfg({"max_tokens": 1_000_001})
 
     def test_validate_temperature_range(self) -> None:
         with pytest.raises(ValueError, match="between 0.0 and 2.0"):

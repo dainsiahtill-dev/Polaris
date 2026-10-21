@@ -65,7 +65,7 @@ _PROVIDER_CFG_VALIDATION: dict[str, tuple[float, float]] = {
 }
 
 #: Maximum allowed max_tokens to prevent runaway billing/OOM.
-_MAX_TOKENS_LIMIT: int = 32_768
+_MAX_TOKENS_LIMIT: int = 1_000_000
 
 
 def _mask_sensitive_values(cfg: dict[str, Any]) -> dict[str, Any]:

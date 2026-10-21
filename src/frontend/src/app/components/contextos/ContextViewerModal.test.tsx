@@ -164,6 +164,84 @@ describe('ContextViewerModal', () => {
     expect(mockedApiFetch).toHaveBeenCalledWith('/v2/context/abc123abc123abc123abc123/final-request');
   });
 
+  it('preserves unknown and not-applicable coverage from the observed native request', async () => {
+    // Exact coverage states from the live Director request sealed in task17 ui-proof.
+    const coverage = {
+      original_goal: 'present',
+      role_instruction: 'present',
+      target_context: 'unknown',
+      failure_feedback: 'present',
+      pm_contract: 'not_applicable',
+      chief_engineer_blueprint: 'not_applicable',
+    };
+    const finalRequest = makeFinalRequestPayload({
+      final_request_context_audit: { coverage },
+    });
+    const original = structuredClone(finalRequest);
+    mockFetchOk(makePayload(), finalRequest);
+    render(
+      <ContextViewerModal
+        contextSnapshotRef="abc123abc123abc123abc123"
+        roleId="director"
+        onClose={vi.fn()}
+        initialTab="final-request"
+      />,
+    );
+    const present = await screen.findByText('PASS original_goal', { selector: 'span' });
+    const unknown = screen.getByText('UNKNOWN target_context', { selector: 'span' });
+    const notApplicable = screen.getByText('N/A pm_contract', { selector: 'span' });
+    expect(screen.getByText('N/A chief_engineer_blueprint', { selector: 'span' })).toBeTruthy();
+    expect(unknown.className).not.toContain('text-emerald-300');
+    expect(notApplicable.className).not.toContain('text-emerald-300');
+    expect(unknown.className).not.toBe(present.className);
+    expect(notApplicable.className).not.toBe(unknown.className);
+    expect(screen.queryByText('PASS target_context', { selector: 'span' })).toBeNull();
+    expect(finalRequest).toEqual(original);
+  });
+
+  it('preserves legacy boolean coverage and treats unrecognized values as unknown', async () => {
+    const coverage = {
+      legacy_present: true,
+      legacy_missing: false,
+      explicitly_missing: 'missing',
+      number_one: 1,
+      number_zero: 0,
+      empty_text: '',
+      null_value: null,
+      object_value: { present: true },
+      array_value: ['present'],
+      boolean_text: 'true',
+      future_status: 'available',
+    };
+    mockFetchOk(makePayload(), makeFinalRequestPayload({ final_request_context_audit: { coverage } }));
+    render(
+      <ContextViewerModal
+        contextSnapshotRef="abc123abc123abc123abc123"
+        roleId="director"
+        onClose={vi.fn()}
+        initialTab="final-request"
+      />,
+    );
+    const present = await screen.findByText('PASS legacy_present', { selector: 'span' });
+    const missing = screen.getByText('MISS legacy_missing', { selector: 'span' });
+    expect(screen.getByText('MISS explicitly_missing', { selector: 'span' })).toBeTruthy();
+    expect(missing.className).not.toBe(present.className);
+    for (const key of [
+      'number_one',
+      'number_zero',
+      'empty_text',
+      'null_value',
+      'object_value',
+      'array_value',
+      'boolean_text',
+      'future_status',
+    ]) {
+      const unknown = screen.getByText(`UNKNOWN ${key}`, { selector: 'span' });
+      expect(unknown.className).not.toBe(present.className);
+      expect(unknown.className).not.toBe(missing.className);
+    }
+  });
+
   it('keeps context messages visible when final provider request evidence is unavailable', async () => {
     const payload = makePayload();
     mockedApiFetch.mockResolvedValueOnce({

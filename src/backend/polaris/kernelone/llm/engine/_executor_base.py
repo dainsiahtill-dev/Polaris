@@ -177,6 +177,8 @@ def build_invoke_config(
     keys = _STREAM_OPTION_KEYS if streaming else _INVOKE_OPTION_KEYS
     for key in keys:
         if key in options:
+            if key == "max_tokens" and options[key] is None:
+                continue
             cfg[key] = options[key]
 
     # A caller timeout remains a per-call override. An enclosing invocation
@@ -208,7 +210,14 @@ def build_invoke_config(
         )
         cfg["temperature"] = resolve_temperature(ctx)
     cfg.setdefault("stream", False)
-    cfg.setdefault("max_tokens", 3000)
+    if cfg.get("max_tokens") is None:
+        configured = cfg.get("max_output_tokens")
+        cfg["max_tokens"] = 3000 if configured is None else configured
+    try:
+        if isinstance(cfg["max_tokens"], bool) or int(cfg["max_tokens"]) <= 0:
+            raise ValueError("max_tokens must be a positive integer")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_tokens must be a positive integer") from exc
     return cfg
 
 
@@ -583,18 +592,14 @@ def planning_output_budget_error(
     effective_messages: Any = None,
     final_output_tokens: int | None = None,
 ) -> str | None:
-    """Pure exact-output guard shared by both planning transport modes."""
+    """Preserve planning input and declared model bounds, not an exact generation reservation."""
     if role not in {"pm", "chief_engineer"}:
         return None
     cap = int(model_spec.max_output_tokens or 0)
     window = int(model_spec.max_context_tokens or 0)
     if cap <= 0 or window <= 0:
         return "planning_output_budget_model_limits_unavailable"
-    if requested > cap:
-        return f"planning_output_budget_model_limit_exceeded:requested={requested},model_output_limit={cap}"
     detail = f"requested={requested},window={window}"
-    if overhead_tokens is not None and requested + overhead_tokens + 64 > window:
-        return f"planning_output_budget_context_window_exceeded:{detail},overhead={overhead_tokens},reserve=64"
     if isinstance(original_messages, list) and original_messages:
         retained = effective_messages if isinstance(effective_messages, list) else []
         original_system = [m for m in original_messages if isinstance(m, dict) and m.get("role") == "system"]
@@ -605,8 +610,8 @@ def planning_output_budget_error(
         retained_user = [m for m in retained if isinstance(m, dict) and m.get("role") == "user"]
         if original_user and (not retained_user or original_user[-1] != retained_user[-1]):
             return f"planning_output_budget_context_window_exceeded:{detail},reason=pinned_requirement_context_changed"
-    if final_output_tokens is not None and final_output_tokens != requested:
-        return f"planning_output_budget_context_window_exceeded:{detail},available_output={final_output_tokens},overhead={overhead_tokens}"
+    if final_output_tokens is not None and final_output_tokens <= 0:
+        return f"planning_output_budget_context_window_exceeded:{detail},available_output={final_output_tokens}"
     return None
 
 
@@ -697,3 +702,53 @@ def resolve_requested_output_tokens(
     if requested <= 0:
         return 0
     return min(requested, int(model_spec.max_output_tokens or requested))
+
+
+def generation_output_budget(
+    provider_cfg: Mapping[str, Any],
+    options: Mapping[str, Any],
+    model_spec: Any,
+    invoke_cfg: Mapping[str, Any],
+    *,
+    requested: int,
+    ceiling: int,
+    prompt_text: str,
+    overhead_tokens: int,
+) -> dict[str, Any]:
+    """Describe the admitted generation ceiling separately from its effective window budget.
+
+    Model output metadata remains a bound. It is configured capability metadata,
+    never proof that a remote provider accepts the number. Physical capture adds
+    the actual wire limit independently after adapter conversion.
+    """
+    from .token_estimator import TokenEstimator
+
+    configured = provider_cfg.get("max_tokens")
+    source = "provider.max_tokens"
+    if configured is None:
+        configured = provider_cfg.get("max_output_tokens")
+        source = "provider.max_output_tokens"
+    if configured is None:
+        configured, source = 3000, "default"
+    if options.get("max_tokens") is not None:
+        source = "request.max_tokens"
+    effective = int(invoke_cfg.get("max_tokens") or 0)
+    reasons = []
+    if ceiling < requested:
+        reasons.append("model_output_limit")
+    if effective < ceiling:
+        reasons.append("context_window_headroom")
+    return {
+        "configured_output_ceiling_tokens": int(configured),
+        "requested_output_tokens": requested,
+        "output_ceiling_tokens": ceiling,
+        "effective_output_tokens": effective,
+        "output_ceiling_source": source,
+        "model_output_limit_tokens": int(model_spec.max_output_tokens or 0),
+        "model_limit_source": "resolved_configuration_metadata",
+        "context_window_tokens": int(model_spec.max_context_tokens or 0),
+        "estimated_prompt_tokens": TokenEstimator.estimate(prompt_text),
+        "payload_overhead_tokens": max(0, int(overhead_tokens)),
+        "safety_reserve_tokens": 64,
+        "adjustment_reasons": reasons,
+    }

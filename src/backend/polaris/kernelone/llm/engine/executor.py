@@ -33,6 +33,7 @@ from ._executor_base import (
     classify_error,
     coerce_required_flag,
     estimate_payload_overhead_tokens,
+    generation_output_budget,
     get_provider_config,
     planning_output_budget_error,
     provider_type_policy_error,
@@ -734,6 +735,16 @@ class AIExecutor:
         if planning_error:
             return AIResponse.failure(error=planning_error, category=ErrorCategory.INVALID_RESPONSE)
 
+        request.context["generation_budget"] = generation_output_budget(
+            provider_cfg,
+            request.options,
+            model_spec,
+            invoke_cfg,
+            requested=required_output_tokens,
+            ceiling=requested_output_tokens,
+            prompt_text=clamp_prompt_text,
+            overhead_tokens=payload_overhead,
+        )
         if physical_dispatch_port is not None:
             route_binder = getattr(physical_dispatch_port, "bind_provider_route_authority", None)
             if callable(route_binder):
@@ -994,6 +1005,7 @@ class AIExecutor:
         effective_prompt_sha256 = self._sha256_text(clamp_prompt_text)
         tool_schema_sha256 = self._sha256_json(tools) if tool_count else ""
         token_budget = build_safe_token_budget_payload(budget_decision)
+        token_budget["generation_budget"] = dict(context.get("generation_budget") or {})
         prompt_profile_fields = build_prompt_profile_observability_fields(context)
         observability_fields = build_final_request_observability_fields(
             context=context,
@@ -1151,6 +1163,7 @@ class AIExecutor:
                 "context_underutilized": context_underutilized,
                 "available_token_headroom": max(0, window_tokens - final_request_token_estimate),
                 "coverage": coverage,
+                "generation_budget": dict(request.context.get("generation_budget") or {}),
                 **prompt_profile_fields,
                 "context_quality": _context_quality_findings(
                     coverage=coverage,

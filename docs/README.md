@@ -1,8 +1,12 @@
 # Polaris 文档阅读入口
 
-最新更新：2026-10-21。
+最新更新：2026-10-22。
 
-当前检查点：冻结 `bef24b386` 的首个动画网页运行 `a420e40bb7434b1e85bd50d2fbfadfcd` 已原生 completed/passed、文本 QA approved，资源关闭；主 Agent 实际查看桌面/手机多时相画面后判质量 FAIL：腿脚与鸟身没有形成连贯骑行关系。旧批准与失败证据均保留。当前按[Director／QA 原生视觉闭环](blueprints/POLARIS_NATIVE_VISUAL_OBSERVATION_20261021.md)及[实施计划](superpowers/plans/2026-10-21-native-director-qa-vision.md)贯通真实图片、当前候选与独立验收；组件通过不代表新视觉网页已交付。新内部任务变体位于 `src/backend/scripts/factory_bench/fixtures/pelican_web_visual/`，沿用原功能检查和质量量表，未改原目录。长期记忆暂不做。静态SVG两例通过、其余八例未运行；原目录 L1-01/02/03 的 root 质量 FAIL、其余117项未运行保留。以下历史检查点只适用于当时版本。
+当前检查点：[Director／QA 原生视觉闭环](blueprints/POLARIS_NATIVE_VISUAL_OBSERVATION_20261021.md)已贯通：真实 QA 看图后独立拒绝旧网页，指出腿脚脱离鸟身，主 Agent 看图确认。随后冻结 `2c7b0c56e` 的全新运行 `1be9405400f34a8aa5c3ff12cd692218` 因 3000 输出默认与截断空响应处理失败，未产出代码，资源已关闭；不能声称新的视觉网页已交付。当前关闭[按模型上限执行的输出预算](blueprints/POLARIS_OUTPUT_LIMIT_POLICY_20261021.md)及 UNKNOWN 被渲染为 PASS 的投影问题，之后另起冻结批次。
+
+当前取舍与实验见[保留能力、比较机制](blueprints/POLARIS_CAPABILITY_EXPERIMENTS_20261022.md)：原调度模块的真实领取／冷恢复实验通过，但新协作链路尚未接入；四次同输入视觉消融确认图片帮助识别旧动画的实际缺陷，不据此宣称总体更可靠。当前工程未接旧完整 StateFirstContextOS／TurnEngine 链；保留耐久历史、K1 预算与最终请求快照。输出修复的环境校正联合回归 1237 passed，KernelOne ALL 十二阶段通过（368 passed、1 skipped）；原失败记录仍保留。随后按原合同运行全新隔离网页，再做序列角色对照；准备与组件通过不代表网页交付。
+
+更早 `bef24b386` 网页 `a420e40bb7434b1e85bd50d2fbfadfcd` 的文本 QA approved 与 root 质量 FAIL 均保留。新数据变体 `fixtures/pelican_web_visual/` 沿用原功能检查及质量量表。长期记忆不做；静态 SVG 两例通过、其余八例未运行；原目录 L1-01/02/03 的 root 质量 FAIL、其余117项未运行不变。以下历史检查点只适用于当时版本。
 
 1. [历史经验报告全文](history/历史经验报告.md)：十章、68 个案例、历史验证边界与来源；保留原 06:58 UTC 检查点，后续 R13 核对见新重构方案第 2 节。
 2. [完整重构方案](blueprints/POLARIS_ROLE_AGENT_REFACTOR_20261020.md)：保留角色分工，删除模型合同维护，明确架构、删留、权限、恢复、验证与迁移。
