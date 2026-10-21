@@ -1,6 +1,6 @@
 # Polaris engineering_v2 当前进展与边界
 
-记录日期：2026-10-21。本记录区分历史交付、当前候选资格和本次真实运行。**无人值守 L1–L12 尚未证明；自主选择验证命令的全新 L1-01 尚未交付。**
+记录日期：2026-10-21。本记录区分历史交付、当前候选资格和本次真实运行。**自主选择验证命令的全新 L1-01 R04 已真实交付并释放，交付后保留三项 P2；无人值守 L1–L12、默认入口切换与旧写路径退役尚未完成。** 详见 [R04 完整记录](POLARIS_ENGINEERING_V2_L101_AUTOVERIFY_R04_20261021.md)。
 
 ## 已保留的真实结果
 
@@ -66,7 +66,16 @@
 - observe 返回 CANCELLED（exit 130），stop 返回 STOPPED（exit 0）；自有后端/前端退出，49978/5174 关闭；主实例 PID 18128 与 NATS PID 18035 保持。
 - R02 全程未热改源码或模型。只读浏览器环境修正没有改变平台执行配置或目标文件。
 
-## 当前唯一修改与下一步
+### R04：当前模型自选验证闭环已通过并释放
+
+- 冻结主线 `a8b820a3d8ba9f3c1c7bc02ffb901a93dc9de1c6`；9373 文件和模型配置直到物理停止均未变。521 项联合回归、KernelOne ALL 十二阶段（368 passed、1 skipped）及四项独立机制实验通过。
+- run `553ab2e9f19245499ce318a26d51b63b`，全新隔离目录 `~/.polaris/projects/engineering-l1-01-autoverify-20261021-r04`。原始目标、host、空 `required_checks`、模型与 3000/5400/6000 预算保持。
+- 正式 PM → CE → Director → QA；约 91.96 秒首个业务源码落盘。模型在普通工具中准备依赖、自行处理编译和测试反馈，最终一次 native `verify_project` 自选八项检查全部真实 exit 0，包括 build、tsc noEmit、104 项业务断言及 CLI；无隐式自动验证。
+- 当前 QA 639→785 approved，绑定 revision 49 / verifier 627，310 项输入与验证结果及现盘一致；ProjectOutcome accepted，terminal 787 completed/passed。798.146 秒，89 工具全部 observed（80 ok、9 false），65 capture/dispatch ID；实际 HTTP 发送、账单与人工分钟 UNKNOWN。
+- 正式 observe 为 OBSERVED_ACCEPTED、stop 为 STOPPED，均 exit 0；无 active/pending，本次 PID 23465/24674 退出、49978/5174 关闭，主实例与 NATS 保持存活。零外部目标编辑、依赖安装、验收命令或诊断注入。
+- 工作台首试浏览器实际通过，不替代目标验收。交付后静态审阅没有明确 P1，但保留 tick 数分配、文档连闪序列及畸形 seed 回退三项 P2，未外部修补。单次成功不是可靠率或文案改动的独立因果证明；失效后重新请求模型验证的分支本次未触发。
+
+## 已集成修改与下一步
 
 R02 后的两路径说明/范围反馈已通过 19 项相关、5 项独立及 519 项联合检查，并在 R03 真实验证了传递和目录调整；尚未证明其足够解决交付收敛。system 阶段证据说明不足属于合理假设；仅准备了同 request 单处 system 替换的 A/B，网络调用和工具执行均为零，不冒充效果数据。
 
@@ -74,9 +83,9 @@ R03 封存与资源释放后，当前只关闭**模型选择与宿主固定要�
 
 Director 的 system 说明同步区分真实准备证据与准备后验证，复用既有指导；不新增权限、数据表、公开 DTO、npm 特例、超时或重试控制器。原生选择、实际收据和交接消费者一起迁移。
 
-本记录写入时，独立真实计数器反例 RED 已转 GREEN；固定检查自动、UNKNOWN 不重放、历史自动 attempt 遮蔽后冷恢复仍为模型归属共 4 项有限独立实验通过。旧“修改产物后自动重验”的合成响应已迁移成显式 native 重验，保留旧检查/新检查及当前 QA 的所有断言。完整冻结资格和全新 R04 仍待完成。合成模型只能证明机制，不能证明远端模型判断或交付。
+独立真实计数器反例 RED 已转 GREEN；固定检查自动、UNKNOWN 不重放、历史自动 attempt 遮蔽后冷恢复仍为模型归属共 4 项有限独立实验通过。旧“修改产物后自动重验”的合成响应已迁移成显式 native 重验，保留旧检查/新检查及当前 QA 的所有断言。完整冻结资格和全新 R04 已完成；合成机制证据与本次远端模型单次交付证据分别保留，不能互相扩大。
 
-下一步是当前边界冻结、主线提交与全新隔离 R04，继续保留全部失败/取消/UNKNOWN。默认入口和旧生产准入退役、L1–L12 扩域仍未完成；不把组件检查数、安全取消或历史单项目成功扩大成平台完成。后续只在 `main` 研发，不新建分支；无关改动及旧冻结证据保留。
+下一步继续既定默认入口切换、旧生产写路径退役与证据页面同步，再冻结新批次逐步扩域 L1–L12。三项 P2 纳入平台自身的后续修复与独立复验，不外部代修、不改写原运行。全部失败/取消/UNKNOWN 保留；单项目成功不扩大为平台完成。后续只在 `main` 研发，不新建分支或 worktree；无关改动及旧冻结证据保留。
 
 ## 原始证据
 
@@ -92,4 +101,5 @@ Director 的 system 说明同步区分真实准备证据与准备后验证，复
 - `task7-l101-autoverify-r02-{cancel,observe,stop}-root/`：正式取消、观察与停止收据。
 - `task7-verifier-preparation-feedback-{red,green}/`：说明/范围反馈实验；后续完整 R03 未交付。
 - `task7-l101-autoverify-r03-{physical-observer,artifact-review,final-audit}/`：R03 最终请求、迁移缺口、静态质量与关闭。
+- `task7-l101-autoverify-r04-{physical-observer,product-static-audit,browser-audit,official-closure,immutable-delivery}/`：R04 当前验收、已知 P2、只读观测、正式释放及产物封存；完整说明见 R04 专项记录。
 - `task7-verification-selection-owner-review/`、`task7-verification-ownership-root-red-r2/`、`task7-verification-selection-owner-independent-review/`：归属反例和有限修复证据。
