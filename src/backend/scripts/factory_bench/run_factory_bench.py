@@ -3,23 +3,17 @@
 # importing the Polaris packages below.
 # ruff: noqa: E402
 
-"""Factory-bench runner — drive the FULL Polaris role chain per project.
+"""Internal isolated engineering acceptance runner for the original120-case catalog.
 
-For each project in ``projects_v2.json`` (L1→L12, sequential — the local vLLM
-is a shared single GPU, so this runner IS the load mutex):
+Active execution uses the public engineering_acceptance adapter and existing
+Instance Supervisor. The harness freezes goals outside targets, submits one
+engineering run, observes platform verification/independent QA, and requests
+safe resource cleanup. It never seeds targets, installs dependencies, executes
+host project gates, or appends product evidence.
 
-1. create a fresh workspace directory;
-2. hand the project brief to the Polaris role chain (PM→Chief Engineer→
-   Director→QA) headlessly;
-3. collect generated artifacts (plan/blueprint docs, QA verdicts, code);
-4. run the project's deterministic checks (``factory_audit``) and append a
-   schema-stamped audit record.
-
-Benchmark discipline (memory: benchmark-run-discipline): one project at a
-time, ``--max-failed`` early stop, audit + root-cause before continuing.
-
-Implementation helpers live in the private package ``_bench_lib``;
-this module remains the CLI entry point and public symbol surface.
+Historical readers remain importable. Old Factory/subprocess writers fail
+explicitly; they are not fallback execution paths. External reports are internal
+audit observations and never substitute platform acceptance authority.
 """
 
 from __future__ import annotations
@@ -57,6 +51,8 @@ read_factory_qa_invocation_status = _impl.read_factory_qa_invocation_status
 required_llm_roles_for_factory_record = _impl.required_llm_roles_for_factory_record
 resolve_runtime_dir_for_workspace = _impl.resolve_runtime_dir_for_workspace
 resolve_runtime_dirs_for_workspace = _impl.resolve_runtime_dirs_for_workspace
+prepare_engineering_case = _impl.prepare_engineering_case
+run_engineering_case = _impl.run_engineering_case
 run_chain = _impl.run_chain
 run_factory_chain = _impl.run_factory_chain
 

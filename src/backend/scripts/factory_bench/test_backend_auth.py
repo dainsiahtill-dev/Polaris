@@ -17,10 +17,12 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
+from unittest import mock
 from urllib.parse import urlparse
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
+from scripts.factory_bench._bench_lib import session as bench_session
 from scripts.factory_bench.run_factory_bench import (
     _http_post_json,
     _push_bench_complete_to_backend,
@@ -64,6 +66,9 @@ class _AuthMockBackend(BaseHTTPRequestHandler):
 
 class TestBenchAuth(unittest.TestCase):
     def setUp(self) -> None:
+        self.enterContext(
+            mock.patch.dict(bench_session._BENCH_OBSERVATION_CIRCUIT, {"disabled_reason": ""}, clear=True)
+        )
         self._server = HTTPServer(("127.0.0.1", 0), _AuthMockBackend)
         self._port = self._server.server_address[1]
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
@@ -107,8 +112,14 @@ class TestBenchAuth(unittest.TestCase):
         ):
             # FACTORY_BENCH_BACKEND_TOKEN wins over generic backend token aliases.
             self.assertEqual(_resolve_backend_token(), "env-bench")
-        with unittest.mock.patch.dict("os.environ", {}, clear=True):
-            self.assertEqual(_resolve_backend_token(), "")
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            mock.patch.object(bench_session, "_read_desktop_backend_info", return_value={}),
+        ):
+            with mock.patch.object(bench_session, "_resolve_backend_url", return_value="https://bench-auth.invalid"):
+                self.assertEqual(_resolve_backend_token(), "")
+            with mock.patch.object(bench_session, "_resolve_backend_url", return_value="http://127.0.0.1:49977"):
+                self.assertEqual(_resolve_backend_token(), "polaris-local-dev")
 
     def test_push_session_sends_authorization_header(self) -> None:
         _AuthMockBackend.response_body = json.dumps({"session_id": "bench-auth-1", "status": "running"}).encode("utf-8")
@@ -185,6 +196,9 @@ class TestBenchProgressPush(unittest.TestCase):
     """Covers the live-counter push that powers BenchStatusStrip's ``X/Y``."""
 
     def setUp(self) -> None:
+        self.enterContext(
+            mock.patch.dict(bench_session._BENCH_OBSERVATION_CIRCUIT, {"disabled_reason": ""}, clear=True)
+        )
         self._server = HTTPServer(("127.0.0.1", 0), _AuthMockBackend)
         self._port = self._server.server_address[1]
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)

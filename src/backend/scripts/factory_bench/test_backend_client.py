@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
 from scripts.factory_bench import run_factory_bench as run_factory_bench_module
+from scripts.factory_bench._bench_lib import session as bench_session
 from scripts.factory_bench.run_factory_bench import (
     _push_bench_complete_to_backend,
     _push_bench_event_to_backend,
@@ -87,6 +88,9 @@ class _MockBackend(BaseHTTPRequestHandler):
 
 class _BenchBackendClientTestBase(unittest.TestCase):
     def setUp(self) -> None:
+        self.enterContext(
+            mock.patch.dict(bench_session._BENCH_OBSERVATION_CIRCUIT, {"disabled_reason": ""}, clear=True)
+        )
         self._server = HTTPServer(("127.0.0.1", 0), _MockBackend)
         self._port = self._server.server_address[1]
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
@@ -186,17 +190,19 @@ class TestBenchBackendClient(_BenchBackendClientTestBase):
                 return None
             return {"workspace": payload["workspace"]}
 
-        with mock.patch.object(run_factory_bench_module, "_http_post_json", side_effect=fake_post_json):
-            ok = run_factory_bench_module._push_bench_workspace_to_backend(
-                backend_url=self.backend_url,
-                workspace="/tmp/project",
-                token="dev-token",
-                attempts=2,
-                retry_delay_seconds=0,
-            )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = str((Path(tmp_dir) / "project").resolve())
+            with mock.patch.object(bench_session, "_http_post_json", side_effect=fake_post_json):
+                ok = run_factory_bench_module._push_bench_workspace_to_backend(
+                    backend_url=self.backend_url,
+                    workspace=workspace,
+                    token="dev-token",
+                    attempts=2,
+                    retry_delay_seconds=0,
+                )
 
         self.assertTrue(ok)
-        self.assertEqual(calls, [{"workspace": "/tmp/project"}, {"workspace": "/tmp/project"}])
+        self.assertEqual(calls, [{"workspace": workspace}, {"workspace": workspace}])
 
     def test_workspace_switch_rejects_mismatched_settings_response(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

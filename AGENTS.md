@@ -92,6 +92,12 @@
 
 28. **目标项目 Runtime 单根制（强制）**：默认 runtime 唯一物理根必须是 `<workspace>/.polaris/runtime`，由 `storage.layout` 统一解析。Instance Registry、backend CLI、ContextOS、ReceiptStore、Run Ledger、Factory/内部 Bench launch receipt 必须记录并消费同一根；禁止新建 `<workspace>/runtime`、默认写 `~/.cache/kernelone/.polaris/projects/<workspace-key>/runtime`，或把 project runtime 同时设置为 `KERNELONE_RUNTIME_ROOT` 与 shared `KERNELONE_RUNTIME_CACHE_ROOT`。外部 cache/RAM-disk 只允许显式 opt-in，并继续按 workspace key 隔离。旧外部 namespace 只能只读发现，不得自动复制、双写或在活跃进程中切根。
 
+#### 当前内部 Bench 入口
+
+当前 `run_factory_bench.py` 复用正式 `engineering_acceptance` 的启动、观察、取消与停止，默认 `--workflow direct`；显式 `--workflow collaborative` 才预先调用 PM／CE。执行必须显式提供冻结的 `--host-config-file`、`--llm-config-file`，以及正确的 `--registry-home`；权限来自该 host 配置，不从目录、模型或 catalog 重新推断。保留 `--timeout 5400 --overall-timeout 6000 --launcher-instance-mode isolated --bench-session-reporting off` 和外层 6000 秒守护预算。原始 120 项业务要求保持；空用户命令清单由模型选择实际验证，不能把 catalog 检查代码当作已经执行的命令。
+
+目标文件、依赖和验收命令全部由 Polaris 工具执行；runner 只在目标外保存冻结输入和观察报告，不初始化目标 Git、不代装依赖、不代跑门禁、不写旧 ledger。未知创建结果只查询原 request key，不重发；未知资源阻止开始下一项目。报告必须区分平台验收、独立产物质量与资源闭合。`--dry-run` 仅检查选择与报告，不是交付证据；旧 Factory／子进程执行选项明确退役，不能静默忽略。
+
 #### 历史 factory_bench 启动约束（仅原冻结引擎内部测试态）
 
 以下命令只用于显式保留的冻结旧引擎测试，不恢复当前进程的 legacy Factory 写准入。新工程验收使用正式 engineering 入口。历史测试仍禁止共享主后端 `49977` 做并发 workspace switch：

@@ -268,14 +268,12 @@ def test_remote_timeout_is_single_attempt_without_spawn(
     assert "supervisor-secret" not in json.dumps(result)
 
 
-def test_cli_documents_explicit_native_supervisor_option(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setattr(cli.sys, "argv", ["run_factory_bench.py", "--help"])
-    with pytest.raises(SystemExit) as exc:
-        cli.main()
-    assert exc.value.code == 0
-    assert "--launcher-supervisor-url" in capsys.readouterr().out
+def test_cli_documents_explicit_native_supervisor_option(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Current formal engineering boundary; private synthetic ports, no target execution."""
+    work = tmp_path / "must-not-create"
+    assert cli.main(["--launcher-supervisor-url", "http://127.0.0.1:59977", "--work-dir", str(work)]) == 2
+    assert "retired" in capsys.readouterr().err
+    assert not work.exists()
 
 
 def test_cross_origin_redirect_never_forwards_supervisor_token(

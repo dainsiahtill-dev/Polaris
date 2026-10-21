@@ -558,3 +558,84 @@ async def test_shutdown_reports_owner_journal_failure(
         await service.shutdown()
     with pytest.raises(RuntimeError, match="terminal journal unavailable"):
         await service.shutdown()
+
+
+def _request_lookup_app(workspace: Path) -> FastAPI:
+    """Synthetic durable requests only; no provider or execution is started."""
+    from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
+    from polaris.cells.runtime.state_owner.public.service import Auth
+    from polaris.delivery.http.routers.engineering_runs import router
+
+    app = FastAPI()
+    app.state.settings = _settings(workspace)
+    app.state.app_state = SimpleNamespace(settings=app.state.settings)
+    app.state.auth = Auth("test-engineering-token")
+    app.state.engineering_run_service = EngineeringRunService(workspace)
+    app.include_router(router)
+    return app
+
+
+async def test_request_lookup_recovers_exact_durable_run_without_new_facts(isolated_workspace: Path) -> None:
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RoleRunCommand, RunLimits
+
+    app = _request_lookup_app(isolated_workspace)
+    service = app.state.engineering_run_service
+    for identity, request_key in (("owned-run", "saved-key"), ("saved-key", "other-key")):
+        service.store.create_run(
+            RoleRunCommand(
+                identity,
+                "director",
+                "冻结原始目标\n保留检查。",
+                isolated_workspace,
+                required_checks=("python3 -V",),
+            ),
+            scope=PermissionScope((), (), frozenset(), False),
+            limits=RunLimits(None, 1000, 1000),
+            engine_version="engineering_v2",
+            request_key=request_key,
+            permission_profile_id="saved-profile",
+        )
+    with sqlite3.connect(service.store.database_path) as connection:
+        before = list(connection.iterdump())
+    async with _client(app) as client:
+        response = await client.get("/v2/engineering/requests/saved-key", params={"workspace": str(isolated_workspace)})
+        assert response.status_code == 200, response.text
+        existing = await client.get("/v2/engineering/runs/owned-run")
+        assert existing.status_code == 200, existing.text
+        assert response.json() == {
+            **existing.json(),
+            "request_identity": {
+                "request_key": "saved-key",
+                "instruction_sha256": "1081e5446e2e7d26c96cc6f5bbcf16a69975e4ff7b453ee6d6150d7042cabd13",
+                "workflow": "direct",
+                "required_checks": ["python3 -V"],
+                "permission_profile_id": "saved-profile",
+            },
+        }
+        assert response.json()["run_id"] == "owned-run"
+    with sqlite3.connect(service.store.database_path) as connection:
+        assert list(connection.iterdump()) == before
+
+
+@pytest.mark.parametrize(
+    ("token", "foreign_workspace", "expected_status"),
+    [("test-engineering-token", False, 404), ("test-engineering-token", True, 403), ("bad", False, 401)],
+)
+async def test_request_lookup_unknown_workspace_and_auth_are_read_only(
+    isolated_workspace: Path, token: str, foreign_workspace: bool, expected_status: int
+) -> None:
+    app = _request_lookup_app(isolated_workspace)
+    service = app.state.engineering_run_service
+    foreign = isolated_workspace / "foreign-never-created"
+    with sqlite3.connect(service.store.database_path) as connection:
+        before = list(connection.iterdump())
+    async with _client(app) as client:
+        response = await client.get(
+            "/v2/engineering/requests/unknown-key",
+            params={"workspace": str(foreign if foreign_workspace else isolated_workspace)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == expected_status, response.text
+    with sqlite3.connect(service.store.database_path) as connection:
+        assert list(connection.iterdump()) == before
+    assert not foreign.exists()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,7 +18,7 @@ from polaris.cells.roles.runtime.public.engineering_service import EngineeringRu
 from polaris.delivery.http.dependencies import require_auth
 from pydantic import BaseModel, Field
 
-router = APIRouter(prefix="/v2/engineering/runs", tags=["engineering"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/v2/engineering", tags=["engineering"], dependencies=[Depends(require_auth)])
 
 
 class EngineeringRunRequest(BaseModel):
@@ -56,7 +57,7 @@ def _error(error: Exception) -> HTTPException:
     return HTTPException(status_code=engineering_error_status(error), detail=str(error))
 
 
-@router.post("")
+@router.post("/runs")
 async def create_run(payload: EngineeringRunRequest, request: Request) -> dict[str, Any]:
     try:
         service, settings, _workspace = _bound(request)
@@ -65,7 +66,29 @@ async def create_run(payload: EngineeringRunRequest, request: Request) -> dict[s
         raise _error(error) from error
 
 
-@router.get("/{session_id}")
+@router.get("/requests/{request_key}")
+async def find_request(request_key: str, request: Request) -> dict[str, Any]:
+    """Find a committed request; absence cannot resolve an in-flight effect."""
+    try:
+        service, _settings, workspace = _bound(request)
+        row = service.find_request(request_key, workspace=workspace)
+        if row is None:
+            raise KeyError(f"no committed engineering request found: {request_key}")
+        return {
+            **observe_engineering_run(service, row["session_id"], workspace),
+            "request_identity": {
+                "request_key": row["request_key"],
+                "instruction_sha256": hashlib.sha256(row["instruction"].encode("utf-8")).hexdigest(),
+                "workflow": row["workflow"],
+                "required_checks": row["required_checks"],
+                "permission_profile_id": row.get("permission_profile_id"),
+            },
+        }
+    except (KeyError, OSError, ValueError, RuntimeError) as error:
+        raise _error(error) from error
+
+
+@router.get("/runs/{session_id}")
 async def get_run(session_id: str, request: Request) -> dict[str, Any]:
     try:
         service, _settings, workspace = _bound(request)
@@ -74,7 +97,7 @@ async def get_run(session_id: str, request: Request) -> dict[str, Any]:
         raise _error(error) from error
 
 
-@router.post("/{session_id}/cancel")
+@router.post("/runs/{session_id}/cancel")
 async def cancel_run(
     session_id: str, request: Request, payload: EngineeringRunActionRequest | None = None
 ) -> dict[str, Any]:
@@ -86,7 +109,7 @@ async def cancel_run(
         raise _error(error) from error
 
 
-@router.post("/{session_id}/resume")
+@router.post("/runs/{session_id}/resume")
 async def resume_run(
     session_id: str, request: Request, payload: EngineeringRunActionRequest | None = None
 ) -> dict[str, Any]:

@@ -21,17 +21,10 @@ from polaris.cells.events.fact_stream.public import (
     fact_stream_bootstrap_streams,
 )
 from polaris.tests.unit.scripts._factory_bench_runner_audit_helpers import (
-    _LAST_FACTORY_RESUME_CALL,
-    _LAST_FACTORY_START_PAYLOAD,
-    _capture_run_chain_command,
     _factory_chain_destructive_findings,
     _guard_runner_external_io,
     _matching_isolated_launch_identity,
-    _ok_run_ledger_projection,
     _record,
-    _setup_run_factory_chain_mocks,
-    _successful_audit_record,
-    _write_director_resume_evidence,
 )
 from scripts.factory_bench import run_factory_bench as bench
 from scripts.factory_bench._bench_lib import (
@@ -53,7 +46,11 @@ from scripts.factory_bench.run_factory_bench import (
     map_factory_run_to_chain_results,
     read_chain_results_from_runtime_dirs,
     resolve_runtime_dirs_for_workspace,
-    run_factory_chain,
+)
+from scripts.factory_bench.test_bench_to_backend_integration import (
+    _assert_retired_consumer,
+    _consumer_batch,
+    _consumer_case,
 )
 
 
@@ -1142,19 +1139,14 @@ def test_legacy_chain_text_cannot_override_canonical_execution() -> None:
     assert "integration_qa_passed" not in gates
 
 
-def test_runner_audits_llm_routes_for_llm_backed_roles_only() -> None:
-    source = "\n".join(
-        (
-            inspect.getsource(bench_cli),
-            inspect.getsource(bench_gates),
-        )
-    )
-
+def test_runner_audits_llm_routes_for_llm_backed_roles_only(monkeypatch: Any, tmp_path: Path) -> None:
+    """Migrated consumer: Fixed-route preflight retired; direct request preserves actual-role projection without invented PM/CE invocation."""
+    inputs, report, http, _ = _consumer_case(tmp_path)
     assert bench.FACTORY_BENCH_REQUIRED_LLM_ROLES == ("pm", "chief_engineer", "director", "qa")
-    assert "require_all_director_routes=False" in source
-    assert "require_all_director_routes=True" not in source
-    assert "FACTORY_BENCH_REQUIRED_LLM_ROLES" in source
-    assert "required_llm_roles_for_factory_record" in source
+    request = json.loads((inputs.evidence_dir / "formal-request.json").read_text(encoding="utf-8"))
+    assert request["role"] == "director" and request["workflow"] == "direct"
+    assert report["observation"]["platform"]["active_roles"] == ["director"]
+    assert all("/v2/factory/" not in path and "llm/status" not in path for _, path, _ in http.calls)
 
 
 def test_missing_legacy_qa_artifact_does_not_override_canonical_projection() -> None:
@@ -1665,187 +1657,47 @@ def test_load_projects_rejects_duplicate_ids_in_extended_catalog(tmp_path: Path)
 
 
 def test_run_chain_preserves_serial_director_workflow_by_default(monkeypatch: Any, tmp_path: Path) -> None:
-    commands = _capture_run_chain_command(monkeypatch, tmp_path)
-
-    assert len(commands) == 1
-    cmd = commands[0]
-    mode_index = cmd.index("--director-workflow-execution-mode")
-    assert cmd[mode_index + 1] == "serial"
+    """Migrated consumer: Subprocess serial protocol retired; default single Director formal request preserved."""
+    _assert_retired_consumer(tmp_path, writer="run_chain")
+    inputs, _, _, _ = _consumer_case(tmp_path / "formal")
+    request = json.loads((inputs.evidence_dir / "formal-request.json").read_text(encoding="utf-8"))
+    assert request["workflow"] == "direct" and request["role"] == "director"
 
 
 def test_run_chain_can_enable_parallel_director_workflow(monkeypatch: Any, tmp_path: Path) -> None:
-    commands = _capture_run_chain_command(
-        monkeypatch,
-        tmp_path,
-        director_workflow_execution_mode="parallel",
-    )
-
-    assert len(commands) == 1
-    cmd = commands[0]
-    mode_index = cmd.index("--director-workflow-execution-mode")
-    assert cmd[mode_index + 1] == "parallel"
+    """Migrated consumer: Legacy parallel subprocess writer rejects before target or log effects."""
+    _assert_retired_consumer(tmp_path, writer="run_chain", director_workflow_execution_mode="parallel")
 
 
-def test_run_chain_task_market_driver_plans_then_dispatches_market(
-    monkeypatch: Any,
-    tmp_path: Path,
-) -> None:
-    commands = _capture_run_chain_command(
-        monkeypatch,
-        tmp_path,
-        director_workflow_execution_mode="parallel",
-        director_dispatch_driver="task-market",
-    )
-
-    assert len(commands) == 2
-    planning_cmd, market_cmd = commands
-    assert "--run-director" not in planning_cmd
-    assert "--director-workflow-execution-mode" not in planning_cmd
-    assert "run_market_chain.py" in market_cmd[1]
-    assert "--fresh-market" in market_cmd
+def test_run_chain_task_market_driver_plans_then_dispatches_market(monkeypatch: Any, tmp_path: Path) -> None:
+    """Migrated consumer: Task Market dispatch no longer authorizes new engineering writes."""
+    _assert_retired_consumer(tmp_path, writer="run_chain", director_dispatch_driver="task_market")
 
 
 def test_main_task_market_driver_uses_http_factory_chain_without_legacy_fallback(
-    monkeypatch: Any,
-    tmp_path: Path,
+    monkeypatch: Any, tmp_path: Path
 ) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(
-        bench_cli,
-        "build_bench_backend_audit_context",
-        lambda *_args, **_kwargs: {"backend_freshness": {"ok": False}, "backend_metadata": {"backend_base_url": ""}},
-    )
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "run_factory_bench.py",
-            "--project-ids",
-            "L1-01",
-            "--work-dir",
-            str(tmp_path),
-            "--director-dispatch-driver",
-            "task-market",
-        ],
-    )
-    monkeypatch.setattr(
-        bench_cli,
-        "load_projects",
-        lambda: [{"id": "L1-01", "level": 1, "title": "Known", "brief": "Build something"}],
-    )
-    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
-    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "token")
-    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-task-market")
-    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench_cli, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
-
-    def _legacy_chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        calls.append("legacy")
-        raise AssertionError("task-market dispatch must not use the legacy subprocess chain")
-
-    def _http_chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        calls.append("http")
-        raise KeyboardInterrupt()
-
-    monkeypatch.setattr(bench_cli, "run_chain", _legacy_chain)
-    monkeypatch.setattr(bench_cli, "run_factory_chain", _http_chain)
-
-    result = bench.main()
-
-    assert result == 130
-    assert calls == ["http"]
+    """Migrated consumer: Retired Task Market option fails before effects instead of falling back to Factory."""
+    base = tmp_path / "batch"
+    assert bench_cli.main(["--director-dispatch-driver", "task_market", "--work-dir", str(base)]) == 2
+    assert not base.exists()
 
 
 def test_main_marks_backend_session_failed_when_run_aborts(monkeypatch: Any, tmp_path: Path) -> None:
-    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
-    completed: list[dict[str, Any]] = []
-    monkeypatch.setattr(
-        bench_cli,
-        "build_bench_backend_audit_context",
-        lambda *_args, **_kwargs: {"backend_freshness": {"ok": False}, "backend_metadata": {"backend_base_url": ""}},
-    )
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "run_factory_bench.py",
-            "--project-ids",
-            "L1-01",
-            "--work-dir",
-            str(tmp_path),
-            "--max-failed",
-            "3",
-        ],
-    )
-    monkeypatch.setattr(
-        bench_cli,
-        "load_projects",
-        lambda: [{"id": "L1-01", "level": 1, "title": "Abort case", "brief": "Build something"}],
-    )
-    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
-    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "token")
-    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-abort")
-    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench_cli, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
-
-    def _capture_complete(**kwargs: Any) -> bool:
-        completed.append(kwargs)
-        return True
-
-    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", _capture_complete)
-
-    def _abort(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        raise RuntimeError("simulated runner abort")
-
-    monkeypatch.setattr(bench_cli, "run_factory_chain", _abort)
-
-    result = bench.main()
-
-    assert result == 1
-    assert completed, "bench session should be marked terminal on runner abort"
-    assert completed[-1]["session_id"] == "bench-abort"
-    assert completed[-1]["success"] is False
-    assert completed[-1]["summary"]["failed"] == 1
-    assert completed[-1]["summary"]["error"] == "simulated runner abort"
+    """Migrated consumer: Partial launch stays external failure/unknown cleanup; no old bench-session product write."""
+    code, summary, traces = _consumer_batch(tmp_path, monkeypatch, fail_start=True)
+    record = summary["records"][0]
+    assert code != 0 and record["launch"]["harness_status"] == "UNKNOWN"
+    assert record["resources_closed"] is False and record["catalog_quality"] == "UNKNOWN"
+    assert traces[0][1].calls == []
+    assert not Path(record["workspace"]).exists()
 
 
-def test_main_rejects_unknown_explicit_project_ids(
-    monkeypatch: Any,
-    tmp_path: Path,
-    capsys: Any,
-) -> None:
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "run_factory_bench.py",
-            "--project-ids",
-            "L1-01,L2-01",
-            "--work-dir",
-            str(tmp_path),
-        ],
-    )
-    monkeypatch.setattr(
-        bench_cli,
-        "load_projects",
-        lambda: [{"id": "L1-01", "level": 1, "title": "Known", "brief": "Build something"}],
-    )
-
-    def _unexpected_session(*_args: Any, **_kwargs: Any) -> str:
-        raise AssertionError("unknown explicit ids must fail before creating a bench session")
-
-    monkeypatch.setattr(bench_cli, "_ensure_bench_session", _unexpected_session)
-
-    result = bench.main()
-
-    captured = capsys.readouterr()
-    assert result == 1
-    assert "unknown project id(s): L2-01" in captured.out
-    assert "refusing to run partial explicit selection" in captured.out
+def test_main_rejects_unknown_explicit_project_ids(monkeypatch: Any, tmp_path: Path) -> None:
+    """Migrated consumer: Keep rejection of partial explicit catalog selection through current real CLI."""
+    base = tmp_path / "batch"
+    assert bench_cli.main(["--dry-run", "--project-ids", "L1-01,NO-SUCH", "--work-dir", str(base)]) == 2
+    assert not base.exists()
 
 
 def test_level_local_explicit_project_ids_resolve_to_catalog_index() -> None:
@@ -1878,334 +1730,80 @@ def test_level_local_explicit_project_ids_resolve_to_catalog_index() -> None:
 
 
 def test_main_defaults_to_l1_through_l12_catalog(monkeypatch: Any, tmp_path: Path) -> None:
-    captured: dict[str, Any] = {}
-    projects = [
-        {"id": f"L{level}-{level:02d}", "level": level, "title": f"Project {level}", "brief": "Build something"}
-        for level in range(1, 13)
-    ]
-
-    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
-    monkeypatch.setattr(bench_cli, "load_projects", lambda: projects)
-    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "")
-    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "")
-    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
-
-    def _capture_session(**kwargs: Any) -> str:
-        captured.update(kwargs)
-        return "bench-default"
-
-    def _stop_after_registration(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        raise KeyboardInterrupt()
-
-    monkeypatch.setattr(bench_cli, "_ensure_bench_session", _capture_session)
-    monkeypatch.setattr(bench_cli, "run_factory_chain", _stop_after_registration)
-
-    result = bench.main()
-
-    assert result == 130
-    assert captured["total"] == 12
-    assert captured["metadata"]["levels"] == list(range(1, 13))
-    assert captured["project_ids"] == [project["id"] for project in projects]
+    """Migrated consumer: Preserve all120/L1-L12 selection; dry-run cannot become delivery evidence or allocate targets."""
+    base = tmp_path / "batch"
+    assert bench_cli.main(["--dry-run", "--work-dir", str(base)]) == 0
+    summary = json.loads(next((base / "reports").glob("*/summary.json")).read_text(encoding="utf-8"))
+    assert summary["catalog_total"] == summary["selected_count"] == len(summary["records"]) == 120
+    assert {r["original_project"]["level"] for r in summary["records"]} == set(range(1, 13))
+    assert all(r["harness_status"] == "NOT_RUN" for r in summary["records"])
+    assert not (base / "workspaces").exists()
 
 
 def test_main_default_max_failed_zero_does_not_early_stop(monkeypatch: Any, tmp_path: Path) -> None:
-    calls: list[str] = []
-    projects = [
-        {"id": "L1-01", "level": 1, "title": "One", "brief": "Build one"},
-        {"id": "L2-02", "level": 2, "title": "Two", "brief": "Build two"},
-    ]
-
-    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
-    monkeypatch.setattr(bench_cli, "load_projects", lambda: projects)
-    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "")
-    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "")
-    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-no-early-stop")
-    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(
-        bench_cli,
-        "build_bench_backend_audit_context",
-        lambda *_args, **_kwargs: {
-            "backend_freshness": {"ok": True, "detail": "backend fresh"},
-            "backend_metadata": {"backend_base_url": ""},
-        },
-    )
-    monkeypatch.setattr(bench_cli, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
-    monkeypatch.setattr(bench_cli, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
-    monkeypatch.setattr(bench_cli, "collect_llm_events", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(bench_cli, "resolve_expected_llm_bindings", lambda: {})
-    monkeypatch.setattr(
-        bench_cli,
-        "build_factory_audit_record",
-        lambda **_kwargs: _successful_audit_record(),
-    )
-    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
-    monkeypatch.setattr(
-        bench_cli,
-        "build_real_run_gate",
-        lambda *_args, **_kwargs: {"ok": False, "summary": "real run failed"},
-    )
-    monkeypatch.setattr(
-        bench_cli,
-        "build_llm_route_audit",
-        lambda *_args, **_kwargs: {"ok": False, "summary": "LLM route audit failed"},
-    )
-
-    def _chain(project: dict[str, Any], *_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        calls.append(str(project["id"]))
-        return {
-            "exit_code": 0,
-            "duration_s": 0.01,
-            "run_id": "factory-unit-observed",
-            "factory_terminal_status": {"status": "completed", "run_id": "factory-unit-observed"},
-            "chain_results": {
-                "contract_goal": str(project["brief"]),
-                "qa_ran": True,
-                "qa_passed": True,
-                "director": {"total": 1, "successes": 1, "failures": 0},
-            },
-        }
-
-    monkeypatch.setattr(bench_cli, "run_factory_chain", _chain)
-
-    result = bench.main()
-
-    assert result == 1
-    assert calls == ["L1-01", "L2-02"]
+    """Migrated consumer: Preserve no default early stop after closed rejection; unknown resource fence remains separate."""
+    code, summary, traces = _consumer_batch(tmp_path, monkeypatch, states=("rejected", "unknown"))
+    assert code == 1 and len(traces) == len(summary["records"]) == 2
+    assert [r["project_id"] for r in summary["records"]] == ["L1-01", "L1-02"]
+    assert all(r["resources_closed"] for r in summary["records"])
+    assert summary["records"][0]["observation"]["platform"]["verification"] == "failed"
 
 
 # --- run_factory_chain (API path) ---
 
 
 def test_run_factory_chain_success(monkeypatch: Any, tmp_path: Path) -> None:
-    workspace = _setup_run_factory_chain_mocks(
-        monkeypatch,
-        tmp_path,
-        start_response={"run_id": "run-123"},
-        terminal_status={"status": "completed", "phase": "qa_gate"},
-        audit_bundle={
-            "gates": [{"gate_name": "quality_gate", "passed": True, "message": "ok"}],
-            "summary_json": {"director": {"total": 5, "successes": 5, "failures": 0, "blocked": 0}},
-        },
-    )
-
-    result = run_factory_chain(
-        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
-        workspace,
-        backend_url="http://localhost:49977",
-        backend_token="",
-        timeout_s=30,
-        log_path=tmp_path / "L2-07.chain.log",
-    )
-
-    assert result["exit_code"] == 0
-    assert result["run_id"] == "run-123"
-    assert result["chain_results"]["exit_class"] == "legacy_unknown"
-    assert result["chain_results"]["authoritative"] is False
-    assert result["chain_results"]["qa_passed"] is None
-    assert result["chain_results"]["director"] == {
-        "total": 5,
-        "successes": 5,
-        "failures": 0,
-        "blocked": 0,
-    }
-    assert "audit_bundle" in result
-    assert _LAST_FACTORY_START_PAYLOAD["workspace"] == str(workspace)
-    assert _LAST_FACTORY_START_PAYLOAD["persist_workspace"] is False
-    assert _LAST_FACTORY_START_PAYLOAD["director_workflow_execution_mode"] == "parallel"
-    assert _LAST_FACTORY_START_PAYLOAD["director_dispatch_driver"] == "task-market"
+    """Migrated consumer: Actual shared adapter observes current acceptance, preserves goal/checks and cleanup without Factory verdict."""
+    inputs, report, http, supervisor = _consumer_case(tmp_path, state="accepted", workflow="collaborative")
+    request = json.loads((inputs.evidence_dir / "formal-request.json").read_text(encoding="utf-8"))
+    assert request["instruction"].endswith(inputs.requirements_file.read_text(encoding="utf-8"))
+    assert request["workflow"] == "collaborative" and request["role"] == "director"
+    assert request["required_checks"] == []
+    assert report["observation"]["harness_status"] == "OBSERVED_ACCEPTED" and report["exit_code"] == 0
+    assert report["cleanup"]["harness_status"] == "STOPPED"
+    assert report["delivery_proven"] is False and report["catalog_quality"] == "UNKNOWN"
+    assert [p for m, p, _ in http.calls if m == "POST"] == ["/v2/engineering/runs"]
+    assert supervisor.stops == [inputs.instance_id]
 
 
-def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
-    monkeypatch: Any,
-    tmp_path: Path,
-) -> None:
-    from polaris.kernelone.storage import resolve_runtime_path
-
-    workspace = _setup_run_factory_chain_mocks(
-        monkeypatch,
-        tmp_path,
-        start_response={"run_id": "run-director"},
-        terminal_status={"status": "completed", "phase": "qa_gate"},
-        audit_bundle={
-            "gates": [{"gate_name": "quality_gate", "passed": True, "message": "ok"}],
-            "summary_json": {"director": {"total": 1, "successes": 1, "failures": 0, "blocked": 0}},
-        },
-    )
-    _bootstrap_test_fact_stream(workspace)
-    _write_director_resume_evidence(workspace)
-    plan_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/plan.json"))
-    plan_payload = json.loads(plan_path.read_text(encoding="utf-8"))
-    plan_payload["tasks"].append(
-        {
-            "id": "TASK-2",
-            "goal": "Preserve completed feature",
-            "target_files": ["src/completed.ts"],
-            "depends_on": ["TASK-1"],
-        }
-    )
-    plan_path.write_text(json.dumps(plan_payload, ensure_ascii=False), encoding="utf-8")
-    task_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.json"))
-    task_path.write_text(
-        json.dumps(
-            {
-                "id": 1,
-                "status": "failed",
-                "subject": "Implement feature",
-                "metadata": {
-                    "external_task_id": "TASK-1",
-                    "runtime_execution": {"status": "failed"},
-                    "workflow_run_id": "director-old",
-                },
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    session_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.session.json"))
-    session_path.write_text(json.dumps({"status": "failed"}, ensure_ascii=False), encoding="utf-8")
-    completed_task_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_2.json"))
-    completed_task_path.write_text(
-        json.dumps(
-            {
-                "id": 2,
-                "status": "completed",
-                "subject": "Preserve completed feature",
-                "metadata": {
-                    "external_task_id": "TASK-2",
-                    "runtime_execution": {"status": "completed"},
-                },
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-
-    result = run_factory_chain(
-        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
-        workspace,
-        backend_url="http://localhost:49977",
-        backend_token="",
-        timeout_s=30,
-        log_path=tmp_path / "L2-07.chain.log",
-        start_from="director_resume",
-    )
-
-    assert result["exit_code"] == 0
-    assert result["start_from"] == "director_resume"
-    assert result["factory_api_start_from"] == "director_resume"
-    assert result["factory_resume_mode"] == "same_run_retry_phase"
-    assert _LAST_FACTORY_START_PAYLOAD == {}
-    assert _LAST_FACTORY_RESUME_CALL["run_id"] == "run-director"
-    assert _LAST_FACTORY_RESUME_CALL["workspace"] == str(workspace)
-    assert "preserve committed PM/CE checkpoints" in _LAST_FACTORY_RESUME_CALL["reason"]
-    snapshot_manifest = workspace / ".polaris" / "factory_snapshots" / "pre_director" / "manifest.json"
-    assert json.loads(snapshot_manifest.read_text(encoding="utf-8"))["snapshot_kind"] == "pre_director_workspace"
-    reset_task = json.loads(task_path.read_text(encoding="utf-8"))
-    assert reset_task["status"] == "pending"
-    assert "runtime_execution" not in reset_task["metadata"]
-    assert not session_path.exists()
-    preserved_task = json.loads(completed_task_path.read_text(encoding="utf-8"))
-    assert preserved_task["status"] == "completed"
-    assert preserved_task["metadata"]["runtime_execution"]["status"] == "completed"
-    reset_evidence = task_path.parent / "director_resume_reset.json"
-    reset_payload = json.loads(reset_evidence.read_text(encoding="utf-8"))
-    assert reset_payload["reset_statuses"] == "unfinished_pm_task_records_only"
-    assert reset_payload["preserved_files"] == ["task_2.json"]
+def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(monkeypatch: Any, tmp_path: Path) -> None:
+    """Migrated consumer: Legacy IDs/checkpoints never upgrade engine or authorize replay; history bytes preserved."""
+    legacy = tmp_path / "history"
+    legacy.mkdir()
+    sentinel = legacy / "checkpoint.json"
+    sentinel.write_text('{"run_id":"old-run","unknown_effect":true}', encoding="utf-8")
+    original = sentinel.read_bytes()
+    _assert_retired_consumer(tmp_path / "attempt", start_from="director", resume_workspace=legacy)
+    assert sentinel.read_bytes() == original
+    assert sorted(p.name for p in legacy.iterdir()) == ["checkpoint.json"]
 
 
 def test_director_resume_accepts_fact_authoritative_runtime_without_task_file_mirror(
-    monkeypatch: Any,
-    tmp_path: Path,
+    monkeypatch: Any, tmp_path: Path
 ) -> None:
-    """Resume uses durable PM/CE evidence; Director rematerializes task rows."""
-
-    from polaris.kernelone.storage import resolve_runtime_path
-
-    workspace = _setup_run_factory_chain_mocks(
-        monkeypatch,
-        tmp_path,
-        start_response={"run_id": "run-director-fact-authority"},
-        terminal_status={"status": "completed", "phase": "qa_gate"},
-        audit_bundle={},
-    )
-    _bootstrap_test_fact_stream(workspace)
-    task_mirror = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.json"))
-    task_mirror.unlink(missing_ok=True)
-    plan_mirror = workspace / ".polaris" / "plans" / "latest.plan.json"
-    plan_mirror.parent.mkdir(parents=True, exist_ok=True)
-    plan_mirror.write_text(
-        json.dumps(
-            {
-                "tasks": [
-                    {
-                        "id": "TASK-1",
-                        "goal": "Implement feature",
-                        "target_files": ["src/index.ts"],
-                    }
-                ]
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    blueprint = workspace / ".polaris" / "blueprints" / "latest.review.json"
-    blueprint.parent.mkdir(parents=True, exist_ok=True)
-    blueprint.write_text(
-        json.dumps(
-            {"generated_blueprints": 1, "blueprints": [{"task_id": "TASK-1"}]},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-
-    result = run_factory_chain(
-        {"id": "L1-01", "title": "Resume", "brief": "Resume", "test_focus": "runtime"},
-        workspace,
-        backend_url="http://localhost:49977",
-        backend_token="",
-        timeout_s=30,
-        log_path=tmp_path / "L1-01.resume.chain.log",
-        start_from="director_resume",
-    )
-
-    assert result["exit_code"] == 0
-    assert _LAST_FACTORY_START_PAYLOAD == {}
-    assert _LAST_FACTORY_RESUME_CALL["run_id"] == "run-director-fact-authority"
-    runtime_plan = Path(resolve_runtime_path(str(workspace), "runtime/tasks/plan.json"))
-    assert runtime_plan.is_file()
-    assert not task_mirror.exists()
+    """Migrated consumer: Legacy IDs/checkpoints never upgrade engine or authorize replay; history bytes preserved."""
+    legacy = tmp_path / "history"
+    legacy.mkdir()
+    sentinel = legacy / "checkpoint.json"
+    sentinel.write_text('{"run_id":"old-run","unknown_effect":true}', encoding="utf-8")
+    original = sentinel.read_bytes()
+    _assert_retired_consumer(tmp_path / "attempt", start_from="director", resume_workspace=legacy)
+    assert sentinel.read_bytes() == original
+    assert sorted(p.name for p in legacy.iterdir()) == ["checkpoint.json"]
 
 
 def test_run_factory_chain_director_resume_without_same_run_checkpoint_fails_closed(
-    monkeypatch: Any,
-    tmp_path: Path,
+    monkeypatch: Any, tmp_path: Path
 ) -> None:
-    workspace = _setup_run_factory_chain_mocks(
-        monkeypatch,
-        tmp_path,
-        start_response={"run_id": "must-not-start"},
-        terminal_status={"status": "completed", "phase": "qa_gate"},
-        audit_bundle={},
-    )
-    monkeypatch.setattr(bench_chain, "list_factory_runs", lambda *_args, **_kwargs: {"runs": [], "total": 0})
-
-    result = run_factory_chain(
-        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
-        workspace,
-        backend_url="http://localhost:49977",
-        backend_token="",
-        timeout_s=30,
-        log_path=tmp_path / "L2-07.missing-resume.chain.log",
-        start_from="director_resume",
-    )
-
-    assert result["exit_code"] == -1
-    assert result["error"] == "director_resume_run_missing"
-    assert _LAST_FACTORY_START_PAYLOAD == {}
-    assert _LAST_FACTORY_RESUME_CALL == {}
+    """Migrated consumer: Legacy IDs/checkpoints never upgrade engine or authorize replay; history bytes preserved."""
+    legacy = tmp_path / "history"
+    legacy.mkdir()
+    sentinel = legacy / "checkpoint.json"
+    sentinel.write_text('{"run_id":"old-run","unknown_effect":true}', encoding="utf-8")
+    original = sentinel.read_bytes()
+    _assert_retired_consumer(tmp_path / "attempt", start_from="director", resume_workspace=legacy)
+    assert sentinel.read_bytes() == original
+    assert sorted(p.name for p in legacy.iterdir()) == ["checkpoint.json"]
 
 
 def test_director_resume_rehydrates_taskboard_from_legacy_runtime(
@@ -2306,104 +1904,44 @@ def test_director_resume_rehydrates_taskboard_from_legacy_runtime(
 
 
 def test_run_factory_chain_start_failure(monkeypatch: Any, tmp_path: Path) -> None:
-    workspace = _setup_run_factory_chain_mocks(
-        monkeypatch,
-        tmp_path,
-        start_response=None,
-        terminal_status=None,
-        audit_bundle=None,
-    )
-
-    result = run_factory_chain(
-        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
-        workspace,
-        backend_url="http://localhost:49977",
-        backend_token="",
-        timeout_s=30,
-        log_path=tmp_path / "L2-07.chain.log",
-    )
-
-    assert result["exit_code"] == -1
-    assert result["error"] == "start_failed"
+    """Migrated consumer: Actual adapter persists failed launch before HTTP/target operation; no implicit retry."""
+    inputs, report, http, _ = _consumer_case(tmp_path, fail_start=True)
+    assert report["launch"]["harness_status"] == "UNKNOWN"
+    assert report["exit_code"] != 0 and report["resources_closed"] is False
+    assert http.calls == [] and not inputs.workspace.exists()
+    assert json.loads((inputs.evidence_dir / "binding.json").read_text(encoding="utf-8"))["phase"] == "instance_unknown"
 
 
 def test_run_factory_chain_event_wait_timeout(monkeypatch: Any, tmp_path: Path) -> None:
-    workspace = _setup_run_factory_chain_mocks(
-        monkeypatch,
-        tmp_path,
-        start_response={"run_id": "run-456"},
-        terminal_status=None,
-        audit_bundle=None,
-    )
-
-    result = run_factory_chain(
-        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
-        workspace,
-        backend_url="http://localhost:49977",
-        backend_token="",
-        timeout_s=30,
-        log_path=tmp_path / "L2-07.chain.log",
-    )
-
-    assert result["exit_code"] == -1
-    assert result["run_id"] == "run-456"
-    assert result["error"] == "event_wait_timeout"
+    """Migrated consumer: Keep bounded wait, exactly owned cancellation and confirmed cleanup through formal API."""
+    inputs, report, http, _ = _consumer_case(tmp_path, state="running")
+    assert report["observation"]["harness_status"] == "TIMEOUT" and report["exit_code"] == 124
+    assert report["final_observation"]["platform"]["status"] == "cancelled"
+    assert report["cleanup"]["harness_status"] == "STOPPED"
+    posts = [p for m, p, _ in http.calls if m == "POST"]
+    assert posts == ["/v2/engineering/runs", "/v2/engineering/runs/consumer-l1-01/cancel"]
+    assert not inputs.workspace.exists()
 
 
 def test_run_factory_chain_failed_status(monkeypatch: Any, tmp_path: Path) -> None:
-    workspace = _setup_run_factory_chain_mocks(
-        monkeypatch,
-        tmp_path,
-        start_response={"run_id": "run-789"},
-        terminal_status={"status": "failed", "phase": "director_dispatch"},
-        audit_bundle={
-            "gates": [],
-            "summary_json": {"director": {"total": 3, "successes": 1, "failures": 2}},
-        },
-    )
-
-    result = run_factory_chain(
-        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
-        workspace,
-        backend_url="http://localhost:49977",
-        backend_token="",
-        timeout_s=30,
-        log_path=tmp_path / "L2-07.chain.log",
-    )
-
-    assert result["exit_code"] == 1
-    assert result["chain_results"]["exit_class"] == "legacy_unknown"
-    assert result["chain_results"]["authoritative"] is False
+    """Migrated consumer: Current failed evidence/QA stay failure, not missing; no silent repair or retry."""
+    _, report, http, _ = _consumer_case(tmp_path, state="rejected")
+    assert report["observation"]["harness_status"] == "REJECTED" and report["exit_code"] == 1
+    platform = report["observation"]["platform"]
+    assert platform["qa_verdict"] == "rejected" and platform["verification"] == "failed"
+    assert platform["checks"][0]["exit_code"] == 1
+    assert report["cleanup"]["harness_status"] == "STOPPED"
+    assert len([c for c in http.calls if c[0] == "POST"]) == 1
 
 
 def test_run_factory_chain_on_stage_change_callback(monkeypatch: Any, tmp_path: Path) -> None:
-    callbacks: list[tuple[str, dict[str, Any]]] = []
-
-    def _on_stage_change(status: str, status_dict: dict[str, Any]) -> None:
-        callbacks.append((status, status_dict))
-
-    workspace = _setup_run_factory_chain_mocks(
-        monkeypatch,
-        tmp_path,
-        start_response={"run_id": "run-cb"},
-        terminal_status={"status": "completed", "phase": "qa_gate"},
-        audit_bundle={
-            "gates": [{"gate_name": "quality_gate", "passed": True}],
-        },
-    )
-
-    run_factory_chain(
-        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
-        workspace,
-        backend_url="http://localhost:49977",
-        backend_token="",
-        timeout_s=30,
-        log_path=tmp_path / "L2-07.chain.log",
-        on_stage_change=_on_stage_change,
-    )
-
-    assert len(callbacks) == 1
-    assert callbacks[0][0] == "completed"
+    """Migrated consumer: Scoped persisted snapshots replace stage callback; completion never implies acceptance."""
+    inputs, report, _, _ = _consumer_case(tmp_path, stages=True, workflow="collaborative")
+    snapshots = [json.loads(p.read_text(encoding="utf-8")) for p in (inputs.evidence_dir / "snapshots").glob("*.json")]
+    assert any(s["active_roles"] == ["chief_engineer"] and s["status"] == "running" for s in snapshots)
+    assert any(s["active_roles"] == [] and s["status"] == "completed" for s in snapshots)
+    assert report["observation"]["platform"]["last_seq"] == 2
+    assert report["observation"]["platform"]["project_outcome"] == "not_accepted"
 
 
 # --- _sanitize_run_id ---
@@ -2528,80 +2066,13 @@ def test_write_immutable_json_payload_contains_audit_path(tmp_path: Path) -> Non
 
 
 def test_main_run_id_shared_across_projects(monkeypatch: Any, tmp_path: Path) -> None:
-    """Verify that all projects in a bench run share the same run_id."""
-    projects = [
-        {"id": "L1-01", "level": 1, "title": "One", "brief": "Build one"},
-        {"id": "L2-02", "level": 2, "title": "Two", "brief": "Build two"},
+    """Migrated consumer: One batch identity preserves separate per-workspace run and request identities."""
+    code, summary, traces = _consumer_batch(tmp_path, monkeypatch, states=("accepted", "accepted"))
+    assert code == 0 and len(summary["records"]) == 2
+    assert len({r["workspace"] for r in summary["records"]}) == 2
+    requests = [
+        json.loads((inputs.evidence_dir / "formal-request.json").read_text(encoding="utf-8")) for inputs, _, _ in traces
     ]
-
-    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
-    monkeypatch.setattr(bench_cli, "load_projects", lambda: projects)
-    monkeypatch.setattr(bench_cli, "_resolve_backend_url", lambda: "")
-    monkeypatch.setattr(bench_cli, "_resolve_backend_token", lambda: "")
-    monkeypatch.setattr(bench_cli, "_ensure_bench_session", lambda **_kwargs: "bench-shared")
-    monkeypatch.setattr(bench_cli, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(bench_cli, "_push_bench_progress_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(bench_cli, "_push_bench_complete_to_backend", lambda **_kwargs: True)
-    monkeypatch.setattr(
-        bench_cli,
-        "build_bench_backend_audit_context",
-        lambda *_args, **_kwargs: {
-            "backend_freshness": {"ok": True, "detail": "backend fresh"},
-            "backend_metadata": {"backend_base_url": ""},
-        },
-    )
-    monkeypatch.setattr(bench_cli, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
-    monkeypatch.setattr(bench_cli, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
-    monkeypatch.setattr(bench_cli, "collect_llm_events", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(bench_cli, "resolve_expected_llm_bindings", lambda: {})
-    monkeypatch.setattr(
-        bench_cli,
-        "build_factory_audit_record",
-        lambda **_kwargs: _successful_audit_record(),
-    )
-    monkeypatch.setattr(bench_cli, "load_run_ledger_projection", _ok_run_ledger_projection)
-    monkeypatch.setattr(
-        bench_cli,
-        "build_real_run_gate",
-        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
-    )
-    monkeypatch.setattr(
-        bench_cli,
-        "build_llm_route_audit",
-        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
-    )
-
-    def _chain(project: dict[str, Any], *_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        return {
-            "exit_code": 0,
-            "duration_s": 0.01,
-            "run_id": "factory-unit-observed",
-            "factory_terminal_status": {"status": "completed", "run_id": "factory-unit-observed"},
-            "chain_results": {
-                "contract_goal": str(project["brief"]),
-                "qa_ran": True,
-                "qa_passed": True,
-                "director": {"total": 1, "successes": 1, "failures": 0},
-            },
-        }
-
-    monkeypatch.setattr(bench_cli, "run_factory_chain", _chain)
-
-    result = bench.main()
-
-    assert result == 0
-    audit_dir = tmp_path / "audits"
-    run_dirs = list(audit_dir.iterdir())
-    assert len(run_dirs) == 1, f"Expected single audit run_dir, got {run_dirs}"
-    run_dir = run_dirs[0]
-    audit_files = sorted(run_dir.glob("*.audit.json"))
-    assert len(audit_files) == 2
-    ids = set()
-    for af in audit_files:
-        data = json.loads(af.read_text(encoding="utf-8"))
-        ids.add(data["run_id"])
-        assert "audit_path" in data, "Per-project audit JSON must include audit_path"
-        assert (tmp_path / data["audit_path"]).resolve() == af.resolve(), (
-            "audit_path must resolve to the actual written audit file"
-        )
-    assert len(ids) == 1, "All projects should share the same run_id"
+    assert len({r["request_key"] for r in requests}) == 2
+    assert len({r["observation"]["platform"]["run_id"] for r in summary["records"]}) == 2
+    assert all(summary["batch_id"] in str(inputs.evidence_dir) for inputs, _, _ in traces)

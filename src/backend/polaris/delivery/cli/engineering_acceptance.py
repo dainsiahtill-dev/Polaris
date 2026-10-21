@@ -21,7 +21,7 @@ from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 from uuid import uuid4
 
 from polaris.kernelone.fs.text_ops import write_text_atomic
@@ -41,7 +41,7 @@ _HOST_KEYS = frozenset(
         "max_tool_output_bytes",
     }
 )
-_NOTICE = """Use the current engineering_v2 collaboration loop for the frozen requirements below.
+_NOTICE = """Use the current engineering_v2 execution loop for the frozen requirements below.
 Preserve every original business goal, numeric depth threshold, real build/test,
 dependency preparation and executable-entry requirement verbatim. Historical
 references to PM task-contract JSON, CE blueprint records, target_files, hashes,
@@ -74,6 +74,7 @@ class LaunchInputs:
     registry_home: Path | None = None
     permission_profile_id: str | None = None
     timeout: int = PROJECT_BUDGET_SECONDS
+    workflow: str = "direct"
 
 
 class SupervisorPort(Protocol):
@@ -135,6 +136,8 @@ def _frozen(path: Path, expected: str, label: str) -> bytes:
 def build_launch_plan(inputs: LaunchInputs) -> dict[str, Any]:
     if inputs.timeout != PROJECT_BUDGET_SECONDS:
         raise ValueError("acceptance requires the original 5400-second project budget")
+    if inputs.workflow not in {"direct", "collaborative"}:
+        raise ValueError("workflow must be direct or collaborative")
     workspace, source, evidence = (
         inputs.workspace.resolve(),
         inputs.polaris_root.resolve(),
@@ -216,6 +219,7 @@ def build_launch_plan(inputs: LaunchInputs) -> dict[str, Any]:
         "instance_id": inputs.instance_id,
         "registry_home": str(inputs.registry_home.resolve()) if inputs.registry_home else None,
         "permission_profile_id": selected,
+        "workflow": inputs.workflow,
         "host_require_qa": True,
         "project_budget_seconds": PROJECT_BUDGET_SECONDS,
         "overall_budget_seconds": OVERALL_BUDGET_SECONDS,
@@ -268,11 +272,13 @@ def _validate_instance(instance: Mapping[str, Any], binding: dict[str, Any]) -> 
     if (
         instance.get("instance_id") != plan["instance_id"]
         or instance.get("workspace") != plan["workspace"]
+        or instance.get("polaris_root") != plan["polaris_root"]
         or instance.get("runtime_root") != str(Path(plan["workspace"]) / ".polaris" / "runtime")
         or instance.get("kind") != "bench_project"
         or not isinstance(metadata, dict)
         or metadata.get("internal_test_only") is not True
         or metadata.get("acceptance_owner") != binding["owner_id"]
+        or metadata.get("backend_binding") != "isolated_backend_instance"
     ):
         raise ValueError("instance scope/ownership differs from the recorded acceptance launch")
     for key, port_key in (("backend_url", "backend_port"), ("frontend_url", "frontend_port")):
@@ -286,6 +292,12 @@ def _validate_instance(instance: Mapping[str, Any], binding: dict[str, Any]) -> 
             raise ValueError("instance endpoint is missing, foreign or reserved")
     if not isinstance(instance.get("token"), str) or not instance["token"]:
         raise ValueError("explicit instance token is required")
+    saved = binding.get("instance")
+    if saved and any(
+        instance.get(key) != saved.get(key)
+        for key in ("backend_url", "frontend_url", "backend_port", "frontend_port", "token")
+    ):
+        raise ValueError("instance endpoint/token changed after the acceptance launch")
 
 
 def _read_binding(path: Path) -> dict[str, Any]:
@@ -296,8 +308,52 @@ def _read_binding(path: Path) -> dict[str, Any]:
         or value.get("internal_test_only") is not True
     ):
         raise ValueError("not an internal acceptance binding")
-    _validate_instance(value["instance"], value)
+    if not isinstance(value.get("instance"), dict) or not isinstance(value.get("plan"), dict):
+        raise ValueError("acceptance binding has no recorded launch identity")
+    if value["instance"]:
+        _validate_instance(value["instance"], value)
     return value
+
+
+def _recover_instance(binding: dict[str, Any], supervisor: SupervisorPort | None = None) -> None:
+    if binding["instance"]:
+        return
+    owner = supervisor or _supervisor(binding["plan"]["registry_home"])
+    current = owner.health(binding["plan"]["instance_id"])
+    _validate_instance(current, binding)
+    binding["instance"] = current
+    binding["instance_recovered"] = True
+    _write(Path(binding["plan"]["evidence_dir"]) / "binding.json", binding)
+
+
+def _recover_request(binding: dict[str, Any], client: HTTPPort) -> None:
+    if binding.get("run_id"):
+        return
+    if binding.get("request_attempted") is False:
+        raise ValueError("the formal engineering request was not attempted")
+    plan = binding["plan"]
+    snapshot = client.request(
+        "GET",
+        "/v2/engineering/requests/"
+        + quote(binding["request_key"], safe="")
+        + "?"
+        + urlencode({"workspace": plan["workspace"]}),
+    )
+    # A lookup miss or an unrelated intent never proves an in-flight create
+    # cannot still commit. Only an exact committed match can recover the run.
+    _validate_snapshot(snapshot, binding, require_run=False)
+    expected = {
+        "request_key": binding["request_key"],
+        "instruction_sha256": hashlib.sha256(plan["instruction"].encode("utf-8")).hexdigest(),
+        "workflow": plan.get("workflow", "collaborative"),
+        "required_checks": plan["required_checks"],
+        "permission_profile_id": plan["permission_profile_id"],
+    }
+    if snapshot.get("request_identity") != expected:
+        raise ValueError("request lookup differs from the saved acceptance intent")
+    binding["run_id"] = snapshot["run_id"]
+    binding["request_recovered"] = True
+    _write(Path(plan["evidence_dir"]) / "binding.json", binding)
 
 
 def _public_instance(instance: Mapping[str, Any]) -> dict[str, Any]:
@@ -358,6 +414,7 @@ def launch(
         "overall_deadline_epoch": started + OVERALL_BUDGET_SECONDS,
         "request_key": uuid4().hex,
         "run_id": None,
+        "request_attempted": False,
         "phase": "before_instance",
         "instance": {},
     }
@@ -385,6 +442,8 @@ def launch(
     }
     try:
         owner = supervisor or _supervisor(plan["registry_home"])
+        binding["phase"] = "instance_start_in_flight"
+        _write(path, binding)
         with _startup_environment(plan):
             binding["instance"] = owner.start_instance(instance_request)
         _validate_instance(binding["instance"], binding)
@@ -393,7 +452,7 @@ def launch(
         payload = {
             "instruction": plan["instruction"],
             "workspace": plan["workspace"],
-            "workflow": "collaborative",
+            "workflow": plan["workflow"],
             "role": "director",
             "permission_profile_id": plan["permission_profile_id"],
             "required_checks": plan["required_checks"],
@@ -401,6 +460,7 @@ def launch(
         }
         _write(directory / "formal-request.json", payload)
         binding["phase"] = "request_in_flight"
+        binding["request_attempted"] = True
         _write(path, binding)
         client = http_factory(binding)
         try:
@@ -420,7 +480,6 @@ def launch(
                     "backend": instance["backend_url"],
                     "token": instance["token"],
                     "workspace": plan["workspace"],
-                    "engine": "engineering_v2",
                     "engineering_run": binding["run_id"],
                 }
             )
@@ -439,8 +498,16 @@ def launch(
             },
         )
     except Exception as error:  # noqa: BLE001 - preserve unknown boundary outcomes without replay.
-        uncertain = binding["phase"] == "request_in_flight"
-        binding["phase"] = "request_unknown" if uncertain else "launch_failed"
+        failed_phase = binding["phase"]
+        uncertain = failed_phase in {"request_in_flight", "instance_start_in_flight"}
+        binding["failed_phase"] = failed_phase
+        binding["phase"] = (
+            "request_unknown"
+            if failed_phase == "request_in_flight"
+            else "instance_unknown"
+            if failed_phase == "instance_start_in_flight"
+            else "launch_failed"
+        )
         _write(path, binding)
         return _record(
             binding,
@@ -465,6 +532,12 @@ def _validate_snapshot(snapshot: Mapping[str, Any], binding: dict[str, Any], *, 
         raise ValueError("backend snapshot engine/workspace/run identity mismatch")
     if snapshot.get("session_id") != identity or (require_run and identity != binding.get("run_id")):
         raise ValueError("backend snapshot is not the bound engineering run")
+    # Historical v1 bindings predate workflow selection. Keep their recorded
+    # identity readable; never infer a new direct run or rewrite old evidence.
+    if "workflow" in binding["plan"] and (
+        snapshot.get("workflow") != binding["plan"]["workflow"] or snapshot.get("role") != "director"
+    ):
+        raise ValueError("backend snapshot workflow/role differs from the acceptance launch")
 
 
 def _measurements(snapshot: Mapping[str, Any]) -> dict[str, Any]:
@@ -677,21 +750,21 @@ def observe(
     http_factory: HTTPFactory = _BoundHTTP,
     now: Callable[[], float] = time.time,
     sleep: Callable[[float], None] = time.sleep,
+    supervisor: SupervisorPort | None = None,
 ) -> dict[str, Any]:
     binding = _read_binding(binding_file)
-    if not binding.get("run_id"):
-        return _record(
-            binding,
-            {
-                "harness_status": "UNKNOWN",
-                "exit_code": 2,
-                "reason": "launch response unknown; no automatic POST replay",
-            },
-        )
-    client = http_factory(binding)
+    client: HTTPPort | None = None
     try:
+        _recover_instance(binding, supervisor)
+        if binding.get("request_attempted") is False and not binding.get("run_id"):
+            return _record(
+                binding,
+                {"harness_status": "UNKNOWN", "exit_code": 2, "request_attempted": False},
+            )
+        client = http_factory(binding)
         while True:
             try:
+                _recover_request(binding, client)
                 snapshot = client.request(
                     "GET",
                     f"/v2/engineering/runs/{binding['run_id']}?"
@@ -710,18 +783,22 @@ def observe(
             ):
                 return _record(binding, report)
             sleep(1)
+    except Exception as error:  # noqa: BLE001 - recovery reads never imply a safe mutation replay.
+        return _record(binding, {"harness_status": "UNKNOWN", "exit_code": 2, "error_type": type(error).__name__})
     finally:
-        client.close()
+        if client is not None:
+            client.close()
 
 
-def cancel(binding_file: Path, *, http_factory: HTTPFactory = _BoundHTTP) -> dict[str, Any]:
+def cancel(
+    binding_file: Path, *, http_factory: HTTPFactory = _BoundHTTP, supervisor: SupervisorPort | None = None
+) -> dict[str, Any]:
     binding = _read_binding(binding_file)
-    if not binding.get("run_id"):
-        return _record(
-            binding, {"harness_status": "UNKNOWN", "exit_code": 2, "reason": "no known run; mutation is not replayed"}
-        )
-    client = http_factory(binding)
+    client: HTTPPort | None = None
     try:
+        _recover_instance(binding, supervisor)
+        client = http_factory(binding)
+        _recover_request(binding, client)
         snapshot = client.request(
             "POST", f"/v2/engineering/runs/{binding['run_id']}/cancel", {"workspace": binding["plan"]["workspace"]}
         )
@@ -734,7 +811,8 @@ def cancel(binding_file: Path, *, http_factory: HTTPFactory = _BoundHTTP) -> dic
             {"harness_status": "UNKNOWN", "exit_code": 2, "error_type": type(error).__name__, "cancel_replayed": False},
         )
     finally:
-        client.close()
+        if client is not None:
+            client.close()
 
 
 def _read_activity(workspace: Path) -> dict[str, Any]:
@@ -798,16 +876,23 @@ def stop(
     process_probe: Callable[[int], bool | None] = _process_alive,
 ) -> dict[str, Any]:
     binding = _read_binding(binding_file)
-    client = http_factory(binding)
+    client: HTTPPort | None = None
     owner = supervisor or _supervisor(binding["plan"]["registry_home"])
     try:
-        snapshot = client.request(
-            "GET", f"/v2/engineering/runs/{binding['run_id']}?" + urlencode({"workspace": binding["plan"]["workspace"]})
-        )
-        _validate_snapshot(snapshot, binding)
+        _recover_instance(binding, owner)
+        before_request = binding.get("request_attempted") is False and not binding.get("run_id")
+        snapshot: dict[str, Any] = {}
+        if not before_request:
+            client = http_factory(binding)
+            _recover_request(binding, client)
+            snapshot = client.request(
+                "GET",
+                f"/v2/engineering/runs/{binding['run_id']}?" + urlencode({"workspace": binding["plan"]["workspace"]}),
+            )
+            _validate_snapshot(snapshot, binding)
         activity = activity_reader(Path(binding["plan"]["workspace"]))
         if (
-            snapshot.get("status") not in _TERMINAL
+            (not before_request and snapshot.get("status") not in _TERMINAL)
             or activity.get("status") != "readable"
             or activity.get("active_runs")
             or activity.get("pending_tool_calls")
@@ -847,6 +932,7 @@ def stop(
                     "instance_after": _public_instance(after),
                     "original_process_alive": process_states,
                     "canonical_activity": activity,
+                    "request_attempted": not before_request,
                 },
                 "acceptance_unchanged_by_cleanup": True,
             },
@@ -857,7 +943,8 @@ def stop(
             {"harness_status": "UNKNOWN", "exit_code": 2, "error_type": type(error).__name__, "stop_replayed": False},
         )
     finally:
-        client.close()
+        if client is not None:
+            client.close()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -892,6 +979,7 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--instance-id", default=None)
         command.add_argument("--registry-home", type=Path, default=None)
         command.add_argument("--permission-profile-id", default=None)
+        command.add_argument("--workflow", choices=("direct", "collaborative"), default="direct")
     for action in ("observe", "cancel", "stop"):
         command = commands.add_parser(action)
         command.add_argument("--internal-test", action="store_true")

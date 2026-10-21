@@ -133,3 +133,13 @@ Director 的 system 说明同步区分真实准备证据与准备后验证，复
 私有后端／前端／NATS／provider 四端口和进程均关闭，主实例 18128 与共享 NATS 18035 存活。最终语义为合成组件运行 cancelled、资源 CLOSED，**不计为真实模型项目或 Bench 交付**。主后端仍有 330 个 OpenAPI 路径、无 `/v2/engineering`，未部署本轮源码。
 
 最终证据：`task8-qualified-r4-all/`、`task8-default-ws-fix/`、`task8-diagnostics-cold-fixture/`、`task8-default-browser-r3-prep/`、`task8-root/default-final-root-acceptance.json`。第 8 批整体仍需收尾内部 Bench runner／剩余旧消费者及原理页面，再用正式新入口另起冻结真实模型批次。原目录有 120 个 L1–L12 项目，尚未完成全范围验证。
+
+### 内部 Bench 复用正式入口与未知结果恢复
+
+当前 runner 的活动路径已改为同一 `engineering_acceptance`／`EngineeringRunService`，默认 Director 直接工作，显式选择时才前置 PM／CE。保留原始 catalog 的 120 项、全部业务／量化要求和 5400／6000 秒预算。冻结输入及报告仅写目标外；不再由 harness 写目标需求、初始化 Git、安装依赖、执行项目门禁或制造旧 Factory／ledger 证据。平台接受、独立产物质量和资源闭合分别报告；独立质量未测保持 UNKNOWN。
+
+接口实验发现两个推进缺口：Supervisor 已提交实例但返回失败时，外部 binding 仍为空；正式创建已持久化但 HTTP 响应丢失时，外部缺少 run ID。修复保留原阶段和 request-attempt 状态，以已有实例 owner 查询精确归属，并复用已有 `find_request` 暴露认证、workspace 绑定的只读查询。恢复核对原指令摘要、workflow、检查和 profile，不扩大权限、不重发创建；404 不证明操作没有发生。已证明尚未提交请求的清理仍要求 canonical SQL 可读且无活跃运行／未结工具，已提交运行仍须终态。
+
+主 Agent 的适配器／HTTP 相邻 77 项通过；独立审查经真实认证 ASGI、现有服务及 SQLite 的四项有限实验通过，包括 ACK 丢失、查询不存在、启动返回丢失和 runner 超时取消／清理组合。48 项旧协议消费者迁移后联合 298 项通过，其余原有测试保留。更大范围首次检查为 561 PASS／23 FAIL；剩余旧入口消费者与辅助测试正在归因收尾，尚不称全组通过。上述服务／进程端口均使用明确合成替身，不计为远端模型或 Bench 交付。
+
+证据位于统一审计根 `task8-bench-runner/`、`task8-bench-catalog/`、`task8-request-lookup/`、`task8-acceptance-lifecycle-audit/`、`task8-bench-recovery-final-review/`、`task8-bench-consumer-tests/` 和 `task8-root/recovery-*`。下一步冻结当前完整候选并运行必要检查，再用新默认入口启动全新 L1-01；旧 R04 的真实交付仅适用于其原冻结源码，不转移成本批结论。

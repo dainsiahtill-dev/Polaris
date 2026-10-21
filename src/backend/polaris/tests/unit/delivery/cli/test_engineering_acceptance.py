@@ -12,6 +12,7 @@ from contextlib import redirect_stdout
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -122,6 +123,8 @@ class FakeHTTP:
             "run_id": "server-run",
             "engine_version": "engineering_v2",
             "workspace": str(workspace),
+            "workflow": "direct",
+            "role": "director",
             "status": "completed",
             "active_roles": [],
             "verification": "passed",
@@ -170,15 +173,56 @@ def test_launch_uses_frozen_originals_and_only_formal_new_http(tmp_path: Path, m
     assert len(http.calls) == 1
     method, path, body = http.calls[0]
     assert (method, path) == ("POST", "/v2/engineering/runs")
-    assert body["workflow"] == "collaborative" and body["role"] == "director"
+    assert body["workflow"] == "direct" and body["role"] == "director"
     assert body["required_checks"] == ["verify-original-entry", "verify-original-rules"]
     assert inputs.requirements_file.read_text(encoding="utf-8") in body["instruction"]
     assert not ({"scope", "enabled_tools", "network_allowed", "require_qa", "limits"} & body.keys())
     assert not inputs.workspace.exists(), "harness wrote the target instead of delegating Supervisor"
     binding = json.loads((inputs.evidence_dir / "binding.json").read_text(encoding="utf-8"))
     assert binding["overall_deadline_epoch"] == 7000.0
+    assert binding["plan"]["workflow"] == "direct"
     assert "engineering_run=server-run" in binding["launch_url"]
+    assert "engine" not in parse_qs(urlparse(binding["launch_url"]).query)
     assert "synthetic-instance-token" not in json.dumps(result)
+
+
+def test_explicit_collaboration_survives_plan_request_and_binding(tmp_path: Path) -> None:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = replace(_inputs(module, tmp_path), workflow="collaborative")
+    http = FakeHTTP(inputs.workspace)
+    http.snapshot["workflow"] = "collaborative"
+    result = module.launch(inputs, supervisor=FakeSupervisor(), http_factory=lambda _binding: http)
+    assert result["harness_status"] == "LAUNCHED"
+    assert http.calls[0][2]["workflow"] == "collaborative"
+    binding = json.loads((inputs.evidence_dir / "binding.json").read_text(encoding="utf-8"))
+    assert binding["plan"]["workflow"] == "collaborative"
+
+
+def test_invalid_workflow_has_no_instance_or_audit_claim_effect(tmp_path: Path) -> None:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = replace(_inputs(module, tmp_path), workflow="old-factory")
+    supervisor = FakeSupervisor()
+    with pytest.raises(ValueError, match="workflow"):
+        module.launch(inputs, supervisor=supervisor)
+    assert not supervisor.starts
+    assert not inputs.workspace.exists()
+    assert not inputs.evidence_dir.exists()
+
+
+@pytest.mark.parametrize("changed", [{"workflow": "collaborative"}, {"role": "pm"}, {"workflow": None}])
+def test_launch_response_for_other_workflow_or_role_stays_unknown_without_replay(
+    tmp_path: Path, changed: dict[str, Any]
+) -> None:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    supervisor = FakeSupervisor()
+    http = FakeHTTP(inputs.workspace)
+    http.snapshot.update(changed)
+    result = module.launch(inputs, supervisor=supervisor, http_factory=lambda _binding: http)
+    assert result["harness_status"] == "UNKNOWN"
+    assert result["request_replayed"] is False
+    assert len(http.calls) == 1
+    assert not supervisor.stops
 
 
 def test_changed_requirements_fail_before_instance_or_post(tmp_path: Path) -> None:
@@ -324,8 +368,24 @@ def test_canonical_aliases_and_fixed_timeout_are_consumed(tmp_path: Path, capsys
     result = json.loads(capsys.readouterr().out)
     assert result["plan"]["project_budget_seconds"] == 5400
     assert result["plan"]["project"]["id"] == "CASE-1"
+    assert result["plan"]["workflow"] == "direct"
     arguments[arguments.index("--timeout") + 1] = "540"
     assert module.main(arguments) == 2
+
+
+def test_cli_accepts_explicit_collaboration_without_changing_project_budget(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    arguments = [*_arguments(inputs), "--internal-test", "--workflow", "collaborative"]
+    assert module.main(arguments) == 0
+    plan = json.loads(capsys.readouterr().out)["plan"]
+    assert plan["workflow"] == "collaborative"
+    assert plan["project_budget_seconds"] == 5400
+    assert plan["overall_budget_seconds"] == 6000
+    assert not inputs.workspace.exists()
+    assert not inputs.evidence_dir.exists()
 
 
 def test_internal_flag_rejects_otherwise_valid_arguments(tmp_path: Path) -> None:
@@ -526,3 +586,239 @@ def test_noncanonical_instance_ids_are_rejected_before_spawn(tmp_path: Path) -> 
             )
         assert not supervisor.starts and not http.calls
     assert module.build_launch_plan(replace(inputs, instance_id="a" * 80))["instance_id"] == "a" * 80
+
+
+class LostStartReplySupervisor(FakeSupervisor):
+    """Synthetic postcommit return loss; no actual instance or process effects."""
+
+    def start_instance(self, request: dict[str, Any]) -> dict[str, Any]:
+        super().start_instance(request)
+        raise OSError("synthetic registry commit succeeded; return projection failed")
+
+
+class LostCreateReplyHTTP(FakeHTTP):
+    """Synthetic durable creation followed by lost HTTP response; no provider."""
+
+    def __init__(self, workspace: Path) -> None:
+        super().__init__(workspace)
+        self.identity: dict[str, Any] = {}
+        self.lookup_error: Exception | None = None
+
+    def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        if method == "POST" and path == "/v2/engineering/runs":
+            assert payload is not None
+            self.calls.append((method, path, payload))
+            self.identity = {
+                "request_key": payload["request_key"],
+                "instruction_sha256": hashlib.sha256(payload["instruction"].encode("utf-8")).hexdigest(),
+                "workflow": payload["workflow"],
+                "required_checks": list(payload["required_checks"]),
+                "permission_profile_id": payload["permission_profile_id"],
+            }
+            raise TimeoutError("synthetic durable create succeeded; HTTP response lost")
+        if method == "GET" and path.startswith("/v2/engineering/requests/"):
+            self.calls.append((method, path, payload))
+            if self.lookup_error:
+                raise self.lookup_error
+            return {**self.snapshot, "request_identity": dict(self.identity)}
+        return super().request(method, path, payload)
+
+
+def test_waiting_observer_recovers_owned_pre_submit_instance_without_waiting_for_an_unattempted_request(
+    tmp_path: Path,
+) -> None:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    supervisor = LostStartReplySupervisor()
+    module.launch(inputs, supervisor=supervisor, now=lambda: 1000.0)
+    opened: list[dict[str, Any]] = []
+    slept: list[float] = []
+
+    def no_wait(seconds: float) -> None:
+        slept.append(seconds)
+        raise AssertionError("an unattempted request cannot progress by waiting")
+
+    def http_factory(binding: dict[str, Any]) -> FakeHTTP:
+        opened.append(binding)
+        return FakeHTTP(inputs.workspace)
+
+    result = module.observe(
+        inputs.evidence_dir / "binding.json",
+        supervisor=supervisor,
+        http_factory=http_factory,
+        wait=True,
+        now=lambda: 1001.0,
+        sleep=no_wait,
+    )
+    assert result["harness_status"] == "UNKNOWN"
+    assert result["request_attempted"] is False
+    assert opened == [] and slept == []
+    assert len(supervisor.starts) == 1 and supervisor.stops == []
+
+
+def test_owned_instance_is_recovered_after_lost_start_reply_and_stopped_without_formal_post(tmp_path: Path) -> None:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    supervisor = LostStartReplySupervisor()
+    http = FakeHTTP(inputs.workspace)
+    launched = module.launch(inputs, supervisor=supervisor, http_factory=lambda _binding: http)
+    binding_file = inputs.evidence_dir / "binding.json"
+    initial = json.loads(binding_file.read_text(encoding="utf-8"))
+    assert initial["instance"] == {}
+    result = module.stop(
+        binding_file,
+        supervisor=supervisor,
+        http_factory=lambda _binding: http,
+        activity_reader=lambda _workspace: {"status": "readable", "active_runs": [], "pending_tool_calls": []},
+        process_probe=lambda _pid: False,
+    )
+    assert launched["harness_status"] == "UNKNOWN"
+    assert result["harness_status"] == "STOPPED"
+    assert result["resources"]["request_attempted"] is False
+    assert len(supervisor.starts) == 1 and supervisor.stops == ["acceptance-case-1"]
+    assert http.calls == [], "pre-submit cleanup must not create, query or guess an engineering run"
+    recovered = json.loads(binding_file.read_text(encoding="utf-8"))
+    assert recovered["instance"]["instance_id"] == "acceptance-case-1"
+    assert recovered["request_attempted"] is False
+    assert recovered["failed_phase"] == "instance_start_in_flight"
+    assert recovered["run_id"] is None
+    assert not inputs.workspace.exists()
+
+
+@pytest.mark.parametrize(
+    "activity",
+    [
+        {"status": "unknown"},
+        {"status": "readable", "active_runs": [{"session_id": "other-live"}], "pending_tool_calls": []},
+        {"status": "readable", "active_runs": [], "pending_tool_calls": [{"call_id": "effect-unknown"}]},
+    ],
+)
+def test_pre_submit_cleanup_still_requires_readable_idle_canonical_activity(
+    tmp_path: Path, activity: dict[str, Any]
+) -> None:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    supervisor = LostStartReplySupervisor()
+    module.launch(inputs, supervisor=supervisor)
+    http = FakeHTTP(inputs.workspace)
+    result = module.stop(
+        inputs.evidence_dir / "binding.json",
+        supervisor=supervisor,
+        http_factory=lambda _binding: http,
+        activity_reader=lambda _workspace: activity,
+    )
+    assert result["harness_status"] == "UNKNOWN"
+    assert supervisor.stops == []
+    assert http.calls == []
+
+
+@pytest.mark.parametrize("operation", ["observe", "cancel", "stop"])
+def test_lost_create_reply_recovers_exact_request_before_observe_cancel_or_stop(tmp_path: Path, operation: str) -> None:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    supervisor = FakeSupervisor()
+    http = LostCreateReplyHTTP(inputs.workspace)
+    assert (
+        module.launch(inputs, supervisor=supervisor, http_factory=lambda _binding: http)["harness_status"] == "UNKNOWN"
+    )
+    binding_file = inputs.evidence_dir / "binding.json"
+    before = json.loads(binding_file.read_text(encoding="utf-8"))
+    kwargs: dict[str, Any] = {"http_factory": lambda _binding: http}
+    if operation == "stop":
+        kwargs.update(
+            supervisor=supervisor,
+            activity_reader=lambda _workspace: {"status": "readable", "active_runs": [], "pending_tool_calls": []},
+            process_probe=lambda _pid: False,
+        )
+    result = getattr(module, operation)(binding_file, **kwargs)
+    recovered = json.loads(binding_file.read_text(encoding="utf-8"))
+    assert recovered["run_id"] == "server-run"
+    assert recovered["request_key"] == before["request_key"]
+    assert recovered["overall_deadline_epoch"] == before["overall_deadline_epoch"]
+    lookup = http.calls[1]
+    assert lookup[0] == "GET"
+    assert urlparse(lookup[1]).path == "/v2/engineering/requests/" + before["request_key"]
+    assert parse_qs(urlparse(lookup[1]).query) == {"workspace": [str(inputs.workspace)]}
+    assert sum(method == "POST" and path == "/v2/engineering/runs" for method, path, _ in http.calls) == 1
+    assert not any("/runs/None" in path for _method, path, _body in http.calls)
+    if operation == "stop":
+        assert result["harness_status"] == "STOPPED" and supervisor.stops == ["acceptance-case-1"]
+    elif operation == "cancel":
+        assert result["harness_status"] == "CANCELLED" and supervisor.stops == []
+    else:
+        assert result["platform"]["status"] == "completed" and supervisor.stops == []
+
+
+@pytest.mark.parametrize(
+    "field,wrong",
+    [
+        ("request_key", "other-request"),
+        ("instruction_sha256", "0" * 64),
+        ("workflow", "collaborative"),
+        ("required_checks", []),
+        ("permission_profile_id", "other-profile"),
+    ],
+)
+def test_request_lookup_rejects_unrelated_intent_without_mutation_or_binding(
+    tmp_path: Path, field: str, wrong: Any
+) -> None:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    supervisor = FakeSupervisor()
+    http = LostCreateReplyHTTP(inputs.workspace)
+    module.launch(inputs, supervisor=supervisor, http_factory=lambda _binding: http)
+    http.identity[field] = wrong
+    result = module.cancel(inputs.evidence_dir / "binding.json", http_factory=lambda _binding: http)
+    assert result["harness_status"] == "UNKNOWN"
+    binding = json.loads((inputs.evidence_dir / "binding.json").read_text(encoding="utf-8"))
+    assert binding["run_id"] is None
+    assert len(http.calls) == 2 and http.calls[1][0] == "GET"
+    assert supervisor.stops == []
+
+
+def test_absent_lookup_keeps_inflight_request_unknown_and_never_stops_or_reposts(tmp_path: Path) -> None:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    supervisor = FakeSupervisor()
+    http = LostCreateReplyHTTP(inputs.workspace)
+    module.launch(inputs, supervisor=supervisor, http_factory=lambda _binding: http)
+    http.lookup_error = LookupError("synthetic lookup404; request may still commit")
+    result = module.stop(
+        inputs.evidence_dir / "binding.json",
+        supervisor=supervisor,
+        http_factory=lambda _binding: http,
+        activity_reader=lambda _workspace: {"status": "readable", "active_runs": [], "pending_tool_calls": []},
+    )
+    assert result["harness_status"] == "UNKNOWN"
+    assert not supervisor.stops
+    assert len(http.calls) == 2
+    assert http.calls[1][0] == "GET" and "/requests/" in http.calls[1][1]
+
+
+@pytest.mark.parametrize("changed", ["polaris_root", "endpoint", "shared_backend"])
+def test_stop_refuses_changed_source_endpoint_or_shared_backend_despite_same_nonce(
+    tmp_path: Path, changed: str
+) -> None:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    supervisor = FakeSupervisor()
+    http = FakeHTTP(inputs.workspace)
+    module.launch(inputs, supervisor=supervisor, http_factory=lambda _binding: http)
+    if changed == "polaris_root":
+        supervisor.record["polaris_root"] = str(tmp_path / "other-source")
+    elif changed == "endpoint":
+        supervisor.record.update(backend_port=50124, backend_url="http://127.0.0.1:50124")
+    else:
+        supervisor.record["metadata"] = {
+            **supervisor.record["metadata"],
+            "backend_binding": "shared_backend_workspace_switch",
+        }
+    result = module.stop(
+        inputs.evidence_dir / "binding.json",
+        supervisor=supervisor,
+        http_factory=lambda _binding: http,
+        activity_reader=lambda _workspace: {"status": "readable", "active_runs": [], "pending_tool_calls": []},
+        process_probe=lambda _pid: False,
+    )
+    assert result["harness_status"] == "UNKNOWN"
+    assert supervisor.stops == []

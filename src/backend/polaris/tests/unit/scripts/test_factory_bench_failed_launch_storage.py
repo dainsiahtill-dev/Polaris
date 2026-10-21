@@ -2,77 +2,130 @@
 
 from __future__ import annotations
 
-import io
+import hashlib
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
-from scripts.factory_bench import factory_http_client
+from polaris.delivery.cli import engineering_acceptance as acceptance
 from scripts.factory_bench._bench_lib import artifacts, chain as bench_chain, cli
+from scripts.factory_bench.test_bench_to_backend_integration import _consumer_inputs, _ConsumerSupervisor
+
+
+def _formal_native_http(
+    response_kind: str, calls: list[tuple[str, str]], *, observed: bool = False, recover: bool = False
+) -> Any:
+    """Actual BoundHTTP/httpx encode/decode with finite private transport only."""
+
+    def factory(binding: dict[str, Any]) -> Any:
+        snapshot = {
+            "run_id": "observed-engineering-run",
+            "session_id": "observed-engineering-run",
+            "workspace": binding["plan"]["workspace"],
+            "engine_version": "engineering_v2",
+            "workflow": binding["plan"]["workflow"],
+            "role": "director",
+            "status": "interrupted",
+            "verification": "unknown",
+            "require_qa": True,
+            "qa_verdict": "not_run",
+            "project_outcome": "unknown",
+            "required_checks": [],
+            "events": [
+                {
+                    "seq": 1,
+                    "kind": "tool_observed",
+                    "role": "director",
+                    "payload": {"ok": False, "error": "observed tool transport interruption"},
+                }
+            ],
+            "last_seq": 1,
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            calls.append((request.method, path))
+            if request.method == "POST":
+                assert path == "/v2/engineering/runs"
+                payload = json.loads(request.content.decode("utf-8"))
+                assert payload["role"] == "director" and payload["workflow"] == "direct"
+                if observed:
+                    return httpx.Response(200, json=snapshot)
+                if response_kind == "timeout":
+                    raise httpx.ReadTimeout("response lost after POST accepted", request=request)
+                if response_kind == "response_loss":
+                    raise httpx.ReadError("response lost after POST accepted", request=request)
+                raw = {"invalid_json": b"{broken", "empty": b"", "missing_id": b'{"status":"running"}', "list": b"[]"}[
+                    response_kind
+                ]
+                return httpx.Response(200, content=raw)
+            assert request.method == "GET"
+            if path.startswith("/v2/engineering/requests/"):
+                if not recover:
+                    return httpx.Response(404, json={"detail": "lookup unavailable; create effect remains unknown"})
+                identity = {
+                    "request_key": binding["request_key"],
+                    "instruction_sha256": hashlib.sha256(binding["plan"]["instruction"].encode("utf-8")).hexdigest(),
+                    "workflow": binding["plan"]["workflow"],
+                    "required_checks": [],
+                    "permission_profile_id": binding["plan"]["permission_profile_id"],
+                }
+                return httpx.Response(200, json={**snapshot, "request_identity": identity})
+            assert path == "/v2/engineering/runs/observed-engineering-run"
+            return httpx.Response(200, json=snapshot)
+
+        port = acceptance._BoundHTTP(binding)
+        port._client.close()
+        port._client = httpx.Client(base_url=binding["instance"]["backend_url"], transport=httpx.MockTransport(handler))
+        return port
+
+    return factory
+
+
+def _formal_run(inputs: Any, supervisor: Any, factory: Any, *, expires: bool = False) -> dict[str, Any]:
+    clock = iter([1000.0, 7001.0, 7002.0])
+    options: dict[str, Any] = {"now": lambda: next(clock)} if expires else {}
+    return bench_chain.run_engineering_case(
+        inputs,
+        supervisor=supervisor,
+        http_factory=factory,
+        activity_reader=lambda _: {"status": "readable", "active_runs": [], "pending_tool_calls": []},
+        process_probe=lambda _: False,
+        sleep=lambda _: None,
+        **options,
+    )
 
 
 @pytest.mark.parametrize("response_kind", ["timeout", "response_loss", "invalid_json", "empty", "missing_id", "list"])
 def test_native_factory_post_ambiguous_response_is_unknown_not_predispatch_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, response_kind: str
 ) -> None:
-    """Exercise native POST/parser/chain without a server, provider, or process."""
-    workspace = tmp_path / "workspace"
-    (workspace / ".git").mkdir(parents=True)
-    posts: list[str] = []
-
-    class Response:
-        def __enter__(self) -> Response:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            pass
-
-        def read(self) -> bytes:
-            if response_kind == "response_loss":
-                raise OSError("response lost after POST accepted")
-            return {"invalid_json": b"{broken", "empty": b"", "missing_id": b'{"status":"running"}', "list": b"[]"}[
-                response_kind
-            ]
-
-    def post(request: Any, **_kwargs: Any) -> Response:
-        assert request.get_method() == "POST"
-        assert request.full_url == "http://127.0.0.1:60001/v2/factory/runs"
-        posts.append(request.full_url)
-        if response_kind == "timeout":
-            raise TimeoutError("response lost after POST accepted")
-        return Response()
-
-    def no_observed_run_operation(*_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("no observed Factory identity: no wait, audit fetch or blind cancellation")
-
-    monkeypatch.setattr(factory_http_client.urllib.request, "urlopen", post)
-    monkeypatch.setattr(bench_chain, "wait_run_until_terminal", no_observed_run_operation)
-    monkeypatch.setattr(bench_chain, "get_audit_bundle", no_observed_run_operation)
-    monkeypatch.setattr(bench_chain, "cancel_factory_run", no_observed_run_operation)
-    result = bench_chain.run_factory_chain(
-        {"id": "L1-01", "level": 1, "title": "Minimal", "brief": "Build a CLI", "checks": []},
-        workspace,
-        backend_url="http://127.0.0.1:60001",
-        backend_token="",
-        timeout_s=30,
-        log_path=tmp_path / "chain.log",
-    )
-    assert posts == ["http://127.0.0.1:60001/v2/factory/runs"]
-    assert result["error"] == "start_failed"
-    assert result.get("run_id", "") == ""
-    if response_kind in {"timeout", "response_loss"}:
-        assert result["start_error"]["status"] == 0
-        assert result["start_error"]["exception"] == ("TimeoutError" if response_kind == "timeout" else "OSError")
-        assert result["start_error"]["reason"] == "response lost after POST accepted"
-    if response_kind == "missing_id":
-        assert result["start_response"] == {"status": "running"}
-    assert artifacts._classify_chain_attempt(result) == {
-        "attempt_state": "unknown",
-        "observed_run_id": "",
-        "terminal": False,
-    }
+    """Current formal engineering boundary; private synthetic ports, no target execution."""
+    inputs = _consumer_inputs(tmp_path)
+    supervisor = _ConsumerSupervisor()
+    calls: list[tuple[str, str]] = []
+    factory = _formal_native_http(response_kind, calls)
+    result = _formal_run(inputs, supervisor, factory, expires=True)
+    binding = json.loads((inputs.evidence_dir / "binding.json").read_text(encoding="utf-8"))
+    assert result["launch"]["harness_status"] == "UNKNOWN"
+    assert binding["phase"] == "request_unknown" and binding["request_attempted"] is True
+    assert binding["run_id"] is None
+    assert [p for m, p in calls if m == "POST"] == ["/v2/engineering/runs"]
+    assert any(p.startswith("/v2/engineering/requests/") for m, p in calls if m == "GET")
+    assert all("/v2/factory/" not in p and not p.endswith("/cancel") for _, p in calls)
+    assert result["cleanup"]["harness_status"] == "UNKNOWN" and supervisor.stops == []
+    assert result["delivery_proven"] is False and result["catalog_quality"] == "UNKNOWN"
+    assert not inputs.workspace.exists()
+    operations = [
+        json.loads(p.read_text(encoding="utf-8")) for p in (inputs.evidence_dir / "operations").glob("*.json")
+    ]
+    assert any(p["harness_status"] == "UNKNOWN" and p.get("request_replayed") is False for p in operations)
+    if response_kind == "timeout":
+        assert result["launch"]["error_type"] == "ReadTimeout"
+    elif response_kind == "response_loss":
+        assert result["launch"]["error_type"] == "ReadError"
 
 
 @pytest.mark.parametrize(
@@ -141,100 +194,44 @@ def test_unobserved_or_never_started_chain_is_not_terminal(error: str) -> None:
 def test_transport_interruption_preserves_only_observed_identity_and_real_negative_facts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, observation: str
 ) -> None:
-    observed_run_id = "factory-observed-real" if observation in {"returned", "callback"} else ""
-    work = tmp_path / "bench"
-    monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("KERNELONE_INSTANCE_HOME", str(tmp_path / "instances"))
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "run_factory_bench.py",
-            "--project-ids",
-            "L1-01",
-            "--work-dir",
-            str(work),
-            "--launcher-instance-mode",
-            "observed",
-            "--bench-session-reporting",
-            "off",
-        ],
+    """Current formal engineering boundary; private synthetic ports, no target execution."""
+    inputs = _consumer_inputs(tmp_path)
+    supervisor = _ConsumerSupervisor()
+    calls: list[tuple[str, str]] = []
+    kind = (
+        "timeout"
+        if observation == "native_timeout"
+        else "invalid_json"
+        if observation == "native_malformed"
+        else "response_loss"
     )
-    monkeypatch.setattr(
-        cli,
-        "load_projects",
-        lambda: [{"id": "L1-01", "level": 1, "title": "Minimal", "brief": "Build a CLI", "checks": []}],
-    )
-    monkeypatch.setattr(cli, "_resolve_backend_url", lambda: "")
-    monkeypatch.setattr(cli, "_resolve_backend_token", lambda: "")
-    monkeypatch.setattr(cli, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(cli, "_push_bench_progress_to_backend", lambda **_kwargs: False)
-    monkeypatch.setattr(cli, "_push_bench_complete_to_backend", lambda **_kwargs: False)
-    monkeypatch.setattr(cli, "resolve_expected_llm_bindings", lambda: {})
-    monkeypatch.setattr(
-        cli,
-        "build_bench_backend_audit_context",
-        lambda *_args, **_kwargs: {"backend_freshness": {"ok": False}, "backend_metadata": {"backend_base_url": ""}},
-    )
-    chain = {"_runner_exception": "transport interrupted", "exit_code": -1}
-    if observed_run_id:
-        chain["run_id"] = observed_run_id
-
-    def interrupted(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        if observation.startswith("native_"):
-
-            def post(request: Any, **_post_kwargs: Any) -> io.BytesIO:
-                assert request.get_method() == "POST"
-                assert request.full_url == "http://127.0.0.1:60001/v2/factory/runs"
-                if observation == "native_timeout":
-                    raise TimeoutError("response lost after POST accepted")
-                return io.BytesIO(b"{broken")
-
-            monkeypatch.setattr(factory_http_client.urllib.request, "urlopen", post)
-            (_args[1] / ".git").mkdir()
-            return bench_chain.run_factory_chain(*_args, **{**_kwargs, "backend_url": "http://127.0.0.1:60001"})
-        if observation == "returned":
-            return chain
-        if observation == "callback":
-            _kwargs["on_stage_change"]("running", {"run_id": observed_run_id, "status": "running", "phase": "pm"})
-        raise RuntimeError("transport interrupted")
-
-    monkeypatch.setattr(cli, "run_factory_chain", interrupted)
-    qa_ids: list[str] = []
-
-    def qa_status(_workspace: Path, run_id: str) -> bool:
-        qa_ids.append(run_id)
-        return False
-
-    monkeypatch.setattr(cli, "read_factory_qa_invocation_status", qa_status)
-
-    def forbid_verifier(*_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("unknown/nonterminal transport must never run verifier")
-
-    monkeypatch.setattr(cli, "build_real_run_gate", forbid_verifier)
-    assert cli.main() == 1
-    record = json.loads((work / "factory_audits.json").read_text(encoding="utf-8"))["records"][0]
-    assert record["factory_run_id"] == observed_run_id
-    assert record["chain_attempt_started"] is bool(observed_run_id)
-    assert record["chain_attempt_state"] == ("observed" if observed_run_id else "unknown")
-    assert record["chain_observed_run_id"] == observed_run_id
-    assert record["audit_terminal"] is False
-    assert record["real_run_gate"]["skipped"] is True
-    assert record["real_run_gate"]["commands"] == []
-    assert record["all_checks_passed"] is False
-    assert (record["chain"].get("error") or record["chain"].get("_runner_exception")) == (
-        "start_failed" if observation.startswith("native_") else "transport interrupted"
-    )
-    if observation == "native_timeout":
-        assert record["chain"]["start_error"]["reason"] == "response lost after POST accepted"
-        assert record["chain"]["start_error"]["status"] == 0
-    assert qa_ids == ([observed_run_id] if observed_run_id else [])
-    rows = [
-        json.loads(line) for line in Path(record["run_ledger"]["ledger_path"]).read_text(encoding="utf-8").splitlines()
-    ]
-    assert rows and all(row["gate"]["ok"] is False for row in rows)
-    if not observed_run_id:
-        assert record["run_ledger_projection"]["event_count"] >= 1
+    factory = _formal_native_http(kind, calls, observed=observation == "returned", recover=observation == "callback")
+    result = _formal_run(inputs, supervisor, factory, expires=observation not in {"returned", "callback"})
+    binding = json.loads((inputs.evidence_dir / "binding.json").read_text(encoding="utf-8"))
+    known = observation in {"returned", "callback"}
+    assert binding["run_id"] == ("observed-engineering-run" if known else None)
+    assert [p for m, p in calls if m == "POST"] == ["/v2/engineering/runs"]
+    assert all("/v2/factory/" not in p and "audit-bundle" not in p and not p.endswith("/cancel") for _, p in calls)
+    assert result["exit_code"] != 0 and result["delivery_proven"] is False
+    assert result["catalog_quality"] == "UNKNOWN"
+    assert result["resources_closed"] is known
+    assert supervisor.stops == ([inputs.instance_id] if known else [])
+    if observation == "returned":
+        assert result["observation"]["platform"]["status"] == "interrupted"
+        assert result["observation"]["platform"]["verification"] == "unknown"
+        snapshots = [
+            json.loads(p.read_text(encoding="utf-8")) for p in (inputs.evidence_dir / "snapshots").glob("*.json")
+        ]
+        assert any(s["events"][0]["payload"]["ok"] is False for s in snapshots)
+    elif observation == "callback":
+        assert result["launch"]["harness_status"] == "UNKNOWN"
+        assert binding["request_recovered"] is True
+        assert result["cleanup"]["platform"]["status"] == "interrupted"
+    else:
+        assert result["launch"]["harness_status"] == "UNKNOWN"
+        assert result["cleanup"]["harness_status"] == "UNKNOWN"
+    assert not inputs.workspace.exists()
+    assert not (inputs.workspace / ".polaris" / "runtime").exists()
 
 
 @pytest.mark.parametrize("forbid_verifier,bootstrap_fails", [(True, False), (False, False), (True, True)])
@@ -244,114 +241,65 @@ def test_failed_isolated_launch_preserves_real_negative_evidence(
     forbid_verifier: bool,
     bootstrap_fails: bool,
 ) -> None:
-    home = tmp_path / "home"
-    work = tmp_path / "bench"
-    monkeypatch.setenv("KERNELONE_HOME", str(home))
-    monkeypatch.setenv("KERNELONE_INSTANCE_HOME", str(home / "instances"))
-    monkeypatch.setattr(
-        sys,
-        "argv",
+    """Current formal engineering boundary; private synthetic ports, no target execution."""
+    seed = _consumer_inputs(tmp_path / "inputs")
+    work = tmp_path / "batch"
+    supervisors: list[_ConsumerSupervisor] = []
+    http_calls: list[tuple[str, str]] = []
+    legacy_verifiers: list[str] = []
+
+    def legacy_gate(*args: Any, **kwargs: Any) -> Any:
+        legacy_verifiers.append("called")
+        if forbid_verifier:
+            raise AssertionError("never-started engineering must not execute host project gates")
+        return {"ok": False}
+
+    monkeypatch.setattr(cli, "build_real_run_gate", legacy_gate)
+    if bootstrap_fails:
+        # Old runtime bootstrap is retired. Its current equivalent is a rejected
+        # host authority declaration, before any instance or engineering request.
+        seed.host_config_file.write_text('{"require_qa":false,"run_timeout_seconds":5400}', encoding="utf-8")
+
+    class LostInstanceStart(_ConsumerSupervisor):
+        def start_instance(self, request: dict[str, Any]) -> dict[str, Any]:
+            super().start_instance(request)
+            raise RuntimeError("controlled_native_startup_response_loss")
+
+    def execute(inputs: Any) -> dict[str, Any]:
+        owner = LostInstanceStart()
+        supervisors.append(owner)
+        return _formal_run(inputs, owner, _formal_native_http("timeout", http_calls))
+
+    monkeypatch.setattr(cli, "run_engineering_case", execute)
+    code = cli.main(
         [
-            "run_factory_bench.py",
-            "--project-ids",
+            "--case",
             "L1-01",
             "--work-dir",
             str(work),
-            "--launcher-instance-mode",
-            "isolated",
-            "--bench-session-reporting",
-            "off",
-        ],
+            "--host-config-file",
+            str(seed.host_config_file),
+            "--llm-config-file",
+            str(seed.llm_config_file),
+        ]
     )
-    monkeypatch.setattr(
-        cli,
-        "load_projects",
-        lambda: [
-            {
-                "id": "L1-01",
-                "level": 1,
-                "title": "Minimal",
-                "brief": "Build a CLI",
-                "checks": [],
-            }
-        ],
-    )
-    monkeypatch.setattr(cli, "_resolve_backend_url", lambda: "http://127.0.0.1:60001")
-    monkeypatch.setattr(cli, "_resolve_backend_token", lambda: "test-only-token")
-    monkeypatch.setattr(cli, "_emit_bench_event", lambda **_kwargs: None)
-    monkeypatch.setattr(
-        cli,
-        "build_bench_backend_audit_context",
-        lambda *_args, **_kwargs: {
-            "backend_freshness": {"ok": False, "detail": "backend never started"},
-            "backend_metadata": {"backend_base_url": ""},
-        },
-    )
-    starts: list[bool] = []
-
-    def start(**_kwargs: Any) -> dict[str, Any]:
-        starts.append(True)
-        return {"ok": False, "error": "controlled_native_startup_failure", "error_type": "RuntimeError"}
-
-    monkeypatch.setattr(cli, "_start_isolated_bench_project_instance", start)
+    summary = json.loads(next((work / "reports").glob("*/summary.json")).read_text(encoding="utf-8"))
+    record = summary["records"][0]
+    assert code != 0 and summary["delivery_proven"] is False
+    assert summary["catalog_quality"] == "UNKNOWN" and legacy_verifiers == []
+    assert http_calls == []
+    assert not Path(record["workspace"]).exists()
+    assert not (work / "factory_audits.json").exists()
     if bootstrap_fails:
-        from polaris.cells.events.fact_stream import public as fact_stream
-
-        def rejected_bootstrap(_command: object) -> None:
-            raise RuntimeError("controlled_runtime_bootstrap_failure")
-
-        monkeypatch.setattr(fact_stream, "bootstrap_fact_stream_workspace", rejected_bootstrap)
-    monkeypatch.setattr(
-        cli,
-        "_non_terminal_chain_diagnostics",
-        lambda **_kwargs: {
-            "factory_attempt_started": False,
-        },
-    )
-    monkeypatch.setattr(cli, "resolve_expected_llm_bindings", lambda: {})
-    monkeypatch.setattr(cli, "_push_bench_progress_to_backend", lambda **_kwargs: False)
-    monkeypatch.setattr(cli, "_push_bench_complete_to_backend", lambda **_kwargs: False)
-
-    def no_factory(*_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("a failed launch must not call Factory")
-
-    monkeypatch.setattr(cli, "run_factory_chain", no_factory)
-    verifier_calls: list[str] = []
-
-    def verifier(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        verifier_calls.append("physical")
-        if forbid_verifier:
-            raise AssertionError("a never-started Factory must not run physical verifiers")
-        return {"ok": False, "summary": "must remain unrun", "commands": []}
-
-    monkeypatch.setattr(cli, "build_real_run_gate", verifier)
-    # Deliberately REAL persist_real_run_gate_ledger, projection, bootstrap and
-    # filesystem. Stubbing these concealed the physical r08 reporting failure.
-    assert cli.main() == 1
-    record = json.loads((work / "factory_audits.json").read_text(encoding="utf-8"))["records"][0]
-    assert record["chain"]["error"] == (
-        "runtime_storage_bootstrap_failed" if bootstrap_fails else "isolated_instance_start_failed"
-    )
-    assert record["launcher_instance"]["error"] == (
-        "runtime_storage_bootstrap_failed" if bootstrap_fails else "controlled_native_startup_failure"
-    )
-    assert record["chain_attempt_started"] is False
-    assert record["audit_terminal"] is False
-    assert record["factory_run_id"] == ""
-    assert record["qa_invoked"]["invoked"] is False
-    assert record["all_checks_passed"] is False
-    assert record["real_run_gate"]["skipped"] is True
-    assert record["real_run_gate"]["commands"] == []
-    assert verifier_calls == []
-    if bootstrap_fails:
-        assert starts == []
-        assert record["run_ledger"]["available"] is False
-        assert record["run_ledger_projection"]["available"] is False
-        assert record["runtime_workspace_bootstrap"]["error_type"] == "RuntimeError"
-        return
-    workspace = Path(record["workspace"])
-    facts = list((workspace / ".polaris" / "runtime" / "events").glob("*.jsonl"))
-    assert facts, "negative evidence must have a real canonical fact"
-    ledger_path = Path(record["run_ledger"]["ledger_path"])
-    rows = [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines()]
-    assert rows and all(row["gate"]["ok"] is False for row in rows)
+        assert code == 2 and supervisors[0].starts == []
+        assert record["harness_status"] == "UNKNOWN" and record["error_type"] == "ValueError"
+        assert record["resources_closed"] is False
+    else:
+        binding = json.loads((Path(record["launch"]["binding_file"])).read_text(encoding="utf-8"))
+        assert record["launch"]["harness_status"] == "UNKNOWN"
+        assert record["launch"]["error_type"] == "RuntimeError"
+        assert binding["failed_phase"] == "instance_start_in_flight"
+        assert binding["request_attempted"] is False and binding["run_id"] is None
+        assert binding["instance_recovered"] is True
+        assert record["cleanup"]["harness_status"] == "STOPPED"
+        assert record["resources_closed"] is True and supervisors[0].stops == [binding["plan"]["instance_id"]]
