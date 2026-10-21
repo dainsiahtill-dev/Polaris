@@ -210,7 +210,9 @@ def test_canonical_retired_intent_rejects_before_any_workspace_or_runtime_bootst
 
 
 def test_cli_history_list_is_a_cold_workspace_bound_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from polaris.delivery.cli.director import console_host
 
@@ -226,18 +228,26 @@ def test_cli_history_list_is_a_cold_workspace_bound_read(
 
 
 def test_cli_history_reads_persisted_messages_without_mutating_tree(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     import hashlib
+
     from polaris.cells.roles.session.public import RoleSessionService
 
     # Explicit synthetic legacy fixture, not a project or acceptance receipt.
     with RoleSessionService(workspace=str(tmp_path), enable_events=False) as writer:
         session = writer.create_session(role="director", workspace=str(tmp_path), title="synthetic old record")
-        writer.add_message(session.id, "user", "archived goal")
+        writer.add_message(str(session.id), "user", "archived goal")
 
     def snapshot() -> dict[str, tuple[int, str | None]]:
-        return {str(p.relative_to(tmp_path)): (p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None) for p in tmp_path.rglob("*")}
+        return {
+            str(p.relative_to(tmp_path)): (
+                p.stat().st_mtime_ns,
+                hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None,
+            )
+            for p in tmp_path.rglob("*")
+        }
 
     before = snapshot()
     args = argparse.Namespace(workspace=str(tmp_path), session_command="show", role="director", session_id=session.id)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
 from pathlib import Path
 
 from polaris.delivery.cli.engineering import add_engineering_arguments, run_engineering_action
@@ -12,7 +11,9 @@ from polaris.kernelone.fs.encoding import enforce_utf8
 
 
 def create_role_cli_parser(role: str) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog=f"polaris-{role}", description="Discuss a goal or explicitly run the selected engineering role.")
+    parser = argparse.ArgumentParser(
+        prog=f"polaris-{role}", description="Discuss a goal or explicitly run the selected engineering role."
+    )
     add_engineering_arguments(parser)
     parser.add_argument("--workspace", default=str(Path.cwd()))
     return parser

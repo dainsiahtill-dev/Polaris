@@ -12,7 +12,9 @@ from polaris.kernelone.fs.encoding import enforce_utf8
 
 
 def create_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="polaris-director", description="Discuss a goal or explicitly execute/resume an engineering run.")
+    parser = argparse.ArgumentParser(
+        prog="polaris-director", description="Discuss a goal or explicitly execute/resume an engineering run."
+    )
     add_engineering_arguments(parser)
     parser.add_argument("--workspace", default=str(Path.cwd()))
     return parser

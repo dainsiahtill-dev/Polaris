@@ -103,3 +103,18 @@ Director 的 system 说明同步区分真实准备证据与准备后验证，复
 - `task7-l101-autoverify-r03-{physical-observer,artifact-review,final-audit}/`：R03 最终请求、迁移缺口、静态质量与关闭。
 - `task7-l101-autoverify-r04-{physical-observer,product-static-audit,browser-audit,official-closure,immutable-delivery}/`：R04 当前验收、已知 P2、只读观测、正式释放及产物封存；完整说明见 R04 专项记录。
 - `task7-verification-selection-owner-review/`、`task7-verification-ownership-root-red-r2/`、`task7-verification-selection-owner-independent-review/`：归属反例和有限修复证据。
+
+
+## 第 8 批：默认入口与旧写路径收敛（实施中）
+
+主线 `2aeeb9503` 已包含默认工程 UI、薄角色 CLI、旧 HTTP／角色执行准入退役、历史只读查看及规范／图谱迁移。其后继续修复历史任务读取：沿现有 TaskRuntime／TaskBoard 增加显式只读构造，不创建目录或锁，不修补损坏历史；CLI 查询直接消费原 observable projection，并绕开执行 bootstrap。全局 `--workspace` 曾被子命令默认 `.` 覆盖，已由真实查询反例定位并修正参数传递；不增加另一套任务事实源。
+
+当前限定验证：CLI／架构及相邻回归 184 项通过，新增 TaskRuntime 只读用例 12 项通过。TaskRuntime 整 Cell 为 406 PASS／4 FAIL，四例在原始 `11db38743` owner 模块下同因复现；失败证据保留，没有降低断言或扩大本次修复。此前前端 155 项、HTTP／存储 573 项、catalog 92 项均是各自切片证据，有重叠且版本不同，不求和。catalog 仍有 159 项既有问题，不能把 audit-only exit 0 称为清洁门禁。
+
+冻结 R1 的 9383 个源码文件与模型配置保持一致，1338 项联合回归通过（512.00 秒）；KernelOne ALL 原有三项旧 CE 执行夹具失败已保留。随后只迁移该测试文件到真实新工程原生请求入口：原三反例、完整文件及相邻 ContextOS 合计 76 项通过。冻结 R2 的 KernelOne ALL 十二阶段通过（368 PASS／1 SKIP，命令 333.31 秒）。R1→R2 仅该测试文件变化，1338 项仍是原候选证据，生产文件相同，不将其改标为一次新的全量执行。
+
+默认 URL 浏览器首试 **FAILED**：真实创建请求 200、工程工具完成写读、SQL 事件越过初始水位 7，但没有收到工程推送。日志逐条显示发布时受管 NATS 客户端未连接；WebSocket 后来才建立连接，启动依赖正在现有技术 owner 内修复。独立核对六份真实最终物理请求快照，Director、run／workspace、读写工具和落盘 hash 均一致；快照数不作为 HTTP 次数。量具还误收集了一份归档测试，第二次创建 409／pending-blocked 事实保留。四端口与私有进程已物理关闭，不把这一结论扩大为项目交付或所有 SQL row 已终结。
+
+**本批默认页面验收与新版本真实项目仍未通过。** 主后端 49977 仍为旧进程，OpenAPI 无 `/v2/engineering`；未部署或重启主服务。内部旧 Bench runner 及剩余旧执行实现仍须按真实消费者收尾，之后另起冻结批次扩大 L1–L12。旧版本 R04 的交付与三项 P2 保持原样，不转移为本批验收。
+
+本批证据：统一审计根下 `task8-root/`、`task8-http/`、`task8-frontend/`、`task8-governance/`、`task8-independent-review/`、`task8-task-history-read-fix/`。临时量具为合成夹具，不能计为 Bench 成功。

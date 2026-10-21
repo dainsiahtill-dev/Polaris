@@ -163,10 +163,16 @@ def _route_task(args: argparse.Namespace) -> int:
         from polaris.delivery.cli.engineering import reject_legacy_execution
 
         return reject_legacy_execution()
-    workspace = WorkspaceGuard.ensure_workspace(getattr(args, "workspace", None))
-
-    if task_cmd == "create":
-        return _task_create(workspace, args)
+    if task_cmd not in {"list", "show"}:
+        print(f"Error: unknown task command: {task_cmd!r}", file=sys.stderr)
+        return 1
+    try:
+        workspace = Path(getattr(args, "workspace", None) or ".").resolve(strict=True)
+        if not workspace.is_dir():
+            raise NotADirectoryError(str(workspace))
+    except OSError as exc:
+        print(f"Error reading task history workspace: {exc}", file=sys.stderr)
+        return 1
     if task_cmd == "list":
         return _task_list(workspace, args)
     if task_cmd == "show":
@@ -187,13 +193,33 @@ def _task_list(workspace: Path, args: argparse.Namespace) -> int:
     """List tasks via the task runtime service."""
     include_terminal = str(getattr(args, "include_terminal", "yes") or "yes").strip().lower()
     try:
-        from polaris.delivery.cli.director.console_host import DirectorConsoleHost
+        from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 
-        host = DirectorConsoleHost(str(workspace))
-        tasks = host.list_tasks(include_terminal=(include_terminal != "no"))
+        tasks = TaskRuntimeService(str(workspace), read_only=True).list_observable_task_rows()
+        if include_terminal == "no":
+            # Preserve the historical display filter; this never determines
+            # completion or authorizes a task transition.
+            tasks = [
+                row
+                for row in tasks
+                if str(row.get("status") or "").strip().lower()
+                not in {
+                    "cancelled",
+                    "canceled",
+                    "completed",
+                    "done",
+                    "failed",
+                    "failure",
+                    "passed",
+                    "success",
+                    "succeeded",
+                    "timeout",
+                    "timed_out",
+                }
+            ]
         print(json.dumps(tasks, ensure_ascii=False, indent=2))
         return 0
-    except (RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         logger.warning("task list failed: %s", exc)
         print(f"Error listing tasks: {exc}", file=sys.stderr)
         return 1
@@ -207,17 +233,16 @@ def _task_show(workspace: Path, args: argparse.Namespace) -> int:
         return 1
 
     try:
-        from polaris.delivery.cli.director.console_host import DirectorConsoleHost
+        from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 
-        host = DirectorConsoleHost(str(workspace))
-        tasks = host.list_tasks()
+        tasks = TaskRuntimeService(str(workspace), read_only=True).list_observable_task_rows()
         for t in tasks:
             if str(t.get("id") or "") == task_id:
                 print(json.dumps(t, ensure_ascii=False, indent=2))
                 return 0
         print(f"Error: task not found: {task_id}", file=sys.stderr)
         return 1
-    except (RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         logger.warning("task show failed: %s", exc)
         print(f"Error showing task: {exc}", file=sys.stderr)
         return 1
@@ -237,7 +262,9 @@ def _route_session(args: argparse.Namespace) -> int:
         from polaris.cells.roles.session.public import RoleSessionService
 
         workspace = Path(getattr(args, "workspace", None) or ".").resolve(strict=True)
-        with RoleSessionService(workspace=str(workspace), read_only=True, enable_persistence=False, enable_events=False) as service:
+        with RoleSessionService(
+            workspace=str(workspace), read_only=True, enable_persistence=False, enable_events=False
+        ) as service:
             return _session_list(service, args) if session_cmd == "list" else _session_show(service, args)
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Error reading session history: {exc}", file=sys.stderr)

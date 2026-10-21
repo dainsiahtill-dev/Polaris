@@ -91,12 +91,12 @@ _AGENTIC_EVAL_SUITE_CHOICES = (
 )
 
 
-def _add_workspace_argument(parser: argparse.ArgumentParser) -> None:
+def _add_workspace_argument(parser: argparse.ArgumentParser, *, default: str = argparse.SUPPRESS) -> None:
     parser.add_argument(
         "--workspace",
         "-w",
         type=str,
-        default=".",
+        default=default,
         help="Workspace directory (default: cwd)",
     )
 
@@ -130,7 +130,7 @@ def create_parser() -> argparse.ArgumentParser:
         description="Polaris unified CLI — one host, multi-role, multi-mode",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    _add_workspace_argument(parser)
+    _add_workspace_argument(parser, default=".")
     _add_session_id_argument(parser)
     parser.add_argument(
         "--no-persist",
@@ -996,14 +996,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     workspace = _resolve_workspace(str(getattr(args, "workspace", ".") or "."))
     args.workspace = workspace
 
-    # Bind env so downstream services find the workspace
-    _bind_workspace_env(workspace)
+    history_query = (command == "task" and getattr(args, "task_command", "") in {"list", "show"}) or (
+        command == "session" and getattr(args, "session_command", "") in {"list", "show"}
+    )
+    if not history_query:
+        # Historical owners receive their workspace explicitly and must not
+        # initialize execution bindings or change the caller's workspace.
+        _bind_workspace_env(workspace)
+        from contextlib import redirect_stdout
 
-    # Bootstrap runtime (lazy but early)
-    from contextlib import redirect_stdout
-
-    with redirect_stdout(sys.stderr):
-        _bootstrap_runtime()
+        with redirect_stdout(sys.stderr):
+            _bootstrap_runtime()
 
     # Dispatch
     router = _get_router()

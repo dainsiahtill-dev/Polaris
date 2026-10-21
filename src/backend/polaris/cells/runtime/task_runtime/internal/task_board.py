@@ -493,12 +493,24 @@ class TaskBoard:
     def __init__(self, workspace: str, *, read_only: bool = False) -> None:
         self._read_only = read_only
         self.workspace = Path(workspace).resolve()
-        self._kernel_fs = KernelFileSystem(str(self.workspace), get_default_adapter(), read_only_paths=read_only)
-        self.tasks_dir = Path(resolve_runtime_path(str(self.workspace), "runtime/tasks", read_only=read_only))
+        self._kernel_fs = (
+            KernelFileSystem(str(self.workspace), get_default_adapter(), read_only_paths=True)
+            if read_only
+            else KernelFileSystem(str(self.workspace), get_default_adapter())
+        )
+        self.tasks_dir = Path(
+            resolve_runtime_path(str(self.workspace), "runtime/tasks", read_only=True)
+            if read_only
+            else resolve_runtime_path(str(self.workspace), "runtime/tasks")
+        )
         if not read_only:
             self.tasks_dir.mkdir(parents=True, exist_ok=True)
 
-        self._max_id_file = Path(resolve_runtime_path(str(self.workspace), "runtime/tasks/.max_id", read_only=read_only))
+        self._max_id_file = Path(
+            resolve_runtime_path(str(self.workspace), "runtime/tasks/.max_id", read_only=True)
+            if read_only
+            else resolve_runtime_path(str(self.workspace), "runtime/tasks/.max_id")
+        )
         if not read_only:
             self._max_id_file.parent.mkdir(parents=True, exist_ok=True)
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterator
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
@@ -59,7 +58,9 @@ def _snapshot(*roots: Path) -> dict[str, tuple[int, str]]:
 def _writer(workspace: Path) -> TaskRuntimeService:
     bootstrap_fact_stream_workspace(
         BootstrapFactStreamWorkspaceCommandV1(
-            workspace=str(workspace), streams=fact_stream_bootstrap_streams(), maintenance_reason="readonly-history-fixture"
+            workspace=str(workspace),
+            streams=fact_stream_bootstrap_streams(),
+            maintenance_reason="readonly-history-fixture",
         )
     )
     return TaskRuntimeService(str(workspace))
@@ -96,7 +97,9 @@ def test_populated_history_observer_preserves_rows_sessions_facts_and_locks(
     assert selected["metadata"]["history_marker"] == "preserve"
     assert selected["execution_state"] == "in_progress"
     projection = observer.query_observable_task_rows_projection()
-    assert next(item for item in projection.rows if str(item["id"]) == str(identity))["execution_state"] == "in_progress"
+    assert (
+        next(item for item in projection.rows if str(item["id"]) == str(identity))["execution_state"] == "in_progress"
+    )
     assert observer.get_task(identity)["execution_state"] == "in_progress"
     assert _snapshot(workspace, private_home) == before
     assert not lock.exists()
@@ -149,6 +152,15 @@ def test_readonly_board_cannot_create_rows_and_writable_board_cannot_be_injected
     writable = TaskBoard(str(workspace))
     with pytest.raises(ValueError, match="read-only"):
         TaskRuntimeService(str(workspace), board=writable, read_only=True)
+
+
+def test_readonly_board_injection_must_match_service_workspace(isolated_history: tuple[Path, Path]) -> None:
+    workspace, private_home = isolated_history
+    foreign = TaskBoard(str(workspace.parent / "foreign"), read_only=True)
+    before = _snapshot(workspace, private_home)
+    with pytest.raises(ValueError, match="workspace"):
+        TaskRuntimeService(str(workspace), board=foreign, read_only=True)
+    assert _snapshot(workspace, private_home) == before
 
 
 @pytest.mark.parametrize("corrupt", ["row", "session"])

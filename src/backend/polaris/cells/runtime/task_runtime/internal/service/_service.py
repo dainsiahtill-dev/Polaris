@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 from polaris.cells.runtime.task_runtime.internal.task_board import (
     TaskBoard,
@@ -43,10 +44,16 @@ class TaskRuntimeService(
             raise ValueError("workspace is required for TaskRuntimeService")
         if read_only and board is not None and not board.read_only:
             raise ValueError("read-only TaskRuntime requires a read-only TaskBoard")
+        if read_only and board is not None and board.workspace != Path(workspace_token).resolve():
+            raise ValueError("read-only TaskRuntime requires a TaskBoard bound to the same workspace")
         self._read_only = read_only
         self._workspace = workspace_token
-        self._board = board if board is not None else TaskBoard(workspace=workspace_token, read_only=read_only)
-        self._kernel_fs = KernelFileSystem(workspace_token, get_default_adapter(), read_only_paths=read_only)
+        if read_only:
+            self._board = board if board is not None else TaskBoard(workspace=workspace_token, read_only=True)
+            self._kernel_fs = KernelFileSystem(workspace_token, get_default_adapter(), read_only_paths=True)
+        else:
+            self._board = board or TaskBoard(workspace=workspace_token)
+            self._kernel_fs = KernelFileSystem(workspace_token, get_default_adapter())
         # Per-task-id locks guard only the read-modify-write cycle on session
         # files. The only FactStream work permitted under this lock is the
         # narrow DEO registry admission/pre-barrier chain; projection uses a

@@ -307,15 +307,24 @@ class TestPmLoopCli:
         assert args.workspace == "/tmp/ws"
 
     def test_parser_preserves_required_commands_including_duplicates(
-        self, pm_loop_parser: argparse.ArgumentParser,
+        self,
+        pm_loop_parser: argparse.ArgumentParser,
     ) -> None:
-        args = pm_loop_parser.parse_args(["--required-check", "npm test", "--required-check", "npm test",
-                                          "--required-check", "npm run check"])
+        args = pm_loop_parser.parse_args(
+            ["--required-check", "npm test", "--required-check", "npm test", "--required-check", "npm run check"]
+        )
         assert args.required_check == ["npm test", "npm test", "npm run check"]
 
-    @pytest.mark.parametrize("arguments", [["--iterations", "0"], ["--agent", "director"],
-                                         ["--run-director"], ["--pm-backend", "auto"],
-                                         ["--director-path", "some-worker.py"]])
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            ["--iterations", "0"],
+            ["--agent", "director"],
+            ["--run-director"],
+            ["--pm-backend", "auto"],
+            ["--director-path", "some-worker.py"],
+        ],
+    )
     def test_worker_protocol_is_rejected(self, pm_loop_parser: argparse.ArgumentParser, arguments: list[str]) -> None:
         with pytest.raises(SystemExit) as error:
             pm_loop_parser.parse_args(arguments)
@@ -574,7 +583,7 @@ class TestPmIntegration:
         assert "metrics" in health
         assert "recommendations" in health
 
-    def test_pm_generate_comprehensive_report(self, tmp_path: Path) -> None:
+    def test_pm_generate_comprehensive_report(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """PM.generate_comprehensive_report must return a file path string."""
         from polaris.delivery.cli.pm.pm_integration import PM
 
@@ -590,13 +599,17 @@ class TestPmIntegration:
         pm._execution_tracker.get_execution_summary.return_value = {}
 
         # Mock get_status to return a JSON-serializable dict
-        pm.get_status = MagicMock(
-            return_value={
-                "initialized": True,
-                "project": "Proj",
-                "version": "1.0",
-                "stats": {"tasks": {}, "requirements": {}},
-            }
+        monkeypatch.setattr(
+            pm,
+            "get_status",
+            MagicMock(
+                return_value={
+                    "initialized": True,
+                    "project": "Proj",
+                    "version": "1.0",
+                    "stats": {"tasks": {}, "requirements": {}},
+                }
+            ),
         )
 
         path = pm.generate_comprehensive_report(str(tmp_path))

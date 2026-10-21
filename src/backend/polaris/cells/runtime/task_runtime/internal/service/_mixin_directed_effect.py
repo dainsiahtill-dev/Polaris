@@ -414,9 +414,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
 
         from ..terminal_intent import validate_fulfilled_terminal_intent
 
-        validated = validate_fulfilled_terminal_intent(
-            session, self._execution_attempt_identity_from_session(session)
-        )
+        validated = validate_fulfilled_terminal_intent(session, self._execution_attempt_identity_from_session(session))
         if isinstance(validated, DirectedEffectSettlementPreBarrierVerdictV1):
             return validated
         pending_intent = self._pending_terminal_intent(session)
@@ -1072,13 +1070,9 @@ class _DirectedEffectMixin(_ServiceMixinBase):
                     )
                 rehydrated = False
             if rehydrated:
-                projection = self.query_observable_task_rows_projection().rows_for_factory_run(
-                    command.factory_run_id
-                )
+                projection = self.query_observable_task_rows_projection().rows_for_factory_run(command.factory_run_id)
                 matching_rows = [
-                    row
-                    for row in projection
-                    if self._same_task_external_aliases(row) == {external_task_id}
+                    row for row in projection if self._same_task_external_aliases(row) == {external_task_id}
                 ]
         if len(matching_rows) != 1:
             return self._same_task_local_rework_result(
@@ -1121,9 +1115,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
                     task_row=row,
                 )
         diagnostic_records = [
-            record
-            for record in records
-            if str(record.get("diagnostic_id") or "").strip() == command.diagnostic_id
+            record for record in records if str(record.get("diagnostic_id") or "").strip() == command.diagnostic_id
         ]
         if len(diagnostic_records) >= command.max_rework_attempts:
             return self._same_task_local_rework_result(

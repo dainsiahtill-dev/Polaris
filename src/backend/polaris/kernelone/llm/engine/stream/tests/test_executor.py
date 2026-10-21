@@ -10,11 +10,16 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.cells.roles.runtime.tests.engineering_support import (
+    ScriptedProvider,
+    scripted_provider as scripted_provider,
+)
 from polaris.kernelone.errors import BudgetExceededError
 from polaris.kernelone.llm.engine._executor_base import clamp_output_tokens_to_window
 from polaris.kernelone.llm.engine.contracts import (
@@ -183,116 +188,105 @@ async def test_planning_stream_budget_at_serialized_transport(
     "cap,window,diagnostic",
     [(65536, 1000000, None), (32768, 1000000, "model_limit_exceeded"), (65536, 60032, "context_window_exceeded")],
 )
-async def test_initial_ce_stream_runtime_freeze_matches_actual_serialized_request(
-    tmp_path, monkeypatch, cap, window, diagnostic
-):
+async def test_initial_ce_engineering_native_request_budget_matches_actual_transport(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scripted_provider: ScriptedProvider,
+    cap: int,
+    window: int,
+    diagnostic: str | None,
+) -> None:
     from dataclasses import asdict
 
-    from polaris.cells.factory.pipeline.tests.test_factory_role_evidence_authority_sa import (
-        _authority,
-        _resolved_cut,
-        _Resolver,
-    )
-    from polaris.cells.roles.adapters.tests.test_pm_factory_controlled_identity import _local_runtime
-    from polaris.cells.roles.kernel.internal.llm_caller.invoker import _binding
-    from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import bind_factory_role_evidence_authority
-    from polaris.cells.roles.profile.public.service import RoleProfile, RolePromptPolicy, RoleToolPolicy
-    from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
-    from polaris.infrastructure.llm.providers import openai_provider
-    from polaris.kernelone.llm.runtime_config import RoleBindingSlot
+    from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RoleRunCommand, RunLimits
+    from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
+    from polaris.kernelone.llm.engine import _executor_base
+    from polaris.kernelone.llm.engine.executor import AIExecutor
+    from polaris.kernelone.storage.io_paths import resolve_storage_roots
 
-    port, _, _, facts = _authority(
-        tmp_path=tmp_path, stage="chief_engineer_review", resolver=_Resolver(_resolved_cut("chief_engineer"))
-    )
-    workspace = tmp_path / "workspace"
-    runtime, freezes, _ = _local_runtime(workspace, monkeypatch, [])
-    runtime._kernels[str(workspace)].registry.register(
-        RoleProfile(
-            role_id="chief_engineer",
-            display_name="Chief Engineer",
-            description="Engineering blueprint",
-            provider_id="local-provider",
-            model="local-model",
-            prompt_policy=RolePromptPolicy(core_template_id="chief_engineer"),
-            tool_policy=RoleToolPolicy(whitelist=["repo_tree", "file_exists"]),
-        )
-    )
-    slot = RoleBindingSlot(
-        role_id="chief_engineer", provider_id="local-provider", model="local-model", binding_id="local-binding"
-    )
-    monkeypatch.setattr(_binding, "get_role_binding_candidates", lambda _: (slot,))
+    # Change only synthetic model configuration. The current engineering owner,
+    # native executor, HTTP codec, capture and ContextOS persistence remain real.
+    monkeypatch.setattr(_executor_base, "get_role_model", lambda _role: ("synthetic", "synthetic-model"))
     configuration = {
         "type": "openai_compat",
-        "base_url": "https://stream-budget.example.test/v1",
+        "base_url": scripted_provider.base_url,
+        "api_path": "/v1/chat/completions",
+        "api_key": "synthetic-loopback-only",
         "retries": 0,
-        "model_specific": {"local-model": {"max_context_tokens": window, "max_output_tokens": cap}},
+        "timeout": 5,
+        "max_tokens": 60000,
+        "model_specific": {"synthetic-model": {"max_context_tokens": window, "max_output_tokens": cap}},
     }
-    monkeypatch.setattr(StreamExecutor, "_get_provider_config", lambda *_: configuration)
-    monkeypatch.setattr(StreamExecutor, "_resolve_provider_model", lambda *_: ("local-provider", "local-model"))
-    wires = []
-
-    async def transport(url, headers, payload, timeout):
-        assert url == "https://stream-budget.example.test/v1/chat/completions"
-        wires.append(json.loads(json.dumps(payload)))
-        yield {
+    monkeypatch.setattr(AIExecutor, "_get_provider_config", lambda *_: configuration)
+    scripted_provider.enqueue_json(
+        {
             "choices": [
-                {
-                    "delta": {"content": '{"construction_plan":{"steps":[]},"scope_for_apply":[],"risk_flags":[]}'},
-                    "finish_reason": None,
-                }
-            ]
-        }
-        yield {
-            "choices": [{"delta": {}, "finish_reason": "stop"}],
+                {"message": {"role": "assistant", "content": "Engineering design complete."}, "finish_reason": "stop"}
+            ],
             "usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11},
         }
-
-    monkeypatch.setattr(openai_provider, "invoke_stream_with_retry", transport)
-    authority = port.mint_authority_binding("chief_engineer")
-    command = ExecuteRoleSessionCommandV1(
-        role="chief_engineer",
-        session_id="ce-budget-session",
-        workspace=str(workspace),
-        run_id="ce-budget-child",
-        user_message="Original CE portfolio requirement retained.",
-        stream=True,
-        timeout_seconds=750,
-        context={"llm_max_tokens": 60000, "llm_call_timeout_seconds": 750},
     )
-    with bind_factory_role_evidence_authority(authority):
-        result = await runtime.execute_role_session(command)
-    (tmp_path / "ce-stream-runtime-proof.json").write_text(
+    service = EngineeringRunService(tmp_path)
+    command = RoleRunCommand(
+        session_id="ce-budget-session",
+        role="chief_engineer",
+        workspace=tmp_path,
+        instruction="Original CE portfolio requirement retained.",
+    )
+    result = await service.run_role(
+        command,
+        scope=PermissionScope((tmp_path,), (), frozenset({"repo_tree"}), False),
+        limits=RunLimits(None, 1_000_000, 64_000),
+        cancel=asyncio.Event(),
+    )
+    snapshot = service.snapshot(command.session_id, workspace=tmp_path)
+    observations = [event for event in snapshot["events"] if event["kind"] == "llm_request_observed"]
+    runtime = Path(resolve_storage_roots(str(tmp_path)).runtime_root)
+    (tmp_path / "ce-engineering-native-proof.json").write_text(
         json.dumps(
-            {
-                "result": asdict(result),
-                "wires": wires,
-                "freezes": [asdict(freeze) if freeze is not None else None for freeze in freezes],
-                "facts": facts.events,
-            },
+            {"result": asdict(result), "wires": scripted_provider.requests, "snapshot": snapshot},
             default=str,
             indent=2,
         ),
         encoding="utf-8",
     )
     if diagnostic:
-        assert not result.ok and wires == []
-        assert diagnostic in str(result)
+        assert result.status == snapshot["status"] == "failed"
+        assert diagnostic in result.text
+        assert scripted_provider.requests == [] and observations == []
+        assert not list((runtime / "contexts").glob("*/*"))
     else:
-        assert result.ok, result
-        assert len(wires) == 1 and wires[0]["max_tokens"] == 60000
-        assert len(freezes) == 1 and freezes[0] is not None
-        frozen = json.loads(freezes[0].canonical_final_payload_json)
-        assert frozen["role"] == "chief_engineer"
-        assert (
-            "Chief Engineer" in wires[0]["messages"][0]["content"] or "工部尚书" in wires[0]["messages"][0]["content"]
-        )
-        assert "Original CE portfolio requirement retained." in str(wires[0]["messages"])
-        assert frozen["max_tokens"] == 60000
-        from polaris.kernelone.llm.engine.provider_native_request import build_openai_native_messages
-
-        assert build_openai_native_messages(frozen["messages"]) == wires[0]["messages"]
-        assert frozen["tools"] == wires[0]["tools"]
-        assert frozen["tool_choice"] == wires[0]["tool_choice"]
+        assert result.status == snapshot["status"] == "completed", result
+        assert len(scripted_provider.requests) == 1
+        request = scripted_provider.requests[0]
+        assert request["path"] == "/v1/chat/completions"
+        wire = request["body"]
+        assert wire["max_tokens"] == 60000
+        assert "Chief Engineer" in wire["messages"][0]["content"]
+        assert command.instruction in str(wire["messages"])
+        assert [event["payload"]["phase"] for event in observations] == ["prepared", "terminal"]
+        for event in observations:
+            assert event["role"] == "chief_engineer"
+            reference = event["payload"]["context_snapshot_ref"]
+            raw = (runtime / "contexts" / reference[:2] / reference).read_text(encoding="utf-8")
+            assert hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24] == reference
+            stored = json.loads(raw)
+            captured = stored["provider_request"]
+            assert captured["role"] == "chief_engineer"
+            physical = captured["final_physical_request"]["body"]
+            assert physical == wire
+            assert physical["max_tokens"] == 60000
+            assert stored["messages"] == wire["messages"]
+            assert physical["tools"] == wire["tools"]
+            assert {tool["function"]["name"] for tool in physical["tools"]} == {"repo_tree"}
+            assert physical["tool_choice"] == wire["tool_choice"] == "auto"
+            assert captured["request_identity"]["engine_version"] == "engineering_v2"
+            assert captured["request_identity"]["session_id"] == command.session_id
+            assert captured["request_identity"]["workspace"] == str(tmp_path)
+            audit = captured["final_request_context_audit"]
+            assert audit["audit_scope"] == "provider_native_wire"
+            assert audit["context_window_tokens"] == window
+            assert audit["final_request_token_estimate"] > audit["message_token_estimate"]
 
 
 class TestStreamExecutorInit:
