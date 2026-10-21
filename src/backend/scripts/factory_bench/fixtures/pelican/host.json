@@ -1,0 +1,28 @@
+{
+  "permission_profiles": {
+    "svg-artifact": {
+      "read_roots": [
+        "."
+      ],
+      "write_roots": [
+        "."
+      ],
+      "enabled_tools": [
+        "read_file",
+        "repo_tree",
+        "repo_rg",
+        "write_file",
+        "edit_file",
+        "execute_command",
+        "consult_role",
+        "report_review",
+        "verify_project"
+      ],
+      "network_allowed": false
+    }
+  },
+  "default_permission_profile_id": "svg-artifact",
+  "require_qa": true,
+  "run_timeout_seconds": 5400,
+  "verification_output_roots": []
+}

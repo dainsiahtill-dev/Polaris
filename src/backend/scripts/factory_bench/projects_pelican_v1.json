@@ -1,0 +1,20 @@
+{
+  "schema_version": "factory-bench/2",
+  "catalog_kind": "internal_visual_probe",
+  "internal_test_only": true,
+  "projects": [
+    {
+      "id": "VIS-PEL-01",
+      "level": null,
+      "domain": "visual_composition",
+      "project_type": "svg_illustration",
+      "primary_language": "svg",
+      "title": "鹈鹕骑自行车 SVG",
+      "brief": "Generate an SVG of a pelican riding a bicycle.",
+      "creative_hook": "A recognizable pelican and structurally coherent bicycle form one riding scene.",
+      "checks": [],
+      "fixture_directory": "fixtures/pelican",
+      "source": "https://simonwillison.net/2024/Oct/25/pelicans-on-a-bicycle/"
+    }
+  ]
+}

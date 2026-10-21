@@ -1,0 +1,106 @@
+{
+  "protocol_id": "pelican-svg-native-architecture-v1",
+  "task_prompt": "Generate an SVG of a pelican riding a bicycle.",
+  "rubric": {
+    "scale": {
+      "0": "Absent, unrecognizable or fundamentally contradictory.",
+      "1": "Weak hint; major ambiguity or structural failure.",
+      "2": "Recognizable but with material incompleteness or awkward relations.",
+      "3": "Clear coherent depiction with minor flaws.",
+      "4": "Strong precise integration, clearly readable and convincing within chosen style."
+    },
+    "dimensions": [
+      {
+        "id": "pelican",
+        "name_zh": "鹈鹕辨识与对象结构",
+        "anchors": {
+          "0": "No recognizable bird/pelican.",
+          "1": "Generic bird; pelican identity depends on label.",
+          "2": "Plausible pelican, but beak/pouch or body structure materially ambiguous.",
+          "3": "Recognizable pelican from long beak and throat pouch plus coherent head/body/wing anatomy.",
+          "4": "Distinct pelican silhouette and well-integrated beak/pouch/body structure, clear at ordinary viewing size."
+        }
+      },
+      {
+        "id": "bicycle",
+        "name_zh": "自行车辨识与结构",
+        "anchors": {
+          "0": "No recognizable bicycle.",
+          "1": "Disconnected wheel-like and line-like marks.",
+          "2": "Bicycle recognizable, but frame/fork/crank/pedals or wheel connection has material inconsistency.",
+          "3": "Coherent wheels, frame, steering/fork and drivetrain/pedal cues with only minor issues.",
+          "4": "Integrated convincing bicycle structure, readable connections and sensible perspective/occlusion."
+        }
+      },
+      {
+        "id": "riding",
+        "name_zh": "骑行动作与空间组合",
+        "anchors": {
+          "0": "Bird and bicycle unrelated, or no ride scene.",
+          "1": "Bird beside/above bicycle; relationship primarily asserted by text.",
+          "2": "Bird placed on bicycle, but seat/body support, feet/pedal interaction or wing/handlebar interaction remains materially ambiguous.",
+          "3": "Clear riding pose: plausible body support near saddle, pedal/foot and steering/wing relations; reasonable artistic simplification and occlusion.",
+          "4": "Body posture, steering and pedaling integrate clearly into one convincing riding action with coherent depth and contact."
+        }
+      },
+      {
+        "id": "composition",
+        "name_zh": "构图与阅读清晰度",
+        "anchors": {
+          "0": "Blank, illegible, overwhelmingly clipped or visually broken.",
+          "1": "Severe overlaps/cropping or contrast makes scene hard to read.",
+          "2": "Readable scene with noticeable spacing, overlap or hierarchy problems.",
+          "3": "Clear subject hierarchy, framing and legibility; small decorative or spacing flaws.",
+          "4": "Intentional balanced composition; strong silhouette, useful detail and effortless reading."
+        }
+      }
+    ],
+    "critical_errors": [
+      "No recognizable pelican",
+      "No recognizable bicycle",
+      "No credible riding relationship; objects merely co-present",
+      "Essential scene content unreadable or outside canvas",
+      "Invalid/non-self-contained SVG, raster substitution or no actual render"
+    ],
+    "critical_error_rule": "Evaluator cites visible evidence, affected region and uncertainty. Mechanical critical errors come from mechanical report; semantic critical errors require viewing the rendered scene. Critical errors remain visible beside scores; never hidden by a good composition score.",
+    "style_preferences": [
+      "Do not require realism, particular color, particular geometry or a specific artistic style.",
+      "Do not require two visible legs, every hidden bicycle part, two literal circle elements, or fixed path/element counts.",
+      "Allow perspective, occlusion, stylization and anthropomorphic wings as arms when riding remains clear.",
+      "Generator labels, comments, claimed landmarks, alt text and self-grades are not evidence of depicted semantics.",
+      "Do not penalize harmless unrequested decoration unless it harms task clarity."
+    ],
+    "score_reporting": "Report four 0-4 scores and written visible evidence. Optional unweighted 0-16 total is descriptive only, never automatic acceptance or proof of capability. Preserve invalid/non-rendered status rather than inventing visual scores.",
+    "task_success": "Record evaluator yes/no/uncertain for the literal prompt, with critical-error list and concise rationale. No new product gate or arbitrary score threshold."
+  },
+  "blind_comparison": {
+    "procedure": [
+      "Root personally rates each finished render before the nextnativeattempt; the scheduled strategy may be known, so initial ratings are not blind.",
+      "After all attempts, hide strategy labels and compare all10 pairs within eachreplicate; prior image memory maypersist.",
+      "Use recorded fixed random side assignments; allow tie/uncertain/not_evaluable.",
+      "Compare literalpelican+bicycle+riding fulfillment first, then scene clarity, and cite visible evidence.",
+      "Lock initialratings and pair decisions before joining detailedtrace/costanalysis; do not claim fullblinding."
+    ],
+    "pair_fields": [
+      "pair_id",
+      "replicate",
+      "left_render_id",
+      "right_render_id",
+      "winner_left_right_tie_uncertain",
+      "reason",
+      "critical_error_difference",
+      "judge_id",
+      "comparison_status"
+    ],
+    "single_judge_limit": "Root is the main AI assistant using visualinspection, not a human panel. Initial per-run review is unblinded; subsequent labelhidden comparison mayretainimage memory. Exploratorysinglejudge evidence, no inter-rater/statisticalsignificance claim.",
+    "report": "Show each attempt, complete score vectors, critical errors, pair wins/ties/uncertainties, actual roles, native/mechanical status, resources and UNKNOWN. Separate quality from efficiency; no hidden composite cost/quality leaderboard.",
+    "nonrender_policy": "Never invent a visual score or image for a missing/invalid render. Mark individual visual evaluation not_evaluable; retain native/mechanical failure in all-attempt results. A pair needing a missing render is not_evaluable for visual preference, not silently removed or replaced. Report the planned 20 pairs, evaluated count and all not_evaluable reasons.",
+    "side_seed": 20261022
+  },
+  "feedback_boundary": {
+    "default": "Native generation is text/code-only unless final provider request proves actual image input capability and that render feedback was supplied.",
+    "evaluator": "External evaluator may view renders after generation; ratings and render observations are never fed back into scored native attempts.",
+    "claims": "Do not call this a native visual self-correction loop or native vision QA merely because an outside evaluator saw PNGs."
+  },
+  "evaluation_procedure": "Initial root per-run assessment with strategy potentially known; supplementary final labelhidden pairwisecomparison only. Native QA separate. No fullyblind orhumanpanel claim."
+}

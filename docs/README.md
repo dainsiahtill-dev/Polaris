@@ -2,7 +2,7 @@
 
 最新更新：2026-10-21。
 
-当前检查点：e700 的 L1-01/02/03 原生 accepted、原资源关闭，亲自质量验收均 FAIL，117 项未运行。正在集成 Launcher 当前运行发现；随后按[角色组合质量预试验](experiments/POLARIS_ROLE_COMBINATION_PILOT_20261021.md)串行比较五种策略。历史通过不扩大为本轮质量通过。
+当前检查点：Launcher 当前运行发现已在主线集成，真实模型实例已验证推送。原目录 e700 的 L1-01/02/03 原生 accepted、资源关闭，亲自质量验收均 FAIL，117 项未运行。后续角色试验首例 L1-02 也保留原生 accepted／亲自 FAIL；用户现指定[鹈鹕骑车 SVG 专项](superpowers/specs/2026-10-21-pelican-role-benchmark-design.md)比较五种角色链，独立目录不改原120项。旧[角色组合预试验](experiments/POLARIS_ROLE_COMBINATION_PILOT_20261021.md)只完成首例，其余九例未运行，不转写为已完成。
 
 1. [历史经验报告全文](history/历史经验报告.md)：十章、68 个案例、历史验证边界与来源；保留原 06:58 UTC 检查点，后续 R13 核对见新重构方案第 2 节。
 2. [完整重构方案](blueprints/POLARIS_ROLE_AGENT_REFACTOR_20261020.md)：保留角色分工，删除模型合同维护，明确架构、删留、权限、恢复、验证与迁移。
