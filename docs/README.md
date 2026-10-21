@@ -4,9 +4,9 @@
 
 L1–L12 题库阅读入口：[120 项项目提示词全集](benchmarks/L1-L12项目提示词全集.md)与[项目说明与评测指南](benchmarks/L1-L12项目说明与评测指南.md)。本轮修订需求表达、领域机制和质量验收场景，保留原检查项；文案与组件验证不代表真实 Bench 已完成。
 
-当前检查点：[Director／QA 原生视觉闭环](blueprints/POLARIS_NATIVE_VISUAL_OBSERVATION_20261021.md)已贯通：真实 QA 看图后独立拒绝旧网页，指出腿脚脱离鸟身，主 Agent 看图确认。随后冻结 `2c7b0c56e` 的全新运行 `1be9405400f34a8aa5c3ff12cd692218` 因 3000 输出默认与截断空响应处理失败，未产出代码，资源已关闭；不能声称新的视觉网页已交付。当前关闭[按模型上限执行的输出预算](blueprints/POLARIS_OUTPUT_LIMIT_POLICY_20261021.md)及 UNKNOWN 被渲染为 PASS 的投影问题，之后另起冻结批次。
+当前检查点：[按模型上限执行的输出预算](blueprints/POLARIS_OUTPUT_LIMIT_POLICY_20261021.md)、空截断反馈和 UNKNOWN 显示修复已集成。随后新运行 `eebef9650cb34189a0720740846a3245` 经真实执行、QA 拒绝与同 Director 修复后，在平台内 accepted，资源闭合；主 Agent 实际检查仍发现脚与曲柄约 90° 错位，质量失败。运行期间其它工作树源码与原 120 项目录发生变化，整仓冻结也失败；不能声称该动画网页成功交付。原零源码失败 `1be9405400f34a8aa5c3ff12cd692218` 保留，不被新运行覆盖。
 
-当前取舍与实验见[保留能力、比较机制](blueprints/POLARIS_CAPABILITY_EXPERIMENTS_20261022.md)：原调度模块的真实领取／冷恢复实验通过，但新协作链路尚未接入；四次同输入视觉消融确认图片帮助识别旧动画的实际缺陷，不据此宣称总体更可靠。当前工程未接旧完整 StateFirstContextOS／TurnEngine 链；保留耐久历史、K1 预算与最终请求快照。输出修复的环境校正联合回归 1237 passed，KernelOne ALL 十二阶段通过（368 passed、1 skipped）；原失败记录仍保留。随后按原合同运行全新隔离网页，再做序列角色对照；准备与组件通过不代表网页交付。
+最新[历史全特性盘点](history/POLARIS_ALL_FEATURES_INVENTORY_20261022.md)包含 174 条记录、21 类，不等于 174 个独立已实现功能。[能力取舍与质量实验](experiments/POLARIS_FEATURE_EVALUATION_20261022.md)记录 15 次实际评审调用：额外 CE／QA 预审未解决新动画核心漏验，CE 也发现一处真实静态 SVG 缺陷；不新增强制预审门禁，也不删除专业角色。另六次通用 DOM 消融两臂都漏验新动画，数据转储增加报告 token 约 12.6 倍，不作为已证修复引入。一次替代 QA 模型检查在同源码和图片下具体检出 90° 错位（250.55 秒）；此前 30 秒调用超时保留 UNKNOWN，单例尚未成为产品交付或模型排名。原[保留能力、比较机制](blueprints/POLARIS_CAPABILITY_EXPERIMENTS_20261022.md)中的派发／冷恢复、四次视觉消融证据继续保留；新工程尚未接入旧完整 TaskMarket／StateFirstContextOS／TurnEngine 链。输出修复联合回归历史结果为 1237 passed，KernelOne ALL 十二阶段 368 passed、1 skipped；组件通过不代替实际网页交付。
 
 更早 `bef24b386` 网页 `a420e40bb7434b1e85bd50d2fbfadfcd` 的文本 QA approved 与 root 质量 FAIL 均保留。新数据变体 `fixtures/pelican_web_visual/` 沿用原功能检查及质量量表。长期记忆不做；静态 SVG 两例通过、其余八例未运行；原目录 L1-01/02/03 的 root 质量 FAIL、其余117项未运行不变。以下历史检查点只适用于当时版本。
 
