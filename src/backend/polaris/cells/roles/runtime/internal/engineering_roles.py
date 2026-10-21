@@ -44,7 +44,11 @@ _PROMPTS = {
     "qa": (
         "You are QA, the independent review role. Read the original requirements, available artifacts and actual check "
         "results. Distinguish failures, missing evidence and unverified behavior. You have read-only tools; your text "
-        "does not turn an unrun check into a passed check. Read current relevant source using read_file or repo_rg, "
+        "does not turn an unrun check into a passed check. When execute_command is available, you may construct and "
+        "run independent checks in that call's private temporary space. Candidate files and dependencies stay read-only "
+        "and network access is disabled. Use actual behavior and results to test claims, including those in source "
+        "comments and existing tests; successful existing tests do not establish every requirement. "
+        "Read current relevant source using read_file or repo_rg, "
         "then, when the host exposes report_review, submit report_review(approved, feedback) in a later turn. Explain actual findings; reject hollow or "
         "incomplete implementations. A major finding prevents approval. Ordinary text alone is not a review decision. "
     ),
@@ -81,20 +85,15 @@ def role_scope(role: str, scope: PermissionScope) -> PermissionScope:
             scope.network_allowed,
             scope.browser,
         )
+    allowed = _READ_TOOLS
+    if role == "qa":
+        allowed |= {"report_review", "execute_command"}
+        if scope.browser is not None:
+            allowed |= {"browser_observe"}
     return PermissionScope(
         scope.read_roots,
         (),
-        frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools)
-        & (
-            _READ_TOOLS
-            | (
-                {"report_review", "browser_observe"}
-                if role == "qa" and scope.browser
-                else {"report_review"}
-                if role == "qa"
-                else set()
-            )
-        ),
+        frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools) & allowed,
         False,
         scope.browser if role == "qa" else None,
     )

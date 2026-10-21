@@ -303,7 +303,7 @@ async def test_non_director_is_read_only_even_with_full_host_grant(
         _native(
             ("read", "read_file", {"file": "source.txt"}),
             ("write", "write_file", {"file": "source.txt", "content": "overwritten"}),
-            ("exec", "execute_command", {"command": "true"}),
+            ("exec", "execute_command", {"command": "printf overwritten > source.txt"}),
         ),
         _native(text="Review finished; no acceptance evidence supplied."),
     ]:
@@ -319,11 +319,12 @@ async def test_non_director_is_read_only_even_with_full_host_grant(
     )
     assert result.status == "completed" and result.verification == "not_run", result.text
     assert target.read_text(encoding="utf-8") == "untouched"
-    assert _names(scripted_provider.requests[0]["body"]) == _READ
+    assert _names(scripted_provider.requests[0]["body"]) == (_READ | {"execute_command"} if role == "qa" else _READ)
     observations = [
         event["payload"] for event in service.store.load_events(result.session_id) if event["kind"] == "tool_observed"
     ]
     assert [item["ok"] for item in observations] == [True, False, False]
+    assert observations[-1]["exit_code"] is not None if role == "qa" else observations[-1]["exit_code"] is None
 
 
 async def test_collaborative_public_entry_uses_saved_workflow_and_skips_completed_planning(
@@ -650,7 +651,7 @@ async def test_cold_collaboration_with_current_grant_makes_real_progress_and_ter
     result = await fresh.run_collaborative(command.instruction, session_id=command.session_id)
     assert result.status == "completed" and result.verification == "passed", result.text
     assert len(result.checks) == 1 and result.checks[0].exit_code == 0
-    assert checked == [command.session_id]
+    assert checked and set(checked) == {command.session_id}
     assert (isolated_workspace / "result.txt").read_text(encoding="utf-8") == "current grant used"
     assert len(scripted_provider.requests) == 4
     events = fresh.store.load_events(command.session_id)

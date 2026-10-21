@@ -238,7 +238,7 @@
 
 ## 10. 执行门禁（最小集）
 
-1. `python -m pytest -q tests/architecture/test_kernelone_release_gates.py`
+1. `python -m pytest -q polaris/tests/architecture/test_kernelone_release_gates.py`
 2. `python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all`
 3. descriptor 语义变化时评估 `polaris.cells.context.catalog.internal.descriptor_pack_generator`；其 CLI 默认遍历全部 Cell 并写 pack/receipt，必须限定授权范围或隔离输出，禁止为单 Cell 文档同步广泛覆盖源码/资产。实际不存在的 pack 不得虚构已更新
 

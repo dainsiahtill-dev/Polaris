@@ -116,6 +116,8 @@ verification:
   tests:
   - polaris/cells/roles/runtime/tests/test_engineering_loop.py
   - polaris/cells/roles/runtime/tests/test_engineering_roles.py
+  - polaris/cells/roles/runtime/tests/test_engineering_qa_execution.py
+  - polaris/cells/roles/runtime/tests/test_engineering_qa_execution_recovery.py
   - polaris/cells/roles/runtime/tests/test_engineering_service.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification_selection.py

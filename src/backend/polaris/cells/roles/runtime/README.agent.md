@@ -22,6 +22,10 @@ No second controller, task table, ledger or role-session mirror is created for n
 
 Host `PermissionScope`, saved limits/deadline and current permission policy govern effects. Explicit empty roots/tools remain empty. Text advice cannot expand grants. File tools use KFS and real-path/symlink/root checks; command tools require actual OS containment and process-tree drain. PM/CE/QA are read-only by default. Unsupported containment fails visibly rather than executing unsandboxed.
 
+When the host grants `execute_command`, QA may use it for independent checks with no workspace write roots and no network. Each command gets K1's existing private temporary space; it cannot persist checker code or change candidate/dependency inputs. PM/CE still do not acquire this execution capability. Availability does not prove that QA selects useful checks or judges their results correctly.
+
+For service-owned native tools and final verification, the existing owner rechecks saved grants against current host policy after normalization and before each effect. A revocation denies the next effect with a real failed observation; it does not retroactively cancel an already running command. Explicit standalone components without a policy resolver have their static supplied scope, not a dynamic revocation promise. Offline commands with no effective write roots preserve the candidate revision; commands with possible writes or network retain conservative verification invalidation. Unknown effects still block recovery and acceptance even when the supplied scope was read-only.
+
 `fs.write:workspace/**` in the graph declares effect kind, not ambient authorization: each operation still needs the saved host grant. Engineering state writes stay under `runtime/engineering/*`; provider requests, tools and durable observations are auditable. KernelOne provides provider/native codecs, ToolSpec aliases/arg aliases, KFS/storage, sandbox/process and budget primitives, without importing the old business execution protocol.
 
 ## Verification, QA and recovery

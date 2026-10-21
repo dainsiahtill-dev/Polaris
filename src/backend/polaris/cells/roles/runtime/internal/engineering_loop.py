@@ -157,6 +157,7 @@ async def run_engineering_loop(
     verify: Callable[[tuple[str, ...], int, str], Awaitable[ToolObservation]] | None = None,
     observe: Callable[[dict[str, Any], int, str], Awaitable[ToolObservation]] | None = None,
     visual_binding: Callable[[], dict[str, Any]] | None = None,
+    authorize: Callable[[], None] | None = None,
     pending_ancestors: frozenset[tuple[int, str]] = frozenset(),
     project_run: bool = True,
     purpose: str = "role",
@@ -239,6 +240,7 @@ async def run_engineering_loop(
         review=review_current if command.role == "qa" else None,
         verify=verify_current if verify is not None and command.role == "director" else None,
         observe=observe_current if observe is not None and command.role in {"director", "qa"} else None,
+        authorize=authorize,
     )
     events = store.load_events(command.session_id)
     starts = [event for event in events if event["kind"] == "role_started" and event["role"] == command.role]
@@ -451,6 +453,9 @@ async def run_engineering_loop(
                     review_reports.append(tool_observation_payload(observation))
                 if (observation.tool in {"write_file", "edit_file"} and observation.ok) or (
                     observation.tool == "execute_command"
+                    # The actual K1 scope, never command text or a model claim,
+                    # determines whether this execution can change the candidate.
+                    and (tools.scope.write_roots or tools.scope.network_allowed)
                     and (observation.exit_code is not None or observation.interrupted or observation.timed_out)
                 ):
                     run = store.load_run(command.session_id, workspace=command.workspace)

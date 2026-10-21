@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import stat
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,7 @@ class EngineeringVerification:
         limits: RunLimits,
         cancel: asyncio.Event,
         writable_output_roots: tuple[Path, ...] = (),
+        authorize: Callable[[], None] | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
         if store.workspace != self.workspace:
@@ -108,6 +110,7 @@ class EngineeringVerification:
             ),
             limits,
             cancel,
+            authorize=authorize,
         )
 
     def _validate_outputs(self, roots: tuple[Path, ...]) -> tuple[Path, ...]:

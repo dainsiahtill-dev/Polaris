@@ -115,7 +115,7 @@ async def test_required_qa_reads_actual_file_cannot_write_and_reports_native_dec
         tool["function"]["name"] for tool in scripted_provider.requests[0]["body"].get("tools", [])
     }
     qa_tools = {tool["function"]["name"] for tool in scripted_provider.requests[1]["body"]["tools"]}
-    assert "report_review" in qa_tools and not qa_tools & {"write_file", "edit_file", "execute_command"}
+    assert {"report_review", "execute_command"} <= qa_tools and not qa_tools & {"write_file", "edit_file"}
     assert "Director done; not acceptance evidence." not in json.dumps(
         scripted_provider.requests[1]["body"], ensure_ascii=False
     )

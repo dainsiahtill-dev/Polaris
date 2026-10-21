@@ -48,7 +48,7 @@ def test_browser_authority_is_available_to_director_and_readonly_qa_only(isolate
         assert "browser_observe" in actual.enabled_tools
         if role == "qa":
             assert not actual.write_roots and not actual.network_allowed
-            assert "execute_command" not in actual.enabled_tools
+            assert "execute_command" in actual.enabled_tools
     for role in ("pm", "chief_engineer"):
         actual = role_scope(role, original)
         assert actual.browser is None and "browser_observe" not in actual.enabled_tools

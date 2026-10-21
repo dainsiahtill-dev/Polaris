@@ -539,6 +539,9 @@ class EngineeringRunService:
                 # Only _drive owns run terminal state, including final checks.
                 project_run=False,
                 purpose=purpose,
+                authorize=(lambda: self._authorize_tools(command.session_id))
+                if self._permission_resolver is not None
+                else None,
             )
         finally:
             self._active_role.reset(token)
@@ -1057,6 +1060,7 @@ class EngineeringRunService:
     ) -> Any:
         from polaris.cells.roles.runtime.internal.engineering_verification import EngineeringVerification
 
+        owner = self._owner.get()
         return EngineeringVerification(
             self.workspace,
             store=self.store,
@@ -1064,7 +1068,14 @@ class EngineeringRunService:
             limits=limits,
             cancel=cancel,
             writable_output_roots=self._writable_output_roots if output_roots is None else output_roots,
+            authorize=(lambda: self._authorize_tools(owner[0].session_id))
+            if owner is not None and self._permission_resolver is not None
+            else None,
         )
+
+    def _authorize_tools(self, session_id: str) -> None:
+        """Recheck current host policy without expanding the saved execution ceiling."""
+        self._revalidated_scope(self.store.load_run(session_id, workspace=self.workspace))
 
     async def _verify_director(
         self,

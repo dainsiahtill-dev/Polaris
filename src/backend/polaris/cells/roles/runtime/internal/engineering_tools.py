@@ -58,6 +58,7 @@ class EngineeringTools:
         review: Callable[[bool], None] | None = None,
         verify: Callable[[tuple[str, ...]], Awaitable[ToolObservation]] | None = None,
         observe: Callable[[dict[str, Any]], Awaitable[ToolObservation]] | None = None,
+        authorize: Callable[[], None] | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
         self.scope = scope
@@ -67,6 +68,7 @@ class EngineeringTools:
         self.review = review
         self.verify = verify
         self.observe = observe
+        self.authorize = authorize
         self.filesystem = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
         self.enabled = frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools) & (
             ENGINEERING_TOOLS
@@ -170,6 +172,8 @@ class EngineeringTools:
         name = tool
         try:
             name, args = self.normalize(tool, arguments)
+            if self.authorize is not None:
+                self.authorize()
             if self.cancel.is_set():
                 return ToolObservation(call_id, name, False, "Execution cancelled before dispatch.", None, True)
             self._remaining()
