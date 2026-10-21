@@ -26,6 +26,8 @@ from polaris.kernelone.fs.runtime import KernelFileSystem
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
+from .engineering_roles import _VERIFICATION_GUIDANCE
+
 
 def verification_observation(call_id: str, payload: dict[str, Any], max_output_bytes: int) -> ToolObservation:
     """Project a durable Verifier completion, never a model's claimed verdict."""
@@ -52,11 +54,15 @@ def verification_observation(call_id: str, payload: dict[str, Any], max_output_b
         raise ValueError("verification output limit must be positive")
     summary = {
         "verification": status,
+        # Reflect the completed attempt's actual binding, never original
+        # Director write permissions or a guessed historical profile.
+        "execution_scope": binding.get("scope") if isinstance(binding.get("scope"), dict) else None,
+        # Keep scope and a legal next step ahead of potentially long outputs.
+        "detail": f"{_VERIFICATION_GUIDANCE}\n{payload.get('detail', '')}",
         "verification_commands": commands,
         "checks": checks,
         "workspace_revision": payload.get("workspace_revision"),
         "attempt_seq": binding.get("attempt_seq"),
-        "detail": payload.get("detail", ""),
     }
     return ToolObservation(
         call_id,
