@@ -46,6 +46,7 @@ def verification_observation(call_id: str, payload: dict[str, Any], max_output_b
             or check.get("ok") is not True
             or check.get("exit_code") != 0
             or check.get("interrupted")
+            or check.get("timed_out")
             for check in checks
         )
     ):
@@ -348,12 +349,16 @@ class EngineeringVerification:
                 uncertain = (
                     self.cancel.is_set()
                     or len(observations) != len(commands)
-                    or any(item.interrupted or item.exit_code is None for item in observations)
+                    or any(item.interrupted or (item.exit_code is None and not item.timed_out) for item in observations)
                 )
                 status = (
                     "unknown"
                     if uncertain
-                    else ("passed" if all(item.ok and item.exit_code == 0 for item in observations) else "failed")
+                    else (
+                        "passed"
+                        if all(item.ok and item.exit_code == 0 and not item.timed_out for item in observations)
+                        else "failed"
+                    )
                 )
                 record(status, "Final checks observed against current inputs.")
         except ProcessTreeDrainError as drain_error:

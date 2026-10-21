@@ -302,8 +302,17 @@ class EngineeringTools:
         except ProcessTreeCancelledError as exc:
             return self._observation(call_id, name, False, str(exc), interrupted=True)
         except subprocess.TimeoutExpired as exc:
+            stdout = exc.output.decode("utf-8", "replace") if isinstance(exc.output, bytes) else (exc.output or "")
+            stderr = exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
             return self._observation(
-                call_id, name, False, f"Command timed out after physical cleanup: {exc}", interrupted=True
+                call_id,
+                name,
+                False,
+                f"Command timed out after {exc.timeout}s; physical cleanup completed. "
+                "It may have partially changed allowed files. Inspect current state before deciding the next action; "
+                f"the command was not replayed.\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                interrupted=self.cancel.is_set(),
+                timed_out=True,
             )
         except (ValueError, OSError, UnicodeError, PathSecurityError, WorkspaceSandboxUnavailableError) as exc:
             return self._observation(call_id, name, False, f"{type(exc).__name__}: {exc}")
@@ -363,10 +372,23 @@ class EngineeringTools:
         return remaining
 
     def _observation(
-        self, call_id: str, name: str, ok: bool, content: str, exit_code: int | None = None, interrupted: bool = False
+        self,
+        call_id: str,
+        name: str,
+        ok: bool,
+        content: str,
+        exit_code: int | None = None,
+        interrupted: bool = False,
+        timed_out: bool = False,
     ) -> ToolObservation:
         return ToolObservation(
-            call_id, name, ok, bounded_output(content, self.limits.max_tool_output_bytes), exit_code, interrupted
+            call_id,
+            name,
+            ok,
+            bounded_output(content, self.limits.max_tool_output_bytes),
+            exit_code,
+            interrupted,
+            timed_out,
         )
 
     @staticmethod

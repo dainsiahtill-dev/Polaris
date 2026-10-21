@@ -40,6 +40,9 @@ class ToolObservation:
     content: str
     exit_code: int | None
     interrupted: bool
+    # A physically drained command deadline is a failed observation, not a
+    # cancelled run or an unobserved effect. Missing historical values stay false.
+    timed_out: bool = False
 
 
 @dataclass(frozen=True)

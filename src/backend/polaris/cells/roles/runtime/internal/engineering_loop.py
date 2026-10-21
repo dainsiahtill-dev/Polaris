@@ -408,7 +408,7 @@ async def run_engineering_loop(
                     review_reports.append(asdict(observation))
                 if (observation.tool in {"write_file", "edit_file"} and observation.ok) or (
                     observation.tool == "execute_command"
-                    and (observation.exit_code is not None or observation.interrupted)
+                    and (observation.exit_code is not None or observation.interrupted or observation.timed_out)
                 ):
                     run = store.load_run(command.session_id, workspace=command.workspace)
                     store.update_run(

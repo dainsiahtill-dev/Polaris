@@ -626,9 +626,13 @@ class EngineeringSessionStore:
                 return False
         status = payload.get("verification")
         if status in {"passed", "failed"}:
-            if len(checks) != len(commands) or any(c.get("exit_code") is None or c.get("interrupted") for c in checks):
+            if len(checks) != len(commands) or any(
+                c.get("interrupted")
+                or (c.get("exit_code") is None and not (c.get("timed_out") is True and c.get("ok") is False))
+                for c in checks
+            ):
                 return False
-            passed = all(c.get("ok") is True and c.get("exit_code") == 0 for c in checks)
+            passed = all(c.get("ok") is True and c.get("exit_code") == 0 and not c.get("timed_out") for c in checks)
             if (status == "passed") != passed:
                 return False
         return True
@@ -894,7 +898,10 @@ class EngineeringSessionStore:
             and verification_payload.get("input_binding", {}).get("commands") == required_checks
             and len(checks) == len(required_checks)
             and all(
-                check.get("ok") is True and check.get("exit_code") == 0 and not check.get("interrupted")
+                check.get("ok") is True
+                and check.get("exit_code") == 0
+                and not check.get("interrupted")
+                and not check.get("timed_out")
                 for check in checks
             )
             and not self._has_pending_tools(connection, str(row["session_id"]))

@@ -1261,6 +1261,7 @@ class EngineeringRunService:
                         payload["content"],
                         payload["exit_code"],
                         payload["interrupted"],
+                        timed_out=payload.get("timed_out", False),
                     )
                 )
         return tuple(checks)
