@@ -5,6 +5,8 @@ Its goal is not to wrap a model with another chat shell, but to turn agent execu
 
 For Chinese readers, see [README.md](./README.md).
 
+**Current engineering path (2026-10-21):** new runs use the existing EngineeringRunService and one workspace-scoped engineering SQLite store, native tools, optional PM/CE collaboration, current-input verification and independent QA. TransactionKernel/session-orchestrator descriptions below explain the historical architecture, not new-run admission. ContextOS final-request auditing is implemented; semantic context-selection benefits and broad unattended reliability remain unproven. Long-term memory is deferred. See the [current implementation and evidence boundaries](docs/history/POLARIS_ENGINEERING_V2_PROGRESS_20261021.md).
+
 From an architectural point of view:
 
 - `KernelOne` is the runtime substrate

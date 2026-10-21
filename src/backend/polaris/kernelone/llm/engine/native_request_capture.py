@@ -77,6 +77,119 @@ def verified_native_capture_audit(*, request: Any, workspace: str | None) -> dic
         return None
 
 
+def _native_text_parts(content: object) -> list[str]:
+    """Return literal native text blocks, excluding tools, images and metadata."""
+    if isinstance(content, str):
+        return [content]
+    if isinstance(content, list):
+        return [
+            block["text"]
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+        ]
+    return []
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("ambiguous native feedback JSON")
+        result[key] = value
+    return result
+
+
+def _engineering_native_coverage(
+    body: Mapping[str, Any], *, protocol: str, goal: str, feedback_expected: bool
+) -> tuple[bool, str]:
+    """Observe goal text and correlated tool feedback in the actual native body.
+
+    This is content presence, not effect authority or semantic quality. Opaque,
+    unpaired or ambiguous results cannot prove that failure feedback is absent.
+    """
+    messages = body.get("messages")
+    if protocol not in {"openai_chat_completions", "anthropic_messages"} or not isinstance(messages, list):
+        return False, "unknown"
+    goal_present = False
+    pending: dict[str, str | None] = {}
+    seen: set[str] = set()
+    uncertain = False
+    failed = False
+    for message in messages:
+        if not isinstance(message, dict):
+            uncertain = True
+            continue
+        role = message.get("role")
+        content = message.get("content")
+        if role == "user" and goal:
+            goal_present = goal_present or any(goal in part for part in _native_text_parts(content))
+        calls: list[tuple[Any, Any]] = []
+        results: list[tuple[Any, Any, bool]] = []
+        if protocol == "openai_chat_completions":
+            if role == "assistant":
+                tool_calls = message.get("tool_calls", [])
+                if not isinstance(tool_calls, list):
+                    uncertain = True
+                    tool_calls = []
+                for call in tool_calls:
+                    if isinstance(call, dict) and isinstance(call.get("function"), dict):
+                        calls.append((call.get("id"), call["function"].get("name")))
+                    else:
+                        uncertain = True
+            elif role == "tool":
+                results.append((message.get("tool_call_id"), content, False))
+        elif isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    uncertain = True
+                elif block.get("type") == "tool_use":
+                    if role == "assistant":
+                        calls.append((block.get("id"), block.get("name")))
+                    else:
+                        uncertain = True
+                elif block.get("type") == "tool_result":
+                    if "is_error" in block and type(block["is_error"]) is not bool:
+                        uncertain = True
+                    if role == "user":
+                        results.append((block.get("tool_use_id"), block.get("content"), block.get("is_error") is True))
+                    else:
+                        uncertain = True
+        for call_id, tool in calls:
+            if not isinstance(call_id, str) or not call_id or not isinstance(tool, str) or not tool:
+                uncertain = True
+            elif call_id in seen:
+                uncertain = True
+                pending[call_id] = None
+            else:
+                seen.add(call_id)
+                pending[call_id] = tool
+        for call_id, result_content, native_error in results:
+            tool = pending.pop(call_id, None) if isinstance(call_id, str) else None
+            try:
+                observation = json.loads(
+                    "".join(_native_text_parts(result_content)), object_pairs_hook=_unique_json_object
+                )
+            except (ValueError, TypeError):
+                uncertain = True
+                continue
+            if (
+                tool is None
+                or not isinstance(observation, dict)
+                or observation.get("call_id") != call_id
+                or observation.get("tool") != tool
+                or not isinstance(observation.get("content"), str)
+                or type(observation.get("ok")) is not bool
+            ):
+                uncertain = True
+            elif observation["ok"] is False:
+                failed = True
+            elif native_error:
+                uncertain = True
+    if failed:
+        return goal_present, "present"
+    return goal_present, "unknown" if uncertain or pending or feedback_expected else "not_applicable"
+
+
 class NativeRequestCapturePort:
     """Persist the actual native request without minting a domain qualification.
 
@@ -201,8 +314,13 @@ class NativeRequestCapturePort:
                 evidence_coverage["pass"] = False
                 evidence_coverage["native_projection_coverage_unverified"] = True
         if self._request.context.get("engine_version") == "engineering_v2":
-            native_text = json.dumps(body, ensure_ascii=False)
             goal = str(self._request.input or "").strip()
+            goal_present, failure_feedback = _engineering_native_coverage(
+                body,
+                protocol=protocol,
+                goal=goal,
+                feedback_expected=bool(self._request.context.get("failure_feedback")),
+            )
             messages = body.get("messages") if isinstance(body.get("messages"), list) else body.get("input")
             messages = messages if isinstance(messages, list) else []
             system = body.get("system") or next(
@@ -210,10 +328,10 @@ class NativeRequestCapturePort:
                 None,
             )
             audit["coverage"] = {
-                "original_goal": "present" if protocol and goal and goal in native_text else "unknown",
+                "original_goal": "present" if goal_present else "unknown",
                 "role_instruction": "present" if protocol and system else "unknown",
                 "target_context": "unknown" if self._request.context.get("session_id") else "not_applicable",
-                "failure_feedback": "unknown" if self._request.context.get("failure_feedback") else "not_applicable",
+                "failure_feedback": failure_feedback,
                 "pm_contract": "not_applicable",
                 "chief_engineer_blueprint": "not_applicable",
             }

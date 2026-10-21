@@ -28,6 +28,9 @@ from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
 ENGINEERING_TOOLS = frozenset({"read_file", "repo_tree", "repo_rg", "write_file", "edit_file", "execute_command"})
+COMMAND_TIMEOUT_DEFAULT = 30
+COMMAND_TIMEOUT_MINIMUM = 1
+COMMAND_TIMEOUT_MAXIMUM = 120
 
 
 def bounded_output(content: str, maximum: int) -> str:
@@ -90,7 +93,7 @@ class EngineeringTools:
             raise ValueError("engineering write roots must stay inside workspace")
 
     def schemas(self) -> list[dict[str, Any]]:
-        """Derive schemas from the registry, narrowing edits to exact replacement."""
+        """Derive session-specific contracts without mutating the registry."""
         schemas = []
         for name in sorted(self.enabled):
             schema = ToolSpecRegistry.get_llm_schema(name)
@@ -107,6 +110,33 @@ class EngineeringTools:
                 parameters["required"] = ["file", "search", "replace"]
                 parameters.pop("anyOf", None)
                 function["description"] = "Replace one unique exact occurrence of search with replace in a UTF-8 file."
+            if name == "execute_command":
+                function = schema["function"]
+                persistence = (
+                    "For persistence, save files only within authorized workspace write roots: "
+                    + json.dumps([str(root) for root in self.scope.write_roots], ensure_ascii=False)
+                    + ". Path/security checks still apply; .polaris control files are inaccessible. "
+                    if self.scope.write_roots
+                    else "No workspace writes are authorized. "
+                )
+                function["description"] = (
+                    f"Run /bin/sh -c with initial cwd {self.workspace}. Each call starts a fresh shell and sandbox. "
+                    "/tmp, HOME, cache (XDG_CACHE_HOME), and output (POLARIS_SANDBOX_OUTPUT) are private and "
+                    "discarded after that call. Shell variables, cd, and files in those private directories do not "
+                    "persist across calls. "
+                    + persistence
+                    + (
+                        "Network access is allowed by host. "
+                        if self.scope.network_allowed
+                        else "Network access is disabled. "
+                    )
+                    + "Command execution is also bounded by the remaining run deadline."
+                )
+                function["parameters"]["properties"]["timeout"].update(
+                    default=COMMAND_TIMEOUT_DEFAULT,
+                    minimum=COMMAND_TIMEOUT_MINIMUM,
+                    maximum=COMMAND_TIMEOUT_MAXIMUM,
+                )
             schemas.append(schema)
         return schemas
 
@@ -183,7 +213,13 @@ class EngineeringTools:
             if name == "execute_command":
                 self._keys(args, {"command", "timeout"})
                 command = self._text(args, "command")
-                timeout = self._integer(args, "timeout", 30, minimum=1, maximum=120)
+                timeout = self._integer(
+                    args,
+                    "timeout",
+                    COMMAND_TIMEOUT_DEFAULT,
+                    minimum=COMMAND_TIMEOUT_MINIMUM,
+                    maximum=COMMAND_TIMEOUT_MAXIMUM,
+                )
                 completed = await self._process(
                     ["/bin/sh", "-c", command], timeout=timeout, writes=self.scope.write_roots
                 )

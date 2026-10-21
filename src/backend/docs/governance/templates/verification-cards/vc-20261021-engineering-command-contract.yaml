@@ -1,0 +1,24 @@
+id: vc-20261021-engineering-command-contract
+classification: pattern
+owner: roles.runtime
+status: component_verified_native_acceptance_pending
+problem: Provider-facing command contract omits actual private-temp lifetime and enforced timeout bounds.
+first_deviation: EngineeringTools.schemas projects registry schema without disclosing the physical execution environment.
+evidence: task13-pelican-benchmark/tool-contract-audit/report.json
+assumptions:
+  - Existing workspace grants already support durable helper files; a new scratch owner is unnecessary.
+  - KernelOne fresh tmpfs mounts explain the observed cross-command loss; ordering is not implicated.
+  - ToolSpecRegistry returns copies so a session projection can safely add execution-specific details.
+falsification:
+  - A second fresh command retains the original private tmp file, or authorized workspace writes do not persist.
+  - Final physical provider request already contains the declared lifecycle and bounds.
+mechanism: Derive accurate session-specific tool schema from the existing registry and use shared timeout constants for schema and execution.
+pre_mortem:
+  - Describing full workspace as writable when scope is empty or narrowed would mislead models; test explicit roots.
+  - Altering cached registry or bypassing native codecs would leak another session's context; inspect final provider bodies.
+verification:
+  - Real two-command sandbox probe and cold tools object over synthetic workspace.
+  - Real local HTTP/native provider codec schema regression; only remote model is replaced.
+  - Positive authorized persistence plus negative empty-write and invalid-timeout behavior.
+  - Adjacent native loop, timeout, context, recovery, QA and required source gates.
+acceptance: Original contract regression fails on baseline and passes after repair; adjacent legal progression and security hold. Fresh native delivery remains a separate acceptance.

@@ -1,0 +1,32 @@
+{
+  "permission_profiles": {
+    "offline-animated-web": {
+      "read_roots": [
+        ".",
+        "/home/dains/.pyenv/versions/3.12.3/lib/python3.12/site-packages/playwright",
+        "/home/dains/.pyenv/versions/3.12.3/lib/python3.12/site-packages/greenlet",
+        "/home/dains/.pyenv/versions/3.12.3/lib/python3.12/site-packages/pyee",
+        "/home/dains/.cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64"
+      ],
+      "write_roots": [
+        "."
+      ],
+      "enabled_tools": [
+        "read_file",
+        "repo_tree",
+        "repo_rg",
+        "write_file",
+        "edit_file",
+        "execute_command",
+        "consult_role",
+        "report_review",
+        "verify_project"
+      ],
+      "network_allowed": false
+    }
+  },
+  "default_permission_profile_id": "offline-animated-web",
+  "require_qa": true,
+  "run_timeout_seconds": 5400,
+  "verification_output_roots": []
+}

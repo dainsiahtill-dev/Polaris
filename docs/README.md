@@ -2,7 +2,7 @@
 
 最新更新：2026-10-21。
 
-当前检查点：Launcher 当前运行发现已在主线集成，真实模型实例已验证推送。原目录 e700 的 L1-01/02/03 原生 accepted、资源关闭，亲自质量验收均 FAIL，117 项未运行。后续角色试验首例 L1-02 也保留原生 accepted／亲自 FAIL；用户现指定[鹈鹕骑车 SVG 专项](superpowers/specs/2026-10-21-pelican-role-benchmark-design.md)比较五种角色链，独立目录不改原120项。旧[角色组合预试验](experiments/POLARIS_ROLE_COMBINATION_PILOT_20261021.md)只完成首例，其余九例未运行，不转写为已完成。
+当前检查点：当前按[工程能力收敛与动画网页验收](blueprints/POLARIS_ANIMATED_WEB_ACCEPTANCE_20261021.md)及[实施计划](superpowers/plans/2026-10-21-polaris-animated-web-acceptance.md)落地。长期记忆暂不做。静态SVG专项只完成两例，原生accepted、root看图及资源关闭，剩余八例未运行；它们不证明动画网页。当前修复通用工具契约与最终请求审计投影，随后冻结版本，用全新隔离网页动画验证。原目录L1-01/02/03的root质量FAIL和其余117项未运行保留；以下历史检查点只适用于当时版本。
 
 1. [历史经验报告全文](history/历史经验报告.md)：十章、68 个案例、历史验证边界与来源；保留原 06:58 UTC 检查点，后续 R13 核对见新重构方案第 2 节。
 2. [完整重构方案](blueprints/POLARIS_ROLE_AGENT_REFACTOR_20261020.md)：保留角色分工，删除模型合同维护，明确架构、删留、权限、恢复、验证与迁移。

@@ -13,7 +13,7 @@ Polaris 是一个面向复杂软件交付场景的 AI Agent 治理与运行时�
 
 - `KernelOne` 是底层运行时基座，负责上下文、执行、副作用、存储布局与事件等通用能力
 - `Cells` 是业务能力边界，负责把复杂系统拆成可治理的能力单元
-- `TransactionKernel` 和 `ContextOS` 是最关键的运行时真相链
+- 新工程运行由 `EngineeringRunService` 与单份工程 SQLite 记录负责；ContextOS 提供最终请求观测。`TransactionKernel` 属于历史执行链。
 
 ## 项目简介
 
@@ -50,6 +50,8 @@ Polaris 是一个面向复杂软件交付场景的 AI Agent 治理与运行时�
 ### 架构总览图
 
 ![Polaris 架构总览](docs/assets/diagrams/polaris-architecture-overview.svg)
+
+图中 TransactionKernel、TruthLog 等保留历史架构概念；新工程执行路径以本文“当前工程运行主线”和批准重构方案为准。
 
 这张图可以先帮助你建立一个最简模型：
 
@@ -93,10 +95,9 @@ Polaris 当前后端 canonical 主干围绕以下分层展开：
 - event and audit primitives
 - provider/tool/runtime contracts
 
-### 2. TransactionKernel
+### 2. TransactionKernel（历史执行链）
 
-`TransactionKernel` 是 turn 级执行内核，核心目标是让 Agent 的一次执行具备明确的提交边界，而不是无限 continuation。  
-相关代码和治理资产主要位于：
+`TransactionKernel` 是旧引擎的 turn 级执行内核，保留用于历史解释与明确的兼容读取。新工程路径不通过该内核准入；执行事实由现有 `EngineeringRunService` 和工程 SQLite 负责。历史代码和治理资产位于：
 
 - [src/backend/polaris/cells/roles/kernel](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel)
 - [adr-0071](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md)
@@ -124,58 +125,32 @@ Polaris 当前后端 canonical 主干围绕以下分层展开：
 
 历史文档里可能还能看到官职隐喻；对外理解和实际开发请优先使用工程术语。统一术语表见 [docs/TERMINOLOGY.md](/C:/Users/dains/Documents/GitLab/polaris/docs/TERMINOLOGY.md)。
 
-### 运行时主线
+### 当前工程运行主线
 
-Polaris 真正的心脏不是 UI，而是这条运行时真相链：
+2026-10-20 角色 Agent 重构后的新路径，由现有 [EngineeringRunService](src/backend/polaris/cells/roles/runtime/public/engineering_service.py) 统一承接 HTTP、CLI、UI、取消与恢复。
 
-1. 启动与装配：由 [backend_bootstrap.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/bootstrap/backend_bootstrap.py:45) 统一负责环境、配置、端口、FastAPI app 和 server 生命周期。
-2. 传输入口：HTTP 入口通过 [app_factory.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/delivery/http/app_factory.py:91) 组装，实时事件通过 [websocket_core.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/delivery/ws/endpoints/websocket_core.py:57) 推送。
-3. 会话编排：多回合角色执行由 [session_orchestrator.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/runtime/internal/session_orchestrator.py:448) 负责状态机、handoff 和 continuation policy。
-4. 单 turn 事务：一次执行的真正事务内核是 [turn_transaction_controller.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/turn_transaction_controller.py:136)，核心目标是杀掉隐式 continuation loop。
-5. 上下文入口：所有上下文构建统一经过 [gateway.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway.py:77)，再落到 `StateFirstContextOS`。
-6. 上下文四层：`TruthLog`、`WorkingState`、`ReceiptStore`、`ProjectionEngine` 分别位于 [truth_log_service.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/context/truth_log_service.py:321)、[working_state_manager.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/context/working_state_manager.py:11)、[receipt_store.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/context/receipt_store.py:13)、[projection_engine.py](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/context/projection_engine.py:86)。
+1. 服务固定 workspace、原始目标、host 权限与预算，同工作区保持一个写入者。
+2. 默认 Director 直接使用 native 工具；显式 collaborative 时执行 PM、Chief Engineer、Director 协作，规划/设计使用普通文本。
+3. 工具先归一化，再经 KFS、KernelOne 命令沙箱与进程底座实际执行，结果反馈回同一任务。
+4. 运行、消息、工具观察和验证保存在 `<workspace>/.polaris/runtime/engineering/sessions.sqlite3`；runtime.v2 从持久事实推送 UI。
+5. Verifier 绑定当前输入执行真实检查；需要独立 QA 时审查同一候选。角色回复结束不等于项目验收通过。
+6. ContextOS 保存最终 provider request、身份、工具及上下文占用，支持同 workspace 快照读取。
 
-这条主线决定了 Polaris 不只是“能调模型”，而是在尝试建立一个真正可治理的 Agent Runtime。
+旧 `session_orchestrator`、`TransactionKernel`、合同/hash/覆盖图准入不参与这条新写路径。底层归一化、隔离、取消回收、快照完整性继续复用。详见[批准方案](docs/blueprints/POLARIS_ROLE_AGENT_REFACTOR_20261020.md)及[当前结果与限制](docs/history/POLARIS_ENGINEERING_V2_PROGRESS_20261021.md)。
 
-## 核心优势
+## 核心能力与待验证优势
 
-### 1. Agent 执行是事务化设计，而不是无限 while-loop
+### 1. 自主工程循环与可恢复事实
 
-Polaris 的一个核心优势，是它把 Agent 执行当成“有提交边界的运行时过程”来设计，而不是把模型、工具和状态全部塞进一个隐式循环里。  
-这条主线主要落在：
+模型负责工程判断和持续修复；平台负责实际权限、隔离、执行观察、持久化、取消和恢复。普通构建/测试失败回到同一 Director，不要求模型修平台内部业务合同。已派发但缺少可靠终态的效果保持 UNKNOWN，不能盲目重放。
 
-- [src/backend/polaris/cells/roles/kernel](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/roles/kernel)
-- [adr-0071](/C:/Users/dains/Documents/GitLab/polaris/src/backend/docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md)
+这些机制已存在于新路径，实际可靠性仍需冻结版本下的交付、故障与恢复实验；源码和组件检查不能替代成品验收。
 
-这件事的意义在于：
+### 2. ContextOS 的设计目标与当前证据
 
-- turn 级决策、工具批次和 handoff 可以被约束
-- 执行过程可以被审计、验证和逐步标准化
-- 系统有机会摆脱 hidden continuation 和 transport-dependent commit
+原始设计将不可变事实、工作状态、大内容引用和只读工作视图分开，目标是帮助长任务保持正确上下文并按需读回。当前新工程路径已接入最终物理请求审计；已审计运行主要保留完整角色帧历史，尚未证明语义工作集选择带来质量或成本收益。不能将快照可读或审计修复称为上下文策略更好。
 
-这不是“多一个概念名”，而是把 Agent 从脚本化行为推进到运行时纪律。
-
-### 2. ContextOS 把上下文问题从 prompt 技巧提升为系统设计
-
-很多 Agent 工程在上下文上依赖经验：消息太长了就裁、太乱了就摘要。  
-Polaris 的方向不是这样。`ContextOS` 试图把上下文拆成不同层级的职责：
-
-- 事实日志
-- 工作状态
-- 大对象引用
-- 只读投影
-
-核心代码在：
-
-- [src/backend/polaris/kernelone/context](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/kernelone/context)
-
-它的价值是：
-
-- prompt 组装可以逐步脱离原始消息堆积
-- 审计、压缩、回放和隔离具备更清楚的结构
-- 运行时事实和控制面信息有机会真正分层
-
-当前这条链路还在继续硬化，但它已经是 Polaris 与普通聊天式 Agent 项目最本质的差异之一。
+长期记忆和学习不在当前动画网页实施范围内。当前任务先复用工程会话连续性，再以实际效果决定是否需要更多上下文机制。
 
 ### 3. 系统不是靠目录习惯维持，而是靠边界和治理资产维持
 
@@ -233,24 +208,11 @@ Polaris 很强调一个问题：
 
 这条路线说明 Polaris 想做的不是“更聪明一点的 Agent”，而是“更可治理一点的 Agent 系统”。
 
-### 6. Polaris 关注的是长链路协作，而不是单轮回答
+### 6. 长任务协作与真实验收
 
-从代码结构就能看出来，Polaris 不是围绕一次性问答设计的。  
-它显式建模了：
+PM 明确目标和完成条件，CE 提供设计与风险判断，Director 生成代码、运行检查并修复，QA 独立审查当前候选。协作深度应由任务需要和实验收益决定。旧 TaskMarket/Factory/TaskRuntime 结构不构成新工程准入。
 
-- 多角色协作
-- 任务市场
-- 执行 broker
-- evidence / archive / audit / runtime state
-
-对应路径包括：
-
-- [src/backend/polaris/cells/runtime/task_market](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/runtime/task_market)
-- [src/backend/polaris/cells/runtime/task_runtime](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/runtime/task_runtime)
-- [src/backend/polaris/cells/runtime/execution_broker](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/runtime/execution_broker)
-- [src/backend/polaris/cells/factory/pipeline](/C:/Users/dains/Documents/GitLab/polaris/src/backend/polaris/cells/factory/pipeline)
-
-这让 Polaris 更像一个 Agent 工程平台，而不是“套了工具调用的聊天窗口”。
+平台 accepted、独立成品质量和资源关闭分别报告。已有原目录样本出现 accepted 但事后质量检查失败，不能据此宣称稳定无人值守或优于其他工具。当前以[鹈鹕骑车动画网页](docs/blueprints/POLARIS_ANIMATED_WEB_ACCEPTANCE_20261021.md)验证工程能力，原120项扩域与竞品对照仍须独立完成。
 
 ## 仓库结构
 

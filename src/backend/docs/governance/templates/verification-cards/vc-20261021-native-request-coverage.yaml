@@ -1,0 +1,21 @@
+id: vc-20261021-native-request-coverage
+classification: pattern
+owner: KernelOne native request capture
+status: component_verified_native_acceptance_pending
+problem: Final request coverage flags falsely label escaped user goals and actual native negative tool feedback.
+first_deviation: Projection searched JSON serialization or an unused semantic context field instead of actual native body structure.
+assumptions:
+  - Coverage is presence only; it does not establish effect truth or context usefulness.
+  - Native tool result identity and top-level observation boolean provide stronger evidence than quoted text.
+  - Unsupported, malformed, opaque or ambiguous protocol data must retain UNKNOWN.
+falsification:
+  - Success output containing quoted failure text becomes a false negative-feedback present flag.
+  - Unpaired, mismatched, malformed or duplicate records are treated as certainly absent.
+  - The fix changes transmitted payloads, authority or runtime state ownership.
+mechanism: Read-only structural projection of actual final user text and correlated native results; no payload mutation.
+verification:
+  - Original valid RED red3.xml 26 failed and 14 passed; final native request bytes persisted and compared.
+  - Independent malformed is_error counterexample failed before the two-line guard; expanded RED7failed/61passed then GREEN102passed.
+  - Independent closure90passed and root joint505passed; overlap is not added as unique coverage.
+acceptance: Final native goal/feedback presence and unknown cases accurately projected, with send bytes unchanged and adjacent tests passing. No delivery-quality or semantic-memory superiority claim.
+evidence: task15-capability-implementation/contextos-audit/implementation and independent-review/closure-review.json
