@@ -1,0 +1,28 @@
+id: vc-20261022-current-visual-projection
+classification: pattern
+owner: roles.runtime
+status: bounded_source_qualified_native_delivery_pending
+design: docs/blueprints/POLARIS_CURRENT_VISUAL_PROJECTION_20261022.md
+evidence_root: ~/.polaris/audit_archives/autonomous-delivery-20261018/engineering-v2-refactor-20261020/task21-current-visual-projection/
+timing: Implementation plan and RED predate the patch; this repository card records integration review, not a backdated pre-fix approval.
+assumptions:
+  - Existing same-session journal and complete host binding can positively attribute obsolete browser pixels.
+  - verification_seq alone changes a receipt, not the rendered candidate.
+  - Native call/result facts and original references must survive model-input selection.
+pre_mortem:
+  - Copied continuation messages may make a unique original observation look ambiguous.
+  - Missing bindings or historical references must not silently authorize omission.
+  - A helper-only test may miss the real loop consumer or mutate historical SQLite.
+falsifiers:
+  - Real saved input still fails unchanged admission after production projection.
+  - Any current/reference pixel, native pair, error or original journal fact is lost or changed.
+verification:
+  - polaris/cells/roles/runtime/tests/test_engineering_visual_projection.py
+  - polaris/cells/roles/runtime/tests/test_engineering_visual_loop.py
+  - polaris/cells/roles/runtime/tests/test_engineering_qa_execution_recovery.py
+  - polaris/tests/architecture/test_engineering_no_legacy_admission.py
+  - polaris/tests/architecture/test_kernelone_release_gates.py
+  - Actual r04 readonly producer/budget/codec replay in two fresh processes.
+  - KernelOne ALL, scoped Ruff/Mypy, catalog fail-on-new with historical debt retained.
+acceptance: All bounded counterexamples and adjacent consumers pass, review blockers close, then freeze a fresh native project; component qualification is not delivery.
+remaining_unknown: Actual visual tokens, billing, public historical-image retrieval, general long-history capacity and end-to-end quality benefit.

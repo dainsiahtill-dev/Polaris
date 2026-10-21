@@ -1,5 +1,7 @@
 # Polaris ContextOS：状态优先的上下文编译、预算与请求证据
 
+> **2026-10-22 版本边界**：本文以下描述 10 月 14 日旧引擎。新 Engineering 循环没有默认调用整套 StateFirst／TurnEngine；保留最终 provider request 审计。r04 的实际失败输入含 38 张旧候选图与 4 张当前图，历史像素累计触发本地结构化预算拒绝。当前修复在原 roles.runtime owner 内派生图片输入，原始 journal、调用／结果／错误与当前图片保留；真实只读输入实验通过原预算和两种 codec。该估算不是实际视觉 token，尚未证明交付率提高或比普通历史上下文更优，长期记忆暂不实施。方案与精确证据见仓库 `docs/blueprints/POLARIS_CURRENT_VISUAL_PROJECTION_20261022.md`。
+
 ## 摘要
 
 从 TruthLog、WorkingState、StateFirst 七阶段投影、RoleSignalPlane、内容引用及预算出发，逐层分析模型输入的生成与观测。区分默认链路、可选记忆组件、规范请求与最终 wire，说明信息损失、快照保留、并发验证和接入覆盖的实际限制。

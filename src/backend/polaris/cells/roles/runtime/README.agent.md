@@ -15,6 +15,7 @@ The single new-run fact store is `<workspace>/.polaris/runtime/engineering/sessi
 - `engineering_roles.py`: role identity, ordinary-text advice and read-only consultation.
 - `engineering_verification.py`: real checks against the current source candidate.
 - `engineering_session.py`: durable observations, committed events and workspace execution lock.
+- `engineering_visual.py`: derives visual model input from the same journal. A complete same-role host capture binding can omit obsolete browser pixels while preserving their metadata, tool results and original stored images. All current capture sets, original user references and unattributed inputs remain; verification receipt sequence alone does not make an image stale. Explicit private host pins are supported, but a public historical-image comparison/retrieval workflow is not wired.
 
 No second controller, task table, ledger or role-session mirror is created for new runs. Legacy `runtime/roles/*` remains declared only to explain old owned history; it is not a writable namespace for engineering.
 
@@ -37,6 +38,8 @@ Recovery preserves run/workspace identity, original permissions/checks/deadline 
 ## Realtime and final request audit
 
 Committed engineering facts publish as `event.engineering` through the existing Nats-JetStream runtime.v2 `/v2/ws/runtime` rail; HTTP serves initial/reconnect snapshots, explicit refresh and one-shot commands. No polling/SSE fallback or second WebSocket. ContextOS exposes actual final provider requests with role/tool schema/tool_choice/response_format/token/window evidence and readable same-workspace snapshot refs. Persisted request/snapshot counts are not physical provider HTTP totals or billing evidence.
+
+The existing `request_prepared` event records derived visual selection counts and attribution reasons. It is auxiliary input-production evidence, not a sent provider body. KernelOne budget and native protocol guards still decide admission; required/current/reference content that exceeds the budget remains an explicit failure. Serialized estimates are not actual visual token costs. This projection does not restore the retired StateFirst/TurnEngine business chain.
 
 ## Historical compatibility and optional utilities
 

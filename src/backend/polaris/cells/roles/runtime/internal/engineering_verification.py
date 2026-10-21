@@ -30,6 +30,10 @@ from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 from .engineering_roles import _VERIFICATION_GUIDANCE
 
 
+class CandidateObservationUnavailableError(ValueError):
+    """Current input observation is incomplete; this grants no verification authority."""
+
+
 def verification_observation(call_id: str, payload: dict[str, Any], max_output_bytes: int) -> ToolObservation:
     """Project a durable Verifier completion, never a model's claimed verdict."""
     status = payload.get("verification", "unknown")
@@ -227,9 +231,9 @@ class EngineeringVerification:
                 content = filesystem.workspace_read_bytes(str(path))
                 value = {"metadata": metadata, "sha256": hashlib.sha256(content).hexdigest()}
             else:
-                raise ValueError(f"verification cannot bind special input: {path}")
+                raise CandidateObservationUnavailableError(f"verification cannot bind special input: {path}")
             if self._metadata(path.lstat()) != metadata:
-                raise ValueError(f"verification input changed while observed: {path}")
+                raise CandidateObservationUnavailableError(f"verification input changed while observed: {path}")
             entries[str(path)] = value
 
         for root in outer:

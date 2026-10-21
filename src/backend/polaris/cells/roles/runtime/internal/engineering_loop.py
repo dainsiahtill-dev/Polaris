@@ -329,8 +329,15 @@ async def run_engineering_loop(
             if limits.deadline is not None and time.time() >= limits.deadline:
                 return finish("failed", "Engineering run deadline exceeded.")
             turn_seq = store.append_event(command.session_id, kind="turn_started", role=command.role, payload={})
+            visual_projection: dict[str, Any] = {}
             options: dict[str, Any] = {
-                "messages": build_visual_messages(messages),
+                "messages": build_visual_messages(
+                    messages,
+                    events=store.load_events(command.session_id),
+                    role=command.role,
+                    binding_provider=visual_binding if scope.browser is not None else None,
+                    audit=visual_projection,
+                ),
                 "tools": tools.schemas(),
                 "tool_choice": "auto",
             }
@@ -354,6 +361,7 @@ async def run_engineering_loop(
                 payload={
                     "turn_seq": turn_seq,
                     "evidence_kind": "auxiliary_prepared_request",
+                    "visual_projection": visual_projection,
                     "request": request.to_dict(),
                 },
             )

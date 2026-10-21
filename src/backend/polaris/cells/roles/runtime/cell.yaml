@@ -123,6 +123,7 @@ verification:
   - polaris/cells/roles/runtime/tests/test_engineering_verification_selection.py
   - polaris/cells/roles/runtime/tests/test_engineering_recovery.py
   - polaris/cells/roles/runtime/tests/test_engineering_context_audit.py
+  - polaris/cells/roles/runtime/tests/test_engineering_visual_projection.py
   - polaris/cells/roles/runtime/tests/test_engineering_events.py
   - polaris/tests/architecture/test_engineering_no_legacy_admission.py
   gaps:

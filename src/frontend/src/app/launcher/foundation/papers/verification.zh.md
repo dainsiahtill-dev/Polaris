@@ -1,5 +1,7 @@
 # 当前验证、同任务修复与最终接受
 
+> **2026-10-22 版本边界**：以下 ExecutionBroker／VerificationGroup 等段落保留旧引擎分析。当前新工程的实际检查、候选绑定、独立 QA 与资源由 `EngineeringRunService` 的同一 SQLite 记录；不恢复旧合同准入。QA 现可在 host 授权下执行隔离只读检查，但两臂真实实验没有证明验收收益；r04 QA 的局部坐标推导错误也已封存。命令 exit 0、QA 拒绝或平台 accepted 都不能代替正确质量判断。详见仓库 `docs/experiments/POLARIS_QA_READONLY_EXECUTION_20261022.md`；当前仍没有动画网页完整交付成功结论。
+
 ## 5. 真实验证：许可、执行、证明与当前性分开
 
 Verifier Policy 只评估 proposal，不 mint execution authority。ExecutionBroker 从 bootstrap-bound owner port 解析 exact DTO，验证 workspace/project/run/contract/obligation、argv/cwd 与 executable identity；spawn 前重新解析 authority，若已变化则拒绝。随后冻结全部声明输入，绑定 input hash，启动受控进程并产出 owner 收据。
