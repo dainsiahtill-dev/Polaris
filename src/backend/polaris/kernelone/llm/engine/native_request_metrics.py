@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 
@@ -22,6 +25,49 @@ def canonical_json_chars(value: Any) -> int:
         )
     except (TypeError, ValueError):
         return len(str(value))
+
+
+def _content_images(content: object) -> Iterator[Mapping[str, Any]]:
+    """Inspect content blocks, never image-shaped tool arguments or text."""
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if not isinstance(block, Mapping):
+            continue
+        if block.get("type") in ("image", "image_url", "input_image"):
+            yield block
+        elif block.get("type") == "tool_result":
+            yield from _content_images(block.get("content"))
+
+
+def _inline_image_bytes(block: Mapping[str, Any]) -> bytes | None:
+    """Decode supplied bytes only. URLs/file references stay unknown."""
+    media_types = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+    if block.get("type") == "image":
+        source = block.get("source")
+        if (
+            not isinstance(source, Mapping)
+            or source.get("type") != "base64"
+            or not isinstance(source.get("media_type"), str)
+            or source.get("media_type") not in media_types
+        ):
+            return None
+        data = source.get("data")
+    else:
+        value = block.get("image_url")
+        url = value.get("url") if isinstance(value, Mapping) else value
+        if not isinstance(url, str):
+            return None
+        header, separator, data = url.partition(",")
+        if not separator or header not in {f"data:{media_type};base64" for media_type in media_types}:
+            return None
+    if not isinstance(data, str):
+        return None
+    try:
+        decoded = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return decoded or None
 
 
 def provider_native_request_metrics(
@@ -74,7 +120,7 @@ def provider_native_request_metrics(
     final_tokens = message_tokens + tool_tokens + response_tokens + request_control_tokens
     window = max(0, int(context_window_tokens))
     utilization = round(final_tokens / window, 4) if window > 0 else None
-    return {
+    metrics: dict[str, Any] = {
         "audit_scope": "provider_native_wire",
         "native_protocol": protocol,
         "message_count": len(native_messages),
@@ -93,3 +139,28 @@ def provider_native_request_metrics(
         "context_underutilized": bool(window >= 8192 and final_tokens < int(window * 0.15)),
         "available_token_headroom": max(0, window - final_tokens),
     }
+    images = [
+        image
+        for message in native_messages
+        if isinstance(message, Mapping)
+        for image in _content_images(message.get("content"))
+    ]
+    if images:
+        decoded = [_inline_image_bytes(image) for image in images]
+        metrics.update(
+            image_count=len(images),
+            image_bytes=sum(len(data) for data in decoded if data is not None)
+            if all(data is not None for data in decoded)
+            else None,
+            image_sha256=[hashlib.sha256(data).hexdigest() for data in decoded if data is not None],
+            visual_token_estimate=None,
+            visual_token_status="unknown",
+            serialized_message_token_estimate=message_tokens,
+            serialized_final_request_token_estimate=final_tokens,
+            message_token_estimate=None,
+            final_request_token_estimate=None,
+            context_window_utilization=None,
+            context_underutilized=None,
+            available_token_headroom=None,
+        )
+    return metrics

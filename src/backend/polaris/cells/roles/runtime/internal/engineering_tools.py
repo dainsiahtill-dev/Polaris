@@ -55,8 +55,9 @@ class EngineeringTools:
         cancel: asyncio.Event,
         *,
         consult: Callable[[str, str], Awaitable[str]] | None = None,
-        review: Callable[[], None] | None = None,
+        review: Callable[[bool], None] | None = None,
         verify: Callable[[tuple[str, ...]], Awaitable[ToolObservation]] | None = None,
+        observe: Callable[[dict[str, Any]], Awaitable[ToolObservation]] | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
         self.scope = scope
@@ -65,11 +66,13 @@ class EngineeringTools:
         self.consult = consult
         self.review = review
         self.verify = verify
+        self.observe = observe
         self.filesystem = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
         self.enabled = frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools) & (
             ENGINEERING_TOOLS
             | ({"consult_role"} if consult is not None else set())
             | ({"report_review"} if review is not None else set())
+            | ({"browser_observe"} if observe is not None and scope.browser is not None else set())
             | (
                 {"verify_project"}
                 if verify is not None
@@ -170,6 +173,10 @@ class EngineeringTools:
             if self.cancel.is_set():
                 return ToolObservation(call_id, name, False, "Execution cancelled before dispatch.", None, True)
             self._remaining()
+            if name == "browser_observe":
+                if self.observe is None:
+                    raise ValueError("browser_observe requires the active session owner")
+                return await self.observe(args)
             if name == "verify_project":
                 self._keys(args, {"commands"})
                 commands = args.get("commands")
@@ -194,7 +201,7 @@ class EngineeringTools:
                     not isinstance(item, str) or not item.strip() for item in findings
                 ):
                     raise ValueError("major_findings must contain nonempty text")
-                self.review()
+                self.review(args["approved"] and not findings)
                 return self._observation(
                     call_id,
                     name,

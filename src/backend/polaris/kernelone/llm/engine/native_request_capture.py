@@ -437,6 +437,13 @@ class NativeRequestCapturePort:
             "final_request_token_estimate",
             "context_window_tokens",
             "context_window_utilization",
+            "image_count",
+            "image_bytes",
+            "image_sha256",
+            "visual_token_estimate",
+            "visual_token_status",
+            "serialized_message_token_estimate",
+            "serialized_final_request_token_estimate",
             "coverage",
         )
         usage = provider_request.get("usage_observation") or self._usage_evidence(None)

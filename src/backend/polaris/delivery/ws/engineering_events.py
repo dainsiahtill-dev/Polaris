@@ -18,7 +18,16 @@ from polaris.kernelone.storage import resolve_storage_roots
 
 def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Keep original full facts in SQLite; send explicit, bounded previews."""
-    selected = dict(payload)
+
+    def without_pixels(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: without_pixels(item) for key, item in value.items() if key != "data_base64"}
+        if isinstance(value, (list, tuple)):
+            return [without_pixels(item) for item in value]
+        return value
+
+    # Includes nested check observations. The durable input remains untouched.
+    selected = without_pixels(payload)
     if kind == "request_prepared":
         selected = {key: payload[key] for key in ("turn_seq", "evidence_kind") if key in payload}
         selected["payload_omitted"] = True
@@ -37,7 +46,7 @@ def compact_engineering_payload(kind: str, payload: dict[str, Any]) -> dict[str,
         arguments = payload.get("arguments", {})
         if isinstance(arguments, dict):
             selected["arguments"] = {
-                key: value for key, value in arguments.items() if key in {"file", "command", "pattern", "role"}
+                key: value for key, value in arguments.items() if key in {"file", "command", "pattern", "role", "entry"}
             }
             if len(selected["arguments"]) != len(arguments):
                 selected["arguments_omitted"] = True

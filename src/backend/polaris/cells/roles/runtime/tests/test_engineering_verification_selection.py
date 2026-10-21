@@ -6,7 +6,6 @@ import asyncio
 import json
 import shlex
 import sqlite3
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -17,6 +16,7 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     RoleRunCommand,
     RunLimits,
     ToolObservation,
+    tool_observation_payload,
 )
 
 RTK = Path("/home/dains/.headroom/bin/rtk")
@@ -74,7 +74,7 @@ async def test_real_selected_checks_merge_reselect_and_survive_windowed_cold_sna
     store, verifier = setup(tmp_path, (first, first))
     assert store.load_run("selection", workspace=tmp_path).get("verification_commands") == [first, first]
     _parent, checks = await request(store, verifier, tmp_path, [first, second, second])
-    assert [c.exit_code for c in checks] == [0, 0, 0]
+    assert [c.exit_code for c in checks] == [0, 0, 0], checks
     row = store.load_run("selection", workspace=tmp_path)
     assert row["required_checks"] == [first, first]
     assert row["verification_commands"] == [first, first, second]
@@ -153,7 +153,7 @@ async def test_complete_parent_recovery_is_exact_atomic_idempotent_and_does_not_
     ]
     assert before_children == after_children and len(checks) == 1
     replies = [m for m in cold.load_message_history("selection") if m.get("tool_call_id") == parent[1]]
-    assert len(replies) == 1 and json.loads(replies[0]["content"]) == asdict(observation)
+    assert len(replies) == 1 and json.loads(replies[0]["content"]) == tool_observation_payload(observation)
     assert cold.load_run("selection", workspace=tmp_path)["project_outcome"] == "accepted"
 
 

@@ -104,6 +104,7 @@ class EngineeringVerification:
                 self.output_roots,
                 frozenset({"execute_command"}) if executable else frozenset(),
                 scope.network_allowed,
+                scope.browser,
             ),
             limits,
             cancel,

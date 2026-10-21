@@ -1,0 +1,20 @@
+{
+  "schema_version": "factory-bench/2",
+  "catalog_kind": "internal_animated_web_native_visual_probe",
+  "internal_test_only": true,
+  "projects": [
+    {
+      "id": "VIS-PEL-WEB-01",
+      "level": null,
+      "domain": "visual_composition_and_interaction",
+      "project_type": "offline_animated_website",
+      "primary_language": "html_css_javascript_svg",
+      "title": "鹈鹕骑自行车动画网页",
+      "brief": "Build an offline animated website of a pelican riding a bicycle, with working play/pause and speed controls.",
+      "creative_hook": "A recognizable pelican and coherent bicycle form one convincing animated riding scene.",
+      "checks": [],
+      "fixture_directory": "fixtures/pelican_web_visual",
+      "source": "https://simonwillison.net/2024/Oct/25/pelicans-on-a-bicycle/"
+    }
+  ]
+}

@@ -290,6 +290,24 @@ class LoggingConfig(BaseModel):
         return normalized
 
 
+class EngineeringBrowserObservationConfig(BaseModel):
+    """Explicit host browser runtime; paths are not supplied by the model."""
+
+    model_config = {"extra": "forbid", "validate_assignment": True}
+
+    executable: str
+    python_executable: str
+    python_paths: tuple[str, ...]
+    require_visual_review: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="after")
+    def validate_runtime_paths(self) -> EngineeringBrowserObservationConfig:
+        for value in (self.executable, self.python_executable, *self.python_paths):
+            if not value or "\0" in value or not Path(value).is_absolute():
+                raise ValueError("browser runtime paths must be absolute non-empty strings")
+        return self
+
+
 class EngineeringPermissionProfile(BaseModel):
     """Host-configured filesystem and command authority; never model supplied."""
 
@@ -301,6 +319,7 @@ class EngineeringPermissionProfile(BaseModel):
         {"read_file", "repo_tree", "repo_rg", "write_file", "edit_file", "execute_command", "verify_project"}
     )
     network_allowed: bool = False
+    browser: EngineeringBrowserObservationConfig | None = None
 
 
 class ServerConfig(BaseModel):

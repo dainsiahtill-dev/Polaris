@@ -8,8 +8,11 @@ attempt without trusting provider adapter self-declarations.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, NoReturn
 from urllib.parse import urlsplit
@@ -290,6 +293,41 @@ def _merge_same_role_messages(messages: list[dict[str, Any]]) -> list[dict[str, 
     return merged
 
 
+def _openai_message_content(content: object) -> str | list[dict[str, Any]]:
+    """Retain structured content; translate only canonical inline images."""
+    if not isinstance(content, list):
+        return str(content or "")
+    blocks: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            raise FactoryProviderNativeRequestProjectionError("native_message_content_block_invalid")
+        if block.get("type") != "image":
+            blocks.append(deepcopy(block))
+            continue
+        source = block.get("source")
+        if not isinstance(source, dict) or source.get("type") != "base64":
+            raise FactoryProviderNativeRequestProjectionError("native_message_image_invalid")
+        media_type, data = source.get("media_type"), source.get("data")
+        if (
+            not isinstance(media_type, str)
+            or media_type not in {"image/png", "image/jpeg", "image/gif", "image/webp"}
+            or not isinstance(data, str)
+        ):
+            raise FactoryProviderNativeRequestProjectionError("native_message_image_invalid")
+        try:
+            decoded = base64.b64decode(data, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise FactoryProviderNativeRequestProjectionError("native_message_image_invalid") from exc
+        if not decoded:
+            raise FactoryProviderNativeRequestProjectionError("native_message_image_invalid")
+        blocks.append({"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{data}"}})
+    return blocks
+
+
+def _openai_content_blocks(content: str | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return content if isinstance(content, list) else [{"type": "text", "text": content}]
+
+
 def build_openai_native_messages(
     messages: object,
     *,
@@ -313,29 +351,44 @@ def build_openai_native_messages(
         role = str(raw.get("role") or "").strip().lower()
         if role == "assistant" and raw.get("tool_calls"):
             normalized.append(
-                {**{key: raw[key] for key in ("content", "tool_calls", "name") if key in raw}, "role": role}
+                {**{key: deepcopy(raw[key]) for key in ("content", "tool_calls", "name") if key in raw}, "role": role}
             )
             seen_non_system = True
             continue
         if role == "tool" and raw.get("tool_call_id"):
             normalized.append(
-                {**{key: raw[key] for key in ("content", "tool_call_id", "name") if key in raw}, "role": role}
+                {**{key: deepcopy(raw[key]) for key in ("content", "tool_call_id", "name") if key in raw}, "role": role}
             )
             seen_non_system = True
             continue
-        content = str(raw.get("content") or "")
-        if not content.strip():
+        content = _openai_message_content(raw.get("content"))
+        if not content or (isinstance(content, str) and not content.strip()):
             continue
         if role == "tool":
-            role, content = "user", f"【工具结果】\n{content}"
+            role = "user"
+            content = (
+                f"【工具结果】\n{content}"
+                if isinstance(content, str)
+                else [{"type": "text", "text": "【工具结果】\n"}, *content]
+            )
         elif role not in {"system", "user", "assistant"}:
             role = "user"
         if role == "system" and seen_non_system:
-            role, content = "user", f"【系统提示】\n{content}"
+            role = "user"
+            content = (
+                f"【系统提示】\n{content}"
+                if isinstance(content, str)
+                else [{"type": "text", "text": "【系统提示】\n"}, *content]
+            )
         if role != "system":
             seen_non_system = True
         if normalized and normalized[-1]["role"] == role and not normalized[-1].get("tool_calls"):
-            normalized[-1]["content"] = f"{normalized[-1]['content']}\n\n{content}"
+            previous = normalized[-1]["content"]
+            normalized[-1]["content"] = (
+                [*_openai_content_blocks(previous), *_openai_content_blocks(content)]
+                if isinstance(previous, list) or isinstance(content, list)
+                else f"{previous}\n\n{content}"
+            )
         else:
             normalized.append({"role": role, "content": content})
     if not normalized:
@@ -346,6 +399,22 @@ def build_openai_native_messages(
         user_content = "(continue)" if not prompt_text or len(prompt_text) <= combined_len * 0.9 else prompt_text
         normalized.append({"role": "user", "content": user_content})
     return normalized
+
+
+def validate_openai_responses_native_messages(messages: list[dict[str, Any]]) -> None:
+    """Do not send Chat image blocks through the unmigrated Responses route.
+
+    The explicit Responses input adapter is separate. This guard covers the
+    shared canonical-message projection, whose text behavior stays unchanged.
+    """
+    if any(
+        isinstance(message.get("content"), list)
+        and any(isinstance(block, dict) and block.get("type") == "image_url" for block in message["content"])
+        for message in messages
+    ):
+        raise FactoryProviderNativeRequestProjectionError(
+            "provider_native_request_visual_protocol_unsupported:openai_responses"
+        )
 
 
 def build_anthropic_native_messages(

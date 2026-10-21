@@ -13,7 +13,12 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from polaris.bootstrap.config import Settings
-from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RoleRunCommand, RunLimits
+from polaris.cells.roles.runtime.public.contracts.engineering_run import (
+    BrowserObservationConfig,
+    PermissionScope,
+    RoleRunCommand,
+    RunLimits,
+)
 from polaris.cells.roles.runtime.public.engineering_service import (
     EngineeringRunService,
     EngineeringSessionConflictError,
@@ -55,12 +60,24 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
         "consult_role",
         "report_review",
         "verify_project",
+        "browser_observe",
     }
     tools = frozenset(ToolSpecRegistry.get_canonical(name) for name in profile.enabled_tools)
     if tools - supported:
         raise ValueError("engineering profile contains unsupported tools: " + ", ".join(sorted(tools - supported)))
     return PermissionScope(
-        _roots(workspace, profile.read_roots), _roots(workspace, profile.write_roots), tools, profile.network_allowed
+        _roots(workspace, profile.read_roots),
+        _roots(workspace, profile.write_roots),
+        tools,
+        profile.network_allowed,
+        browser=BrowserObservationConfig(
+            profile.browser.executable,
+            profile.browser.python_executable,
+            profile.browser.python_paths,
+            profile.browser.require_visual_review,
+        )
+        if profile.browser is not None
+        else None,
     )
 
 

@@ -12,12 +12,14 @@ from typing import Any, Literal
 from polaris.cells.roles.runtime.internal.engineering_roles import register_consult_tool, role_instruction, role_scope
 from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
 from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools, bounded_output
+from polaris.cells.roles.runtime.internal.engineering_visual import build_visual_messages, require_current_visual_input
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     PermissionScope,
     RoleRunCommand,
     RoleRunResult,
     RunLimits,
     ToolObservation,
+    tool_observation_payload,
 )
 from polaris.kernelone.llm.contracts.tool import ToolCall
 from polaris.kernelone.llm.engine.client import ResilientLLMClient
@@ -149,6 +151,8 @@ async def run_engineering_loop(
     client: ResilientLLMClient,
     consult: Callable[[str, str, int, str], Awaitable[str]] | None = None,
     verify: Callable[[tuple[str, ...], int, str], Awaitable[ToolObservation]] | None = None,
+    observe: Callable[[dict[str, Any], int, str], Awaitable[ToolObservation]] | None = None,
+    visual_binding: Callable[[], dict[str, Any]] | None = None,
     pending_ancestors: frozenset[tuple[int, str]] = frozenset(),
     project_run: bool = True,
     purpose: str = "role",
@@ -161,6 +165,7 @@ async def run_engineering_loop(
     """
     from polaris.cells.roles.runtime.internal.engineering_roles import (
         interpret_review_reports,
+        register_browser_observation_tool,
         register_review_tool,
         register_verification_tool,
     )
@@ -168,6 +173,7 @@ async def run_engineering_loop(
     register_consult_tool()
     register_review_tool()
     register_verification_tool()
+    register_browser_observation_tool()
     scope = role_scope(command.role, scope)
     active_dispatch: tuple[int, str] | None = None
 
@@ -179,9 +185,28 @@ async def run_engineering_loop(
     async def verify_current(commands: tuple[str, ...]) -> ToolObservation:
         if verify is None or active_dispatch is None or command.role != "director":
             raise ValueError("verify_project requires an active Director dispatch")
+        check_visual()
         return await verify(commands, *active_dispatch)
 
-    def review_current() -> None:
+    async def observe_current(arguments: dict[str, Any]) -> ToolObservation:
+        if observe is None or active_dispatch is None:
+            raise ValueError("browser_observe requires an active tool dispatch")
+        return await observe(arguments, *active_dispatch)
+
+    def check_visual() -> None:
+        if scope.browser is not None and scope.browser.require_visual_review:
+            if visual_binding is None or active_dispatch is None:
+                raise ValueError("current visual candidate binding is unavailable")
+            require_current_visual_input(
+                store,
+                command.session_id,
+                role=command.role,
+                frame_seq=frame_seq,
+                turn_seq=active_dispatch[0],
+                current_binding=visual_binding(),
+            )
+
+    def review_current(approved: bool) -> None:
         if command.role != "qa" or active_dispatch is None:
             raise ValueError("report_review requires an active QA dispatch")
         if not any(
@@ -198,6 +223,8 @@ async def run_engineering_loop(
             for event in store.load_events(command.session_id)
         ):
             raise ValueError("report_review requires a successful current-frame source read in a previous turn")
+        if approved:
+            check_visual()
 
     tools = EngineeringTools(
         command.workspace,
@@ -207,6 +234,7 @@ async def run_engineering_loop(
         consult=consult_current if consult is not None and command.role == "director" else None,
         review=review_current if command.role == "qa" else None,
         verify=verify_current if verify is not None and command.role == "director" else None,
+        observe=observe_current if observe is not None and command.role in {"director", "qa"} else None,
     )
     events = store.load_events(command.session_id)
     starts = [event for event in events if event["kind"] == "role_started" and event["role"] == command.role]
@@ -233,7 +261,14 @@ async def run_engineering_loop(
         messages = []
     if not messages:
         messages = [
-            {"role": "system", "content": role_instruction(command.role)},
+            {
+                "role": "system",
+                "content": role_instruction(
+                    command.role,
+                    visual="browser_observe" in tools.enabled,
+                    require_visual_review=bool(scope.browser and scope.browser.require_visual_review),
+                ),
+            },
             {"role": "user", "content": command.instruction},
         ]
         for message in messages:
@@ -288,7 +323,11 @@ async def run_engineering_loop(
             if limits.deadline is not None and time.time() >= limits.deadline:
                 return finish("failed", "Engineering run deadline exceeded.")
             turn_seq = store.append_event(command.session_id, kind="turn_started", role=command.role, payload={})
-            options: dict[str, Any] = {"messages": list(messages), "tools": tools.schemas(), "tool_choice": "auto"}
+            options: dict[str, Any] = {
+                "messages": build_visual_messages(messages),
+                "tools": tools.schemas(),
+                "tool_choice": "auto",
+            }
             request = AIRequest(
                 task_type=TaskType.DIALOGUE,
                 role=command.role,
@@ -405,7 +444,7 @@ async def run_engineering_loop(
                     command.session_id, turn_seq=turn_seq, observation=observation, role=command.role
                 )
                 if observation.tool == "report_review" and observation.ok and not observation.interrupted:
-                    review_reports.append(asdict(observation))
+                    review_reports.append(tool_observation_payload(observation))
                 if (observation.tool in {"write_file", "edit_file"} and observation.ok) or (
                     observation.tool == "execute_command"
                     and (observation.exit_code is not None or observation.interrupted or observation.timed_out)
@@ -420,7 +459,7 @@ async def run_engineering_loop(
                 message = {
                     "role": "tool",
                     "tool_call_id": call.id,
-                    "content": json.dumps(asdict(observation), ensure_ascii=False),
+                    "content": json.dumps(tool_observation_payload(observation), ensure_ascii=False),
                 }
                 messages.append(message)
                 store.append_message(command.session_id, role=command.role, message=message)

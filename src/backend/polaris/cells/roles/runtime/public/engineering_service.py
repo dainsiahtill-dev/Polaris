@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+import subprocess
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager
@@ -20,6 +21,7 @@ from polaris.cells.roles.runtime.internal.engineering_session import (
     WorkspaceBusyError,
 )
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
+    BrowserObservationConfig,
     PermissionScope,
     RoleRunCommand,
     RoleRunResult,
@@ -285,6 +287,13 @@ class EngineeringRunService:
                     scope, self._limits(row), asyncio.Event(), output_roots=self._saved_outputs(row)
                 )
                 current = verifier.current_verification(session_id)
+                if current == "passed":
+                    self._require_visual_input(
+                        session_id,
+                        role="director",
+                        scope=scope,
+                        current_binding=lambda: verifier.review_binding(session_id),
+                    )
             except (OSError, ValueError, RuntimeError, PathSecurityError) as error:
                 current = "unknown"
                 row["verification_detail"] = f"Cannot observe current verification inputs: {error}"
@@ -294,7 +303,7 @@ class EngineeringRunService:
                 row["verification"] = "unknown"
         if row.get("require_qa") and row.get("qa_verdict") in {"approved", "rejected"}:
             try:
-                self._revalidated_scope(row)
+                scope = self._revalidated_scope(row)
                 verifier = self._verification(
                     self._scope(row), self._limits(row), asyncio.Event(), output_roots=self._saved_outputs(row)
                 )
@@ -307,6 +316,27 @@ class EngineeringRunService:
                     or decisions[-1]["payload"].get("input_binding") != verifier.review_binding(session_id)
                 ):
                     row["qa_verdict"] = "unknown"
+                elif row["qa_verdict"] == "approved":
+                    decision = decisions[-1]["payload"]
+                    reports = [
+                        event
+                        for event in self.store.load_events(session_id)
+                        if event["kind"] == "tool_observed"
+                        and event["role"] == "qa"
+                        and event["payload"].get("call_id") == decision.get("report_call_id")
+                        and event["payload"].get("tool") == "report_review"
+                    ]
+                    if scope.browser is not None and scope.browser.require_visual_review:
+                        if not reports:
+                            raise ValueError("current visual QA report is unavailable")
+                        self._require_visual_input(
+                            session_id,
+                            role="qa",
+                            scope=scope,
+                            current_binding=lambda: verifier.review_binding(session_id),
+                            frame_seq=decision.get("frame_seq"),
+                            turn_seq=reports[-1]["payload"].get("turn_seq"),
+                        )
             except (OSError, ValueError, RuntimeError, PathSecurityError):
                 row["qa_verdict"] = "unknown"
         if row["verification"] == "unknown" or (row.get("require_qa") and row.get("qa_verdict") == "unknown"):
@@ -492,6 +522,19 @@ class EngineeringRunService:
                 client=client,
                 consult=self._consult_dispatch,
                 verify=self._verify_dispatch,
+                observe=self._observe_dispatch if scope.browser is not None else None,
+                visual_binding=(
+                    lambda: self._verification(
+                        scope,
+                        limits,
+                        cancel,
+                        output_roots=self._saved_outputs(
+                            self.store.load_run(command.session_id, workspace=self.workspace)
+                        ),
+                    ).review_binding(command.session_id)
+                )
+                if scope.browser is not None
+                else None,
                 pending_ancestors=self._pending_ancestors.get(),
                 # Only _drive owns run terminal state, including final checks.
                 project_run=False,
@@ -532,6 +575,13 @@ class EngineeringRunService:
         if limits.deadline is not None and time.time() >= limits.deadline:
             raise ValueError("engineering run deadline exceeded")
         verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(row))
+        self._require_visual_input(
+            command.session_id,
+            role="director",
+            scope=scope,
+            current_binding=lambda: verifier.review_binding(command.session_id),
+            turn_seq=turn_seq,
+        )
         requested_by = (turn_seq, call_id)
         await verifier.run_verification(
             commands,
@@ -550,6 +600,118 @@ class EngineeringRunService:
             # cannot replace a missing durable final input binding or permit replay.
             raise RuntimeError("verify_project has no matching durable verification completion")
         return verification_observation(call_id, completed[-1], limits.max_tool_output_bytes)
+
+    async def _observe_dispatch(self, arguments: Mapping[str, Any], turn_seq: int, call_id: str) -> ToolObservation:
+        """Bind an authorized read-only capture before its durable tool result."""
+        from polaris.cells.roles.runtime.internal.engineering_browser import capture_browser_observation
+        from polaris.cells.roles.runtime.internal.engineering_roles import role_scope
+        from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        owner, role = self._owner.get(), self._active_role.get()
+        if owner is None or role not in {"director", "qa"}:
+            raise ValueError("browser_observe requires the active Director or QA session owner")
+        command, scope, limits, cancel, _client = owner
+        row = self.store.load_run(command.session_id, workspace=self.workspace)
+        if self._permission_resolver is not None:
+            scope = self._revalidated_scope(row)
+        permitted = role_scope(role, scope)
+        if permitted.browser is None or "browser_observe" not in {
+            ToolSpecRegistry.get_canonical(name) for name in permitted.enabled_tools
+        }:
+            raise PermissionError("browser_observe requires unchanged explicit host permission")
+        if cancel.is_set():
+            raise asyncio.CancelledError
+        if limits.deadline is not None and time.time() >= limits.deadline:
+            raise ValueError("engineering run deadline exceeded")
+        readonly = replace(permitted, write_roots=(), network_allowed=False)
+        verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(row))
+        binding: dict[str, Any] = {}
+        try:
+            binding = verifier.review_binding(command.session_id)
+            tools = EngineeringTools(self.workspace, readonly, limits, cancel)
+
+            async def run_process(argv: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
+                return await tools._process(argv, timeout=timeout, writes=())
+
+            observed = await capture_browser_observation(
+                call_id, dict(arguments), workspace=self.workspace, scope=readonly, run_process=run_process
+            )
+            if observed.call_id != call_id or observed.tool != "browser_observe":
+                raise ValueError("browser observation identity mismatch")
+            if binding != verifier.review_binding(command.session_id):
+                observed = replace(
+                    observed, ok=False, images=(), content="Current inputs changed during browser capture."
+                )
+            elif cancel.is_set():
+                observed = replace(observed, ok=False, images=(), interrupted=True)
+            elif not observed.ok or observed.interrupted or not observed.images:
+                observed = replace(observed, ok=False, images=())
+        except subprocess.TimeoutExpired:
+            observed = ToolObservation(
+                call_id,
+                "browser_observe",
+                False,
+                "Browser capture timed out after physical cleanup.",
+                None,
+                cancel.is_set(),
+                timed_out=True,
+            )
+        except (OSError, ValueError, PathSecurityError) as error:
+            observed = ToolObservation(
+                call_id, "browser_observe", False, f"{type(error).__name__}: {error}", None, False
+            )
+        # Cancellation and unknown physical drains propagate; the already
+        # dispatched tool remains pending until its original owner reconciles it.
+        self.store.append_event(
+            command.session_id,
+            kind="visual_observation_completed",
+            role=role,
+            payload={
+                "ok": observed.ok,
+                "requested_by": [turn_seq, call_id],
+                "input_binding": binding,
+                "image_sha256": [image.sha256 for image in observed.images],
+            },
+        )
+        return observed
+
+    def _require_visual_input(
+        self,
+        session_id: str,
+        *,
+        role: str,
+        scope: PermissionScope,
+        current_binding: Mapping[str, Any] | Callable[[], Mapping[str, Any]],
+        turn_seq: int | None = None,
+        frame_seq: int | None = None,
+    ) -> None:
+        """Apply the current-frame native-image condition at the service boundary."""
+        if scope.browser is None or not scope.browser.require_visual_review:
+            return
+        from polaris.cells.roles.runtime.internal.engineering_visual import require_current_visual_input
+
+        events = self.store.load_events(session_id)
+        starts = [event for event in events if event["kind"] == "role_started" and event["role"] == role]
+        if frame_seq is None:
+            frame_seq = starts[-1]["seq"] if starts else 0
+        if type(frame_seq) is not int or (turn_seq is not None and type(turn_seq) is not int):
+            raise ValueError("current visual role identity is invalid")
+        turns = [
+            event["seq"]
+            for event in events
+            if event["kind"] == "turn_started" and event["role"] == role and event["seq"] > frame_seq
+        ]
+        if not frame_seq or not turns or (turn_seq is not None and turn_seq not in turns):
+            raise ValueError("current visual evidence is required in an actual current role turn")
+        require_current_visual_input(
+            self.store,
+            session_id,
+            role=role,
+            frame_seq=frame_seq,
+            turn_seq=turns[-1] if turn_seq is None else turn_seq,
+            current_binding=current_binding() if callable(current_binding) else current_binding,
+        )
 
     async def consult_role(self, role: Literal["pm", "chief_engineer"], question: str, *, session_id: str) -> str:
         """Return one read-only answer within the current Director's owned run."""
@@ -948,6 +1110,21 @@ class EngineeringRunService:
         )
         while result.status == "completed":
             current = self.store.load_run(command.session_id, workspace=self.workspace)
+            try:
+                self._require_visual_input(
+                    command.session_id,
+                    role="director",
+                    scope=scope,
+                    current_binding=lambda: verifier.review_binding(command.session_id),
+                )
+            except ValueError as error:
+                if cancel.is_set():
+                    return replace(result, status="cancelled")
+                if limits.deadline is not None and time.time() >= limits.deadline:
+                    return replace(result, status="failed", text=str(error))
+                result = await self._continue_director(command, str(error), scope=scope, limits=limits, cancel=cancel)
+                resume_review = False
+                continue
             commands = tuple(current["verification_commands"])
             revision = int(current["workspace_revision"])
             history = self.store.load_events(command.session_id)
@@ -1023,6 +1200,19 @@ class EngineeringRunService:
                 )
             if verification != "failed":
                 result = replace(result, verification=verification, checks=checks)
+                if verification == "passed":
+                    try:
+                        self._require_visual_input(
+                            command.session_id,
+                            role="director",
+                            scope=scope,
+                            current_binding=lambda: verifier.review_binding(command.session_id),
+                        )
+                    except ValueError:
+                        # A real check may legitimately rebuild declared outputs.
+                        # Return current-image feedback on the next iteration;
+                        # current completed command evidence is not replayed.
+                        continue
                 if not saved["require_qa"] or verification != "passed":
                     return result
                 verdict, feedback = await self._review_qa(
@@ -1209,8 +1399,21 @@ class EngineeringRunService:
                 and verifier.current_verification(command.session_id) == "passed"
             ):
                 verdict, feedback, report_call_id = interpret_review_reports([event["payload"] for event in reports])
-        except (ValueError, OSError, RuntimeError, PathSecurityError):
+                if verdict == "approved":
+                    report = next(
+                        event for event in reversed(reports) if event["payload"].get("call_id") == report_call_id
+                    )
+                    self._require_visual_input(
+                        command.session_id,
+                        role="qa",
+                        scope=scope,
+                        current_binding=lambda: verifier.review_binding(command.session_id),
+                        frame_seq=frame["seq"],
+                        turn_seq=report["payload"].get("turn_seq"),
+                    )
+        except (ValueError, OSError, RuntimeError, PathSecurityError) as error:
             verdict = "unknown"
+            feedback = f"Current QA evidence cannot establish acceptance: {error}"
         self.store.append_event(
             command.session_id,
             kind="qa_review_completed",
@@ -1232,7 +1435,7 @@ class EngineeringRunService:
         self._saved_outputs(row)
         original_scope = self._scope(row)
         current_scope = self._permission_resolver(row)
-        if not self._scope_within(original_scope, current_scope):
+        if not self._scope_within(original_scope, current_scope) or original_scope.browser != current_scope.browser:
             raise PermissionError("saved scope exceeds current permission policy")
         return original_scope
 
@@ -1442,11 +1645,18 @@ class EngineeringRunService:
     @staticmethod
     def _scope(row: dict[str, Any]) -> PermissionScope:
         scope = row["scope"]
+        browser = scope.get("browser")
+        if browser is not None:
+            try:
+                browser = BrowserObservationConfig(**{**browser, "python_paths": tuple(browser["python_paths"])})
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("saved browser configuration is invalid") from error
         return PermissionScope(
             tuple(Path(root) for root in scope["read_roots"]),
             tuple(Path(root) for root in scope["write_roots"]),
             frozenset(scope["enabled_tools"]),
             scope["network_allowed"],
+            browser,
         )
 
     @staticmethod
@@ -1478,4 +1688,5 @@ class EngineeringRunService:
             and (not saved.network_allowed or current.network_allowed)
             and roots_within(saved.read_roots, current.read_roots)
             and roots_within(saved.write_roots, current.write_roots)
+            and (saved.browser is None or saved.browser == current.browser)
         )

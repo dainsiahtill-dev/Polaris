@@ -2,7 +2,7 @@
 
 最新更新：2026-10-21。
 
-当前检查点：当前按[工程能力收敛与动画网页验收](blueprints/POLARIS_ANIMATED_WEB_ACCEPTANCE_20261021.md)及[实施计划](superpowers/plans/2026-10-21-polaris-animated-web-acceptance.md)落地。长期记忆暂不做。静态SVG专项只完成两例，原生accepted、root看图及资源关闭，剩余八例未运行；它们不证明动画网页。当前修复通用工具契约与最终请求审计投影，随后冻结版本，用全新隔离网页动画验证。原目录L1-01/02/03的root质量FAIL和其余117项未运行保留；以下历史检查点只适用于当时版本。
+当前检查点：冻结 `bef24b386` 的首个动画网页运行 `a420e40bb7434b1e85bd50d2fbfadfcd` 已原生 completed/passed、文本 QA approved，资源关闭；主 Agent 实际查看桌面/手机多时相画面后判质量 FAIL：腿脚与鸟身没有形成连贯骑行关系。旧批准与失败证据均保留。当前按[Director／QA 原生视觉闭环](blueprints/POLARIS_NATIVE_VISUAL_OBSERVATION_20261021.md)及[实施计划](superpowers/plans/2026-10-21-native-director-qa-vision.md)贯通真实图片、当前候选与独立验收；组件通过不代表新视觉网页已交付。新内部任务变体位于 `src/backend/scripts/factory_bench/fixtures/pelican_web_visual/`，沿用原功能检查和质量量表，未改原目录。长期记忆暂不做。静态SVG两例通过、其余八例未运行；原目录 L1-01/02/03 的 root 质量 FAIL、其余117项未运行保留。以下历史检查点只适用于当时版本。
 
 1. [历史经验报告全文](history/历史经验报告.md)：十章、68 个案例、历史验证边界与来源；保留原 06:58 UTC 检查点，后续 R13 核对见新重构方案第 2 节。
 2. [完整重构方案](blueprints/POLARIS_ROLE_AGENT_REFACTOR_20261020.md)：保留角色分工，删除模型合同维护，明确架构、删留、权限、恢复、验证与迁移。

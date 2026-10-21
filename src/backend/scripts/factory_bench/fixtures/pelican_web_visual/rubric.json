@@ -1,0 +1,73 @@
+{
+  "protocol_id": "pelican-animated-web-v2-native-vision",
+  "project_id": "VIS-PEL-WEB-01",
+  "evaluation_owner": "External root examination; non-authoritative for native engineering state",
+  "dimensions": [
+    {
+      "id": "pelican",
+      "question": "Does the rendered animal read clearly as a pelican from its silhouette, beak/pouch and coherent anatomy, without relying on labels?"
+    },
+    {
+      "id": "bicycle",
+      "question": "Does the rendered bicycle have coherent wheels, frame/steering and drivetrain/pedal relationships, allowing deliberate perspective and occlusion?"
+    },
+    {
+      "id": "riding",
+      "question": "Do body support, steering pose and feet/pedal relationships form a convincing riding action across time rather than two merely adjacent objects?"
+    },
+    {
+      "id": "motion",
+      "question": "Do actual browser frames show continuous wheel/crank/pedal movement and coherent leg/foot contact, with no material jumps, detached feet or static riding mechanism?"
+    },
+    {
+      "id": "interaction",
+      "question": "Do real play/pause/resume and speed interactions affect the visible animation, with usable labels and keyboard operation?"
+    },
+    {
+      "id": "presentation",
+      "question": "Is the scene intentional, readable and unclipped on desktop and narrow screens, with working offline resources and no relevant browser errors?"
+    }
+  ],
+  "scale": {
+    "0": "Absent, broken, unrecognizable or fundamentally contradictory.",
+    "1": "Weak hint with major structural, temporal or usability problems.",
+    "2": "Recognizable and partly functional, with material quality problems.",
+    "3": "Clear and coherent with minor flaws.",
+    "4": "Strong integrated result, convincing and easy to use within its chosen style."
+  },
+  "critical_errors": [
+    "No actual delivered runnable webpage",
+    "No recognizable pelican or coherent bicycle",
+    "No credible riding relationship",
+    "Only static artwork or unrelated decorative motion; required riding mechanism remains static",
+    "Material foot/pedal detachment or contradictory motion prevents credible cycling",
+    "Required play/pause or speed controls are missing or do not affect actual motion",
+    "Essential scene or controls are unreadable, inaccessible or materially clipped",
+    "Page fails to load offline or has material JavaScript/runtime failures",
+    "Actual native browser verification or current-candidate independent QA is missing, failed or unknown",
+    "Target externally repaired, native evidence fabricated or source changed during the frozen run"
+  ],
+  "procedure": [
+    "Bind actual candidate file bytes and current native verification/QA manifest before external examination; record hashes as evaluator evidence, never model-maintained contracts.",
+    "Load the original unmodified local entry in a real browser. External read-only serving is permitted only as separately labelled root review, with no wrapper, target edits or dependency installation.",
+    "Record relevant console/page errors and resource requests while blocking external network; disclose any attempted remote load.",
+    "Capture screenshots at multiple unequal time offsets, desktop and narrow viewport, plus video or a timestamped frame sequence.",
+    "Personally view actual renders to judge objects, composition, wheel/crank/foot movement and contact. DOM text, counters, generator comments, screenshot hashes and self-grades are not substitutes.",
+    "Exercise real controls including keyboard. Compare multiple temporal samples for pause stability, resumed movement and changed speed; avoid periodic phase aliasing.",
+    "Report native accepted, native functional browser checks, native image input proven/not-proven, root quality and each resource lifecycle separately.",
+    "Retain absent/invalid/unrendered as not_evaluable; never invent images or visual scores. Record remaining uncertainty and critical failures explicitly."
+  ],
+  "style_policy": [
+    "No required realism, palette, framework, path geometry, literal circle count, code line count or file count.",
+    "Permit stylization, anthropomorphism, perspective and hidden parts when riding remains clear.",
+    "Do not treat decorative richness as a substitute for coherent animation and working interaction."
+  ],
+  "decision": "Record task_success yes/no/uncertain with visible/behavioral evidence and critical-error list. Scores describe quality; no aggregate threshold automatically determines product acceptance.",
+  "limitations": [
+    "Root is an AI visual examiner; this is not a human panel or fully blinded comparison.",
+    "Native vision is proven only by exact current-role image bytes in the final physical provider request. Native approval and external root visual quality remain separate claims.",
+    "Generated native tests are useful execution evidence but are not an independent semantic oracle.",
+    "One case does not prove broad superiority, the best role combination, all120case capability, long-term memory or untested recovery behavior."
+  ],
+  "resources": "After native terminal outcome use the original acceptance stop fence and independently reconcile process/port/registry state. Close external browser and any read-only preview server; unknown cleanup remains unknown and blocks a subsequent case."
+}

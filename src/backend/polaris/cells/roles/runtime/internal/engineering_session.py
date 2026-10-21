@@ -25,6 +25,7 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     RoleRunCommand,
     RunLimits,
     ToolObservation,
+    tool_observation_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -208,6 +209,7 @@ class EngineeringSessionStore:
                     "write_roots": [str(Path(p).expanduser().resolve()) for p in scope.write_roots],
                     "enabled_tools": sorted(scope.enabled_tools),
                     "network_allowed": scope.network_allowed,
+                    **({"browser": asdict(scope.browser)} if scope.browser is not None else {}),
                 }
             ),
             "limits": self._json(asdict(limits)),
@@ -443,7 +445,7 @@ class EngineeringSessionStore:
             raise ValueError("tool observation has no matching dispatch")
         if row["status"] != "started":
             raise ValueError("tool dispatch was already observed")
-        payload = asdict(observation)
+        payload = tool_observation_payload(observation)
         connection.execute(
             "UPDATE tool_calls SET status='observed',observation=?,observed_at=? WHERE session_id=? AND turn_seq=? AND call_id=?",
             (self._json(payload), time.time(), session_id, turn_seq, observation.call_id),
@@ -685,7 +687,9 @@ class EngineeringSessionStore:
                     self._record_tool_observation(
                         connection, session_id, turn_seq=parent["turn_seq"], observation=observation, role="director"
                     )
-                elif parent["status"] != "observed" or json.loads(parent["observation"]) != asdict(observation):
+                elif parent["status"] != "observed" or json.loads(parent["observation"]) != tool_observation_payload(
+                    observation
+                ):
                     continue
                 messages = connection.execute(
                     "SELECT payload FROM events WHERE session_id=? AND kind='message' AND seq>?",
@@ -696,7 +700,7 @@ class EngineeringSessionStore:
                     value = json.loads(message["payload"]).get("message", {})
                     if value.get("tool_call_id") == parent["call_id"]:
                         with suppress(ValueError, TypeError):
-                            present = json.loads(value.get("content", "")) == asdict(observation)
+                            present = json.loads(value.get("content", "")) == tool_observation_payload(observation)
                         if present:
                             break
                 if not present:
@@ -711,7 +715,7 @@ class EngineeringSessionStore:
                             "message": {
                                 "role": "tool",
                                 "tool_call_id": parent["call_id"],
-                                "content": self._json(asdict(observation)),
+                                "content": self._json(tool_observation_payload(observation)),
                             },
                         },
                     )
@@ -743,7 +747,7 @@ class EngineeringSessionStore:
                 "verification": projected,
                 "detail": detail if current else "Workspace revision changed during verification.",
                 "input_binding": dict(input_binding),
-                "checks": [asdict(check) for check in checks],
+                "checks": [tool_observation_payload(check) for check in checks],
                 "verification_commands": list(cast(list[str], input_binding.get("commands", commands))),
             }
             if projected in {"passed", "failed"} and not self._completion_observed(connection, session_id, payload):
@@ -819,7 +823,7 @@ class EngineeringSessionStore:
                 original is None
                 or original["status"] != "started"
                 or not any(
-                    json.loads(item["observation"]) == asdict(readback)
+                    json.loads(item["observation"]) == tool_observation_payload(readback)
                     and json.loads(item["arguments"]).get("file") == arguments["file"]
                     for item in observed
                 )
@@ -830,7 +834,7 @@ class EngineeringSessionStore:
                 "call_id": call_id,
                 "original_effect": "unknown",
                 "continuation_basis": "current_file_matches_requested_write",
-                "readback": asdict(readback),
+                "readback": tool_observation_payload(readback),
             }
             self._append_event(connection, session_id, kind="tool_reconciled", role=role, payload=payload)
             self._append_event(
@@ -966,7 +970,7 @@ class EngineeringSessionStore:
             if not isinstance(checks, (tuple, list)):
                 raise ValueError("checks must be an observation sequence")
             updates["checks"] = self._json(
-                [asdict(item) if isinstance(item, ToolObservation) else item for item in checks]
+                [tool_observation_payload(item) if isinstance(item, ToolObservation) else item for item in checks]
             )
         with self._transaction() as connection:
             row = self._require_run(connection, session_id)

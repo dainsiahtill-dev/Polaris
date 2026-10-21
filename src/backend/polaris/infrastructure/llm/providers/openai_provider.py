@@ -177,11 +177,15 @@ def _build_openai_responses_input(prompt: str, config: dict[str, Any]) -> Any:
     explicit_input = config.get("input")
     if explicit_input is not None:
         return explicit_input
-    return _build_chat_messages_payload(
+    messages = _build_chat_messages_payload(
         config.get("chat_messages"),
         prompt,
         system_prompt=config.get("system_prompt"),
     )
+    from polaris.kernelone.llm.engine.provider_native_request import validate_openai_responses_native_messages
+
+    validate_openai_responses_native_messages(messages)
+    return messages
 
 
 def _build_openai_chat_payload(

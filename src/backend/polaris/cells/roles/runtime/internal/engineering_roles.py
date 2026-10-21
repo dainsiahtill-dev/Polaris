@@ -51,9 +51,24 @@ _PROMPTS = {
 }
 
 
-def role_instruction(role: str) -> str:
+def role_instruction(role: str, *, visual: bool = False, require_visual_review: bool = False) -> str:
     """Choose only the current role's fixed identity."""
-    return _PROMPTS[role] + _COMMON
+    text = _PROMPTS[role] + _COMMON
+    if visual and role in {"director", "qa"}:
+        text += (
+            " You can use browser_observe to render a workspace-local HTML/SVG page and receive actual images. "
+            "Inspect those images for appearance, composition, spatial relationships, clipping and motion; "
+            "source text, a screenshot path and successful DOM tests do not establish visible correctness. "
+            "Use multiple times or viewports when relevant. Controls can be exercised through bounded click/keypress actions. "
+            "Re-observe after changes; tell the user about unresolved visual limitations."
+        )
+        if require_visual_review:
+            text += (
+                " This host requires visual review: capture the current candidate and inspect the returned images "
+                "in a later turn before final verify_project or approval. "
+                "QA must capture independently in its own review; it cannot reuse Director's images."
+            )
+    return text
 
 
 def role_scope(role: str, scope: PermissionScope) -> PermissionScope:
@@ -64,13 +79,24 @@ def role_scope(role: str, scope: PermissionScope) -> PermissionScope:
             scope.write_roots,
             frozenset(name for name in scope.enabled_tools if ToolSpecRegistry.get_canonical(name) != "report_review"),
             scope.network_allowed,
+            scope.browser,
         )
     return PermissionScope(
         scope.read_roots,
         (),
         frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools)
-        & (_READ_TOOLS | ({"report_review"} if role == "qa" else set())),
+        & (
+            _READ_TOOLS
+            | (
+                {"report_review", "browser_observe"}
+                if role == "qa" and scope.browser
+                else {"report_review"}
+                if role == "qa"
+                else set()
+            )
+        ),
         False,
+        scope.browser if role == "qa" else None,
     )
 
 
@@ -87,6 +113,65 @@ def register_consult_tool() -> None:
                 {"name": "question", "type": "string", "required": True},
             ],
             "category": "read",
+        },
+    )
+
+
+def register_browser_observation_tool() -> None:
+    """Optional read-only local browser capability; host paths are never model arguments."""
+    ToolSpecRegistry.register(
+        "browser_observe",
+        {
+            "aliases": [],
+            "arg_aliases": {"path": "entry", "file": "entry", "filename": "entry"},
+            "category": "read",
+            "description": (
+                "Render a workspace-local HTML or SVG entry in a fresh read-only offline browser and return actual images. "
+                "No workspace writes or remote resources. Frames are captured at absolute milliseconds after load, "
+                "after optional bounded actions. Maximum four JPEG frames, 1 MiB total; excess fails explicitly. "
+                "Each call closes its browser and server. Inspect the images in your next turn before making a visual judgment."
+            ),
+            "arguments": [
+                {
+                    "name": "entry",
+                    "type": "string",
+                    "description": "Workspace-relative HTML/SVG path, default index.html.",
+                },
+                {
+                    "name": "viewport",
+                    "type": "object",
+                    "properties": {
+                        "width": {"type": "integer", "minimum": 320, "maximum": 1600},
+                        "height": {"type": "integer", "minimum": 240, "maximum": 1200},
+                    },
+                    "required": ["width", "height"],
+                    "additionalProperties": False,
+                },
+                {
+                    "name": "frame_times_ms",
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 0, "maximum": 10000},
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "description": "Strictly increasing absolute capture times, default [0, 400]. Actions plus final frame wait must total at most 10000ms.",
+                },
+                {
+                    "name": "actions",
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "enum": ["click", "keypress"]},
+                            "selector": {"type": "string"},
+                            "key": {"type": "string"},
+                            "wait_ms": {"type": "integer", "minimum": 0, "maximum": 10000},
+                        },
+                        "required": ["type", "selector"],
+                        "additionalProperties": False,
+                    },
+                },
+            ],
         },
     )
 
