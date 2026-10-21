@@ -21,7 +21,7 @@ export function parseEngineeringAcceptanceUrl(input: string | undefined): Engine
   if (RESERVED.has(url.port)) throw new Error('Acceptance cannot use a reserved main port');
   const values = Object.fromEntries(['instance', 'backend', 'token', 'workspace', 'engineering_run'].map((key) => [key, url.searchParams.get(key)?.trim()]));
   if (Object.values(values).some((value) => !value)) throw new Error('Explicit instance/backend/token/workspace/run binding is required');
-  if (url.searchParams.get('engine') !== 'engineering_v2') throw new Error('Acceptance requires explicit engineering_v2');
+  if (url.searchParams.has('engine') && url.searchParams.get('engine') !== 'engineering_v2') throw new Error('Acceptance requires engineering_v2');
   const backend = new URL(values.backend!);
   if (!['http:', 'https:'].includes(backend.protocol) || backend.username || backend.password || backend.pathname !== '/' || backend.search || backend.hash) throw new Error('Invalid backend binding');
   if (RESERVED.has(backend.port)) throw new Error('Acceptance backend cannot use a reserved main port');

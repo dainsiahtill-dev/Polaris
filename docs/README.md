@@ -2,6 +2,8 @@
 
 最新更新：2026-10-21。
 
+当前检查点：e700 的 L1-01/02/03 原生 accepted、原资源关闭，亲自质量验收均 FAIL，117 项未运行。正在集成 Launcher 当前运行发现；随后按[角色组合质量预试验](experiments/POLARIS_ROLE_COMBINATION_PILOT_20261021.md)串行比较五种策略。历史通过不扩大为本轮质量通过。
+
 1. [历史经验报告全文](history/历史经验报告.md)：十章、68 个案例、历史验证边界与来源；保留原 06:58 UTC 检查点，后续 R13 核对见新重构方案第 2 节。
 2. [完整重构方案](blueprints/POLARIS_ROLE_AGENT_REFACTOR_20261020.md)：保留角色分工，删除模型合同维护，明确架构、删留、权限、恢复、验证与迁移。
 3. [逐批实施计划](superpowers/plans/2026-10-20-polaris-role-agent-refactor.md)：具体文件、接口、八批任务、测试与切换条件。

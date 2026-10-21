@@ -161,3 +161,18 @@ Director 的 system 说明同步区分真实准备证据与准备后验证，复
 主线 `2c07bfca2` 经冻结 9384 文件、834 项相关回归、KernelOne ALL 十二阶段 368 PASS／1 SKIP、17 文件格式／静态检查及 5 个生产文件类型检查后，已通过实际新 Bench CLI 运行全新 L1-01。Director 按需咨询 CE，PM 未调用；原生失败修复、构建、类型、33 项业务测试、42 项核心检查和当前独立 QA 成立，ProjectOutcome accepted。277 份当前文件 hash 及 Verifier／QA 同 revision62 manifest 由主 Agent 直接核对。
 
 原 STOP 仍为 UNKNOWN／exit2，整 CLI exit1，不回标全绿；后来独立读取证明自有 PID／端口已关闭，主服务／共享 NATS 保持。首次收尾偏差已用私有真实 owned child 复现为 owner wait／reap 缺口及未确认仍清 PID，正在已有进程底座修复。两项静态 P2、安装管道不能证明安装通过、HTTP 总数／账单未知均保留。源码、模型、host 和 catalog 在本次运行直到原停止后保持不变；后续修改另起候选。完整结果、量具边界与证据见[新默认入口 R01](POLARIS_ENGINEERING_V2_DIRECT_L101_R01_20261021.md)。全 120 项尚未运行，不标整体目标完成。
+
+
+### e700 原目录前三例：平台接受与质量结论分离
+
+L1-01、L1-02、L1-03 均由正式新工程入口生成、验证、独立 QA accepted，并由原 CLI 确认 STOPPED/exit0；没有外部代写、代装依赖或补造原生证据。主 Agent 事后亲自只读复验分别发现核心问题，质量结论均 FAIL：L1-01 闪烁时钟将 tick 当毫秒；L1-02 CLI 提醒基准固定2024年；L1-03 watch 七步有八标题但只有两份相同最终画面，真正云图对风向不敏感。有效领域逻辑和真实测试存在，但不能据此称成品质量合格。原目录其余117项未运行。
+
+实例页空白已定位为交接缺口：Launcher URL 只有 workspace/instance 绑定，页面缺 run ID 时既不查当前运行，也不订阅工程事件。修复复用原 EngineeringRunService/SQLite 查询当前身份；初始只读查询及同 workspace runtime.v2 事件引导 UI，不把当前 run 写进 Registry，不新增控制器或轮询。后端独立45项检查通过；合成 native provider、真实工具/SQLite/NATS/浏览器已经从实际 Launcher 按钮打开，看到原运行、工程推送与真实写读结果；该组件证据不计为远端模型交付。前端独立审查发现的 workspace 往返及订阅停用期间旧响应两个生命周期反例已修复，独立34项反例/相邻检查与121项前端检查通过；最终候选再次从实际 Launcher 按钮完成当前运行发现和真实 WebSocket 写读进展，8762个前后端文件在浏览器观察期间相同，私有四类资源已关闭。
+
+下一批遵循[角色组合预试验](../experiments/POLARIS_ROLE_COMBINATION_PILOT_20261021.md)。保留规划与设计职责，先在相同质量要求下比较咨询策略，不根据三个不同任务就断言缺文档是根因。源码变化另起批次；主后端18128未重启，本轮独立实例加载新代码。
+
+证据：统一审计根 `task9-full120-timeout-recovery-r02/root-quality/L1-01/`、`task9-full120-e700-cohort/root-quality/L1-02/`、`root-quality/L1-03/`、`task11-current-run-bootstrap/`、`task12-role-comparison/`。快照、请求准备事件不计为实际 HTTP 总数，账单保持 UNKNOWN。
+
+本接口最终相邻 CLI、实例、runner 与旧入口拒绝共215项通过，后端当前查询25项及相邻 owner/store/完整 HTTP 53项通过；检查存在重叠，不求和。KernelOne ALL 十二阶段368 PASS/1 SKIP，其8129个后端文件与最终候选相同；运行期间仅前端hook及测试变化使严格全源码守护返回2，原报告保留，不称同一次全局冻结资格。最终前端另经121项、类型/构建/静态检查及浏览器验证。完整前端53个失败及3个Resident错误在HEAD替换对照复现，后端扩展检查351项后停滞中断；不声称全仓测试通过。
+
+最终独立审查无当前Launcher/App阻塞；保留潜在P2：hook的显式prop经历r1、启动new、r2、再r1时可能选回new。当前App只读取一次初始URL，无法触发同挂载导航；将来接入该消费路径前必须关闭反例。本次不将无当前因果的风险继续扩为角色实验前置条件。

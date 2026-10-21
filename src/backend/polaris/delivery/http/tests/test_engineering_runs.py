@@ -639,3 +639,97 @@ async def test_request_lookup_unknown_workspace_and_auth_are_read_only(
     with sqlite3.connect(service.store.database_path) as connection:
         assert list(connection.iterdump()) == before
     assert not foreign.exists()
+
+
+async def test_current_route_selects_existing_owner_snapshot_before_dynamic_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from polaris.cells.roles.runtime.tests.test_engineering_current_run import _create_run
+
+    app = _request_lookup_app(tmp_path)
+    service = app.state.engineering_run_service
+    _create_run(service, "current", status="completed", created_at=20)
+    _create_run(service, "actual-active", role="chief_engineer", status="running", created_at=1)
+    service.store.append_event("actual-active", kind="role_started", role="chief_engineer", payload={})
+    with sqlite3.connect(service.store.database_path) as connection:
+        before = list(connection.iterdump())
+    original_connect = sqlite3.connect
+    statements: list[str] = []
+
+    def read_only_connection(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        connection = original_connect(*args, **kwargs)
+        connection.execute("PRAGMA query_only=ON")
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", read_only_connection)
+    async with _client(app) as client:
+        current = await client.get("/v2/engineering/runs/current", params={"workspace": str(tmp_path)})
+        assert current.status_code == 200, current.text
+        assert current.json()["session_id"] == "actual-active"
+        assert current.json()["active_roles"] == ["chief_engineer"]
+        assert current.json()["roles"]["director"] == "not_called"
+        assert current.json()["last_seq"] == 1
+        assert "scope" not in current.json() and "limits" not in current.json()
+        by_id = await client.get("/v2/engineering/runs/actual-active")
+        assert current.json() == by_id.json()
+    assert statements and all(statement.split()[0].upper() in {"SELECT", "BEGIN", "PRAGMA"} for statement in statements)
+    with sqlite3.connect(service.store.database_path) as connection:
+        assert list(connection.iterdump()) == before
+    assert not service._tasks and not service._cancellations and service._client is None
+
+
+async def test_current_route_empty_is_json_null_without_creating_run(tmp_path: Path) -> None:
+    app = _request_lookup_app(tmp_path)
+    service = app.state.engineering_run_service
+    with sqlite3.connect(service.store.database_path) as connection:
+        before = list(connection.iterdump())
+    async with _client(app) as client:
+        response = await client.get("/v2/engineering/runs/current", params={"workspace": str(tmp_path)})
+        assert response.status_code == 200, response.text
+        assert response.json() is None
+    with sqlite3.connect(service.store.database_path) as connection:
+        assert list(connection.iterdump()) == before
+
+
+async def test_current_route_ambiguous_active_runs_return_conflict_without_changes(tmp_path: Path) -> None:
+    from polaris.cells.roles.runtime.tests.test_engineering_current_run import _create_run
+
+    app = _request_lookup_app(tmp_path)
+    service = app.state.engineering_run_service
+    _create_run(service, "pending")
+    _create_run(service, "running", status="running")
+    with sqlite3.connect(service.store.database_path) as connection:
+        before = list(connection.iterdump())
+    async with _client(app) as client:
+        response = await client.get("/v2/engineering/runs/current")
+        assert response.status_code == 409, response.text
+    with sqlite3.connect(service.store.database_path) as connection:
+        assert list(connection.iterdump()) == before
+
+
+@pytest.mark.parametrize(
+    ("token", "foreign_workspace", "expected_status"),
+    [
+        ("bad", False, 401),
+        ("test-engineering-token", True, 403),
+    ],
+)
+async def test_current_route_requires_auth_and_exact_workspace_without_effects(
+    tmp_path: Path, token: str, foreign_workspace: bool, expected_status: int
+) -> None:
+    app = _request_lookup_app(tmp_path)
+    service = app.state.engineering_run_service
+    foreign = tmp_path / "uncreated-foreign"
+    with sqlite3.connect(service.store.database_path) as connection:
+        before = list(connection.iterdump())
+    async with _client(app) as client:
+        response = await client.get(
+            "/v2/engineering/runs/current",
+            params={"workspace": str(foreign if foreign_workspace else tmp_path)},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == expected_status, response.text
+    with sqlite3.connect(service.store.database_path) as connection:
+        assert list(connection.iterdump()) == before
+    assert not foreign.exists()

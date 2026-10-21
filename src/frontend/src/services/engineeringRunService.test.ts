@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const post = vi.fn();
 const get = vi.fn();
 vi.mock('./apiClient', () => ({ apiPost: (...args: unknown[]) => post(...args), apiGet: (...args: unknown[]) => get(...args) }));
-import { cancelEngineeringRun, getEngineeringRun, resumeEngineeringRun, startEngineeringRun } from './engineeringRunService';
+import { cancelEngineeringRun, getCurrentEngineeringRun, getEngineeringRun, resumeEngineeringRun, startEngineeringRun } from './engineeringRunService';
 const saved = { session_id: 'r1', run_id: 'r1', engine_version: 'engineering_v2', workspace: '/work', workflow: 'direct', role: 'director', status: 'running', active_roles: [], roles: { pm: 'not_called', chief_engineer: 'not_called', director: 'running', qa: 'not_called' }, text: '', verification: 'not_run', checks: [], required_checks: [], permission_profile_id: null, resource_url: '/v2/engineering/runs/r1', last_seq: 1, events: [] };
 beforeEach(() => { vi.clearAllMocks(); post.mockResolvedValue({ ok: true, data: saved }); get.mockResolvedValue({ ok: true, data: saved }); });
 describe('engineering API client', () => {
@@ -27,5 +27,25 @@ describe('engineering API client', () => {
     expect((await getEngineeringRun('old', '/work')).ok).toBe(false);
     get.mockResolvedValue({ ok: true, data: { ...saved, last_seq: undefined } });
     expect((await getEngineeringRun('r1', '/work')).ok).toBe(false);
+  });
+});
+
+describe('workspace current engineering query', () => {
+  it('reads the workspace current resource and validates its snapshot', async () => {
+    expect(await getCurrentEngineeringRun('/work')).toMatchObject({ ok: true, data: { session_id: 'r1', workspace: '/work' } });
+    expect(get).toHaveBeenCalledWith('/v2/engineering/runs/current?workspace=%2Fwork', expect.any(String));
+    expect(post).not.toHaveBeenCalled();
+  });
+  it('preserves JSON null as an empty workspace', async () => {
+    get.mockResolvedValue({ ok: true, data: null });
+    expect(await getCurrentEngineeringRun('/work')).toEqual({ ok: true, data: null });
+  });
+  it.each([undefined, {}, { ...saved, workspace: '/foreign' }, { ...saved, events: [null] }])('rejects malformed or foreign current snapshots', async (data) => {
+    get.mockResolvedValue({ ok: true, data });
+    expect((await getCurrentEngineeringRun('/work')).ok).toBe(false);
+  });
+  it('preserves owner conflict errors', async () => {
+    get.mockResolvedValue({ ok: false, error: 'multiple active engineering runs' });
+    expect(await getCurrentEngineeringRun('/work')).toEqual({ ok: false, error: 'multiple active engineering runs' });
   });
 });

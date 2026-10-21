@@ -79,7 +79,8 @@ describe('engineering acceptance fixture guards', () => {
     const backend = new URL(valid); backend.searchParams.set('backend', `http://127.0.0.1:${port}`);
     expect(() => parseEngineeringAcceptanceUrl(backend.href)).toThrow(/reserved/);
   });
-  it('requires the explicit new engine and hides access tokens in public evidence', () => {
+  it('uses the default new engine while rejecting explicit legacy engines and hides access tokens', () => {
+    expect(parseEngineeringAcceptanceUrl(valid.replace('&engine=engineering_v2', ''))).toMatchObject({ sessionId: 'r1' });
     expect(() => parseEngineeringAcceptanceUrl(valid.replace('engineering_v2', 'legacy'))).toThrow(/engineering_v2/);
     expect(redactEngineeringUrl(valid)).not.toContain('private-token');
   });

@@ -254,6 +254,28 @@ class EngineeringSessionStore:
             )
         return command.session_id
 
+    def find_current_session_id(self, *, workspace: Path, engine_version: str) -> str | None:
+        """Select saved workspace identity without recovering or changing a run."""
+        self._assert_workspace(workspace)
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            active = connection.execute(
+                "SELECT session_id FROM runs WHERE workspace=? AND engine_version=? "
+                "AND status IN ('pending','running') ORDER BY created_at DESC,session_id DESC LIMIT 2",
+                (str(self.workspace), engine_version),
+            ).fetchall()
+            if len(active) > 1:
+                raise EngineeringSessionConflictError("multiple active engineering sessions for workspace")
+            if active:
+                return str(active[0]["session_id"])
+            terminal = connection.execute(
+                "SELECT session_id FROM runs WHERE workspace=? AND engine_version=? "
+                "AND status IN ('completed','failed','cancelled','interrupted') "
+                "ORDER BY created_at DESC,session_id DESC LIMIT 1",
+                (str(self.workspace), engine_version),
+            ).fetchone()
+        return str(terminal["session_id"]) if terminal is not None else None
+
     def find_request(self, request_key: str) -> str | None:
         """Read the existing idempotency owner without creating another run."""
         with self._connection() as connection:

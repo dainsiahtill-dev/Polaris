@@ -1,6 +1,7 @@
 /** One-shot engineering commands/queries; realtime belongs to the shared transport. */
 import { apiGet, apiPost } from './apiClient';
 import type { ApiResult, EngineeringRole, EngineeringRunSnapshot, EngineeringStartOptions } from './api.types';
+import { normalizeRuntimeWorkspacePath } from '@/app/hooks/_runtimeEventFilter';
 import { parseEngineeringSnapshot } from '@/runtime/engineeringRunProjection';
 async function snapshotResult(request: Promise<ApiResult<unknown>>): Promise<ApiResult<EngineeringRunSnapshot>> {
   const result = await request;
@@ -18,6 +19,14 @@ export function startEngineeringRun(options: EngineeringStartOptions): Promise<A
 }
 export function getEngineeringRun(id: string, workspace: string): Promise<ApiResult<EngineeringRunSnapshot>> {
   return snapshotResult(apiGet<unknown>(`/v2/engineering/runs/${encodeURIComponent(id)}?workspace=${encodeURIComponent(workspace)}`, '工程运行不可用'));
+}
+export async function getCurrentEngineeringRun(workspace: string): Promise<ApiResult<EngineeringRunSnapshot | null>> {
+  const result = await apiGet<unknown>(`/v2/engineering/runs/current?workspace=${encodeURIComponent(workspace)}`, '工程运行不可用');
+  if (result.ok && result.data === null) return { ok: true, data: null };
+  const parsed = await snapshotResult(Promise.resolve(result));
+  if (parsed.ok && parsed.data && normalizeRuntimeWorkspacePath(parsed.data.workspace) !== normalizeRuntimeWorkspacePath(workspace))
+    return { ok: false, error: 'Engineering snapshot workspace/session mismatch' };
+  return parsed;
 }
 export function cancelEngineeringRun(id: string, workspace: string): Promise<ApiResult<EngineeringRunSnapshot>> {
   return snapshotResult(apiPost<unknown>(`/v2/engineering/runs/${encodeURIComponent(id)}/cancel`, { workspace }, '取消工程运行失败'));

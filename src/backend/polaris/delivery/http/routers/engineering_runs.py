@@ -88,6 +88,19 @@ async def find_request(request_key: str, request: Request) -> dict[str, Any]:
         raise _error(error) from error
 
 
+@router.get("/runs/current")
+async def get_current_run(request: Request) -> dict[str, Any] | None:
+    """Read current workspace facts through the injected engineering owner."""
+    try:
+        service, _settings, workspace = _bound(request)
+        row = service.current_snapshot(workspace=workspace)
+        if row is None:
+            return None
+        return observe_engineering_run(service, row["session_id"], workspace)
+    except (KeyError, OSError, ValueError, RuntimeError) as error:
+        raise _error(error) from error
+
+
 @router.get("/runs/{session_id}")
 async def get_run(session_id: str, request: Request) -> dict[str, Any]:
     try:

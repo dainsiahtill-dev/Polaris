@@ -205,6 +205,12 @@ class EngineeringRunService:
             "native_observation_error": self._native_observation_error,
         }
 
+    def current_snapshot(self, *, workspace: Path) -> dict[str, Any] | None:
+        """Discover current identity, then apply the same read-only freshness checks."""
+        self._assert_workspace(workspace)
+        session_id = self.store.find_current_session_id(workspace=workspace, engine_version=self.engine_version)
+        return self.snapshot(session_id, workspace=workspace) if session_id is not None else None
+
     def find_request(self, request_key: str, *, workspace: Path) -> dict[str, Any] | None:
         """Read saved request identity through the same workspace owner."""
         self._assert_workspace(workspace)
