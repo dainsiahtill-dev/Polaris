@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         install_file_event_broadcaster_publisher,
         shutdown_log_jetstream_publisher,
     )
-    from polaris.infrastructure.messaging import close_default_client
+    from polaris.infrastructure.messaging import close_default_client, get_default_client
     from polaris.infrastructure.messaging.nats.server_runtime import (
         ensure_local_nats_runtime,
         shutdown_local_nats_runtime,
@@ -142,6 +142,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     nats_enabled = bool(getattr(nats_settings, "enabled", True))
     nats_required = bool(getattr(nats_settings, "required", True))
     if nats_enabled:
+        from nats.errors import Error as NATSError
+        from polaris.infrastructure.messaging.nats.jetstream_admin import JetStreamAdmin
+
         try:
             phase_started_at = _startup_phase_started("nats.ensure_local_runtime")
             await ensure_local_nats_runtime(
@@ -150,7 +153,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 allow_autostart=not bool(getattr(nats_settings, "user", "") or getattr(nats_settings, "password", "")),
             )
             _startup_phase_completed("nats.ensure_local_runtime", phase_started_at)
-        except (OSError, RuntimeError, ValueError) as exc:
+            # Producers must be ready before HTTP admission, even when no
+            # health request or WebSocket consumer has opened the connection.
+            phase_started_at = _startup_phase_started("nats.connect_default_client")
+            nats_client = await get_default_client()
+            if not nats_client.is_connected:
+                raise RuntimeError("managed NATS client is disconnected after startup")
+            _startup_phase_completed("nats.connect_default_client", phase_started_at)
+            phase_started_at = _startup_phase_started("nats.ensure_runtime_stream")
+            if not await JetStreamAdmin(nats_client).ensure_stream_exists():
+                raise RuntimeError("managed NATS client runtime stream is unavailable")
+            _startup_phase_completed("nats.ensure_runtime_stream", phase_started_at)
+        except (OSError, RuntimeError, ValueError, NATSError) as exc:
             log_method = logger.critical if nats_required else logger.warning
             log_method(
                 "[startup] Managed NATS bootstrap failed%s: %s",

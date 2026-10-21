@@ -355,3 +355,5 @@ Expected: 新生产调用图没有旧准入；历史仍可读；没有无限 dua
 2026-10-21 第 8 批实施检查点：默认 UI／薄 CLI／旧准入退役和历史只读迁移已形成主线 `2aeeb9503`；后续 TaskRuntime 历史读取及 CLI workspace 传递反例修复限定通过（184 项相邻测试、12 项只读测试，彼此不作交付统计）。整 TaskRuntime 4 项既有失败经旧 owner 基线同因复现，保留记录。本批最终冻结联合检查／默认浏览器／新源码真实项目仍待验收；主服务未升级。剩余内部 Bench runner、旧实现消费者及 L1–L12 不标完成。详见[当前进展](../../history/POLARIS_ENGINEERING_V2_PROGRESS_20261021.md)。
 
 2026-10-21 第 8 批冻结验证补充：R1 联合 1338 PASS；原 KernelOne 三项旧 CE 夹具失败保留，迁移后 76 项限定检查通过；R2 ALL 十二阶段 368 PASS／1 SKIP。默认 URL 浏览器首试 FAILED，已定位发布客户端未连接的启动交接遗漏；私有资源物理闭合、项目未交付。现有 NATS 技术 owner 的连接／流声明正在单独修复；不恢复旧 Factory 控制循环。完整事实见[当前进展](../../history/POLARIS_ENGINEERING_V2_PROGRESS_20261021.md)及统一审计根 `task8-qualified-*`、`task8-default-browser-prep`。这一检查点不标记第 8 批完成。
+
+2026-10-21 第 8 批默认入口组件检查点：真实发布链的 NATS 客户端／stream 技术启动在原 owner 内闭合；R4 ALL 十二阶段 368 PASS／1 SKIP、相关 147 PASS。新鲜默认 App 一次真实浏览器运行通过，三个 SQL 时点 seq33／46／50、当前物理请求和取消／同 run 续跑一致，自有四端口／进程关闭。前两轮失败仍保留。模型替换为明确的合成 loopback provider，故仅证明入口与技术底座，不计作真实模型或 Bench。第 8 批其余旧消费者／内部 runner／原理同步及 L1–L12 仍未完成，主服务尚未部署。详见[当前进展](../../history/POLARIS_ENGINEERING_V2_PROGRESS_20261021.md)。

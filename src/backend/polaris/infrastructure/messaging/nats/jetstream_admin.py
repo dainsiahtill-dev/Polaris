@@ -99,6 +99,7 @@ class StreamManager:
         # when the library stubs are incomplete
         try:
             from nats.js.api import (  # type: ignore[attr-defined]
+                DiscardPolicy,
                 RetentionPolicy,
                 StorageType,
                 StreamConfig,
@@ -107,23 +108,15 @@ class StreamManager:
             # Fallback: return a dict-like object if types unavailable
             return _StreamConfigFallback(self._config)
 
-        storage_type = (
-            StorageType.File  # type: ignore[attr-defined]
-            if self._config.stream_storage == "file"
-            else StorageType.Memory  # type: ignore[attr-defined]
-        )
+        storage_type = StorageType.FILE if self._config.stream_storage == "file" else StorageType.MEMORY
 
         retention_policy = {
-            "limits": RetentionPolicy.Limits,  # type: ignore[attr-defined]
-            "workqueue": RetentionPolicy.Workqueue,  # type: ignore[attr-defined]
-            "interest": RetentionPolicy.Interest,  # type: ignore[attr-defined]
-        }.get(self._config.stream_retention, RetentionPolicy.Limits)  # type: ignore[attr-defined]
+            "limits": RetentionPolicy.LIMITS,  # type: ignore[attr-defined]
+            "workqueue": RetentionPolicy.WORK_QUEUE,  # type: ignore[attr-defined]
+            "interest": RetentionPolicy.INTEREST,  # type: ignore[attr-defined]
+        }.get(self._config.stream_retention, RetentionPolicy.LIMITS)  # type: ignore[attr-defined]
 
-        discard_policy = (
-            StreamConfig.DISCARD_OLD  # type: ignore[attr-defined]
-            if self._config.stream_discard == "old"
-            else StreamConfig.DISCARD_NEW  # type: ignore[attr-defined]
-        )
+        discard_policy = DiscardPolicy.OLD if self._config.stream_discard == "old" else DiscardPolicy.NEW
 
         return StreamConfig(
             name=self._config.stream_name,
@@ -133,7 +126,7 @@ class StreamManager:
             storage=storage_type,
             num_replicas=self._config.stream_replicas,
             max_bytes=self._config.stream_max_bytes,
-            max_age=self._config.stream_max_age_seconds * 1_000_000_000,  # Convert to nanoseconds
+            max_age=self._config.stream_max_age_seconds,
             max_msg_size=self._config.stream_max_msg_size,
             discard=discard_policy,
         )
@@ -252,7 +245,7 @@ class _StreamConfigFallback:
         self.subjects = admin_config.stream_subjects
         self.num_replicas = admin_config.stream_replicas
         self.max_bytes = admin_config.stream_max_bytes
-        self.max_age = admin_config.stream_max_age_seconds * 1_000_000_000
+        self.max_age = admin_config.stream_max_age_seconds
         self.max_msg_size = admin_config.stream_max_msg_size
 
 

@@ -115,6 +115,21 @@ Director 的 system 说明同步区分真实准备证据与准备后验证，复
 
 默认 URL 浏览器首试 **FAILED**：真实创建请求 200、工程工具完成写读、SQL 事件越过初始水位 7，但没有收到工程推送。日志逐条显示发布时受管 NATS 客户端未连接；WebSocket 后来才建立连接，启动依赖正在现有技术 owner 内修复。独立核对六份真实最终物理请求快照，Director、run／workspace、读写工具和落盘 hash 均一致；快照数不作为 HTTP 次数。量具还误收集了一份归档测试，第二次创建 409／pending-blocked 事实保留。四端口与私有进程已物理关闭，不把这一结论扩大为项目交付或所有 SQL row 已终结。
 
-**本批默认页面验收与新版本真实项目仍未通过。** 主后端 49977 仍为旧进程，OpenAPI 无 `/v2/engineering`；未部署或重启主服务。内部旧 Bench runner 及剩余旧执行实现仍须按真实消费者收尾，之后另起冻结批次扩大 L1–L12。旧版本 R04 的交付与三项 P2 保持原样，不转移为本批验收。
+**下述初次失败后的默认页面组件验收已通过；新版本真实模型项目与 L1–L12 仍未完成。** 主后端 49977 仍为旧进程，OpenAPI 无 `/v2/engineering`；未部署或重启主服务。内部旧 Bench runner 及剩余旧执行实现仍须按真实消费者收尾，之后另起冻结批次扩大 L1–L12。旧版本 R04 的交付与三项 P2 保持原样，不转移为本批验收。
 
 本批证据：统一审计根下 `task8-root/`、`task8-http/`、`task8-frontend/`、`task8-governance/`、`task8-independent-review/`、`task8-task-history-read-fix/`。临时量具为合成夹具，不能计为 Bench 成功。
+
+
+### 默认入口最终组件检查点
+
+受管 NATS 连接与既有 JetStream runtime stream 声明现由技术启动显式等待，完成后才开放 HTTP；既有 stream 管理器的原生枚举和秒单位映射在原 owner 内修正。没有恢复旧 Factory／settlement 控制循环。真实私有 NATS 实验证明先发布、后订阅能读取同一事件，重复初始化保留消息，应用退出后借用的 server 仍存活。
+
+冻结 R4 的 9383 文件和主模型配置稳定，KernelOne ALL 十二阶段通过：368 PASS／1 SKIP，命令 325.08 秒。相关 147 项回归通过。诊断接口单元夹具的四项冷启动错误已保留；仅隔离无关 app／LLM 装配，原四项测试体逐字保留，冷／暖配置各四项通过，既有配置 hash 不变。
+
+新鲜默认页面 R3 使用合成 loopback provider，真实 App、HTTP、工具、SQLite、NATS 与 runtime.v2；一次测试通过（浏览器命令 24.50 秒）。run `c1b13c7a7d0940e6baef44c7470424c9` 在同一身份下完成创建、真实写读、推送可见、当前 ContextOS 查看、显式刷新失败与恢复、取消、刷新后恢复同一运行、续跑并再次取消。三个只读 SQL 检查点分别位于 seq 33／46／50，均通过；没有旧写 POST、产品轮询、跨 workspace 或全局 Bench 订阅。
+
+第一轮零推送和第二轮审计时点错误均原样保留。第二轮将取消前 prepared 引用与取消后 terminal 引用混比，虽为同一物理请求，引用已变化；第三轮在实际 terminal WS 后重新打开当前 UI，再执行完全相同的严格 SQL 核对，没有放宽断言、超时或重试。主 Agent 独立核对八份真实物理请求快照的 hash、角色、run／workspace 和工具，以及实际文件与原生写入参数一致。快照数不作为实际 HTTP 发送次数。
+
+私有后端／前端／NATS／provider 四端口和进程均关闭，主实例 18128 与共享 NATS 18035 存活。最终语义为合成组件运行 cancelled、资源 CLOSED，**不计为真实模型项目或 Bench 交付**。主后端仍有 330 个 OpenAPI 路径、无 `/v2/engineering`，未部署本轮源码。
+
+最终证据：`task8-qualified-r4-all/`、`task8-default-ws-fix/`、`task8-diagnostics-cold-fixture/`、`task8-default-browser-r3-prep/`、`task8-root/default-final-root-acceptance.json`。第 8 批整体仍需收尾内部 Bench runner／剩余旧消费者及原理页面，再用正式新入口另起冻结真实模型批次。原目录有 120 个 L1–L12 项目，尚未完成全范围验证。

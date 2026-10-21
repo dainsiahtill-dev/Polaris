@@ -3,24 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from polaris.bootstrap.config import Settings
-from polaris.cells.runtime.state_owner.public.service import AppState
+from polaris.cells.runtime.state_owner.public.service import AppState, ConnectionState
 
 
 @pytest.fixture
-def mock_settings() -> Settings:
+def mock_settings(tmp_path: Path) -> Settings:
     """Create minimal Settings for runtime diagnostics tests."""
 
     from polaris.bootstrap.config import ServerConfig, Settings
     from polaris.config.nats_config import NATSConfig
 
     settings = MagicMock(spec=Settings)
-    settings.workspace = "."
-    settings.workspace_path = "."
+    settings.workspace = str(tmp_path)
+    settings.workspace_path = str(tmp_path)
     settings.ramdisk_root = ""
     settings.nats = NATSConfig(enabled=True, required=True, url="nats://user:secret@127.0.0.1:4222")
     settings.server = ServerConfig(cors_origins=["*"])
@@ -33,12 +34,16 @@ def mock_settings() -> Settings:
 
 @pytest.fixture
 async def client(mock_settings: Settings) -> AsyncIterator[AsyncClient]:
-    """Create an async test client with mocked lifespan."""
+    """Exercise the actual diagnostics router without unrelated app/LLM assembly."""
 
-    from polaris.delivery.http.app_factory import create_app
+    from fastapi import FastAPI
+    from polaris.delivery.http.v2.runtime_diagnostics import router
 
-    app = create_app(settings=mock_settings)
+    app = FastAPI()
+    app.include_router(router, prefix="/v2")
+    app.state.settings = mock_settings
     app.state.app_state = AppState(settings=mock_settings)
+    app.state.connection_state = ConnectionState()
 
     class _AllowAllAuth:
         def check(self, _auth_header: str) -> bool:
@@ -50,28 +55,7 @@ async def client(mock_settings: Settings) -> AsyncIterator[AsyncClient]:
     app.state.connection_state.last_event = "open"
     app.state.connection_state.channels = {"llm", "director"}
 
-    with (
-        patch(
-            "polaris.infrastructure.messaging.nats.server_runtime.ensure_local_nats_runtime",
-            new_callable=AsyncMock,
-        ),
-        patch("polaris.bootstrap.assembly.assemble_core_services"),
-        patch(
-            "polaris.infrastructure.di.container.get_container",
-            new_callable=AsyncMock,
-        ) as mock_container,
-        patch(
-            "polaris.kernelone.process.terminate_external_loop_pm_processes",
-            return_value=[],
-        ),
-        patch("polaris.delivery.http.app_factory.sync_process_settings_environment"),
-        patch(
-            "polaris.delivery.http.routers.primary.get_settings",
-            return_value=mock_settings,
-        ),
-        patch.dict("os.environ", {"KERNELONE_METRICS_ENABLED": "false"}),
-    ):
-        mock_container.return_value = MagicMock()
+    with patch.dict("os.environ", {"KERNELONE_METRICS_ENABLED": "false"}):
         async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as ac:
             yield ac
 
