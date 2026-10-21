@@ -944,16 +944,20 @@ class EngineeringRunService:
             current = self.store.load_run(command.session_id, workspace=self.workspace)
             commands = tuple(current["verification_commands"])
             revision = int(current["workspace_revision"])
+            history = self.store.load_events(command.session_id)
+            # A prior implicit attempt cannot turn an accepted native choice
+            # into a host-owned recipe. Derive ownership from this same journal.
+            model_selected = any(
+                event["kind"] == "verification_started"
+                and event["payload"].get("input_binding", {}).get("requested_by") is not None
+                for event in history
+            )
             completed = verifier.current_completed_result(command.session_id)
             if resume_review or completed is not None:
                 checks = tuple(ToolObservation(**check) for check in current["checks"])
             else:
                 previous = next(
-                    (
-                        event["payload"]
-                        for event in reversed(self.store.load_events(command.session_id))
-                        if event["kind"] == "verification_completed"
-                    ),
+                    (event["payload"] for event in reversed(history) if event["kind"] == "verification_completed"),
                     None,
                 )
                 uncertain = previous is not None and previous.get("verification") == "unknown"
@@ -973,6 +977,29 @@ class EngineeringRunService:
                             )
                         ),
                     )
+                if model_selected:
+                    if limits.deadline is not None and time.time() >= limits.deadline:
+                        return replace(result, status="failed", verification=current["verification"])
+                    feedback = (
+                        "There is no valid verification of the current candidate. Your previous check selection "
+                        "will not be replayed automatically. Continue the original goal and explicitly call "
+                        "verify_project with meaningful current checks. You may revise your choices; host-required "
+                        "commands remain included. Prepare inputs with authorized ordinary tools first.\n"
+                        + json.dumps(
+                            {"required_checks": current["required_checks"], "verification_commands": commands},
+                            ensure_ascii=False,
+                        )
+                    )
+                    result = await self._continue_director(command, feedback, scope=scope, limits=limits, cancel=cancel)
+                    if result.status != "completed":
+                        current = self.store.load_run(command.session_id, workspace=self.workspace)
+                        return replace(
+                            result,
+                            verification=current["verification"],
+                            checks=tuple(ToolObservation(**check) for check in current["checks"]),
+                        )
+                    resume_review = False
+                    continue
                 checks = await verifier.run_verification(
                     commands, session_id=command.session_id, workspace_revision=revision
                 )
@@ -1017,18 +1044,29 @@ class EngineeringRunService:
                 continue
             if limits.deadline is not None and time.time() >= limits.deadline:
                 return replace(result, status="failed", verification="failed", checks=checks)
+            actual_results = [
+                {
+                    "command": actual,
+                    "result": {"ok": check.ok, "exit_code": check.exit_code, "content": check.content},
+                }
+                for actual, check in zip(commands, checks, strict=False)
+            ]
             feedback = (
-                "Final required checks failed. Continue the same task using these actual results:\n"
-                + json.dumps(
-                    [
-                        {
-                            "command": actual,
-                            "result": {"ok": check.ok, "exit_code": check.exit_code, "content": check.content},
-                        }
-                        for actual, check in zip(commands, checks, strict=False)
-                    ],
-                    ensure_ascii=False,
-                )
+                "Current selected checks failed. Continue the original goal using actual results. "
+                "You may revise your selected recipe through verify_project; host-required commands remain "
+                "included. Successful current preparation through ordinary authorized tools is preparation "
+                "evidence and need not be repeated in read-only verification.\n"
+                if model_selected
+                else "Final required checks failed. Continue the same task using these actual results:\n"
+            ) + json.dumps(
+                {
+                    "required_checks": current["required_checks"],
+                    "verification_commands": commands,
+                    "checks": actual_results,
+                }
+                if model_selected
+                else actual_results,
+                ensure_ascii=False,
             )
             result = await self._continue_director(command, feedback, scope=scope, limits=limits, cancel=cancel)
             if result.status != "completed":

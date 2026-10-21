@@ -390,6 +390,8 @@ async def test_writing_after_verified_candidate_requires_actual_fresh_check(
         _response(("verify-one", "verify_project", {"commands": [actual]})),
         _response(("write-two", "write_file", {"file": "artifact.txt", "content": "2"})),
         _response(),
+        _response(("verify-current", "verify_project", {"commands": [actual]})),
+        _response(),
         _response(("read", "read_file", {"file": "artifact.txt"})),
         _response(
             ("review", "report_review", {"approved": True, "feedback": "Read current artifact2, not old value1."})
@@ -412,6 +414,7 @@ async def test_writing_after_verified_candidate_requires_actual_fresh_check(
     )
     assert "stdout:\n1\n" in history[0]["payload"]["checks"][0]["content"]
     assert "stdout:\n2\n" in row["checks"][0]["content"]
+    assert all(event["payload"]["input_binding"]["requested_by"] is not None for event in history)
 
 
 @pytest.mark.parametrize("cut", ["before_outer", "after_outer", "before_completion", "before_child_observation"])

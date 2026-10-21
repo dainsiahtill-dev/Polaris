@@ -13,7 +13,7 @@
 
 [首个 L1-01 完整交付记录](POLARIS_ENGINEERING_V2_L101_R02_20261021.md)。其他样本的原始证据位于本文末统一审计根；不同源码和验收输入不合并成一个成功率。
 
-## 自主选择验证的两次尝试
+## 自主选择验证的三次尝试
 
 正式入口为内部验收 CLI → Instance Supervisor/Registry → 项目独立后端的 `/v2/engineering/runs`。原始目录 `projects_v2.json` 的 TypeScript 发光昆虫花园需求完整保留；原始 `required_checks=[]`，Director 自选配方，独立 QA 必需。模型仍为 MiniMax-M3，物理请求输出上限 3000，项目/外层预算 5400/6000 秒。没有外部目标编辑、安装、验收命令或补造收据。
 
@@ -42,6 +42,21 @@
 
 只读静态审阅确认 6 个生产 TS 文件/1206 物理行、2 个业务测试文件；仍保留高湿度垂直环绕 P2 和亮度 JSDoc P3，不伪造修复。无当前独立 QA 通过结论。
 
+### R03：范围反馈形成推进，检查归属暴露迁移缺口
+
+- 源码 `83fadd9efe94ada11822d88192a1b86604e93936`；9372 文件冻结，519 项联合回归与 KernelOne ALL 12 阶段通过后启动。
+- run `1fe1f9d6df904bce93af2012af9e01d3`，全新隔离目录 `~/.polaris/projects/engineering-l1-01-autoverify-20261021-r03`。模型、原始需求、host 权限及 3000/5400/6000 预算保持。
+- 新工具说明及 actual binding.scope 完整进入 Director 的最终物理请求。模型据此将输出调整到合法 `dist/build`，构建、业务测试和 CLI 形成真实通过；湿度灯光衰减的业务缺陷也由原生运行自行修正，外部没有注入诊断。
+- 依赖安装仍被模型反复放进只读验证。不能据包含管道、tail 或后续 echo 的普通命令整体 exit 0，断言安装子步骤已成功。后来 vendor 工具链尝试又引入 npx 编译器错误；旧检查不能当最终候选证据。
+- 已证另一处消费偏差：Director 自然结束后，finalizer attempt 1353（requested_by=null）自动复跑旧模型配方；新 Director frame 1371 的真实 user 消息称其为“Final required checks”，但不可变 host `required_checks=[]`。这发生在前五次原生验证失败之后，不能倒推解释最初五次失败。
+- 共 9 次原生验证调用及 1 次自动复跑，10 次实际 attempt 中 9 次失败、取消时最后一次 UNKNOWN。QA 始终未到达。
+
+本轮由主 Agent 正式取消，**CANCELLED / verification UNKNOWN / 未交付**。实际 1245.19 秒，未耗尽 5400 秒。2534 events、245 工具记录全部 observed、pending 为空，165 个 capture-dispatch ID；HTTP 总数、账单及人工分钟保持 UNKNOWN。原始 provider usage：input 150516、output 63037、cache_read_input_tokens 11363819，不能拿归一化缓存零值替代。
+
+当前静态审阅为 8 个生产 TS 文件、929 物理行、61 个业务/CLI/种子测试及 2 个结构测试；`.probe`、vendor 和 node_modules 不计业务深度。目标 Web 的 Canvas arc 参数及缩放点击坐标仍有 P1/P2 静态问题，未动态代验，不能用工作台浏览器通过替代目标网页通过。工作台只读浏览器首试实际通过。
+
+正式 observe 为 CANCELLED（exit 130），stop 为 STOPPED（exit 0）；独立进程与 49978/5174 关闭，主实例/NATS 保持；源码、模型及冻结配置全程未变。
+
 ## 资源、观测与计量
 
 - R02 canonical SQL：1205 events、133 工具记录全部 observed，113 `ok=true`、20 `ok=false`，pending 为空；run_ended 明确允许释放。
@@ -53,11 +68,15 @@
 
 ## 当前唯一修改与下一步
 
-R02 已封存并释放后，仅在既有 `roles.runtime` 收紧工具说明与反馈边界：明确现有输入（包括依赖和锁文件）只读；准备先使用原有授权普通工具；模型可调整自选验证配方，用户 required checks 保留；反馈投影实际绑定范围，缺失范围保持未知。Verifier 执行、权限、五个公开 DTO、SQL 状态 owner 和结果规则不变，不增加 npm 特例或重试控制器。
+R02 后的两路径说明/范围反馈已通过 19 项相关、5 项独立及 519 项联合检查，并在 R03 真实验证了传递和目录调整；尚未证明其足够解决交付收敛。system 阶段证据说明不足属于合理假设；仅准备了同 request 单处 system 替换的 A/B，网络调用和工具执行均为零，不冒充效果数据。
 
-本记录写入时，该修改已有对应真实只读拒绝→合法准备→修订自选检查且保留用户检查→当前 QA 的合成模型实验：19 项相关回归及 5 项独立有限故障实验通过，类型与格式检查通过；尚待冻结候选正式检查与全新 R03。合成响应只替换远端模型，不能证明提示一定改善 MiniMax 判断。
+R03 封存与资源释放后，当前只关闭**模型选择与宿主固定要求的归属边界**：同一 SQL 中已接受的 native `requested_by` 历史决定模型选择，后来的自动 attempt 不得覆盖归属；自选配方失效后只反馈给同 Director，等待新原生请求，不隐式重跑；当前失败反馈明确区分 `required_checks` 与 `verification_commands`。从未做过原生选择的用户固定检查保留原自动路径。UNKNOWN 的旧阻断先于继续执行，QA 与接受标准不放宽。
 
-下一步是这一个边界的有限验证、主线提交和全新隔离 R03。之后再完成默认入口/旧生产准入退役，逐步扩大冻结 L1–L12。不得把历史单项目成功、组件测试数或安全取消扩大成平台完成。所有后续研发直接在 `main`，不新建分支；旧冻结证据和无关未提交实验保留。
+Director 的 system 说明同步区分真实准备证据与准备后验证，复用既有指导；不新增权限、数据表、公开 DTO、npm 特例、超时或重试控制器。原生选择、实际收据和交接消费者一起迁移。
+
+本记录写入时，独立真实计数器反例 RED 已转 GREEN；固定检查自动、UNKNOWN 不重放、历史自动 attempt 遮蔽后冷恢复仍为模型归属共 4 项有限独立实验通过。旧“修改产物后自动重验”的合成响应已迁移成显式 native 重验，保留旧检查/新检查及当前 QA 的所有断言。完整冻结资格和全新 R04 仍待完成。合成模型只能证明机制，不能证明远端模型判断或交付。
+
+下一步是当前边界冻结、主线提交与全新隔离 R04，继续保留全部失败/取消/UNKNOWN。默认入口和旧生产准入退役、L1–L12 扩域仍未完成；不把组件检查数、安全取消或历史单项目成功扩大成平台完成。后续只在 `main` 研发，不新建分支；无关改动及旧冻结证据保留。
 
 ## 原始证据
 
@@ -71,4 +90,6 @@ R02 已封存并释放后，仅在既有 `roles.runtime` 收紧工具说明与�
 - `task7-l101-autoverify-r02-physical-observer/`：最终请求、原生响应、反馈、实际 Verifier 收据与限定归因。
 - `task7-l101-autoverify-r02-artifact-review/`、`task7-l101-autoverify-r02-browser{,-r2}/`：静态产物与两次浏览器尝试。
 - `task7-l101-autoverify-r02-{cancel,observe,stop}-root/`：正式取消、观察与停止收据。
-- `task7-verifier-preparation-feedback-{red,green}/`：当前新边界实验；完整真实 R03 尚未开始。
+- `task7-verifier-preparation-feedback-{red,green}/`：说明/范围反馈实验；后续完整 R03 未交付。
+- `task7-l101-autoverify-r03-{physical-observer,artifact-review,final-audit}/`：R03 最终请求、迁移缺口、静态质量与关闭。
+- `task7-verification-selection-owner-review/`、`task7-verification-ownership-root-red-r2/`、`task7-verification-selection-owner-independent-review/`：归属反例和有限修复证据。
