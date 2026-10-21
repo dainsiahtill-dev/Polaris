@@ -159,6 +159,7 @@ class _DependencySessionMixin(_ServiceMixinBase):
         raise RuntimeError("TaskRuntimeService.list_ready is retired; use list_ready_task_rows()")
 
     def wait_ready(self, timeout: float | None = None) -> bool:
+        self._require_writable()
         self.refresh_dependency_unblocks()
         return cast(bool, self._board.wait_ready(timeout=timeout))
 
@@ -174,6 +175,7 @@ class _DependencySessionMixin(_ServiceMixinBase):
         selected, so the mutation stays explicit at this execution boundary.
         """
 
+        self._require_writable()
         self.refresh_dependency_unblocks()
         rows = self.list_observable_task_rows()
         ready_rows: list[dict[str, Any]] = []
@@ -234,6 +236,7 @@ class _DependencySessionMixin(_ServiceMixinBase):
         path needs ``TaskBoard.update`` rather than projected dicts.
         """
 
+        self._require_writable()
         changed: list[int] = []
         refreshed: list[int] = []
         failed: list[dict[str, Any]] = []
@@ -723,6 +726,7 @@ class _DependencySessionMixin(_ServiceMixinBase):
         the validation critical section linearizes open against terminal settle.
         """
 
+        self._require_writable()
         if not isinstance(command, OpenTaskRuntimeExecutionAttemptAuthorityCommandV1):
             raise TypeError("command must be OpenTaskRuntimeExecutionAttemptAuthorityCommandV1")
         identity = command.identity
@@ -1042,6 +1046,12 @@ class _DependencySessionMixin(_ServiceMixinBase):
         """Read a session under the per-task local and cooperative file locks."""
 
         task_id = int(task_id)
+        if self._read_only:
+            with (
+                self._get_session_lock(task_id),
+                self._board._file_lock(self._session_file_lock_path(task_id), read_only=True),
+            ):
+                return self._read_session_locked(task_id, raise_infrastructure_errors=True)
         with (
             self._get_session_lock(task_id),
             self._board._file_lock(self._session_file_lock_path(task_id)),
@@ -1094,6 +1104,7 @@ class _DependencySessionMixin(_ServiceMixinBase):
         *,
         allow_terminal_downgrade: bool = False,
     ) -> bool:
+        self._require_writable()
         task_id = int(session.task_id)
         with (
             self._get_session_lock(task_id),
@@ -1110,6 +1121,7 @@ class _DependencySessionMixin(_ServiceMixinBase):
         *,
         allow_terminal_downgrade: bool = False,
     ) -> bool:
+        self._require_writable()
         session_path = self._session_logical_path(session.task_id)
         if is_terminal_session_status(session.status):
             persisted_session = self._read_session_locked(session.task_id)

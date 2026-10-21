@@ -31,13 +31,16 @@ from polaris.cells.roles.runtime.tests.engineering_support import (
     [
         ("polaris.delivery.cli.pm.cli", "pm"),
         ("polaris.delivery.cli.director.cli_thin", "director"),
+        ("polaris.delivery.cli.__main__", "director"),
         ("polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli", "chief_engineer"),
     ],
 )
+@pytest.mark.parametrize("engine_args", [(), ("--engine", "engineering_v2")])
 @pytest.mark.asyncio
-async def test_cli_explicit_v2_runs_native_loop_and_emits_persisted_identity(
+async def test_cli_default_or_explicit_v2_runs_native_loop_and_emits_persisted_identity(
     module_name: str,
     role: str,
+    engine_args: tuple[str, ...],
     isolated_workspace: Path,
     scripted_provider: ScriptedProvider,
     monkeypatch: pytest.MonkeyPatch,
@@ -82,15 +85,16 @@ async def test_cli_explicit_v2_runs_native_loop_and_emits_persisted_identity(
 
     monkeypatch.setattr(module, "_bootstrap_backend_import_path", forbidden, raising=False)
     monkeypatch.setattr(module, "RoleRuntimeService", forbidden, raising=False)
+    monkeypatch.setattr(module, "run_director_console", forbidden, raising=False)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             module_name,
+            *(["console"] if module_name.endswith(".__main__") else []),
             "--workspace",
             str(isolated_workspace),
-            "--engine",
-            "engineering_v2",
+            *engine_args,
             "--engineering-action",
             "execute",
             "--instruction",
@@ -143,3 +147,73 @@ def test_cli_parser_accepts_explicit_engine_before_legacy_bootstrap(module_name:
     assert args.engine == "engineering_v2"
     assert args.engineering_action == "execute"
     assert args.instruction == "Review"
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "polaris.delivery.cli.pm.cli",
+        "polaris.delivery.cli.director.cli_thin",
+        "polaris.delivery.cli.__main__",
+        "polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli",
+    ],
+)
+@pytest.mark.asyncio
+async def test_explicit_legacy_cli_is_rejected_before_old_bootstrap_or_effects(
+    module_name: str,
+    isolated_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import asyncio
+
+    module = importlib.import_module(module_name)
+
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("retired engine reached old bootstrap")
+
+    monkeypatch.setattr(module, "_bootstrap_backend_import_path", forbidden, raising=False)
+    monkeypatch.setattr(module, "RoleRuntimeService", forbidden, raising=False)
+    monkeypatch.setattr(module, "run_director_console", forbidden, raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            module_name,
+            *(["console"] if module_name.endswith(".__main__") else []),
+            "--workspace",
+            str(isolated_workspace),
+            "--engine",
+            "legacy",
+            "--instruction",
+            "must not run",
+        ],
+    )
+    if module_name.endswith("chief_engineer_cli"):
+        code = await module.main()
+    else:
+        code = await asyncio.to_thread(module.main)
+    output = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert output["error_code"] == "legacy_engine_retired"
+    assert not (isolated_workspace / ".polaris/runtime/engineering/sessions.sqlite3").exists()
+
+
+@pytest.mark.parametrize("module_name,legacy_options", [
+    ("polaris.delivery.cli.pm.cli", ["--max-failures", "0"]),
+    ("polaris.delivery.cli.pm.cli", ["--planner-response-path", "fake.json"]),
+    ("polaris.delivery.cli.pm.cli", ["--timeout", "5"]),
+    ("polaris.delivery.cli.director.cli_thin", ["--max-workers", "4"]),
+    ("polaris.delivery.cli.director.cli_thin", ["--backend", "auto"]),
+    ("polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli", ["--mode", "oneshot"]),
+    ("polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli", ["--max-iterations", "4"]),
+    ("polaris.cells.chief_engineer.blueprint.internal.chief_engineer_cli", ["--model", "other"]),
+])
+def test_old_execution_knobs_are_rejected_instead_of_silently_ignored(
+    module_name: str, legacy_options: list[str],
+) -> None:
+    module = importlib.import_module(module_name)
+    parser = module.create_role_cli_parser("chief_engineer") if module_name.endswith("chief_engineer_cli") else module.create_parser()
+    with pytest.raises(SystemExit) as error:
+        parser.parse_args(legacy_options)
+    assert error.value.code == 2

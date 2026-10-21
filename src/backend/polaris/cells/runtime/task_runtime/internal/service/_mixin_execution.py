@@ -86,6 +86,7 @@ class _ExecutionMixin(_ServiceMixinBase):
             - attempts (list[dict]): Details of each claim attempt
             - reason (str): Reason for failure (if success is False)
         """
+        self._require_writable()
         self.refresh_dependency_unblocks()
         observable_rows = self.list_observable_task_rows()
         candidates = [row for row in observable_rows if self._is_row_claimable(row)]
@@ -181,6 +182,7 @@ class _ExecutionMixin(_ServiceMixinBase):
         the latest terminal fact is the fail-closed fallback when no terminal
         session handled the row.
         """
+        self._require_writable()
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
             return build_task_execution_claim_result(success=False, reason="invalid_task_id")
@@ -381,6 +383,7 @@ class _ExecutionMixin(_ServiceMixinBase):
         context_summary: str = "",
     ) -> dict[str, Any]:
         """Renew an existing task lease."""
+        self._require_writable()
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
             return build_task_execution_heartbeat_result(success=False, reason="invalid_task_id")
@@ -461,6 +464,7 @@ class _ExecutionMixin(_ServiceMixinBase):
         caller and a concurrent terminal transition.
         """
 
+        self._require_writable()
         identity = command.identity
         if command.workspace != self.workspace or identity.workspace != command.workspace:
             return self._execution_attempt_heartbeat_verdict(
@@ -739,6 +743,7 @@ class _ExecutionMixin(_ServiceMixinBase):
         those idempotent effects without ever acquiring a session lock.
         """
 
+        self._require_writable()
         identity = command.identity
         if command.workspace != self.workspace or identity.workspace != command.workspace:
             return self._execution_attempt_settlement_result(
@@ -1523,6 +1528,7 @@ class _ExecutionMixin(_ServiceMixinBase):
             and append ``task_runtime.execution`` facts for each row mutation.
         """
 
+        self._require_writable()
         normalized_run_id = str(run_id or "").strip()
         if not normalized_run_id:
             return build_task_execution_bulk_suspend_result(

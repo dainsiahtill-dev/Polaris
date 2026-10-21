@@ -1,7 +1,7 @@
 # Polaris Agent 最新架构执行标准（ACGA 2.0）
 
 状态: Active  
-生效日期: 2026-03-22  
+生效日期: 2026-10-21（工程主线同步）
 适用范围: `src/backend`（所有人类/AI/Agent 协作开发）  
 
 > 本文件是给 Agent 的统一执行入口，目标是减少多文档漂移。  
@@ -31,7 +31,7 @@
 1. 先服从 graph 当前事实做边界判断。
 2. 再按 `FINAL_SPEC.md` 决定迁移方向。
 3. 最后在上述边界内应用 ACGA 2.0 检索与治理增强。
-4. 必须显式记录 gap，禁止把目标态写成现状。
+4. 必须显式记录 gap，禁止把目标态写成现状。工程主线以 `../../../docs/blueprints/POLARIS_ROLE_AGENT_REFACTOR_20261020.md` 批准方案为准；旧 FINAL_SPEC/TransactionKernel/任务审计合同不得恢复已退役的新运行准入。
 
 ---
 
@@ -145,13 +145,16 @@
 6. 测试 harness 可以轮询状态端点等待异步完成，但不得把测试轮询包装为产品实时机制。
 7. 首页、Factory、PM、ChiefEngineer、Director、ContextOS 的实时显示变更必须以 Playwright 或等价浏览器审计证明：WebSocket 推送到达后页面无刷新更新。
 
-## 8.1 全链路任务流唯一标准
+## 8.1 单一工程 owner 与可选协作
 
-1. 平台运行态任务链路唯一为 `PM → Chief Engineer → Director`；PM 产出任务合同，Chief Engineer 产出蓝图/交接证据，Director 执行 CE 交接后的任务。
-2. 禁止新增或保留 `PM → Director`、`PM->Director`、`PM -> Director` 旧链路作为产品执行路径、UI 文案、实时投影或兜底逻辑。
-3. 缺少 Chief Engineer 蓝图、handoff 或实时投影时必须 fail-closed：展示等待/阻塞 CE，不得把 PM 合同直接送入 Director，也不得用 Director 队列状态冒充 CE 已完成。
-4. 首页主战场、PM/ChiefEngineer/Director 工作区必须订阅同一 runtime.v2 事件事实，并展示 `PM → Chief Engineer → Director` 三段状态；任一阶段状态不得通过 HTTP 轮询或旧 PM→Director 快照推断补齐。Factory Bench 仅可作为内部测试 harness 订阅同一事实流做压力测试和审计，不得作为正式产品视图或生产状态源。
-5. 审计时必须 grep `PM → Director`、`PM->Director`、`PM -> Director`、`PM 规划 → Director`；命中产品代码或规范即 P0，除非文件明确标注为历史归档。
+1. 新工程运行的唯一 owner 是现有 `roles.runtime.public.engineering_service.EngineeringRunService`。HTTP、CLI、UI、取消、恢复与错误路径共用该服务，不新增 Cell、任务表、ledger 或第二 controller。
+2. 默认 `workflow=direct`，Director 读取目标、调用工具、根据真实结果继续工作；PM/Chief Engineer 按需只读咨询。显式 `workflow=collaborative` 才执行 PM、Chief Engineer、Director 协作；未调用角色显示 `not_called`。咨询一层返回，不递归派生总控；讨论不创建工程 run。
+3. PM/CE 使用可读文本提供规划、设计或审阅。新运行不要求 PM 合同、CE portfolio/blueprint、handoff/hash、OBL/covers 图、semantic patch、Task Market、JobToken/DEO/Run Ledger 旧链准入，也不受旧一 turn 一 batch 规则约束。普通编译/测试失败回到同一 Director，不自动 deterministic repair 或重启规划。
+4. 工具授权来自 host 持久化且不可由模型扩大的 `PermissionScope`、当前 profile、预算与 deadline；显式空权限保持为空。归一化后仍须检查真实路径/symlink/允许根，经 KFS 读写和 OS/process sandbox 执行命令；不支持 containment 时明确拒绝，禁止裸跑。PM/CE/QA 默认只读，同 workspace 仅一个源码写入者。
+5. 唯一工程事实记录是 `<workspace>/.polaris/runtime/engineering/sessions.sqlite3`，保存运行、事件、真实工具观察和验证；新运行不写旧 TaskBoard/TaskMarket/Run Ledger/role-session 镜像。保留 runtime.v2/Nats-JetStream、ContextOS 最终 provider request、UTF-8、实例 workspace 绑定与 storage 单根。
+6. 角色回复结束与 `completed` 不等于 `accepted`。实际检查必须绑定当前源码；用户已声明检查必须保留，未声明时由 Director 结合实际工程选择并实际执行验证。空检查、模型自报、快照条数或 QA 文本不得冒充通过；任务要求的独立 QA 必须审查同一当前候选，拒绝后继续同一任务。
+7. 恢复使用原身份、workspace、原始权限与 deadline，并重新校验当前 host policy；保留失败、interrupted/UNKNOWN 和未知效果，不自动重放可能已执行的命令或写入。旧 ID 不升级为新 run；历史按 `engine_version` 只读，旧在途运行留在原冻结 owner，不在新进程恢复旧写入口。
+8. 旧 Factory/RoleRuntimeService/execute_role_session/RoleExecutionKernel 写准入与自动 fallback 退役；历史解码器、只读查询与显式可选技术工具可保留，禁止据此声称历史源码已全部删除。旧规范仅解释旧记录，不能重新约束新运行。底层 hash 可用于证据/快照完整性，不能要求模型填写业务 hash。真实 HTTP 次数与费用仅用物理证据，未知保持 UNKNOWN。
 
 ## 8.2 工具调用归一化标准
 
@@ -165,17 +168,17 @@
 
 1. 每次真实 LLM 调用都必须审计最终 provider request，而不只统计 ContextOS messages 投影。
 2. 审计字段至少包含：message 数量/字符/token 估算、native tool schema 数量/字符/token 估算、response_format token 估算、最终请求 token 估算、上下文窗口大小与利用率。
-3. Factory/角色链路调用必须同时记录覆盖度 flags：是否包含 PM 合同、Chief Engineer 蓝图/交接、目标文件/目标项目上下文、失败反馈、workspace quality evidence。
+3. 工程角色调用须记录实际所需上下文的覆盖：原目标、实际使用的规划/设计、目标文件/目标项目上下文、失败反馈、workspace quality evidence；PM/CE 未调用的材料记不适用，不能变成强制合同准入。
 4. ContextOS 实时视图必须优先展示最终请求上下文 token（含工具 schema 和 response format），不得继续用 messages-only 或 prompt usage 冒充最终上下文占用。
 5. 最终请求上下文明显低于预期时，先归因为上下文装配/覆盖度/预算策略问题并留下 runtime event 证据；禁止通过扩大 max_tokens 或伪造 token 数掩盖缺失上下文。
-6. Token/window utilization 只是容量指标，不是质量指标。最终请求 coverage 必须结构化记录 required evidence refs、included refs、missing refs、required tools、available tools、missing required tools、role identity、tool schema registry coverage、Run Ledger/receipt 绑定和 freshness。
-7. `docs/governance/schemas/final-request-evidence-coverage.schema.yaml` 是最终请求证据覆盖的目标契约。字符串命中可以作为低置信度线索，但不能单独证明 PM contract、CE blueprint、handoff decision、target files、workspace quality evidence 或 failed gate evidence 已被正确注入。
+6. Token/window utilization 只是容量指标，不是质量指标。最终请求审计须记录实际所需/已包含/缺失的证据与工具、role identity、tool schema registry coverage、工程 run/tool observation 绑定和 freshness；不能以旧 Run Ledger 绑定或业务覆盖图作为新运行前置。
+7. `docs/governance/schemas/final-request-evidence-coverage.schema.yaml` 仅保留为旧合同链的历史审计契约。字符串命中只能作为低置信度线索，不能证明上下文正确注入；旧 contract/blueprint/handoff schema 只审计历史引擎，新运行不要求模型生成这些字段。
 
 ## 8.4 角色工具失败外部审计标准（主 Agent 专用，禁止产品化）
 
 1. PM、Chief Engineer、Director、QA 任一角色发生工具调用失败、工具调用缺失、工具参数无法归一化、工具结果被误判成功、或 LLM 输出被错误当作 action 执行时，主 Agent 可以派发 OpenCode 外部 Agent 做独立审计。
 2. OpenCode 外部审计只属于 Codex/Claude 等主 Agent 的协作工具，绝对不是 Polaris 平台架构元素。任何后端 Cell、Factory Pipeline、Run Ledger、ContextOS、ReceiptStore、runtime event、UI、bench gate 或 QA gate 都不得调度、等待、记录或依赖 OpenCode 审计状态。
-3. 审计必须检查最终送入 provider 的完整 LLM request、ContextOS 组装结果、tool schema/response format、token 估算与覆盖度 flags，并确认是否缺 PM 合同、Chief Engineer 蓝图/交接、目标文件、失败反馈或 workspace quality evidence。若 LLM event 中 `messages`/`content` 被 redacted，主 Agent 必须读取 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件，不得用 redacted event 代替完整上下文审计。
+3. 审计必须检查最终送入 provider 的完整 LLM request、ContextOS 组装结果、tool schema/response format、token 估算与覆盖度 flags，并确认是否缺原目标、实际使用的规划/设计、目标文件、失败反馈或 workspace quality evidence；未调用 PM/CE 不视为缺失。若 LLM event 中 `messages`/`content` 被 redacted，主 Agent 必须读取 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件，不得用 redacted event 代替完整上下文审计。
 4. 审计必须沿工具解析与归一化路径确认 `ToolSpecRegistry` aliases/arg_aliases、自然语言/JSON/XML/native tool call 解析、授权门禁、路径门禁和命令门禁是否按顺序执行。
 5. 审计必须收集 runtime event、LLM 调用日志、ContextOS 证据、bench session、角色日志和失败命令输出；不得用“模型没按格式输出”作为未审计的终结解释。
 6. OpenCode 审计默认只读；若需要修复，主 Agent 必须先拆成互不重叠的授权范围，并在回收后零信任复核 diff、测试与证据链。
@@ -196,33 +199,26 @@
 3. 正式环境/生产环境不得出现 Bench 入口、Bench 菜单、Bench 面板、Bench 专属 API、Bench 文案或 Bench 专属状态模型。
 4. Run Ledger、Job Token、ContextOS、ReceiptStore、Verifier/Gate Policy 是平台基础设施，必须以平台级 Cell/contract/projection/API/type 命名和暴露。Bench 只能在内部测试态作为这些平台能力的 producer/consumer，不得承载正式语义。
 5. 禁止让正式 UI、ContextOS、TaskBoard、QA 工作台、Settings、public API 或生产运行时依赖 `benchService`、bench session、`factory_audits.json`、bench-only metadata 或任何 Bench 命名空间。
-6. 如果某项能力先在 Bench 中验证成功，进入正式产品前必须完成命名空间提升：从 Bench 抽离到平台级 Control Plane / Run Ledger projection，再由正式视图消费。
+6. 如果某项能力先在 Bench 中验证成功，进入正式产品前必须完成命名空间提升：从 Bench 抽离到其真实平台 owner 的 projection/API；工程 run 从单份 engineering SQLite 投影，再由正式视图消费，不恢复旧 Run Ledger 写入。
 7. 审计发现生产路径出现 Bench 依赖时按 P0 边界污染处理；修复优先级高于新增功能。
-8. 正式角色内核、transaction kernel、tool gating、prompt layer 和 tool batch executor 不得解析 `[Benchmark Tool Contract]`、`benchmark_require_*` 或类似 Bench 文本/字段；内部 evaluator 若需要表达工具数量、必选工具、单批次或 barrier 绕过，必须在进入正式内核前转换为平台级 `tool_contract` / `platform_tool_contract` metadata。
+8. 正式工程循环、tool gating、prompt layer 和工具执行器不得解析 `[Benchmark Tool Contract]`、`benchmark_require_*` 或类似 Bench 文本/字段；内部 evaluator 的测量要求不能在生产循环恢复单批次限制、旧 tool_contract 或权限 barrier 绕过；正式行为仍由 host 权限和真实目标决定。
 9. Browser、视觉、多模态 QA、用户脚本、领域脚本等 verifier modality 是平台级 Control Plane 可选能力，默认关闭；设置页可以保存启用意图，但只有当前环境显式声明可用时才允许把它们设为 hard-required evidence，禁止由 Bench harness 或内部压力测试状态决定正式项目是否必须启用这些能力。
-10. Job Token 是从控制面事实源派生的 capability token，不得成为第二事实源；正式写入和命令工具执行层必须消费 Job Token 派生的授权 scope，并把 `token_id`、contract/blueprint hash、stage、project_id 等 capability evidence 写入 effect receipt，供 Run Ledger、QA 和 UI projection 只读消费。
+10. 新工程工具消费 host `PermissionScope` 与当前 profile，并记录真实调用、效果与结果；Job Token/DEO/旧 Run Ledger 合同链仅历史读取，不是新运行前置，模型不能扩大授权。
 
-## 8.7 任务执行审计契约标准
+## 8.7 工程运行审计与历史契约
 
-1. `docs/POLARIS_TASK_EXECUTION_AUDIT_SPEC.md` 是 PM -> Chief Engineer -> Director -> QA 执行链路的审计规范入口。它不引入第二套架构，只把现有 PM Contract、CE Blueprint、Handoff Decision、Execution Profile、Job Token、ContextOS、Run Ledger、ReceiptStore、Verifier/Gate Policy 和 Resident AGI evidence interface 收敛到同一套长期契约。
-2. Director dispatch 的授权对象必须收敛为 `ce_handoff_decision.v1`，`handoff_ready` 只能作为 UI/summary 字段，不能作为权限字段。
-3. Director execution 的目标契约必须收敛为 `execution_envelope.v1`。Prompt 只负责指导模型；envelope 定义权限、预算和审计要求；tool/write/command guard 必须消费 envelope 派生的 capability evidence。
-4. 最终 provider request 审计必须输出 `final_request_evidence_coverage`，把 required refs、included refs、missing refs、required tools、available tools、workflow hashes 与 role identity 放在同一个结构化对象中；token/window 利用率只能作为容量指标，不能替代证据覆盖判断。
-5. 每次 run 的最终追责对象必须收敛为 `run_provenance_bundle.v1`，至少绑定 PM contract hash、CE blueprint hash、handoff decision hash、execution envelope hash、final provider request hashes、tool receipt hashes、command receipt hashes 和 QA/verifier 结果。
-6. 机器可读 schema 位于：
-   - `docs/governance/schemas/ce-handoff-decision.schema.yaml`
-   - `docs/governance/schemas/execution-envelope.schema.yaml`
-   - `docs/governance/schemas/final-request-evidence-coverage.schema.yaml`
-   - `docs/governance/schemas/run-provenance-bundle.schema.yaml`
-7. 新增或修改 PM、Chief Engineer、Director、QA、Resident AGI、Run Ledger、ContextOS、ReceiptStore、tool guard、provider request audit 相关入口时，必须评估是否会破坏上述契约；若存在缺口，必须在代码、测试或审计文档中明确当前事实与目标态差距。
+1. 新工程以 `EngineeringRunService` 与 `<workspace>/.polaris/runtime/engineering/sessions.sqlite3` 保存同一 run 的目标、原始权限/deadline、角色实际调用、tool started/observation、验证与 QA。不得复制到旧 task/ledger/role-session 事实表。
+2. 最终 provider request、native tool 身份、实际工具结果、KFS 效果与进程退出码可互相追溯；不可用证据明确 unknown/unavailable，不能用模型回复、messages-only 或快照条数补造。
+3. 验证必须实际发生且绑定当前源码；已声明检查保留，未声明时由 Director 结合真实工程选择检查。必要独立 QA 检查同一候选；工程完成、验证与验收各自如实展示。
+4. `POLARIS_TASK_EXECUTION_AUDIT_SPEC.md`、`ce-handoff-decision`、`execution-envelope`、`run-provenance-bundle` 与旧 final-request coverage schema 仅解释历史合同链。新运行不要求 PM/CE/hash/handoff/OBL、旧 dispatch envelope、JobToken 或 semantic repair 准入。
+5. 独立 deterministic repair 工具可显式保留在 `director.runtime`，跨 Cell 只走 public；coverage/plan/compose/policy/receipt/revalidation 约束只适用于这些工具，普通编译错误直接反馈 Director，禁止默认自动 schedule/fallback。
 
 ## 8.8 反证式架构验收标准
 
 1. `docs/governance/POLARIS_SKEPTICAL_ARCHITECTURE_REVIEW.md` 是 Polaris 执行架构可靠性审查的固定入口。
 2. 涉及 Factory、Director、ToolCallLifecycle、TaskRuntime、Run Ledger、TaskBoundary、QA verdict、cancel/deadline barrier、repair convergence 或 bench taxonomy 的底座改动，必须按该清单做反证式验收。
 3. 单测、summary gate、coverage pass 或局部 bench 改善不能单独证明架构收敛；至少需要 fresh isolated 项目的完整事实链证据。
-4. 若 fresh isolated 项目未能稳定进入 `COMPLETED_VERIFIED`，必须把断点定位到：
-   `final provider request -> provider response -> tool lifecycle receipt -> tool dispatch -> effect receipt -> TaskBoundary verdict -> TaskRuntime observable projection -> Run Ledger projection -> QA verdict -> Factory/bench report`。
+4. fresh isolated 工程未达到 accepted 时，定位 `final provider request -> provider response -> native tool dispatch -> durable tool observation/effect -> current-source verifier -> required QA -> engineering snapshot`；历史 Factory 的 TaskBoundary/TaskRuntime/Run Ledger 链只用于原记录。
 5. 若任一状态仍依赖 raw TaskBoard/session JSON、prompt 文本、messages-only 统计、legacy deterministic repair、bench direct-write workaround 或第二套投影，必须按架构未证明处理，禁止声称“底座已收敛”。
 
 ---
@@ -244,7 +240,7 @@
 
 1. `python -m pytest -q tests/architecture/test_kernelone_release_gates.py`
 2. `python docs/governance/ci/scripts/run_kernelone_release_gate.py --mode all`
-3. `python -m polaris.cells.context.catalog.internal.descriptor_pack_generator`（触及 descriptor 语义时）
+3. descriptor 语义变化时评估 `polaris.cells.context.catalog.internal.descriptor_pack_generator`；其 CLI 默认遍历全部 Cell 并写 pack/receipt，必须限定授权范围或隔离输出，禁止为单 Cell 文档同步广泛覆盖源码/资产。实际不存在的 pack 不得虚构已更新
 
 若无法执行，必须明确：
 

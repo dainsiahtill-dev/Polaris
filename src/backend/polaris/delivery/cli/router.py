@@ -144,56 +144,26 @@ class WorkspaceGuard:
 
 
 def _route_console(args: argparse.Namespace) -> int:
-    """Launch the canonical terminal console host."""
-    workspace = WorkspaceGuard.ensure_workspace(getattr(args, "workspace", None))
-    role = str(getattr(args, "role", "director") or "director").strip().lower()
-    backend = str(getattr(args, "backend", "auto") or "auto").strip().lower()
-    session_id = str(getattr(args, "session_id", "") or "").strip() or None
-    session_title = str(getattr(args, "session_title", "") or "").strip() or None
-    prompt_style = str(getattr(args, "prompt_style", "plain") or "plain").strip().lower() or "plain"
-    omp_config = str(getattr(args, "omp_config", "") or "").strip() or None
-    json_render = str(getattr(args, "json_render", "raw") or "raw").strip().lower() or "raw"
-    debug = bool(getattr(args, "debug", False))
-    dry_run = bool(getattr(args, "dry_run", False))
-    super_mode = bool(getattr(args, "super", False))
+    """Use the shared engineering service; never reopen a legacy console."""
+    import asyncio
 
-    # Batch mode: explicit flag OR auto-detect (stdin AND stdout both not tty)
-    explicit_batch = bool(getattr(args, "batch", False))
-    auto_batch = not sys.stdin.isatty() and not sys.stdout.isatty()
-    batch = explicit_batch or auto_batch
+    from polaris.delivery.cli.engineering import reject_legacy_execution, run_engineering_action
 
-    try:
-        from polaris.delivery.cli.terminal import run_role_console
-    except (RuntimeError, ValueError) as exc:  # pragma: no cover — import guard
-        logger.warning("Failed to import director console host: %s", exc)
-        print(f"Error: console backend unavailable ({exc})", file=sys.stderr)
-        return 1
-
-    try:
-        return run_role_console(
-            workspace=str(workspace),
-            role=role,
-            backend=backend,
-            session_id=session_id,
-            session_title=session_title,
-            prompt_style=prompt_style,
-            omp_config=omp_config,
-            json_render=json_render,
-            debug=debug,
-            batch=batch,
-            dry_run=dry_run,
-            super_mode=super_mode,
-        )
-    except (RuntimeError, ValueError) as exc:
-        logger.warning("console route failed: %s", exc)
-        print(f"Error launching console: {exc}", file=sys.stderr)
-        return 1
+    if getattr(args, "session_id", None) or getattr(args, "super", False):
+        return reject_legacy_execution()
+    if getattr(args, "batch", False) and not args.instruction:
+        args.instruction = sys.stdin.read()
+    return asyncio.run(run_engineering_action(args, role=args.role))
 
 
 def _route_task(args: argparse.Namespace) -> int:
     """Dispatch task subcommands (create / list / show)."""
-    workspace = WorkspaceGuard.ensure_workspace(getattr(args, "workspace", None))
     task_cmd = str(getattr(args, "task_command", "") or "").strip().lower()
+    if task_cmd == "create":
+        from polaris.delivery.cli.engineering import reject_legacy_execution
+
+        return reject_legacy_execution()
+    workspace = WorkspaceGuard.ensure_workspace(getattr(args, "workspace", None))
 
     if task_cmd == "create":
         return _task_create(workspace, args)
@@ -207,35 +177,10 @@ def _route_task(args: argparse.Namespace) -> int:
 
 
 def _task_create(workspace: Path, args: argparse.Namespace) -> int:
-    """Create a task via the task runtime service."""
-    subject = str(getattr(args, "subject", "") or "").strip()
-    if not subject:
-        print("Error: --subject is required for task create", file=sys.stderr)
-        return 1
+    """Retired mutation; historical inspection remains available."""
+    from polaris.delivery.cli.engineering import reject_legacy_execution
 
-    description = str(getattr(args, "description", "") or "").strip()
-    priority = str(getattr(args, "priority", "MEDIUM") or "MEDIUM").strip().upper()
-    blocked_by: list[int] = []
-    raw_blocked = getattr(args, "blocked_by", None)
-    if raw_blocked and isinstance(raw_blocked, (list, tuple)):
-        blocked_by = [int(x) for x in raw_blocked if str(x).isdigit()]
-
-    try:
-        from polaris.delivery.cli.director.console_host import DirectorConsoleHost
-
-        host = DirectorConsoleHost(str(workspace))
-        result = host.create_task(
-            subject=subject,
-            description=description,
-            priority=priority,
-            blocked_by=blocked_by or None,
-        )
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
-    except (RuntimeError, ValueError) as exc:
-        logger.warning("task create failed: %s", exc)
-        print(f"Error creating task: {exc}", file=sys.stderr)
-        return 1
+    return reject_legacy_execution()
 
 
 def _task_list(workspace: Path, args: argparse.Namespace) -> int:
@@ -279,102 +224,64 @@ def _task_show(workspace: Path, args: argparse.Namespace) -> int:
 
 
 def _route_session(args: argparse.Namespace) -> int:
-    """Dispatch session subcommands (list / show / switch / clear)."""
-    workspace = WorkspaceGuard.ensure_workspace(getattr(args, "workspace", None))
+    """Read scoped history without constructing a runtime or writable host."""
+    from polaris.delivery.cli.engineering import reject_legacy_execution
+
     session_cmd = str(getattr(args, "session_command", "") or "").strip().lower()
-    role = str(getattr(args, "role", "director") or "director").strip().lower()
-
+    if session_cmd in {"switch", "clear"}:
+        return reject_legacy_execution()
+    if session_cmd not in {"list", "show"}:
+        print(f"Error: unknown session command: {session_cmd!r}", file=sys.stderr)
+        return 1
     try:
-        from polaris.delivery.cli.director.console_host import DirectorConsoleHost
+        from polaris.cells.roles.session.public import RoleSessionService
 
-        host = DirectorConsoleHost(str(workspace), role=role)
-    except (RuntimeError, ValueError) as exc:
-        logger.warning("Failed to create console host: %s", exc)
-        print(f"Error: cannot initialise session service: {exc}", file=sys.stderr)
+        workspace = Path(getattr(args, "workspace", None) or ".").resolve(strict=True)
+        with RoleSessionService(workspace=str(workspace), read_only=True, enable_persistence=False, enable_events=False) as service:
+            return _session_list(service, args) if session_cmd == "list" else _session_show(service, args)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"Error reading session history: {exc}", file=sys.stderr)
         return 1
 
-    if session_cmd == "list":
-        return _session_list(host, args)
-    if session_cmd == "show":
-        return _session_show(host, args)
-    if session_cmd == "switch":
-        return _session_switch(host, args)
-    if session_cmd == "clear":
-        return _session_clear(host, args)
 
-    print(f"Error: unknown session command: {session_cmd!r}", file=sys.stderr)
-    return 1
-
-
-def _session_list(host, args: argparse.Namespace) -> int:
-    """List active sessions."""
+def _session_list(service, args: argparse.Namespace) -> int:
+    """List recorded sessions using the existing read-only owner."""
     limit = max(1, int(getattr(args, "limit", 20) or 20))
     state = str(getattr(args, "state", "") or "").strip() or None
-    role_filter = str(getattr(args, "role", "") or "").strip() or None
-    try:
-        sessions = host.list_sessions(limit=limit, state=state, role=role_filter)
-        print(json.dumps(sessions, ensure_ascii=False, indent=2))
-        return 0
-    except (RuntimeError, ValueError) as exc:
-        logger.warning("session list failed: %s", exc)
-        print(f"Error listing sessions: {exc}", file=sys.stderr)
-        return 1
+    role = str(getattr(args, "role", "") or "").strip() or None
+    sessions = service.get_sessions(limit=limit, state=state, role=role)
+    print(json.dumps([session.to_dict(include_messages=False) for session in sessions], ensure_ascii=False, indent=2))
+    return 0
 
 
-def _session_show(host, args: argparse.Namespace) -> int:
-    """Show a specific session by ID."""
+def _session_show(service, args: argparse.Namespace) -> int:
+    """Show one workspace-bound historical record without reactivating it."""
     session_id = str(getattr(args, "session_id", "") or "").strip()
     if not session_id:
         print("Error: --session-id is required for session show", file=sys.stderr)
         return 1
-    try:
-        payload = host.load_session(session_id)
-        if payload is None:
-            print(f"Error: session not found: {session_id}", file=sys.stderr)
-            return 1
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 0
-    except (RuntimeError, ValueError) as exc:
-        logger.warning("session show failed: %s", exc)
-        print(f"Error showing session: {exc}", file=sys.stderr)
+    session = service.get_session(session_id)
+    if session is None:
+        print(f"Error: session not found: {session_id}", file=sys.stderr)
         return 1
+    payload = session.to_dict(include_messages=False)
+    payload["messages"] = [message.to_dict() for message in service.get_messages(session_id)]
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
 
 
 def _session_switch(host, args: argparse.Namespace) -> int:
-    """Switch the active session pointer (persist for the role)."""
-    session_id = str(getattr(args, "session_id", "") or "").strip()
-    if not session_id:
-        print("Error: --session-id is required for session switch", file=sys.stderr)
-        return 1
-    try:
-        payload = host.load_session(session_id)
-        if payload is None:
-            print(f"Error: session not found: {session_id}", file=sys.stderr)
-            return 1
-        print(f"Switched to session: {session_id}")
-        return 0
-    except (RuntimeError, ValueError) as exc:
-        logger.warning("session switch failed: %s", exc)
-        print(f"Error switching session: {exc}", file=sys.stderr)
-        return 1
+    """Retired mutation; historical inspection remains available."""
+    from polaris.delivery.cli.engineering import reject_legacy_execution
+
+    return reject_legacy_execution()
 
 
 def _session_clear(host, args: argparse.Namespace) -> int:
-    """Clear (deactivate) sessions for the role."""
-    role = str(getattr(args, "role", "director") or "director").strip().lower()
-    try:
-        sessions = host.list_sessions(role=role)
-        cleared = 0
-        for s in sessions:
-            sid = str(s.get("id") or "").strip()
-            if sid:
-                cleared += 1
-        print(f"Cleared {cleared} session(s) for role={role}")
-        return 0
-    except (RuntimeError, ValueError) as exc:
-        logger.warning("session clear failed: %s", exc)
-        print(f"Error clearing sessions: {exc}", file=sys.stderr)
-        return 1
+    """Retired mutation; historical inspection remains available."""
+    from polaris.delivery.cli.engineering import reject_legacy_execution
+
+    return reject_legacy_execution()
 
 
 def _route_serve(args: argparse.Namespace) -> int:

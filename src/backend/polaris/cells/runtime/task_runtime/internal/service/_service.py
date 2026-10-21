@@ -37,13 +37,16 @@ class TaskRuntimeService(
     - Persist execution lease/session facts under ``runtime/tasks/*``
     - Expose a stable, resumable read model for snapshot/observer consumers"""
 
-    def __init__(self, workspace: str, board: TaskBoard | None = None) -> None:
+    def __init__(self, workspace: str, board: TaskBoard | None = None, *, read_only: bool = False) -> None:
         workspace_token = str(workspace or "").strip()
         if not workspace_token:
             raise ValueError("workspace is required for TaskRuntimeService")
+        if read_only and board is not None and not board.read_only:
+            raise ValueError("read-only TaskRuntime requires a read-only TaskBoard")
+        self._read_only = read_only
         self._workspace = workspace_token
-        self._board = board or TaskBoard(workspace=workspace_token)
-        self._kernel_fs = KernelFileSystem(workspace_token, get_default_adapter())
+        self._board = board if board is not None else TaskBoard(workspace=workspace_token, read_only=read_only)
+        self._kernel_fs = KernelFileSystem(workspace_token, get_default_adapter(), read_only_paths=read_only)
         # Per-task-id locks guard only the read-modify-write cycle on session
         # files. The only FactStream work permitted under this lock is the
         # narrow DEO registry admission/pre-barrier chain; projection uses a
@@ -60,3 +63,8 @@ class TaskRuntimeService(
     @property
     def workspace(self) -> str:
         return self._workspace
+
+    def _require_writable(self) -> None:
+        """Reject mutation before old history acquires store or lock authority."""
+        if self._read_only:
+            raise PermissionError("historical TaskRuntime observation is read-only")

@@ -165,6 +165,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
     ) -> dict[str, Any] | None:
         """Reopen a task and return the runtime row projection with event evidence."""
 
+        self._require_writable()
         _task, row, execution_event, downstream_events, blocker = self._reopen_with_execution_event(
             task_id,
             reason=reason,
@@ -205,6 +206,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
             the number of downstream rows blocked by the task.
         """
 
+        self._require_writable()
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
             return None
@@ -275,6 +277,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
             O(1) task-row/session work for the target duplicate row.
         """
 
+        self._require_writable()
         normalized, task = self._task_entity_for_owner_terminal_transition(task_id)
         if normalized is None or task is None:
             return None
@@ -362,6 +365,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
             O(1) task-row/session work for the target row.
         """
 
+        self._require_writable()
         authority = str(factory_run_id or "").strip()
         if not authority:
             raise ValueError("factory_run_id must be a non-empty string")
@@ -476,6 +480,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
             O(1) task-row/session work for the target row.
         """
 
+        self._require_writable()
         authority = str(factory_run_id or "").strip()
         if not authority:
             raise ValueError("factory_run_id must be a non-empty string")
@@ -614,6 +619,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
             O(n) over observable rows for the factory_run_id.
         """
 
+        self._require_writable()
         authority = str(factory_run_id or "").strip()
         if not authority:
             raise ValueError("factory_run_id must be a non-empty string")
@@ -738,6 +744,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
             O(1) task-row/session work for the target row.
         """
 
+        self._require_writable()
         normalized, task = self._task_entity_for_owner_terminal_transition(task_id)
         if normalized is None or task is None:
             return None
@@ -1001,6 +1008,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
         centralized there.
         """
 
+        self._require_writable()
         self.refresh_dependency_unblocks()
         return self._list_file_task_rows(include_terminal=include_terminal)
 
@@ -2149,6 +2157,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
         use ``claim_next_execution`` so selection and claim stay in one retryable
         operation.
         """
+        self._require_writable()
         self.refresh_dependency_unblocks()
         observable_rows = self.list_observable_task_rows()
         if requested_task_id:

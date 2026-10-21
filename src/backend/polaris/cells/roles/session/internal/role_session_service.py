@@ -254,6 +254,7 @@ class RoleSessionService:
         workspace: str | None = None,
         enable_persistence: bool = True,
         enable_events: bool = True,
+        read_only: bool = False,
     ) -> None:
         """初始化服务
 
@@ -266,8 +267,9 @@ class RoleSessionService:
         self._db = db
         self._owns_session = db is None
         self._workspace = workspace
-        self._enable_persistence = enable_persistence
-        self._enable_events = enable_events
+        self._enable_persistence = enable_persistence and not read_only
+        self._enable_events = enable_events and not read_only
+        self._read_only = read_only
         self._persistence: SessionPersistenceService | None = None
         self._event_publisher: SessionEventPublisher | None = None
 
@@ -282,8 +284,23 @@ class RoleSessionService:
     def db(self) -> DbSession:
         """获取数据库会话"""
         if self._db is None:
-            self._db = get_session_local(workspace=self._workspace)()
+            factory = get_session_local(workspace=self._workspace, read_only=self._read_only)
+            if factory is None:
+                raise FileNotFoundError("historical role session database does not exist")
+            self._db = factory()
         return self._db
+
+    def _read_database_available(self) -> bool:
+        """Missing read-only history is empty, never a request to bootstrap it."""
+        try:
+            _ = self.db
+        except FileNotFoundError:
+            return False
+        return True
+
+    def _require_writable(self) -> None:
+        if self._read_only:
+            raise PermissionError("historical role session storage is read-only")
 
     @property
     def persistence(self) -> SessionPersistenceService | None:
@@ -454,6 +471,7 @@ class RoleSessionService:
         Returns:
             Conversation: 创建的会话对象
         """
+        self._require_writable()
         context_config = self._sanitize_context_config(context_config)
         session = Conversation(
             id=str(uuid.uuid4()),
@@ -493,7 +511,12 @@ class RoleSessionService:
         Returns:
             Conversation 或 None
         """
-        return self.db.query(Conversation).filter(Conversation.id == session_id).first()
+        if not self._read_database_available():
+            return None
+        query = self.db.query(Conversation).filter(Conversation.id == session_id)
+        if self._read_only:
+            query = query.filter(Conversation.workspace == str(Path(self.workspace).resolve()))
+        return query.first()
 
     def get_sessions(
         self,
@@ -519,6 +542,13 @@ class RoleSessionService:
         Returns:
             会话列表
         """
+        if not self._read_database_available():
+            return []
+        if self._read_only:
+            bound_workspace = str(Path(self.workspace).resolve())
+            if workspace and str(Path(workspace).resolve()) != bound_workspace:
+                return []
+            workspace = bound_workspace
         query = self.db.query(Conversation).filter(Conversation.is_deleted == 0)
 
         if role:
@@ -554,6 +584,7 @@ class RoleSessionService:
         Returns:
             更新后的会话或 None
         """
+        self._require_writable()
         session = self.get_session(session_id)
         if not session:
             return None
@@ -641,6 +672,7 @@ class RoleSessionService:
         snapshot: dict[str, Any] | None,
     ) -> Conversation | None:
         """Persist the State-First Context OS snapshot back into context_config."""
+        self._require_writable()
         context_config = self.get_context_config_dict(session_id)
         if context_config is None:
             return None
@@ -665,6 +697,7 @@ class RoleSessionService:
         Returns:
             是否成功
         """
+        self._require_writable()
         session = self.get_session(session_id)
 
         if not session:
@@ -707,6 +740,7 @@ class RoleSessionService:
         Returns:
             SessionAttachment 或 None
         """
+        self._require_writable()
         session = self.get_session(session_id)
         if not session:
             return None
@@ -750,6 +784,7 @@ class RoleSessionService:
         Returns:
             是否成功
         """
+        self._require_writable()
         session = self.get_session(session_id)
         if not session:
             return False
@@ -842,6 +877,7 @@ class RoleSessionService:
         Returns:
             更新后的会话或 None
         """
+        self._require_writable()
         return self.update_session(session_id, capability_profile=capabilities)
 
     # ==================== Strategy Override (WS2) ====================
@@ -875,6 +911,7 @@ class RoleSessionService:
         Returns:
             更新后的会话或 None
         """
+        self._require_writable()
         session = self.get_session(session_id)
         if not session:
             return None
@@ -912,6 +949,7 @@ class RoleSessionService:
         Returns:
             更新后的会话或 None
         """
+        self._require_writable()
         from polaris.cells.roles.session.internal.conversation import ConversationMessage
 
         session = self.get_session(session_id)
@@ -1007,6 +1045,7 @@ class RoleSessionService:
         Returns:
             被清理的会话 ID 列表
         """
+        self._require_writable()
         try:
             cleanup_service = _get_ttl_cleanup_service(self.workspace)
             return cleanup_service.cleanup_expired()

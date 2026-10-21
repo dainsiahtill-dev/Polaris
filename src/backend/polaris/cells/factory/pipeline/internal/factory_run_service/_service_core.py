@@ -117,25 +117,35 @@ class _FactoryRunServiceCore:
         ] = query_factory_settlement_barrier,
         stage_artifact_binding_builder: Callable[[str, StageResult], FactoryStageArtifactBindingsV1 | None]
         | None = None,
+        read_only: bool = False,
     ) -> None:
         from ..factory_store import FactoryStore
 
+        self._read_only = read_only
         self.workspace = Path(workspace)
+        from polaris.kernelone.storage import resolve_storage_roots_read_only
+
+        roots_resolver = resolve_storage_roots_read_only if read_only else resolve_storage_roots
         self.cache_root = (
-            Path(cache_root)
-            if cache_root is not None
-            else Path(resolve_storage_roots(str(self.workspace)).runtime_root)
+            Path(cache_root) if cache_root is not None else Path(roots_resolver(str(self.workspace)).runtime_root)
         )
-        self.store = FactoryStore(self.cache_root / "factory")
-        self._admission = admission or FactoryWorkspaceRunAdmission(
-            self.workspace,
-            state_root=self.cache_root / "factory",
+        self.store = FactoryStore(self.cache_root / "factory", create_root=not read_only)
+        self._admission = (
+            None
+            if read_only
+            else admission
+            or FactoryWorkspaceRunAdmission(
+                self.workspace,
+                state_root=self.cache_root / "factory",
+            )
         )
         self._settlement_barrier_query = settlement_barrier_query
         # 细粒度锁: 按 run_id 哈希分片，减少竞争
         self._run_locks: list[asyncio.Lock] = [asyncio.Lock() for _ in range(self._LOCK_BUCKETS)]
         self._physical_attempt_coordinators: dict[str, FactoryPhysicalAttemptLiveControlPort] = {}
-        self._executor: FactoryStageExecutor = executor or OrchestrationStageExecutor(self.workspace)
+        self._executor: FactoryStageExecutor | None = (
+            None if read_only else executor or OrchestrationStageExecutor(self.workspace)
+        )
         # Explicit injected executors are test/adapter seams and cannot claim
         # production PM/CE artifacts. Production construction (executor=None)
         # always uses the strict Factory-owned binding builders below.
@@ -146,6 +156,11 @@ class _FactoryRunServiceCore:
             self._stage_artifact_binding_builder = lambda _run_id, _result: None
         else:
             self._stage_artifact_binding_builder = None
+
+    def _require_writable(self: Any) -> None:
+        """Historical readers cannot obtain write, admission, or event authority."""
+        if self._read_only:
+            raise PermissionError("historical Factory storage is read-only")
 
     def _get_run_lock(self: Any, run_id: str) -> asyncio.Lock:
         """获取 run_id 对应的细粒度锁。
@@ -680,6 +695,7 @@ class _FactoryRunServiceCore:
     ) -> FactoryRun:
         """Explicitly release a failed-stage claim only after settlement proof."""
 
+        self._require_writable()
         run_lock = self._get_run_lock(run_id)
         async with run_lock:
             run = await self.store.get_run(run_id)
@@ -891,6 +907,7 @@ class _FactoryRunServiceCore:
     ) -> FactoryRun:
         """Fail closed unless the latest stage transaction is fully committed."""
 
+        self._require_writable()
         run_snapshot = await self.store.read_strict_run_snapshot(run_id)
         try:
             persisted_run = FactoryRun.from_dict(run_snapshot)
@@ -964,6 +981,7 @@ class _FactoryRunServiceCore:
     ) -> FactoryRun:
         """Service-owned read guard for service methods that do their own writes."""
 
+        self._require_writable()
         self._automatic_router_mutation_families(operation)
         async with self._get_run_lock(run_id):
             return await self.assert_mutation_allowed(run_id, current_run=current_run)
@@ -983,6 +1001,7 @@ class _FactoryRunServiceCore:
         overwritten by a stale router snapshot.
         """
 
+        self._require_writable()
         families = self._automatic_router_mutation_families(operation)
         if "store.save_run" not in families:
             raise RuntimeError(f"Automatic Factory router operation is not a direct persistence family: {operation}")
@@ -1087,6 +1106,7 @@ class _FactoryRunServiceCore:
         publish: bool = True,
         commit_permit: Callable[[], contextlib.AbstractContextManager[None]] | None = None,
     ) -> dict[str, Any]:
+        self._require_writable()
         payload = dict(event)
         payload.setdefault("run_id", run_id)
         payload.setdefault("event_id", f"evt_{uuid.uuid4().hex[:12]}")

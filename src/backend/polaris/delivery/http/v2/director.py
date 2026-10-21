@@ -5,12 +5,9 @@ Director v2 endpoints backed by the governed workflow services.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import time
 from pathlib import Path  # patched via director.Path / dereferenced by support helpers
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -65,6 +62,7 @@ from polaris.delivery.http.dependencies import (
     get_director_service as get_director_service_dep,
     require_auth,
 )
+from polaris.delivery.http.legacy_engine_retired import legacy_engine_retired
 from polaris.delivery.http.routers._shared import (
     StructuredHTTPException,
     ensure_required_roles_ready,  # patched/dereferenced via director.<name>
@@ -223,6 +221,7 @@ def select_task_rows_from_projection(projection: Any) -> list[dict[str, Any]]:
     """
 
     return _select_projection_task_rows_for_director(projection)
+
 
 # Explicit re-export surface. The lossless module split moved ~90 helpers into
 # sibling modules (``director_diagnostics``, ``director_support``,
@@ -392,22 +391,17 @@ async def start_director(
     request: Request,
     workspace: str = "",
 ) -> dict[str, Any]:
-    """Start the Director service."""
-    _ensure_director_lifecycle_can_start(request, workspace)
-    service = await get_director_service_dep(request)
-    await service.start()
-    return {"ok": True, "state": service.state.name, "workspace": _workspace_from_request(request, workspace)}
+    """Reject retired role mutations before constructing their owners."""
+    raise legacy_engine_retired("Legacy start_director")
 
 
 @router.post("/stop", dependencies=[Depends(require_auth)])
 async def stop_director(
     request: Request,
     workspace: str = "",
-    service: DirectorService = Depends(get_director_service_dep),
 ) -> dict[str, Any]:
-    """Stop the Director service."""
-    await service.stop()
-    return {"ok": True, "state": service.state.name, "workspace": _workspace_from_request(request, workspace)}
+    """Only the original frozen owner may control legacy execution."""
+    raise legacy_engine_retired("Legacy stop_director")
 
 
 @router.get("/status", dependencies=[Depends(require_auth)])
@@ -479,32 +473,9 @@ async def create_task(
     http_request: Request,
     request: TaskCreateRequest,
     workspace: str = "",
-    service: DirectorService = Depends(get_director_service_dep),
 ) -> TaskResponse:
-    """Create and submit a new task."""
-    priority = _parse_task_priority(request.priority)
-    blocked_by: list[int | str] = list(request.blocked_by)
-    resolved_workspace = _workspace_from_request(http_request, workspace)
-    metadata = dict(request.metadata)
-    metadata.setdefault("workspace", resolved_workspace)
-    metadata.setdefault("director_workspace", resolved_workspace)
-
-    task = await service.submit_task(
-        subject=request.subject,
-        description=request.description,
-        command=request.command,
-        priority=priority,
-        blocked_by=blocked_by,
-        timeout_seconds=request.timeout_seconds,
-        metadata=metadata,
-    )
-
-    row = _task_row_from_object(task)
-    task_metadata = _as_dict(row.get("metadata"))
-    task_metadata.setdefault("workspace", resolved_workspace)
-    task_metadata.setdefault("director_workspace", resolved_workspace)
-    row["metadata"] = task_metadata
-    return _task_response_from_row(row)
+    """Reject retired role mutations before constructing their owners."""
+    raise legacy_engine_retired("Legacy create_task")
 
 
 @router.get("/tasks", dependencies=[Depends(require_auth)])
@@ -597,17 +568,9 @@ async def cancel_task(
     request: Request,
     task_id: str,
     workspace: str = "",
-    service: DirectorService = Depends(get_director_service_dep),
 ) -> dict[str, Any]:
-    """Cancel a task."""
-    result = await service.cancel_task(task_id)
-    payload = _cancel_success_payload(task_id, result)
-
-    if payload is None:
-        raise HTTPException(status_code=400, detail=_cancel_failure_detail(result))
-
-    payload.setdefault("workspace", _workspace_from_request(request, workspace))
-    return payload
+    """Only the original frozen owner may control legacy execution."""
+    raise legacy_engine_retired("Legacy cancel_task")
 
 
 @router.get("/workers", dependencies=[Depends(require_auth)])
@@ -734,60 +697,8 @@ async def director_run_integration_qa(
     request: Request,
     payload: DirectorIntegrationQaRequest,
 ) -> DirectorIntegrationQaResponse:
-    """Run the canonical post-dispatch integration QA after Director reaches terminal state."""
-    try:
-        from polaris.cells.orchestration.pm_dispatch.public.service import (
-            run_post_dispatch_integration_qa,
-        )
-        from polaris.cells.orchestration.workflow_runtime.public.service import (
-            build_integration_qa_tasks_from_director_result,
-            persist_director_result_from_runtime,
-        )
-
-        settings = request.app.state.app_state.settings
-        workspace = requested_or_active_workspace(settings, payload.workspace)
-        run_id = str(payload.run_id or "").strip() or f"director-qa-{int(time.time())}"
-        director_result = persist_director_result_from_runtime(workspace=workspace, run_id=run_id)
-        if director_result is None:
-            raise StructuredHTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                code="director_result_not_terminal",
-                message="Director tasks are not terminal; integration QA cannot run yet.",
-                details={"workspace": workspace, "run_id": run_id},
-            )
-
-        task_rows = build_integration_qa_tasks_from_director_result(director_result)
-        run_dir = resolve_artifact_path(workspace, "", f"runtime/runs/{run_id}")
-        await asyncio.to_thread(os.makedirs, run_dir, exist_ok=True)
-        run_events = resolve_artifact_path(workspace, "", f"runtime/runs/{run_id}/events/runtime.events.jsonl")
-        dialogue_full = resolve_artifact_path(workspace, "", "runtime/events/dialogue.transcript.jsonl")
-        qa_result = await asyncio.to_thread(
-            run_post_dispatch_integration_qa,
-            args=SimpleNamespace(integration_qa=True),
-            workspace_full=workspace,
-            cache_root_full="",
-            run_dir=run_dir,
-            run_id=run_id,
-            iteration=int(payload.iteration or 0),
-            tasks=task_rows,
-            run_events=run_events,
-            dialogue_full=dialogue_full,
-        )
-        return DirectorIntegrationQaResponse(
-            ok=bool(qa_result.get("passed") is True),
-            workspace=workspace,
-            run_id=run_id,
-            director_result=director_result,
-            result=qa_result,
-        )
-    except StructuredHTTPException:
-        raise
-    except (OSError, RuntimeError, TypeError, ValueError) as exc:
-        logger.error("Failed to run Director integration QA: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="internal error",
-        ) from exc
+    """Reject retired role mutations before constructing their owners."""
+    raise legacy_engine_retired("Legacy director_run_integration_qa")
 
 
 @router.get("/token-budget-stats", dependencies=[Depends(require_auth)])
@@ -811,73 +722,8 @@ async def director_run_orchestration(
     request: Request,
     payload: DirectorRunOrchestrationRequest,
 ) -> DirectorOrchestrationResponse:
-    """Execute Director run - unified entry point
-
-    Phase 4: Uses OrchestrationCommandService as the single write path.
-    All Director execution goes through this endpoint for consistency.
-
-    Example:
-        POST /v2/director/run
-        {
-            "workspace": ".",
-            "max_workers": 3,
-            "execution_mode": "parallel"
-        }
-    """
-    try:
-        # Phase 4: Use OrchestrationCommandService as single entry point
-        from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
-
-        settings = request.app.state.app_state.settings
-        workspace = requested_or_active_workspace(settings, payload.workspace)
-        diagnostics = await _build_director_diagnostics_for_request(request, workspace)
-        _ensure_director_can_execute(diagnostics)
-
-        service = OrchestrationCommandService(settings)
-        explicit_task_ids = [str(payload.task_id).strip()] if str(payload.task_id or "").strip() else []
-        if explicit_task_ids or not str(payload.task_filter or "").strip():
-            task_ids, task_selection_source = _director_run_task_ids_from_diagnostics(diagnostics, explicit_task_ids)
-        else:
-            task_ids, task_selection_source = [], "filter_request"
-        task_filter = payload.task_filter or (task_ids[0] if len(task_ids) == 1 else None)
-
-        result = await service.execute_director_run(
-            workspace=workspace,
-            tasks=task_ids,
-            options={
-                "task_filter": task_filter,
-                "task_id": payload.task_id,
-                "max_workers": payload.max_workers,
-                "execution_mode": payload.execution_mode,
-                "metadata": {
-                    "task_selection_source": task_selection_source,
-                    "selected_task_ids": task_ids,
-                },
-            },
-        )
-
-        # Register adapters for execution
-        orch_service = await get_orchestration_service()
-        from polaris.cells.roles.adapters.public.service import register_all_adapters
-
-        register_all_adapters(orch_service)
-
-        return DirectorOrchestrationResponse(
-            run_id=result.run_id,
-            status=result.status,
-            workspace=workspace,
-            tasks_queued=_director_tasks_queued(result, task_ids),
-            message=result.message or f"Director started in {payload.execution_mode} mode",
-        )
-
-    except HTTPException:
-        raise
-    except (RuntimeError, ValueError) as e:
-        logger.error("Failed to start Director orchestration: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="internal error",
-        ) from e
+    """Reject retired role mutations before constructing their owners."""
+    raise legacy_engine_retired("Legacy director_run_orchestration")
 
 
 @router.get("/runs/{run_id}", response_model=DirectorOrchestrationResponse, dependencies=[Depends(require_auth)])
@@ -920,30 +766,5 @@ async def director_cancel_orchestration(
     run_id: str,
     workspace: str = "",
 ) -> DirectorOrchestrationResponse:
-    """Cancel a Director orchestration run and return the resulting snapshot."""
-    try:
-        service = await get_orchestration_service()
-        snapshot = await service.query_run(run_id)
-
-        if not snapshot:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Run not found: {run_id}",
-            )
-
-        _ensure_snapshot_workspace(request, snapshot, run_id, workspace)
-        status_token = _director_snapshot_status(snapshot).lower()
-        terminal_statuses = {"completed", "failed", "cancelled", "canceled", "blocked", "timeout"}
-        if status_token not in terminal_statuses:
-            snapshot = await service.cancel_run(run_id)
-
-        return _director_orchestration_response(snapshot)
-
-    except HTTPException:
-        raise
-    except (RuntimeError, ValueError, OrchestrationError) as e:
-        logger.error("Failed to cancel Director run: run_id=%s: %s", run_id, e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="internal error",
-        ) from e
+    """New processes cannot mutate a frozen legacy owner without its authority."""
+    raise legacy_engine_retired("Legacy director_cancel_orchestration")

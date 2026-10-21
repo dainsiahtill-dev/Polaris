@@ -1,8 +1,7 @@
-"""Thin opt-in CLI arguments shared by PM, Chief Engineer and Director.
+"""Shared default engineering CLI: one service and store for all roles.
 
-Legacy CLI defaults remain until the default-engine acceptance switch. New
-commands use the same host settings, service, SQLite store and run resources as
-HTTP; an explicit old run id is never imported or converted.
+Discussion creates no run; execution requires explicit intent. Retired run IDs
+are never imported or converted into engineering sessions.
 """
 
 from __future__ import annotations
@@ -15,12 +14,26 @@ from pathlib import Path
 from typing import Literal
 
 
+def reject_legacy_execution() -> int:
+    """Report retired intent without bootstrapping or converting old state."""
+    print(
+        json.dumps(
+            {
+                "error_code": "legacy_engine_retired",
+                "error": "Legacy execution is retired. Use an engineering action; historical records remain read-only.",
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 1
+
+
 def add_engineering_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--engine",
         choices=("legacy", "engineering_v2"),
-        default="legacy",
-        help="Opt in to engineering_v2; legacy remains default until acceptance",
+        default="engineering_v2",
+        help="Engineering is the default; legacy execution is retired",
     )
     parser.add_argument(
         "--engineering-action",
@@ -28,7 +41,7 @@ def add_engineering_arguments(parser: argparse.ArgumentParser) -> None:
         default="discuss",
         help="New-engine action; discussion creates no run",
     )
-    parser.add_argument("--instruction", default="", help="Discussion or execution instruction")
+    parser.add_argument("--instruction", "--goal", default="", help="Discussion or execution instruction")
     parser.add_argument("--workflow", choices=("direct", "collaborative"), default="direct")
     parser.add_argument("--permission-profile-id", default=None, help="Exact server-configured permission profile")
     parser.add_argument(
@@ -45,6 +58,9 @@ async def run_engineering_action(
     args: argparse.Namespace, *, role: Literal["pm", "chief_engineer", "director", "qa"]
 ) -> int:
     """Map CLI intent only; the public service owns execution and recovery."""
+    if getattr(args, "engine", "engineering_v2") != "engineering_v2":
+        return reject_legacy_execution()
+
     from polaris.bootstrap.config import get_settings
     from polaris.bootstrap.engineering_runtime import (
         create_engineering_service,

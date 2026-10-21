@@ -52,7 +52,6 @@ from polaris.cells.roles.kernel.public.service import (
     ContextRequest,
     ContextResult,
     RoleContextGateway,
-    RoleExecutionKernel,
     RoleToolGateway,
     ToolAuthorizationError,
 )
@@ -266,8 +265,6 @@ from polaris.cells.roles.runtime.public.capability_commands import (
 )
 
 # Wave 3: CLI runner module extracted to public/cli_runner.py
-from polaris.cells.roles.runtime.public.cli_runner import CliRunner
-
 # Lossless split: cognitive-runtime methods extracted to
 # cognitive_runtime_methods.py as a mixin (real class attributes preserved).
 from polaris.cells.roles.runtime.public.cognitive_runtime_methods import (
@@ -394,9 +391,14 @@ from polaris.kernelone.context.runtime_feature_flags import (
 )
 
 # Skill system: prefer KernelOne implementation, keep Cells layer for backward compat
-from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 
 if TYPE_CHECKING:
+    from polaris.cells.roles.kernel.public.service import RoleExecutionKernel
+    from polaris.cells.roles.runtime.public.cli_runner import CliRunner
+    from polaris.cells.roles.runtime.public.contracts import (
+        AggregateChatCompletionsCommandV1,
+        AggregateChatCompletionsResultV1,
+    )
     from polaris.cells.roles.session.public import (
         PathSecurityError,
         RoleDataStore,
@@ -450,23 +452,8 @@ class RoleRuntimeService(
         self._turn_indices: dict[str, int] = {}  # session_id -> turn_index
 
     def _get_kernel(self, workspace: str) -> RoleExecutionKernel:
-        token = str(workspace or "").strip()
-        if not token:
-            token = "."
-        with self._kernel_lock:
-            kernel = self._kernels.get(token)
-            if kernel is None:
-                if not registry.list_roles():
-                    load_core_roles()
-                kernel = RoleExecutionKernel(
-                    workspace=token,
-                    registry=registry,
-                    context_gateway_config_factory=_build_context_gateway_config_for_role,
-                    directed_effect_runtime=self._directed_effect_runtime,
-                    directed_effect_required=self._directed_effect_required,
-                )
-                self._kernels[token] = kernel
-        return kernel
+        """Reject retired execution before authority, state or effect preparation."""
+        raise RuntimeError("legacy_engine_retired: use the engineering run service; old records are read-only")
 
     @classmethod
     def _normalize_execution_domain(cls, domain: str | None) -> str | None:
@@ -900,538 +887,72 @@ class RoleRuntimeService(
             directed_effect_required=self._directed_effect_required,
         )
 
+    async def chat_completions(
+        self,
+        command: AggregateChatCompletionsCommandV1,
+    ) -> AggregateChatCompletionsResultV1:
+        """Keep deterministic advice; retired aggregate execution cannot plan or write."""
+        if command.execution_mode != "plan_only":
+            raise RuntimeError("legacy_engine_retired: use the engineering run service")
+        return await super().chat_completions(command)
+
     async def execute_role_task(
         self,
         command: ExecuteRoleTaskCommandV1,
     ) -> RoleExecutionResultV1:
-        self._validate_task_execution_attempt(command)
-        request = await self._prepare_task_request(command)
-        kernel = self._get_kernel(command.workspace)
-        if command.stream:
-            full_content: list[str] = []
-            thinking: list[str] = []
-            tool_calls: list[str] = []
-            error_message: str | None = None
-            error_code: str | None = None
-            final_result: RoleTurnResult | None = None
-            stream_metadata: dict[str, Any] = {"stream": True}
-            try:
-                async for event in kernel.run_stream(command.role, request):
-                    event_metadata = event.get("metadata")
-                    if isinstance(event_metadata, Mapping):
-                        stream_metadata.update(dict(event_metadata))
-                    event_type = str(event.get("type") or "")
-                    if event_type == "content_chunk":
-                        full_content.append(str(event.get("content") or ""))
-                    elif event_type == "thinking_chunk":
-                        thinking.append(str(event.get("content") or ""))
-                    elif event_type == "tool_call":
-                        tool_name = str(event.get("tool") or "").strip()
-                        if tool_name:
-                            tool_calls.append(tool_name)
-                    elif event_type == "complete":
-                        maybe_result = event.get("result")
-                        if isinstance(maybe_result, RoleTurnResult):
-                            final_result = maybe_result
-                    elif event_type == "error" and error_message is None:
-                        # Preserve the first physical/transport failure.  A
-                        # downstream orchestrator may emit a generic terminal
-                        # error after the provider event; replacing the first
-                        # cause destroys the only actionable runtime evidence.
-                        error_message = str(event.get("error") or "stream error")
-                        error_code = str(event.get("error_type") or "role_runtime_error")
-            except (OSError, RuntimeError, ValueError) as exc:
-                error_message = str(exc)
-                error_code = "role_runtime_error"
-
-            if final_result is None and error_message is None:
-                error_message = "Role stream ended without a complete or error event"
-                error_code = "role_stream_incomplete"
-
-            if final_result is not None:
-                contract_result = _with_result_metadata_patch(
-                    _to_contract_result(
-                        role=command.role,
-                        workspace=command.workspace,
-                        task_id=command.task_id,
-                        session_id=command.session_id,
-                        run_id=command.run_id,
-                        result=final_result,
-                    ),
-                    stream_metadata,
-                )
-            else:
-                error_text = str(error_message or "")
-                contract_result = RoleExecutionResultV1(
-                    ok=not bool(error_text),
-                    status="ok" if not error_text else "failed",
-                    role=command.role,
-                    workspace=command.workspace,
-                    task_id=command.task_id,
-                    session_id=command.session_id,
-                    run_id=command.run_id,
-                    output="".join(full_content),
-                    thinking="".join(thinking) or None,
-                    tool_calls=tuple(tool_calls),
-                    artifacts=(),
-                    usage={"stream": True, "tool_calls_count": len(tool_calls)},
-                    metadata=stream_metadata,
-                    error_code=None if not error_text else error_code or "role_runtime_error",
-                    error_message=error_text or None,
-                )
-        else:
-            result = await kernel.run(command.role, request)
-            contract_result = _to_contract_result(
-                role=command.role,
-                workspace=command.workspace,
-                task_id=command.task_id,
-                session_id=command.session_id,
-                run_id=command.run_id,
-                result=result,
-            )
-        evidence = self._emit_cognitive_runtime_shadow_artifacts(
-            source="roles.runtime.execute_role_task",
-            workspace=command.workspace,
-            role=command.role,
-            task_id=command.task_id,
-            session_id=command.session_id,
-            run_id=command.run_id,
-            result=contract_result,
-            metadata=request.metadata,
-            context=request.context_override,
-        )
-        return _with_result_metadata_patch(
-            contract_result,
-            _cognitive_runtime_result_patch(
-                evidence=evidence,
-                request_metadata=request.metadata,
-            ),
-        )
+        """Reject retired execution before authority, state or effect preparation."""
+        raise RuntimeError("legacy_engine_retired: use the engineering run service; old records are read-only")
 
     async def execute_role_session(
         self,
         command: ExecuteRoleSessionCommandV1,
     ) -> RoleExecutionResultV1:
-        self._require_directed_effect_session_attempt(command)
-        from polaris.cells.roles.runtime.internal.kernel_session_turn import (
-            execute_kernel_session,
-            kernel_session_continuation_enabled,
-        )
-
-        if kernel_session_continuation_enabled(command):
-            contract_result = await execute_kernel_session(self, command)
-            evidence = self._emit_cognitive_runtime_shadow_artifacts(
-                source="roles.runtime.execute_role_session.continuous",
-                workspace=command.workspace,
-                role=command.role,
-                task_id=command.task_id,
-                session_id=command.session_id,
-                run_id=command.run_id,
-                result=contract_result,
-                metadata=command.metadata,
-                context=command.context,
-            )
-            return _with_result_metadata_patch(
-                contract_result,
-                _cognitive_runtime_result_patch(evidence=evidence, request_metadata=command.metadata),
-            )
-        if command.stream:
-            # Collect streaming events and assemble the final result.
-            kernel = self._get_kernel(command.workspace)
-            full_content: list[str] = []
-            thinking: list[str] = []
-            tool_calls: list[dict[str, Any]] = []
-            error_message: str | None = None
-            final_result: RoleTurnResult | None = None
-            # SSOT Fix: Track accumulated turn_events_metadata from each complete event
-            # so we can persist events even when complete is not the final event.
-            accumulated_turn_events_metadata: list[dict[str, Any]] = []
-            request: RoleTurnRequest | None = None
-
-            try:
-                request = await self._prepare_session_request(
-                    command,
-                    include_session_snapshot=True,
-                )
-                async for event in kernel.run_stream(
-                    command.role,
-                    request,
-                ):
-                    event_type = str(event.get("type") or "")
-                    if event_type == "content_chunk":
-                        full_content.append(str(event.get("content", "")))
-                    elif event_type == "thinking_chunk":
-                        thinking.append(str(event.get("content", "")))
-                    elif event_type == "tool_call":
-                        tool_calls.append(
-                            {
-                                "name": str(event.get("tool", "")),
-                                "args": event.get("args") or {},
-                            }
-                        )
-                    elif event_type == "complete":
-                        maybe_result = event.get("result")
-                        if isinstance(maybe_result, RoleTurnResult):
-                            final_result = maybe_result
-                            # SSOT Fix: Accumulate turn_events_metadata from each complete event.
-                            # This ensures events are persisted even if the stream doesn't end
-                            # with the typical early_return/complete pattern.
-                            if maybe_result.turn_events_metadata:
-                                accumulated_turn_events_metadata.extend(list(maybe_result.turn_events_metadata))
-                    elif event_type == "error":
-                        error_message = str(event.get("error", "stream error"))
-            except (RuntimeError, ValueError) as e:
-                error_message = str(e)
-
-            # SSOT Fix: Use accumulated turn_events_metadata if final_result doesn't have them.
-            # This handles the case where complete was never received or had empty metadata.
-            turn_events_to_persist = (
-                list(final_result.turn_events_metadata)
-                if final_result and final_result.turn_events_metadata
-                else accumulated_turn_events_metadata
-                if accumulated_turn_events_metadata
-                else None
-            )
-            turn_history_to_persist = (
-                list(final_result.turn_history) if final_result and final_result.turn_history else []
-            )
-
-            if final_result is not None:
-                assert request is not None
-                await self._persist_session_turn_state(
-                    command,
-                    turn_history=turn_history_to_persist,
-                    turn_events_metadata=turn_events_to_persist,
-                )
-                contract_result = _to_contract_result(
-                    role=command.role,
-                    workspace=command.workspace,
-                    task_id=command.task_id,
-                    session_id=command.session_id,
-                    run_id=command.run_id,
-                    result=final_result,
-                )
-                evidence = self._emit_cognitive_runtime_shadow_artifacts(
-                    source="roles.runtime.execute_role_session.stream",
-                    workspace=command.workspace,
-                    role=command.role,
-                    task_id=command.task_id,
-                    session_id=command.session_id,
-                    run_id=command.run_id,
-                    result=contract_result,
-                    metadata=request.metadata,
-                    context=request.context_override,
-                )
-                return _with_result_metadata_patch(
-                    contract_result,
-                    _cognitive_runtime_result_patch(
-                        evidence=evidence,
-                        request_metadata=request.metadata,
-                    ),
-                )
-
-            full_text = "".join(full_content)
-            thinking_text = "".join(thinking)
-            error_msg = error_message or ""
-            ok = not bool(error_msg)
-
-            # NOTE: In the error case, final_result may never have been set.
-            # Persist only the turn state collected before the failure.
-            await self._persist_session_turn_state(
-                command,
-                turn_history=turn_history_to_persist,
-                turn_events_metadata=turn_events_to_persist,
-            )
-
-            contract_result = RoleExecutionResultV1(
-                ok=ok,
-                status="ok" if ok else "failed",
-                role=command.role,
-                workspace=command.workspace,
-                task_id=command.task_id,
-                session_id=command.session_id,
-                run_id=command.run_id,
-                output=full_text,
-                thinking=thinking_text if thinking_text else None,
-                tool_calls=tuple(str(t.get("name") or "") for t in tool_calls if isinstance(t, dict)),
-                artifacts=(),
-                usage={"stream": True, "tool_calls_count": len(tool_calls)},
-                metadata={},
-                error_code=None if ok else "role_runtime_error",
-                error_message=error_msg or None,
-            )
-            evidence = self._emit_cognitive_runtime_shadow_artifacts(
-                source="roles.runtime.execute_role_session.stream_fallback",
-                workspace=command.workspace,
-                role=command.role,
-                task_id=command.task_id,
-                session_id=command.session_id,
-                run_id=command.run_id,
-                result=contract_result,
-                metadata=request.metadata if request is not None else command.metadata,
-                context=request.context_override if request is not None else command.context,
-            )
-            return _with_result_metadata_patch(
-                contract_result,
-                _cognitive_runtime_result_patch(
-                    evidence=evidence,
-                    request_metadata=request.metadata if request is not None else command.metadata,
-                ),
-            )
-
-        kernel = self._get_kernel(command.workspace)
-        request = await self._prepare_session_request(command, include_session_snapshot=True)
-        result = await kernel.run(command.role, request)
-        await self._persist_session_turn_state(
-            command,
-            turn_history=list(result.turn_history) if result.turn_history else [],
-            turn_events_metadata=list(result.turn_events_metadata) if result.turn_events_metadata else None,
-        )
-        contract_result = _to_contract_result(
-            role=command.role,
-            workspace=command.workspace,
-            task_id=command.task_id,
-            session_id=command.session_id,
-            run_id=command.run_id,
-            result=result,
-        )
-        evidence = self._emit_cognitive_runtime_shadow_artifacts(
-            source="roles.runtime.execute_role_session",
-            workspace=command.workspace,
-            role=command.role,
-            task_id=command.task_id,
-            session_id=command.session_id,
-            run_id=command.run_id,
-            result=contract_result,
-            metadata=request.metadata,
-            context=request.context_override,
-        )
-        return _with_result_metadata_patch(
-            contract_result,
-            _cognitive_runtime_result_patch(
-                evidence=evidence,
-                request_metadata=request.metadata,
-            ),
-        )
+        """Reject retired execution before authority, state or effect preparation."""
+        raise RuntimeError("legacy_engine_retired: use the engineering run service; old records are read-only")
 
     async def get_runtime_status(
         self,
         query: GetRoleRuntimeStatusQueryV1,
     ) -> Mapping[str, Any]:
-        if not registry.list_roles():
-            load_core_roles()
+        """Describe the retired facade without inventing live queue or tool facts."""
         roles = sorted(registry.list_roles())
         role_token = str(query.role or "").strip()
-        role_exists = role_token in roles if role_token else True
         status_payload: dict[str, Any] = {
             "workspace": query.workspace,
             "role": role_token or None,
-            "ready": bool(roles) and role_exists,
-            "role_exists": role_exists,
+            "engine_version": "legacy",
+            "execution_retired": True,
+            "ready": False,
+            "role_exists": role_token in roles if role_token else bool(roles),
             "role_count": len(roles),
             "roles": roles,
         }
         if query.include_agent_health:
-            status_payload["agent_health"] = {"status": "ready" if role_exists else "degraded"}
+            status_payload["agent_health"] = {"status": "retired"}
         if query.include_queue:
-            status_payload["queue"] = {"pending": 0, "running": 0}
+            status_payload["queue"] = {"pending": None, "running": None, "status": "not_observed"}
         if query.include_tools:
-            status_payload["tools"] = {"available": True}
+            status_payload["tools"] = {"available": False}
         return status_payload
 
     async def stream_chat_turn(
         self,
         command: ExecuteRoleSessionCommandV1,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream role chat turns as an async iterator of events.
-
-        Yields dict events with keys: type, content, thinking, tool, args,
-        result, error, fingerprint.
-
-        Before the first turn event, yields a fingerprint event containing
-        strategy identity (profile_id, profile_hash, bundle_id, run_id).
-        After the stream completes, persists a StrategyReceipt to
-        `<metadata_dir>/runtime/strategy_runs/`.
-        """
-        try:
-            self._require_directed_effect_session_attempt(command)
-            request = await self._prepare_session_request(
-                command,
-                include_session_snapshot=True,
-            )
-        except (RuntimeError, ValueError) as exc:
-            yield {
-                "type": "error",
-                "error": str(exc),
-                "source": "roles.runtime.cognitive_preflight",
-            }
-            return
-
-        execution_domain, domain_explicit = self._resolve_execution_domain(
-            command_domain=request.domain or command.domain,
-            context=request.context_override,
-            metadata=request.metadata,
-            role=command.role,
-        )
-        cognitive_strategy_override = _copy_strategy_override(
-            request.metadata.get("cognitive_strategy_override") if isinstance(request.metadata, Mapping) else None
-        )
-        # WS2: Create strategy run context before the turn.
-        run_ctx = self.create_strategy_run(
-            domain=execution_domain,
-            role=command.role,
-            session_id=command.session_id,
-            budget=None,  # Budget snapshot taken during context assembly
-            workspace=command.workspace,
-            domain_explicit=domain_explicit,
-            include_session_override=True,
-            current_turn_override=cognitive_strategy_override,
-        )
-        emit_debug_event(
-            category="strategy",
-            label="resolved",
-            source="roles.runtime",
-            payload={
-                "workspace": command.workspace,
-                "role": command.role,
-                "domain": execution_domain,
-                "session_id": command.session_id,
-                "run_id": run_ctx.run_id,
-                "turn_index": run_ctx.turn_index,
-                "bundle_id": run_ctx.bundle_id,
-                "bundle_version": run_ctx.bundle_version,
-                "profile_id": run_ctx.profile_id,
-                "profile_hash": run_ctx.profile_hash,
-                "resolved_overrides": dict(run_ctx.resolved_overrides),
-                "cognitive_strategy_override_applied": bool(cognitive_strategy_override),
-            },
-        )
-        # Emit strategy fingerprint as the first event.
-        fingerprint_event = {
-            "type": "fingerprint",
-            "profile_id": run_ctx.profile_id,
-            "profile_hash": run_ctx.profile_hash,
-            "bundle_id": run_ctx.bundle_id,
-            "bundle_version": run_ctx.bundle_version,
-            "run_id": run_ctx.run_id,
-            "turn_index": run_ctx.turn_index,
-            "cognitive_strategy_override_applied": bool(cognitive_strategy_override),
+        """Report retired streaming intent without preparing or persisting a turn."""
+        yield {
+            "type": "error",
+            "error_code": "legacy_engine_retired",
+            "error": "Legacy role execution is retired; use the engineering run service.",
         }
-        yield fingerprint_event
-
-        from polaris.cells.roles.runtime.internal.kernel_session_turn import (
-            kernel_session_continuation_enabled,
-            stream_kernel_session,
-        )
-
-        continuous_session = kernel_session_continuation_enabled(command)
-        kernel = self._get_kernel(command.workspace)
-        streamed_content: list[str] = []
-        streamed_thinking: list[str] = []
-        streamed_tool_calls: list[str] = []
-        final_stream_result: RoleTurnResult | None = None
-        try:
-            session_events = (
-                stream_kernel_session(self, command)
-                if continuous_session
-                else kernel.run_stream(command.role, request)
-            )
-            async for event in session_events:
-                # WS2: Accumulate tool calls into the strategy run context.
-                event_type = str(event.get("type") or "")
-                if event_type == "tool_call":
-                    tool_name = str(event.get("tool") or "")
-                    if tool_name:
-                        run_ctx = run_ctx.with_tool_call(tool_name)
-                        streamed_tool_calls.append(tool_name)
-                elif event_type == "content_chunk":
-                    streamed_content.append(str(event.get("content") or ""))
-                elif event_type == "thinking_chunk":
-                    streamed_thinking.append(str(event.get("content") or ""))
-                elif event_type == "complete":
-                    maybe_result = event.get("result")
-                    if isinstance(maybe_result, RoleTurnResult):
-                        contract_result = _to_contract_result(
-                            role=command.role,
-                            workspace=command.workspace,
-                            task_id=command.task_id,
-                            session_id=command.session_id,
-                            run_id=command.run_id,
-                            result=maybe_result,
-                        )
-                        evidence = self._emit_cognitive_runtime_shadow_artifacts(
-                            source="roles.runtime.stream_chat_turn",
-                            workspace=command.workspace,
-                            role=command.role,
-                            task_id=command.task_id,
-                            session_id=command.session_id,
-                            run_id=command.run_id,
-                            result=contract_result,
-                            metadata=request.metadata,
-                            context=request.context_override,
-                        )
-                        evidence_patch = _cognitive_runtime_result_patch(
-                            evidence=evidence,
-                            request_metadata=request.metadata,
-                        )
-                        maybe_result.metadata.update(evidence_patch)
-                        maybe_result.execution_stats["cognitive_runtime_evidence_emitted"] = True
-                        event["cognitive_runtime_evidence"] = dict(evidence_patch["cognitive_runtime_evidence"])
-                        raw_event_metadata = event.get("metadata")
-                        event_metadata: dict[str, Any] = (
-                            dict(raw_event_metadata) if isinstance(raw_event_metadata, dict) else {}
-                        )
-                        result_metadata = _copy_result_metadata(maybe_result.metadata)
-                        event["metadata"] = {
-                            **result_metadata,
-                            **event_metadata,
-                            **evidence_patch,
-                        }
-                        final_stream_result = maybe_result
-
-                yield dict(event)
-        finally:
-            usage_payload: dict[str, Any] = {"stream": True}
-            if final_stream_result is not None:
-                usage_payload.update(dict(final_stream_result.execution_stats or {}))
-            if not continuous_session:
-                await self._persist_session_turn_state(
-                    command,
-                    turn_history=list(final_stream_result.turn_history)
-                    if final_stream_result and final_stream_result.turn_history
-                    else [],
-                    turn_events_metadata=list(final_stream_result.turn_events_metadata)
-                    if final_stream_result and final_stream_result.turn_events_metadata
-                    else None,
-                )
-            # WS2: Mark run ended and emit receipt.
-            run_ctx = run_ctx.mark_ended()
-            try:
-                receipt_path = self.emit_strategy_receipt(run_ctx, command.workspace)
-                emit_debug_event(
-                    category="strategy",
-                    label="receipt_emitted",
-                    source="roles.runtime",
-                    payload={
-                        "run_id": run_ctx.run_id,
-                        "turn_index": run_ctx.turn_index,
-                        "profile_id": run_ctx.profile_id,
-                        "profile_hash": run_ctx.profile_hash,
-                        "receipt_path": str(receipt_path),
-                        "tool_sequence": list(run_ctx.tool_sequence),
-                        "ended_at": run_ctx.ended_at,
-                    },
-                )
-            except (RuntimeError, ValueError):
-                logger.warning("Failed to emit strategy receipt for run %s", run_ctx.run_id)
 
     # ── CLI helper methods (Wave 3: delegated to CliRunner) ────────────────────
     # These methods forward to CliRunner for backward compatibility.
     # New code should use CliRunner directly.
 
     def _get_cli_runner(self) -> CliRunner:
-        """Get CliRunner instance for CLI method forwarding."""
-        return CliRunner(self)
+        """Retired execution intent; no legacy runner or session is created."""
+        raise RuntimeError("legacy_engine_retired: use the engineering run service; old records are read-only")
 
     async def run_interactive(
         self,
@@ -1439,12 +960,8 @@ class RoleRuntimeService(
         workspace: str,
         welcome_message: str = "",
     ) -> None:
-        """Interactive REPL loop for a role. Delegates to CliRunner."""
-        await self._get_cli_runner().run_interactive(
-            role=role,
-            workspace=workspace,
-            welcome_message=welcome_message,
-        )
+        """Retired execution intent; no legacy runner or session is created."""
+        raise RuntimeError("legacy_engine_retired: use the engineering run service; old records are read-only")
 
     async def run_oneshot(
         self,
@@ -1453,13 +970,8 @@ class RoleRuntimeService(
         goal: str,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Execute a single role goal. Delegates to CliRunner."""
-        return await self._get_cli_runner().run_oneshot(
-            role=role,
-            workspace=workspace,
-            goal=goal,
-            context=context,
-        )
+        """Retired execution intent; no legacy runner or session is created."""
+        raise RuntimeError("legacy_engine_retired: use the engineering run service; old records are read-only")
 
     async def run_autonomous(
         self,
@@ -1469,14 +981,8 @@ class RoleRuntimeService(
         max_iterations: int = 10,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Plan-and-execute loop for a role. Delegates to CliRunner."""
-        return await self._get_cli_runner().run_autonomous(
-            role=role,
-            workspace=workspace,
-            goal=goal,
-            max_iterations=max_iterations,
-            context=context,
-        )
+        """Retired execution intent; no legacy runner or session is created."""
+        raise RuntimeError("legacy_engine_retired: use the engineering run service; old records are read-only")
 
     async def run_server(
         self,
@@ -1485,24 +991,16 @@ class RoleRuntimeService(
         host: str = "127.0.0.1",
         port: int = 50000,
     ) -> None:
-        """Run a FastAPI server for programmatic role access. Delegates to CliRunner."""
-        await self._get_cli_runner().run_server(
-            role=role,
-            workspace=workspace,
-            host=host,
-            port=port,
-        )
+        """Retired execution intent; no legacy runner or session is created."""
+        raise RuntimeError("legacy_engine_retired: use the engineering run service; old records are read-only")
 
     async def execute_role(
         self,
         role_id: str,
         context: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        """Execute a role task or session. Delegates to CliRunner."""
-        return await self._get_cli_runner().execute_role(
-            role_id=role_id,
-            context=context,
-        )
+        """Retired execution intent; no legacy runner or session is created."""
+        raise RuntimeError("legacy_engine_retired: use the engineering run service; old records are read-only")
 
 
 _DEFAULT_ROLE_RUNTIME_SERVICE = RoleRuntimeService()
@@ -1621,33 +1119,8 @@ def create_role_cli_parser(role: str) -> argparse.ArgumentParser:
 
 
 def run_tui(role: str, workspace: str, session_id: str | None = None, debug: bool = False) -> int:
-    """Run the Textual TUI console for a role.
-
-    This is a convenience wrapper that forwards to the textual_console module.
-
-    Args:
-        role: Role name (e.g. 'architect', 'director', 'pm').
-        workspace: Workspace directory path.
-        session_id: Optional session ID for session continuity.
-        debug: Enable debug mode.
-
-    Returns:
-        Exit code from the TUI application.
-    """
-    try:
-        from polaris.delivery.cli.textual_console import run_claude_tui
-
-        return run_claude_tui(
-            workspace=workspace,
-            role=role,
-            session_id=session_id,
-            debug=debug,
-        )
-    except ImportError as e:
-        print("Error: TUI mode requires textual and rich packages")
-        print("Install: pip install textual rich")
-        print(f"Details: {e}")
-        return 1
+    """Reject the retired writable TUI before importing or creating its host."""
+    raise RuntimeError("legacy_engine_retired: use the engineering CLI or project workspace")
 
 
 def __getattr__(name: str) -> object:
@@ -1711,7 +1184,6 @@ __all__ = [
     "RoleDataPolicy",
     "RoleDataStore",
     "RoleDataStoreError",
-    "RoleExecutionKernel",
     "RoleExecutionMode",
     "RoleExecutionResultV1",
     "RoleHandoffRehydrationResultV1",

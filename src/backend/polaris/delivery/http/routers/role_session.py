@@ -9,11 +9,8 @@
 这是 Polaris 角色多宿主架构的核心 API。
 """
 
-import asyncio
-import contextlib
 import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -33,6 +30,7 @@ from polaris.cells.roles.session.public.contracts import (
     ReadRoleSessionEpisodeQueryV1,
     SearchRoleSessionMemoryQueryV1,
 )
+from polaris.delivery.http.legacy_engine_retired import legacy_engine_retired
 from polaris.delivery.http.schemas.common import (
     ArtifactDetailResponse,
     ArtifactListResponse,
@@ -50,41 +48,14 @@ from polaris.delivery.http.schemas.common import (
 )
 from polaris.delivery.http.workspace import active_workspace_value
 from polaris.domain.entities.capability import get_role_capabilities as get_caps
-from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
-from polaris.kernelone.context.session_continuity import (
-    SessionContinuityEngine,
-    SessionContinuityRequest,
-    history_pairs_to_messages,
-    messages_to_history_pairs,
-)
-from polaris.kernelone.events.constants import (
-    EVENT_TYPE_COMPLETE,
-    EVENT_TYPE_THINKING_CHUNK,
-)
 from pydantic import BaseModel
 
 from ._shared import StructuredHTTPException, ensure_required_roles_ready, get_state, require_auth
-from .role_chat_jetstream import execute_role_chat_jetstream
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-_SESSION_CONTINUITY_ENGINE = SessionContinuityEngine()
 ROLE_SESSION_AUDIT_EVENT_TYPES = frozenset(RoleSessionAuditService.EVENT_TYPES)
-_ROLE_SESSION_JETSTREAM_TASKS: set[asyncio.Task[None]] = set()
-
-
-def _track_role_session_jetstream_task(task: asyncio.Task[None]) -> None:
-    _ROLE_SESSION_JETSTREAM_TASKS.add(task)
-
-    def _on_done(done_task: asyncio.Task[None]) -> None:
-        _ROLE_SESSION_JETSTREAM_TASKS.discard(done_task)
-        with contextlib.suppress(asyncio.CancelledError):
-            exc = done_task.exception()
-            if exc is not None:
-                logger.warning("role_session_jetstream background task failed: %s", exc)
-
-    task.add_done_callback(_on_done)
 
 
 # ==================== Request/Response Models ====================
@@ -406,7 +377,12 @@ def _workspace_path_for_session(session: Any, request: Request) -> Path:
 def _role_session_service(request: Request) -> RoleSessionService:
     """Construct RoleSessionService bound to the active desktop workspace."""
     workspace = _active_workspace(request)
-    return RoleSessionService(workspace=workspace or None)
+    requested = str(request.query_params.get("workspace") or "").strip()
+    if requested and _canonical_workspace_path(requested) != _canonical_workspace_path(workspace):
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return RoleSessionService(
+        workspace=workspace or None, read_only=True, enable_events=False, enable_persistence=False
+    )
 
 
 # ==================== Session Endpoints ====================
@@ -417,54 +393,8 @@ async def create_session(
     request: Request,
     payload: CreateSessionRequest,
 ) -> dict[str, Any]:
-    """创建新会话
-
-    POST /v2/roles/sessions
-
-    Request:
-        {
-            "role": "pm",
-            "host_kind": "electron_workbench",
-            "workspace": "/path/to/workspace",
-            "session_type": "workbench",
-            "attachment_mode": "isolated",
-            "title": "My PM Session",
-            "context_config": {},
-            "capability_profile": {}
-        }
-
-    Response:
-        {
-            "ok": true,
-            "session": {...}
-        }
-    """
-    try:
-        active_workspace = _active_workspace(request)
-        session_workspace = _validated_requested_workspace(active_workspace, payload.workspace)
-        with RoleSessionService(workspace=session_workspace or None) as service:
-            session = service.create_session(
-                role=payload.role,
-                host_kind=payload.host_kind,
-                workspace=session_workspace,
-                session_type=payload.session_type,
-                attachment_mode=payload.attachment_mode,
-                title=payload.title,
-                context_config=payload.context_config,
-                capability_profile=payload.capability_profile,
-            )
-
-            return {
-                "ok": True,
-                "session": session.to_dict(),
-            }
-
-    except (RuntimeError, ValueError) as e:
-        raise StructuredHTTPException(
-            status_code=400,
-            code="REQUEST_ERROR",
-            message=str(e),
-        ) from e
+    """Reject retired RoleSession mutations before storage access."""
+    raise legacy_engine_retired("RoleSession create_session")
 
 
 @router.get("/v2/roles/sessions", dependencies=[Depends(require_auth)], response_model=SessionListResponse)
@@ -560,52 +490,8 @@ async def update_session(
     session_id: str,
     payload: UpdateSessionRequest,
 ) -> dict[str, Any]:
-    """更新会话
-
-    PUT /v2/roles/sessions/{session_id}
-
-    Request:
-        {
-            "title": "New Title",
-            "context_config": {},
-            "capability_profile": {},
-            "state": "archived"
-        }
-
-    Response:
-        {
-            "ok": true,
-            "session": {...}
-        }
-    """
-    try:
-        with _role_session_service(request) as service:
-            session = service.update_session(
-                session_id=session_id,
-                title=payload.title,
-                context_config=payload.context_config,
-                capability_profile=payload.capability_profile,
-                state=payload.state,
-            )
-
-            if not session:
-                raise StructuredHTTPException(
-                    status_code=404,
-                    code="SESSION_NOT_FOUND",
-                    message=f"Session not found: {session_id}",
-                )
-
-            return {
-                "ok": True,
-                "session": session.to_dict(),
-            }
-
-    except (RuntimeError, ValueError) as e:
-        raise StructuredHTTPException(
-            status_code=400,
-            code="REQUEST_ERROR",
-            message=str(e),
-        ) from e
+    """Reject retired RoleSession mutations before storage access."""
+    raise legacy_engine_retired("RoleSession update_session")
 
 
 @router.delete(
@@ -618,36 +504,8 @@ async def delete_session(
     session_id: str,
     soft: bool = True,
 ) -> dict[str, Any]:
-    """删除会话
-
-    DELETE /v2/roles/sessions/{session_id}?soft=true
-
-    Response:
-        {
-            "ok": true
-        }
-    """
-    try:
-        with _role_session_service(request) as service:
-            success = service.delete_session(session_id, soft=soft)
-
-            if not success:
-                raise StructuredHTTPException(
-                    status_code=404,
-                    code="SESSION_NOT_FOUND",
-                    message=f"Session not found: {session_id}",
-                )
-
-            return {
-                "ok": True,
-            }
-
-    except (RuntimeError, ValueError) as e:
-        raise StructuredHTTPException(
-            status_code=400,
-            code="REQUEST_ERROR",
-            message=str(e),
-        ) from e
+    """Reject retired RoleSession mutations before storage access."""
+    raise legacy_engine_retired("RoleSession delete_session")
 
 
 # ==================== Message Endpoints ====================
@@ -709,52 +567,8 @@ async def send_message(
     session_id: str,
     payload: SendMessageRequest,
 ) -> dict[str, Any]:
-    """发送消息（非流式）
-
-    POST /v2/roles/sessions/{session_id}/messages
-
-    Request:
-        {
-            "role": "user",
-            "content": "Hello PM",
-            "thinking": null,
-            "meta": {}
-        }
-
-    Response:
-        {
-            "ok": true,
-            "session": {...}
-        }
-    """
-    try:
-        with _role_session_service(request) as service:
-            session = service.add_message(
-                session_id=session_id,
-                role=payload.role,
-                content=payload.content,
-                thinking=payload.thinking,
-                meta=payload.meta,
-            )
-
-            if not session:
-                raise StructuredHTTPException(
-                    status_code=404,
-                    code="SESSION_NOT_FOUND",
-                    message=f"Session not found: {session_id}",
-                )
-
-            return {
-                "ok": True,
-                "session": session.to_dict(),
-            }
-
-    except (RuntimeError, ValueError) as e:
-        raise StructuredHTTPException(
-            status_code=400,
-            code="REQUEST_ERROR",
-            message=str(e),
-        ) from e
+    """Reject retired RoleSession mutations before storage access."""
+    raise legacy_engine_retired("RoleSession send_message")
 
 
 @router.post("/v2/roles/sessions/{session_id}/messages/jetstream", dependencies=[Depends(require_auth)])
@@ -763,144 +577,8 @@ async def send_message_jetstream(
     session_id: str,
     payload: SendMessageRequest,
 ) -> dict[str, Any]:
-    """Start a RoleSession chat turn and publish chunks over Nats-JetStream."""
-    try:
-        with _role_session_service(request) as service:
-            session = service.get_session(session_id)
-            if not session:
-                raise StructuredHTTPException(
-                    status_code=404,
-                    code="session_not_found",
-                    message=f"Session not found: {session_id}",
-                    details={"session_id": session_id},
-                )
-
-            session_role = str(session.role or "").strip()
-            prior_messages = service.get_messages(session_id, limit=50, offset=0)
-            history = tuple(
-                (
-                    str(message.role or "").strip(),
-                    str(message.content or "").strip(),
-                )
-                for message in prior_messages
-                if str(message.role or "").strip() and str(message.content or "").strip()
-            )
-            context_config_raw = str(session.context_config or "").strip()
-            session_workspace = _session_workspace(session, request)
-            try:
-                session_context = json.loads(context_config_raw) if context_config_raw else None
-            except json.JSONDecodeError:
-                logger.warning(
-                    "Role session %s has invalid context_config JSON; falling back to None",
-                    session_id,
-                )
-                session_context = None
-
-            projection = await _SESSION_CONTINUITY_ENGINE.project(
-                SessionContinuityRequest(
-                    session_id=session_id,
-                    role=session_role,
-                    workspace=session_workspace,
-                    session_title=str(session.title or "").strip(),
-                    messages=history_pairs_to_messages(history),
-                    session_context_config=session_context,
-                    incoming_context={
-                        "role": session_role,
-                        "host_kind": RoleHostKind.API_SERVER.value,
-                    },
-                    history_limit=10,
-                )
-            )
-            runtime_history = messages_to_history_pairs(projection.recent_messages)
-            runtime_context = dict(projection.prompt_context)
-            if projection.changed:
-                service.update_session(
-                    session_id=session_id,
-                    context_config=projection.persisted_context_config,
-                )
-
-            service.add_message(
-                session_id=session_id,
-                role=payload.role,
-                content=payload.content,
-            )
-
-        async def _run_role_session_jetstream_dialogue() -> None:
-            response_parts: list[str] = []
-            thinking_parts: list[str] = []
-            assistant_saved = False
-
-            async def _collect_and_persist(chunk: dict[str, Any]) -> None:
-                nonlocal assistant_saved
-                event_type = str(chunk.get("type") or "").strip()
-                event_data = chunk.get("data")
-                event_payload = event_data if isinstance(event_data, dict) else {}
-
-                if event_type == "content_chunk":
-                    response_parts.append(str(event_payload.get("content") or ""))
-                    return
-
-                if event_type == EVENT_TYPE_THINKING_CHUNK:
-                    thinking_parts.append(str(event_payload.get("content") or ""))
-                    return
-
-                if event_type == EVENT_TYPE_COMPLETE:
-                    response = str(event_payload.get("content") or "") or "".join(response_parts)
-                    thinking = str(event_payload.get("thinking") or "") or "".join(thinking_parts) or None
-                    if response:
-                        with _role_session_service(request) as save_service:
-                            save_service.add_message(
-                                session_id=session_id,
-                                role="assistant",
-                                content=response,
-                                thinking=thinking,
-                            )
-                        assistant_saved = True
-                    return
-
-                if event_type == "done" and response_parts and not assistant_saved:
-                    with _role_session_service(request) as save_service:
-                        save_service.add_message(
-                            session_id=session_id,
-                            role="assistant",
-                            content="".join(response_parts),
-                            thinking="".join(thinking_parts) or None,
-                        )
-
-            await execute_role_chat_jetstream(
-                workspace=session_workspace,
-                role=session_role,
-                message=payload.content,
-                payload=None,
-                default_domain="general",
-                host_kind="role_session_ws_jetstream",
-                context=runtime_context,
-                session_id=session_id,
-                history=runtime_history,
-                on_chunk=_collect_and_persist,
-            )
-
-        task = asyncio.create_task(_run_role_session_jetstream_dialogue())
-        _track_role_session_jetstream_task(task)
-        return {
-            "ok": True,
-            "session_id": session_id,
-            "status": "started",
-            "channel": f"chat:{session_id}",
-            "subject": f"hp.runtime.chat.{session_id}",
-            "transport": "nats-jetstream",
-        }
-
-    except HTTPException:
-        raise
-    except (RuntimeError, ValueError) as e:
-        logger.error(f"Role session jetstream action failed: {e}")
-        raise StructuredHTTPException(
-            status_code=500,
-            code="INTERNAL_ERROR",
-            message="An internal error occurred while processing the role session.",
-            details={"exception": str(e)},
-        ) from e
+    """Reject retired RoleSession mutations before storage access."""
+    raise legacy_engine_retired("RoleSession send_message_jetstream")
 
 
 # ==================== Attachment Endpoints ====================
@@ -916,55 +594,8 @@ async def attach_session(
     session_id: str,
     payload: AttachRequest,
 ) -> dict[str, Any]:
-    """附着会话到工作流
-
-    POST /v2/roles/sessions/{session_id}/actions/attach
-
-    Request:
-        {
-            "run_id": "run_xxx",
-            "task_id": "task_xxx",
-            "mode": "attached_readonly",
-            "note": "Attaching for review"
-        }
-
-    Response:
-        {
-            "ok": true,
-            "attachment": {...}
-        }
-    """
-    try:
-        with _role_session_service(request) as service:
-            attachment = service.attach_session(
-                session_id=session_id,
-                run_id=payload.run_id,
-                task_id=payload.task_id,
-                mode=payload.mode,
-                note=payload.note,
-            )
-
-            if not attachment:
-                raise StructuredHTTPException(
-                    status_code=404,
-                    code="SESSION_NOT_FOUND",
-                    message=f"Session not found: {session_id}",
-                )
-
-            session = service.get_session(session_id)
-
-            return {
-                "ok": True,
-                "attachment": attachment.to_dict(),
-                "session": session.to_dict() if session else None,
-            }
-
-    except (RuntimeError, ValueError) as e:
-        raise StructuredHTTPException(
-            status_code=400,
-            code="REQUEST_ERROR",
-            message=str(e),
-        ) from e
+    """Reject retired RoleSession mutations before storage access."""
+    raise legacy_engine_retired("RoleSession attach_session")
 
 
 @router.post(
@@ -976,40 +607,8 @@ async def detach_session(
     request: Request,
     session_id: str,
 ) -> dict[str, Any]:
-    """解除会话的工作流附着
-
-    POST /v2/roles/sessions/{session_id}/actions/detach
-
-    Response:
-        {
-            "ok": true,
-            "session": {...}
-        }
-    """
-    try:
-        with _role_session_service(request) as service:
-            success = service.detach_session(session_id)
-
-            if not success:
-                raise StructuredHTTPException(
-                    status_code=404,
-                    code="SESSION_NOT_FOUND",
-                    message=f"Session not found: {session_id}",
-                )
-
-            session = service.get_session(session_id)
-
-            return {
-                "ok": True,
-                "session": session.to_dict() if session else None,
-            }
-
-    except (RuntimeError, ValueError) as e:
-        raise StructuredHTTPException(
-            status_code=400,
-            code="REQUEST_ERROR",
-            message=str(e),
-        ) from e
+    """Reject retired RoleSession mutations before storage access."""
+    raise legacy_engine_retired("RoleSession detach_session")
 
 
 # ==================== Export Endpoints ====================
@@ -1046,7 +645,7 @@ async def get_artifacts(
                 )
 
         # Use artifact service to list artifacts
-        artifact_service = RoleSessionArtifactService(_workspace_path_for_session(session, request))
+        artifact_service = RoleSessionArtifactService(_workspace_path_for_session(session, request), read_only=True)
         artifacts = artifact_service.list_artifacts(session_id, artifact_type)
 
         return {
@@ -1094,7 +693,7 @@ async def get_audit(
                 )
 
         # Use audit service to get events
-        audit_service = RoleSessionAuditService(_workspace_path_for_session(session, request))
+        audit_service = RoleSessionAuditService(_workspace_path_for_session(session, request), read_only=True)
         events = audit_service.get_events(session_id, event_type, limit, offset)
 
         return {
@@ -1117,42 +716,8 @@ async def append_audit_event(
     session_id: str,
     payload: AppendAuditEventRequest,
 ) -> dict[str, Any]:
-    """Append a role-session audit event without invoking a workflow."""
-    event_type = str(payload.event_type or "").strip()
-    if event_type not in ROLE_SESSION_AUDIT_EVENT_TYPES:
-        raise StructuredHTTPException(
-            status_code=400,
-            code="INVALID_AUDIT_EVENT_TYPE",
-            message=f"Unsupported role-session audit event type: {event_type}",
-        )
-
-    try:
-        with _role_session_service(request) as service:
-            session = service.get_session(session_id)
-            if not session:
-                raise StructuredHTTPException(
-                    status_code=404,
-                    code="SESSION_NOT_FOUND",
-                    message=f"Session not found: {session_id}",
-                )
-
-        audit_service = RoleSessionAuditService(_workspace_path_for_session(session, request))
-        event = audit_service.append_audit_event(
-            session_id=session_id,
-            event_type=event_type,
-            details=payload.details or {},
-        )
-        return {
-            "ok": True,
-            "session_id": session_id,
-            "event": event,
-        }
-    except (RuntimeError, ValueError) as e:
-        raise StructuredHTTPException(
-            status_code=400,
-            code="REQUEST_ERROR",
-            message=str(e),
-        ) from e
+    """Reject retired RoleSession mutations before storage access."""
+    raise legacy_engine_retired("RoleSession append_audit_event")
 
 
 @router.post("/v2/roles/sessions/{session_id}/audit/export", dependencies=[Depends(require_auth)])
@@ -1160,41 +725,8 @@ async def export_audit_log(
     request: Request,
     session_id: str,
 ) -> dict[str, Any]:
-    """Export a role-session audit log without starting a workflow."""
-    try:
-        with _role_session_service(request) as service:
-            session = service.get_session(session_id)
-            if not session:
-                raise StructuredHTTPException(
-                    status_code=404,
-                    code="SESSION_NOT_FOUND",
-                    message=f"Session not found: {session_id}",
-                )
-
-        session_workspace = _session_workspace(session, request)
-        audit_service = RoleSessionAuditService(Path(session_workspace))
-
-        from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
-
-        workspace_root = Path(session_workspace).resolve()
-        export_dir = workspace_root / get_workspace_metadata_dir_name() / "exports" / "role_sessions"
-        export_dir.mkdir(parents=True, exist_ok=True)
-        export_target = export_dir / f"{_safe_export_token(session_id)}.audit.json"
-        export_path = audit_service.export_audit_log(session_id, export_target)
-        event_count = audit_service.get_event_count(session_id, None)
-
-        return {
-            "ok": True,
-            "session_id": session_id,
-            "export_path": str(export_path),
-            "event_count": event_count,
-        }
-    except (RuntimeError, ValueError) as e:
-        raise StructuredHTTPException(
-            status_code=400,
-            code="REQUEST_ERROR",
-            message=str(e),
-        ) from e
+    """Reject retired RoleSession mutations before storage access."""
+    raise legacy_engine_retired("RoleSession export_audit_log")
 
 
 # ==================== Context OS Memory Endpoints ====================
@@ -1229,7 +761,10 @@ async def search_session_memory(
             message=str(exc),
         ) from exc
 
-    with RoleSessionContextMemoryService() as service:
+    with (
+        _role_session_service(request) as historical_service,
+        RoleSessionContextMemoryService(session_service=historical_service) as service,
+    ):
         result = service.search_memory(query)
 
     if not result.ok:
@@ -1278,7 +813,10 @@ async def read_session_memory_artifact(
             message=str(exc),
         ) from exc
 
-    with RoleSessionContextMemoryService() as service:
+    with (
+        _role_session_service(request) as historical_service,
+        RoleSessionContextMemoryService(session_service=historical_service) as service,
+    ):
         result = service.read_artifact(query)
 
     if not result.ok:
@@ -1318,7 +856,10 @@ async def read_session_memory_episode(
             message=str(exc),
         ) from exc
 
-    with RoleSessionContextMemoryService() as service:
+    with (
+        _role_session_service(request) as historical_service,
+        RoleSessionContextMemoryService(session_service=historical_service) as service,
+    ):
         result = service.read_episode(query)
 
     if not result.ok:
@@ -1358,7 +899,10 @@ async def read_session_memory_state(
             message=str(exc),
         ) from exc
 
-    with RoleSessionContextMemoryService() as service:
+    with (
+        _role_session_service(request) as historical_service,
+        RoleSessionContextMemoryService(session_service=historical_service) as service,
+    ):
         result = service.get_state(query)
 
     if not result.ok:
@@ -1386,62 +930,8 @@ async def export_session(
     session_id: str,
     payload: ExportRequest,
 ) -> dict[str, Any]:
-    """导出会话
-
-    POST /v2/roles/sessions/{session_id}/actions/export
-
-    Request:
-        {
-            "include_messages": true,
-            "format": "json"
-        }
-
-    Response:
-        {
-            "ok": true,
-            "export": {...}
-        }
-    """
-    try:
-        with _role_session_service(request) as service:
-            export_data = service.export_session(
-                session_id,
-                include_messages=payload.include_messages,
-            )
-
-            if not export_data:
-                raise StructuredHTTPException(
-                    status_code=404,
-                    code="SESSION_NOT_FOUND",
-                    message=f"Session not found: {session_id}",
-                )
-
-            if payload.format == "markdown":
-                # 转换为 Markdown 格式
-                md = f"# {export_data.get('title', 'Session Export')}\n\n"
-                md += f"- Role: {export_data.get('role')}\n"
-                md += f"- Host: {export_data.get('host_kind')}\n"
-                md += f"- Created: {export_data.get('created_at')}\n\n"
-
-                if export_data.get("messages"):
-                    md += "## Messages\n\n"
-                    for msg in export_data["messages"]:
-                        md += f"### {msg['role']}\n\n"
-                        md += f"{msg['content']}\n\n"
-
-                export_data = {"markdown": md}
-
-            return {
-                "ok": True,
-                "export": export_data,
-            }
-
-    except (RuntimeError, ValueError) as e:
-        raise StructuredHTTPException(
-            status_code=400,
-            code="REQUEST_ERROR",
-            message=str(e),
-        ) from e
+    """Reject retired RoleSession mutations before storage access."""
+    raise legacy_engine_retired("RoleSession export_session")
 
 
 # ==================== Export to Workflow Endpoint ====================
@@ -1457,215 +947,8 @@ async def export_to_workflow(
     session_id: str,
     payload: ExportToWorkflowRequest,
 ) -> dict[str, Any]:
-    """Export session to workflow
-
-    POST /v2/roles/sessions/{session_id}/actions/export-to-workflow
-
-    Request:
-        {
-            "target": "pm",  // or "director", "factory"
-            "export_kind": "session_bundle",  // or "artifacts_only", "messages_only"
-            "include_audit_log": false
-        }
-
-    Response:
-        {
-            "ok": true,
-            "exported_to": "pm",
-            "run_id": "pm_export_xxx",
-            "session_id": "xxx",
-            "artifact_count": 5
-        }
-    """
-    state = get_state(request)
-
-    try:
-        include_artifacts = payload.export_kind in {"session_bundle", "artifacts_only"}
-        include_messages = payload.export_kind in {"session_bundle", "messages_only"}
-
-        # Verify session exists
-        with _role_session_service(request) as service:
-            session = service.get_session(session_id)
-            if not session:
-                raise StructuredHTTPException(
-                    status_code=404,
-                    code="SESSION_NOT_FOUND",
-                    message=f"Session not found: {session_id}",
-                )
-            messages = _safe_records(service.get_messages(session_id, limit=200, offset=0)) if include_messages else []
-
-        _ensure_workflow_export_runtime_ready(state, payload.target)
-
-        session_workspace = _session_workspace(session, request)
-        artifact_service = RoleSessionArtifactService(Path(session_workspace))
-        audit_service = RoleSessionAuditService(Path(session_workspace))
-
-        # 1. Collect session content
-        artifacts = _safe_records(artifact_service.list_artifacts(session_id)) if include_artifacts else []
-        events = _safe_records(audit_service.get_events(session_id, limit=1000)) if payload.include_audit_log else []
-
-        # 2. Build export bundle
-        export_bundle = {
-            "session_id": session_id,
-            "exported_at": datetime.now(timezone.utc).isoformat(),
-            "target": payload.target,
-            "export_kind": payload.export_kind,
-            "artifacts": [_serialize_artifact(artifact) for artifact in artifacts],
-            "messages": [_serialize_message(message) for message in messages],
-            "audit_events": [_serialize_audit_event(event) for event in events],
-            "artifact_count": len(artifacts),
-            "message_count": len(messages),
-            "event_count": len(events),
-        }
-
-        # 3. Persist export bundle and create target workflow
-        import json
-
-        from polaris.infrastructure.storage import LocalFileSystemAdapter
-        from polaris.kernelone.fs import KernelFileSystem
-
-        workspace_root = Path(session_workspace).resolve()
-        kernel_fs = KernelFileSystem(str(workspace_root), LocalFileSystemAdapter())
-        export_timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        export_filename = f"{session_id}_{export_timestamp}_export.json"
-        from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
-
-        export_path = workspace_root / get_workspace_metadata_dir_name() / "exports" / export_filename
-        export_rel_path = kernel_fs.to_workspace_relative_path(str(export_path))
-        kernel_fs.workspace_write_text(
-            export_rel_path,
-            json.dumps(export_bundle, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        export_path = workspace_root / export_rel_path
-
-        if payload.target == "pm":
-            # Export to PM workflow via OrchestrationCommandService
-            from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
-
-            cmd_service = OrchestrationCommandService(state.settings)
-            directive = _build_directive_from_artifacts(artifacts, messages)
-
-            result = await cmd_service.execute_pm_run(
-                workspace=session_workspace,
-                run_type="full",
-                options={
-                    "directive": directive,
-                    "run_director": False,
-                    "export_session_id": session_id,
-                    "export_bundle_path": str(export_path),
-                },
-            )
-            run_id = result.run_id
-
-        elif payload.target == "director":
-            # Export to Director workflow via OrchestrationCommandService
-            from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
-
-            cmd_service = OrchestrationCommandService(state.settings)
-            task_filter = _build_task_filter_from_artifacts(artifacts, messages)
-
-            result = await cmd_service.execute_director_run(
-                workspace=session_workspace,
-                options={
-                    "task_filter": task_filter,
-                    "max_workers": DEFAULT_DIRECTOR_MAX_PARALLELISM,
-                    "execution_mode": "parallel",
-                    "export_session_id": session_id,
-                    "export_bundle_path": str(export_path),
-                },
-            )
-            result_status = str(getattr(result, "status", "") or "").strip().lower()
-            if result_status in {"failed", "error", "blocked", "cancelled", "canceled"}:
-                raise StructuredHTTPException(
-                    status_code=409,
-                    code=str(getattr(result, "reason_code", "") or "DIRECTOR_EXPORT_BLOCKED"),
-                    message=str(getattr(result, "message", "") or "Director export was blocked"),
-                    details={
-                        "run_id": str(getattr(result, "run_id", "") or ""),
-                        "status": result_status,
-                    },
-                )
-            run_id = result.run_id
-
-        else:
-            # Export to Factory via FactoryRunService
-            from polaris.cells.factory.pipeline.public.service import FactoryConfig, FactoryRunService
-            from polaris.cells.factory.pipeline.public.types import FactoryStartRequest
-            from polaris.delivery.http.routers.factory import _schedule_factory_run_task
-
-            factory_service = FactoryRunService(workspace=Path(session_workspace))
-            directive = _build_directive_from_artifacts(artifacts, messages)
-            start_payload = FactoryStartRequest(
-                workspace=session_workspace,
-                start_from="architect",
-                directive=directive,
-                run_director=True,
-                director_iterations=1,
-                loop=False,
-                input_source="role_session",
-            )
-
-            config = FactoryConfig(
-                name=f"export_from_{session_id}",
-                description=directive or f"Factory run exported from session {session_id}",
-                stages=[
-                    "docs_generation",
-                    "pm_planning",
-                    "chief_engineer_review",
-                    "director_dispatch",
-                    "quality_gate",
-                ],
-                auto_dispatch=True,
-            )
-
-            run = await factory_service.create_run(config)
-            run_id = run.id
-
-            # Start the factory run
-            await factory_service.start_run(run_id)
-
-            # Record export reference in metadata
-            await factory_service.update_run_metadata(
-                run_id,
-                {
-                    "export_session_id": session_id,
-                    "export_bundle_path": str(export_path),
-                    "directive": directive,
-                    "input_source": "role_session",
-                    "factory_start_request": start_payload.model_dump(mode="json"),
-                },
-            )
-            _schedule_factory_run_task(factory_service, run_id, start_payload, state)
-
-        # 4. Record export event
-        audit_service.append_audit_event(
-            session_id=session_id,
-            event_type="workflow_exported",
-            details={
-                "target": payload.target,
-                "run_id": run_id,
-                "artifact_count": len(artifacts),
-                "message_count": len(messages),
-                "export_kind": payload.export_kind,
-            },
-        )
-
-        return {
-            "ok": True,
-            "exported_to": payload.target,
-            "run_id": run_id,
-            "session_id": session_id,
-            "artifact_count": len(artifacts),
-            "message_count": len(messages),
-        }
-
-    except (RuntimeError, ValueError) as e:
-        raise StructuredHTTPException(
-            status_code=400,
-            code="REQUEST_ERROR",
-            message=str(e),
-        ) from e
+    """Reject retired RoleSession mutations before storage access."""
+    raise legacy_engine_retired("RoleSession export_to_workflow")
 
 
 # ==================== Capabilities Endpoint ====================

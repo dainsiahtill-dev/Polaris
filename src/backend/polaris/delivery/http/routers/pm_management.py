@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from polaris.cells.runtime.artifact_store.public.service import resolve_safe_path
 from polaris.delivery.http.adapters.scripts_pm import ScriptsPMAdapter
+from polaris.delivery.http.legacy_engine_retired import legacy_engine_retired
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.schemas.common import (
     DocumentDeleteResponse,
@@ -579,35 +580,8 @@ def create_or_update_document(
     body: DocumentUpdateRequest,
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
-    """Create or update a document."""
-    workspace = _workspace_from_request(request, workspace)
-
-    pm = _get_pm_instance(workspace)
-
-    if not pm.is_initialized():
-        raise StructuredHTTPException(status_code=400, code="PM_NOT_INITIALIZED", message="PM system not initialized")
-
-    # Resolve full path
-    full_path = _resolve_document_path(workspace, doc_path)
-
-    version_info = pm.create_or_update_document(
-        doc_path=full_path,
-        content=body.content,
-        updated_by="api",
-        change_summary=body.change_summary or "Updated via API",
-    )
-
-    if version_info is None:
-        raise StructuredHTTPException(
-            status_code=500, code="PM_OPERATION_FAILED", message="Failed to create/update document"
-        )
-
-    return {
-        "success": True,
-        "path": full_path,
-        "version": version_info.version if hasattr(version_info, "version") else str(version_info),
-        "checksum": version_info.checksum if hasattr(version_info, "checksum") else None,
-    }
+    """Reject retired role mutations before constructing their owners."""
+    raise legacy_engine_retired("Legacy create_or_update_document")
 
 
 @router.delete(
@@ -619,23 +593,8 @@ def delete_document(
     delete_file: bool = Query(True, description="Whether to delete the actual file"),
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
-    """Delete a document and its version history."""
-    workspace = _workspace_from_request(request, workspace)
-
-    pm = _get_pm_instance(workspace)
-
-    if not pm.is_initialized():
-        raise StructuredHTTPException(status_code=400, code="PM_NOT_INITIALIZED", message="PM system not initialized")
-
-    # Resolve full path
-    full_path = _resolve_document_path(workspace, doc_path)
-
-    success = pm.delete_document(full_path, delete_file=delete_file)
-
-    if not success:
-        raise StructuredHTTPException(status_code=500, code="PM_OPERATION_FAILED", message="Failed to delete document")
-
-    return {"success": True, "path": full_path, "deleted": True}
+    """Reject retired role mutations before constructing their owners."""
+    raise legacy_engine_retired("Legacy delete_document")
 
 
 @router.get(
@@ -870,27 +829,8 @@ def create_task(
     body: PMTaskCreateRequest,
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
-    """Create a PM task in the workspace-owned task registry."""
-    workspace = _workspace_from_request(request, workspace)
-
-    pm = _get_pm_instance(workspace)
-
-    if not pm.is_initialized():
-        raise StructuredHTTPException(status_code=400, code="PM_NOT_INITIALIZED", message="PM system not initialized")
-
-    task = pm.create_task(
-        subject=body.subject.strip(),
-        description=body.description,
-        priority=body.priority,
-        status=body.status,
-        acceptance=body.acceptance,
-        assignee=body.assignee,
-        due_date=body.due_date,
-        tags=body.tags,
-        parent_id=body.parent_id,
-        metadata=body.metadata,
-    )
-    return _task_to_response(task)
+    """Reject retired role mutations before constructing their owners."""
+    raise legacy_engine_retired("Legacy create_task")
 
 
 @router.get(
@@ -1034,20 +974,8 @@ def init_pm(
     description: str = Query("", description="Project description"),
     workspace: str = Query("", description="Workspace override"),
 ) -> dict[str, Any]:
-    """Initialize PM system for the workspace."""
-    workspace = _workspace_from_request(request, workspace)
-
-    pm = _get_pm_instance(workspace)
-
-    if pm.is_initialized():
-        return {"initialized": True, "message": "PM system already initialized", "workspace": workspace}
-
-    result = pm.initialize(project_name=project_name or "Unnamed Project", description=description)
-    response = dict(result) if isinstance(result, dict) else {"initialized": bool(result)}
-    response.setdefault("initialized", True)
-    response.setdefault("workspace", workspace)
-    response.setdefault("project_name", project_name or "Unnamed Project")
-    return response
+    """Reject retired role mutations before constructing their owners."""
+    raise legacy_engine_retired("Legacy init_pm")
 
 
 # --- V2 PM management endpoints ---

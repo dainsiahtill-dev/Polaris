@@ -999,7 +999,7 @@ def resolve_global_path(rel_path: str) -> str:
     return _join_under(root, suffix)
 
 
-def resolve_workspace_persistent_path(workspace: str, rel_path: str) -> str:
+def resolve_workspace_persistent_path(workspace: str, rel_path: str, *, read_only: bool = False) -> str:
     normalized = normalize_logical_rel_path(rel_path)
     if normalized == "workspace":
         suffix = ""
@@ -1007,7 +1007,7 @@ def resolve_workspace_persistent_path(workspace: str, rel_path: str) -> str:
         suffix = normalized[len("workspace/") :]
     else:
         raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {rel_path}")
-    roots = resolve_storage_roots(workspace)
+    roots = (resolve_storage_roots_read_only if read_only else resolve_storage_roots)(workspace)
     return _join_under(roots.project_persistent_root, suffix)
 
 
@@ -1035,6 +1035,7 @@ def resolve_logical_path(
     rel_path: str,
     *,
     ramdisk_root: str | None = None,
+    read_only: bool = False,
 ) -> str:
     normalized = normalize_logical_rel_path(rel_path)
     if normalized == "runtime" or normalized.startswith("runtime/"):
@@ -1042,9 +1043,10 @@ def resolve_logical_path(
             workspace,
             normalized,
             ramdisk_root=ramdisk_root,
+            read_only=read_only,
         )
     if normalized == "workspace" or normalized.startswith("workspace/"):
-        return resolve_workspace_persistent_path(workspace, normalized)
+        return resolve_workspace_persistent_path(workspace, normalized, read_only=read_only)
     if normalized == "config" or normalized.startswith("config/"):
         return resolve_global_path(normalized)
     raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {rel_path}")

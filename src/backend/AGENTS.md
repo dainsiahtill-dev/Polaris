@@ -18,7 +18,7 @@
 3. `docs/graph/catalog/cells.yaml` 与 `docs/graph/subgraphs/*.yaml`
 4. `docs/FINAL_SPEC.md`
 5. `docs/真正可执行的 ACGA 2.0 落地版.md` 与 `docs/ACGA_2.0_PRINCIPLES.md`
-6. 2026-04-16 目标态治理资产：
+6. 历史 2026-04-16 治理资产（仅解释旧引擎，不覆盖 2026-10-20 批准重构）：
    - `../../docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_BLUEPRINT_20260416.md`
    - `docs/governance/templates/verification-cards/vc-20260416-transaction-kernel-contextos-tool-refactor.yaml`
    - `docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md`
@@ -28,7 +28,7 @@
 1. 先按当前 graph 事实处理边界。
 2. 再按 `FINAL_SPEC.md` 判断迁移方向。
 3. 最后在前两者约束内应用 ACGA 2.0 的 Descriptor / Semantic / Governance 规则。
-4. 禁止把目标态或规划态写成当前事实。
+4. 禁止把目标态或规划态写成当前事实。当前工程行为以 `../../docs/blueprints/POLARIS_ROLE_AGENT_REFACTOR_20261020.md` 批准方案及本文件工程主线为准，旧目标态不能恢复旧准入。
 
 ## 2. 核心目标
 
@@ -50,7 +50,7 @@
 3. 相关 `docs/graph/subgraphs/*.yaml`
 4. `docs/FINAL_SPEC.md`
 5. 若任务涉及 Context Plane / Descriptor / Semantic Search，再读 ACGA 2.0 文档
-6. 目标 Cell 的 `cell.yaml`、`README.agent.md`、`generated/context.pack.json`
+6. 目标 Cell 的 `cell.yaml`、`README.agent.md`；`generated/context.pack.json` 仅在实际存在时读取，不虚构缺失 pack
 7. 若存在，再读 `generated/descriptor.pack.json`、`generated/impact.pack.json`、`generated/verify.pack.json`
 8. 目标 Cell 的公开契约
 9. 必要时才进入 `owned_paths`
@@ -124,16 +124,16 @@ Cell 是最小自治边界。
 5. 测试 harness 可以轮询状态端点等待异步流程完成，但测试轮询不得被产品代码复用或包装成运行时机制。
 6. 涉及首页、Factory、PM、ChiefEngineer、Director、ContextOS 的实时显示变更，必须附带 Playwright 证据证明页面从 WebSocket 推送更新，无刷新、无轮询。
 
-### 4.13 Full-Chain Task Flow Only（PM -> Chief Engineer -> Director）
+### 4.13 Single Engineering Owner（默认 Director，按需协作）
 
-1. Polaris 运行态任务链路唯一为 `PM -> Chief Engineer -> Director`。
-2. PM 只能产出任务合同；Chief Engineer 必须产出蓝图/交接证据；Director 只能消费 CE 交接后的任务。
-3. 禁止新增或保留 `PM -> Director`、`PM->Director`、`PM → Director` 旧链路作为产品执行路径、UI 文案、实时投影、脚本兜底或恢复策略。
-4. `start_from=director`、`run_director=false` 等历史字段只能作为兼容输入被规范化到完整链路，不得改变执行链路。
-5. 缺少 CE 蓝图、handoff 或实时投影时必须 fail-closed：展示等待/阻塞 CE，不得把 PM 合同直接送入 Director。
-6. 首页主战场、PM/ChiefEngineer/Director 工作区必须展示同一条 `PM -> Chief Engineer -> Director` 三段状态事实；Factory Bench 仅作为内部测试 harness 消费同一事实流做压力测试/审计，不得定义生产 UI 或正式状态语义。
-7. `KERNELONE_TASK_MARKET_MODE=off|shadow` 和 `direct_to_director|pending_exec` 只允许作为历史兼容输入；运行态必须归一到 `mainline-full` / `chief_blueprint_required`，不得恢复 PM 直达 Director。
-8. Factory Bench 作为内部测试 harness 时必须经 HTTP Factory API 启动 `PM -> Chief Engineer -> Director` 全链路；`--use-legacy-chain`、`workflow` driver、subprocess PM->Director 只能 fail-closed，不得作为自动回退。该规则不得被理解为生产环境需要暴露 Bench。
+1. 新工程运行的唯一 owner 是现有 `roles.runtime.public.engineering_service.EngineeringRunService`。HTTP、CLI、UI、取消、恢复与错误路径共用该服务，不新增 Cell、任务表、ledger 或第二 controller。
+2. 默认 `workflow=direct`，Director 读取目标、调用工具、根据真实结果继续工作；PM/Chief Engineer 按需只读咨询。显式 `workflow=collaborative` 才执行 PM、Chief Engineer、Director 协作；未调用角色显示 `not_called`。咨询一层返回，不递归派生总控；讨论不创建工程 run。
+3. PM/CE 使用可读文本提供规划、设计或审阅。新运行不要求 PM 合同、CE portfolio/blueprint、handoff/hash、OBL/covers 图、semantic patch、Task Market、JobToken/DEO/Run Ledger 旧链准入，也不受旧一 turn 一 batch 规则约束。普通编译/测试失败回到同一 Director，不自动 deterministic repair 或重启规划。
+4. 工具授权来自 host 持久化且不可由模型扩大的 `PermissionScope`、当前 profile、预算与 deadline；显式空权限保持为空。归一化后仍须检查真实路径/symlink/允许根，经 KFS 读写和 OS/process sandbox 执行命令；不支持 containment 时明确拒绝，禁止裸跑。PM/CE/QA 默认只读，同 workspace 仅一个源码写入者。
+5. 唯一工程事实记录是 `<workspace>/.polaris/runtime/engineering/sessions.sqlite3`，保存运行、事件、真实工具观察和验证；新运行不写旧 TaskBoard/TaskMarket/Run Ledger/role-session 镜像。保留 runtime.v2/Nats-JetStream、ContextOS 最终 provider request、UTF-8、实例 workspace 绑定与 storage 单根。
+6. 角色回复结束与 `completed` 不等于 `accepted`。实际检查必须绑定当前源码；用户已声明检查必须保留，未声明时由 Director 结合实际工程选择并实际执行验证。空检查、模型自报、快照条数或 QA 文本不得冒充通过；任务要求的独立 QA 必须审查同一当前候选，拒绝后继续同一任务。
+7. 恢复使用原身份、workspace、原始权限与 deadline，并重新校验当前 host policy；保留失败、interrupted/UNKNOWN 和未知效果，不自动重放可能已执行的命令或写入。旧 ID 不升级为新 run；历史按 `engine_version` 只读，旧在途运行留在原冻结 owner，不在新进程恢复旧写入口。
+8. 旧 Factory/RoleRuntimeService/execute_role_session/RoleExecutionKernel 写准入与自动 fallback 退役；历史解码器、只读查询与显式可选技术工具可保留，禁止据此声称历史源码已全部删除。旧规范仅解释旧记录，不能重新约束新运行。底层 hash 可用于证据/快照完整性，不能要求模型填写业务 hash。真实 HTTP 次数与费用仅用物理证据，未知保持 UNKNOWN。
 
 ### 4.14 Role Tool Failure External Audit（主 Agent 专用，禁止产品化）
 
@@ -141,7 +141,7 @@ Cell 是最小自治边界。
 2. OpenCode 审计只属于 Codex/Claude 等主 Agent 的外部工程协作手段，绝对不是 Polaris 后端、Factory、Run Ledger、ContextOS、ReceiptStore、runtime event、UI 或质量门禁的一部分。后端产品代码不得调度 OpenCode、等待 OpenCode、生成 `opencode_audit` 平台字段，或把 OpenCode 状态作为成功/失败依据。
 3. 审计范围必须覆盖最终送入 provider 的 LLM request（messages、tool schema、response format、token 估算、覆盖度 flags）、工具调用解析与归一化链路、`ToolSpecRegistry` aliases/arg_aliases、runtime event、LLM 调用日志、ContextOS 证据、bench session 和角色日志；若事件中 `messages`/`content` 被 redacted，主 Agent 必须把 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件纳入自己的外部审计证据包，禁止只看 redacted event。
 4. 外部 Agent 不应长期只做审计。对于已经有明确根因、授权文件范围、验收命令和无交叉依赖的账本项，主 Agent 应优先使用 Claude CLI JSON Sub-Agent 的 `mode=implementation` 让子 Agent 直接修改代码/测试/文档；OpenCode 审计默认只读，只在 Claude CLI 不可用或用户显式要求时作为兼容审计路径。任何可写子任务都必须互斥范围明确、不得跨桶写入，且完成后由主 Agent 复核 diff、运行门禁并提交。
-5. 平台自身的失败分类仍必须由 Polaris 原生证据闭环完成：PM Contract、Chief Engineer Blueprint、Director Execution、LLM Output、Context Budget、Baseline Issue、Runtime Environment。无法归类时视为 Polaris 证据链缺口，先补 runtime/ledger/receipt/command 证据，不得用 OpenCode 审计状态补位。
+5. 平台自身失败分类由真实工程原生证据完成：原目标/设计、Director Execution、LLM Output、Tool/Permission、Verification/QA、Context Budget、Baseline Issue、Runtime Environment；旧 PM Contract/Blueprint 只用于历史归因。无法归类时视为 Polaris 证据链缺口，先补当前工程 owner 的 runtime/tool observation/command 证据，不得用 OpenCode 审计状态补位。
 
 ### 4.15 Director Multi-Binding Degraded Execution
 
@@ -159,9 +159,9 @@ Cell 是最小自治边界。
 4. Run Ledger、Job Token、ContextOS、ReceiptStore、Verifier/Gate Policy 等是平台内置基础设施，必须以平台级契约、平台级 projection、平台级 API 暴露；禁止把这些能力归属到 Bench 或依赖 `benchService` 承载正式语义。
 5. Bench 可以作为平台基础设施的内部 producer/consumer：写入测试样本、读取 projection、聚合压力测试结果。但它只能验证平台能力，不得反向决定平台架构边界。
 6. 如果某项能力未来要进入正式项目工作台，必须先从 Bench 命名空间抽离为平台级 Cell/contract/API/UI 类型，再由正式视图消费；禁止把 `factory_audits.json`、bench session、bench route、bench-only metadata 直接接入生产 UI。
-7. 审计时发现生产路径、正式 UI、设置页、ContextOS、TaskBoard、QA 工作台或 public API 依赖 Bench 命名空间时，按 P0 边界污染处理，必须迁移到平台级 Run Ledger/Control Plane projection。
+7. 审计时发现生产路径、正式 UI、设置页、ContextOS、TaskBoard、QA 工作台或 public API 依赖 Bench 命名空间时，按 P0 边界污染处理，必须迁移到真实平台 owner 的 projection/API；工程 run 使用单份 engineering SQLite 投影，不能新增旧 Run Ledger 镜像。
 8. Browser、视觉、多模态 QA、用户脚本、领域脚本等 verifier modality 是平台 Control Plane 的可选能力，默认关闭；设置页可以保存启用意图，但只有当前环境显式声明可用时才允许设为 hard-required evidence，禁止由 Bench 或内部压力测试状态决定正式项目必须启用这些能力。
-9. Job Token 是从控制面事实源派生的 capability token，不得成为第二事实源；正式写入和命令工具执行层必须消费 Job Token 派生的授权 scope，并把 token/hash/stage/project capability evidence 写入 effect receipt，供 Run Ledger、QA 和 UI projection 只读消费。
+9. 新工程写入与命令权限由 host `PermissionScope` 与当前 profile 控制；实际工具身份、效果、退出码进入单份工程记录。Job Token/旧 receipt chain 仅历史读取，不是新运行授权前置。
 
 ## 5. 根目录与归属裁决
 
@@ -297,6 +297,8 @@ Cell 是最小自治边界。
 若改动涉及 runtime / contracts / governance，高风险门禁优先于大而全测试。
 
 ### 10.1 两阶段执行模型（Blueprint First）
+
+本节约束主 Agent 修改 Polaris 平台时的工程设计流程；不是产品 engineering run 的 PM/CE 蓝图准入，不要求普通用户任务先生成文档或合同。
 
 接到具体任务后，默认按两个阶段执行：
 
@@ -517,45 +519,10 @@ Cell 是最小自治边界。
 
 ---
 
-## 17. 最新目标态治理裁决（2026-04-16，非当前事实）
+## 17. 历史目标态边界（2026-04-16，已由工程主线替代）
 
-本节是目标态治理裁决，不是当前现实快照。
+旧 TransactionKernel 单一 turn commit、一 turn 一 ToolBatch、panic/handoff_workflow、ContextHandoffPack 与合同控制面属于历史引擎契约，仅用于解码、只读审计或原冻结实例。新运行不得以这些规则限制 native 工具循环，不得从错误/恢复路径回流旧内核。
 
-### 17.1 权威来源
-
-1. `../../docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_BLUEPRINT_20260416.md`
-2. `docs/governance/templates/verification-cards/vc-20260416-transaction-kernel-contextos-tool-refactor.yaml`
-3. `docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md`
-4. `docs/blueprints/AGENT_INSTRUCTION_ALIGNMENT_BLUEPRINT_20260416.md`
-5. `docs/blueprints/AGENT_INSTRUCTION_COMPACTION_BLUEPRINT_20260416.md`
-6. `docs/blueprints/AGENT_ENGINEERING_DISCIPLINE_ALIGNMENT_BLUEPRINT_20260416.md`
-
-### 17.2 TransactionKernel 裁决
-
-1. `TransactionKernel` 是唯一 turn 事务执行内核和唯一 commit point
-2. 旧 `TurnEngine` 只保留 facade / shim
-3. 一个 turn 内必须满足：
-   - `len(TurnDecisions) == 1`
-   - `len(ToolBatches) <= 1`
-   - `hidden_continuation == 0`
-4. 协议违规统一 `panic + handoff_workflow`
-
-### 17.3 ContextOS / Plane Isolation 裁决
-
-1. ContextOS 固定拆成 `TruthLog`、`WorkingState`、`ReceiptStore`、`ProjectionEngine`
-2. `TruthLog` append-only
-3. `PromptProjection` 只读生成
-4. control-plane 字段不得进入 data plane
-5. raw tool output / system warning / thinking residue 不得直接回灌 prompt
-
-### 17.4 Handoff Contract 裁决
-
-1. `ContextHandoffPack` 是 canonical handoff contract
-2. 公开真相位于：
-   - `polaris.domain.cognitive_runtime.models.ContextHandoffPack`
-   - `polaris.cells.factory.cognitive_runtime.public.contracts`
-3. `roles.kernel`、`TransactionKernel`、`ExplorationWorkflowRuntime` 禁止再造第二套 `HandoffPack` schema
-
----
+继续保留技术原则：权限由 host 决定；模型与工具内容不成为控制面权威；最终 provider request 原样审计；prompt 上下文只选择相关证据；失败与 UNKNOWN 不能改成成功。当前实现与历史设计的差距必须明确记录。
 
 See docs/blueprints/COGNITIVE_LIFEFORM_ARCHITECTURE_ALIGNMENT_MEMO_20260417.md

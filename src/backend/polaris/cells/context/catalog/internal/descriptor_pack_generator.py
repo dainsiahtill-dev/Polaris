@@ -4,7 +4,7 @@ Analyzes Cell source code and generates machine-readable functional descriptors.
 This is a key component of the Polaris governance system.
 
 PR-09 Enhancements:
-- Schema validation against semantic-descriptor.schema.yaml
+- Per-Cell pack validation derived from the existing DescriptorPack program contract
 - Semantic versioning (2.1.0)
 - Source hash (content fingerprint)
 - Index write receipt
@@ -21,9 +21,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from jsonschema import ValidationError, validate
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.utils.time_utils import utc_now_str
+from pydantic import TypeAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -109,10 +111,10 @@ def verify_recall_at_10(
 
 
 def validate_schema(descriptor: dict[str, Any], schema_path: Path) -> bool:
-    """Validate descriptor pack against YAML schema.
+    """Validate a semantic descriptor cache against its YAML schema.
 
     Args:
-        descriptor: The descriptor pack dictionary to validate.
+        descriptor: The semantic descriptor cache dictionary to validate.
         schema_path: Path to the semantic-descriptor.schema.yaml file.
 
     Returns:
@@ -325,11 +327,7 @@ def _declared_descriptor_surface(
                 continue
             allowed_symbols.update(str(value).strip() for value in values if str(value).strip())
 
-    py_files = {
-        path
-        for path in (cell_dir / "public").rglob("*.py")
-        if _should_analyze_source_file(path)
-    }
+    py_files = {path for path in (cell_dir / "public").rglob("*.py") if _should_analyze_source_file(path)}
     class_methods: dict[str, frozenset[str]] = {}
     raw_classes = raw_surface.get("classes")
     if isinstance(raw_classes, dict):
@@ -345,9 +343,7 @@ def _declared_descriptor_surface(
             if not module_path.exists() or not module_path.is_file():
                 continue
             allowed_symbols.add(class_name)
-            class_methods[class_name] = frozenset(
-                str(method).strip() for method in methods if str(method).strip()
-            )
+            class_methods[class_name] = frozenset(str(method).strip() for method in methods if str(method).strip())
             py_files.add(module_path)
 
     return py_files, allowed_symbols, class_methods
@@ -495,8 +491,8 @@ async def generate_pack(
         embedding_runtime_fingerprint="local-v1",
     )
 
-    # Compute source hash from analyzed files
-    pack.source_hash = pack._compute_source_hash(source_files_for_hash)
+    # The manifest selects public capability/method exposure even when Python is unchanged.
+    pack.source_hash = pack._compute_source_hash([cell_yaml_path, *source_files_for_hash])
 
     # Role-Driven Evolution (Optional)
     if evolve:
@@ -513,21 +509,21 @@ async def generate_pack(
             logger.warning("Failed to get evolution insights for %s: %s", cell_id, e)
 
     output_path = cell_dir / "generated" / "descriptor.pack.json"
-    kfs = _build_kernel_fs(repo_root)
     relative_output_path = output_path.relative_to(repo_root).as_posix()
 
     descriptor_dict = pack.to_dict()
     payload = json.dumps(descriptor_dict, indent=2, ensure_ascii=False) + "\n"
 
-    # Validate against schema if not skipped
+    # A per-Cell capabilities pack is distinct from the semantic descriptor cache.
+    # Derive validation from its existing program contract; JSON Schema validation
+    # rejects malformed values without populating defaults or coercing input.
     if not skip_schema_validation:
-        schema_path = repo_root / "docs" / "governance" / "schemas" / "semantic-descriptor.schema.yaml"
-        if schema_path.exists():
-            if not validate_schema(descriptor_dict, schema_path):
-                logger.warning("Schema validation failed for %s, but proceeding with write", cell_id)
-        else:
-            logger.debug("Schema file not found at %s, skipping validation", schema_path)
+        try:
+            validate(descriptor_dict, TypeAdapter(DescriptorPack).json_schema())
+        except ValidationError as error:
+            raise ValueError(f"Invalid descriptor pack: {error.message}") from error
 
+    kfs = _build_kernel_fs(repo_root)
     kfs.workspace_write_text(relative_output_path, payload, encoding="utf-8")
 
     # Compute verification hash after write

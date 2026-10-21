@@ -15,7 +15,7 @@ from polaris.kernelone.audit import (
 )
 from polaris.kernelone.audit.validators import SYSTEM_ROLE
 from polaris.kernelone.fs import KernelFileSystem
-from polaris.kernelone.storage import resolve_storage_roots
+from polaris.kernelone.storage import resolve_storage_roots, resolve_storage_roots_read_only
 
 
 class RoleSessionAuditService:
@@ -34,11 +34,11 @@ class RoleSessionAuditService:
         "session_closed",
     }
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, *, read_only: bool = False) -> None:
         self.workspace = Path(workspace).resolve()
-        roots = resolve_storage_roots(str(self.workspace))
-        self._runtime = KernelAuditRuntime.get_instance(Path(roots.runtime_root))
-        self._fs = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
+        roots = (resolve_storage_roots_read_only if read_only else resolve_storage_roots)(str(self.workspace))
+        self._runtime = None if read_only else KernelAuditRuntime.get_instance(Path(roots.runtime_root))
+        self._fs = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter(), read_only_paths=read_only)
 
     def _get_audit_logical_path(self, session_id: str) -> str:
         session_token = str(session_id or "").strip()
@@ -52,6 +52,8 @@ class RoleSessionAuditService:
         event_type: str,
         details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if self._runtime is None:
+            raise PermissionError("historical role session audit is read-only")
         event_name = str(event_type or "").strip()
         payload = {
             "id": uuid.uuid4().hex,
@@ -144,6 +146,8 @@ class RoleSessionAuditService:
         return count
 
     def export_audit_log(self, session_id: str, target_file: Path) -> Path:
+        if self._runtime is None:
+            raise PermissionError("historical role session audit is read-only")
         events = self.get_events(session_id, limit=100000, offset=0)
         payload = {
             "session_id": session_id,

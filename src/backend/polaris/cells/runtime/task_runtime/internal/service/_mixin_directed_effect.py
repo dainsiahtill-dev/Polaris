@@ -119,6 +119,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
     ) -> DirectedEffectOperationResultV1:
         """Atomically roll over one completed batch and admit its successor."""
 
+        self._require_writable()
         identity = command.execution_attempt
         if command.workspace != self.workspace or identity.workspace != command.workspace:
             return DirectedEffectOperationResultV1(
@@ -208,6 +209,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
         No TaskBoard transaction or projection runs in the critical section.
         """
 
+        self._require_writable()
         identity = command.execution_attempt
         if command.workspace != self.workspace or identity.workspace != command.workspace:
             return DirectedEffectOperationResultV1(
@@ -561,6 +563,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
         no-op, while a conflicting or malformed authorization fails closed.
         """
 
+        self._require_writable()
         authorization = getattr(command, "authorization", None)
         task_id = str(getattr(authorization, "task_id", "") or "").strip()
         if not task_id:
@@ -1010,6 +1013,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
     ) -> SameTaskLocalReworkPreparationResultV1:
         """Apply a cursor-claimed completion action to one exact TaskRuntime row."""
 
+        self._require_writable()
         external_task_id = str(command.external_task_id or "").strip()
         claim = dict(command.dispatch_claim)
         claim_identity_raw = claim.get("identity")
@@ -1421,6 +1425,7 @@ class _DirectedEffectMixin(_ServiceMixinBase):
     ) -> DirectedEffectRecoverySweepResultV1:
         """Recover ambiguous effects under a TaskRuntime-minted durable lease."""
 
+        self._require_writable()
         from polaris.cells.runtime.task_runtime.public.contracts import (
             DirectedEffectRecoverySweepResultV1,
         )

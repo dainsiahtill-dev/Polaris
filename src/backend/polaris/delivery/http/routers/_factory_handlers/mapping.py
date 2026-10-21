@@ -149,7 +149,7 @@ def _stage_local_rework_is_authorized(result: Any, *, expected_reason: str) -> b
     return str(deferred_map.get("reason") or "").strip() == expected_reason and workflow_authorized
 
 
-def _get_service(workspace: str) -> FactoryRunService:
+def _get_service(workspace: str, *, read_only: bool = False) -> FactoryRunService:
     """Return the lifespan-owned Factory service for the bound workspace.
 
     Physical-attempt coordinators are deliberately process-local.  Creating a
@@ -161,6 +161,8 @@ def _get_service(workspace: str) -> FactoryRunService:
     """
 
     resolved_workspace = Path(workspace).resolve()
+    if read_only:
+        return FactoryRunService(workspace=resolved_workspace, read_only=True)
     try:
         from polaris.bootstrap.factory_run_driver_runtime import get_factory_run_driver_runtime
 
@@ -213,6 +215,9 @@ def _resolve_workspace(state: AppState, workspace: str | None = None) -> str:
         raise StructuredHTTPException(
             status_code=400, code="WORKSPACE_NOT_CONFIGURED", message="workspace not configured"
         )
+    active = str(getattr(state.settings, "workspace", "") or "").strip()
+    if active and Path(requested).resolve() != Path(active).resolve():
+        raise StructuredHTTPException(status_code=404, code="WORKSPACE_NOT_FOUND", message="Workspace not found")
     return str(Path(requested).resolve())
 
 

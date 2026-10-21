@@ -1,99 +1,38 @@
 # Polaris 核心系统地图
 
-本文从仓库根 `CLAUDE.md` 原样迁出，保留完整约束。适用任务须在修改或派工前读取；与更细粒度架构规范冲突时遵循原有优先级。
+本文件是当前工程主线的复用入口。所有跨 Cell 调用走公开边界，所有新能力先复用已有 Cell，再复用 KernelOne；内部文件仅用于定位 owner，不能当作跨 Cell import 示例。
 
-## 7) 核心系统地图（防重复造轮子）
+## 工程运行与角色
 
-以下模块已实现，禁止重复创建：
+- 唯一工程公开服务：`src/backend/polaris/cells/roles/runtime/public/engineering_service.py` 的 `EngineeringRunService`。
+- 程序类型：`roles.runtime.public.contracts.engineering_run` 的 `RoleRunCommand`、`PermissionScope`、`RunLimits`、`ToolObservation`、`RoleRunResult`；这些不是模型业务合同。
+- HTTP：`/v2/engineering/runs`；CLI 共用 `polaris.delivery.cli.engineering` 适配器；启动装配在 `polaris.bootstrap.engineering_runtime`，不拥有第二份状态。
+- 默认 Director。显式 collaborative 才运行 PM、Chief Engineer、Director；按需咨询只读且一层返回。普通 discuss 无动作工具、不创建 run；未调用角色为 `not_called`。
+- 实现职责：`engineering_loop` 运行 native 多轮；`engineering_tools` 组合安全工具；`engineering_roles` 角色提示/只读咨询；`engineering_verification` 执行真实当前候选检查；`engineering_session` 持久化与 workspace 锁。
+- 唯一工程事实库：`<workspace>/.polaris/runtime/engineering/sessions.sqlite3`。不新增 Cell/controller/ledger/task 表，不把新运行镜像到旧 TaskBoard、Task Market、Run Ledger 或 RoleSession。
 
-### 7.1) LLM 工具系统
-**唯一实现**: `src/backend/polaris/kernelone/llm/toolkit/`
+## 工具与模型技术底座
 
-```python
-# ✅ 正确用法
-from polaris.kernelone.llm.toolkit import (
-    AgentAccelToolExecutor,      # 统一工具执行器
-    parse_tool_calls,            # 工具调用解析
-)
+- `polaris.kernelone.tool_execution.tool_spec_registry`：工具定义、tool alias 和 arg_aliases 的统一归一化；归一化后仍须 host 权限、路径和命令检查，未知参数 fail-closed。
+- `polaris.kernelone.llm.engine.client` / `provider_native_request`：现有 provider 调用、预算与 native 消息编解码；不得另造 provider registry 或静默 fallback。
+- `polaris.kernelone.fs.runtime` / `storage.layout`：KFS、UTF-8 与 canonical `<workspace>/.polaris/runtime`。
+- `polaris.kernelone.process.process_tree` 与现有 sandbox：真实命令隔离、取消、drain；仅 cwd/进程组不能替代 OS containment，不支持时明确拒绝。
+- host `PermissionScope` 保留显式空 grant；PM/CE/QA 默认只读，同 workspace 单一源码写入者。模型文本、旧 JobToken/DEO/合同 hash 不能扩大授权。
 
-# 获取角色工具集成（注册表 ROLE_TOOL_INTEGRATIONS 现位于 tool_runtime cell）
-from polaris.cells.llm.tool_runtime.internal.role_integrations import ROLE_TOOL_INTEGRATIONS
+## 验证、恢复与观测
 
-integration = ROLE_TOOL_INTEGRATIONS["pm"](workspace=".")
-prompt = integration.get_system_prompt()
-```
+- 实际检查绑定当前源码；用户已声明检查必须保留，未声明时 Director 从真实工程选择并实际执行。必要独立 QA 审查同一候选；回复 completed 不能替代 accepted。
+- 原目标、相关代码、实际建议、近期工具观察与失败结果进入上下文。最终 provider request、token/window、工具 schema 与可读 ContextOS ref 由平台记录，不要求模型填写覆盖 flags/hash。
+- runtime.v2/Nats-JetStream 与 `/v2/ws/runtime` 是唯一实时链路；HTTP 仅初始/重连快照、显式刷新、一次 command/query。UI 不得轮询或在断线时伪装实时。
+- Launcher/Instance Registry 管实例发现与运维；每实例单 workspace，显式 backend/token/workspace，非主实例不占 `49977/5173`。
+- cancel/resume 保留身份、原权限/deadline 和当前 policy 校验；保留 failed/interrupted/UNKNOWN，不自动重放未知命令/写入，不把旧 ID 转为 engineering run。
 
-**禁止行为**:
-- ✗ 在 `polaris/cells/llm/` 下新建 `*ToolIntegration` 类
-- ✗ 自定义 `TOOL_CALL:...ARGS:...` 格式
-- ✗ 直接调用底层 `tools.py`
+## 历史实现与可选工具
 
-**相关文件**:
-- `polaris/kernelone/llm/toolkit/definitions.py` - 工具定义（单一事实来源）
-- `polaris/kernelone/llm/toolkit/executor/` - 工具执行（目录）
-- `polaris/cells/llm/tool_runtime/internal/role_integrations.py` - 5个角色的工具集成
-- `polaris/kernelone/llm/toolkit/parsers/` - 工具调用解析（目录）
+旧 `RoleRuntimeService`、`RoleExecutionKernel`、`KernelToolExecutor`、Factory 合同编排、TaskBoard/Task Market、RoleSession/Run Ledger 记录只用于原引擎只读解码/审计；旧在途运行留在原冻结 owner。它们不是新工程入口的复用建议，也不表示所有历史源码已删除。
 
-### 7.2) 角色对话系统
-**唯一实现**: `src/backend/polaris/cells/llm/dialogue/internal/role_dialogue.py`
+独立 deterministic repair 实用工具仅显式使用，owner 保持 `director.runtime` public；其 coverage、policy、receipt/revalidation 不成为普通修复前置。禁止把 CE portfolio/semantic patch、JobToken/DEO/旧 ledger gate 或自动 repair schedule 接回新循环。
 
-```python
-# ✅ 正确用法
-from polaris.cells.llm.dialogue.internal.role_dialogue import generate_role_response
+历史 `llm.dialogue.role_dialogue`、`role_integrations` 与 TaskBoard 不再是新工程的唯一实现；禁止照旧例直接 import 其它 Cell internal 或再创建平行工具/任务/角色控制器。
 
-result = await generate_role_response(
-    workspace=workspace,
-    settings=settings,
-    role="pm",  # 或 architect, chief_engineer, director, qa
-    message=message,
-)
-```
-
-**角色提示词注册表**: `ROLE_PROMPT_TEMPLATES`
-- `pm` - 尚书令 (项目管理)
-- `architect` - 中书令 (架构设计)
-- `chief_engineer` - 工部尚书 (技术分析)
-- `director` - 工部侍郎 (代码执行)
-- `qa` - 门下侍中 (质量审查)
-- `scout` - 探子 (只读代码探索，sub-agent，即将由 PM/Director 调用)
-
-**禁止行为**:
-- ✗ 在 `polaris/cells/llm/dialogue/` 下新建独立角色对话文件（已统一到 `role_dialogue.py`）
-- ✗ 在角色 CLI/internal 模块下内嵌角色提示词
-- ✗ 创建新的 `generate_xxx_response()` 函数
-
-### 7.3) Provider 系统
-- ✗ 直接操作 `base_provider.provider_registry`
-- ✗ 绕过 `ProviderManager` 创建 Provider 实例
-
-### 7.4) 任务管理系统
-**唯一实现**: `src/backend/polaris/cells/runtime/task_runtime/internal/task_board.py`
-
-```python
-# ✅ 正确用法
-from polaris.cells.runtime.task_runtime.internal.task_board import TaskBoard
-
-board = TaskBoard(workspace=".")
-board.create(subject="实现登录功能", priority="high")
-```
-
-### 7.5) 已删除模块（历史记录）
-
-| 模块 | 替代方案 | 状态 |
-|------|----------|------|
-| `pm_dialogue.py` | `polaris.cells.llm.dialogue.internal.role_dialogue.generate_role_response(role="pm", ...)` | 已删除 |
-| `pm_tools.py` | `polaris.kernelone.llm.toolkit.AgentAccelToolExecutor` | 已删除 |
-| `api/routers/pm.py` | `polaris/delivery/http/routers/pm_chat.py` + `pm_management.py`（`/v2/pm`） | 已删除 |
-| `workflow_nodes_compat.py` | `polaris/cells/roles/adapters/internal/workflow_adapter.py` | 已删除 |
-
-### 7.6) 新增能力检查清单
-
-在实现新功能前，检查：
-
-1. **工具能力?** → 先看 `polaris/kernelone/llm/toolkit/` 是否已存在
-2. **角色对话?** → 先看 `role_dialogue.ROLE_PROMPT_TEMPLATES` 是否已有
-3. **Provider?** → 先看 `providers/provider_registry.py` 是否已支持
-4. **任务管理?** → 先看 `task_board.py` 是否满足需求
-
-如果不确定，查看对应模块的 `__init__.py` 中的 **"防重复造轮子提示"** 区域。
-
+新增能力前先核对本地图、当前 `roles.runtime/cell.yaml`、graph 与真实 public consumers；缺失生成 pack 保持缺失事实，不能冒充新鲜资产或执行证据。真实 HTTP 次数与费用没有物理证据时保持 UNKNOWN。

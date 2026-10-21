@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const harness = vi.hoisted(() => ({
@@ -14,6 +14,8 @@ const harness = vi.hoisted(() => ({
   empty: [],
   factoryBench: { currentSession: null, events: [] },
   factoryBenchOptions: vi.fn(),
+  factoryOptions: vi.fn(),
+  start: vi.fn(), get: vi.fn(), cancel: vi.fn(), resume: vi.fn(), discuss: vi.fn(),
 }));
 
 // Render the actual App and run its options through the actual connection hook.
@@ -69,7 +71,8 @@ vi.mock('./hooks/useUsageStats', () => ({ useUsageStats: () => ({ stats: {} }) }
 vi.mock('./hooks/useLlmRuntimeGate', () => ({
   useLlmRuntimeGate: () => ({ llmRuntimeState: { state: 'UNKNOWN', blockedRoles: [] }, getLlmRoleBlockedReason: () => '' }),
 }));
-vi.mock('@/hooks/useFactory', () => ({ useFactory: () => ({ currentRun: null }) }));
+vi.mock('@/hooks/useFactory', () => ({ useFactory: (options: unknown) => { harness.factoryOptions(options); return { currentRun: null }; } }));
+vi.mock('@/services/engineeringRunService', () => ({ startEngineeringRun: harness.start, getEngineeringRun: harness.get, cancelEngineeringRun: harness.cancel, resumeEngineeringRun: harness.resume, discussEngineeringRole: harness.discuss }));
 vi.mock('@/hooks/useFactoryBench', () => ({ useFactoryBench: (options: unknown) => { harness.factoryBenchOptions(options); return harness.factoryBench; } }));
 vi.mock('@/services/controlPlane', () => ({
   getControlPlaneProjection: async () => ({ ok: true }),
@@ -194,5 +197,80 @@ describe('App explicit global Bench opt-in boundary', () => {
     expect(runtimeSubscriptions().every((channels) => channels.includes('event.bench') === enabled)).toBe(true);
     expect(runtimeSubscriptions().every((channels) => channels.includes('event.factory'))).toBe(true);
     expect(harness.factoryBenchOptions).toHaveBeenLastCalledWith(expect.objectContaining({ enabled, autoSelect: enabled ? 'newest' : 'none' }));
+  });
+});
+
+
+describe('App engineering-only production entry', () => {
+  const snapshot = (status = 'running') => ({ session_id: 'engineering-1', run_id: 'engineering-1', engine_version: 'engineering_v2', workspace: '/workspace/scoped', workflow: 'direct', role: 'director', status, active_roles: ['director'], roles: { pm: 'not_called', chief_engineer: 'not_called', director: status, qa: 'not_called' }, text: '', verification: 'not_run', checks: [], required_checks: [], permission_profile_id: 'host-profile', resource_url: '/v2/engineering/runs/engineering-1', last_seq: 0, events: [] });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('VITE_POLARIS_INTERNAL_BENCH', '0');
+    vi.stubEnv('VITE_POLARIS_WORKSPACE', '');
+    vi.stubEnv('VITE_WORKSPACE', '');
+    vi.stubEnv('VITE_POLARIS_INSTANCE_ID', '');
+    harness.start.mockResolvedValue({ ok: true, data: snapshot() });
+    harness.get.mockResolvedValue({ ok: true, data: snapshot() });
+    harness.cancel.mockResolvedValue({ ok: true, data: snapshot('cancelled') });
+    harness.resume.mockResolvedValue({ ok: true, data: snapshot() });
+    window.history.replaceState({}, '', '/?instance=scoped&backend=http%3A%2F%2F127.0.0.1%3A5555&token=bound-token&workspace=%2Fworkspace%2Fscoped');
+  });
+  afterEach(() => { cleanup(); vi.unstubAllEnvs(); window.history.replaceState({}, '', '/'); });
+  it.each(['', '&engine=legacy'])('defaults to Director and creates only an engineering run from a clean URL (%s)', async (suffix) => {
+    window.history.replaceState({}, '', window.location.href + suffix);
+    render(<App />);
+    expect(screen.getByRole('heading', { name: 'Engineering v2 · Director' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('工程目标'), { target: { value: 'Implement the requested change' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始执行' }));
+    await waitFor(() => expect(window.location.search).toContain('engineering_run=engineering-1'));
+    expect(harness.start).toHaveBeenCalledWith(expect.objectContaining({ workspace: '/workspace/scoped', instruction: 'Implement the requested change', role: 'director', workflow: 'direct', required_checks: [] }));
+    expect(harness.factoryOptions).not.toHaveBeenCalled();
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get('backend')).toBe('http://127.0.0.1:5555');
+    expect(params.get('token')).toBe('bound-token');
+    expect(params.get('instance')).toBe('scoped');
+  });
+  it('preserves the same engineering run across context, role navigation, cancellation, resume and reload', async () => {
+    const app = render(<App />);
+    fireEvent.change(screen.getByLabelText('工程目标'), { target: { value: 'Build feature' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始执行' }));
+    await waitFor(() => expect(window.location.search).toContain('engineering_run=engineering-1'));
+    fireEvent.click(screen.getByRole('button', { name: 'ContextOS' }));
+    fireEvent.click(screen.getByRole('button', { name: '返回工程运行' }));
+    fireEvent.click(screen.getByRole('button', { name: 'PM 规划' }));
+    expect(screen.getByRole('heading', { name: 'Engineering v2 · PM' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Director 工程' }));
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '继续同一运行' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '继续同一运行' }));
+    await waitFor(() => expect(harness.resume).toHaveBeenCalledWith('engineering-1', '/workspace/scoped'));
+    expect(harness.cancel).toHaveBeenCalledWith('engineering-1', '/workspace/scoped');
+    app.unmount(); render(<App />);
+    await waitFor(() => expect(harness.get).toHaveBeenCalledWith('engineering-1', '/workspace/scoped'));
+    expect(harness.start).toHaveBeenCalledTimes(1);
+    expect(window.location.search).toContain('engineering_run=engineering-1');
+    expect(harness.factoryOptions).not.toHaveBeenCalled();
+  });
+  it('pins a settings-derived workspace into the run URL and ignores later settings drift', async () => {
+    window.history.replaceState({}, '', '/');
+    harness.settings.workspace = '/workspace/main';
+    harness.start.mockResolvedValue({ ok: true, data: { ...snapshot(), workspace: '/workspace/main' } });
+    harness.get.mockResolvedValue({ ok: true, data: { ...snapshot(), workspace: '/workspace/main' } });
+    const app = render(<App />);
+    fireEvent.change(screen.getByLabelText('工程目标'), { target: { value: 'Pinned work' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始执行' }));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get('workspace')).toBe('/workspace/main'));
+    harness.settings.workspace = '/workspace/other';
+    app.rerender(<App />);
+    expect(screen.getByTitle('/workspace/main')).toBeInTheDocument();
+    expect(harness.start).toHaveBeenCalledWith(expect.objectContaining({ workspace: '/workspace/main' }));
+    harness.settings.workspace = '/workspace/main';
+  });
+  it('blocks an instance with no workspace binding instead of writing to settings workspace', () => {
+    window.history.replaceState({}, '', '/?instance=missing-workspace');
+    render(<App />);
+    expect(screen.getByRole('alert')).toHaveTextContent('实例缺少 workspace 绑定');
+    expect(screen.queryByRole('button', { name: '开始执行' })).not.toBeInTheDocument();
+    expect(harness.start).not.toHaveBeenCalled();
   });
 });

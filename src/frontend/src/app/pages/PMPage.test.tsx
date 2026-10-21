@@ -1,127 +1,26 @@
-import { render, screen, fireEvent } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { makeEngineeringBinding } from '@/test/engineeringRunFixtures';
 import { PMPage } from './PMPage';
-
-const pmWorkspaceProps = vi.hoisted(() => vi.fn());
-const runtimeOverlayProps = vi.hoisted(() => vi.fn());
-
-vi.mock('@/app/components/pm', () => ({
-  PMWorkspace: (props: { onOpenSettings?: () => void }) => {
-    pmWorkspaceProps(props);
-    return (
-      <button type="button" data-testid="pm-page-settings" onClick={props.onOpenSettings}>
-        Settings
-      </button>
-    );
-  },
-}));
-
-vi.mock('@/app/components/LlmRuntimeOverlay', () => ({
-  LlmRuntimeOverlay: (props: Record<string, unknown>) => {
-    runtimeOverlayProps(props);
-    return <div data-testid="runtime-overlay" />;
-  },
-}));
-
-vi.mock('@/app/components/ui/sonner', () => ({
-  Toaster: () => <div data-testid="toaster" />,
-}));
-
-vi.mock('@/runtime/transport', () => ({
-  useRuntimeTransport: () => ({
-    subscribeChannels: () => () => {},
-    registerMessageHandler: () => () => {},
-  }),
-}));
-
-function renderPage(
-  onOpenSettings = vi.fn(),
-  overrides: Partial<Parameters<typeof PMPage>[0]> = {},
-): void {
-  render(
-    <PMPage
-      workspace="C:/Temp/Product"
-      tasks={[]}
-      pmState={null}
-      pmRunning={false}
-      isStarting={false}
-      onTogglePm={vi.fn()}
-      onRunPmOnce={vi.fn()}
-      onBackToMain={vi.fn()}
-      onOpenSettings={onOpenSettings}
-      websocketLive={true}
-      websocketReconnecting={false}
-      websocketAttemptCount={0}
-      llmRuntimeState={{
-        state: 'READY',
-        blockedRoles: [],
-        requiredRoles: ['pm'],
-        lastUpdated: '2026-05-23T00:00:00Z',
-      }}
-      notifyError={vi.fn()}
-      {...overrides}
-    />,
-  );
-}
-
-describe('PMPage', () => {
-  beforeEach(() => {
-    pmWorkspaceProps.mockClear();
-    runtimeOverlayProps.mockClear();
+describe('PMPage engineering retirement', () => {
+  it('fails visibly without a binding and exposes no retired write controls', () => {
+    const oldWrite = vi.fn();
+    render(<PMPage workspace="/work" tasks={[]} onBackToMain={() => { }} onRunPmOnce={oldWrite} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('工程运行绑定不可用');
+    expect(screen.queryByRole('button', { name: /开始执行|启动|重试|继续|取消/ })).not.toBeInTheDocument();
+    expect(oldWrite).not.toHaveBeenCalled();
   });
-
-  it('forwards the settings callback to PMWorkspace', () => {
-    const onOpenSettings = vi.fn();
-
-    renderPage(onOpenSettings);
-
-    fireEvent.click(screen.getByTestId('pm-page-settings'));
-
-    expect(onOpenSettings).toHaveBeenCalledTimes(1);
-    expect(pmWorkspaceProps).toHaveBeenCalledWith(expect.objectContaining({ onOpenSettings }));
-  });
-
-  it('forwards PM runtime evidence and cross-role overlay state', () => {
-    const pmTerminalStatus = { terminal: true, status: 'failed', exit_code: 1 };
-    const runtimeIssue = { code: 'PM_FAILED', title: 'PM failed', detail: 'see logs' };
-    const taskTraceMap = new Map([['PM-1', [{ phase: 'planning' }]]]);
-    const fileEditEvents = [{ task_id: 'PM-1', path: 'docs/plan.md' }];
-
-    renderPage(vi.fn(), {
-      directorRunning: true,
-      pmTerminalStatus,
-      pmStartBlockedReason: 'LLM blocked',
-      runtimeIssue,
-      qualityGate: { score: 90 },
-      taskTraceMap,
-      fileEditEvents,
-    });
-
-    expect(pmWorkspaceProps).toHaveBeenCalledWith(expect.objectContaining({
-      pmTerminalStatus,
-      pmStartBlockedReason: 'LLM blocked',
-      runtimeIssue,
-      qualityGate: { score: 90 },
-      taskTraceMap,
-    }));
-    expect(runtimeOverlayProps).toHaveBeenCalledWith(expect.objectContaining({
-      activeView: 'pm',
-      pmRunning: false,
-      directorRunning: true,
-      fileEditEvents,
-    }));
-  });
-
-  it('forwards the PM stopping transition to PMWorkspace', () => {
-    renderPage(vi.fn(), {
-      pmRunning: true,
-      isStopping: true,
-    });
-
-    expect(pmWorkspaceProps).toHaveBeenLastCalledWith(expect.objectContaining({
-      pmRunning: true,
-      isStarting: false,
-      isStopping: true,
-    }));
+  it.each([undefined, false, true])('uses the same engineering owner for new pm work despite stale mode (%s)', (enabled) => {
+    const engineering = makeEngineeringBinding();
+    const oldWrite = vi.fn();
+    const changeMode = vi.fn();
+    render(<PMPage workspace="/work" tasks={[]} onBackToMain={() => { }} engineering={engineering} engineeringEnabled={enabled} onEngineeringModeChange={changeMode} onRunPmOnce={oldWrite} />);
+    expect(screen.getByRole('heading', { name: 'Engineering v2 · PM' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('工程目标'), { target: { value: 'Requested work' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始执行' }));
+    expect(engineering.start).toHaveBeenCalledWith({ instruction: 'Requested work', role: 'pm', workflow: 'direct', required_checks: [] });
+    expect(oldWrite).not.toHaveBeenCalled();
+    expect(changeMode).not.toHaveBeenCalled();
+    expect(screen.queryByText('查看历史界面')).not.toBeInTheDocument();
   });
 });

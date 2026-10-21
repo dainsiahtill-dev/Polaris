@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { EngineeringRunWorkspace } from './EngineeringRunWorkspace';
+import { EngineeringModeBoundary, EngineeringRunWorkspace } from './EngineeringRunWorkspace';
 import { FactoryWorkspace } from './FactoryWorkspace';
 import { applyEngineeringEvent, hydrateEngineeringRun, newEngineeringProjection } from '@/runtime/engineeringRunProjection';
 import type { EngineeringRunSnapshot } from '@/services/api.types';
@@ -107,5 +107,27 @@ describe('EngineeringRunWorkspace', () => {
     view.rerender(<EngineeringRunWorkspace workspace="/work" binding={{ ...run, pending: 'start', connected: false }} role="pm" onBackToMain={() => { }} />);
     expect(screen.getByRole('button', { name: '启动中…' })).toBeDisabled();
     expect(screen.getByText(/实时连接已断开/)).toBeInTheDocument();
+  });
+});
+
+
+describe('EngineeringModeBoundary retirement', () => {
+  it.each([undefined, false, true])('never mounts legacy actions when engineering binding is unavailable (%s)', (enabled) => {
+    const legacyMount = vi.fn();
+    function LegacyWriter() { legacyMount(); return <button>Legacy write</button>; }
+    render(<EngineeringModeBoundary enabled={enabled} workspace="/work" role="director" onBackToMain={() => { }}><LegacyWriter /></EngineeringModeBoundary>);
+    expect(screen.getByRole('alert')).toHaveTextContent('工程运行绑定不可用');
+    expect(screen.queryByRole('button', { name: 'Legacy write' })).not.toBeInTheDocument();
+    expect(legacyMount).not.toHaveBeenCalled();
+  });
+  it('keeps an existing engineering binding writable even when a stale legacy mode was requested', () => {
+    const run = binding(null);
+    const changeMode = vi.fn();
+    render(<EngineeringModeBoundary enabled={false} binding={run} onModeChange={changeMode} workspace="/work" role="director" onBackToMain={() => { }}><button>Legacy write</button></EngineeringModeBoundary>);
+    fireEvent.change(screen.getByLabelText('工程目标'), { target: { value: 'Continue engineering' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始执行' }));
+    expect(run.start).toHaveBeenCalledWith(expect.objectContaining({ instruction: 'Continue engineering' }));
+    expect(screen.queryByText('查看历史界面')).not.toBeInTheDocument();
+    expect(changeMode).not.toHaveBeenCalled();
   });
 });

@@ -83,7 +83,7 @@ async def test_lifespan_skips_managed_nats_when_nats_disabled(
         fake_ensure_local_nats_runtime,
     )
     settings = Settings(
-        workspace=str(tmp_path),
+        workspace=tmp_path,
         nats=NATSConfig(enabled=False, required=False, url="nats://127.0.0.1:4222"),
     )
 
@@ -111,7 +111,7 @@ async def test_lifespan_enables_log_pipeline_jetstream_publish_by_default(
         fake_ensure_local_nats_runtime,
     )
     settings = Settings(
-        workspace=str(tmp_path),
+        workspace=tmp_path,
         nats=NATSConfig(enabled=True, required=True, url="nats://127.0.0.1:4222"),
     )
 
@@ -136,7 +136,7 @@ async def test_lifespan_continues_when_nats_optional_bootstrap_fails(
         fake_ensure_local_nats_runtime,
     )
     settings = Settings(
-        workspace=str(tmp_path),
+        workspace=tmp_path,
         nats=NATSConfig(enabled=True, required=False, url="nats://127.0.0.1:4222"),
     )
 
@@ -161,7 +161,7 @@ async def test_lifespan_fails_closed_when_required_nats_bootstrap_fails(
         fake_ensure_local_nats_runtime,
     )
     settings = Settings(
-        workspace=str(tmp_path),
+        workspace=tmp_path,
         nats=NATSConfig(enabled=True, required=True, url="nats://127.0.0.1:4222"),
     )
 
@@ -173,7 +173,7 @@ async def test_lifespan_fails_closed_when_required_nats_bootstrap_fails(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("credentials", [{"user": "configured-user"}, {"password": "configured-password"}])
 async def test_config_only_credentials_deny_plaintext_autostart(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, credentials: dict[str, str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, credentials: dict[str, Any]
 ) -> None:
     import socket
 
@@ -195,8 +195,39 @@ async def test_config_only_credentials_deny_plaintext_autostart(
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
-    settings = Settings(workspace=str(tmp_path), nats=NATSConfig(url=f"nats://127.0.0.1:{port}", **credentials))
+    settings = Settings(workspace=tmp_path, nats=NATSConfig(url=f"nats://127.0.0.1:{port}", **credentials))
     with pytest.raises(RuntimeError, match="credentialed endpoint cannot autostart"):
         async with lifespan(_make_app(settings)):
             pass
     assert not (tmp_path / "private-home").exists()
+
+
+@pytest.mark.asyncio
+async def test_new_lifespan_never_starts_or_replays_legacy_project_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_lifespan_dependencies(monkeypatch)
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        pytest.fail("new application touched a retired execution owner")
+
+    monkeypatch.setattr("polaris.kernelone.process.terminate_external_loop_pm_processes", forbidden)
+    monkeypatch.setattr("polaris.delivery.http.resident_autotick.maybe_start_resident_autotick", forbidden)
+    monkeypatch.setattr("polaris.bootstrap.factory_run_driver_runtime.FactoryRunDriverRuntimeV1", forbidden)
+    monkeypatch.setattr(
+        "polaris.bootstrap.project_completion_convergence_runtime.configure_project_completion_convergence_runtime",
+        forbidden,
+    )
+    monkeypatch.setattr("polaris.cells.factory.pipeline.public.start_factory_settlement_runtime", forbidden)
+    monkeypatch.setattr("polaris.cells.instances.public.service.maybe_start_instance_watchdog", lambda: None)
+    monkeypatch.setattr(
+        "polaris.bootstrap.managed_process_receipt_owner.configure_managed_process_receipt_owner", lambda: None
+    )
+    monkeypatch.setattr(
+        "polaris.bootstrap.project_verification_clients.configure_project_verification_clients", lambda: None
+    )
+    settings = Settings(workspace=tmp_path, nats=NATSConfig(enabled=False, required=False))
+    async with lifespan(_make_app(settings)):
+        assert not (tmp_path / ".polaris/runtime/factory").exists()
+    assert not (tmp_path / ".polaris/runtime/factory").exists()

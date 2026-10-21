@@ -94,13 +94,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         bootstrap_fact_stream_workspace,
         fact_stream_bootstrap_streams,
     )
-    from polaris.cells.factory.pipeline.public import (
-        start_factory_settlement_runtime,
-        stop_factory_settlement_runtime,
-    )
     from polaris.cells.instances.public.service import maybe_start_instance_watchdog
     from polaris.cells.resident.autonomy.public.service import reset_resident_services
-    from polaris.delivery.http.resident_autotick import maybe_start_resident_autotick
     from polaris.infrastructure.db.repositories.accel_session_receipt_store import (
         clear_context_retrieve_receipt_lookup,
         install_context_retrieve_receipt_lookup,
@@ -116,7 +111,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ensure_local_nats_runtime,
         shutdown_local_nats_runtime,
     )
-    from polaris.kernelone.process import terminate_external_loop_pm_processes
 
     async def cleanup_startup_resources() -> None:
         """Release idempotent process resources after a failed startup stage."""
@@ -214,20 +208,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.auth = Auth(token, allow_dev_fallback=_token_was_auto_generated)
 
     workspace = str(getattr(app.state.settings, "workspace", "") or "").strip()
-    if workspace:
-        phase_started_at = _startup_phase_started("terminate_external_loop_pm_processes")
-        stale_pids = terminate_external_loop_pm_processes(workspace)
-        _startup_phase_completed("terminate_external_loop_pm_processes", phase_started_at)
-        if stale_pids:
-            logger.info(
-                f"[startup] terminated stale PM loop processes for workspace={workspace}: {stale_pids}",
-            )
-
-    resident_autotick_task = None
     instance_watchdog_task = None
-    settlement_runtime_started = False
-    project_completion_runtime = None
-    factory_run_driver_runtime = None
     try:
         if workspace:
             phase_started_at = _startup_phase_started("bootstrap_fact_stream_workspace")
@@ -239,59 +220,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 )
             )
             _startup_phase_completed("bootstrap_fact_stream_workspace", phase_started_at)
-        # Opt-in unattended ignition for the Resident autonomy loop (default off).
-        resident_autotick_task = maybe_start_resident_autotick(workspace)
         instance_watchdog_task = maybe_start_instance_watchdog()
         if workspace:
-            from polaris.bootstrap.factory_run_driver_runtime import (
-                FactoryRunDriverRuntimeV1,
-                bind_factory_run_driver_runtime,
-                recover_committed_factory_run_ids,
-            )
-            from polaris.bootstrap.managed_process_receipt_owner import (
-                configure_managed_process_receipt_owner,
-            )
-            from polaris.bootstrap.project_completion_convergence_runtime import (
-                configure_project_completion_convergence_runtime,
-            )
-            from polaris.bootstrap.project_verification_clients import (
-                configure_project_verification_clients,
-            )
+            from polaris.bootstrap.managed_process_receipt_owner import configure_managed_process_receipt_owner
+            from polaris.bootstrap.project_verification_clients import configure_project_verification_clients
 
-            phase_started_at = _startup_phase_started("configure_project_runtime_services")
             configure_managed_process_receipt_owner()
             configure_project_verification_clients()
-            project_completion_runtime = configure_project_completion_convergence_runtime(workspace)
-            _startup_phase_completed("configure_project_runtime_services", phase_started_at)
-            phase_started_at = _startup_phase_started("project_completion_runtime.start")
-            await project_completion_runtime.start()
-            _startup_phase_completed("project_completion_runtime.start", phase_started_at)
-            phase_started_at = _startup_phase_started("factory_settlement_runtime.start")
-            await start_factory_settlement_runtime(
-                workspace,
-                enable_wake_bridge=nats_enabled,
-                wake_bridge_required=nats_enabled and nats_required,
-            )
-            _startup_phase_completed("factory_settlement_runtime.start", phase_started_at)
-            settlement_runtime_started = True
-            from polaris.delivery.http.routers.factory import (
-                _build_retry_start_request,
-                _execute_run_with_service,
-                _get_service,
-            )
-
-            factory_run_driver_runtime = FactoryRunDriverRuntimeV1(
-                workspace=workspace,
-                service=_get_service(workspace),
-                state=app_state,
-                execute=_execute_run_with_service,
-                build_recovery_payload=_build_retry_start_request,
-                recover_committed_run_ids=lambda: recover_committed_factory_run_ids(workspace),
-            )
-            bind_factory_run_driver_runtime(factory_run_driver_runtime)
-            phase_started_at = _startup_phase_started("factory_run_driver_runtime.start")
-            await factory_run_driver_runtime.start()
-            _startup_phase_completed("factory_run_driver_runtime.start", phase_started_at)
 
         yield
     finally:
@@ -302,30 +237,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await engineering_service.shutdown()
             except BaseException as error:  # noqa: BLE001 - re-raise the owner failure after all host cleanup.
                 engineering_shutdown_error = error
-        if factory_run_driver_runtime is not None:
-            from polaris.bootstrap.factory_run_driver_runtime import clear_factory_run_driver_runtime
-
-            try:
-                await factory_run_driver_runtime.stop()
-            except (OSError, RuntimeError, ValueError) as exc:
-                logger.error(
-                    "Factory run driver shutdown failed for workspace=%s: %s",
-                    workspace,
-                    exc,
-                    exc_info=True,
-                )
-            finally:
-                clear_factory_run_driver_runtime(factory_run_driver_runtime)
-        if project_completion_runtime is not None:
-            try:
-                await project_completion_runtime.stop()
-            except (OSError, RuntimeError, ValueError) as exc:
-                logger.error(
-                    "Project completion convergence shutdown failed for workspace=%s: %s",
-                    workspace,
-                    exc,
-                    exc_info=True,
-                )
         if instance_watchdog_task is not None:
             instance_watchdog_task.cancel()
             try:
@@ -334,24 +245,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 logger.debug("Instance watchdog cancelled during lifespan shutdown")
             except (OSError, RuntimeError, ValueError) as exc:
                 logger.error("Instance watchdog shutdown failed: %s", exc, exc_info=True)
-        if resident_autotick_task is not None:
-            resident_autotick_task.cancel()
-            try:
-                await resident_autotick_task
-            except asyncio.CancelledError:
-                logger.debug("Resident autotick cancelled during lifespan shutdown")
-            except (OSError, RuntimeError, ValueError) as exc:
-                logger.error("Resident autotick shutdown failed: %s", exc, exc_info=True)
-        if settlement_runtime_started:
-            try:
-                await stop_factory_settlement_runtime(workspace)
-            except (OSError, RuntimeError, ValueError) as exc:
-                logger.error(
-                    "Factory settlement runtime shutdown failed for workspace=%s: %s",
-                    workspace,
-                    exc,
-                    exc_info=True,
-                )
         await cleanup_startup_resources()
         try:
             reset_resident_services()

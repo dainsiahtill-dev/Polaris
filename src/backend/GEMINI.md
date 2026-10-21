@@ -20,6 +20,17 @@
 
 规则：先服从当前 graph，再按 `FINAL_SPEC.md` 判断迁移方向，最后应用 ACGA 2.0 增强规则。
 
+## 1.1 当前工程主线镜像
+
+1. 新工程运行的唯一 owner 是现有 `roles.runtime.public.engineering_service.EngineeringRunService`。HTTP、CLI、UI、取消、恢复与错误路径共用该服务，不新增 Cell、任务表、ledger 或第二 controller。
+2. 默认 `workflow=direct`，Director 读取目标、调用工具、根据真实结果继续工作；PM/Chief Engineer 按需只读咨询。显式 `workflow=collaborative` 才执行 PM、Chief Engineer、Director 协作；未调用角色显示 `not_called`。咨询一层返回，不递归派生总控；讨论不创建工程 run。
+3. PM/CE 使用可读文本提供规划、设计或审阅。新运行不要求 PM 合同、CE portfolio/blueprint、handoff/hash、OBL/covers 图、semantic patch、Task Market、JobToken/DEO/Run Ledger 旧链准入，也不受旧一 turn 一 batch 规则约束。普通编译/测试失败回到同一 Director，不自动 deterministic repair 或重启规划。
+4. 工具授权来自 host 持久化且不可由模型扩大的 `PermissionScope`、当前 profile、预算与 deadline；显式空权限保持为空。归一化后仍须检查真实路径/symlink/允许根，经 KFS 读写和 OS/process sandbox 执行命令；不支持 containment 时明确拒绝，禁止裸跑。PM/CE/QA 默认只读，同 workspace 仅一个源码写入者。
+5. 唯一工程事实记录是 `<workspace>/.polaris/runtime/engineering/sessions.sqlite3`，保存运行、事件、真实工具观察和验证；新运行不写旧 TaskBoard/TaskMarket/Run Ledger/role-session 镜像。保留 runtime.v2/Nats-JetStream、ContextOS 最终 provider request、UTF-8、实例 workspace 绑定与 storage 单根。
+6. 角色回复结束与 `completed` 不等于 `accepted`。实际检查必须绑定当前源码；用户已声明检查必须保留，未声明时由 Director 结合实际工程选择并实际执行验证。空检查、模型自报、快照条数或 QA 文本不得冒充通过；任务要求的独立 QA 必须审查同一当前候选，拒绝后继续同一任务。
+7. 恢复使用原身份、workspace、原始权限与 deadline，并重新校验当前 host policy；保留失败、interrupted/UNKNOWN 和未知效果，不自动重放可能已执行的命令或写入。旧 ID 不升级为新 run；历史按 `engine_version` 只读，旧在途运行留在原冻结 owner，不在新进程恢复旧写入口。
+8. 旧 Factory/RoleRuntimeService/execute_role_session/RoleExecutionKernel 写准入与自动 fallback 退役；历史解码器、只读查询与显式可选技术工具可保留，禁止据此声称历史源码已全部删除。旧规范仅解释旧记录，不能重新约束新运行。底层 hash 可用于证据/快照完整性，不能要求模型填写业务 hash。真实 HTTP 次数与费用仅用物理证据，未知保持 UNKNOWN。
+
 ## 2. 最小必要规则
 
 ### 2.1 Graph / Cell / KernelOne
@@ -70,6 +81,8 @@
 结构性问题遵循 `AGENTS.md §8.6`：Verification Card + 必要 ADR。
 
 ### 4.1 两阶段执行模型
+
+本节约束主 Agent 修改 Polaris 平台时的工程设计流程；不是产品 engineering run 的 PM/CE 蓝图准入，不要求普通用户任务先生成文档或合同。
 
 1. 先做 `Blueprint & Architecture`
    - 方案先落到 `docs/blueprints/*.md`
@@ -228,50 +241,8 @@
 
 ---
 
-## 9. 最新目标态治理裁决（2026-04-16，非当前事实）
+## 9. 历史治理镜像
 
-> 本节是 `AGENTS.md §17` 的镜像摘要，不是当前现实快照。
-
-### 9.1 权威来源
-
-1. `../../docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_BLUEPRINT_20260416.md`
-2. `docs/governance/templates/verification-cards/vc-20260416-transaction-kernel-contextos-tool-refactor.yaml`
-3. `docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md`
-4. `docs/blueprints/AGENT_INSTRUCTION_ALIGNMENT_BLUEPRINT_20260416.md`
-5. `docs/blueprints/AGENT_INSTRUCTION_COMPACTION_BLUEPRINT_20260416.md`
-6. `docs/blueprints/AGENT_ENGINEERING_DISCIPLINE_ALIGNMENT_BLUEPRINT_20260416.md`
-
-### 9.2 TransactionKernel 裁决
-
-1. `TransactionKernel` 是唯一 turn 事务执行内核和唯一 commit point
-2. 旧 `TurnEngine` 只保留 facade / shim
-3. 一个 turn 内必须满足：
-   - `len(TurnDecisions) == 1`
-   - `len(ToolBatches) <= 1`
-   - `hidden_continuation == 0`
-4. 协议违规统一 `panic + handoff_workflow`
-
-### 9.3 ContextOS / Plane Isolation 裁决
-
-1. ContextOS 固定拆成 `TruthLog`、`WorkingState`、`ReceiptStore`、`ProjectionEngine`
-2. `TruthLog` append-only
-3. `PromptProjection` 只读生成
-4. control-plane 字段不得进入 data plane
-5. raw tool output / system warning / thinking residue 不得直接回灌 prompt
-
-### 9.4 Handoff Contract 裁决
-
-1. `ContextHandoffPack` 是 canonical handoff contract
-2. 公开真相位于：
-   - `polaris.domain.cognitive_runtime.models.ContextHandoffPack`
-   - `polaris.cells.factory.cognitive_runtime.public.contracts`
-3. `roles.kernel`、`TransactionKernel`、`ExplorationWorkflowRuntime` 禁止再造第二套 `HandoffPack` schema
-
-### 9.5 镜像规则
-
-1. 本文件不是独立权威
-2. 若 `AGENTS.md §15 / §16 / §17` 更新，必须同步更新本文件
-
----
+`AGENTS.md §17` 的旧 TransactionKernel/ContextHandoffPack 契约仅用于历史读取与冻结旧 owner。新工程不采用一 turn 一 ToolBatch、旧 commit/handoff 或业务合同准入；本文件不得复活旧引擎写入口。当前主线与实际权限/验证规则见 §1.1。
 
 See docs/blueprints/COGNITIVE_LIFEFORM_ARCHITECTURE_ALIGNMENT_MEMO_20260417.md

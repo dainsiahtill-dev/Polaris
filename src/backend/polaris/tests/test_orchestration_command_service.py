@@ -280,41 +280,13 @@ async def test_execute_pm_run_propagates_metadata_to_role_entry_and_request(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    stub = _SubmitCaptureService()
-
-    async def _get_service() -> _SubmitCaptureService:
-        return stub
-
-    monkeypatch.setattr(
-        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service.get_orchestration_service",
-        _get_service,
-    )
-    monkeypatch.setattr(
-        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service.register_all_adapters",
-        lambda _: None,
-    )
-
+    """Retired orchestration rejects all prior metadata, budgets and handoff variations."""
     service = OrchestrationCommandService(settings={})
-    result = await service.execute_pm_run(
-        workspace=str(tmp_path),
-        run_type="pm",
-        options={
-            "directive": "生成受控投影计划",
-            "metadata": {
-                "execution_backend": "projection_generate",
-                "projection": {
-                    "scenario_id": "scenario_alpha",
-                    "project_slug": "projection_lab",
-                },
-            },
-        },
-    )
-
-    assert result.status == "pending", result.message
-    assert stub.request is not None
-    assert stub.request.role_entries[0].metadata["execution_backend"] == "projection_generate"
-    assert stub.request.metadata["execution_backend"] == "projection_generate"
-    assert stub.request.metadata["projection"]["scenario_id"] == "scenario_alpha"
+    result = await service.execute_pm_run(workspace=str(tmp_path))
+    assert result.status == "failed"
+    assert result.reason_code == "legacy_engine_retired"
+    assert result.run_id == ""
+    assert service.list_active_runs() == []
 
 
 @pytest.mark.parametrize(
@@ -336,33 +308,13 @@ async def test_execute_pm_run_propagates_metadata_to_role_entry_and_request(
 async def test_pm_command_admits_timeout_before_workflow_submission(
     tmp_path, monkeypatch, options, want_stage, want_call, want_output
 ):
-    from polaris.cells.orchestration.pm_dispatch.internal import orchestration_command_service as module
-
-    if options.get("metadata", {}).get("pm_planning_deadline_epoch_seconds") == 11505.0:
-        from datetime import datetime, timezone
-        from types import SimpleNamespace
-
-        monkeypatch.setattr(
-            module, "datetime", SimpleNamespace(now=lambda _: datetime.fromtimestamp(10000, timezone.utc))
-        )
-    stub = _SubmitCaptureService()
-
-    async def get_service():
-        return stub
-
-    monkeypatch.setattr(module, "get_orchestration_service", get_service)
-    monkeypatch.setattr(module, "register_all_adapters", lambda _: None)
-    result = await OrchestrationCommandService(settings={}).execute_pm_run(str(tmp_path), "pm", options)
-    if want_stage is None:
-        assert result.status == "failed" and stub.request is None
-        assert "pm_planning" in result.message and "budget" in result.message
-    else:
-        assert result.status == "pending", result.message
-        request = stub.request
-        assert request.metadata["timeout_seconds"] == want_stage
-        assert request.role_entries[0].metadata["timeout_seconds"] == want_stage
-        assert request.role_entries[0].metadata["llm_call_timeout_seconds"] == want_call
-        assert request.role_entries[0].metadata["llm_max_tokens"] == want_output
+    """Retired orchestration rejects all prior metadata, budgets and handoff variations."""
+    service = OrchestrationCommandService(settings={})
+    result = await service.execute_pm_run(workspace=str(tmp_path), options=options)
+    assert result.status == "failed"
+    assert result.reason_code == "legacy_engine_retired"
+    assert result.run_id == ""
+    assert service.list_active_runs() == []
 
 
 def test_factory_stage_sequence_forces_unique_full_chain() -> None:
@@ -531,70 +483,24 @@ async def test_execute_director_run_propagates_metadata_to_role_entry_and_reques
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _allow_strict_handoff_for_orchestration_boundary(monkeypatch)
-    stub = _SubmitCaptureService()
-
-    async def _get_service() -> _SubmitCaptureService:
-        return stub
-
-    monkeypatch.setattr(
-        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service.get_orchestration_service",
-        _get_service,
-    )
-    monkeypatch.setattr(
-        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service.register_all_adapters",
-        lambda _: None,
-    )
-    blueprint_id = _generate_valid_ce_blueprint(
-        tmp_path,
-        task_id="task-1",
-        objective="Execute projection reproject task",
-        target_files=["src/projection.py"],
-    )
-
+    """Retired orchestration rejects all prior metadata, budgets and handoff variations."""
     service = OrchestrationCommandService(settings={})
-    result = await service.execute_director_run(
-        workspace=str(tmp_path),
-        tasks=["task-1"],
-        options={
-            "execution_mode": "parallel",
-            "metadata": {
-                "blueprint_id": blueprint_id,
-                "execution_backend": "projection_reproject",
-                "projection": {
-                    "scenario_id": "scenario_alpha",
-                    "experiment_id": "exp-001",
-                },
-            },
-        },
-    )
-
-    assert result.status == "pending", result.message
-    assert result.metadata is not None
-    assert result.metadata["tasks_queued"] == 1
-    assert result.metadata["requested_task_ids"] == ["task-1"]
-    assert stub.request is not None
-    assert stub.request.role_entries[0].metadata["execution_backend"] == "projection_reproject"
-    assert stub.request.role_entries[0].metadata["blueprint_id"] == blueprint_id
-    assert stub.request.role_entries[0].input == "Execute tasks: task-1"
-    assert stub.request.metadata["tasks"] == ["task-1"]
-    assert stub.request.metadata["execution_backend"] == "projection_reproject"
-    assert stub.request.metadata["projection"]["experiment_id"] == "exp-001"
+    result = await service.execute_director_run(workspace=str(tmp_path))
+    assert result.status == "failed"
+    assert result.reason_code == "legacy_engine_retired"
+    assert result.run_id == ""
+    assert service.list_active_runs() == []
 
 
 @pytest.mark.asyncio
 async def test_execute_director_run_requires_chief_engineer_handoff(tmp_path: Path) -> None:
+    """Retired orchestration rejects all prior metadata, budgets and handoff variations."""
     service = OrchestrationCommandService(settings={})
-
-    result = await service.execute_director_run(
-        workspace=str(tmp_path),
-        tasks=["task-1"],
-        options={"execution_mode": "parallel"},
-    )
-
+    result = await service.execute_director_run(workspace=str(tmp_path))
     assert result.status == "failed"
-    assert result.reason_code == "CHIEF_ENGINEER_HANDOFF_REQUIRED"
-    assert "valid Chief Engineer blueprint/handoff evidence" in result.message
+    assert result.reason_code == "legacy_engine_retired"
+    assert result.run_id == ""
+    assert service.list_active_runs() == []
 
 
 @pytest.mark.asyncio
@@ -602,92 +508,10 @@ async def test_execute_director_run_materializes_pm_task_payloads(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    stub = _SubmitCaptureService()
-
-    async def _get_service() -> _SubmitCaptureService:
-        return stub
-
-    monkeypatch.setattr(
-        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service.get_orchestration_service",
-        _get_service,
-    )
-    monkeypatch.setattr(
-        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service.register_all_adapters",
-        lambda _: None,
-    )
-    blueprint_id = _generate_valid_ce_blueprint(
-        tmp_path,
-        task_id="T01-001",
-        objective="Bootstrap TypeScript foundation",
-        target_files=["package.json", "src/index.ts"],
-    )
-    monkeypatch.setattr(
-        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service._select_pm_task_payloads",
-        lambda _workspace, _task_ids: [
-            {
-                "id": "T01-001",
-                "title": "Bootstrap project",
-                "goal": "Create the TypeScript foundation",
-                "target_files": ["package.json", "src/index.ts"],
-                "scope_paths": ["src/config"],
-                "metadata": {"blueprint_id": blueprint_id},
-            }
-        ],
-    )
-    task_completion_projection = {
-        "schema_version": "polaris.task_completion_projection.v1",
-        "task_id": "T01-001",
-        "project_contract_hash": "contract-hash",
-        "projection_hash": "projection-hash",
-        "owned_artifacts": [],
-        "owned_entrypoints": [],
-        "owned_verification": [],
-    }
-    job_token = {
-        "schema_version": 1,
-        "token_id": "job-task-t01-001",
-        "run_id": "run-test",
-        "factory_run_id": "run-test",
-        "project_id": "project-test",
-        "stage": "pending_exec",
-        "contract_hash": "a" * 64,
-        "blueprint_hash": "b" * 64,
-        "capability_audit": {"ok": True, "issues": []},
-    }
-    monkeypatch.setattr(
-        "polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service."
-        "validate_director_handoff_from_payload",
-        lambda _workspace, _payload, require_strict: {
-            "allowed": True,
-            "reason": "handoff_ready",
-            "decision_payload": {"allowed": True},
-            "task_completion_projection": task_completion_projection,
-            "job_token": job_token,
-            "capability_token": job_token,
-            "require_strict": require_strict,
-        },
-    )
-
+    """Retired orchestration rejects all prior metadata, budgets and handoff variations."""
     service = OrchestrationCommandService(settings={})
-    result = await service.execute_director_run(
-        workspace=str(tmp_path),
-        tasks=["T01-001"],
-        options={"execution_mode": "parallel"},
-    )
-
-    assert result.status == "pending", result.message
-    assert result.metadata is not None
-    assert result.metadata["tasks_queued"] == 1
-    assert stub.request is not None
-    role_entry = stub.request.role_entries[0]
-    assert "Bootstrap project" in role_entry.input
-    assert role_entry.metadata["task_id"] == "T01-001"
-    assert role_entry.metadata["pm_task_id"] == "T01-001"
-    assert role_entry.metadata["blueprint_id"] == blueprint_id
-    assert role_entry.metadata["target_files"] == ["package.json", "src/index.ts"]
-    assert role_entry.metadata["scope_paths"] == ["src/config"]
-    projected_completion = role_entry.metadata["task_completion_projection"]
-    assert projected_completion == task_completion_projection
-    assert role_entry.metadata["job_token"] == job_token
-    assert role_entry.metadata["capability_token"] == job_token
-    assert stub.request.metadata["pm_task_payloads"][0]["id"] == "T01-001"
+    result = await service.execute_pm_run(workspace=str(tmp_path))
+    assert result.status == "failed"
+    assert result.reason_code == "legacy_engine_retired"
+    assert result.run_id == ""
+    assert service.list_active_runs() == []

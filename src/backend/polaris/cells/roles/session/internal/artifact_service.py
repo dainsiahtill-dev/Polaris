@@ -52,16 +52,18 @@ class RoleSessionArtifactService:
         "log",  # Session logs
     }
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, *, read_only: bool = False) -> None:
+        self._read_only = read_only
         self.workspace = Path(workspace).resolve()
-        self._kernel_fs = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
+        self._kernel_fs = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter(), read_only_paths=read_only)
         self._base_rel_dir = resolve_preferred_logical_prefix(
             self._kernel_fs,
             runtime_prefix="runtime/role_sessions",
             workspace_fallback_prefix="workspace/runtime/role_sessions",
         )
         self.base_dir = self._kernel_fs.resolve_path(self._base_rel_dir)
-        self.base_dir.mkdir(parents=True, exist_ok=True)
+        if not read_only:
+            self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def _artifact_rel_path(self, session_id: str, artifact_id: str) -> str:
         return f"{self._base_rel_dir}/{session_id}/artifacts/{artifact_id}.json"
@@ -81,6 +83,8 @@ class RoleSessionArtifactService:
         metadata: dict[str, Any] | None = None,
     ) -> Artifact:
         """Write an artifact to a session."""
+        if self._read_only:
+            raise PermissionError("historical role session artifacts are read-only")
         if artifact_type not in self.ARTIFACT_TYPES:
             logger.warning("Unknown artifact type: %s", artifact_type)
 
@@ -177,6 +181,8 @@ class RoleSessionArtifactService:
 
     def delete_artifact(self, session_id: str, artifact_id: str) -> bool:
         """Delete an artifact."""
+        if self._read_only:
+            raise PermissionError("historical role session artifacts are read-only")
         artifact_rel_path = self._artifact_rel_path(session_id, artifact_id)
 
         if not self._kernel_fs.exists(artifact_rel_path):
@@ -193,6 +199,8 @@ class RoleSessionArtifactService:
         artifact_type: str | None = None,
     ) -> list[Path]:
         """Export artifacts to a workspace-relative directory."""
+        if self._read_only:
+            raise PermissionError("historical role session artifacts are read-only")
         artifacts = self.list_artifacts(session_id, artifact_type)
         target_rel = self._kernel_fs.to_workspace_relative_path(str(Path(target_dir).resolve()))
 

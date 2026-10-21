@@ -18,22 +18,17 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from polaris.cells.chief_engineer.blueprint.public import validate_director_handoff_from_payload
 from polaris.cells.orchestration.workflow_runtime.public.service import (
-    OrchestrationMode,
-    OrchestrationRunRequest,
-    RoleEntrySpec,
     get_orchestration_service,
 )
 
 # Import and register role adapters to ensure they're available for factory flows
 # (API routes already do this, but factory flow needs it too)
-from polaris.cells.roles.adapters.public.service import register_all_adapters
-from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM, DEFAULT_MAX_WORKERS
+from polaris.kernelone.constants import DEFAULT_MAX_WORKERS
 from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path
 
 logger = logging.getLogger(__name__)
@@ -537,166 +532,13 @@ class OrchestrationCommandService:
         run_type: str = "full",
         options: dict[str, Any] | None = None,
     ) -> CommandResult:
-        """Execute PM run - unified entry point for PM orchestration.
-
-        This is the ONLY entry point for PM execution. All PM runs must go
-        through this method to ensure consistent run ID generation,
-        logging, and error handling.
-
-        Args:
-            workspace: Workspace path
-            run_type: Type of run ("full", "architect", "pm")
-            options: Optional execution options dictionary
-
-        Returns:
-            CommandResult with run details and status
-
-        Example:
-            result = await service.execute_pm_run(
-                workspace=".",
-                run_type="architect",
-                options={"directive": "Implement login feature"}
-            )
-        """
-        run_id = self._generate_run_id("pm")
-        started_at = datetime.now(timezone.utc).isoformat()
-
-        opts = options or {}
-        pm_options = PMRunOptions(
-            run_type=run_type,
-            directive=opts.get("directive", ""),
-            run_director=opts.get("run_director", False),
-            director_iterations=opts.get("director_iterations", 2),
+        """Reject the retired pipeline before allocating a run or invoking roles."""
+        return CommandResult(
+            run_id="",
+            status="failed",
+            message="Legacy execution is retired; use roles.runtime.public.engineering_service.",
+            reason_code="legacy_engine_retired",
         )
-        metadata_overrides = _coerce_metadata_overrides(opts.get("metadata"))
-
-        try:
-            # Get unified orchestration service and ensure adapters are registered
-            service = await get_orchestration_service()
-            register_all_adapters(service)
-
-            # Determine role based on run_type
-            role_id = "architect" if run_type == "architect" else "pm"
-            if role_id == "pm":
-                from polaris.kernelone.llm.budget_policy import (
-                    BUDGET_CONTEXT_KEYS_CANONICAL,
-                    DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS,
-                    OUTPUT_BUDGET_CONTEXT_KEYS,
-                    PM_PLANNING_LOGICAL_REQUEST_COUNT,
-                    PM_PLANNING_SETTLEMENT_GRACE_SECONDS,
-                    TIMEOUT_CEILING_CONTEXT_KEYS,
-                    resolve_output_budget_tokens,
-                    resolve_pm_planning_time_budget,
-                )
-
-                planning_policy = dict(metadata_overrides)
-                for key in (
-                    *OUTPUT_BUDGET_CONTEXT_KEYS,
-                    *BUDGET_CONTEXT_KEYS_CANONICAL,
-                    *TIMEOUT_CEILING_CONTEXT_KEYS,
-                    "timeout",
-                    "timeout_seconds",
-                    "llm_call_timeout_seconds",
-                    "request_timeout_seconds",
-                ):
-                    if key in opts:
-                        planning_policy[key] = opts[key]
-                output_tokens = resolve_output_budget_tokens(DEFAULT_PLANNING_ROLE_OUTPUT_TOKENS, planning_policy)
-                stage_timeout, call_timeout = resolve_pm_planning_time_budget(output_tokens, planning_policy)
-                stage_deadline = planning_policy.get("pm_planning_deadline_epoch_seconds")
-                if stage_deadline is None:
-                    stage_deadline = datetime.now(timezone.utc).timestamp() + stage_timeout
-                else:
-                    import math
-
-                    try:
-                        deadline_epoch = float(stage_deadline)
-                    except (TypeError, ValueError):
-                        raise ValueError("pm_planning_budget_invalid_deadline") from None
-                    if isinstance(stage_deadline, bool) or not math.isfinite(deadline_epoch):
-                        raise ValueError("pm_planning_budget_invalid_deadline")
-                    remaining = deadline_epoch - datetime.now(timezone.utc).timestamp()
-                    # Round only sub-second entry construction; retain both call
-                    # floors and the admitted settlement allowance.
-                    minimum_stage = (
-                        PM_PLANNING_LOGICAL_REQUEST_COUNT * call_timeout + PM_PLANNING_SETTLEMENT_GRACE_SECONDS
-                    )
-                    if math.ceil(remaining) < minimum_stage:
-                        raise ValueError("pm_planning_budget_deadline_exhausted")
-                metadata_overrides = {
-                    **metadata_overrides,
-                    "llm_max_tokens": output_tokens,
-                    "llm_call_timeout_seconds": call_timeout,
-                    "timeout_seconds": stage_timeout,
-                    "pm_planning_deadline_epoch_seconds": stage_deadline,
-                }
-
-            # Build role entries
-            # NOTE: scope_paths must include workspace for adapter path resolution
-            # (PM adapter uses scope_paths[0] as workspace for resolve_runtime_path)
-            role_entries = [
-                RoleEntrySpec(
-                    role_id=role_id,
-                    input=pm_options.directive or f"Execute {run_type} phase",
-                    scope_paths=[workspace],
-                    metadata=metadata_overrides,
-                )
-            ]
-
-            # Build orchestration request
-            orch_request = OrchestrationRunRequest(
-                run_id=run_id,
-                workspace=Path(workspace),
-                mode=OrchestrationMode.WORKFLOW,
-                role_entries=role_entries,
-                metadata={
-                    "run_type": run_type,
-                    "run_director": pm_options.run_director,
-                    "director_iterations": pm_options.director_iterations,
-                    "command_source": "orchestration_command_service",
-                    **metadata_overrides,
-                },
-            )
-
-            # Validate request
-            errors = orch_request.validate()
-            if errors:
-                return CommandResult(
-                    run_id=run_id,
-                    status="failed",
-                    message=f"Validation failed: {errors}",
-                    reason_code="VALIDATION_FAILED",
-                    started_at=started_at,
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                )
-
-            # Submit run
-            snapshot = await service.submit_run(orch_request)
-
-            # Track active run
-            self._active_runs[run_id] = {
-                "workspace": workspace,
-                "role": role_id,
-                "started_at": started_at,
-            }
-
-            return CommandResult(
-                run_id=run_id,
-                status=snapshot.status.value,
-                message=f"PM {run_type} run started",
-                started_at=started_at,
-                artifacts=[],
-            )
-
-        except (RuntimeError, ValueError) as e:
-            return CommandResult(
-                run_id=run_id,
-                status="failed",
-                message=str(e),
-                reason_code="PM_RUN_FAILED",
-                started_at=started_at,
-                completed_at=datetime.now(timezone.utc).isoformat(),
-            )
 
     async def execute_director_run(
         self,
@@ -704,198 +546,13 @@ class OrchestrationCommandService:
         tasks: list[str] | None = None,
         options: dict[str, Any] | None = None,
     ) -> CommandResult:
-        """Execute Director run - unified entry point for Director orchestration.
-
-        This is the ONLY entry point for Director execution. All Director runs
-        must go through this method to ensure consistent execution semantics.
-
-        Args:
-            workspace: Workspace path
-            tasks: Optional list of specific task IDs to execute
-            options: Optional execution options dictionary
-
-        Returns:
-            CommandResult with run details and status
-
-        Example:
-            result = await service.execute_director_run(
-                workspace=".",
-                tasks=["task-1", "task-2"],
-                options={"max_workers": 3}
-            )
-        """
-        run_id = self._generate_run_id("director")
-        started_at = datetime.now(timezone.utc).isoformat()
-
-        opts = options or {}
-        task_ids = [str(item).strip() for item in list(tasks or []) if str(item).strip()]
-        director_options = DirectorRunOptions(
-            task_filter=opts.get("task_filter"),
-            max_workers=opts.get("max_workers", DEFAULT_DIRECTOR_MAX_PARALLELISM),
-            execution_mode=opts.get("execution_mode", "parallel"),
+        """Reject the retired pipeline before allocating a run or invoking roles."""
+        return CommandResult(
+            run_id="",
+            status="failed",
+            message="Legacy execution is retired; use roles.runtime.public.engineering_service.",
+            reason_code="legacy_engine_retired",
         )
-        metadata_overrides = _coerce_metadata_overrides(opts.get("metadata"))
-
-        try:
-            # Get unified orchestration service and ensure adapters are registered
-            service = await get_orchestration_service()
-            register_all_adapters(service)
-
-            selected_task_payloads = _select_pm_task_payloads(workspace, task_ids)
-            if selected_task_payloads:
-                invalid_handoff_reasons: list[str] = []
-                for task_payload in selected_task_payloads:
-                    handoff_payload = dict(task_payload)
-                    handoff_payload.update(metadata_overrides)
-                    allowed, reason, _decision_payload, task_completion_projection, job_token = (
-                        _validated_chief_engineer_handoff(workspace, handoff_payload)
-                    )
-                    if not allowed:
-                        task_label = _task_id_from_payload(task_payload) or "<unknown>"
-                        invalid_handoff_reasons.append(f"{task_label}: {reason}")
-                    elif task_completion_projection:
-                        task_payload["task_completion_projection"] = task_completion_projection
-                        task_payload["job_token"] = job_token
-                        task_payload["control_plane_job_token"] = job_token
-                        task_payload["capability_token"] = job_token
-                if invalid_handoff_reasons:
-                    return CommandResult(
-                        run_id=run_id,
-                        status="failed",
-                        message=(
-                            "Director run requires valid Chief Engineer blueprint/handoff evidence; "
-                            + "; ".join(invalid_handoff_reasons)
-                        ),
-                        reason_code="CHIEF_ENGINEER_HANDOFF_REQUIRED",
-                        started_at=started_at,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                    )
-                role_entries = []
-                for task_payload in selected_task_payloads:
-                    task_id = str(
-                        task_payload.get("id") or task_payload.get("task_id") or task_payload.get("pm_task_id") or ""
-                    ).strip()
-                    if not task_id:
-                        continue
-                    role_entries.append(
-                        RoleEntrySpec(
-                            role_id="director",
-                            input=_director_role_entry_input(task_id, task_payload),
-                            scope_paths=[workspace],
-                            metadata=_director_role_entry_metadata(
-                                task_id=task_id,
-                                task_payload=task_payload,
-                                metadata_overrides=metadata_overrides,
-                            ),
-                        )
-                    )
-            else:
-                allowed, reason, _decision_payload, task_completion_projection, job_token = (
-                    _validated_chief_engineer_handoff(
-                        workspace,
-                        metadata_overrides,
-                    )
-                )
-                if not allowed:
-                    return CommandResult(
-                        run_id=run_id,
-                        status="failed",
-                        message=f"Director run requires valid Chief Engineer blueprint/handoff evidence: {reason}",
-                        reason_code="CHIEF_ENGINEER_HANDOFF_REQUIRED",
-                        started_at=started_at,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                    )
-                if task_completion_projection:
-                    metadata_overrides = {
-                        **metadata_overrides,
-                        "task_completion_projection": task_completion_projection,
-                        "job_token": job_token,
-                        "control_plane_job_token": job_token,
-                        "capability_token": job_token,
-                    }
-                # Build role entries
-                input_text = director_options.task_filter or "Execute ready tasks"
-                if task_ids:
-                    input_text = f"Execute tasks: {', '.join(task_ids)}"
-
-                role_entries = [
-                    RoleEntrySpec(
-                        role_id="director",
-                        input=input_text,
-                        scope_paths=[workspace],
-                        metadata=_director_role_entry_metadata(
-                            task_id=task_ids[0] if len(task_ids) == 1 else "director",
-                            task_payload=None,
-                            metadata_overrides=metadata_overrides,
-                        )
-                        if task_ids
-                        else metadata_overrides,
-                    )
-                ]
-
-            # Build orchestration request
-            orch_request = OrchestrationRunRequest(
-                run_id=run_id,
-                workspace=Path(workspace),
-                mode=OrchestrationMode.WORKFLOW,
-                role_entries=role_entries,
-                metadata={
-                    "tasks": task_ids,
-                    "pm_task_payloads": selected_task_payloads,
-                    "max_workers": director_options.max_workers,
-                    "execution_mode": director_options.execution_mode,
-                    "command_source": "orchestration_command_service",
-                    **metadata_overrides,
-                },
-            )
-
-            # Validate request
-            errors = orch_request.validate()
-            if errors:
-                return CommandResult(
-                    run_id=run_id,
-                    status="failed",
-                    message=f"Validation failed: {errors}",
-                    reason_code="VALIDATION_FAILED",
-                    started_at=started_at,
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                )
-
-            # Submit run
-            snapshot = await service.submit_run(orch_request)
-            snapshot_task_ids = list(snapshot.tasks.keys())
-            queued_task_ids = snapshot_task_ids or task_ids
-
-            # Track active run
-            self._active_runs[run_id] = {
-                "workspace": workspace,
-                "role": "director",
-                "started_at": started_at,
-            }
-
-            return CommandResult(
-                run_id=run_id,
-                status=snapshot.status.value,
-                message=f"Director started in {director_options.execution_mode} mode",
-                started_at=started_at,
-                artifacts=[],
-                metadata={
-                    "tasks_queued": len(queued_task_ids),
-                    "task_ids": queued_task_ids,
-                    "snapshot_task_ids": snapshot_task_ids,
-                    "requested_task_ids": task_ids,
-                },
-            )
-
-        except (RuntimeError, ValueError) as e:
-            return CommandResult(
-                run_id=run_id,
-                status="failed",
-                message=str(e),
-                reason_code="DIRECTOR_RUN_FAILED",
-                started_at=started_at,
-                completed_at=datetime.now(timezone.utc).isoformat(),
-            )
 
     async def execute_qa_run(
         self,
@@ -903,75 +560,13 @@ class OrchestrationCommandService:
         target: str | None = None,
         options: dict[str, Any] | None = None,
     ) -> CommandResult:
-        """Execute QA run - unified entry point for QA orchestration."""
-        run_id = self._generate_run_id("qa")
-        started_at = datetime.now(timezone.utc).isoformat()
-
-        opts = options or {}
-        input_text = opts.get("input") or target or "Run quality gate checks on completed tasks"
-        metadata_overrides = _coerce_metadata_overrides(opts.get("metadata"))
-
-        try:
-            service = await get_orchestration_service()
-            register_all_adapters(service)
-
-            role_entries = [
-                RoleEntrySpec(
-                    role_id="qa",
-                    input=input_text,
-                    scope_paths=[workspace],
-                    metadata=metadata_overrides,
-                )
-            ]
-
-            orch_request = OrchestrationRunRequest(
-                run_id=run_id,
-                workspace=Path(workspace),
-                mode=OrchestrationMode.WORKFLOW,
-                role_entries=role_entries,
-                metadata={
-                    "command_source": "orchestration_command_service",
-                    "qa_target": target or "",
-                    **metadata_overrides,
-                },
-            )
-
-            errors = orch_request.validate()
-            if errors:
-                return CommandResult(
-                    run_id=run_id,
-                    status="failed",
-                    message=f"Validation failed: {errors}",
-                    reason_code="VALIDATION_FAILED",
-                    started_at=started_at,
-                    completed_at=datetime.now(timezone.utc).isoformat(),
-                )
-
-            snapshot = await service.submit_run(orch_request)
-
-            self._active_runs[run_id] = {
-                "workspace": workspace,
-                "role": "qa",
-                "started_at": started_at,
-            }
-
-            return CommandResult(
-                run_id=run_id,
-                status=snapshot.status.value,
-                message="QA run started",
-                started_at=started_at,
-                artifacts=[],
-            )
-
-        except (RuntimeError, ValueError) as e:
-            return CommandResult(
-                run_id=run_id,
-                status="failed",
-                message=str(e),
-                reason_code="QA_RUN_FAILED",
-                started_at=started_at,
-                completed_at=datetime.now(timezone.utc).isoformat(),
-            )
+        """Reject the retired pipeline before allocating a run or invoking roles."""
+        return CommandResult(
+            run_id="",
+            status="failed",
+            message="Legacy execution is retired; use roles.runtime.public.engineering_service.",
+            reason_code="legacy_engine_retired",
+        )
 
     async def execute_factory_run(
         self,
@@ -979,74 +574,13 @@ class OrchestrationCommandService:
         config: dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
     ) -> CommandResult:
-        """Execute Factory run - unified entry point for Factory orchestration.
-
-        This is the entry point for Factory execution. It delegates to
-        FactoryRunService for actual execution.
-
-        Args:
-            workspace: Workspace path
-            config: Optional Factory configuration
-            options: Optional execution options dictionary
-
-        Returns:
-            CommandResult with run details and status
-
-        Example:
-            result = await service.execute_factory_run(
-                workspace=".",
-                config={"stages": ["docs", "pm", "chief_engineer", "director"]}
-            )
-        """
-        run_id = self._generate_run_id("factory")
-        started_at = datetime.now(timezone.utc).isoformat()
-
-        opts = options or {}
-        factory_options = FactoryRunOptions(
-            config=config or {},
-            auto_start=opts.get("auto_start", True),
+        """Reject the retired pipeline before allocating a run or invoking roles."""
+        return CommandResult(
+            run_id="",
+            status="failed",
+            message="Legacy execution is retired; use roles.runtime.public.engineering_service.",
+            reason_code="legacy_engine_retired",
         )
-
-        # Use FactoryRunService for actual execution
-        try:
-            from polaris.cells.factory.pipeline.public.service import FactoryConfig, FactoryRunService
-
-            factory_service = FactoryRunService(workspace=Path(workspace))
-
-            requested_stages = opts.get(
-                "stages",
-                ["docs_generation", *_CANONICAL_FACTORY_TASK_CHAIN],
-            )
-            stages = _canonical_factory_stage_sequence(requested_stages)
-            factory_config = FactoryConfig(
-                name=f"orch_factory_{run_id}",
-                description="Factory run from orchestration command",
-                stages=stages,
-                auto_dispatch=factory_options.auto_start,
-            )
-
-            run = await factory_service.create_run(factory_config)
-
-            if factory_options.auto_start:
-                await factory_service.start_run(run.id)
-
-            return CommandResult(
-                run_id=run.id,
-                status=run.status,
-                message=f"Factory run created: {run.status}",
-                started_at=run.started_at or started_at,
-                artifacts=[],
-            )
-        except (RuntimeError, ValueError) as e:
-            logger.error(f"Factory run creation failed: {e}")
-            return CommandResult(
-                run_id=run_id,
-                status="failed",
-                message=f"Factory run failed: {e}",
-                reason_code="FACTORY_RUN_CREATION_FAILED",
-                started_at=started_at,
-                artifacts=[],
-            )
 
     def _generate_run_id(self, prefix: str = "run") -> str:
         """Generate unique run ID.

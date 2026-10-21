@@ -6,11 +6,8 @@ import type { EngineeringRunBinding } from '@/hooks/useEngineeringRun';
  * 展示 PM 任务管理界面
  */
 
-import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
-import { PMWorkspace } from '@/app/components/pm';
-import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
-import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
-import { Toaster } from '@/app/components/ui/sonner';
+import type { PMWorkspace } from '@/app/components/pm';
+import type { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 
@@ -22,11 +19,11 @@ export interface PMPageProps {
   /** 工作区路径 */
   workspace: string;
   /** PM 任务列表 */
-  tasks: PmTask[];
+  tasks?: PmTask[];
   /** PM 状态 */
-  pmState: Record<string, unknown> | null;
+  pmState?: Record<string, unknown> | null;
   /** PM 是否运行中 */
-  pmRunning: boolean;
+  pmRunning?: boolean;
   /** Director 是否运行中 */
   directorRunning?: boolean;
   /** PM 终端状态 */
@@ -36,27 +33,27 @@ export interface PMPageProps {
   /** PM 运行时问题 */
   runtimeIssue?: Parameters<typeof PMWorkspace>[0]['runtimeIssue'];
   /** 是否正在启动 */
-  isStarting: boolean;
+  isStarting?: boolean;
   /** 是否正在停止 */
   isStopping?: boolean;
   /** PM 切换回调 */
-  onTogglePm: () => void | boolean | Promise<void | boolean>;
+  onTogglePm?: () => void | boolean | Promise<void | boolean>;
   /** 单次运行回调 */
-  onRunPmOnce: () => void | boolean | Promise<void | boolean>;
+  onRunPmOnce?: () => void | boolean | Promise<void | boolean>;
   /** 返回主界面回调 */
   onBackToMain: () => void;
   /** 打开系统配置 */
   onOpenSettings?: () => void;
   /** WebSocket 连接状态 */
-  websocketLive: boolean;
+  websocketLive?: boolean;
   /** WebSocket 重连状态 */
-  websocketReconnecting: boolean;
+  websocketReconnecting?: boolean;
   /** WebSocket 重连次数 */
-  websocketAttemptCount: number;
+  websocketAttemptCount?: number;
   /** 内部测试模式下才允许展示 Factory Bench 状态。 */
   internalBenchEnabled?: boolean;
   /** LLM 运行时状态 */
-  llmRuntimeState: {
+  llmRuntimeState?: {
     state: 'READY' | 'BLOCKED' | 'DEGRADED' | 'UNKNOWN';
     blockedRoles: string[];
     requiredRoles: string[];
@@ -79,97 +76,10 @@ export interface PMPageProps {
   /** 任务追踪事件 */
   taskTraceMap?: Parameters<typeof PMWorkspace>[0]['taskTraceMap'];
   /** 错误通知回调 */
-  notifyError: (message: string) => void;
+  notifyError?: (message: string) => void;
 }
 
-/**
- * PM 工作区页面
- */
-function LegacyPMPage({
-  workspace,
-  tasks,
-  pmState,
-  pmRunning,
-  directorRunning = false,
-  pmTerminalStatus = null,
-  pmStartBlockedReason = '',
-  runtimeIssue = null,
-  isStarting,
-  isStopping = false,
-  onTogglePm,
-  onRunPmOnce,
-  onBackToMain,
-  onOpenSettings,
-  websocketLive,
-  websocketReconnecting,
-  websocketAttemptCount,
-  internalBenchEnabled = false,
-  llmRuntimeState,
-  currentPhase,
-  qualityGate,
-  executionLogs,
-  llmStreamEvents,
-  processStreamEvents,
-  fileEditEvents,
-  controlPlaneProjection,
-  taskTraceMap,
-  notifyError,
-}: PMPageProps) {
-  return (
-    <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
-      <BenchStatusStrip
-        enabled={internalBenchEnabled}
-        websocketLive={websocketLive}
-        websocketReconnecting={websocketReconnecting}
-        websocketAttemptCount={websocketAttemptCount}
-      />
-      <PMWorkspace
-        tasks={tasks}
-        pmState={pmState}
-        pmRunning={pmRunning}
-        pmTerminalStatus={pmTerminalStatus}
-        pmStartBlockedReason={pmStartBlockedReason}
-        runtimeIssue={runtimeIssue}
-        isStarting={isStarting}
-        isStopping={isStopping}
-        onBackToMain={onBackToMain}
-        onTogglePm={onTogglePm}
-        onRunPmOnce={onRunPmOnce}
-        onOpenSettings={onOpenSettings}
-        workspace={workspace}
-        executionLogs={executionLogs}
-        llmStreamEvents={llmStreamEvents}
-        processStreamEvents={processStreamEvents}
-        currentPhase={currentPhase}
-        qualityGate={qualityGate as Parameters<typeof PMWorkspace>[0]['qualityGate']}
-        taskTraceMap={taskTraceMap}
-        llmRuntimeState={llmRuntimeState}
-      />
-      <LlmRuntimeOverlay
-        activeView="pm"
-        websocketLive={websocketLive}
-        websocketReconnecting={websocketReconnecting}
-        websocketAttemptCount={websocketAttemptCount}
-        pmRunning={pmRunning}
-        directorRunning={directorRunning}
-        llmState={llmRuntimeState.state}
-        llmBlockedRoles={llmRuntimeState.blockedRoles}
-        llmRequiredRoles={llmRuntimeState.requiredRoles}
-        llmLastUpdated={llmRuntimeState.lastUpdated}
-        currentPhase={currentPhase ?? ''}
-        qualityGate={qualityGate as Parameters<typeof LlmRuntimeOverlay>[0]['qualityGate']}
-        executionLogs={executionLogs ?? []}
-        llmStreamEvents={llmStreamEvents ?? []}
-        processStreamEvents={processStreamEvents ?? []}
-        fileEditEvents={fileEditEvents}
-        controlPlaneProjection={controlPlaneProjection}
-      />
-      <Toaster position="bottom-right" />
-    </ErrorBoundaryClass>
-  );
-}
-
-
+/** All writable role actions use the shared engineering owner. */
 export function PMPage(props: PMPageProps) {
-  return <EngineeringModeBoundary enabled={props.engineeringEnabled} binding={props.engineering} onModeChange={props.onEngineeringModeChange} workspace={props.workspace} role="pm" onBackToMain={props.onBackToMain} onOpenContext={props.onOpenEngineeringContext}><LegacyPMPage {...props} /></EngineeringModeBoundary>;
+  return <EngineeringModeBoundary binding={props.engineering} workspace={props.workspace} role="pm" onBackToMain={props.onBackToMain} onOpenContext={props.onOpenEngineeringContext} />;
 }

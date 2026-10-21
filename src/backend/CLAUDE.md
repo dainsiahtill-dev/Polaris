@@ -29,26 +29,18 @@
 
 规则：先服从当前 graph，再按 `FINAL_SPEC.md` 判断迁移方向，最后应用 ACGA 2.0 增强规则。
 
-### 1.1 无人值守完成闭环镜像
+### 1.1 当前工程主线镜像
 
-- Exact identity 固定为 `(workspace, project_id, run_id, completion_contract_hash)`；禁止 latest-run、跨 workspace fallback 或 caller 自报身份。
-- Chief Engineer 拥有 whole-project typed completion contract；Director 只做 hash-bound 无损传递。合同必须覆盖 owner task、artifact、canonical verifier argv/cwd/modality、entrypoint或显式 N/A。
-- VerificationGuard 负责物理验证和 obligation-bound typed receipts，但不拥有最终成功；caller evidence、TaskBoundary、stage gate、generic audit receipt、日志摘要与磁盘猜测都不是权威。
-- workflow runtime 只拥有 durable convergence cursor，并使用跨进程 CAS、reserve-before-effect、deterministic action id 与 crash replay；不得在 Factory/adapter/bench 中复制重试状态机。
-- 角色失败必须阶段局部恢复，禁止默认重跑整条 `PM -> Chief Engineer -> Director`：CE 输出/schema 失败只重试 `chief_engineer_review`；Director/QA 普通失败必须由 durable completion cursor 生成 action/claim，携带完整 owner diagnostic，并通过 TaskRuntime 重开 exact owner row 后只执行 `edit/repair -> affected verifier`。TaskMarket 迁移未完成时不得作为同任务完成动作的第二事实源；仅 pending 无真实 stage driver 不算进展。PM 仅在合同无效或显式 supersede 时重跑。
-- `mutation_bypass_blocked` 是 owner Director 的普通局部恢复态：只有 `Director + materialize_changes` 可保留同一 session、已提交合同、最终请求上下文、读取结果和失败 receipt，下一 turn 直接 edit/write 后只重跑受影响 verifier；禁止创建新 Director 规划会话或重启 PM/CE。该恢复必须有独立于自适应 extra-turn 的硬预算（当前最多 2 次 bypass）；耗尽后输出 `director_quality_repair_stalled`、`model_ceiling`、`retry_scope=same_director_task_only` 并停止 Provider 调用。`inline_patch_escape_blocked` 等权限/策略边界仍 fail-closed。
-- Verifier 失败归因必须先从生成/编译产物反投影到 authored source，再执行 task write-scope：例如 Node traceback 的 `tsconfig.compilerOptions.outDir/*.js` 只有在显式 `rootDir/outDir` 可唯一解析且源文件真实存在时，才能归因到对应 `.ts/.tsx/.mts/.cts`；不得授权 Director 编辑 `dist/` 等生成物，配置缺失/歧义时保持 fail-closed。语言分类必须有真实命令/异常锚点，禁止因临时路径包含 `pytest` 等子串把 Node/Go/Rust 失败误投影为 Python。归因成功后只回到 exact owner Director task，保留合同/上下文/失败 receipt，并只重跑 exact failed verifier。
-- ContextOS control-plane 隔离审计必须区分弱自然语言名词与强 authority 标识：QA workspace-quality data-plane 中的通用 `workspace` 路径字段和 verifier `metrics` 文案允许出现在 prompt content，但作为 message metadata / structured projection key 仍必须拒绝；`workspace_root`、`factory_run_id`、`job_token`、capability token 等强标识无论位于何种非当前用户指令内容都必须 fail-closed。禁止 blanket 跳过 `[UNTRUSTED_USER_MESSAGE]`；taxonomy 变更必须以原始 final provider request 快照重放并证明合法 QA 上下文 PASS、真实 authority 泄漏仍 FAIL。
-- Provider structured-output 若把 schema 声明的 object/array 额外 JSON 字符串化，或把 root siblings 串进首个 object field，必须先在 `roles.kernel` 传输层做 caller-schema-proven 有界归一化，禁止直接重跑整角色。只允许 JSON container 解码与单层已知无效 escape 修正；结果必须仅含声明字段、保持现有 sibling 不变并通过完整 JSON Schema，否则 fail-closed。归一化必须投影 `schema_normalization_applied` / `schema_normalization_policy`，不得承担语义修复。
-- Director 局部 repair 的“进展”必须同时满足：authoritative write receipt 对应负责路径的真实 fingerprint 变化、required verifier 复跑、诊断或 missing target 净减少且不引入新诊断。纯读取、同内容写入、只改变诊断签名、等量换错或错误增多一律记为 stagnation；连续 2 次 stagnation 必须停止 Provider 调用，输出 `director_quality_repair_stalled` + `model_ceiling`，并保持 `retry_scope=same_director_task_only`、禁止回退 PM/CE。
-- Director 局部 repair 的当前 verifier residual 是唯一可执行诊断；已解决或被候选事务回滚的 compiler diagnostic 只能按 `relative_path + enclosing_function + normalized_message` 投影为 compact negative constraint，禁止回灌原始 compiler transcript 或旧 source window。嵌套 unittest/pytest 文本中的 literal `\n` 必须先在只读诊断解析层归一化；primary anchor 必须按每个 path:line token 的紧邻 `error:` 后缀判定，真实 error 必须先于 include/note context。行为型 regression guard 可保留有界 verifier source context，但不得把当前 compiler atom 重新注入历史区。
-- TaskRuntime 执行历史与 TaskBoundary 交付权威是独立轴。Factory 权威投影只能从已提交 PM stage event 的 immutable artifact binding 重验并取得 PM 合同任务，禁止从可变 `tasks/plan.json`/mirror 重建完成义务；PM contract IDs、TaskRuntime IDs、TaskBoundary IDs 归一化后集合必须完全一致。缺失合同任务、`N`/`TASK-N` 合同 alias collision、重复 runtime identity 必须 fail-closed，settlement/verifier 辅助行与 boundary 不得新增或污染交付义务。TaskRuntime 已终态 `failed/cancelled` 时，只有 canonical `completed_verified` TaskBoundary 同时具备 ledger append/content 坐标、evidence refs、零 missing/failed obligation，才可保留失败历史并授权进入 QA；`pending/in_progress/blocked` 或仅磁盘扫描永远不得放行。
-- Factory stage 失败不得仅凭“可能修复”占住 workspace lease。只有 durable cursor owner receipt + TaskRuntime action/claim/full diagnostic + exact row reopen 三者一致，且 backend lifespan-owned Factory run driver 会真实消费，才允许 Director/QA defer drain；HTTP Router 只能向该 driver 提交，不得自行持有不可恢复的执行 task。启动恢复必须合并 `RUNNING/RECOVERING` runs 与 pending exact-row local-rework actions；单独 TaskMarket receipt、纯 metadata、伪 action ref、错 run/contract/task 均拒绝。
-- DEO member 已 claim 为 `EFFECT_STARTED` 后，任何物理执行前的 policy/target drift 拒绝必须先消费 one-use fence，再以 recovery + `DEAD_LETTER` 收敛；不得把 claimed denial 留成永久非终态。fence 或终态写入有歧义时保留 reconciliation blocker，禁止 abort 相关 contingency 或伪造成功。
-- 运行时观察链不得复制 Durable TaskRuntime/Provider/Tool 全量证据。事实流与持久化快照保留完整 payload；runtime.v2/NATS/状态投影只能发送有界语义摘要、不可变 fact 坐标与可解析 evidence ref，默认单事件预算 64 KiB。高频事件只能按明确 canonical kind 触发 status refresh，并采用单任务 latest-wins 合并；禁止用模糊字符串匹配、每事件/每连接同步全量重建或对子树反复 JSON 序列化，避免 observer 反向拖死执行面。
-- runtime.projection 独占 `completed_verified` 签发。`model_ceiling` 必须由 owner-query facts 封存，禁止由自报 attempt/budget/JSON 触发。
-- Bench 仅用于门禁全绿后的稀缺验证；失败必须先落唯一 residual/module attribution。外部 Supervisor 只做项目调度，不进入平台事实源或成功条件。
-- `/tmp` 只用于可丢弃 scratch/worktree；bench 审计、最终请求快照、缺陷 manifest 与 handoff 必须持久化到 `~/.polaris/bench_runs`、`~/.polaris/audit_archives` 或仓内治理资产。
+1. 新工程运行的唯一 owner 是现有 `roles.runtime.public.engineering_service.EngineeringRunService`。HTTP、CLI、UI、取消、恢复与错误路径共用该服务，不新增 Cell、任务表、ledger 或第二 controller。
+2. 默认 `workflow=direct`，Director 读取目标、调用工具、根据真实结果继续工作；PM/Chief Engineer 按需只读咨询。显式 `workflow=collaborative` 才执行 PM、Chief Engineer、Director 协作；未调用角色显示 `not_called`。咨询一层返回，不递归派生总控；讨论不创建工程 run。
+3. PM/CE 使用可读文本提供规划、设计或审阅。新运行不要求 PM 合同、CE portfolio/blueprint、handoff/hash、OBL/covers 图、semantic patch、Task Market、JobToken/DEO/Run Ledger 旧链准入，也不受旧一 turn 一 batch 规则约束。普通编译/测试失败回到同一 Director，不自动 deterministic repair 或重启规划。
+4. 工具授权来自 host 持久化且不可由模型扩大的 `PermissionScope`、当前 profile、预算与 deadline；显式空权限保持为空。归一化后仍须检查真实路径/symlink/允许根，经 KFS 读写和 OS/process sandbox 执行命令；不支持 containment 时明确拒绝，禁止裸跑。PM/CE/QA 默认只读，同 workspace 仅一个源码写入者。
+5. 唯一工程事实记录是 `<workspace>/.polaris/runtime/engineering/sessions.sqlite3`，保存运行、事件、真实工具观察和验证；新运行不写旧 TaskBoard/TaskMarket/Run Ledger/role-session 镜像。保留 runtime.v2/Nats-JetStream、ContextOS 最终 provider request、UTF-8、实例 workspace 绑定与 storage 单根。
+6. 角色回复结束与 `completed` 不等于 `accepted`。实际检查必须绑定当前源码；用户已声明检查必须保留，未声明时由 Director 结合实际工程选择并实际执行验证。空检查、模型自报、快照条数或 QA 文本不得冒充通过；任务要求的独立 QA 必须审查同一当前候选，拒绝后继续同一任务。
+7. 恢复使用原身份、workspace、原始权限与 deadline，并重新校验当前 host policy；保留失败、interrupted/UNKNOWN 和未知效果，不自动重放可能已执行的命令或写入。旧 ID 不升级为新 run；历史按 `engine_version` 只读，旧在途运行留在原冻结 owner，不在新进程恢复旧写入口。
+8. 旧 Factory/RoleRuntimeService/execute_role_session/RoleExecutionKernel 写准入与自动 fallback 退役；历史解码器、只读查询与显式可选技术工具可保留，禁止据此声称历史源码已全部删除。旧规范仅解释旧记录，不能重新约束新运行。底层 hash 可用于证据/快照完整性，不能要求模型填写业务 hash。真实 HTTP 次数与费用仅用物理证据，未知保持 UNKNOWN。
+
+运行时推送保留有界摘要和可读证据引用，不能复制全量 provider/tool 历史拖慢执行；最终请求与完整工具观察保存在其真实 owner。审计/最终快照持久化到 `~/.polaris/` 或目标 canonical runtime。
 
 ## 2. 多实例与 Bench 边界速记
 
@@ -58,7 +50,7 @@
 - Instance Registry 只是发现/运维视图，不是 PM、Chief Engineer、Director、QA、ContextOS、ReceiptStore 或 Run Ledger 的事实源。
 - `factory_bench` / L1-L12 只属于内部测试态；可以注册 `kind=bench_project` 供总控观测。共享后端注册只能视为可观测测试实例，不能冒充独立生产实例，也不得把 Bench 语义写成生产项目模型。
 - `metadata.backend_binding=shared_backend_workspace_switch` 的 `bench_project` 执行 restart/独立启动时必须分配新 backend/frontend 端口，禁止复用共享 backend 端口。
-- 多 Agent 并行跑 `factory_bench` 时 runner 必须显式使用 `--launcher-instance-mode isolated --bench-session-reporting off`，确保每个项目的 Factory run 打到独立 backend；Launcher 可见性来自 Instance Registry 和项目实例自己的 runtime.v2。共享主后端 `/v2/factory/bench/sessions` 只是内部兼容观测桥，只有串行调试时才允许 `--launcher-instance-mode observed --bench-session-reporting shared`。
+- 仅在显式冻结旧引擎内部测试中，多 Agent 并行跑 `factory_bench` 时 runner 必须显式使用 `--launcher-instance-mode isolated --bench-session-reporting off`，确保每个项目的 Factory run 打到独立 backend；Launcher 可见性来自 Instance Registry 和项目实例自己的 runtime.v2。共享主后端 `/v2/factory/bench/sessions` 只是内部兼容观测桥，只有串行调试时才允许 `--launcher-instance-mode observed --bench-session-reporting shared`。
 - Launcher 实时状态只走 runtime.v2 WebSocket `status.instances`，禁止新增 HTTP polling 或文件轮询。
 
 ## 3. 最小必要规则
@@ -75,7 +67,7 @@
 2. 文件、数据库、网络、子进程、LLM、Descriptor、Embedding、Index 都是 effect，必须可审计
 3. 所有文本读写必须显式 UTF-8
 4. 任一 Bench/角色/工具/QA/runtime/控制面失败必须先动态调试 exact run；静态分析只解释动态证据。目标项目只读且禁止修改，修复只能落 Polaris 元平台，并补回归测试、同运行验证、机器可读缺陷记录。
-5. Exact-run 归因必须优先调用 `GET /v2/audit/runs/{factory_run_id}/causal` 或 `query_exact_run_causal_audit`，按 Factory → Run Ledger → TaskBoundary/TaskRuntime → tool/effect receipt → verifier → QA → final provider request 证据链输出唯一 `root_cause_code`、owner Cell 和最窄 retry boundary。历史错误只能统计，禁止覆盖当前终态；显式 workspace 必须本地解析，禁止先走 backend HTTP hint 或跨 workspace runtime。
+5. 新工程 exact-run 归因先读同 workspace 的 engineering snapshot/SQLite、最终 provider request、tool observation、当前 verifier 和 QA；不转查 latest Factory run 或写旧 ledger。历史 Factory causal API 只解释旧记录。保留当前失败/UNKNOWN，定位 owner 与最窄修复边界。
 
 ### 3.3 归属与旧根冻结
 
@@ -118,6 +110,8 @@
 结构性问题遵循 `AGENTS.md §8.6`：Verification Card + 必要 ADR。
 
 ### 4.1 两阶段执行模型
+
+本节约束主 Agent 修改 Polaris 平台时的工程设计流程；不是产品 engineering run 的 PM/CE 蓝图准入，不要求普通用户任务先生成文档或合同。
 
 1. 先做 `Blueprint & Architecture`
    - 方案先落到 `docs/blueprints/*.md`
@@ -276,32 +270,8 @@
 
 ---
 
-## 8. 最新目标态治理裁决（2026-04-16，非当前事实）
+## 8. 历史治理镜像
 
-> 本节是 `AGENTS.md §17` 的镜像摘要，不是当前现实快照。
-
-### 8.1 权威来源
-
-- `../../docs/blueprints/TRANSACTION_KERNEL_CONTEXTOS_TOOL_REFACTOR_BLUEPRINT_20260416.md`
-- `docs/governance/templates/verification-cards/vc-20260416-transaction-kernel-contextos-tool-refactor.yaml`
-- `docs/governance/decisions/adr-0071-transaction-kernel-single-commit-and-context-plane-isolation.md`
-- `docs/blueprints/AGENT_INSTRUCTION_ALIGNMENT_BLUEPRINT_20260416.md`
-- `docs/blueprints/AGENT_INSTRUCTION_COMPACTION_BLUEPRINT_20260416.md`
-- `docs/blueprints/AGENT_ENGINEERING_DISCIPLINE_ALIGNMENT_BLUEPRINT_20260416.md`
-
-### 8.2 核心裁决
-
-1. `TransactionKernel` 是唯一 turn 事务执行内核与唯一 commit point
-2. 一个 turn 内必须满足：`len(TurnDecisions) == 1`、`len(ToolBatches) <= 1`、`hidden_continuation == 0`
-3. ContextOS 目标态固定为 `TruthLog / WorkingState / ReceiptStore / ProjectionEngine`
-4. control-plane 字段不得进入 data plane
-5. `ContextHandoffPack` 是 canonical handoff contract，`roles.kernel` 禁止再造第二套 handoff schema
-
-### 8.3 镜像规则
-
-1. 本文件不是独立权威
-2. 若 `AGENTS.md §15 / §16 / §17` 更新，必须同步更新本文件
-
----
+`AGENTS.md §17` 中的旧 TransactionKernel/ContextHandoffPack 设计仅用于历史读取与冻结旧 owner；新工程不采用一 turn 一 ToolBatch、旧 commit/handoff 或业务合同准入。当前工程主线、技术权限与实际验证规则见 §1.1；本文件不得复活旧引擎写入口。
 
 See docs/blueprints/COGNITIVE_LIFEFORM_ARCHITECTURE_ALIGNMENT_MEMO_20260417.md

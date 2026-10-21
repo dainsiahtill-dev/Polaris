@@ -30,6 +30,7 @@ from polaris.cells.roles.kernel.public.service import (
 )
 from polaris.cells.runtime.projection.public.service import build_llm_status
 from polaris.delivery.http.dependencies import get_pm_service, require_auth
+from polaris.delivery.http.legacy_engine_retired import legacy_engine_retired
 from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
 from polaris.delivery.http.v2.llm_event_filters import filter_llm_events_by_workspace
 from polaris.delivery.http.workspace import (
@@ -624,18 +625,9 @@ def _ensure_director_handoff_llm_ready(request: Request, workspace: str = "") ->
 async def pm_run_once(
     request: Request,
     workspace: str = "",
-    pm_service: PMService = Depends(get_pm_service),
 ) -> dict:
-    """Run PM once.
-
-    Raises:
-        ProcessAlreadyRunningError: If PM is already running
-        ServiceUnavailableError: If backend is not available
-        ProcessError: If process fails to start
-    """
-    diagnostics = _build_pm_diagnostics_for_request(request, workspace_override=workspace)
-    _ensure_pm_can_start(diagnostics)
-    return _with_workspace_evidence(await pm_service.run_once(), diagnostics.workspace.workspace)
+    """Reject retired execution before preflight, storage or scheduling."""
+    raise legacy_engine_retired("Legacy pm_run_once")
 
 
 @router.post(
@@ -651,21 +643,9 @@ async def pm_start(
     request: Request,
     resume: bool = False,
     workspace: str = "",
-    pm_service: PMService = Depends(get_pm_service),
 ) -> dict:
-    """Start PM in loop mode.
-
-    Args:
-        resume: Whether to resume from previous state
-
-    Raises:
-        ProcessAlreadyRunningError: If PM is already running
-        ServiceUnavailableError: If backend is not available
-        ProcessError: If process fails to start
-    """
-    diagnostics = _build_pm_diagnostics_for_request(request, workspace_override=workspace)
-    _ensure_pm_can_start(diagnostics)
-    return _with_workspace_evidence(await pm_service.start_loop(resume=resume), diagnostics.workspace.workspace)
+    """Reject retired execution before preflight, storage or scheduling."""
+    raise legacy_engine_retired("Legacy pm_start")
 
 
 @router.post("/stop", dependencies=[Depends(require_auth)])
@@ -674,20 +654,9 @@ async def pm_stop(
     graceful: bool = True,
     graceful_timeout: float = 5.0,
     workspace: str = "",
-    pm_service: PMService = Depends(get_pm_service),
 ) -> dict:
-    """Stop PM process with graceful shutdown support.
-
-    Args:
-        graceful: Whether to attempt graceful shutdown first (via stop flag)
-        graceful_timeout: Seconds to wait for graceful shutdown
-    """
-    resolved_workspace = _workspace_value(request.app.state.app_state.settings, workspace)
-    result = await pm_service.stop(
-        graceful=graceful,
-        graceful_timeout=graceful_timeout,
-    )
-    return _with_workspace_evidence(result, resolved_workspace)
+    """Only the original frozen owner may control legacy execution."""
+    raise legacy_engine_retired("Legacy pm_stop")
 
 
 @router.get("/status", dependencies=[Depends(require_auth)])
@@ -728,70 +697,8 @@ async def pm_run_orchestration(
     request: Request,
     payload: PMRunOrchestrationRequest,
 ) -> PMOrchestrationResponse:
-    """Execute PM run - unified entry point
-
-    Phase 4: Uses OrchestrationCommandService as the single write path.
-    All PM execution goes through this endpoint for consistency.
-
-    Example:
-        POST /v2/pm/run
-        {
-            "workspace": ".",
-            "directive": "实现用户登录功能",
-            "stage": "architect",
-            "run_director": true
-        }
-    """
-    try:
-        # Phase 4: Use OrchestrationCommandService as single entry point
-        from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
-
-        settings = request.app.state.app_state.settings
-        workspace = requested_or_active_workspace(settings, payload.workspace)
-        _ensure_pm_can_start(
-            _build_pm_diagnostics_for_request(
-                request,
-                workspace_override=workspace,
-                allow_inline_directive=bool(payload.directive.strip()),
-            )
-        )
-        if payload.run_director:
-            _ensure_director_handoff_llm_ready(request, workspace)
-
-        service = OrchestrationCommandService(settings)
-
-        result = await service.execute_pm_run(
-            workspace=workspace,
-            run_type=payload.stage,
-            options={
-                "directive": payload.directive,
-                "run_director": payload.run_director,
-                "director_iterations": payload.director_iterations,
-                "metadata": dict(payload.metadata),
-            },
-        )
-
-        # Register adapters for execution
-        orch_service = await get_orchestration_service()
-        from polaris.cells.roles.adapters.public.service import register_all_adapters
-
-        register_all_adapters(orch_service)
-
-        return PMOrchestrationResponse(
-            run_id=result.run_id,
-            status=result.status,
-            workspace=workspace,
-            stage=payload.stage,
-            message=result.message or f"PM {payload.stage} run started",
-        )
-
-    except HTTPException:
-        raise
-    except (RuntimeError, ValueError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="internal error",
-        ) from e
+    """Reject retired execution before preflight, storage or scheduling."""
+    raise legacy_engine_retired("Legacy pm_run_orchestration")
 
 
 @router.get("/runs/{run_id}", response_model=PMOrchestrationResponse, dependencies=[Depends(require_auth)])
@@ -832,33 +739,8 @@ async def pm_cancel_orchestration(
     run_id: str,
     workspace: str = "",
 ) -> PMOrchestrationResponse:
-    """Cancel a PM orchestration run and return the resulting snapshot."""
-    try:
-        service = await get_orchestration_service()
-        snapshot = await service.query_run(run_id)
-
-        if not snapshot:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Run not found: {run_id}",
-            )
-
-        _ensure_snapshot_workspace(request, snapshot, run_id, workspace)
-        if _pm_snapshot_status(snapshot).lower() not in _TERMINAL_ORCHESTRATION_STATUSES:
-            snapshot = await service.cancel_run(run_id)
-
-        return _pm_orchestration_response(snapshot)
-
-    except HTTPException:
-        raise
-    except (RuntimeError, ValueError, OrchestrationError) as e:
-        import logging
-
-        logging.getLogger(__name__).error("pm_cancel_orchestration failed: run_id=%s: %s", run_id, e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="internal error",
-        ) from e
+    """New processes cannot mutate a frozen legacy owner without its authority."""
+    raise legacy_engine_retired("Legacy pm_cancel_orchestration")
 
 
 # ============================================================================

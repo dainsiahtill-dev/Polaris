@@ -8,7 +8,6 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import asdict  # re-exported for lossless surface
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any  # Protocol re-exported for lossless surface
 
 from polaris.cells.runtime.task_runtime.public.contracts import (
@@ -19,11 +18,6 @@ from polaris.cells.runtime.task_runtime.public.service import (
     fence_expired_factory_run_sessions,
 )
 
-from ..factory_deadline_calculations import extend_factory_run_deadline_for_same_run_retry
-from ..factory_event_chain import (
-    FactoryRunAdmissionV1,
-    build_factory_run_admitted_event,
-)
 from ..factory_physical_attempt_coordinator import (
     FactoryPhysicalAttemptControlError,
     FactoryPhysicalAttemptLiveControlPort,
@@ -516,56 +510,8 @@ class _FactoryRunServiceLifecycleMixin:
         return target_run
 
     async def create_run(self: Any, config: FactoryConfig) -> FactoryRun:
-        """Create a new factory run with directory structure."""
-        detached_config = FactoryConfig(
-            name=config.name,
-            description=config.description,
-            stages=list(config.stages),
-            auto_dispatch=config.auto_dispatch,
-            checkpoint_interval=config.checkpoint_interval,
-        )
-        run = FactoryRun(
-            id=f"factory_{uuid.uuid4().hex[:12]}",
-            config=detached_config,
-            status=FactoryRunStatus.PENDING,
-            created_at=self._now(),
-            metadata={
-                "current_stage": None,
-                "last_stage": None,
-                "last_successful_stage": None,
-                "last_failed_stage": None,
-                _STAGE_IN_FLIGHT_METADATA_KEY: False,
-                _CHILD_SESSIONS_SETTLED_METADATA_KEY: True,
-            },
-        )
-
-        admitted = await self._append_event(
-            run.id,
-            build_factory_run_admitted_event(
-                FactoryRunAdmissionV1(
-                    factory_run_id=run.id,
-                    created_at=run.created_at,
-                    name=run.config.name,
-                    description=run.config.description,
-                )
-            ),
-            publish=False,
-        )
-        run_dir = self.store.get_run_dir(run.id)
-        (run_dir / "artifacts").mkdir(parents=True, exist_ok=True)
-        (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
-        await self.store.save_run(run)
-        self._ensure_physical_attempt_replay_ledgers(run.id)
-        self._physical_attempt_coordinators[run.id] = FactoryPhysicalAttemptLiveControlPort(
-            factory_run_id=run.id,
-            revalidate_active_stage_claim=self._revalidate_active_physical_attempt_stage_claim,
-        )
-        # Realtime observers may only learn about the run after the mutable
-        # snapshot exists.  The admission bytes remain authoritative if save
-        # fails, but that half-run stays quarantined and unpublished.
-        await self._publish_factory_event(run.id, admitted)
-        logger.info("Created factory run %s", run.id)
-        return run
+        """Retired execution belongs only to its frozen historical process."""
+        raise RuntimeError("legacy_engine_retired: use roles.runtime.public.engineering_service")
 
     async def _revalidated_pm_stage_artifact_binding(
         self: Any,
@@ -610,203 +556,12 @@ class _FactoryRunServiceLifecycleMixin:
             return None
 
     async def recover_run(self: Any, run_id: str) -> FactoryRun:
-        """Recover a run from durable storage."""
-        run_lock = self._get_run_lock(run_id)
-        async with run_lock:
-            run = await self.store.get_run(run_id)
-            if run is None:
-                raise ValueError(f"Run {run_id} not found")
-            await self._recover_stage_commit_if_proven(run_id)
-            run = await self.store.get_run(run_id)
-            if run is None:
-                raise ValueError(f"Run {run_id} not found after cancelled stage recovery")
-            run = await self.assert_mutation_allowed(run_id, current_run=run)
-
-            if run.status in TERMINAL_RUN_STATUSES:
-                return run
-
-            operation = "recover_run"
-            # A backend crash can occur after the durable restart-replay claim
-            # is committed but before it is released.  Under the platform's
-            # single-backend-per-workspace invariant, the next lifespan owner
-            # must resume that exact idempotent operation instead of creating a
-            # fresh nonce that conflicts with its own orphaned claim for the
-            # full workspace TTL (live L1-04: 30 minutes).
-            current_lease = self._admission.current()
-            current_claim = (
-                current_lease.lifecycle_operation_claim
-                if current_lease is not None and current_lease.run_id == run.id
-                else None
-            )
-            resumable_restart_claim = (
-                current_lease is not None
-                and current_lease.state.value == "draining"
-                and current_lease.drain_reason == "factory_physical_attempt_restart_replay_fence"
-                and current_claim is not None
-                and current_claim.operation == operation
-            )
-            nonce = (
-                current_claim.nonce
-                if resumable_restart_claim and current_claim is not None
-                else f"lifecycle_{uuid.uuid4().hex}"
-            )
-            claimed = False
-            try:
-                lease = self._claim_lifecycle_operation(
-                    run,
-                    operation=operation,
-                    nonce=nonce,
-                    acquire_if_available=True,
-                )
-                replay_fenced = lease.state.value == "draining"
-                claimed = True
-                # Backend restart recovery is allowed to close only child
-                # execution leases that are already expired and belong to
-                # this exact Factory run.  The TaskRuntime fence remains
-                # fail-closed for live/foreign sessions and for any pending
-                # directed effect.  Without this step an expired Director
-                # session with no ambiguous write operation stays ``active``
-                # forever: DEO startup recovery has nothing to reconcile,
-                # while the Factory settlement projection correctly refuses
-                # re-entry on that stale session.
-                child_fence = fence_expired_factory_run_sessions(
-                    FenceExpiredFactoryRunSessionsCommandV1(
-                        workspace=str(self.workspace),
-                        factory_run_id=run.id,
-                        reason="factory_restart_recovery_expired_child_session",
-                    )
-                )
-                run.metadata["factory_expired_child_session_fence"] = child_fence.to_record()
-                settlement = await self._require_child_session_settlement_for_reentry(
-                    run,
-                    operation=operation,
-                )
-                run.metadata[_STAGE_IN_FLIGHT_METADATA_KEY] = False
-                run.updated_at = self._now()
-                await self.store.save_run(run)
-                await self._reconcile_stage_execution_claim(run, settlement=settlement)
-                last_successful_stage = (
-                    str(run.metadata.get("last_successful_stage") or "").strip()
-                    or str(run.recovery_point or "").strip()
-                    or str(await self._find_last_successful_stage(run_id) or "").strip()
-                    or None
-                )
-                run.recovery_point = last_successful_stage
-                run.status = FactoryRunStatus.RECOVERING
-                run.updated_at = self._now()
-                run.metadata["current_stage"] = last_successful_stage
-                run.metadata["last_stage"] = last_successful_stage
-                await self.store.save_run(run)
-                await self._append_event(
-                    run_id,
-                    {
-                        "type": "recovered",
-                        "stage": last_successful_stage,
-                        "message": f"Recovered run at {last_successful_stage or 'start'}",
-                        "timestamp": run.updated_at,
-                    },
-                )
-                if replay_fenced:
-                    physical_drain = self._physical_attempt_coordinator(run.id).close()
-                    if not physical_drain.settled:
-                        raise FactoryPhysicalAttemptReplayError(
-                            "factory_physical_attempt_replay_terminal_settlement_incomplete"
-                        )
-                    run.metadata["factory_physical_attempt_admission_dead"] = True
-                    release_evidence = self._workspace_release_evidence(
-                        run.id,
-                        settlement,
-                        source="factory_physical_attempt_restart_replay",
-                        observed_at=self._now(),
-                        details={
-                            "physical_attempt_replay_fence": True,
-                            "physical_attempt_drain": {
-                                "settled": physical_drain.settled,
-                                "blocking_reservation_ids": list(physical_drain.blocking_reservation_ids),
-                                "terminal_failure_reservation_ids": list(
-                                    physical_drain.terminal_failure_reservation_ids
-                                ),
-                            },
-                        },
-                    )
-                    released = self._admission.release(
-                        run.id,
-                        fencing_token=lease.fencing_token,
-                        settlement_evidence=release_evidence,
-                        operation_nonce=nonce,
-                    )
-                    self._attach_workspace_lease(run, released)
-                    run.updated_at = self._now()
-                    await self.store.save_run(run)
-                else:
-                    await self._release_lifecycle_operation(
-                        run,
-                        operation=operation,
-                        nonce=nonce,
-                    )
-                claimed = False
-                logger.info("Run %s recovered at stage %s", run_id, last_successful_stage)
-                return run
-            except Exception:
-                if claimed:
-                    await self._rollback_lifecycle_operation(
-                        run,
-                        operation=operation,
-                        nonce=nonce,
-                        reason="recover_run_failed",
-                    )
-                elif run.metadata.get("factory_physical_attempt_admission_dead") is True:
-                    run.updated_at = self._now()
-                    await self.store.save_run(run)
-                raise
+        """Retired execution belongs only to its frozen historical process."""
+        raise RuntimeError("legacy_engine_retired: use roles.runtime.public.engineering_service")
 
     async def resume_recovered_run(self: Any, run_id: str) -> FactoryRun:
-        """Open one fresh execution epoch after strict restart replay.
-
-        Restart replay permanently closes the *old* physical-attempt
-        coordinator so an ambiguous provider request can never be repeated.
-        That safety fence must not permanently kill the whole Factory run.
-        After replay has drained and released the old workspace authority,
-        this explicit lifecycle transition acquires a newer fencing token and
-        installs an empty coordinator for future stage claims.
-        """
-
-        run_lock = self._get_run_lock(run_id)
-        async with run_lock:
-            run = await self.store.get_run(run_id)
-            if run is None:
-                raise ValueError(f"Run {run_id} not found")
-            run = await self.assert_mutation_allowed(run_id, current_run=run)
-            if run.status in TERMINAL_RUN_STATUSES:
-                return run
-            if run.status is not FactoryRunStatus.RECOVERING:
-                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_resume_requires_recovering_run")
-            if run.metadata.get("factory_physical_attempt_admission_dead") is not True:
-                raise FactoryPhysicalAttemptControlError("factory_physical_attempt_resume_requires_replay_fence")
-
-            replayed = self._physical_attempt_coordinator(run.id)
-            replay_drain = replayed.close()
-            if not replay_drain.settled:
-                raise FactoryPhysicalAttemptReplayError(
-                    "factory_physical_attempt_replay_terminal_settlement_incomplete"
-                )
-            current = self._admission.current()
-            if (
-                current is None
-                or current.run_id != run.id
-                or current.state.value != "released"
-                or current.lifecycle_operation_claim is not None
-                or current.release_evidence is None
-                or current.release_evidence.details.get("physical_attempt_replay_fence") is not True
-            ):
-                raise FactoryPhysicalAttemptControlError(
-                    "factory_physical_attempt_resume_replay_release_evidence_missing"
-                )
-            return await self._open_fresh_physical_attempt_execution_epoch_locked(
-                run,
-                replayed=replayed,
-                source="restart_replay",
-            )
+        """Retired execution belongs only to its frozen historical process."""
+        raise RuntimeError("legacy_engine_retired: use roles.runtime.public.engineering_service")
 
     async def retry_run_from_stage(
         self: Any,
@@ -814,241 +569,20 @@ class _FactoryRunServiceLifecycleMixin:
         target_stage: str | None = None,
         reason: str | None = None,
     ) -> FactoryRun:
-        """Move a run into recovery from a checkpoint or configured stage."""
-        run_lock = self._get_run_lock(run_id)
-        async with run_lock:
-            run = await self.store.get_run(run_id)
-            if run is None:
-                raise ValueError(f"Run {run_id} not found")
-            await self._recover_stage_commit_if_proven(run_id)
-            run = await self.store.get_run(run_id)
-            if run is None:
-                raise ValueError(f"Run {run_id} not found after cancelled stage recovery")
-            run = await self.assert_mutation_allowed(run_id, current_run=run)
-
-            requested_stage = str(target_stage or "").strip()
-            # Completed is terminal for PM/CE/Director replay. Live L2-14
-            # quality_gate passed after skipping rust (lowercase cargo.toml).
-            # Same-run owner repair must be allowed to re-run only quality_gate
-            # without opening a new Factory run or rolling back PM/CE.
-            # Operator cancellation remains terminal for PM/CE/Director.  A
-            # later, explicit QA-only retry is different: it revalidates the
-            # already-delivered workspace without reopening upstream authority
-            # or regenerating project artifacts.  Returning the unchanged
-            # CANCELLED run here made the HTTP control endpoint report 200 while
-            # silently doing nothing, which prevented exact-run validation after
-            # a debugger stopped a runaway QA repair loop.
-            if run.status == FactoryRunStatus.CANCELLED and requested_stage != "quality_gate":
-                return run
-            if run.status == FactoryRunStatus.COMPLETED and requested_stage != "quality_gate":
-                return run
-            qa_only_terminal_retry = requested_stage == "quality_gate" and run.status in {
-                FactoryRunStatus.CANCELLED,
-                FactoryRunStatus.COMPLETED,
-            }
-            if run.status != FactoryRunStatus.FAILED and not qa_only_terminal_retry:
-                raise ValueError(f"Run {run_id} cannot be retried in status {run.status.value}")
-
-            # A retry must not use FAILED terminal-drain cleanup to kill a
-            # still-live Director child and then declare the workspace safe.
-            # Check child authority first: expired children owned by this run
-            # may be terminalized by the settlement guard, while live or
-            # foreign children remain fail-closed. Explicit complete/cancel
-            # closeout keeps its separate force-abort policy.
-            await self._require_child_session_settlement_for_reentry(
-                run,
-                operation="retry_run_from_stage_preflight",
-            )
-
-            # Launcher-restart can leave an orphaned settle_terminal_run claim.
-            # Finish that exact nonce before recover_run, otherwise retry_phase
-            # conflicts for the workspace TTL (live L2-12 factory_a1b49b0460f2).
-            #
-            # A terminal DRAINING lease *without* such a claim is different:
-            # it is the old physical-attempt epoch that
-            # _prepare_failed_retry_execution_epoch_locked must replay and
-            # settle.  Trying to claim settle_terminal_run first made an
-            # expired exact-owner drain permanently unrecoverable (live L3-23
-            # QA-only retry) before the replay path could produce release
-            # evidence.  Do not renew or bypass the lease here; route that
-            # precise state to the fenced replay below.
-            current_lease = self._admission.current()
-            current_claim = (
-                current_lease.lifecycle_operation_claim
-                if current_lease is not None and current_lease.run_id == run.id
-                else None
-            )
-            terminal_drain_requires_retry_replay = (
-                current_lease is not None
-                and current_lease.run_id == run.id
-                and current_lease.state.value == "draining"
-                and current_claim is None
-            )
-            if not terminal_drain_requires_retry_replay:
-                run = await self._settle_terminal_run_locked(run)
-            run = await self._prepare_failed_retry_execution_epoch_locked(run)
-            self._require_physical_attempt_admission_open(run.id)
-            self._acquire_workspace_lease(run)
-            settlement = await self._require_child_session_settlement_for_reentry(
-                run,
-                operation="retry_run_from_stage",
-            )
-
-            configured_stages = [str(stage).strip() for stage in run.config.stages if str(stage).strip()]
-            requested_stage = str(target_stage or "").strip()
-            if requested_stage and requested_stage not in configured_stages:
-                raise ValueError(f"Stage {requested_stage} is not configured for run {run_id}")
-
-            retry_stage = (
-                requested_stage
-                or str(run.metadata.get("last_successful_stage") or "").strip()
-                or str(run.recovery_point or "").strip()
-                or str(await self._find_last_successful_stage(run_id) or "").strip()
-                or None
-            )
-            retry_start_policy = "rerun_stage" if requested_stage else "after_checkpoint"
-            retry_execution_stage = retry_stage
-            if retry_stage and retry_stage in configured_stages:
-                stage_index = configured_stages.index(retry_stage)
-                rerun_start_index = stage_index if requested_stage else stage_index + 1
-            else:
-                rerun_start_index = 0
-            stages_to_rerun = set(configured_stages[rerun_start_index:])
-            if stages_to_rerun:
-                run.stages_completed = [stage for stage in run.stages_completed if stage not in stages_to_rerun]
-                run.stages_failed = [stage for stage in run.stages_failed if stage not in stages_to_rerun]
-                retry_execution_stage = (
-                    configured_stages[rerun_start_index] if rerun_start_index < len(configured_stages) else retry_stage
-                )
-
-            timestamp = self._now()
-            # Frozen TaskRuntime authority belongs to one Director execution
-            # epoch. Re-executing Director (or any earlier stage) will create
-            # newer TaskRuntime facts, so retaining the old snapshot would let
-            # terminal drain reuse stale rows forever. QA-only retry preserves
-            # the snapshot because no execution authority is regenerated.
-            if "director_dispatch" in stages_to_rerun:
-                from polaris.cells.factory.pipeline.public.contracts import (
-                    FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
-                )
-
-                invalidated_snapshot = run.metadata.pop(
-                    FACTORY_TERMINAL_TASK_RUNTIME_PROJECTION_METADATA_KEY,
-                    None,
-                )
-                if isinstance(invalidated_snapshot, Mapping):
-                    run.metadata["factory_terminal_task_runtime_projection_invalidation"] = {
-                        "schema_version": "factory.terminal-task-runtime-projection-invalidation.v1",
-                        "invalidated_at": timestamp,
-                        "requested_stage": requested_stage or None,
-                        "retry_execution_stage": retry_execution_stage,
-                        "prior_captured_at": str(invalidated_snapshot.get("captured_at") or "").strip() or None,
-                        "reason": "director_execution_epoch_reopened",
-                    }
-            previous_status = run.status.value
-            previous_failure = run.metadata.get("failure")
-            run.recovery_point = retry_stage
-            run.status = FactoryRunStatus.RECOVERING
-            run.completed_at = None
-            run.updated_at = timestamp
-            run.metadata["current_stage"] = retry_execution_stage
-            run.metadata["last_stage"] = retry_stage
-            run.metadata["retry_from_status"] = previous_status
-            run.metadata["retry_start_policy"] = retry_start_policy
-            run.metadata["retry_requested_stage"] = requested_stage or None
-            run.metadata["retry_execution_stage"] = retry_execution_stage
-            run.metadata[_STAGE_IN_FLIGHT_METADATA_KEY] = False
-            deadline_extension = extend_factory_run_deadline_for_same_run_retry(
-                now_epoch=datetime.now(timezone.utc).timestamp(),
-                metadata=run.metadata,
-                retry_stage=str(retry_execution_stage or retry_stage or ""),
-            )
-            if deadline_extension:
-                run.metadata.update(deadline_extension)
-                start_request = run.metadata.get("factory_start_request")
-                if isinstance(start_request, Mapping):
-                    start_payload = dict(start_request)
-                    start_metadata_raw = start_payload.get("metadata")
-                    start_metadata = dict(start_metadata_raw) if isinstance(start_metadata_raw, Mapping) else {}
-                    start_metadata.update(deadline_extension)
-                    start_payload["metadata"] = start_metadata
-                    run.metadata["factory_start_request"] = start_payload
-            if previous_failure:
-                run.metadata["retry_previous_failure"] = previous_failure
-            run.metadata["failure"] = None
-            run.metadata["last_failed_stage"] = None
-            if reason:
-                run.metadata["retry_reason"] = reason
-            await self.store.save_run(run)
-            await self._reconcile_stage_execution_claim(run, settlement=settlement)
-            await self._append_event(
-                run_id,
-                {
-                    "type": "retry_requested",
-                    "stage": retry_stage,
-                    "message": f"Retry requested from {retry_stage or 'start'}",
-                    "reason": reason,
-                    "previous_status": previous_status,
-                    "timestamp": timestamp,
-                },
-            )
-            logger.info("Run %s retry requested from stage %s", run_id, retry_stage)
-            return run
+        """Retired execution belongs only to its frozen historical process."""
+        raise RuntimeError("legacy_engine_retired: use roles.runtime.public.engineering_service")
 
     async def execute_pause(self: Any, run_id: str) -> FactoryRun:
-        """Pause a running factory run."""
-        run_lock = self._get_run_lock(run_id)
-        async with run_lock:
-            run = await self.store.get_run(run_id)
-            if run is None:
-                raise ValueError(f"Run {run_id} not found")
-            run = await self.assert_mutation_allowed(run_id, current_run=run)
-
-            if run.status == FactoryRunStatus.RUNNING:
-                self._physical_attempt_coordinator(run.id)
-                self._renew_workspace_lease(run, require_active=True)
-                run.status = FactoryRunStatus.PAUSED
-                run.updated_at = self._now()
-                await self.store.save_run(run)
-                await self._append_event(
-                    run_id,
-                    {
-                        "type": "paused",
-                        "message": "Run paused",
-                        "timestamp": run.updated_at,
-                    },
-                )
-                logger.info("Run %s paused", run_id)
-            return run
+        """Retired execution belongs only to its frozen historical process."""
+        raise RuntimeError("legacy_engine_retired: use roles.runtime.public.engineering_service")
 
     async def execute_resume(self: Any, run_id: str) -> FactoryRun:
-        """Resume a paused factory run."""
-        run_lock = self._get_run_lock(run_id)
-        async with run_lock:
-            run = await self.store.get_run(run_id)
-            if run is None:
-                raise ValueError(f"Run {run_id} not found")
-            run = await self.assert_mutation_allowed(run_id, current_run=run)
-
-            if run.status == FactoryRunStatus.PAUSED:
-                self._require_physical_attempt_admission_open(run.id)
-                self._acquire_workspace_lease(run)
-                run.status = FactoryRunStatus.RUNNING
-                run.updated_at = self._now()
-                await self.store.save_run(run)
-                await self._append_event(
-                    run_id,
-                    {
-                        "type": "resumed",
-                        "message": "Run resumed",
-                        "timestamp": run.updated_at,
-                    },
-                )
-                logger.info("Run %s resumed", run_id)
-            return run
+        """Retired execution belongs only to its frozen historical process."""
+        raise RuntimeError("legacy_engine_retired: use roles.runtime.public.engineering_service")
 
     async def update_run_metadata(self: Any, run_id: str, metadata: dict[str, Any]) -> FactoryRun:
         """Persist metadata updates for an existing factory run."""
+        self._require_writable()
         run_lock = self._get_run_lock(run_id)
         async with run_lock:
             run = await self.store.get_run(run_id)
@@ -1083,68 +617,12 @@ class _FactoryRunServiceLifecycleMixin:
             return run
 
     async def start_run(self: Any, run_id: str) -> FactoryRun:
-        """Start a run only after durable workspace admission succeeds."""
-        run_lock = self._get_run_lock(run_id)
-        async with run_lock:
-            run = await self.store.get_run(run_id)
-            if run is None:
-                raise ValueError(f"Run {run_id} not found")
-            run = await self.assert_mutation_allowed(run_id, current_run=run)
-
-            if run.status in TERMINAL_RUN_STATUSES:
-                return run
-
-            operation = "start_run"
-            nonce = f"lifecycle_{uuid.uuid4().hex}"
-            claimed = False
-            try:
-                self._claim_lifecycle_operation(
-                    run,
-                    operation=operation,
-                    nonce=nonce,
-                    acquire_if_available=True,
-                )
-                claimed = True
-                self._require_physical_attempt_admission_open(run.id)
-                started_now = run.status == FactoryRunStatus.PENDING
-                if started_now:
-                    started_at = self._now()
-                    run.status = FactoryRunStatus.RUNNING
-                    run.started_at = started_at
-                    run.updated_at = started_at
-                else:
-                    run.updated_at = self._now()
-                await self.store.save_run(run)
-                if started_now:
-                    await self._append_event(
-                        run_id,
-                        {
-                            "type": "started",
-                            "message": "Run started",
-                            "timestamp": run.updated_at,
-                        },
-                    )
-                    logger.info("Run %s started", run_id)
-                await self._release_lifecycle_operation(
-                    run,
-                    operation=operation,
-                    nonce=nonce,
-                )
-                claimed = False
-                return run
-            except Exception:
-                if claimed:
-                    await self._rollback_lifecycle_operation(
-                        run,
-                        operation=operation,
-                        nonce=nonce,
-                        reason="start_run_failed",
-                        persist_run=False,
-                    )
-                raise
+        """Retired execution belongs only to its frozen historical process."""
+        raise RuntimeError("legacy_engine_retired: use roles.runtime.public.engineering_service")
 
     async def cancel_run(self: Any, run_id: str, reason: str | None = None) -> FactoryRun:
         """Cancel a factory run and keep a distinct terminal status."""
+        self._require_writable()
         run_lock = self._get_run_lock(run_id)
         async with run_lock:
             run = await self.store.get_run(run_id)
@@ -1223,6 +701,7 @@ class _FactoryRunServiceLifecycleMixin:
         settlement — skipping when already terminal left R50-class runs with
         ``completed_at=null`` and leases stuck in ``draining``.
         """
+        self._require_writable()
         run_lock = self._get_run_lock(run_id)
         completion_event_appended = False
         async with run_lock:
@@ -1395,6 +874,7 @@ class _FactoryRunServiceLifecycleMixin:
         behavior for direct callers.
         """
 
+        self._require_writable()
         run_lock = self._get_run_lock(run_id)
         async with run_lock:
             run = await self.store.get_run(run_id)
@@ -1531,6 +1011,7 @@ class _FactoryRunServiceLifecycleMixin:
     ) -> FactoryWorkspaceRunLeaseV1:
         """Explicitly fence expired child sessions and release one stale owner."""
 
+        self._require_writable()
         run_lock = self._get_run_lock(run_id)
         async with run_lock:
             run = await self.store.get_run(run_id)

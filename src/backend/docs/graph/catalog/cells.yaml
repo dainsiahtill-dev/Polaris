@@ -1633,145 +1633,155 @@ cells:
     visibility: public
     stateful: true
     owner: orchestration
-    purpose: >
-      Composite runtime boundary for shared role kernel and role-session
-      lifecycle; PM/Director/QA/ChiefEngineer behavior is delegated to dedicated
-      business cells.
+    purpose: Own the single engineering Agent loop, optional read-only role collaboration, current-source verification
+      and workspace-scoped engineering sessions; retain legacy role shapes only for historical readers, never new
+      execution admission.
     tags:
-      - composite
+    - composite
+    - engineering
+    - single-owner
     current_modules:
-      - polaris.cells.roles.runtime.public.service
-      - polaris.cells.roles.runtime.internal
-      - polaris.delivery.http.routers.role_chat
-      - polaris.delivery.http.routers.role_session
+    - polaris.cells.roles.runtime.public.engineering_service
+    - polaris.cells.roles.runtime.public.contracts.engineering_run
+    - polaris.cells.roles.runtime.internal.engineering_loop
+    - polaris.cells.roles.runtime.internal.engineering_session
+    - polaris.cells.roles.runtime.public.service
     owned_paths:
-      - polaris/cells/roles/runtime/public/**
-      - polaris/cells/roles/runtime/internal/**
-      - polaris/delivery/http/routers/role_chat.py
-      - polaris/delivery/http/routers/role_session.py
+    - polaris/cells/roles/runtime/public/**
+    - polaris/cells/roles/runtime/internal/**
+    - polaris/delivery/http/routers/role_chat.py
+    - polaris/delivery/http/routers/role_session.py
     public_contracts:
       modules:
-        - polaris.cells.roles.runtime.public.contracts
+      - polaris.cells.roles.runtime.public.contracts
+      - polaris.cells.roles.runtime.public.contracts.engineering_run
       commands:
-        - InstantiateRoleRuntimeObjectCommandV1
-        - ExecuteRoleTaskMarketLifecycleCommandV1
-        - ExecuteRoleCapabilityInvocationCommandV1
-        - AssembleRoleRuntimeChainCommandV1
-        - RoleStateCommitRequest
-        - RehydrateRoleHandoffCommandV1
-        - ExecuteRoleTaskCommandV1
-        - ExecuteRoleSessionCommandV1
-        - AggregateChatCompletionsCommandV1
+      - RoleRunCommand
+      - InstantiateRoleRuntimeObjectCommandV1
+      - ExecuteRoleTaskMarketLifecycleCommandV1
+      - ExecuteRoleCapabilityInvocationCommandV1
+      - AssembleRoleRuntimeChainCommandV1
+      - RoleStateCommitRequest
+      - RehydrateRoleHandoffCommandV1
+      - ExecuteRoleTaskCommandV1
+      - ExecuteRoleSessionCommandV1
+      - AggregateChatCompletionsCommandV1
       queries:
-        - GetRoleRuntimeStatusQueryV1
-        - BuildAggregateRolePlanQueryV1
-        - AuditAggregateRuntimeIntegrationsQueryV1
+      - GetRoleRuntimeStatusQueryV1
+      - BuildAggregateRolePlanQueryV1
+      - AuditAggregateRuntimeIntegrationsQueryV1
       events:
-        - RoleTaskStartedEventV1
-        - RoleTaskCompletedEventV1
+      - RoleTaskStartedEventV1
+      - RoleTaskCompletedEventV1
       results:
-        - RoleRuntimeObjectResultV1
-        - RoleTaskMarketLifecycleResultV1
-        - RoleCapabilityInvocationResultV1
-        - RoleRuntimeChainAssemblyResultV1
-        - RoleStateCommitReceipt
-        - RoleHandoffRehydrationResultV1
-        - RoleExecutionResultV1
-        - AggregateRolePlanResultV1
-        - AggregateRoleLobeV1
-        - AggregateCognitiveLedgerEntryV1
-        - AggregateTakeoverDirectiveV1
-        - AggregateRuntimeIntegrationV1
-        - AggregateRuntimeEntrypointCheckV1
-        - AggregateRuntimeAuditResultV1
-        - AggregateChatCompletionsResultV1
-        - AggregateChatChoiceV1
-        - AggregateChatMessageV1
+      - RoleRunResult
+      - ToolObservation
+      - RoleRuntimeObjectResultV1
+      - RoleTaskMarketLifecycleResultV1
+      - RoleCapabilityInvocationResultV1
+      - RoleRuntimeChainAssemblyResultV1
+      - RoleStateCommitReceipt
+      - RoleHandoffRehydrationResultV1
+      - RoleExecutionResultV1
+      - AggregateRolePlanResultV1
+      - AggregateRoleLobeV1
+      - AggregateCognitiveLedgerEntryV1
+      - AggregateTakeoverDirectiveV1
+      - AggregateRuntimeIntegrationV1
+      - AggregateRuntimeEntrypointCheckV1
+      - AggregateRuntimeAuditResultV1
+      - AggregateChatCompletionsResultV1
+      - AggregateChatChoiceV1
+      - AggregateChatMessageV1
       errors:
-        - RoleRuntimeErrorV1
+      - RoleRuntimeErrorV1
     depends_on:
-      - llm.control_plane
-      - context.catalog
-      - context.engine
-      - events.fact_stream
-      - runtime.execution_broker
-      - runtime.projection
-      - runtime.state_owner
-      - audit.evidence
-      - code_intelligence.engine
-      - policy.workspace_guard
-      - policy.permission
-      - orchestration.pm_planning
-      - orchestration.pm_dispatch
-      - chief_engineer.blueprint
-      - director.execution
-      - qa.audit_verdict
-      - roles.engine
-      - roles.kernel
-      - roles.profile
-      - roles.session
-      - runtime.task_market
-      - runtime.task_runtime
-      - factory.verification_guard
-      - factory.cognitive_runtime
-      - finops.budget_guard
-      - archive.run_archive
-      - audit.diagnosis
-      - cognitive.knowledge_distiller
-      - control_plane.run_ledger
+    - llm.control_plane
+    - context.catalog
+    - context.engine
+    - events.fact_stream
+    - runtime.execution_broker
+    - runtime.projection
+    - runtime.state_owner
+    - audit.evidence
+    - code_intelligence.engine
+    - policy.workspace_guard
+    - policy.permission
+    - orchestration.pm_planning
+    - orchestration.pm_dispatch
+    - chief_engineer.blueprint
+    - director.execution
+    - qa.audit_verdict
+    - roles.engine
+    - roles.kernel
+    - roles.profile
+    - roles.session
+    - runtime.task_market
+    - runtime.task_runtime
+    - factory.verification_guard
+    - factory.cognitive_runtime
+    - finops.budget_guard
+    - archive.run_archive
+    - audit.diagnosis
+    - cognitive.knowledge_distiller
+    - control_plane.run_ledger
     subgraphs:
-      - execution_governance_pipeline
+    - roles_execution_pipeline
+    - execution_governance_pipeline
     state_owners:
-      - runtime/roles/*
+    - runtime/engineering/sessions.sqlite3
+    - runtime/engineering/workspace.lock
+    - runtime/roles/*
     effects_allowed:
-      - fs.read:runtime/**
-      - fs.write:runtime/roles/*
-      - fs.write:runtime/tasks/*
-      - fs.write:runtime/state/*
-      - fs.write:runtime/events/*
-      - fs.write:runtime/strategy_runs/*
-      - fs.write:runtime/cognitive_runtime/*
-      - ws.outbound:runtime/*
-      - process.spawn:roles/*
-      - process.spawn:director/*
-      - bus.publish:agent_messages/*
-      - bus.consume:agent_messages/*
-      - task_market.publish:*
-      - task_market.read
-      - task_market.claim
-      - task_market.lease
-      - task_market.ack
-      - task_market.fail
-      - task_market.requeue
-      - task_market.dead_letter
-      - runtime_projection.read
-      - blueprint.generate:*
-      - blueprint.memo.record
-      - process.spawn:qa/pytest
-      - qa.failure_signal.parse
-      - qa.verdict.issue
-      - llm.invoke:vision
-      - budget.reserve:context
-      - mutation.guard:workspace
-      - architect.validate_cell_boundary
-      - code_intelligence.read
-      - change_set.validate
-      - runtime_receipt.record
-      - handoff.export
-      - handoff.rehydrate
+    - fs.read:workspace/**
+    - fs.write:workspace/**
+    - fs.read:runtime/**
+    - fs.write:runtime/engineering/*
+    - llm.invoke:roles/*
+    - process.spawn:engineering/*
+    - ws.outbound:runtime/*
+    - mutation.guard:workspace
     verification:
       tests:
-        - tests/test_roles_kernel.py
-        - tests/test_runtime_role_binding.py
-        - tests/test_roles_state_ownership.py
-        - polaris/cells/roles/runtime/public/tests/test_role_runtime_object_contracts.py
-        - polaris/cells/roles/runtime/public/tests/test_directed_effect_attempt_validation.py
-        - polaris/cells/roles/runtime/public/tests/test_directed_effect_port_wiring.py
-        - polaris/cells/roles/runtime/tests/test_host_session_continuity.py
-        - polaris/cells/roles/runtime/tests/test_aggregate_role_plan.py
-        - polaris/delivery/http/routers/test_aggregate_chat.py
+      - polaris/cells/roles/runtime/tests/test_engineering_loop.py
+      - polaris/cells/roles/runtime/tests/test_engineering_roles.py
+      - polaris/cells/roles/runtime/tests/test_engineering_service.py
+      - polaris/cells/roles/runtime/tests/test_engineering_verification.py
+      - polaris/cells/roles/runtime/tests/test_engineering_verification_selection.py
+      - polaris/cells/roles/runtime/tests/test_engineering_recovery.py
+      - polaris/cells/roles/runtime/tests/test_engineering_context_audit.py
+      - polaris/cells/roles/runtime/tests/test_engineering_events.py
+      - polaris/tests/architecture/test_engineering_no_legacy_admission.py
       gaps:
-        - Role kernel is converged; business-role cell extraction still has remaining call-site rewiring.
+      - Graph/source synchronization and focused tests do not prove all workloads. Fresh direct/collaborative/recovery
+        acceptance and required release/catalog gates must be reported from actual runs.
+      - Legacy readers and optional utilities remain in source; their retained imports do not authorize new legacy
+        execution. Physical provider HTTP totals/cost require independent transport evidence.
+    descriptor_surface:
+      include_public_contracts: false
+      classes:
+        EngineeringRunService:
+          module: polaris.cells.roles.runtime.public.engineering_service
+          methods:
+          - start
+          - observe
+          - snapshot
+          - find_request
+          - wait
+          - cancel
+          - resume
+          - chat_role
+          - consult_role
+          - run_collaborative
+    notes:
+    - EngineeringRunService and engineering/sessions.sqlite3 are the only new-run execution/state owners. Direct Director
+      is default; explicit collaborative PM/CE/Director and read-only consult reuse this owner.
+    - Legacy public DTO names and dependencies below describe retained historical readers/utilities, not permission
+      to create legacy runs or invoke old kernel/session/task-market/Factory admission.
+    - Host PermissionScope, KFS and OS/process sandbox enforce real effects. No new-run PM contract, CE blueprint/hash/portfolio,
+      semantic patch, JobToken/DEO/Run Ledger admission or automatic deterministic-repair fallback.
+    - Historical runtime/roles state is read-only; existing frozen legacy owners are not migrated or resumed by the
+      engineering owner. Engineering events publish committed snapshots through event.engineering on runtime.v2.
 
   - id: roles.adapters
     title: Roles Adapters

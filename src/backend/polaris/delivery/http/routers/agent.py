@@ -7,13 +7,10 @@ instead of maintaining a private in-memory session model.
 
 from __future__ import annotations
 
-import asyncio
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Request
-from polaris.cells.factory.pipeline.public.types import RunPhase
-from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
-from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.roles.session.public import (
     RoleHostKind,
     RoleSessionContextMemoryService,
@@ -26,12 +23,8 @@ from polaris.cells.roles.session.public.contracts import (
     ReadRoleSessionEpisodeQueryV1,
     SearchRoleSessionMemoryQueryV1,
 )
-from polaris.kernelone.context.session_continuity import (
-    SessionContinuityEngine,
-    SessionContinuityRequest,
-    history_pairs_to_messages,
-    messages_to_history_pairs,
-)
+from polaris.delivery.http.legacy_engine_retired import legacy_engine_retired
+from polaris.delivery.http.workspace import active_workspace_value
 from pydantic import BaseModel, Field
 
 from ._shared import StructuredHTTPException, get_state, require_auth
@@ -40,8 +33,6 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 
 _AGENT_CONTEXT_FLAG = "agent_router_v1"
 _AGENT_SESSION_SCAN_LIMIT = 200
-_AGENT_CONTINUITY_ENGINE = SessionContinuityEngine()
-_ROLE_RUNTIME = RoleRuntimeService()
 
 
 class SessionMessageRequest(BaseModel):
@@ -57,6 +48,14 @@ class AgentTurnPayload(BaseModel):
     message: str = Field(..., min_length=1, max_length=20000)
     role: Literal["pm", "architect", "chief_engineer", "director", "qa", "assistant"] = "assistant"
     stream: bool = False
+
+
+def _agent_workspace(request: Request) -> str:
+    workspace = active_workspace_value(get_state(request).settings)
+    requested = str(request.query_params.get("workspace") or "").strip()
+    if requested and Path(requested).resolve() != Path(workspace).resolve():
+        raise StructuredHTTPException(status_code=404, code="WORKSPACE_NOT_FOUND", message="Workspace not found")
+    return str(Path(workspace).resolve())
 
 
 def _safe_text(value: Any) -> str:
@@ -137,8 +136,12 @@ def _build_agent_session_payload(
     }
 
 
-def _load_agent_session(session_id: str) -> dict[str, Any] | None:
-    with RoleSessionService() as service:
+def _load_agent_session(session_id: str, *, workspace: str | None = None) -> dict[str, Any] | None:
+    if not workspace:
+        return None
+    with RoleSessionService(
+        workspace=workspace, read_only=True, enable_persistence=False, enable_events=False
+    ) as service:
         session = service.get_session(session_id)
         if session is None:
             return None
@@ -150,289 +153,8 @@ def _load_agent_session(session_id: str) -> dict[str, Any] | None:
 
 
 def _get_or_create_session(workspace: str, role: str, session_id: str | None = None) -> dict[str, Any]:
-    if session_id:
-        existing = _load_agent_session(session_id)
-        if existing is not None:
-            return existing
-
-    session_context = {
-        _AGENT_CONTEXT_FLAG: True,
-        "workspace": workspace,
-    }
-    session = RoleSessionService.create_ad_hoc_session(
-        role=role,
-        workspace=workspace,
-        host_kind=RoleHostKind.API_SERVER.value,
-        title=f"Agent {role} session",
-        context_config=session_context,
-    )
-    return _build_agent_session_payload(
-        session_payload=session.to_dict(include_messages=False),
-        messages=[],
-    )
-
-
-def _project_agent_turn(
-    *,
-    service: RoleSessionService,
-    session_id: str,
-    role: str,
-    workspace: str,
-    session_title: str,
-    session_context: dict[str, Any],
-) -> tuple[tuple[tuple[str, str], ...], dict[str, Any]]:
-    prior_messages = [message.to_dict() for message in service.get_messages(session_id, limit=50, offset=0)]
-    projection = _AGENT_CONTINUITY_ENGINE.project(
-        SessionContinuityRequest(
-            session_id=session_id,
-            role=role,
-            workspace=workspace,
-            session_title=session_title,
-            messages=history_pairs_to_messages(_message_history_pairs(prior_messages)),
-            session_context_config=session_context,
-            incoming_context={
-                "role": role,
-                "host_kind": RoleHostKind.API_SERVER.value,
-            },
-            history_limit=10,
-        )
-    )
-    if projection.changed:
-        service.update_session(
-            session_id=session_id,
-            context_config=projection.persisted_context_config,
-        )
-    return messages_to_history_pairs(projection.recent_messages), dict(projection.prompt_context)
-
-
-async def _execute_agent_message(
-    session_id: str,
-    message: str,
-    role: str,
-    workspace: str,
-) -> dict[str, Any]:
-    with RoleSessionService() as service:
-        session = service.get_session(session_id)
-        if session is None:
-            raise StructuredHTTPException(
-                status_code=404,
-                code="SESSION_NOT_FOUND",
-                message="Session not found",
-            )
-        session_payload = session.to_dict(include_messages=False)
-        if not _is_agent_session_payload(session_payload):
-            raise StructuredHTTPException(
-                status_code=404,
-                code="SESSION_NOT_FOUND",
-                message="Session not found",
-            )
-        runtime_role = _safe_text(session_payload.get("role")) or role
-        runtime_history, runtime_context = _project_agent_turn(
-            service=service,
-            session_id=session_id,
-            role=runtime_role,
-            workspace=workspace,
-            session_title=_safe_text(session_payload.get("title")) or f"Agent {runtime_role} session",
-            session_context=_normalize_session_context(session_payload.get("context_config")),
-        )
-        service.add_message(
-            session_id=session_id,
-            role="user",
-            content=message,
-        )
-
-    result = await _ROLE_RUNTIME.execute_role_session(
-        ExecuteRoleSessionCommandV1(
-            role=runtime_role,
-            session_id=session_id,
-            workspace=workspace,
-            user_message=message,
-            history=runtime_history,
-            context=runtime_context,
-            stream=False,
-        )
-    )
-
-    with RoleSessionService() as service:
-        service.add_message(
-            session_id=session_id,
-            role="assistant",
-            content=str(result.output or ""),
-            thinking=result.thinking,
-            meta={
-                "tool_calls": [{"name": name} for name in list(result.tool_calls or ()) if _safe_text(name)],
-                "status": result.status,
-                "error_message": result.error_message,
-            },
-        )
-
-    return {
-        "ok": result.ok,
-        "session_id": session_id,
-        "reply": result.output,
-        "reasoning_summary": result.thinking,
-        "tool_calls": list(result.tool_calls),
-        "error": result.error_message if not result.ok else None,
-    }
-
-
-async def _stream_agent_response(
-    *,
-    session_id: str,
-    message: str,
-    workspace: str,
-    role: str,
-    output_queue: asyncio.Queue,
-) -> None:
-    with RoleSessionService() as service:
-        session = service.get_session(session_id)
-        if session is None:
-            await output_queue.put({"type": "error", "data": {"error": "Session not found"}})
-            await output_queue.put({"type": "done"})
-            return
-        session_payload = session.to_dict(include_messages=False)
-        runtime_role = _safe_text(session_payload.get("role")) or role
-        runtime_history, runtime_context = _project_agent_turn(
-            service=service,
-            session_id=session_id,
-            role=runtime_role,
-            workspace=workspace,
-            session_title=_safe_text(session_payload.get("title")) or f"Agent {runtime_role} session",
-            session_context=_normalize_session_context(session_payload.get("context_config")),
-        )
-        service.add_message(
-            session_id=session_id,
-            role="user",
-            content=message,
-        )
-
-    command = ExecuteRoleSessionCommandV1(
-        role=runtime_role,
-        session_id=session_id,
-        workspace=workspace,
-        user_message=message,
-        history=runtime_history,
-        context=runtime_context,
-        stream=True,
-    )
-
-    response_parts: list[str] = []
-    thinking_parts: list[str] = []
-    assistant_saved = False
-    await output_queue.put(
-        {
-            "type": "thinking_start",
-            "data": {"message": "Starting..."},
-        }
-    )
-    try:
-        async for event in _ROLE_RUNTIME.stream_chat_turn(command):
-            event_type = _safe_text(event.get("type"))
-            if event_type == "content_chunk":
-                response_parts.append(_safe_text(event.get("content")))
-                await output_queue.put(
-                    {
-                        "type": "content_chunk",
-                        "data": {"content": _safe_text(event.get("content"))},
-                    }
-                )
-                continue
-            if event_type == "thinking_chunk":
-                thinking_parts.append(_safe_text(event.get("content")))
-                await output_queue.put(
-                    {
-                        "type": "thinking_chunk",
-                        "data": {"content": _safe_text(event.get("content"))},
-                    }
-                )
-                continue
-            if event_type == "tool_call":
-                await output_queue.put(
-                    {
-                        "type": "tool_call",
-                        "data": {
-                            "tool": event.get("tool"),
-                            "args": event.get("args") or {},
-                        },
-                    }
-                )
-                continue
-            if event_type == "tool_result":
-                await output_queue.put(
-                    {
-                        "type": "tool_result",
-                        "data": event.get("result", {}),
-                    }
-                )
-                continue
-            if event_type == "fingerprint":
-                await output_queue.put(
-                    {
-                        "type": "fingerprint",
-                        "data": {"fingerprint": event.get("fingerprint")},
-                    }
-                )
-                continue
-            if event_type == "complete":
-                result = event.get("result")
-                content = _safe_text(
-                    getattr(result, "output", None) or getattr(result, "content", None) or "".join(response_parts)
-                )
-                thinking = _safe_text(getattr(result, "thinking", None) or "".join(thinking_parts))
-                tool_calls = [
-                    {"name": name} for name in list(getattr(result, "tool_calls", ()) or ()) if _safe_text(name)
-                ]
-                with RoleSessionService() as service:
-                    service.add_message(
-                        session_id=session_id,
-                        role="assistant",
-                        content=content,
-                        thinking=thinking or None,
-                        meta={
-                            "tool_calls": tool_calls,
-                            "status": getattr(result, "status", None),
-                            "error_message": getattr(result, "error_message", None),
-                        },
-                    )
-                assistant_saved = True
-                await output_queue.put(
-                    {
-                        "type": "complete",
-                        "data": {
-                            "content": content,
-                            "thinking": thinking or None,
-                            "tool_calls": tool_calls,
-                        },
-                    }
-                )
-                break
-            if event_type == "error":
-                await output_queue.put(
-                    {
-                        "type": "error",
-                        "data": {"error": _safe_text(event.get("error")) or "Unknown error"},
-                    }
-                )
-                return
-    except (RuntimeError, ValueError) as exc:
-        await output_queue.put(
-            {
-                "type": "error",
-                "data": {"error": str(exc)},
-            }
-        )
-        return
-    finally:
-        if response_parts and not assistant_saved:
-            with RoleSessionService() as service:
-                service.add_message(
-                    session_id=session_id,
-                    role="assistant",
-                    content="".join(response_parts),
-                    thinking="".join(thinking_parts) or None,
-                    meta={},
-                )
-        await output_queue.put({"type": "done"})
+    """Reject retired execution before preflight, storage or scheduling."""
+    raise legacy_engine_retired("Legacy _get_or_create_session")
 
 
 @router.get("/sessions", dependencies=[Depends(require_auth)])
@@ -441,7 +163,9 @@ async def list_agent_sessions(
     limit: int = 20,
 ) -> dict[str, Any]:
     get_state(request)
-    with RoleSessionService() as service:
+    with RoleSessionService(
+        workspace=_agent_workspace(request), read_only=True, enable_persistence=False, enable_events=False
+    ) as service:
         candidate_sessions = service.get_sessions(
             host_kind=RoleHostKind.API_SERVER.value,
             session_type="standalone",
@@ -475,7 +199,7 @@ async def get_agent_session(
     session_id: str,
 ) -> dict[str, Any]:
     get_state(request)
-    session = _load_agent_session(session_id)
+    session = _load_agent_session(session_id, workspace=_agent_workspace(request))
     if session is None:
         raise StructuredHTTPException(
             status_code=404,
@@ -495,7 +219,7 @@ async def search_agent_session_memory(
     limit: int = 6,
 ) -> dict[str, Any]:
     get_state(request)
-    if _load_agent_session(session_id) is None:
+    if _load_agent_session(session_id, workspace=_agent_workspace(request)) is None:
         raise StructuredHTTPException(
             status_code=404,
             code="SESSION_NOT_FOUND",
@@ -516,7 +240,12 @@ async def search_agent_session_memory(
             message="Invalid query parameters",
         ) from None
 
-    with RoleSessionContextMemoryService() as service:
+    with (
+        RoleSessionService(
+            workspace=_agent_workspace(request), read_only=True, enable_events=False, enable_persistence=False
+        ) as historical_service,
+        RoleSessionContextMemoryService(session_service=historical_service) as service,
+    ):
         result = service.search_memory(query)
 
     if not result.ok:
@@ -547,7 +276,7 @@ async def read_agent_session_memory_artifact(
     end_line: int | None = None,
 ) -> dict[str, Any]:
     get_state(request)
-    if _load_agent_session(session_id) is None:
+    if _load_agent_session(session_id, workspace=_agent_workspace(request)) is None:
         raise StructuredHTTPException(
             status_code=404,
             code="SESSION_NOT_FOUND",
@@ -567,7 +296,12 @@ async def read_agent_session_memory_artifact(
             message="Invalid query parameters",
         ) from None
 
-    with RoleSessionContextMemoryService() as service:
+    with (
+        RoleSessionService(
+            workspace=_agent_workspace(request), read_only=True, enable_events=False, enable_persistence=False
+        ) as historical_service,
+        RoleSessionContextMemoryService(session_service=historical_service) as service,
+    ):
         result = service.read_artifact(query)
 
     if not result.ok:
@@ -591,7 +325,7 @@ async def read_agent_session_memory_episode(
     episode_id: str,
 ) -> dict[str, Any]:
     get_state(request)
-    if _load_agent_session(session_id) is None:
+    if _load_agent_session(session_id, workspace=_agent_workspace(request)) is None:
         raise StructuredHTTPException(
             status_code=404,
             code="SESSION_NOT_FOUND",
@@ -609,7 +343,12 @@ async def read_agent_session_memory_episode(
             message="Invalid query parameters",
         ) from None
 
-    with RoleSessionContextMemoryService() as service:
+    with (
+        RoleSessionService(
+            workspace=_agent_workspace(request), read_only=True, enable_events=False, enable_persistence=False
+        ) as historical_service,
+        RoleSessionContextMemoryService(session_service=historical_service) as service,
+    ):
         result = service.read_episode(query)
 
     if not result.ok:
@@ -633,7 +372,7 @@ async def read_agent_session_memory_state(
     path: str,
 ) -> dict[str, Any]:
     get_state(request)
-    if _load_agent_session(session_id) is None:
+    if _load_agent_session(session_id, workspace=_agent_workspace(request)) is None:
         raise StructuredHTTPException(
             status_code=404,
             code="SESSION_NOT_FOUND",
@@ -651,7 +390,12 @@ async def read_agent_session_memory_state(
             message="Invalid query parameters",
         ) from None
 
-    with RoleSessionContextMemoryService() as service:
+    with (
+        RoleSessionService(
+            workspace=_agent_workspace(request), read_only=True, enable_events=False, enable_persistence=False
+        ) as historical_service,
+        RoleSessionContextMemoryService(session_service=historical_service) as service,
+    ):
         result = service.get_state(query)
 
     if not result.ok:
@@ -675,14 +419,8 @@ async def send_agent_message(
     session_id: str,
     payload: SessionMessageRequest,
 ) -> dict[str, Any]:
-    state = get_state(request)
-    result = await _execute_agent_message(
-        session_id="",
-        message=payload.message.strip(),
-        role=payload.role,
-        workspace=str(state.settings.workspace),
-    )
-    return result
+    """Reject retired execution before preflight, storage or scheduling."""
+    raise legacy_engine_retired("Legacy send_agent_message")
 
 
 @router.delete("/sessions/{session_id}", dependencies=[Depends(require_auth)])
@@ -690,23 +428,8 @@ async def delete_agent_session(
     request: Request,
     session_id: str,
 ) -> dict[str, Any]:
-    get_state(request)
-    with RoleSessionService() as service:
-        session = service.get_session(session_id)
-        if session is None or not _is_agent_session_payload(session.to_dict(include_messages=False)):
-            raise StructuredHTTPException(
-                status_code=404,
-                code="SESSION_NOT_FOUND",
-                message="Session not found",
-            )
-        success = service.delete_session(session_id, soft=False)
-    if success:
-        return {"ok": True, "message": f"Session {session_id} deleted"}
-    raise StructuredHTTPException(
-        status_code=404,
-        code="SESSION_NOT_FOUND",
-        message="Session not found",
-    )
+    """Reject retired execution before preflight, storage or scheduling."""
+    raise legacy_engine_retired("Legacy delete_agent_session")
 
 
 @router.post("/turn", dependencies=[Depends(require_auth)])
@@ -714,34 +437,5 @@ async def agent_turn(
     request: Request,
     payload: AgentTurnPayload,
 ) -> dict[str, Any]:
-    state = get_state(request)
-    workspace = payload.workspace or state.settings.workspace
-    message = payload.message.strip()
-    role = payload.role
-    stream = bool(payload.stream)
-
-    session = _get_or_create_session(str(workspace), role)
-    session_id = _safe_text(session.get("session_id"))
-
-    if stream:
-        return {
-            "ok": True,
-            "session_id": session_id,
-            "jetstream_url": f"/v2/roles/sessions/{session_id}/messages/jetstream",
-            "transport": "nats-jetstream",
-        }
-
-    response = await _execute_agent_message(
-        session_id=session_id,
-        message=message,
-        role=role,
-        workspace=str(workspace),
-    )
-    return {
-        "ok": bool(response.get("ok")),
-        "session_id": session_id,
-        "reply": response.get("reply", ""),
-        "reasoning_summary": response.get("reasoning_summary"),
-        "phase": RunPhase.PENDING.value,
-        "error": response.get("error"),
-    }
+    """Reject retired execution before preflight, storage or scheduling."""
+    raise legacy_engine_retired("Legacy agent_turn")

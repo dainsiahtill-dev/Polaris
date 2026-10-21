@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from polaris.bootstrap.config import Settings
 from polaris.cells.events.fact_stream.public import (
@@ -22,6 +22,7 @@ from polaris.cells.events.fact_stream.public import (
 )
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryConfig,
+    FactoryRun,
     FactoryRunService,
     FactoryRunStatus,
     OrchestrationStageExecutor,
@@ -34,9 +35,10 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
     TaskRuntimeExecutionAttemptIdentityV1,
 )
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.delivery.http.app_factory import create_app
+from polaris.cells.storage.layout.public.service import sync_process_settings_environment
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import factory as factory_router_module
-from polaris.delivery.http.routers._shared import StructuredHTTPException
+from polaris.delivery.http.routers._shared import require_auth
 from polaris.kernelone.quality import (
     matching_owner_handoff_request,
     owner_handoff_identifier_tokens,
@@ -553,10 +555,54 @@ class LoopingStageExecutor:
         )
 
 
+async def _seed_history_run(
+    service: FactoryRunService, config: FactoryConfig, *, with_authority: bool = False
+) -> FactoryRun:
+    """Seed a historical snapshot; never reopen retired production admission."""
+    import uuid
+
+    run = FactoryRun(
+        id="historical_" + uuid.uuid4().hex[:12],
+        config=config,
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-10-20T00:00:00+00:00",
+    )
+    from polaris.cells.factory.pipeline.internal.factory_event_chain import (
+        FactoryRunAdmissionV1,
+        build_factory_run_admitted_event,
+    )
+
+    await service._append_event(
+        run.id,
+        {
+            **build_factory_run_admitted_event(
+                FactoryRunAdmissionV1(
+                    factory_run_id=run.id, created_at=run.created_at, name=config.name, description=config.description
+                )
+            ),
+            "run_id": run.id,
+        },
+        publish=False,
+    )
+    if with_authority:
+        from polaris.cells.factory.pipeline.internal.factory_physical_attempt_coordinator import (
+            FactoryPhysicalAttemptLiveControlPort,
+        )
+
+        lease = service._admission.acquire(run.id)
+        service._attach_workspace_lease(run, lease)
+        service._ensure_physical_attempt_replay_ledgers(run.id)
+        service._physical_attempt_coordinators[run.id] = FactoryPhysicalAttemptLiveControlPort(
+            factory_run_id=run.id,
+            revalidate_active_stage_claim=service._revalidate_active_physical_attempt_stage_claim,
+        )
+    await service.store.save_run(run)
+    return run
+
+
 @pytest.fixture
-def temp_workspace():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
+def temp_workspace(tmp_path: Path):
+    yield tmp_path
 
 
 @pytest.fixture(autouse=True)
@@ -603,13 +649,22 @@ def _factory_test_client(
         # Set a test token before creating the app (IRONWALL-1: auth is now enforced)
         test_token = "test-factory-router-token-2024"
         monkeypatch.setenv("KERNELONE_TOKEN", test_token)
-        app = create_app(
-            Settings(
-                workspace=temp_workspace,
-                nats={"enabled": False, "required": False},
+        app = FastAPI()
+        app.state.app_state = SimpleNamespace(
+            settings=Settings(workspace=temp_workspace, nats={"enabled": False, "required": False})
+        )
+        sync_process_settings_environment(app.state.app_state.settings)
+        setup_exception_handlers(app)
+        app.include_router(factory_router_module.router)
+        app.dependency_overrides[require_auth] = lambda: None
+        bootstrap_fact_stream_workspace(
+            BootstrapFactStreamWorkspaceCommandV1(
+                workspace=str(temp_workspace),
+                streams=fact_stream_bootstrap_streams(),
+                maintenance_reason="historical_factory_router_fixture",
             )
         )
-        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace, **kwargs: service)
         monkeypatch.setattr(factory_router_module, "ensure_required_roles_ready", lambda *args, **kwargs: None)
 
         with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as test_client:
@@ -684,53 +739,45 @@ def test_client_fixture_restores_process_settings_environment(
 def test_start_and_get_factory_run_without_workspace(client: TestClient, temp_workspace: Path) -> None:
     response = client.post(
         "/v2/factory/runs",
-        json={
-            "workspace": str(temp_workspace),
-            "start_from": "architect",
-            "directive": "Build a complete workflow",
-            "run_director": True,
-        },
+        json={"workspace": str(temp_workspace), "start_from": "pm", "persist_workspace": True},
     )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["status"] == "running"
-    assert "phase" in payload
-    assert "current_stage" in payload
-
-    status_response = client.get(f"/v2/factory/runs/{payload['run_id']}")
-    assert status_response.status_code == 200
-    status_payload = status_response.json()
-    assert "status" in status_payload
-    assert "current_stage" in status_payload
-    assert "last_successful_stage" in status_payload
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
 
 
 def test_cancel_factory_run_without_workspace(
     client: TestClient,
     service: FactoryRunService,
 ) -> None:
-    run = asyncio.run(service.create_run(FactoryConfig(name="manual-run", stages=["pm_planning"])))
-    asyncio.run(service.start_run(run.id))
+    run = asyncio.run(
+        _seed_history_run(service, FactoryConfig(name="manual-run", stages=["pm_planning"]), with_authority=True)
+    )
 
     response = client.post(
         f"/v2/factory/runs/{run.id}/control",
         json={"action": "cancel", "reason": "operator stop"},
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["status"] == "cancelled"
-    assert payload["phase"] == "cancelled"
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    updated = asyncio.run(service.get_run(run.id))
+    assert updated is not None and updated.status == FactoryRunStatus.RUNNING
+
+
+def test_cleanup_remains_available_to_real_mutable_factory_owner(service: FactoryRunService) -> None:
+    """A read-only query mode must not disable the actual owner's cleanup kernel."""
+    run = asyncio.run(
+        _seed_history_run(service, FactoryConfig(name="owned-cleanup", stages=["pm_planning"]), with_authority=True)
+    )
+    cancelled = asyncio.run(service.cancel_run(run.id, "owned test cleanup"))
+    assert cancelled.status == FactoryRunStatus.CANCELLED
 
 
 def test_stream_route_is_not_registered(
     client: TestClient,
     service: FactoryRunService,
 ) -> None:
-    run = asyncio.run(service.create_run(FactoryConfig(name="stream-run", stages=["pm_planning"])))
-    asyncio.run(service.start_run(run.id))
-    asyncio.run(service.complete_run(run.id, success=True))
+    run = asyncio.run(_seed_history_run(service, FactoryConfig(name="stream-run", stages=["pm_planning"])))
 
     response = client.get(f"/v2/factory/runs/{run.id}/stream")
 
@@ -762,27 +809,10 @@ def test_start_from_pm_builds_pm_chief_engineer_director_chain(
 ) -> None:
     response = client.post(
         "/v2/factory/runs",
-        json={
-            "workspace": str(temp_workspace),
-            "start_from": "pm",
-            "directive": "Plan and execute implementation",
-            "run_director": True,
-        },
+        json={"workspace": str(temp_workspace), "start_from": "pm", "persist_workspace": True},
     )
-
-    assert response.status_code == 200
-    payload = response.json()
-    run_id = str(payload.get("run_id") or "")
-    assert run_id
-
-    run = asyncio.run(service.get_run(run_id))
-    assert run is not None
-    assert list(run.config.stages) == [
-        "pm_planning",
-        "chief_engineer_review",
-        "director_dispatch",
-        "quality_gate",
-    ]
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
 
 
 def test_factory_director_context_defaults_to_auto_rounds() -> None:
@@ -811,19 +841,13 @@ def test_factory_director_context_defaults_to_auto_rounds() -> None:
 def test_factory_start_rejects_workspace_outside_instance_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("KERNELONE_INSTANCE_WORKSPACE", "/srv/polaris/main")
-    payload = FactoryStartRequest(workspace="/tmp/bench-project")
-    state = SimpleNamespace(settings=Settings(workspace="/srv/polaris/main"))
-
-    with pytest.raises(StructuredHTTPException) as exc_info:
+    payload = FactoryStartRequest(workspace="/foreign")
+    state = SimpleNamespace(settings=SimpleNamespace(workspace="/bound"))
+    with pytest.raises(HTTPException) as caught:
         asyncio.run(factory_router_module._start_factory_run_core(payload, state))
-
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.code == "INSTANCE_WORKSPACE_BINDING_MISMATCH"
-    assert exc_info.value.structured_details == {
-        "bound_workspace": "/srv/polaris/main",
-        "requested_workspace": "/tmp/bench-project",
-    }
+    assert caught.value.status_code == 410
+    assert isinstance(caught.value.detail, dict)
+    assert caught.value.detail["error_code"] == "legacy_engine_retired"
 
 
 def test_factory_director_context_uses_director_timeout_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -896,9 +920,9 @@ def test_factory_readiness_roles_include_architect_for_docs_generation() -> None
 
 
 def test_factory_role_projection_marks_chief_engineer_stage_running() -> None:
-    run = factory_router_module.FactoryRun(
+    run = FactoryRun(
         id="factory_ce_role",
-        config=factory_router_module.FactoryConfig(name="test", stages=["chief_engineer_review"]),
+        config=FactoryConfig(name="test", stages=["chief_engineer_review"]),
         status=FactoryRunStatus.RUNNING,
         created_at="2026-05-23T00:00:00Z",
         metadata={"current_stage": "chief_engineer_review"},
@@ -912,9 +936,9 @@ def test_factory_role_projection_marks_chief_engineer_stage_running() -> None:
 
 
 def test_factory_status_elides_oversized_metadata_but_preserves_control_fields() -> None:
-    run = factory_router_module.FactoryRun(
+    run = FactoryRun(
         id="factory_large_status",
-        config=factory_router_module.FactoryConfig(name="test", stages=["quality_gate"]),
+        config=FactoryConfig(name="test", stages=["quality_gate"]),
         status=FactoryRunStatus.RUNNING,
         created_at="2026-08-12T00:00:00Z",
         metadata={
@@ -942,7 +966,9 @@ def test_artifact_endpoint_includes_existing_stage_result_artifacts(
     service: FactoryRunService,
     temp_workspace: Path,
 ) -> None:
-    run = asyncio.run(service.create_run(FactoryConfig(name="artifact-stage-run", stages=["chief_engineer_review"])))
+    run = asyncio.run(
+        _seed_history_run(service, FactoryConfig(name="artifact-stage-run", stages=["chief_engineer_review"]))
+    )
     blueprint_path = Path(resolve_logical_path(str(temp_workspace), "runtime/blueprints/ce-test.json"))
     blueprint_path.parent.mkdir(parents=True, exist_ok=True)
     blueprint_path.write_text('{"blueprint_id":"ce-test","task_id":"TASK-CE-1"}\n', encoding="utf-8")
@@ -975,8 +1001,9 @@ def test_artifact_endpoint_includes_existing_stage_result_artifacts(
 def test_delivery_loop_replans_until_pipeline_complete_and_stable(temp_workspace: Path) -> None:
     executor = LoopingStageExecutor(temp_workspace, signatures=["A", "B", "B"], complete_cycle=3)
     service = FactoryRunService(temp_workspace, executor=executor)
-    run = asyncio.run(service.create_run(FactoryConfig(name="loop-run", stages=["pm_planning", "quality_gate"])))
-    asyncio.run(service.start_run(run.id))
+    run = asyncio.run(
+        _seed_history_run(service, FactoryConfig(name="loop-run", stages=["pm_planning", "quality_gate"]))
+    )
 
     payload = FactoryStartRequest(
         workspace=str(temp_workspace),
@@ -987,19 +1014,15 @@ def test_delivery_loop_replans_until_pipeline_complete_and_stable(temp_workspace
     )
     state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
 
-    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+    before = run.to_dict()
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+    assert caught.value.status_code == 410
+    assert isinstance(caught.value.detail, dict)
+    assert caught.value.detail["error_code"] == "legacy_engine_retired"
     updated = asyncio.run(service.get_run(run.id))
     assert updated is not None
-    assert updated.status == FactoryRunStatus.COMPLETED
-    assert int(updated.metadata.get("loop_cycles_executed") or 0) == 3
-    history = updated.metadata.get("loop_history")
-    assert isinstance(history, list) and len(history) == 3
-    assert str(updated.metadata.get("loop_stop_reason") or "") == "plan_signature_stable"
-    assert executor.pm_calls == 3
-    assert executor.qa_calls == 1
-    summary_json = updated.metadata.get("summary_json")
-    assert isinstance(summary_json, dict)
-    assert summary_json.get("status") == "PASS"
+    assert updated.to_dict() == before
 
 
 def test_delivery_loop_fails_when_docs_pipeline_stalled_without_new_plan(temp_workspace: Path) -> None:
@@ -2023,9 +2046,8 @@ def test_execute_run_does_not_reenter_director_for_qa_without_committed_requeue_
         executor=executor,
     )
     run = asyncio.run(
-        service.create_run(FactoryConfig(name="qa-rework-run", stages=["director_dispatch", "quality_gate"]))
+        _seed_history_run(service, FactoryConfig(name="qa-rework-run", stages=["director_dispatch", "quality_gate"]))
     )
-    asyncio.run(service.start_run(run.id))
     payload = FactoryStartRequest(
         workspace=str(temp_workspace),
         start_from="director_resume",
@@ -2034,15 +2056,15 @@ def test_execute_run_does_not_reenter_director_for_qa_without_committed_requeue_
     )
     state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
 
-    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
-
+    before = run.to_dict()
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+    assert caught.value.status_code == 410
+    assert isinstance(caught.value.detail, dict)
+    assert caught.value.detail["error_code"] == "legacy_engine_retired"
     updated = asyncio.run(service.get_run(run.id))
     assert updated is not None
-    assert updated.status == FactoryRunStatus.FAILED
-    assert executor.director_calls == 1
-    assert executor.qa_calls == 1
-    history = updated.metadata.get("quality_rework_history")
-    assert history is None
+    assert updated.to_dict() == before
 
 
 def test_execute_run_does_not_replay_director_without_committed_requeue_receipt(temp_workspace: Path) -> None:
@@ -2052,14 +2074,14 @@ def test_execute_run_does_not_replay_director_without_committed_requeue_receipt(
         executor=executor,
     )
     run = asyncio.run(
-        service.create_run(
+        _seed_history_run(
+            service,
             FactoryConfig(
                 name="director-local-rework-run",
                 stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
-            )
+            ),
         )
     )
-    asyncio.run(service.start_run(run.id))
     payload = FactoryStartRequest(
         workspace=str(temp_workspace),
         start_from="pm",
@@ -2068,17 +2090,15 @@ def test_execute_run_does_not_replay_director_without_committed_requeue_receipt(
     )
     state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
 
-    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
-
+    before = run.to_dict()
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+    assert caught.value.status_code == 410
+    assert isinstance(caught.value.detail, dict)
+    assert caught.value.detail["error_code"] == "legacy_engine_retired"
     updated = asyncio.run(service.get_run(run.id))
     assert updated is not None
-    assert updated.status == FactoryRunStatus.FAILED
-    assert executor.director_calls == 1
-    assert executor.qa_calls == 0
-    assert updated.stages_completed.count("pm_planning") == 1
-    assert updated.stages_completed.count("chief_engineer_review") == 1
-    history = updated.metadata.get("director_local_rework_history")
-    assert history is None
+    assert updated.to_dict() == before
 
 
 def test_stage_local_rework_projection_accepts_durable_workflow_action_shape() -> None:
@@ -2148,14 +2168,14 @@ def test_execute_run_does_not_replay_chief_engineer_without_committed_requeue_re
     executor = ChiefEngineerLocalReworkStageExecutor()
     service = FactoryRunService(temp_workspace, executor=executor)
     run = asyncio.run(
-        service.create_run(
+        _seed_history_run(
+            service,
             FactoryConfig(
                 name="chief-engineer-local-rework-run",
                 stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
-            )
+            ),
         )
     )
-    asyncio.run(service.start_run(run.id))
     payload = FactoryStartRequest(
         workspace=str(temp_workspace),
         start_from="pm",
@@ -2164,35 +2184,29 @@ def test_execute_run_does_not_replay_chief_engineer_without_committed_requeue_re
     )
     state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
 
-    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
-
+    before = run.to_dict()
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+    assert caught.value.status_code == 410
+    assert isinstance(caught.value.detail, dict)
+    assert caught.value.detail["error_code"] == "legacy_engine_retired"
     updated = asyncio.run(service.get_run(run.id))
     assert updated is not None
-    assert updated.status == FactoryRunStatus.FAILED
-    assert executor.pm_calls == 1
-    assert executor.chief_engineer_calls == 1
-    assert executor.director_calls == 0
-    assert executor.qa_calls == 0
-    assert updated.stages_completed.count("pm_planning") == 1
-    history = updated.metadata.get("chief_engineer_local_rework_history")
-    assert history is None
-    failure = updated.metadata.get("failure")
-    assert isinstance(failure, dict)
-    assert "factory_physical_attempt_recovered_run_permanently_closed" not in str(failure)
+    assert updated.to_dict() == before
 
 
 def test_execute_run_bounds_chief_engineer_local_rework_without_upstream_replay(temp_workspace: Path) -> None:
     executor = ChiefEngineerAlwaysFailsStageExecutor()
     service = FactoryRunService(temp_workspace, executor=executor)
     run = asyncio.run(
-        service.create_run(
+        _seed_history_run(
+            service,
             FactoryConfig(
                 name="chief-engineer-local-rework-exhaustion",
                 stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
-            )
+            ),
         )
     )
-    asyncio.run(service.start_run(run.id))
     payload = FactoryStartRequest(
         workspace=str(temp_workspace),
         start_from="pm",
@@ -2201,17 +2215,15 @@ def test_execute_run_bounds_chief_engineer_local_rework_without_upstream_replay(
     )
     state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
 
-    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
-
+    before = run.to_dict()
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+    assert caught.value.status_code == 410
+    assert isinstance(caught.value.detail, dict)
+    assert caught.value.detail["error_code"] == "legacy_engine_retired"
     updated = asyncio.run(service.get_run(run.id))
     assert updated is not None
-    assert updated.status == FactoryRunStatus.FAILED
-    assert executor.pm_calls == 1
-    assert executor.chief_engineer_calls == 1
-    assert executor.director_calls == 0
-    assert executor.qa_calls == 0
-    history = updated.metadata.get("chief_engineer_local_rework_history")
-    assert history is None
+    assert updated.to_dict() == before
 
 
 def test_quality_task_boundary_triage_does_not_bypass_committed_requeue_receipt(
@@ -2223,9 +2235,10 @@ def test_quality_task_boundary_triage_does_not_bypass_committed_requeue_receipt(
         executor=executor,
     )
     run = asyncio.run(
-        service.create_run(FactoryConfig(name="task-boundary-rework-run", stages=["director_dispatch", "quality_gate"]))
+        _seed_history_run(
+            service, FactoryConfig(name="task-boundary-rework-run", stages=["director_dispatch", "quality_gate"])
+        )
     )
-    asyncio.run(service.start_run(run.id))
     payload = FactoryStartRequest(
         workspace=str(temp_workspace),
         start_from="director_resume",
@@ -2234,21 +2247,20 @@ def test_quality_task_boundary_triage_does_not_bypass_committed_requeue_receipt(
     )
     state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
 
-    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
-
+    before = run.to_dict()
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+    assert caught.value.status_code == 410
+    assert isinstance(caught.value.detail, dict)
+    assert caught.value.detail["error_code"] == "legacy_engine_retired"
     updated = asyncio.run(service.get_run(run.id))
     assert updated is not None
-    assert updated.status == FactoryRunStatus.FAILED
-    assert executor.director_calls == 1
-    assert executor.qa_calls == 1
-    history = updated.metadata.get("quality_rework_history")
-    assert history is None
+    assert updated.to_dict() == before
 
 
 def test_execute_run_preserves_qa_llm_unavailable_root_cause(temp_workspace: Path) -> None:
     service = FactoryRunService(temp_workspace, executor=QaLlmUnavailableStageExecutor())
-    run = asyncio.run(service.create_run(FactoryConfig(name="qa-llm-run", stages=["quality_gate"])))
-    asyncio.run(service.start_run(run.id))
+    run = asyncio.run(_seed_history_run(service, FactoryConfig(name="qa-llm-run", stages=["quality_gate"])))
     payload = FactoryStartRequest(
         workspace=str(temp_workspace),
         start_from="pm",
@@ -2257,13 +2269,12 @@ def test_execute_run_preserves_qa_llm_unavailable_root_cause(temp_workspace: Pat
     )
     state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
 
-    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
-
+    before = run.to_dict()
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+    assert caught.value.status_code == 410
+    assert isinstance(caught.value.detail, dict)
+    assert caught.value.detail["error_code"] == "legacy_engine_retired"
     updated = asyncio.run(service.get_run(run.id))
     assert updated is not None
-    assert updated.status == FactoryRunStatus.FAILED
-    failure = updated.metadata.get("failure")
-    assert isinstance(failure, dict)
-    assert failure.get("stage") == "quality_gate"
-    assert failure.get("code") == "QA_LLM_JUDGEMENT_UNAVAILABLE"
-    assert "qa_llm_judgement_unavailable" in str(failure.get("detail") or "")
+    assert updated.to_dict() == before

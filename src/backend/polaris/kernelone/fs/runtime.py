@@ -14,6 +14,7 @@ from polaris.kernelone.storage import (
     normalize_logical_rel_path,
     resolve_logical_path,
     resolve_storage_roots,
+    resolve_storage_roots_read_only,
 )
 from polaris.kernelone.utils import utc_now_str
 
@@ -28,13 +29,18 @@ _CHANNEL_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 class KernelFileSystem:
     """Kernel-level file system boundary for all file effects."""
 
-    def __init__(self, workspace: str, adapter: KernelFileSystemAdapter) -> None:
+    def __init__(self, workspace: str, adapter: KernelFileSystemAdapter, *, read_only_paths: bool = False) -> None:
+        # This selects non-initializing path resolution; write authorization
+        # remains with the caller and the normal filesystem effect policies.
+        self._read_only_paths = read_only_paths
         self._physical_workspace = str(Path(workspace).absolute())
         self.workspace = str(Path(workspace).resolve())
         self._adapter = adapter
 
     def resolve_path(self, logical_path: str) -> Path:
         normalized = self.to_logical_path(logical_path)
+        if self._read_only_paths:
+            return Path(resolve_logical_path(self.workspace, normalized, read_only=True))
         return Path(resolve_logical_path(self.workspace, normalized))
 
     def to_logical_path(self, logical_or_absolute_path: str) -> str:
@@ -496,7 +502,7 @@ class KernelFileSystem:
 
     def _logical_from_absolute_path(self, absolute_path: str) -> str:
         absolute = os.path.abspath(absolute_path)
-        roots = resolve_storage_roots(self.workspace)
+        roots = (resolve_storage_roots_read_only if self._read_only_paths else resolve_storage_roots)(self.workspace)
         candidates = (
             ("runtime", roots.runtime_root),
             ("workspace", roots.workspace_persistent_root),

@@ -1,139 +1,80 @@
 version: 1
 id: roles_execution_pipeline
-title: Roles Execution Pipeline
-purpose: >
-  Unified role execution flow from host protocol adaptation through kernel
-  primitives, engine strategy selection, runtime lifecycle, and adapter
-  dispatch for PM/Director/Architect/ChiefEngineer/QA.
-
+title: Roles Engineering Execution Pipeline
+purpose: Single engineering Agent owner from HTTP/CLI admission through native tool execution, optional read-only
+  role collaboration and workspace-scoped session recovery; legacy lifecycle readers are historical.
 entry_cells:
-  - delivery.api_gateway
-  - delivery.cli
-
+- delivery.api_gateway
+- delivery.cli
 cells:
-  - roles.host
-  - roles.kernel
-  - roles.engine
-  - roles.runtime
-  - roles.adapters
-  - roles.profile
-  - roles.session
-  - context.engine
-  - llm.control_plane
-  - policy.permission
-  - policy.workspace_guard
-  - audit.evidence
-  - runtime.execution_broker
-  - runtime.task_runtime
-  - runtime.state_owner
-
+- roles.runtime
+- events.fact_stream
+- context.engine
+- llm.control_plane
+- policy.permission
+- policy.workspace_guard
 exit_cells:
-  - roles.runtime
-  - roles.adapters
-  - roles.kernel
-
+- roles.runtime
 relations:
-  - from: roles.host
-    to: roles.session
-    type: calls
-    contract: CreateRoleSessionCommandV1
-  - from: roles.session
-    to: roles.kernel
-    type: calls
-    contract: ExecuteRoleKernelCommandV1
-  - from: roles.kernel
-    to: roles.engine
-    type: calls
-    contract: SelectEngineCommandV1
-  - from: roles.engine
-    to: roles.runtime
-    type: calls
-    contract: ExecuteRoleTaskCommandV1
-  - from: roles.runtime
-    to: roles.adapters
-    type: calls
-    contract: CreateRoleAdapterCommandV1
-  - from: roles.adapters
-    to: roles.profile
-    type: queries
-    contract: QueryRoleProfileRegistryV1
-  - from: roles.profile
-    to: policy.workspace_guard
-    type: queries
-    contract: WorkspaceWriteGuardQueryV1
-  - from: roles.kernel
-    to: context.engine
-    type: queries
-    contract: BuildRoleContextCommandV1
-  - from: roles.kernel
-    to: llm.control_plane
-    type: calls
-    contract: InvokeLlmRoleCommandV1
-  - from: roles.runtime
-    to: runtime.execution_broker
-    type: commands
-    contract: LaunchExecutionProcessCommandV1
-  - from: roles.runtime
-    to: runtime.task_runtime
-    type: commands
-    contract: CreateRuntimeTaskCommandV1
-  - from: roles.runtime
-    to: runtime.state_owner
-    type: commands
-    contract: PersistRuntimeTaskStateCommandV1
-  - from: roles.kernel
-    to: audit.evidence
-    type: emits
-    contract: RoleKernelEventV1
-  - from: policy.permission
-    to: roles.kernel
-    type: governs
-    contract: EvaluatePermissionCommandV1
-
+- from: delivery.api_gateway
+  to: roles.runtime
+  type: commands
+  contract: RoleRunCommand
+  note: EngineeringRunService start/cancel/resume; discuss is read-only and creates no run.
+- from: delivery.cli
+  to: roles.runtime
+  type: commands
+  contract: RoleRunCommand
+  note: Same engineering owner; explicit legacy write admission is retired.
+- from: roles.runtime
+  to: events.fact_stream
+  type: emits
+  contract: event.engineering
+  note: Committed engineering events on existing Nats-JetStream runtime.v2; transport does not own execution facts.
 critical_contracts:
-  - CreateRoleSessionCommandV1
-  - ExecuteRoleKernelCommandV1
-  - SelectEngineCommandV1
-  - ExecuteRoleTaskCommandV1
-  - CreateRoleAdapterCommandV1
-  - QueryRoleProfileRegistryV1
-  - BuildRoleContextCommandV1
-  - InvokeLlmRoleCommandV1
-  - LaunchExecutionProcessCommandV1
-  - CreateRuntimeTaskCommandV1
-  - PersistRuntimeTaskStateCommandV1
-  - EvaluatePermissionCommandV1
-
+- RoleRunCommand
+- PermissionScope
+- RunLimits
+- ToolObservation
+- RoleRunResult
 state_boundaries:
-  - owner: roles.session
-    state: runtime/role_sessions/*
-  - owner: roles.session
-    state: runtime/conversations/*
-  - owner: roles.profile
-    state: config/roles/*
-  - owner: roles.runtime
-    state: runtime/roles/*
-  - owner: runtime.state_owner
-    state: runtime/tasks/*
-  - owner: runtime.state_owner
-    state: runtime/state/*
-
+- owner: roles.runtime
+  state: runtime/engineering/sessions.sqlite3
+  note: Sole new-run fact store under <workspace>/.polaris/runtime; no old task/ledger/session mirrors.
+- owner: roles.runtime
+  state: runtime/engineering/workspace.lock
+  note: One workspace writer; release only after known process drain.
+- owner: roles.runtime
+  state: runtime/roles/*
+  note: Historical owned namespace only; no new-run writes or replay.
 verify_targets:
   tests:
-    - tests/test_roles_kernel.py
-    - tests/test_runtime_role_binding.py
-    - tests/test_roles_state_ownership.py
-    - tests/test_sequential_engine.py
-    - tests/test_role_adapters_taskboard_alignment.py
-    - polaris/cells/roles/runtime/tests/test_host_session_continuity.py
+  - polaris/cells/roles/runtime/tests/test_engineering_loop.py
+  - polaris/cells/roles/runtime/tests/test_engineering_roles.py
+  - polaris/cells/roles/runtime/tests/test_engineering_service.py
+  - polaris/cells/roles/runtime/tests/test_engineering_verification.py
+  - polaris/cells/roles/runtime/tests/test_engineering_verification_selection.py
+  - polaris/cells/roles/runtime/tests/test_engineering_recovery.py
+  - polaris/cells/roles/runtime/tests/test_engineering_context_audit.py
+  - polaris/cells/roles/runtime/tests/test_engineering_events.py
+  - polaris/tests/architecture/test_engineering_no_legacy_admission.py
   contracts:
-    - ExecuteRoleKernelCommandV1
-    - SelectEngineCommandV1
-    - ExecuteRoleTaskCommandV1
-    - CreateRoleAdapterCommandV1
-    - EvaluatePermissionCommandV1
-
+  - RoleRunCommand
+  - PermissionScope
+  - RunLimits
+  - ToolObservation
+  - RoleRunResult
 migration_notes:
-  - roles.host is newly created; full test coverage and EngineRegistry host_kind awareness pending.
-  - roles.runtime is a composite cell; business-role cell extraction still has remaining call-site rewiring.
-  - roles.adapters still routes Director optional execution backends during migration.
+- New runs default to one Director engineering loop; explicit collaborative PM/Chief Engineer/Director and one-level
+  read-only consult reuse the same owner. Uncalled roles remain not_called.
+- KernelOne technical provider/native codec, ToolSpec normalization, KFS, sandbox/process drain and budget reuse
+  remain. Host PermissionScope grants are immutable by model text, including explicit empty permissions.
+- Legacy role host/session/kernel/engine/adapters, TaskMarket, PM contract/CE portfolio/semantic patch and JobToken/DEO/Run
+  Ledger admission topology is historical only. New writes and automatic legacy fallback are retired; retained readers/utilities
+  are not evidence all historical source was deleted.
+- Old in-flight runs remain on original frozen owners; never migrate old IDs or replay unknown effects into engineering.
+  Current-source checks and required independent QA determine acceptance, not role completion text.
+- ContextOS audits actual final provider request and same-workspace snapshots; runtime.v2 is sole realtime rail.
+  Missing physical HTTP/billing evidence remains UNKNOWN.
+- Graph declaration/focused tests do not prove final release or all workloads; actual KernelOne ALL/catalog and
+  fresh formal results must be reported separately.

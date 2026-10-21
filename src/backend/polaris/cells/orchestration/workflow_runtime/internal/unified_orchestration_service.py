@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal, overload
 
 from polaris.cells.orchestration.workflow_runtime.internal.ports import (
     OrchestrationEventPublisher,
@@ -24,7 +24,6 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts imp
     FileChangeStats,
     OrchestrationMode,
     OrchestrationRunRequest,
-    OrchestrationSignal,
     OrchestrationSnapshot,
     PipelineSpec,
     PipelineTask,
@@ -316,45 +315,8 @@ class UnifiedOrchestrationService(OrchestrationService):
         self,
         request: OrchestrationRunRequest,
     ) -> OrchestrationSnapshot:
-        """提交编排运行"""
-        # 1. 统一契约规范化 (role_entries -> pipeline_spec)
-        request = self._canonicalize_workflow_request(request)
-
-        # 2. 零信任校验
-        errors = request.validate()
-        if errors:
-            raise ValidationError(f"Request validation failed: {errors}")
-
-        # 3. 确保角色适配器可用
-        self._ensure_role_adapters(request)
-
-        # 4. 持久化请求（用于恢复）
-        await self._repo.save_request(request)
-
-        # 5. 创建初始快照
-        snapshot = self._create_initial_snapshot(request)
-        await self._repo.save_snapshot(snapshot)
-        await self._publisher.publish_snapshot(request.run_id, snapshot)
-
-        # 6. 启动执行
-        if request.mode == OrchestrationMode.WORKFLOW:
-            task = asyncio.create_task(
-                self._execute_workflow(request.run_id),
-                name=f"orchestration-{request.run_id}",
-            )
-        else:  # CHAT mode
-            task = asyncio.create_task(
-                self._execute_chat(request.run_id),
-                name=f"orchestration-chat-{request.run_id}",
-            )
-
-        self._active_runs[request.run_id] = task
-        self._run_locks[request.run_id] = asyncio.Lock()
-
-        # 添加完成回调以清理
-        task.add_done_callback(lambda t: self._cleanup_run(request.run_id))
-
-        return snapshot
+        """Old orchestration may execute only in its frozen original process."""
+        raise RuntimeError("legacy_engine_retired: use roles.runtime.public.engineering_service")
 
     async def query_run(self, run_id: str) -> OrchestrationSnapshot | None:
         """查询运行状态"""
@@ -386,36 +348,16 @@ class UnifiedOrchestrationService(OrchestrationService):
         run_id: str,
         signal: SignalRequest,
     ) -> OrchestrationSnapshot:
-        """发送控制信号"""
-        snapshot = await self._repo.get_snapshot(run_id)
-        if not snapshot:
-            raise NotFoundError(f"Run not found: {run_id}")
-
-        lock = self._run_locks.get(run_id)
-        if not lock:
-            raise InvalidStateError(f"Run {run_id} is not active")
-
-        async with lock:
-            # 处理信号
-            if signal.signal == OrchestrationSignal.CANCEL:
-                return await self._handle_cancel(run_id, force=False)
-            elif signal.signal == OrchestrationSignal.RETRY:
-                return await self._handle_retry(run_id, signal.task_id)
-            elif signal.signal == OrchestrationSignal.SKIP:
-                return await self._handle_skip(run_id, signal.task_id)
-            else:
-                raise InvalidSignalError(f"Unsupported signal: {signal.signal}")
+        """Old orchestration may execute only in its frozen original process."""
+        raise RuntimeError("legacy_engine_retired: use roles.runtime.public.engineering_service")
 
     async def cancel_run(
         self,
         run_id: str,
         force: bool = False,
     ) -> OrchestrationSnapshot:
-        """取消运行"""
-        return await self.signal_run(
-            run_id,
-            SignalRequest(signal=OrchestrationSignal.CANCEL),
-        )
+        """Old orchestration may execute only in its frozen original process."""
+        raise RuntimeError("legacy_engine_retired: use roles.runtime.public.engineering_service")
 
     async def list_runs(
         self,
@@ -1156,9 +1098,19 @@ def get_orchestration_role_adapter_factory() -> RoleAdapterFactory:
     return factory
 
 
-async def get_orchestration_service() -> UnifiedOrchestrationService:
+@overload
+async def get_orchestration_service(*, read_only: Literal[True]) -> UnifiedOrchestrationService | None: ...
+
+
+@overload
+async def get_orchestration_service(*, read_only: Literal[False] = False) -> UnifiedOrchestrationService: ...
+
+
+async def get_orchestration_service(*, read_only: bool = False) -> UnifiedOrchestrationService | None:
     """获取编排服务单例"""
     global _service_instance
+    if read_only:
+        return _service_instance
     if _service_instance is None:
         async with _service_lock:
             if _service_instance is None:

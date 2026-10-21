@@ -939,42 +939,48 @@ rules:
       - grep effects_allowed for fs.write:runtime/events in non-fact_stream cells
       - fail if any Cell other than events.fact_stream claims runtime/events/* write
 
-  - id: no_direct_role_call
+  - id: engineering_single_execution_owner
     severity: blocker
     description: >
-      PM, ChiefEngineer, Director, and QA mainline collaboration must not rely on
-      direct role-to-role service or agent invocation. Business coordination must
-      flow through runtime.task_market contracts and state transitions.
+      All new writable HTTP/CLI/UI admissions, resume and error paths must use
+      roles.runtime.public.engineering_service.EngineeringRunService. Default
+      direct Director and explicit collaborative PM/CE/Director share one owner;
+      read-only consultation/discussion cannot create another controller or store.
     evidence:
-      - docs/AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14.md
-      - docs/graph/subgraphs/execution_governance_pipeline.yaml
-      - docs/graph/subgraphs/pm_pipeline.yaml
-    current_status: draft
+      - ../../docs/blueprints/POLARIS_ROLE_AGENT_REFACTOR_20261020.md
+      - polaris/cells/roles/runtime/public/engineering_service.py
+      - polaris/tests/architecture/test_engineering_no_legacy_admission.py
+      - docs/graph/subgraphs/roles_execution_pipeline.yaml
+    current_status: enforced_non_regressive
     desired_automation:
-      - grep mainline orchestration paths for direct imports of peer role public.service modules
-      - fail if PM/ChiefEngineer/Director/QA public services directly call each other outside approved adapters or tests
+      - run python -m pytest -q polaris/tests/architecture/test_engineering_no_legacy_admission.py
+      - reject new-run fallback to RoleExecutionKernel, execute_role_session, Factory contract or TaskMarket admission
+      - preserve legacy readers and original frozen in-flight owners without upgrading old run identities
 
-  - id: task_market_is_single_business_broker
+  - id: engineering_single_session_fact_store
     severity: blocker
     description: >
-      runtime.task_market is the sole business broker for PM/ChiefEngineer/Director/QA
-      work-item publication, claim, ack, requeue, and dead-letter transitions.
-      runtime.execution_broker may execute processes but must not own business task routing.
+      New engineering state is owned only by roles.runtime in workspace-local
+      .polaris/runtime/engineering/sessions.sqlite3. No task/ledger/RoleSession
+      mirror or TaskMarket business routing is required for new execution.
+      PermissionScope from the host, KFS and OS/process containment retain real safety.
     evidence:
-      - docs/AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14.md
+      - polaris/cells/roles/runtime/internal/engineering_session.py
+      - polaris/cells/roles/runtime/internal/engineering_tools.py
       - docs/graph/catalog/cells.yaml
-      - docs/graph/subgraphs/execution_governance_pipeline.yaml
-    current_status: draft
+    current_status: enforced_non_regressive
     desired_automation:
-      - validate graph relations route PM/ChiefEngineer/Director/QA work-item transitions through runtime.task_market
-      - fail if runtime.execution_broker contracts are used for business task publication or claim semantics
+      - verify one workspace writer and original saved scope/deadline on resume
+      - preserve explicit empty grants and reject model-controlled permission expansion
+      - reject duplicate new-run task, ledger or role-session facts
 
   - id: outbox_atomic
     severity: blocker
     description: >
-      runtime.task_market state transitions and downstream fact publication must
-      be bound by a durable outbox or equivalent transaction. Best-effort fact
-      emission is forbidden on the final mainline.
+      Retained runtime.task_market utility state transitions and downstream fact
+      publication must keep their durable outbox transaction. This guards that
+      optional or historical subsystem; it is not engineering admission or a
+      reason to recreate TaskMarket state for new engineering runs.
     evidence:
       - docs/AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14.md
       - docs/AGENT_COLLABORATION_EDA_IMPLEMENTATION_STATUS_2026-04-14.md
@@ -995,23 +1001,24 @@ rules:
       _escalate_to_human_review_no_lock) still use auto-commit outbox
       append — acceptable because outbox relay provides at-least-once delivery.
 
-  - id: director_requires_blueprint
+  - id: engineering_verification_uses_current_candidate
     severity: blocker
     description: >
-      Director execution work items must carry blueprint_id or blueprint_ref.
-      Any execution task lacking blueprint evidence must be rejected or moved to
-      dead letter before execution begins.
+      Director needs the actual user goal and host-granted tools, not a mandatory
+      PM contract or CE blueprint/hash. Declared checks remain required; omitted
+      checks are selected from the actual project and executed. Current-source
+      verification and required independent QA must agree before accepted;
+      completed text, empty checks and QA prose cannot fabricate success.
     evidence:
-      - docs/AGENT_COLLABORATION_EDA_TASK_MARKET_BLUEPRINT_2026-04-14.md
-      - docs/AGENT_COLLABORATION_EDA_IMPLEMENTATION_STATUS_2026-04-14.md
-      - docs/graph/subgraphs/execution_governance_pipeline.yaml
-    current_status: enforced
-    # Migrated 2026-04-24: runtime.task_market service references blueprint_id in
-    # upstream worker flow; execution governance pipeline subgraph enforces this
-    # contract.  Non-regressive gate is feasible via grep of task payload validation.
+      - polaris/cells/roles/runtime/internal/engineering_verification.py
+      - polaris/cells/roles/runtime/tests/test_engineering_verification_selection.py
+      - polaris/cells/roles/runtime/tests/test_engineering_verification.py
+      - polaris/cells/roles/runtime/tests/test_engineering_roles.py
+    current_status: enforced_non_regressive
     desired_automation:
-      - test that claiming or acknowledging execution without blueprint is rejected
-      - fail if director execution entrypoints contain fallback paths that bypass blueprint requirements
+      - run focused engineering verification selection, current-source and QA regressions
+      - preserve failed, missing, not_run and unknown as distinct facts
+      - reject automatic old deterministic repair, semantic patch and JobToken admission fallback
 
   # ---------------------------------------------------------------------------
   # Exception Handling Rules (2026-04-06)

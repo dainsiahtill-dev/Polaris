@@ -296,199 +296,36 @@ class TestPmCliMain:
 
 
 class TestPmLoopCli:
-    """Test loop-pm CLI parser and main."""
+    """PM entry validates the supported engineering intent, not old worker protocols.
 
-    def test_loop_pm_parser_has_workspace(self, pm_loop_parser: argparse.ArgumentParser) -> None:
-        """loop-pm parser must accept --workspace."""
+    Native defaults/explicit execution and durable state are covered by
+    test_engineering_cli_entry_adapters; PM document/service tests stay below.
+    """
+
+    def test_parser_preserves_workspace(self, pm_loop_parser: argparse.ArgumentParser) -> None:
         args = pm_loop_parser.parse_args(["--workspace", "/tmp/ws"])
         assert args.workspace == "/tmp/ws"
 
-    def test_loop_pm_parser_has_iterations(self, pm_loop_parser: argparse.ArgumentParser) -> None:
-        """loop-pm parser must accept --iterations."""
-        args = pm_loop_parser.parse_args(["--iterations", "5"])
-        assert args.iterations == 5
-
-    def test_loop_pm_parser_has_agent(self, pm_loop_parser: argparse.ArgumentParser) -> None:
-        """loop-pm parser must accept --agent with choices."""
-        for agent in ("pm", "director", "qa", "architect"):
-            args = pm_loop_parser.parse_args(["--agent", agent])
-            assert args.agent == agent
-
-    def test_loop_pm_parser_default_values(self, pm_loop_parser: argparse.ArgumentParser) -> None:
-        """loop-pm parser defaults must be correct."""
-        args = pm_loop_parser.parse_args([])
-        assert args.workspace == str(Path.cwd())
-        assert args.iterations == 1
-        assert args.agent == "pm"
-
-    def test_loop_pm_parser_default_director_path_is_canonical(
-        self,
-        pm_loop_parser: argparse.ArgumentParser,
+    def test_parser_preserves_required_commands_including_duplicates(
+        self, pm_loop_parser: argparse.ArgumentParser,
     ) -> None:
-        """loop-pm must expose the canonical Director CLI compatibility path."""
-        args = pm_loop_parser.parse_args([])
-        director_path = Path(args.director_path)
-        assert director_path.is_absolute()
-        assert director_path.name == "director_v2.py"
-        assert director_path.is_file()
+        args = pm_loop_parser.parse_args(["--required-check", "npm test", "--required-check", "npm test",
+                                          "--required-check", "npm run check"])
+        assert args.required_check == ["npm test", "npm test", "npm run check"]
 
-    def test_loop_pm_parser_accepts_pm_service_contract(self, pm_loop_parser: argparse.ArgumentParser) -> None:
-        """loop-pm parser must accept the command emitted by PMService."""
-        args = pm_loop_parser.parse_args(
-            [
-                "--workspace",
-                "/tmp/ws",
-                "--pm-backend",
-                "auto",
-                "--model",
-                "gpt-test",
-                "--timeout",
-                "0",
-                "--json-log",
-                "runtime/events/pm.events.jsonl",
-                "--agents-approval-mode",
-                "auto_accept",
-                "--agents-approval-timeout",
-                "90",
-                "--orchestration-runtime",
-                "workflow",
-                "--max-failures",
-                "5",
-                "--max-blocked",
-                "5",
-                "--max-same-task",
-                "3",
-                "--blocked-strategy",
-                "skip",
-                "--blocked-degrade-max-retries",
-                "2",
-                "--run-director",
-                "--director-result-timeout",
-                "60",
-                "--director-iterations",
-                "1",
-                "--director-workflow-execution-mode",
-                "parallel",
-                "--director-max-parallel-tasks",
-                "3",
-                "--director-ready-timeout-seconds",
-                "30",
-                "--director-claim-timeout-seconds",
-                "30",
-                "--director-phase-timeout-seconds",
-                "900",
-                "--director-complete-timeout-seconds",
-                "30",
-                "--director-task-timeout-seconds",
-                "86400",
-            ]
-        )
+    @pytest.mark.parametrize("arguments", [["--iterations", "0"], ["--agent", "director"],
+                                         ["--run-director"], ["--pm-backend", "auto"],
+                                         ["--director-path", "some-worker.py"]])
+    def test_worker_protocol_is_rejected(self, pm_loop_parser: argparse.ArgumentParser, arguments: list[str]) -> None:
+        with pytest.raises(SystemExit) as error:
+            pm_loop_parser.parse_args(arguments)
+        assert error.value.code == 2
 
-        assert args.workspace == "/tmp/ws"
-        assert args.pm_backend == "auto"
-        assert args.model == "gpt-test"
-        assert args.run_director is True
-        assert args.director_workflow_execution_mode == "parallel"
-
-    def test_loop_pm_main_help_exits_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """loop-pm main(['--help']) must raise SystemExit(0)."""
-        monkeypatch.setattr(sys, "argv", ["loop-pm", "--help"])
-        with pytest.raises(SystemExit) as exc_info:
+    def test_main_help_exits_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "argv", ["polaris-pm", "--help"])
+        with pytest.raises(SystemExit) as error:
             pm_loop_main()
-        assert exc_info.value.code == 0
-
-    def test_loop_pm_main_runs_with_zero_iterations(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """loop-pm with --iterations 0 must not call run_once."""
-        run_once_calls: list[Any] = []
-
-        def fake_run_once(_args: argparse.Namespace, iteration: int = 1) -> int:
-            run_once_calls.append((_args, iteration))
-            return 0
-
-        def fake_bootstrap():
-            return (
-                None,  # SUPPORTED_ORCHESTRATION_RUNTIMES
-                None,  # AGENTS_APPROVAL_MODES
-                None,  # CANONICAL_PM_TASKS_REL
-                None,  # DEFAULT_AGENTS_APPROVAL_MODE
-                None,  # DEFAULT_AGENTS_APPROVAL_TIMEOUT
-                None,  # DEFAULT_DIRECTOR_SUBPROCESS_LOG
-                None,  # PROMPT_PROFILE_ENV
-                lambda: None,  # enforce_utf8
-                None,  # load_cli_directive
-                None,  # run_architect_docs_stage
-                None,  # ensure_docs_ready
-                fake_run_once,  # run_once
-                None,  # read_json_file
-                None,  # build_cache_root
-                None,  # flush_jsonl_buffers
-                None,  # pause_flag_path
-                None,  # pause_requested
-                None,  # resolve_artifact_path
-                None,  # resolve_ramdisk_root
-                None,  # resolve_workspace_path
-                None,  # scan_last_seq
-                None,  # set_dialogue_seq
-                None,  # state_to_ramdisk_enabled
-            )
-
-        monkeypatch.setattr(
-            "polaris.delivery.cli.pm.cli._bootstrap_backend_import_path",
-            fake_bootstrap,
-        )
-        monkeypatch.setattr(sys, "argv", ["loop-pm", "--iterations", "0"])
-        code = pm_loop_main()
-        assert code == 0
-        assert len(run_once_calls) == 0
-
-    def test_loop_pm_main_passes_namespace_to_run_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """loop-pm must pass the parsed Namespace to orchestration_engine.run_once."""
-        run_once_calls: list[tuple[argparse.Namespace, int]] = []
-
-        def fake_run_once(_args: argparse.Namespace, iteration: int = 1) -> int:
-            run_once_calls.append((_args, iteration))
-            return 0
-
-        def fake_bootstrap():
-            return (
-                None,  # SUPPORTED_ORCHESTRATION_RUNTIMES
-                None,  # AGENTS_APPROVAL_MODES
-                None,  # CANONICAL_PM_TASKS_REL
-                None,  # DEFAULT_AGENTS_APPROVAL_MODE
-                None,  # DEFAULT_AGENTS_APPROVAL_TIMEOUT
-                None,  # DEFAULT_DIRECTOR_SUBPROCESS_LOG
-                None,  # PROMPT_PROFILE_ENV
-                lambda: None,  # enforce_utf8
-                None,  # load_cli_directive
-                None,  # run_architect_docs_stage
-                None,  # ensure_docs_ready
-                fake_run_once,  # run_once
-                None,  # read_json_file
-                None,  # build_cache_root
-                None,  # flush_jsonl_buffers
-                None,  # pause_flag_path
-                lambda _workspace: False,  # pause_requested
-                None,  # resolve_artifact_path
-                None,  # resolve_ramdisk_root
-                None,  # resolve_workspace_path
-                None,  # scan_last_seq
-                None,  # set_dialogue_seq
-                None,  # state_to_ramdisk_enabled
-            )
-
-        monkeypatch.setattr(
-            "polaris.delivery.cli.pm.cli._bootstrap_backend_import_path",
-            fake_bootstrap,
-        )
-        monkeypatch.setattr(sys, "argv", ["loop-pm", "--workspace", "/tmp/ws"])
-        code = pm_loop_main()
-
-        assert code == 0
-        assert len(run_once_calls) == 1
-        args, iteration = run_once_calls[0]
-        assert isinstance(args, argparse.Namespace)
-        assert args.workspace == "/tmp/ws"
-        assert iteration == 1
+        assert error.value.code == 0
 
 
 # ---------------------------------------------------------------------------

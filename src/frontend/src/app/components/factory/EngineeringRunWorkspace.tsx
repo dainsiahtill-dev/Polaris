@@ -13,12 +13,12 @@ function contextRef(event: EngineeringEvent): string | null {
   const raw = payload.context_snapshot_ref;
   return payload.snapshot_status === 'available' && typeof raw === 'string' && /^[a-f0-9]{24}$/.test(raw) ? raw : null;
 }
-export function EngineeringRunWorkspace({ workspace, binding, role = 'director', onBackToMain, onLegacy, onOpenContext }: {
+export function EngineeringRunWorkspace({ workspace, binding, role = 'director', onBackToMain, onOpenContext }: {
   workspace: string;
   binding: EngineeringRunBinding;
   role?: EngineeringRole;
   onBackToMain: () => void;
-  onLegacy?: () => void; onOpenContext?: () => void;
+  onOpenContext?: () => void;
 }) {
   const [instruction, setInstruction] = useState('');
   const [checks, setChecks] = useState('');
@@ -49,7 +49,6 @@ export function EngineeringRunWorkspace({ workspace, binding, role = 'director',
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {onOpenContext && <button type="button" onClick={onOpenContext} className="rounded-lg border border-white/10 px-3 py-3 text-xs text-cyan-100">ContextOS</button>}
-        {onLegacy && <button type="button" onClick={onLegacy} className="rounded-lg border border-white/10 px-3 py-3 text-xs text-slate-300">查看历史界面</button>}
         <button type="button" onClick={() => void binding.refresh()} disabled={binding.loading || !binding.sessionId} aria-label="刷新工程快照" className="rounded-lg border border-white/10 p-3 disabled:opacity-40"><RefreshCw className="h-4 w-4" /></button>
         {canCancel && <button type="button" onClick={() => void binding.cancel()} disabled={busy} className="flex items-center gap-2 rounded-lg bg-red-500/15 px-3 py-3 text-sm text-red-100 disabled:opacity-40"><Square className="h-4 w-4" />取消</button>}
         {canResume && <button type="button" onClick={() => void binding.resume()} disabled={busy} className="rounded-lg border border-emerald-400/25 px-3 py-3 text-sm text-emerald-100 disabled:opacity-40">继续同一运行</button>}
@@ -111,8 +110,8 @@ export function EngineeringRunWorkspace({ workspace, binding, role = 'director',
     {selectedContext && <ContextViewerModal initialTab="final-request" contextSnapshotRef={selectedContext.ref} roleId={selectedContext.role} workspace={workspace} onClose={() => setSelectedContext(null)} />}
   </div>;
 }
-/** Hook-free engine dispatch keeps old component effects behind their original mode. */
-export function EngineeringModeBoundary({ enabled, binding, onModeChange, workspace, role, onBackToMain, onOpenContext, children }: {
+/** Retired mode flags cannot re-enable legacy writers or mount their effects. */
+export function EngineeringModeBoundary({ binding, workspace, role, onBackToMain, onOpenContext }: {
   enabled?: boolean;
   binding?: EngineeringRunBinding;
   onModeChange?: (enabled: boolean) => void;
@@ -120,11 +119,12 @@ export function EngineeringModeBoundary({ enabled, binding, onModeChange, worksp
   role: EngineeringRole;
   onBackToMain: () => void;
   onOpenContext?: () => void;
-  children: ReactNode;
+  children?: ReactNode;
 }) {
-  if (enabled && binding)
-    return <EngineeringRunWorkspace workspace={workspace} binding={binding} role={role} onBackToMain={onBackToMain} onOpenContext={onOpenContext} onLegacy={() => onModeChange?.(false)} />;
-  if (!onModeChange)
-    return <>{children}</>;
-  return <div className="flex h-full min-h-0 flex-col"><div className="flex shrink-0 items-center justify-end border-b border-white/10 bg-slate-950 px-4 py-1"><button type="button" className="rounded px-3 py-3 text-xs text-emerald-200 hover:bg-white/5" onClick={() => onModeChange(true)}>使用 Engineering v2</button></div><div className="min-h-0 flex-1">{children}</div></div>;
+  if (binding)
+    return <EngineeringRunWorkspace workspace={workspace} binding={binding} role={role} onBackToMain={onBackToMain} onOpenContext={onOpenContext} />;
+  return <div className="polaris-soft-scope soft-app-bg flex h-full flex-col gap-4 p-6 text-slate-100">
+    <p role="alert">工程运行绑定不可用。请检查当前实例与工作区配置。</p>
+    <button type="button" onClick={onBackToMain} className="self-start rounded-lg border border-white/15 px-4 py-3 text-sm">返回工程入口</button>
+  </div>;
 }

@@ -147,11 +147,12 @@ def create_parser() -> argparse.ArgumentParser:
         "console",
         help="Launch the canonical terminal console host",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description=(
-            "Open the Polaris terminal console host. Backend defaults to 'auto'."
-        ),
+        description=("Open the Polaris terminal console host. Backend defaults to 'auto'."),
     )
     _add_workspace_argument(console_parser)
+    from polaris.delivery.cli.engineering import add_engineering_arguments
+
+    add_engineering_arguments(console_parser)
     _add_session_id_argument(console_parser)
     _add_log_level_argument(console_parser, default=argparse.SUPPRESS)
     console_parser.add_argument(
@@ -972,6 +973,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
+    # Retired intent never acquires a workspace or bootstraps an old runtime.
+    command = getattr(args, "command", "")
+    retired = (
+        (
+            command == "console"
+            and (
+                getattr(args, "engine", "engineering_v2") != "engineering_v2"
+                or getattr(args, "session_id", "")
+                or getattr(args, "super", False)
+            )
+        )
+        or (command == "task" and getattr(args, "task_command", "") == "create")
+        or (command == "session" and getattr(args, "session_command", "") in {"switch", "clear"})
+    )
+    if retired:
+        from polaris.delivery.cli.engineering import reject_legacy_execution
+
+        return reject_legacy_execution()
+
     # Normalise workspace
     workspace = _resolve_workspace(str(getattr(args, "workspace", ".") or "."))
     args.workspace = workspace
@@ -980,7 +1000,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     _bind_workspace_env(workspace)
 
     # Bootstrap runtime (lazy but early)
-    _bootstrap_runtime()
+    from contextlib import redirect_stdout
+
+    with redirect_stdout(sys.stderr):
+        _bootstrap_runtime()
 
     # Dispatch
     router = _get_router()

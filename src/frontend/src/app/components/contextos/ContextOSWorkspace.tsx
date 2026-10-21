@@ -2652,7 +2652,7 @@ function LegacyContextOSWorkspace({
 }
 
 
-function EngineeringContextView({ engineering, workspace, onBackToMain }: { engineering: EngineeringRunBinding; workspace: string; onBackToMain: () => void }) {
+export function EngineeringContextView({ engineering, workspace, onBackToMain }: { engineering: EngineeringRunBinding; workspace: string; onBackToMain: () => void }) {
   const [selected, setSelected] = useState<{ ref: string; role: string } | null>(null);
   const rows = useMemo(() => engineeringContextRecords(engineering.projection.events), [engineering.projection.events]);
   const current = rows[0];

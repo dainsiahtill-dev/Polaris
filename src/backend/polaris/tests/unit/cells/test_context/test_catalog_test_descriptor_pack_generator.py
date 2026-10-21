@@ -700,3 +700,86 @@ class TestRunAll:
             mock_kfs.return_value = mock_fs
             await run_all(repo_root=tmp_path, skip_schema_validation=True)
         assert mock_fs.workspace_write_text.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_generate_pack_validates_its_program_contract_without_semantic_cache_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A per-Cell capability pack must not be sent to the semantic-cache validator."""
+    from polaris.cells.context.catalog.internal.descriptor_pack_generator import generate_pack
+
+    cell_dir = tmp_path / "polaris" / "cells" / "sample" / "runtime"
+    public_dir = cell_dir / "public"
+    public_dir.mkdir(parents=True)
+    (cell_dir / "cell.yaml").write_text(
+        "id: sample.runtime\nowned_paths:\n  - polaris/cells/sample/runtime/public/**\n",
+        encoding="utf-8",
+    )
+    (public_dir / "service.py").write_text("def inspect():\n    return 1\n", encoding="utf-8")
+    schema_path = tmp_path / "docs" / "governance" / "schemas" / "semantic-descriptor.schema.yaml"
+    schema_path.parent.mkdir(parents=True)
+    schema_path.write_text(
+        "type: object\nrequired: [version, descriptors]\nproperties:\n  version: {type: integer}\n",
+        encoding="utf-8",
+    )
+
+    output = await generate_pack(cell_dir, tmp_path)
+
+    assert output is not None
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["cell_id"] == "sample.runtime"
+    assert payload["version"] == "2.1.0"
+    assert [capability["name"] for capability in payload["capabilities"]] == ["inspect"]
+    assert not [record.message for record in caplog.records if "Schema validation failed" in record.message]
+
+
+@pytest.mark.asyncio
+async def test_generate_pack_rejects_malformed_manifest_identity_before_effects(tmp_path: Path) -> None:
+    """A malformed real manifest cannot become a published pack or index receipt."""
+    from polaris.cells.context.catalog.internal.descriptor_pack_generator import generate_pack
+
+    cell_dir = tmp_path / "polaris" / "cells" / "sample" / "runtime"
+    cell_dir.mkdir(parents=True)
+    (cell_dir / "cell.yaml").write_text("id: 42\nowned_paths: []\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="descriptor pack"):
+        await generate_pack(cell_dir, tmp_path)
+
+    assert not (cell_dir / "generated" / "descriptor.pack.json").exists()
+    assert not list(tmp_path.rglob("*_receipt.json"))
+
+
+@pytest.mark.asyncio
+async def test_generate_pack_selected_surface_change_invalidates_source_hash(tmp_path: Path) -> None:
+    """Same Python can expose different authority; changing selection must invalidate freshness."""
+    from polaris.cells.context.catalog.internal.descriptor_pack_generator import generate_pack
+
+    cell_dir = tmp_path / "polaris" / "cells" / "sample" / "runtime"
+    public_dir = cell_dir / "public"
+    public_dir.mkdir(parents=True)
+    (public_dir / "service.py").write_text(
+        "class SampleService:\n    def inspect(self): pass\n    def execute(self): pass\n",
+        encoding="utf-8",
+    )
+    manifest = """id: sample.runtime
+owned_paths:
+  - polaris/cells/sample/runtime/public/**
+descriptor_surface:
+  include_public_contracts: false
+  classes:
+    SampleService:
+      module: polaris.cells.sample.runtime.public.service
+      methods:
+        - {method}
+"""
+    snapshots = []
+    for method in ("inspect", "execute"):
+        (cell_dir / "cell.yaml").write_text(manifest.format(method=method), encoding="utf-8")
+        output = await generate_pack(cell_dir, tmp_path)
+        assert output is not None
+        snapshots.append(json.loads(output.read_text(encoding="utf-8")))
+
+    assert [m["name"] for m in snapshots[0]["capabilities"][0]["methods"]] == ["inspect"]
+    assert [m["name"] for m in snapshots[1]["capabilities"][0]["methods"]] == ["execute"]
+    assert snapshots[0]["source_hash"] != snapshots[1]["source_hash"]

@@ -7,11 +7,9 @@ External services are mocked to avoid database and storage dependencies.
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -171,30 +169,12 @@ def _make_mock_message(message_id: str = "msg_1", role: str = "user", content: s
 
 @pytest.mark.asyncio
 async def test_create_session(client: AsyncClient) -> None:
-    """POST /v2/roles/sessions should create a session and return it."""
-    mock_session = _make_mock_session(session_id="sess_new", role="architect")
-
-    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.create_session.return_value = mock_session
-
-        response = await client.post(
-            "/v2/roles/sessions",
-            json={
-                "role": "architect",
-                "host_kind": "electron_workbench",
-                "workspace": ".",
-                "title": "Arch Session",
-            },
-        )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ok"] is True
-    assert data["session"]["id"] == "sess_new"
-    assert data["session"]["role"] == "architect"
-    mock_service.create_session.assert_called_once()
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.post("/v2/roles/sessions", json={"role": "pm"})
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -202,46 +182,22 @@ async def test_create_session_defaults_to_active_workspace_path(
     client: AsyncClient,
     mock_settings: Settings,
 ) -> None:
-    """Session creation must use the desktop active workspace when payload omits one."""
-    mock_settings.workspace = "C:/Repo/Polaris"
-    mock_settings.workspace_path = "C:/Temp/Product"
-    mock_session = _make_mock_session(session_id="sess_active", role="pm")
-
-    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.create_session.return_value = mock_session
-
-        response = await client.post(
-            "/v2/roles/sessions",
-            json={
-                "role": "pm",
-                "host_kind": "electron_workbench",
-                "title": "PM Session",
-            },
-        )
-
-    assert response.status_code == 200
-    mock_service_cls.assert_called_once_with(workspace="C:/Temp/Product")
-    assert mock_service.create_session.call_args.kwargs["workspace"] == "C:/Temp/Product"
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.post("/v2/roles/sessions", json={"role": "pm"})
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_create_session_request_error(client: AsyncClient) -> None:
-    """POST /v2/roles/sessions should return 400 on service error."""
-    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.create_session.side_effect = ValueError("invalid role")
-
-        response = await client.post(
-            "/v2/roles/sessions",
-            json={"role": "unknown"},
-        )
-
-    assert response.status_code == 400
-    data = response.json()
-    assert data["error"]["code"] == "REQUEST_ERROR"
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.post("/v2/roles/sessions", json={"role": "pm"})
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +245,9 @@ async def test_list_sessions_defaults_to_active_workspace_path(
         response = await client.get("/v2/roles/sessions?role=pm&limit=10")
 
     assert response.status_code == 200
-    mock_service_cls.assert_called_once_with(workspace="C:/Temp/Product")
+    mock_service_cls.assert_called_once_with(
+        workspace="C:/Temp/Product", read_only=True, enable_events=False, enable_persistence=False
+    )
     assert mock_service.get_sessions.call_args.kwargs["workspace"] == "C:/Temp/Product"
 
 
@@ -355,53 +313,22 @@ async def test_get_session_not_found(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_update_session(client: AsyncClient) -> None:
-    """PUT /v2/roles/sessions/{session_id} should update and return the session."""
-    mock_session = _make_mock_session("sess_abc", "pm")
-    mock_session.title = "Updated Title"
-    mock_session.to_dict.return_value = {
-        **mock_session.to_dict.return_value,
-        "title": "Updated Title",
-    }
-
-    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.update_session.return_value = mock_session
-
-        response = await client.put(
-            "/v2/roles/sessions/sess_abc",
-            json={"title": "Updated Title", "state": "archived"},
-        )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ok"] is True
-    assert data["session"]["title"] == "Updated Title"
-    mock_service.update_session.assert_called_once_with(
-        session_id="sess_abc",
-        title="Updated Title",
-        context_config=None,
-        capability_profile=None,
-        state="archived",
-    )
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.put("/v2/roles/sessions/sess_123", json={"title": "changed"})
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_update_session_not_found(client: AsyncClient) -> None:
-    """PUT /v2/roles/sessions/{session_id} should return 404 when missing."""
-    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.update_session.return_value = None
-
-        response = await client.put(
-            "/v2/roles/sessions/sess_missing",
-            json={"title": "New Title"},
-        )
-
-    assert response.status_code == 404
-    data = response.json()
-    assert data["error"]["code"] == "SESSION_NOT_FOUND"
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.put("/v2/roles/sessions/sess_123", json={"title": "changed"})
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -411,49 +338,32 @@ async def test_update_session_not_found(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_delete_session(client: AsyncClient) -> None:
-    """DELETE /v2/roles/sessions/{session_id} should soft-delete and return ok."""
-    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.delete_session.return_value = True
-
-        response = await client.delete("/v2/roles/sessions/sess_abc")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ok"] is True
-    mock_service.delete_session.assert_called_once_with("sess_abc", soft=True)
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.delete("/v2/roles/sessions/sess_123")
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_delete_session_not_found(client: AsyncClient) -> None:
-    """DELETE /v2/roles/sessions/{session_id} should return 404 when missing."""
-    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.delete_session.return_value = False
-
-        response = await client.delete("/v2/roles/sessions/sess_missing")
-
-    assert response.status_code == 404
-    data = response.json()
-    assert data["error"]["code"] == "SESSION_NOT_FOUND"
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.delete("/v2/roles/sessions/sess_123")
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_delete_session_hard(client: AsyncClient) -> None:
-    """DELETE /v2/roles/sessions/{session_id}?soft=false should hard-delete."""
-    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.delete_session.return_value = True
-
-        response = await client.delete("/v2/roles/sessions/sess_abc?soft=false")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ok"] is True
-    mock_service.delete_session.assert_called_once_with("sess_abc", soft=False)
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.delete("/v2/roles/sessions/sess_123")
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -514,48 +424,22 @@ async def test_get_messages_session_not_found(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_send_message(client: AsyncClient) -> None:
-    """POST /v2/roles/sessions/{session_id}/messages should add a message."""
-    mock_session = _make_mock_session("sess_abc", "pm")
-
-    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.add_message.return_value = mock_session
-
-        response = await client.post(
-            "/v2/roles/sessions/sess_abc/messages",
-            json={"role": "user", "content": "Hello PM", "thinking": None, "meta": {}},
-        )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ok"] is True
-    assert data["session"]["id"] == "sess_abc"
-    mock_service.add_message.assert_called_once_with(
-        session_id="sess_abc",
-        role="user",
-        content="Hello PM",
-        thinking=None,
-        meta={},
-    )
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.post("/v2/roles/sessions/sess_123/messages", json={"role": "user", "content": "hello"})
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_send_message_session_not_found(client: AsyncClient) -> None:
-    """POST /v2/roles/sessions/{session_id}/messages should return 404 when session missing."""
-    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls:
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.add_message.return_value = None
-
-        response = await client.post(
-            "/v2/roles/sessions/sess_missing/messages",
-            json={"role": "user", "content": "Hello"},
-        )
-
-    assert response.status_code == 404
-    data = response.json()
-    assert data["error"]["code"] == "SESSION_NOT_FOUND"
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.post("/v2/roles/sessions/sess_123/messages", json={"role": "user", "content": "hello"})
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -626,8 +510,10 @@ async def test_get_artifacts_uses_stored_session_workspace(
         response = await client.get("/v2/roles/sessions/sess_abc/artifacts")
 
     assert response.status_code == 200
-    mock_service_cls.assert_called_once_with(workspace="C:/Active/Workspace")
-    mock_artifact_cls.assert_called_once_with(Path("C:/Temp/Product"))
+    mock_service_cls.assert_called_once_with(
+        workspace="C:/Active/Workspace", read_only=True, enable_events=False, enable_persistence=False
+    )
+    mock_artifact_cls.assert_called_once_with(Path("C:/Temp/Product"), read_only=True)
 
 
 @pytest.mark.asyncio
@@ -741,8 +627,10 @@ async def test_get_audit_uses_stored_session_workspace(
         response = await client.get("/v2/roles/sessions/sess_abc/audit")
 
     assert response.status_code == 200
-    mock_service_cls.assert_called_once_with(workspace="C:/Active/Workspace")
-    mock_audit_cls.assert_called_once_with(Path("C:/Temp/Product"))
+    mock_service_cls.assert_called_once_with(
+        workspace="C:/Active/Workspace", read_only=True, enable_events=False, enable_persistence=False
+    )
+    mock_audit_cls.assert_called_once_with(Path("C:/Temp/Product"), read_only=True)
 
 
 @pytest.mark.asyncio
@@ -791,46 +679,12 @@ async def test_append_audit_event_uses_stored_session_workspace(
     client: AsyncClient,
     mock_settings: Settings,
 ) -> None:
-    """POST /v2/roles/sessions/{id}/audit/events should append a session audit event."""
-    mock_settings.workspace = "C:/Repo/Polaris"
-    mock_settings.workspace_path = "C:/Active/Workspace"
-    mock_session = _make_mock_session("sess_abc", "pm")
-    mock_session.workspace = "C:/Temp/Product"
-    mock_event = {
-        "id": "evt_1",
-        "type": "message_sent",
-        "details": {"message_id": "msg_1"},
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-    with (
-        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
-    ):
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.get_session.return_value = mock_session
-
-        mock_audit_service = MagicMock()
-        mock_audit_cls.return_value = mock_audit_service
-        mock_audit_service.append_audit_event.return_value = mock_event
-
-        response = await client.post(
-            "/v2/roles/sessions/sess_abc/audit/events",
-            json={"event_type": "message_sent", "details": {"message_id": "msg_1"}},
-        )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ok"] is True
-    assert data["event"]["type"] == "message_sent"
-    mock_service_cls.assert_called_once_with(workspace="C:/Active/Workspace")
-    mock_audit_cls.assert_called_once_with(Path("C:/Temp/Product"))
-    mock_audit_service.append_audit_event.assert_called_once_with(
-        session_id="sess_abc",
-        event_type="message_sent",
-        details={"message_id": "msg_1"},
-    )
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.post("/v2/roles/sessions/sess_123/audit/events", json={"event_type": "message_sent"})
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -838,40 +692,12 @@ async def test_export_audit_log_uses_stored_session_workspace(
     client: AsyncClient,
     mock_settings: Settings,
 ) -> None:
-    """POST /v2/roles/sessions/{id}/audit/export should export audit without starting workflow."""
-    mock_settings.workspace = "C:/Repo/Polaris"
-    mock_settings.workspace_path = "C:/Active/Workspace"
-    mock_session = _make_mock_session("sess_abc", "pm")
-    mock_session.workspace = "C:/Temp/Product"
-
-    with (
-        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
-    ):
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.get_session.return_value = mock_session
-
-        mock_audit_service = MagicMock()
-        mock_audit_cls.return_value = mock_audit_service
-        mock_audit_service.get_event_count.return_value = 3
-        mock_audit_service.export_audit_log.return_value = Path(
-            "C:/Temp/Product/.polaris/exports/role_sessions/sess_abc.audit.json"
-        )
-
-        response = await client.post("/v2/roles/sessions/sess_abc/audit/export")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ok"] is True
-    assert data["session_id"] == "sess_abc"
-    assert data["event_count"] == 3
-    assert data["export_path"].endswith("sess_abc.audit.json")
-    mock_service_cls.assert_called_once_with(workspace="C:/Active/Workspace")
-    mock_audit_cls.assert_called_once_with(Path("C:/Temp/Product"))
-    export_target = mock_audit_service.export_audit_log.call_args.args[1]
-    assert isinstance(export_target, Path)
-    assert export_target.name == "sess_abc.audit.json"
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
+        response = await client.post("/v2/roles/sessions/sess_123/audit/export", json={})
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -884,66 +710,14 @@ async def test_export_to_pm_workflow_uses_stored_session_workspace(
     client: AsyncClient,
     mock_settings: Settings,
 ) -> None:
-    """PM export must hand off the selected session workspace to orchestration."""
-    mock_settings.workspace = "C:/Repo/Polaris"
-    mock_settings.workspace_path = "C:/Active/Workspace"
-    mock_session = _make_mock_session("sess_abc", "pm")
-    mock_session.workspace = "C:/Temp/Product"
-
-    mock_artifact = MagicMock()
-    mock_artifact.id = "art_1"
-    mock_artifact.type = "directive"
-    mock_artifact.content = "Implement the desktop workflow"
-    mock_artifact.metadata = {}
-
-    with (
-        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionArtifactService") as mock_artifact_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
-        patch("polaris.infrastructure.storage.LocalFileSystemAdapter"),
-        patch("polaris.kernelone.fs.KernelFileSystem") as mock_kernel_fs_cls,
-        patch("polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService") as mock_command_cls,
-        patch("polaris.delivery.http.routers.role_session.ensure_required_roles_ready") as mock_roles_ready,
-    ):
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.get_session.return_value = mock_session
-
-        mock_artifact_service = MagicMock()
-        mock_artifact_cls.return_value = mock_artifact_service
-        mock_artifact_service.list_artifacts.return_value = [mock_artifact]
-
-        mock_audit_service = MagicMock()
-        mock_audit_cls.return_value = mock_audit_service
-        mock_audit_service.get_events.return_value = []
-
-        mock_kernel_fs = MagicMock()
-        mock_kernel_fs_cls.return_value = mock_kernel_fs
-        mock_kernel_fs.to_workspace_relative_path.return_value = ".polaris/exports/export.json"
-
-        mock_command = MagicMock()
-        mock_command.execute_pm_run = AsyncMock(return_value=SimpleNamespace(run_id="pm-run-1"))
-        mock_command_cls.return_value = mock_command
-
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
         response = await client.post(
-            "/v2/roles/sessions/sess_abc/actions/export-to-workflow",
-            json={
-                "target": "pm",
-                "export_kind": "session_bundle",
-                "include_audit_log": False,
-            },
+            "/v2/roles/sessions/sess_123/actions/export-to-workflow", json={"target": "factory"}
         )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["run_id"] == "pm-run-1"
-    mock_roles_ready.assert_called_once()
-    assert mock_roles_ready.call_args.kwargs["default_roles"] == ["pm"]
-    assert mock_roles_ready.call_args.kwargs["force_first"] == "pm"
-    mock_artifact_cls.assert_called_once_with(Path("C:/Temp/Product"))
-    mock_audit_cls.assert_called_once_with(Path("C:/Temp/Product"))
-    assert mock_command.execute_pm_run.await_args.kwargs["workspace"] == "C:/Temp/Product"
-    mock_kernel_fs.workspace_write_text.assert_called_once()
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -951,76 +725,14 @@ async def test_export_to_director_workflow_includes_role_session_messages(
     client: AsyncClient,
     mock_settings: Settings,
 ) -> None:
-    """Director export should preserve desktop dialogue messages when artifacts are absent."""
-    mock_settings.workspace = "C:/Repo/Polaris"
-    mock_settings.workspace_path = "C:/Active/Workspace"
-    mock_session = _make_mock_session("sess_ce", "chief_engineer")
-    mock_session.workspace = "C:/Temp/Product"
-    mock_messages = [
-        _make_mock_message("msg_user", "user", "Review PM-7 and hand off the backend cache repair."),
-        _make_mock_message("msg_assistant", "assistant", "Director should execute PM-7 with cache tests."),
-    ]
-
-    with (
-        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionArtifactService") as mock_artifact_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
-        patch("polaris.infrastructure.storage.LocalFileSystemAdapter"),
-        patch("polaris.kernelone.fs.KernelFileSystem") as mock_kernel_fs_cls,
-        patch("polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService") as mock_command_cls,
-        patch("polaris.delivery.http.routers.role_session.ensure_required_roles_ready") as mock_roles_ready,
-    ):
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.get_session.return_value = mock_session
-        mock_service.get_messages.return_value = mock_messages
-
-        mock_artifact_service = MagicMock()
-        mock_artifact_cls.return_value = mock_artifact_service
-        mock_artifact_service.list_artifacts.return_value = []
-
-        mock_audit_service = MagicMock()
-        mock_audit_cls.return_value = mock_audit_service
-        mock_audit_service.get_events.return_value = [{"event_type": "message_sent"}]
-
-        mock_kernel_fs = MagicMock()
-        mock_kernel_fs_cls.return_value = mock_kernel_fs
-        mock_kernel_fs.to_workspace_relative_path.return_value = ".polaris/exports/export.json"
-
-        mock_command = MagicMock()
-        mock_command.execute_director_run = AsyncMock(
-            return_value=SimpleNamespace(run_id="director-run-1", status="pending")
-        )
-        mock_command_cls.return_value = mock_command
-
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
         response = await client.post(
-            "/v2/roles/sessions/sess_ce/actions/export-to-workflow",
-            json={
-                "target": "director",
-                "export_kind": "session_bundle",
-                "include_audit_log": True,
-            },
+            "/v2/roles/sessions/sess_123/actions/export-to-workflow", json={"target": "factory"}
         )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["run_id"] == "director-run-1"
-    mock_roles_ready.assert_called_once()
-    assert mock_roles_ready.call_args.kwargs["default_roles"] == ["director"]
-    assert mock_roles_ready.call_args.kwargs["force_first"] == "director"
-    assert data["artifact_count"] == 0
-    assert data["message_count"] == 2
-    mock_service.get_messages.assert_called_once_with("sess_ce", limit=200, offset=0)
-    director_options = mock_command.execute_director_run.await_args.kwargs["options"]
-    assert "Review PM-7" in director_options["task_filter"]
-    assert director_options["export_bundle_path"].endswith(".polaris\\exports\\export.json") or director_options[
-        "export_bundle_path"
-    ].endswith(".polaris/exports/export.json")
-    export_payload = json.loads(mock_kernel_fs.workspace_write_text.call_args.args[1])
-    assert export_payload["message_count"] == 2
-    assert export_payload["messages"][0]["content"] == "Review PM-7 and hand off the backend cache repair."
-    assert export_payload["event_count"] == 1
-    assert export_payload["audit_events"][0]["event_type"] == "message_sent"
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1028,62 +740,14 @@ async def test_export_to_director_workflow_surfaces_handoff_block(
     client: AsyncClient,
     mock_settings: Settings,
 ) -> None:
-    mock_settings.workspace = "C:/Repo/Polaris"
-    mock_settings.workspace_path = "C:/Active/Workspace"
-    mock_session = _make_mock_session("sess_ce_blocked", "chief_engineer")
-    mock_session.workspace = "C:/Temp/Product"
-
-    with (
-        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionArtifactService") as mock_artifact_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
-        patch("polaris.infrastructure.storage.LocalFileSystemAdapter"),
-        patch("polaris.kernelone.fs.KernelFileSystem") as mock_kernel_fs_cls,
-        patch("polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService") as mock_command_cls,
-        patch("polaris.delivery.http.routers.role_session.ensure_required_roles_ready"),
-    ):
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.get_session.return_value = mock_session
-        mock_service.get_messages.return_value = []
-
-        mock_artifact_service = MagicMock()
-        mock_artifact_cls.return_value = mock_artifact_service
-        mock_artifact_service.list_artifacts.return_value = []
-
-        mock_audit_service = MagicMock()
-        mock_audit_cls.return_value = mock_audit_service
-        mock_audit_service.get_events.return_value = []
-
-        mock_kernel_fs = MagicMock()
-        mock_kernel_fs_cls.return_value = mock_kernel_fs
-        mock_kernel_fs.to_workspace_relative_path.return_value = ".polaris/exports/export.json"
-
-        mock_command = MagicMock()
-        mock_command.execute_director_run = AsyncMock(
-            return_value=SimpleNamespace(
-                run_id="director-run-blocked",
-                status="failed",
-                reason_code="CHIEF_ENGINEER_HANDOFF_REQUIRED",
-                message="Director run requires valid Chief Engineer blueprint/handoff evidence",
-            )
-        )
-        mock_command_cls.return_value = mock_command
-
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
         response = await client.post(
-            "/v2/roles/sessions/sess_ce_blocked/actions/export-to-workflow",
-            json={
-                "target": "director",
-                "export_kind": "session_bundle",
-                "include_audit_log": False,
-            },
+            "/v2/roles/sessions/sess_123/actions/export-to-workflow", json={"target": "factory"}
         )
-
-    assert response.status_code == 409
-    data = response.json()
-    assert data["error"]["code"] == "CHIEF_ENGINEER_HANDOFF_REQUIRED"
-    assert "valid Chief Engineer blueprint/handoff evidence" in data["error"]["message"]
-    assert data["error"]["details"]["status"] == "failed"
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1097,53 +761,14 @@ async def test_export_to_role_workflow_blocks_when_runtime_role_not_ready(
     target: str,
     missing_role: str,
 ) -> None:
-    """Role-session workflow export should fail closed before creating role runs."""
-    from polaris.delivery.http.routers._shared import StructuredHTTPException
-
-    mock_settings.workspace = "C:/Repo/Polaris"
-    mock_settings.workspace_path = "C:/Active/Workspace"
-    mock_session = _make_mock_session("sess_blocked", target)
-    mock_session.workspace = "C:/Temp/Product"
-
-    with (
-        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionArtifactService") as mock_artifact_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
-        patch("polaris.kernelone.fs.KernelFileSystem") as mock_kernel_fs_cls,
-        patch("polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService") as mock_command_cls,
-        patch("polaris.delivery.http.routers.role_session.ensure_required_roles_ready") as mock_roles_ready,
-    ):
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.get_session.return_value = mock_session
-        mock_service.get_messages.return_value = []
-        mock_roles_ready.side_effect = StructuredHTTPException(
-            status_code=409,
-            code="RUNTIME_ROLES_NOT_READY",
-            message="One or more required runtime roles are not ready",
-            details={
-                "required_roles": [missing_role],
-                "missing_roles": [missing_role],
-            },
-        )
-
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
         response = await client.post(
-            "/v2/roles/sessions/sess_blocked/actions/export-to-workflow",
-            json={
-                "target": target,
-                "export_kind": "session_bundle",
-                "include_audit_log": False,
-            },
+            "/v2/roles/sessions/sess_123/actions/export-to-workflow", json={"target": "factory"}
         )
-
-    assert response.status_code == 409
-    data = response.json()
-    assert data["error"]["code"] == "RUNTIME_ROLES_NOT_READY"
-    assert data["error"]["details"]["missing_roles"] == [missing_role]
-    mock_artifact_cls.assert_not_called()
-    mock_audit_cls.assert_not_called()
-    mock_kernel_fs_cls.assert_not_called()
-    mock_command_cls.assert_not_called()
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1151,76 +776,11 @@ async def test_export_to_factory_workflow_persists_export_metadata(
     client: AsyncClient,
     mock_settings: Settings,
 ) -> None:
-    """Factory export should persist RoleSession lineage on the created run."""
-    mock_settings.workspace = "C:/Repo/Polaris"
-    mock_settings.workspace_path = "C:/Active/Workspace"
-    mock_session = _make_mock_session("sess_pm", "pm")
-    mock_session.workspace = "C:/Temp/Product"
-    mock_messages = [
-        _make_mock_message("msg_user", "user", "Build the PM Director desktop handoff."),
-    ]
-
-    with (
-        patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionArtifactService") as mock_artifact_cls,
-        patch("polaris.delivery.http.routers.role_session.RoleSessionAuditService") as mock_audit_cls,
-        patch("polaris.infrastructure.storage.LocalFileSystemAdapter"),
-        patch("polaris.kernelone.fs.KernelFileSystem") as mock_kernel_fs_cls,
-        patch("polaris.cells.factory.pipeline.public.service.FactoryRunService") as mock_factory_cls,
-        patch("polaris.delivery.http.routers.factory._schedule_factory_run_task") as mock_schedule_factory_run,
-        patch("polaris.delivery.http.routers.role_session.ensure_required_roles_ready") as mock_roles_ready,
-    ):
-        mock_service = MagicMock()
-        mock_service_cls.return_value.__enter__.return_value = mock_service
-        mock_service.get_session.return_value = mock_session
-        mock_service.get_messages.return_value = mock_messages
-
-        mock_artifact_service = MagicMock()
-        mock_artifact_cls.return_value = mock_artifact_service
-        mock_artifact_service.list_artifacts.return_value = []
-
-        mock_audit_service = MagicMock()
-        mock_audit_cls.return_value = mock_audit_service
-        mock_audit_service.get_events.return_value = []
-
-        mock_kernel_fs = MagicMock()
-        mock_kernel_fs_cls.return_value = mock_kernel_fs
-        mock_kernel_fs.to_workspace_relative_path.return_value = ".polaris/exports/export.json"
-
-        mock_factory = MagicMock()
-        mock_factory.create_run = AsyncMock(return_value=SimpleNamespace(id="factory-run-1"))
-        mock_factory.start_run = AsyncMock()
-        mock_factory.update_run_metadata = AsyncMock()
-        mock_factory_cls.return_value = mock_factory
-
+    """Retired writes reject before storage/readiness, regardless of old session state."""
+    with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as service:
         response = await client.post(
-            "/v2/roles/sessions/sess_pm/actions/export-to-workflow",
-            json={
-                "target": "factory",
-                "export_kind": "session_bundle",
-                "include_audit_log": False,
-            },
+            "/v2/roles/sessions/sess_123/actions/export-to-workflow", json={"target": "factory"}
         )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["run_id"] == "factory-run-1"
-    mock_roles_ready.assert_called_once()
-    assert mock_roles_ready.call_args.kwargs["default_roles"] == ["pm", "chief_engineer", "director", "qa"]
-    assert mock_roles_ready.call_args.kwargs["force_roles"] == ["pm", "chief_engineer", "director", "qa"]
-    mock_factory_cls.assert_called_once_with(workspace=Path("C:/Temp/Product"))
-    mock_factory.create_run.assert_awaited_once()
-    config = mock_factory.create_run.await_args.args[0]
-    assert "chief_engineer_review" in config.stages
-    mock_factory.start_run.assert_awaited_once_with("factory-run-1")
-    mock_factory.update_run_metadata.assert_awaited_once()
-    metadata = mock_factory.update_run_metadata.await_args.args[1]
-    assert metadata["export_session_id"] == "sess_pm"
-    assert metadata["export_bundle_path"].endswith(".polaris\\exports\\export.json") or metadata[
-        "export_bundle_path"
-    ].endswith(".polaris/exports/export.json")
-    assert "Build the PM Director desktop handoff." in metadata["directive"]
-    assert metadata["input_source"] == "role_session"
-    assert metadata["factory_start_request"]["input_source"] == "role_session"
-    mock_schedule_factory_run.assert_called_once()
-    assert mock_schedule_factory_run.call_args.args[1] == "factory-run-1"
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    service.assert_not_called()

@@ -13,6 +13,7 @@ import uuid
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import quote
 
 from polaris.cells.roles.session.internal.storage_paths import (
     resolve_preferred_sqlite_path,
@@ -25,6 +26,7 @@ from polaris.cells.roles.session.public.contracts import (
 )
 from polaris.infrastructure.db.adapters import SqlAlchemyAdapter
 from polaris.kernelone.db import KernelDatabase
+from polaris.kernelone.storage import resolve_storage_roots_read_only
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 from sqlalchemy import (
     Column,
@@ -35,6 +37,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    event,
 )
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
@@ -419,8 +422,33 @@ def get_engine(database_url: str | None = None, *, workspace: str | None = None)
     return engine
 
 
-def get_session_local(*, workspace: str | None = None) -> Any:
+def _read_only_session_local(workspace: str | None) -> Any:
+    """Open existing historical storage without schema or directory creation."""
+    kernel_db = _get_kernel_db(workspace)
+    roots = resolve_storage_roots_read_only(_resolve_kernel_workspace(workspace))
+    candidates = (
+        Path(roots.runtime_root) / _DEFAULT_CONVERSATIONS_DB_LOGICAL_PATH.partition("/")[2],
+        Path(roots.workspace_persistent_root) / _FALLBACK_CONVERSATIONS_DB_LOGICAL_PATH.partition("/")[2],
+    )
+    existing = next((Path(path) for path in candidates if Path(path).is_file()), None)
+    if existing is None:
+        return None
+    database_url = f"sqlite:///file:{quote(existing.as_posix(), safe='/')}?mode=ro&uri=true"
+    engine = kernel_db.sqlalchemy(
+        database_url, connect_args={"check_same_thread": False}, pool_class=NullPool, pool_pre_ping=False
+    )
+
+    def set_query_only(connection: Any, _record: Any) -> None:
+        connection.execute("PRAGMA query_only=ON")
+
+    event.listen(engine, "connect", set_query_only)
+    return sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def get_session_local(*, workspace: str | None = None, read_only: bool = False) -> Any:
     """获取会话工厂（线程安全）"""
+    if read_only:
+        return _read_only_session_local(workspace)
     global _SessionLocal
     if _SessionLocal is not None and _engine is not None and _engine not in _engines_by_url.values():
         return _SessionLocal

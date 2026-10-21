@@ -490,14 +490,17 @@ class TaskBoard:
     - Easy inspection and debugging
     """
 
-    def __init__(self, workspace: str) -> None:
+    def __init__(self, workspace: str, *, read_only: bool = False) -> None:
+        self._read_only = read_only
         self.workspace = Path(workspace).resolve()
-        self._kernel_fs = KernelFileSystem(str(self.workspace), get_default_adapter())
-        self.tasks_dir = Path(resolve_runtime_path(str(self.workspace), "runtime/tasks"))
-        self.tasks_dir.mkdir(parents=True, exist_ok=True)
+        self._kernel_fs = KernelFileSystem(str(self.workspace), get_default_adapter(), read_only_paths=read_only)
+        self.tasks_dir = Path(resolve_runtime_path(str(self.workspace), "runtime/tasks", read_only=read_only))
+        if not read_only:
+            self.tasks_dir.mkdir(parents=True, exist_ok=True)
 
-        self._max_id_file = Path(resolve_runtime_path(str(self.workspace), "runtime/tasks/.max_id"))
-        self._max_id_file.parent.mkdir(parents=True, exist_ok=True)
+        self._max_id_file = Path(resolve_runtime_path(str(self.workspace), "runtime/tasks/.max_id", read_only=read_only))
+        if not read_only:
+            self._max_id_file.parent.mkdir(parents=True, exist_ok=True)
 
         self._lock = threading.RLock()
         self._ready_condition = threading.Condition(self._lock)
@@ -506,6 +509,14 @@ class TaskBoard:
         self._last_row_write_receipt: TaskBoardRowWriteReceipt | None = None
         self._row_write_receipts_by_task_id: dict[int, TaskBoardRowWriteReceipt] = {}
         self._load_all()
+
+    @property
+    def read_only(self) -> bool:
+        return self._read_only
+
+    def _require_writable(self) -> None:
+        if self._read_only:
+            raise PermissionError("historical TaskBoard observation is read-only")
 
     def _logical_path(self, path: Path) -> str:
         return self._kernel_fs.to_logical_path(str(path))
@@ -585,6 +596,8 @@ class TaskBoard:
                     KeyError,
                     json.JSONDecodeError,
                 ) as exc:
+                    if self._read_only:
+                        raise
                     logger.warning("Failed to load task from %s: %s", task_file, exc)
 
     def _load_task_snapshot_from_disk(self, task_id: int) -> tuple[Task, str] | None:
@@ -687,6 +700,7 @@ class TaskBoard:
         Nested writes receive the held ticket explicitly, never reacquire its
         flock. Closing inherited copies cannot unlock the parent's description.
         """
+        self._require_writable()
         if os.name != "posix":
             raise RuntimeError("taskboard_guarded_recovery_platform_unsupported")
         root = os.path.abspath(self.tasks_dir)
@@ -743,6 +757,7 @@ class TaskBoard:
             O(n) time and memory for one serialized row of size ``n``.
         """
 
+        self._require_writable()
         with (
             self.transaction(),
             (
@@ -837,6 +852,7 @@ class TaskBoard:
         lock_file_path: Path,
         *,
         timeout_seconds: float | None = None,
+        read_only: bool = False,
     ) -> Any:
         """Acquire a cross-platform exclusive file lock with an optional deadline.
 
@@ -845,17 +861,26 @@ class TaskBoard:
         retain control over its shutdown and settlement state machine.
         """
 
+        if not read_only:
+            self._require_writable()
         if timeout_seconds is not None:
             if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
                 raise TypeError("timeout_seconds must be a finite number or None")
             if not math.isfinite(float(timeout_seconds)) or float(timeout_seconds) < 0:
                 raise ValueError("timeout_seconds must be a finite number >= 0")
-        lock_file_path.parent.mkdir(parents=True, exist_ok=True)
+        if not read_only:
+            lock_file_path.parent.mkdir(parents=True, exist_ok=True)
         lock_file = None
         lock_acquired = False
         deadline = None if timeout_seconds is None else time.monotonic() + float(timeout_seconds)
         try:
-            lock_file = open(lock_file_path, "a+", encoding="utf-8")  # noqa: SIM115
+            try:
+                lock_file = open(lock_file_path, "r" if read_only else "a+", encoding="utf-8")  # noqa: SIM115
+            except FileNotFoundError:
+                if not read_only:
+                    raise
+                yield None
+                return
             while not lock_acquired:
                 try:
                     if os.name == "nt":
@@ -866,13 +891,15 @@ class TaskBoard:
                         locking = cast(Callable[[int, int, int], None], msvcrt_vars["locking"])
                         lock_flag = cast(
                             int,
-                            msvcrt_vars["LK_LOCK"] if deadline is None else msvcrt_vars["LK_NBLCK"],
+                            msvcrt_vars["LK_RLCK" if read_only else "LK_LOCK"]
+                            if deadline is None
+                            else msvcrt_vars["LK_NBRLCK" if read_only else "LK_NBLCK"],
                         )
                         locking(lock_file.fileno(), lock_flag, 1)
                     else:
                         import fcntl
 
-                        lock_flag = fcntl.LOCK_EX
+                        lock_flag = fcntl.LOCK_SH if read_only else fcntl.LOCK_EX
                         if deadline is not None:
                             lock_flag |= fcntl.LOCK_NB
                         fcntl.flock(lock_file.fileno(), lock_flag)  # type: ignore[attr-defined]
@@ -909,6 +936,7 @@ class TaskBoard:
 
     def _get_next_id(self) -> int:
         """Get next task ID with cross-process file locking."""
+        self._require_writable()
         lock_file_path = self._max_id_file.with_suffix(".lock")
         with self._file_lock(lock_file_path):
             current_max = self._load_max_id()
@@ -943,6 +971,7 @@ class TaskBoard:
         Returns:
             The created Task.
         """
+        self._require_writable()
         import copy
 
         should_notify_ready = False
@@ -1029,6 +1058,7 @@ class TaskBoard:
             O(n) time and memory over one serialized task row; O(1) task rows.
         """
 
+        self._require_writable()
         normalized_task_id = _normalize_task_id(task_id)
         requested_factory_run_id = str(factory_run_id or "").strip()
         if not requested_factory_run_id:
@@ -1115,6 +1145,7 @@ class TaskBoard:
         use ``TaskRuntimeService`` / ``task_runtime.execution`` projections as
         the authoritative state source.
         """
+        self._require_writable()
         import copy
 
         next_status = _normalize_status(status)
@@ -1191,6 +1222,7 @@ class TaskBoard:
     def _append_terminal_event(self, event_data: dict[str, Any]) -> None:
         """Append one compatibility projection through FactStream CAS."""
 
+        self._require_writable()
         event_type = str(event_data.get("status") or "terminal").strip().lower() or "terminal"
         task_id = str(event_data.get("task_id") or "").strip() or None
         encoded = json.dumps(
@@ -1257,6 +1289,7 @@ class TaskBoard:
         must not roll back the already-validated TaskBoard row mutation.
         """
 
+        self._require_writable()
         try:
             self._append_terminal_event(event_data)
         except FactStreamError as exc:
@@ -1293,6 +1326,7 @@ class TaskBoard:
         allow_dependency_status: bool = False,
     ) -> Task | None:
         """Compatibility update API (delegates to update_status)."""
+        self._require_writable()
         import copy
 
         with self.transaction():
@@ -1344,6 +1378,7 @@ class TaskBoard:
         reverse dependencies should be written.
         """
 
+        self._require_writable()
         import copy
 
         normalized_blocks: list[int] = []
@@ -1366,6 +1401,7 @@ class TaskBoard:
 
     def assign(self, task_id: int, owner: str) -> Task | None:
         """Assign task owner without changing execution status."""
+        self._require_writable()
         import copy
 
         with self.transaction():
@@ -1376,12 +1412,15 @@ class TaskBoard:
             return copy.deepcopy(task) if task else None
 
     def claim(self, task_id: int, worker_id: str) -> bool:
+        self._require_writable()
         raise RuntimeError("TaskBoard.claim is retired; use TaskRuntimeService.claim_execution()")
 
     def complete(self, task_id: int) -> bool:
+        self._require_writable()
         raise RuntimeError("TaskBoard.complete is retired; use TaskRuntimeService.complete_execution()")
 
     def fail(self, task_id: int, reason: str = "") -> bool:
+        self._require_writable()
         raise RuntimeError("TaskBoard.fail is retired; use TaskRuntimeService.fail_execution()")
 
     def reopen(
@@ -1396,6 +1435,7 @@ class TaskBoard:
         _defer_ready_notification: bool = False,
     ) -> Task | None:
         """Reopen a terminal task for another implementation round."""
+        self._require_writable()
         import copy
 
         should_notify_ready = False
@@ -1467,6 +1507,7 @@ class TaskBoard:
         ``InvalidTaskStateTransitionError`` (``reopen`` is the only sanctioned
         terminal-downgrade path).
         """
+        self._require_writable()
         next_status = _normalize_status(status)
         if not next_status.is_terminal:
             raise ValueError(f"reconcile_terminal_status requires a terminal status, got {next_status.value!r}")

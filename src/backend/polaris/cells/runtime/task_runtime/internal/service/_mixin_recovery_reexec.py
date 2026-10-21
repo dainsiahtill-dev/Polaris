@@ -366,6 +366,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         non-resumable suspension and carry durable execution-fact evidence.
         """
 
+        self._require_writable()
         from polaris.cells.runtime.task_runtime.public.contracts import (
             ExpiredFactoryRunSessionFenceResultV1,
         )
@@ -694,6 +695,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         orchestration may call this public capability, but other cells must not
         delete these files directly.
         """
+        self._require_writable()
         authority = str(factory_run_id or "").strip()
         tasks_dir = self._board.tasks_dir
         tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -855,6 +857,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             must never be reopened as Director work.
         """
 
+        self._require_writable()
         eligible_ids: set[str] | None = None
         if eligible_external_task_ids is not None:
             normalized_ids = tuple(str(item or "").strip() for item in eligible_external_task_ids)
@@ -930,6 +933,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         ``task_runtime.execution`` evidence.
         """
 
+        self._require_writable()
         imported_files: list[str] = []
         skipped_files: list[str] = []
         deleted_session_files: list[str] = []
@@ -1321,6 +1325,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
     ) -> dict[str, Any]:
         """Create a task and return the runtime row projection with event evidence."""
 
+        self._require_writable()
         _task, row, execution_event, reverse_dependency_events = self._create_with_execution_event(
             subject=subject,
             description=description,
@@ -1727,6 +1732,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         they do not mint capabilities or replace the subsequent claim/DEO fence.
         Ordinary ``ensure_task_row`` remains creation-only.
         """
+        self._require_writable()
         for digest in (project_contract_hash, projection_hash):
             if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
                 raise ValueError("factory_task_recovery_contract_identity_required")
@@ -1780,6 +1786,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
         priority: int | str = 1,
     ) -> dict[str, Any]:
         """Materialize a legacy/orchestration task into the canonical taskboard."""
+        self._require_writable()
         external_id = str(external_task_id or "").strip()
         if not external_id:
             raise ValueError("external_task_id is required")
@@ -1880,6 +1887,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             plus one O(n) row compare-and-set, where ``n`` is row size.
         """
 
+        self._require_writable()
         from polaris.cells.runtime.task_runtime.public.contracts import (
             BindRuntimeTaskToFactoryRunCommandV1,
         )
@@ -2117,6 +2125,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
     ) -> dict[str, Any] | None:
         """Update a task and return the runtime row projection with event evidence."""
 
+        self._require_writable()
         _, row, execution_event = self._update_with_execution_event(
             task_id,
             status=status,
