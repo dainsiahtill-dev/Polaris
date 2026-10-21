@@ -14,13 +14,13 @@ from polaris.cells.events.fact_stream.public import (
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
 )
+from polaris.kernelone.benchmark.factory_depth_contract import build_factory_bench_level_contract
 from polaris.tests.unit.scripts._factory_bench_runner_audit_helpers import (
     _guard_runner_external_io,
 )
 from scripts.factory_bench import run_factory_bench as bench
 from scripts.factory_bench._bench_lib import (
     cli as bench_cli,
-    gates as bench_gates,
     session as bench_session,
 )
 from scripts.factory_bench._bench_lib.constants import _FIXTURE
@@ -346,8 +346,8 @@ def test_extract_feature_keywords_deduplicates_case_insensitive() -> None:
     assert keywords == ["Fire", "FLOWER"]
 
 
-def test_l1_01_requirements_doc_contains_source_tree_contract() -> None:
-    """L1-01 requirements doc must contain source tree contract requiring src/."""
+def test_l1_01_requirements_doc_preserves_real_source_and_layout_choice() -> None:
+    """Real source is required; implementation layout remains a project choice."""
     project = {
         "id": "L1-01",
         "level": 1,
@@ -366,26 +366,26 @@ def test_l1_01_requirements_doc_contains_source_tree_contract() -> None:
         ],
     }
     doc = build_requirements_doc(project)
-    assert "Source Tree Structure Contract" in doc
-    assert "目录拓扑由 Chief Engineer 决定" in doc
+    assert "源码与入口" in doc
+    assert "框架、算法与模块划分可自行选择" in doc
     assert "不规定唯一目录范式" in doc
-    assert "写成唯一合法结构" in doc
-    assert "Feature Keywords Contract" in doc
+    assert "CE 蓝图" not in doc
+    assert "领域语义" in doc
     assert "firefly" in doc
     assert "flower" in doc
     assert "moon" in doc
     assert "humidity" in doc
-    assert "Project Metadata" in doc
+    assert "项目说明" in doc
     assert "science_creative" in doc
     assert "simulation_toy" in doc
     assert "萤火虫根据花朵情绪和月相组成实时灯光舞蹈" in doc
-    assert "Bench Level Contract (Mandatory)" in doc
+    assert "工程深度要求" in doc
     assert "level: 1" in doc
     assert "min_prod_files: 3" in doc
 
 
-def test_l1_01_requirements_doc_director_target_files_mandate() -> None:
-    """L1-01 requirements doc must mandate Director target_files cover src/."""
+def test_l1_01_requirements_doc_requires_source_without_legacy_admission() -> None:
+    """Executable source is required without a model-authored blueprint or file list."""
     project = {
         "id": "L1-01",
         "level": 1,
@@ -404,12 +404,14 @@ def test_l1_01_requirements_doc_director_target_files_mandate() -> None:
         ],
     }
     doc = build_requirements_doc(project)
-    assert "必须覆盖 CE 蓝图声明的业务源码与入口" in doc
+    assert "真实业务源码与入口" in doc
+    assert "target_files" not in doc
+    assert "任务合同" not in doc
     assert "不能只包含配置/脚手架" in doc
 
 
 def test_l1_01_requirements_doc_has_ts_strict_and_features() -> None:
-    """L1-01 requirements doc must include TS-specific contract + feature keywords."""
+    """Preserve actual TypeScript checks and domain discovery terms."""
     project = {
         "id": "L1-01",
         "level": 1,
@@ -428,14 +430,14 @@ def test_l1_01_requirements_doc_has_ts_strict_and_features() -> None:
         ],
     }
     doc = build_requirements_doc(project)
-    assert "Language-Specific Runnable Contract (TypeScript)" in doc
+    assert "TypeScript 运行要求" in doc
     assert "tsc --noEmit" in doc
-    assert "Feature Keywords Contract" in doc
+    assert "领域语义" in doc
     assert "firefly" in doc
 
 
 def test_build_requirements_doc_python_includes_source_tree() -> None:
-    """Python projects must also get source tree contract."""
+    """Python projects retain executable source, tests and depth requirements."""
     project = {
         "id": "L1-03",
         "level": 1,
@@ -449,12 +451,12 @@ def test_build_requirements_doc_python_includes_source_tree() -> None:
         "checks": ["py_compile", "content_any:planet|weather|cloud|wind"],
     }
     doc = build_requirements_doc(project)
-    assert "Source Tree Structure Contract" in doc
-    assert "目录拓扑由 Chief Engineer 决定" in doc
+    assert "源码与入口" in doc
+    assert "框架、算法与模块划分可自行选择" in doc
     assert "不规定唯一目录范式" in doc
-    assert "Feature Keywords Contract" in doc
+    assert "领域语义" in doc
     assert "planet" in doc
-    assert "Bench Level Contract (Mandatory)" in doc
+    assert "工程深度要求" in doc
 
 
 def test_l2_requirements_doc_uses_stronger_depth_contract() -> None:
@@ -474,7 +476,7 @@ def test_l2_requirements_doc_uses_stronger_depth_contract() -> None:
 
     doc = build_requirements_doc(project)
 
-    assert "Bench Level Contract (Mandatory)" in doc
+    assert "工程深度要求" in doc
     assert "level: 2" in doc
     assert "min_prod_files: 6" in doc
     assert "min_prod_lines: 500" in doc
@@ -515,7 +517,7 @@ def test_factory_chain_catalog_contract_writes_metadata(tmp_path: Path) -> None:
         "checks": list(project.get("checks") or []),  # type: ignore[call-overload]
         "test_focus": str(project.get("test_focus") or "").strip(),
         "level": level,
-        "level_contract": bench_gates.build_factory_bench_level_contract(level, project=project),
+        "level_contract": build_factory_bench_level_contract(level, project=project),
         "source_tree_mandate": "PM/CE/Director must create src/ with core source files, not just scaffolding",
     }
     catalog_path = workspace / ".polaris" / "catalog_contract.json"
@@ -535,12 +537,8 @@ def test_factory_chain_catalog_contract_writes_metadata(tmp_path: Path) -> None:
     assert written["source_tree_mandate"] != ""
 
 
-def test_director_contract_requires_ts_target_and_feature_keywords() -> None:
-    """The generated Director contract for L1-01 must include .ts targets and feature keywords.
-
-    This is the core regression: the Director must not only produce package.json/tsconfig.json
-    scaffolding — it must target src/ .ts files and embed firefly|flower|moon|humidity.
-    """
+def test_requirements_preserve_ts_source_and_domain_without_fixed_layout() -> None:
+    """Actual TypeScript behavior and tests are required; an undeclared source root is not."""
     project = {
         "id": "L1-01",
         "level": 1,
@@ -559,16 +557,17 @@ def test_director_contract_requires_ts_target_and_feature_keywords() -> None:
         ],
     }
     doc = build_requirements_doc(project)
-    assert "src/" in doc
+    assert "真实业务源码与入口" in doc
+    assert "`src/engine/renderer.ts`" not in doc
     assert ".ts" in doc
     assert "firefly" in doc
     assert "flower" in doc
     assert "moon" in doc
     assert "humidity" in doc
-    # Tests remain mandatory; only CE may choose their directory topology.
+    # Tests remain mandatory; the project chooses its directory topology.
     assert "至少一个可执行测试/检查文件" in doc
     assert "不能只包含配置/脚手架" in doc
-    assert "目录拓扑由 Chief Engineer 决定" in doc
+    assert "框架、算法与模块划分可自行选择" in doc
 
 
 # --- _fallback_audit_bundle_from_workspace ---

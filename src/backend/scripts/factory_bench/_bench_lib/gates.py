@@ -562,11 +562,11 @@ def apply_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
 
 
 def _build_language_runnable_contract(primary_language: str) -> str:
-    """Build a runnable-language contract specifying how the project must be executable."""
+    """Describe real build/run requirements without prescribing role handoffs."""
     lang = primary_language.lower().strip()
     if lang == "typescript":
         return (
-            "## Language-Specific Runnable Contract (TypeScript)\n"
+            "## TypeScript 运行要求\n"
             "- 必须包含 `package.json` 且定义 `scripts.start` / `scripts.build` 脚本。\n"
             "- `npm install && npm run build` 必须成功。\n"
             "- 必须包含 `tsconfig.json`。\n"
@@ -574,101 +574,80 @@ def _build_language_runnable_contract(primary_language: str) -> str:
         )
     if lang == "python":
         return (
-            "## Language-Specific Runnable Contract (Python)\n"
+            "## Python 运行要求\n"
             "- 必须包含 `requirements.txt` 或 `pyproject.toml`。\n"
             "- `python -m pip install -r requirements.txt` 或等价命令必须成功。\n"
         )
     if lang == "rust":
-        return "## Language-Specific Runnable Contract (Rust)\n- 必须包含 `Cargo.toml`。\n- `cargo build` 必须成功。\n"
+        return "## Rust 运行要求\n- 必须包含 `Cargo.toml`。\n- `cargo build` 必须成功。\n"
     return ""
 
 
 def _build_source_tree_contract(primary_language: str, project_type: str) -> str:
-    """Require real source + tests; Chief Engineer owns directory topology.
-
-    Polar is must not force ``src/models`` + ``src/engine`` as the only legal
-    tree. CE blueprint names modules, public files, and entrypoints; Director
-    executes that topology. Scaffold-only delivery still fails.
-    """
+    """Require usable source and tests while leaving implementation choices open."""
     lang = primary_language.lower().strip()
     ptype = project_type.lower().strip()
 
     sections: list[str] = []
-    sections.append("## Source Tree Structure Contract (MANDATORY)\n")
+    sections.append("## 源码与入口\n")
     sections.append(
-        "Polaris 不规定唯一目录范式。**目录拓扑由 Chief Engineer 决定**：\n"
-        "CE 蓝图必须命名具体模块、公开文件与入口；Director 只能无损执行该拓扑。\n"
-        "禁止 PM/Director/QA/bench 把 `src/models/` + `src/engine/` 写成唯一合法结构。\n"
+        "不规定唯一目录范式；框架、算法与模块划分可自行选择，并满足下列明确的源码路径检查。\n"
         "仅生成 package.json / tsconfig.json / CMakeLists.txt 等脚手架不算完成。\n"
     )
 
     if lang == "typescript":
         sections.append(
-            "- 必须有 TypeScript 业务源码（`.ts`/`.tsx`），路径由 CE 决定。\n"
-            "- 必须有可运行入口（Node CLI、浏览器 HTML+脚本，或 CE 声明的等价入口）。\n"
+            "- 必须有 TypeScript 业务源码（`.ts`/`.tsx`）。\n"
+            "- 必须有可运行入口（Node CLI、浏览器 HTML+脚本，或需求指定的等价入口）。\n"
             "- 必须有至少一个可执行测试/检查文件。\n"
-            "- `package.json` / `tsconfig.json` 必须指向 CE 选定的真实源码根。\n"
+            "- `package.json` / `tsconfig.json` 必须指向真实源码根。\n"
         )
     elif lang == "javascript":
         sections.append(
-            "- 必须有 JavaScript 业务源码（`.js`/`.mjs`/`.cjs`），路径由 CE 决定。\n"
-            "- 必须有可运行入口与至少一个测试/检查文件。\n"
+            "- 必须有 JavaScript 业务源码（`.js`/`.mjs`/`.cjs`）。\n- 必须有可运行入口与至少一个测试/检查文件。\n"
         )
     elif lang == "python":
         sections.append(
-            "- 必须有 Python 业务源码（`.py` 包或模块），路径由 CE 决定。\n"
-            "- 必须有可运行入口与至少一个 `test_*.py`（或 CE 声明的等价检查）。\n"
+            "- 必须有 Python 业务源码（`.py` 包或模块）。\n- 必须有可运行入口与至少一个 `test_*.py`（或等价检查）。\n"
         )
     elif lang == "go":
-        sections.append(
-            "- 必须有 Go 业务源码（`.go` 包），路径由 CE 决定。\n- 必须有 `main` 包或 `cmd/` 入口，以及 `*_test.go`。\n"
-        )
+        sections.append("- 必须有 Go 业务源码（`.go` 包）、`main` 包或 `cmd/` 入口，以及 `*_test.go`。\n")
     elif lang == "rust":
-        sections.append(
-            "- 必须有 Rust 业务源码（`.rs`），crate 布局由 CE 决定。\n- 必须有可构建入口（bin/lib）与测试。\n"
-        )
+        sections.append("- 必须有 Rust 业务源码（`.rs`）、可构建入口（bin/lib）与测试。\n")
     elif lang == "cpp":
         sections.append(
-            "- 必须有 C++ 业务源码（`.cpp`/`.hpp` 等），include 根与目录由 CE 决定。\n"
-            "- 必须有可构建入口与测试；CMake/构建文件必须匹配 CE 选定的 include 根。\n"
+            "- 必须有 C++ 业务源码（`.cpp`/`.hpp` 等）、可构建入口与测试。\n- CMake/构建文件必须匹配实际 include 根。\n"
         )
     elif lang == "java":
-        sections.append("- 必须有 Java 业务源码（`.java`），包路径由 CE 决定。\n- 必须有可运行入口与测试源码。\n")
+        sections.append("- 必须有 Java 业务源码（`.java`）、可运行入口与测试源码。\n")
     else:
         sections.append(
-            f"- primary_language={lang!r} — 必须有该语言的真实业务源码、入口与测试；"
-            "目录与模块切分由 Chief Engineer 决定。\n"
+            f"- primary_language={lang!r} — 必须有该语言的真实业务源码、入口与测试；目录与模块切分可自行选择。\n"
         )
 
     if "simulation" in ptype or "game" in ptype or "interactive" in ptype:
-        sections.append(
-            "- simulation/game/interactive 必须有真实场景/渲染/交互源码；"
-            "文件名与目录由 CE 决定，不强制 `src/engine/renderer.ts`。\n"
-        )
+        sections.append("- simulation/game/interactive 必须有真实场景/渲染/交互源码；呈现方式以本题明确要求为准。\n")
 
-    sections.append(
-        "\n**重要**: Director `target_files` 必须覆盖 CE 蓝图声明的业务源码与入口，"
-        "不能只包含配置/脚手架。CE 选定的路径即权威。\n"
-    )
+    sections.append("\n交付必须包含真实业务源码与入口，不能只包含配置/脚手架。\n")
     return "".join(sections)
 
 
 def _build_feature_keywords_contract(feature_keywords: list[str]) -> str:
-    """Build a contract section requiring feature keywords in generated source code."""
+    """Explain lexical discovery checks without confusing them with functionality."""
     if not feature_keywords:
         return ""
     kw_list = ", ".join(feature_keywords)
     return (
-        "\n## Feature Keywords Contract (MANDATORY)\n"
-        f"以下关键词必须出现在生成的源代码文件中(变量名、类名、注释或字符串均可): "
-        f"**{kw_list}**\n"
-        "PM -> Chief Engineer -> Director 的任务目标和验收标准必须包含这些关键词。\n"
-        "Director 的 target_files 中的源文件必须至少包含其中一个关键词的实际使用。\n"
+        "\n## 领域语义\n"
+        f"本题的源码发现词：{kw_list}。\n"
+        "`content_any:a|b` 表示至少一个词出现在真实领域源码中；"
+        "它只帮助发现相关源码，不能证明功能通过。"
+        "核心需求仍须逐项实现并验证，不能靠关键词堆砌、固定输出或空壳通过。\n"
     )
 
 
 def build_requirements_doc(project: dict[str, Any]) -> str:
-    """Frame the project brief as the requirements file the PM chain consumes."""
+    """Render the complete case as a readable engineering goal, without legacy admission."""
     checks = [str(item).strip() for item in project.get("checks", []) if str(item).strip()]
     checks_block = "\n".join(f"- {item}" for item in checks) if checks else "- 未声明额外 deterministic checks。"
     primary_language = str(project.get("primary_language") or "").strip()
@@ -680,7 +659,17 @@ def build_requirements_doc(project: dict[str, Any]) -> str:
     source_tree_contract = _build_source_tree_contract(primary_language, project_type)
     feature_contract = _build_feature_keywords_contract(feature_keywords)
     level_contract = build_factory_bench_level_contract(project.get("level"), project=project)
-    level_contract_block = format_level_contract_for_requirements(level_contract)
+    depth_minimums = "\n".join(f"- {key}: {value}" for key, value in sorted(level_contract["minimums"].items()))
+    anti_hollow_rules = "\n".join(f"- {item}" for item in level_contract["anti_hollow_delivery"])
+    level_contract_block = (
+        "## 工程深度要求\n"
+        f"- level: {level_contract['level']}\n"
+        f"{depth_minimums}\n\n"
+        "源码与示例须体现本题实体和行为规则；模块、接口和实际验证命令应可定位。"
+        "核心行为应与入口/I/O适当分离，测试应断言正常、边界和非法输入的业务结果。"
+        "文件数、行数和关键词只是下限，不能替代行为正确性与独立质量审查。\n"
+        f"{anti_hollow_rules}\n"
+    )
 
     domain_line = f"- 领域: {domain}\n" if domain else ""
     type_line = f"- 项目类型: {project_type}\n" if project_type else ""
@@ -688,26 +677,22 @@ def build_requirements_doc(project: dict[str, Any]) -> str:
     metadata_block = ""
     language_line = f"- 主语言: {primary_language}\n" if primary_language else ""
     if domain_line or type_line or hook_line or language_line:
-        metadata_block = (
-            "\n## Project Metadata\n"
-            f"{language_line}{domain_line}{type_line}{hook_line}"
-            "- PM -> Chief Engineer -> Director -> QA 必须在任务合同中保留这些元数据字段, "
-            "确保目标语义不丢失。\n"
-        )
+        metadata_block = f"\n## 项目说明\n{language_line}{domain_line}{type_line}{hook_line}"
 
     return (
-        f"# Product Requirements — {project['title']}\n\n"
-        "## Goal\n"
-        f"- {project['brief']}\n\n"
+        f"# 项目需求 — {project['title']}\n\n"
+        "## 目标与使用体验\n"
+        f"{project['brief']}\n\n"
         f"{metadata_block}\n"
-        "## Acceptance Criteria\n"
+        "## 交付与质量要求\n"
         "- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。\n"
-        "- 必须提供至少一种真实可执行入口，且验收脚本可自动发现。入口方式由 Chief Engineer 按原始目标选择，完整保留显式用户要求：Web 项目提供含 <html> 的 HTML 入口；CLI 项目提供实际执行的 package.json 脚本或 main 文件；API 项目提供实际 server 入口和健康检查。语言或 simulation/game 分类不额外指定 HTML 入口。\n"
+        "- 必须提供至少一种真实可执行入口，且验收脚本可自动发现。入口方式以原始需求为准：Web 项目提供含 <html> 的 HTML 入口；CLI 项目提供实际执行的 package.json 脚本或 main 文件；API 项目提供实际 server 入口和健康检查。语言或 simulation/game 分类不额外指定 HTML 入口。\n"
         "- package.json 脚本不得是只检查 manifest 的占位脚本; build/test/start 或等价脚本必须实际运行产品入口或核心规则验证。\n"
-        "- 附 README.md 说明如何运行。\n"
+        "- 附 README.md、示例数据或种子内容，说明依赖、启动、操作、验证及已知限制。\n"
+        "- 实际执行构建、入口和核心规则测试；覆盖正常流程、领域边界与失败处理。未执行、失败与未知结果须如实说明。\n"
         f"- 关键验收维度: {project.get('test_focus', '')}。\n"
         "\n## Deterministic Checks\n"
-        "PM -> Chief Engineer -> Director -> QA 必须把以下检查转成任务目标和验收标准, 缺失任一项应视为未完成:\n"
+        "以下原有检查必须满足；它们是结构与工程质量的下限，不能替代本题功能和体验验收：\n"
         f"{checks_block}\n"
         "\n"
         f"{level_contract_block}"
@@ -721,8 +706,8 @@ def build_requirements_doc(project: dict[str, Any]) -> str:
 def _extract_feature_keywords(project: dict[str, Any]) -> list[str]:
     """Extract feature keywords from content_any checks in the project catalog.
 
-    Returns a deduplicated list of keywords that the Director must embed in the
-    generated source code to pass deterministic content checks.
+    Return deduplicated lexical probes. Their actual match semantics remain in
+    the checker; keyword discovery does not establish behavioral correctness.
     """
     keywords: list[str] = []
     seen: set[str] = set()

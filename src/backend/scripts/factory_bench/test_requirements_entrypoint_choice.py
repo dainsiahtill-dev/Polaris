@@ -25,10 +25,12 @@ def test_requirements_do_not_convert_category_or_language_into_html(project_type
     doc = build_requirements_doc(project)
     assert project["brief"] in doc
     assert "Web/visual/simulation/game 项目提供含 <html>" not in doc
-    assert "入口方式由 Chief Engineer" in doc
+    assert "入口方式以原始需求为准" in doc
     assert "Node CLI" in doc
     if "simulation" in project_type:
         assert "真实场景/渲染/交互源码" in doc
+    for obsolete_instruction in ("任务合同", "CE 蓝图", "target_files", "PM -> Chief Engineer"):
+        assert obsolete_instruction not in doc
     assert project == before
 
 
