@@ -6,6 +6,8 @@ import os
 import queue
 import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -175,11 +177,12 @@ def test_backend_spawn_overwrites_launcher_workspace_runtime_environment(
 
 def test_instance_signal_resolves_real_process_group_through_kernelone(monkeypatch: Any) -> None:
     calls: list[tuple[int, bool]] = []
-    monkeypatch.setattr(
-        instance_service,
-        "signal_process_tree",
-        lambda pid, *, force: calls.append((pid, force)) or True,
-    )
+
+    def record_signal(pid: int, *, force: bool) -> bool:
+        calls.append((pid, force))
+        return True
+
+    monkeypatch.setattr(instance_service, "signal_process_tree", record_signal)
 
     InstanceSupervisor._signal_pid(4321, signal.SIGTERM)
     InstanceSupervisor._signal_pid(4321, signal.SIGKILL)
@@ -2463,3 +2466,108 @@ def test_restart_isolated_bench_project_does_not_reuse_reserved_main_ports(
     assert record["frontend_url"] == "http://127.0.0.1:60122"
     assert calls[0]["command"][calls[0]["command"].index("--port") + 1] == "60121"
     assert calls[1]["command"][calls[1]["command"].index("--port") + 1] == "60122"
+
+
+def test_unconfirmed_process_exit_preserves_instance_registry_identity(tmp_path: Path, monkeypatch: Any) -> None:
+    """Unknown termination cannot erase operational PID identity or claim stopped."""
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    record = supervisor._build_record(
+        {"instance_id": "stop-unknown", "polaris_root": str(root), "workspace": str(tmp_path / "work")}
+    )
+    record.status = "running"
+    record.backend_pid, record.frontend_pid = 998811, 998812
+    registry.save(record)
+    signals: list[tuple[int, signal.Signals]] = []
+    budgets: list[float] = []
+
+    def no_exit_proof(_pid: int, *, timeout_seconds: float = 5.0) -> bool:
+        budgets.append(timeout_seconds)
+        return False
+
+    # Synthetic authority/signal boundaries: never signal invented or unrelated PIDs.
+    monkeypatch.setattr(InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda *_a, **_k: True))
+    monkeypatch.setattr(InstanceSupervisor, "_signal_pid", staticmethod(lambda pid, sig: signals.append((pid, sig))))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_pid_exit", staticmethod(no_exit_proof))
+    with pytest.raises(RuntimeError, match=r"exit.*confirmed"):
+        supervisor.stop_instance(record.instance_id)
+    saved = registry.get(record.instance_id)
+    assert saved is not None
+    assert (saved.status, saved.backend_pid, saved.frontend_pid) == ("running", 998811, 998812)
+    assert signals == [(998812, signal.SIGTERM), (998812, signal.SIGKILL)]
+    assert budgets == [5.0, 1.0]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires exact POSIX child reap")
+def test_fresh_public_supervisor_reaps_same_parent_process_without_handle_map(tmp_path: Path, monkeypatch: Any) -> None:
+    """Different public delegates share only registry and kernel parenthood, not handles."""
+    from polaris.cells.instances.public.service import get_instance_supervisor
+
+    root = _make_polaris_root(tmp_path)
+    home = tmp_path / "instances"
+    release = tmp_path / "keep-running"
+    ready = tmp_path / "sleeper-ready"
+    release.write_text("alive", encoding="utf-8")
+    real_popen = subprocess.Popen
+    children: list[Any] = []
+
+    def harmless_spawn(command: Any, **kwargs: Any) -> Any:
+        assert "polaris.delivery.cli.backend" in command
+        child = real_popen(
+            [
+                "rtk",
+                "proxy",
+                sys.executable,
+                "-c",
+                "import sys,time; from pathlib import Path; "
+                "Path(sys.argv[2]).write_text('ready', encoding='utf-8'); "
+                "flag=Path(sys.argv[1]); exec('while flag.exists(): time.sleep(0.01)')",
+                str(release),
+                str(ready),
+                *command,
+            ],
+            **kwargs,
+        )
+        children.append(child)
+        return child
+
+    # Replace only external process payload/network/transport edges, not registry/owner/wait.
+    monkeypatch.setattr(instance_service.subprocess, "Popen", harmless_spawn)
+    monkeypatch.setattr(instance_service, "is_port_free", lambda *_a, **_k: True)
+    monkeypatch.setattr(instance_service, "publish_instances_update", lambda **_k: None)
+    monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda *_a: True))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_record_ports_free", lambda *_a, **_k: None)
+    # A graceful signal boundary releases the harmless child naturally, avoiding orphan fixtures.
+    monkeypatch.setattr(
+        InstanceSupervisor, "_signal_pid", staticmethod(lambda _pid, _sig: release.unlink(missing_ok=True))
+    )
+    try:
+        starter = get_instance_supervisor(home)
+        launched = starter.start_instance(
+            {
+                "instance_id": "stop-fresh-facade",
+                "polaris_root": str(root),
+                "workspace": str(tmp_path / "work"),
+                "start_frontend": False,
+                "backend_port": 54111,
+                "frontend_port": 54112,
+            }
+        )
+        pid = launched["backend_pid"]
+        deadline = time.monotonic() + 3
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists()
+        stopper = get_instance_supervisor(home)
+        assert stopper is not starter and stopper._delegate is not starter._delegate
+        stopped = stopper.stop_instance("stop-fresh-facade")
+        assert stopped["status"] == "stopped" and stopped["backend_pid"] is None
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+        with pytest.raises(ChildProcessError):
+            os.waitpid(pid, os.WNOHANG)
+    finally:
+        release.unlink(missing_ok=True)
+        for child in children:
+            child.wait(timeout=3)

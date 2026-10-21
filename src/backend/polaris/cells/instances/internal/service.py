@@ -29,7 +29,7 @@ from typing import Any, Iterator
 from polaris.cells.storage.layout.public import canonical_project_runtime_root
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.fs.jsonl.locking import file_lock
-from polaris.kernelone.process import signal_process_tree
+from polaris.kernelone.process import signal_process_tree, wait_for_process_exit
 
 SCHEMA_VERSION = 1
 DEFAULT_BACKEND_PORT = 49977
@@ -764,9 +764,7 @@ class InstanceSupervisor:
             frontend_pid = self._start_frontend(record, log_dir / "frontend.log")
             record.frontend_pid = frontend_pid
             record.status = "starting"
-            record.metadata["frontend_recovery_count"] = int(
-                record.metadata.get("frontend_recovery_count") or 0
-            ) + 1
+            record.metadata["frontend_recovery_count"] = int(record.metadata.get("frontend_recovery_count") or 0) + 1
             record.metadata["frontend_recovered_at"] = utc_timestamp()
             self.registry.save(record)
             try:
@@ -1612,12 +1610,7 @@ class InstanceSupervisor:
 
     @staticmethod
     def _wait_for_pid_exit(pid: int, *, timeout_seconds: float = PROCESS_TERMINATE_TIMEOUT_SECONDS) -> bool:
-        deadline = time.monotonic() + timeout_seconds
-        while time.monotonic() < deadline:
-            if not is_process_alive(pid):
-                return True
-            time.sleep(0.1)
-        return not is_process_alive(pid)
+        return wait_for_process_exit(pid, deadline=time.monotonic() + timeout_seconds)
 
     @staticmethod
     def _terminate_pid(pid: int | None) -> None:
@@ -1631,7 +1624,8 @@ class InstanceSupervisor:
             return
         with suppress(ProcessLookupError):
             InstanceSupervisor._signal_pid(pid, signal.SIGKILL)
-        InstanceSupervisor._wait_for_pid_exit(pid, timeout_seconds=1.0)
+        if not InstanceSupervisor._wait_for_pid_exit(pid, timeout_seconds=1.0):
+            raise RuntimeError(f"process exit not confirmed after termination: {pid}")
 
     @staticmethod
     def _http_ok(url: str, token: str) -> bool:

@@ -143,3 +143,9 @@ Director 的 system 说明同步区分真实准备证据与准备后验证，复
 主 Agent 的适配器／HTTP 相邻 77 项通过；独立审查经真实认证 ASGI、现有服务及 SQLite 的四项有限实验通过，包括 ACK 丢失、查询不存在、启动返回丢失和 runner 超时取消／清理组合。48 项旧协议消费者迁移后联合 298 项通过，其余原有测试保留。更大范围首次检查为 561 PASS／23 FAIL；剩余旧入口消费者与辅助测试正在归因收尾，尚不称全组通过。上述服务／进程端口均使用明确合成替身，不计为远端模型或 Bench 交付。
 
 证据位于统一审计根 `task8-bench-runner/`、`task8-bench-catalog/`、`task8-request-lookup/`、`task8-acceptance-lifecycle-audit/`、`task8-bench-recovery-final-review/`、`task8-bench-consumer-tests/` 和 `task8-root/recovery-*`。下一步冻结当前完整候选并运行必要检查，再用新默认入口启动全新 L1-01；旧 R04 的真实交付仅适用于其原冻结源码，不转移成本批结论。
+
+### 新默认 L1-01 已验收，资源确认仍需收尾
+
+主线 `2c07bfca2` 经冻结 9384 文件、834 项相关回归、KernelOne ALL 十二阶段 368 PASS／1 SKIP、17 文件格式／静态检查及 5 个生产文件类型检查后，已通过实际新 Bench CLI 运行全新 L1-01。Director 按需咨询 CE，PM 未调用；原生失败修复、构建、类型、33 项业务测试、42 项核心检查和当前独立 QA 成立，ProjectOutcome accepted。277 份当前文件 hash 及 Verifier／QA 同 revision62 manifest 由主 Agent 直接核对。
+
+原 STOP 仍为 UNKNOWN／exit2，整 CLI exit1，不回标全绿；后来独立读取证明自有 PID／端口已关闭，主服务／共享 NATS 保持。首次收尾偏差已用私有真实 owned child 复现为 owner wait／reap 缺口及未确认仍清 PID，正在已有进程底座修复。两项静态 P2、安装管道不能证明安装通过、HTTP 总数／账单未知均保留。源码、模型、host 和 catalog 在本次运行直到原停止后保持不变；后续修改另起候选。完整结果、量具边界与证据见[新默认入口 R01](POLARIS_ENGINEERING_V2_DIRECT_L101_R01_20261021.md)。全 120 项尚未运行，不标整体目标完成。

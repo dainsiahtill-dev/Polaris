@@ -27,6 +27,7 @@ from .process_tree import (
     isolated_process_group_kwargs,
     run_process_tree_safe,
     signal_process_tree,
+    wait_for_process_exit,
 )
 from .runtime_control import (
     clear_director_stop_flag,
@@ -64,4 +65,5 @@ __all__ = [
     "signal_process_tree",
     "terminate_external_loop_pm_processes",
     "terminate_pid",
+    "wait_for_process_exit",
 ]

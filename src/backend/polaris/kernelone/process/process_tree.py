@@ -8,6 +8,8 @@ these return values must not grant cleanup for arbitrary detached descendants.
 
 from __future__ import annotations
 
+import logging
+import math
 import os
 import signal
 import subprocess
@@ -16,6 +18,8 @@ import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 
 class ProcessTreeCancelledError(RuntimeError):
@@ -73,6 +77,39 @@ class ProcessTreeRunControl:
 _PROCESS_TREE_STOP_GRACE_SECONDS = 0.5
 _PROCESS_TREE_DRAIN_TIMEOUT_SECONDS = 2.0
 _PROCESS_TREE_WAIT_SLICE_SECONDS = 0.05
+
+
+def wait_for_process_exit(pid: int, *, deadline: float) -> bool:
+    """Confirm one PID is absent, reaping an exited child owned by this caller.
+
+    ``deadline`` is an existing finite ``time.monotonic()`` deadline. This
+    function never signals a process or extends that deadline. POSIX ``ECHILD``
+    only means the caller cannot reap this PID; it is not proof of exit. A live
+    or inaccessible PID remains unconfirmed. This proves leader exit only,
+    not descendant drain, port release, or any execution authority.
+    """
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise ValueError("pid must be a positive integer")
+    if not math.isfinite(deadline):
+        raise ValueError("deadline must be finite")
+    while True:
+        if os.name == "posix":
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, InterruptedError) as exc:
+                _logger.debug("PID %s wait status unavailable; checking kernel presence: %s", pid, type(exc).__name__)
+            except OSError:
+                return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except OSError:
+            return False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.1, remaining))
 
 
 def isolated_process_group_kwargs() -> dict[str, Any]:
@@ -287,4 +324,5 @@ __all__ = [
     "isolated_process_group_kwargs",
     "run_process_tree_safe",
     "signal_process_tree",
+    "wait_for_process_exit",
 ]
