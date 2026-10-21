@@ -4,6 +4,7 @@
 
 ## 阅读入口
 
+- [历史全特性盘点（2026-10-22，21 类 174 条）](POLARIS_ALL_FEATURES_INVENTORY_20261022.md)：区分设计、历史实现、当前接入与证据边界；先盘点，不作删留判断。
 - [Launcher 历史经验报告](http://127.0.0.1:59977/launcher?view=foundation&topic=history-experience-report)
 - [完整报告全文（docs 交付版）](历史经验报告.md)
 - [完整重构方案](../blueprints/POLARIS_ROLE_AGENT_REFACTOR_20261020.md)
