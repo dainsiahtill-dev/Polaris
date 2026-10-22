@@ -1,9 +1,10 @@
 id: vc-20261022-runtime-budget-visibility
 classification: pattern
 owner: roles.runtime
-status: bounded_component_qualified_native_experiment_not_started
+status: bounded_native_case_accepted_root_qualified_with_defects
 design: docs/blueprints/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md
 plan: docs/superpowers/plans/2026-10-22-runtime-budget-visibility.md
+experiment: docs/experiments/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md
 evidence_root: ~/.polaris/audit_archives/autonomous-delivery-20261018/engineering-v2-refactor-20261020/task24-runtime-budget-visibility/
 assumptions:
   - The existing persisted RunLimits.deadline is the sole run time authority.
@@ -25,7 +26,7 @@ verification:
   - Required KernelOne release and explicit historical catalog-baseline checks
   - One frozen fresh isolated native webpage run followed by independent ROOT quality review
 acceptance: Qualify the bounded mechanism, then report the actual native outcome without claiming H2 causal superiority.
-remaining_unknown: Full delivery benefit, best role combination, physical HTTP sends, actual bill and arbitrary workload reliability.
+remaining_unknown: H2 causal delivery benefit, best role combination, ContextOS comparative advantage, all120 workloads, physical HTTP sends, total usage, actual bill, human minutes and arbitrary workload reliability.
 qualification_limits:
   - R1 full Python3.13 retained584 passed and5 test-side missing-PIL failures; native3.12 related36 passed.
   - R2 full native3.12 integration retained588 passed and1 test JSON-tail assumption failure.
@@ -33,3 +34,27 @@ qualification_limits:
   - R2 uses a transient tail user observation; preserving prefix content does not prove M3 cache hits or billing benefit.
   - Fresh-service SQLite recovery is not a fresh interpreter or arbitrary crash proof.
   - K1 ALL passed12 stages; strict catalog retained159 existing byte-identical issues and incremental introduced0.
+native_case:
+  source_commit: b41245103c47dcfae9dc7f4063861cc1ee9b1cac
+  run_id: 7dd30e15505e42c098daf90602625d94
+  outcome: completed_passed_QA_approved_accepted
+  elapsed_seconds: 5173.183883905411
+  root_task_success: "yes"
+  root_quality: moderate_with_recorded_defects
+  descriptive_scores: {pelican: 3, bicycle: 2, riding: 3, motion: 3, interaction: 3, presentation: 3}
+  tool_observations: {total: 401, failed: 16, pending: 0}
+  prepared_by_role: {pm: 3, chief_engineer: 4, director: 377, qa: 13}
+  snapshot_phases: {prepared: 397, terminal: 397}
+  harness_usage_observations: 18
+  physical_HTTP_sends: UNKNOWN
+  total_usage: UNKNOWN
+  billed_cost: UNKNOWN
+  human_minutes: UNKNOWN
+  native_and_root_known_resources_closed: true
+  external_target_repairs_or_native_acceptance_runs: false
+  retained_limits:
+    - Snapshot phases are not physical HTTP sends; harness18 observations have unknown event coverage.
+    - RearCog position and rate are inaccurate; reduced initial range0.25 conflicts with readout and actual speed0.35.
+    - External inspector R1 callback failure and closurefalse retained; ROOT reconciled known processes and ports, then R2 observed successfully.
+    - Budget delivery and notice plus this case feasibility are observed; T22 and random outputs confound r05/r06 causal attribution.
+    - Revision-only visual invalidation is a T25 research question, not a completed fix.

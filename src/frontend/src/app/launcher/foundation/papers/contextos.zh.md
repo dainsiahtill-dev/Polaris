@@ -1,6 +1,6 @@
 # Polaris ContextOS：状态优先的上下文编译、预算与请求证据
 
-> **2026-10-22 后续候选**：Director实际请求尾部新增原host deadline、观测时刻和近似剩余秒数，每次现算，不累积到会话历史。为保持稳定前缀，原system不变；这不保证M3 cache命中或账单改善，也不是新的时间／权限authority。两个native codec真实loopback body与物理快照已核对，替代模型输出不证明真实交付或更优上下文。原生实验待启动，见 docs/blueprints/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md；本次只更新论文源文，未验证主Launcher加载。
+> **2026-10-22 r06实际结果**：17行生产代码在Director请求尾部呈现原host deadline、观测时刻及近似余量，不累积历史、不改system或时间／权限authority。冻结 `b41245103c47dcfae9dc7f4063861cc1ee9b1cac` 的原生r06已completed／passed／QA approved／accepted，ROOT task_success=yes、质量中等，两项缺陷与失败历史保留，已知资源闭合。预算送达／被注意和本例可行已观察；r05/r06还存在T22及随机输出差异，不证明H2因果、缓存／账单收益、ContextOS相对优势或最佳角色组合。397 prepared／397 terminal相位不是HTTP；harness仅18观察，全量usage／HTTP／账单／人工分钟UNKNOWN。详见[实验结果与相对证据链接](../../../../../../../docs/experiments/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md)。本次只更新论文源文，未build／deploy，未验证主Launcher加载。
 
 > **2026-10-22 当前证据边界**：下文保留旧 StateFirst／TurnEngine 研究。新工程继续最终 provider request 审计与当前图片投影，并在原 SQLite 内按消费者需要读取 kind／role，不裁剪已持久化历史、不另建缓存事实源。真实新接口对照保留当前 3 图、工具和错误，局部视觉读取生成约 2.13→0.43 秒；不证明真实图像 token／账单减少或交付率提升。r05 仍失败，长期记忆暂不做；详见仓库 docs/blueprints/POLARIS_ENGINEERING_EVENT_SELECTION_20261022.md。
 

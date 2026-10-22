@@ -1,6 +1,6 @@
 # 当前验证、同任务修复与最终接受
 
-> **2026-10-22 后续候选**：三组交接说明对照未证下一步验证／交回收益，未集成该段提示词。当前Director请求尾部只呈现原host deadline及准备时刻余量，原system保持。r2组件、K1和目录增量完成；完整3.12回归588通过／1测试JSON尾文本假设失败，实际反馈完整，修测试消费后相关9项通过，旧失败保留。尚无该候选原生网页结果，不新增停止门禁或宣称H2收益。详见 docs/blueprints/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md；只更新论文源文，未验证主Launcher已加载。
+> **2026-10-22 r06实际结果**：冻结 `b41245103c47dcfae9dc7f4063861cc1ee9b1cac` 的原生r06 completed／passed／QA approved／accepted，正式检查真实exit0、当前709项输入及3产物哈希与批准绑定。ROOT亲看16张最终原图并判task_success=yes、质量中等：车2分、其余五维3分，后齿轮与reduce控件不一致保留；QA独立图像被真实请求消费，仍未测slider.value便扩述其正确。原生与ROOT已知资源闭合；401工具观察含16失败、0pending，检查器R1失败／R2成功另记。资格仍是588通过／1消费解析失败后相关9项通过，产品17行未变，没有单次589通过。T25视觉revision反例尚未修复，不增停止门禁或宣称H2因果收益。详见[实验结果与边界](../../../../../../../docs/experiments/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md)。仅更新论文源文，未build／deploy，未验证主Launcher已加载。
 
 > **2026-10-22 当前证据边界**：下文 ExecutionBroker 等部分保留旧引擎分析。当前工程同一 owner 保存真实检查、当前候选及独立 QA；QA 只读计算能力已接通，验收收益尚未证明。r05 从未进入正式验证与 QA，不能把该失败归因于 QA 卡住。本次只过滤绑定所需事件，完整当前 manifest、权限与接受条件不变；532 项相关回归与 K1 ALL 不替代真实网页交付。详见仓库 docs/blueprints/POLARIS_ENGINEERING_EVENT_SELECTION_20261022.md。
 

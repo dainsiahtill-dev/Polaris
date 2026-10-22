@@ -2,13 +2,13 @@
 
 最新更新：2026-10-22。
 
-下一原生候选：[真实运行预算可见性](blueprints/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md)用17行在请求尾部暴露host原deadline及准备时刻余量，保持原system，不新增停止规则。组件、r2 K1及目录增量完成；实际3.12完整回归588通过／1测试JSON文本假设失败，归档真实反馈后只修测试消费，相关9项复验通过，原始失败和r1环境问题均保留。详细范围见蓝图。全新隔离动画网页尚未启动，缓存与交付收益未证；T23未证收益的交接提示词未合入。
+最新原生结果：[运行预算可见性 r06](experiments/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md)在冻结 `b41245103c47dcfae9dc7f4063861cc1ee9b1cac` 下完成 `7dd30e15505e42c098daf90602625d94`：原生 completed／passed／QA approved／accepted，ROOT task_success=yes、质量中等，车2分、其余五维3分；后齿轮传动和 reduced-motion 控件不一致两项缺陷保留。原生与 ROOT 已知资源闭合，无外部代修或代跑原生验收。17行机制只呈现原host deadline与准备时刻余量，不增停止规则；预算已送达并被注意，但 r05/r06 同时存在 T22 和随机输出差异，不能证明 H2 因果收益。401条工具观察含16失败、0pending；397 prepared／397 terminal 相位不是HTTP数，harness用量仅覆盖18观察，总用量／HTTP／账单／人工分钟仍 UNKNOWN。资格记录仍为588通过／1消费测试失败后相关9项通过，没有单次589通过；详见[蓝图](blueprints/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md)。
 
 最新对照：[Director 交接说明实验](experiments/POLARIS_HANDOFF_SEMANTICS_20261022.md)完成 3 组真实请求比较；两臂均 3/3 继续工具诊断，未观察到转向验证／交回的收益，暂不合入该提示词。全量原始请求、先评分后解盲及独立核证已保存；没有执行工具，不构成项目交付或架构优胜证据。
 
-最新底座改进：[工程事件按需读取](blueprints/POLARIS_ENGINEERING_EVENT_SELECTION_20261022.md)已完成同一 SQLite 内四处过滤迁移；532 项相关回归、KernelOne ALL 12 阶段及独立审查通过，严格目录历史 159 条保持。真实新接口与全读后过滤的局部对照输出一致，视觉读取与生成约 2.13→0.43 秒；这不是整个工程耗时或交付率提升的证明。原 r05 失败不改，当前版本尚无新原生交付结果。
+最新底座改进：[工程事件按需读取](blueprints/POLARIS_ENGINEERING_EVENT_SELECTION_20261022.md)已完成同一 SQLite 内四处过滤迁移；532 项相关回归、KernelOne ALL 12 阶段及独立审查通过，严格目录历史 159 条保持。真实新接口与全读后过滤的局部对照输出一致，视觉读取与生成约 2.13→0.43 秒；这不是整个工程耗时或交付率提升的证明。r06 是结合 T22／T24 后的一次新交付，未单独隔离 T22 收益，原 r05 失败不改。
 
-最新实测：冻结 `cb6bef15` 后，鹈鹕动画网页 r05 `4e04cb507e4d4ff3965c39ac32f14870` 达到原项目截止期限，权威结果 failed／verification not_run／QA not_called，交付失败；原实例与资源已关闭，9442 份源码及 690 份执行资产未变。主 Agent 亲自查看最终网页并操作：车轮转动、实际调速和暂停连续性在本次采样中成立，骑行操纵姿态仍有限；外部检查不能补成产品验收。完整取舍、负面结果与下一轮有限实验见[能力取舍与质量实验](experiments/POLARIS_FEATURE_EVALUATION_20261022.md)。
+此前实测：冻结 `cb6bef15` 后，鹈鹕动画网页 r05 `4e04cb507e4d4ff3965c39ac32f14870` 达到原项目截止期限，权威结果 failed／verification not_run／QA not_called，交付失败；原实例与资源已关闭，9442 份源码及 690 份执行资产未变。主 Agent 亲自查看最终网页并操作：车轮转动、实际调速和暂停连续性在本次采样中成立，骑行操纵姿态仍有限；外部检查不能补成产品验收。完整取舍、负面结果与有限研究队列见[能力取舍与质量实验](experiments/POLARIS_FEATURE_EVALUATION_20261022.md)。
 
 最新实现：[QA 只读执行与当前候选](experiments/POLARIS_QA_READONLY_EXECUTION_20261022.md)已接通现有工具与工程 owner，覆盖当前授权、候选版本及冷恢复。相关回归 509 passed，K1 ALL 十二阶段通过（368 passed、1 skipped）；独立源码审查未发现 P0/P1。严格目录审计的 159 条既存诊断与修改前完全相同，增量检查通过，旧债未清零。两臂真实模型比较未证验收收益；随后 r04 正式运行因历史图片累计触发本地预算拒绝，根检查也判骑行质量 FAIL。原始请求和资源均已封存，本次不构成动画网页交付成功，也未验证主实例运行时已加载新代码。
 
