@@ -2,7 +2,7 @@
 
 最新更新：2026-10-22。
 
-当前集成：[当前候选图片投影](blueprints/POLARIS_CURRENT_VISUAL_PROJECTION_20261022.md)已有真实旧输入的只读生产重建与独立复核，保留当前图片／原生调用并通过原预算。最终工程回归 556 passed（1 条既有警告）、KernelOne ALL 12 阶段通过；9442 份冻结文件未变，目录新增问题为零，历史严格审计仍失败。新网页交付待验；没有提高输出上限、改写历史失败或代修目标。
+最新实测：冻结 `cb6bef15` 后，鹈鹕动画网页 r05 `4e04cb507e4d4ff3965c39ac32f14870` 达到原项目截止期限，权威结果 failed／verification not_run／QA not_called，交付失败；原实例与资源已关闭，9442 份源码及 690 份执行资产未变。主 Agent 亲自查看最终网页并操作：车轮转动、实际调速和暂停连续性在本次采样中成立，骑行操纵姿态仍有限；外部检查不能补成产品验收。完整取舍、负面结果与下一轮有限实验见[能力取舍与质量实验](experiments/POLARIS_FEATURE_EVALUATION_20261022.md)。
 
 最新实现：[QA 只读执行与当前候选](experiments/POLARIS_QA_READONLY_EXECUTION_20261022.md)已接通现有工具与工程 owner，覆盖当前授权、候选版本及冷恢复。相关回归 509 passed，K1 ALL 十二阶段通过（368 passed、1 skipped）；独立源码审查未发现 P0/P1。严格目录审计的 159 条既存诊断与修改前完全相同，增量检查通过，旧债未清零。两臂真实模型比较未证验收收益；随后 r04 正式运行因历史图片累计触发本地预算拒绝，根检查也判骑行质量 FAIL。原始请求和资源均已封存，本次不构成动画网页交付成功，也未验证主实例运行时已加载新代码。
 
@@ -12,7 +12,7 @@ L1–L12 题库阅读入口：[120 项项目提示词全集](benchmarks/L1-L12�
 
 [按模型上限执行的输出预算](blueprints/POLARIS_OUTPUT_LIMIT_POLICY_20261021.md)、空截断反馈和 UNKNOWN 显示修复已集成。上一运行 `eebef9650cb34189a0720740846a3245` 保留平台 accepted、根质量失败及整仓冻结失败；原零源码失败 `1be9405400f34a8aa5c3ff12cd692218` 也保留，不被 r03 覆盖。
 
-最新[历史全特性盘点](history/POLARIS_ALL_FEATURES_INVENTORY_20261022.md)包含 174 条记录、21 类，不等于 174 个独立已实现功能。[能力取舍与质量实验](experiments/POLARIS_FEATURE_EVALUATION_20261022.md)已记录 25 次模型模块调用尝试及 r03 原生运行。额外 CE／QA 预审和完整 DOM 转储未解决核心漏验；替代 QA 发现旧错位，真实 r03 也完成首轮拒绝与修复，但仍漏验其它运动错误。因此保留专业角色、视觉、模型配置和同任务返工。后续无模型合成实验的 8 次真实工具观察证明现有 K1 可做只读计算、临时空间释放和候选／网络隔离；再后的源码接口与资格验证见顶部新报告，两臂收益未证，r04 又暴露了旧图片逐轮累计的真实上下文缺口，已用原输入零 provider 复现。下一项限定为当前图片投影；不整体恢复旧控制链。新工程尚未接入旧完整 TaskMarket／StateFirstContextOS／TurnEngine 链；[此前派发与上下文实验](blueprints/POLARIS_CAPABILITY_EXPERIMENTS_20261022.md)保留。输出修复联合回归历史结果为 1237 passed，KernelOne ALL 十二阶段 368 passed、1 skipped；组件通过不代替实际网页交付。
+[历史全特性盘点](history/POLARIS_ALL_FEATURES_INVENTORY_20261022.md)保留 174 条记录、21 类、176 份不可变来源；功能、机制、研究设想和当前接入分开。保留专业分工、执行反馈与现有可靠底座；额外预审、全量 DOM 转储未证收益，不新增必经流程。派发领取、上下文选择、独立计算和专业能力逐项实验，长期记忆暂不做。新工程尚未整体接回旧 TaskMarket／StateFirstContextOS／TurnEngine 链；[此前组成实验](blueprints/POLARIS_CAPABILITY_EXPERIMENTS_20261022.md)不能冒充新运行交付。
 
 更早 `bef24b386` 网页 `a420e40bb7434b1e85bd50d2fbfadfcd` 的文本 QA approved 与 root 质量 FAIL 均保留。新数据变体 `fixtures/pelican_web_visual/` 沿用原功能检查及质量量表。长期记忆不做；静态 SVG 两例通过、其余八例未运行；原目录 L1-01/02/03 的 root 质量 FAIL、其余117项未运行不变。以下历史检查点只适用于当时版本。
 
