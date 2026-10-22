@@ -27,7 +27,13 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from polaris.cells.storage.layout.public import canonical_project_runtime_root
-from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.fs import (
+    GuardedMetadataError,
+    GuardedRegularFileSnapshotError,
+    KernelFileSystem,
+    get_default_adapter,
+    read_guarded_regular_file_snapshot,
+)
 from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.process import signal_process_tree, wait_for_process_exit
 
@@ -395,10 +401,16 @@ class BackendProcessIdentity:
 
 
 class InstanceRegistry:
-    def __init__(self, home: Path | None = None, *, publish_events: bool = True) -> None:
-        self.home = ensure_absolute_dir(home or default_instance_home())
+    def __init__(self, home: Path | None = None, *, publish_events: bool = True, read_only: bool = False) -> None:
+        self._read_only = read_only
+        selected_home = home or default_instance_home()
+        self.home = (
+            Path(os.path.abspath(os.path.expanduser(str(selected_home))))
+            if read_only
+            else ensure_absolute_dir(selected_home)
+        )
         self.registry_path = self.home / "registry.json"
-        self._fs = KernelFileSystem(str(self.home), get_default_adapter())
+        self._fs = KernelFileSystem(str(self.home), get_default_adapter(), read_only_paths=read_only)
         self.publish_events = publish_events
 
     def list_records(self) -> list[InstanceRecord]:
@@ -422,6 +434,7 @@ class InstanceRegistry:
         lock keeps two isolated runners from choosing the same free port in the
         gap between probing and binding it.
         """
+        self._require_writable()
         key = str(self.registry_path.resolve())
         with _REGISTRY_LOCKS_GUARD:
             lock = _REGISTRY_LOCKS.setdefault(key, threading.RLock())
@@ -490,7 +503,11 @@ class InstanceRegistry:
 
     def _read_raw(self) -> InstanceRegistrySnapshot:
         try:
-            raw_text = self.registry_path.read_text(encoding="utf-8")
+            raw_text = (
+                self._read_guarded_registry_text()
+                if self._read_only
+                else self.registry_path.read_text(encoding="utf-8")
+            )
         except FileNotFoundError as exc:
             if self.registry_path.is_symlink():
                 raise RegistryReadError(
@@ -512,6 +529,8 @@ class InstanceRegistry:
                 detail=f"{type(exc).__name__}: {exc}",
             ) from exc
 
+        if raw_text is None:
+            return InstanceRegistrySnapshot(schema_version=SCHEMA_VERSION, records=())
         try:
             data = json.loads(raw_text)
         except json.JSONDecodeError as exc:
@@ -631,7 +650,30 @@ class InstanceRegistry:
                 detail=f"index={index}",
             )
 
+    def _require_writable(self) -> None:
+        if self._read_only:
+            raise RegistryReadError(self.registry_path, reason="read_only_registry")
+
+    def _read_guarded_registry_text(self) -> str | None:
+        try:
+            metadata = self._fs.workspace_lstat("registry.json")
+        except GuardedMetadataError as exc:
+            if exc.code == "guarded_metadata_missing":
+                return None
+            raise RegistryReadError(self.registry_path, reason=exc.code, detail=str(exc)) from exc
+        try:
+            snapshot = read_guarded_regular_file_snapshot(str(self.home), "registry.json", max(1, metadata.size))
+        except (GuardedRegularFileSnapshotError, OSError, ValueError) as exc:
+            raise RegistryReadError(
+                self.registry_path, reason=getattr(exc, "code", "read_failed"), detail=str(exc)
+            ) from exc
+        fields = ("device", "inode", "size", "mtime_ns", "ctime_ns", "root_device", "root_inode")
+        if any(getattr(metadata, field) != getattr(snapshot, field) for field in fields):
+            raise RegistryReadError(self.registry_path, reason="registry_identity_drift")
+        return snapshot.content.decode("utf-8")
+
     def _write_raw(self, data: dict[str, Any]) -> None:
+        self._require_writable()
         self.assert_healthy()
         self.home.mkdir(parents=True, exist_ok=True)
         self._fs.workspace_write_text_atomic(

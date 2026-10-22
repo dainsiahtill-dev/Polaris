@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -53,8 +54,7 @@ def test_query_final_physical_provider_request_projects_native_anthropic_body(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context_ref = "a" * 24
-    snapshot_path = tmp_path / context_ref
+    snapshot_path = tmp_path / "synthetic-provider.json"
     native_body = {
         "model": "kimi-for-coding",
         "max_tokens": 1024,
@@ -92,10 +92,13 @@ def test_query_final_physical_provider_request_projects_native_anthropic_body(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "polaris.cells.context.engine.public.service.context_snapshot_candidates",
-        lambda _workspace, _context_hash: [("test", snapshot_path)],
-    )
+    # Synthetic provider fixture uses the exact persisted bytes as its hash authority.
+    content = snapshot_path.read_bytes()
+    snapshot_path.unlink()
+    context_ref = hashlib.sha256(content).hexdigest()[:24]
+    snapshot_path = tmp_path / ".polaris" / "runtime" / "contexts" / context_ref[:2] / context_ref
+    snapshot_path.parent.mkdir(parents=True)
+    snapshot_path.write_bytes(content)
 
     result = query_final_provider_request_audit(
         QueryFinalProviderRequestAuditV1(workspace=str(tmp_path), context_snapshot_ref=context_ref)
@@ -118,11 +121,10 @@ def _query_physical_snapshot(
     *,
     tmp_path: Path,
     monkeypatch: Any,
-    context_ref: str,
     native_protocol: str,
     native_body: dict[str, Any],
 ) -> Any:
-    snapshot_path = tmp_path / context_ref
+    snapshot_path = tmp_path / "synthetic-provider.json"
     snapshot_path.write_text(
         json.dumps(
             {
@@ -151,10 +153,13 @@ def _query_physical_snapshot(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "polaris.cells.context.engine.public.service.context_snapshot_candidates",
-        lambda _workspace, _context_hash: [("test", snapshot_path)],
-    )
+    # Synthetic provider fixture uses the exact persisted bytes as its hash authority.
+    content = snapshot_path.read_bytes()
+    snapshot_path.unlink()
+    context_ref = hashlib.sha256(content).hexdigest()[:24]
+    snapshot_path = tmp_path / ".polaris" / "runtime" / "contexts" / context_ref[:2] / context_ref
+    snapshot_path.parent.mkdir(parents=True)
+    snapshot_path.write_bytes(content)
     return query_final_provider_request_audit(
         QueryFinalProviderRequestAuditV1(workspace=str(tmp_path), context_snapshot_ref=context_ref)
     )
@@ -174,7 +179,6 @@ def test_query_final_physical_provider_request_projects_openai_chat_body(
     result = _query_physical_snapshot(
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
-        context_ref="b" * 24,
         native_protocol="openai_chat_completions",
         native_body=native_body,
     )
@@ -199,7 +203,6 @@ def test_query_final_physical_provider_request_projects_openai_responses_input(
     result = _query_physical_snapshot(
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
-        context_ref="c" * 24,
         native_protocol="openai_responses",
         native_body=native_body,
     )
@@ -217,7 +220,6 @@ def test_query_final_physical_provider_request_rejects_unknown_native_protocol(
     result = _query_physical_snapshot(
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
-        context_ref="d" * 24,
         native_protocol="opaque_unknown",
         native_body={"messages": [{"role": "user", "content": "build"}]},
     )
@@ -571,3 +573,75 @@ def test_ordinary_native_snapshot_projects_actual_wire_instead_of_semantic_surfa
     assert result.payload["tool_choice"] == {"type": "any"}
     assert result.payload["response_format"] is None
     assert result.payload["physical_capture_status"] == "available"
+
+
+def test_guarded_context_read_preserves_large_utf8_inline_image_and_raw_hash(tmp_path: Path, monkeypatch: Any) -> None:
+    """Synthetic provider/image bytes; catches truncation, JSON rehash and fixed small caps."""
+    from polaris.cells.context.engine.public import snapshot_paths
+
+    image = "data:image/jpeg;base64," + "A" * (2 * 1024 * 1024)
+    payload = {
+        "messages": [{"role": "user", "content": "中文"}],
+        "provider_request": {
+            "role": "director",
+            "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": image}}]}],
+        },
+        "stored_at": "synthetic-fixture",
+    }
+    content = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    ref = hashlib.sha256(content).hexdigest()[:24]
+    path = tmp_path / ".polaris" / "runtime" / "contexts" / ref[:2] / ref
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+    monkeypatch.setenv("KERNELONE_INSTANCE_HOME", str(tmp_path / "absent-registry"))
+    result = snapshot_paths.read_context_snapshot(str(tmp_path), ref)
+    assert result.snapshot.content == content
+    assert result.snapshot.size == len(content)
+    assert result.payload["provider_request"] == payload["provider_request"]
+    assert result.storage_source == "active_runtime_root"
+    assert not (tmp_path / "absent-registry").exists()
+
+
+def test_guarded_context_read_rejects_metadata_read_replacement(tmp_path: Path, monkeypatch: Any) -> None:
+    from polaris.cells.context.engine.public import snapshot_paths
+
+    content = b'{"provider_request":{"role":"director"}}'
+    ref = hashlib.sha256(content).hexdigest()[:24]
+    path = tmp_path / ".polaris" / "runtime" / "contexts" / ref[:2] / ref
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+    original = snapshot_paths.read_guarded_regular_file_snapshot
+
+    def replace_then_read(root: str, relative: str, max_bytes: int) -> Any:
+        replacement = path.with_suffix(".replacement")
+        replacement.write_bytes(content)
+        replacement.replace(path)
+        return original(root, relative, max_bytes)
+
+    monkeypatch.setattr(snapshot_paths, "read_guarded_regular_file_snapshot", replace_then_read)
+    try:
+        snapshot_paths.read_context_snapshot(str(tmp_path), ref)
+    except snapshot_paths.ContextSnapshotReadError as exc:
+        assert exc.code == "context_snapshot_identity_drift"
+    else:
+        raise AssertionError("replacement between metadata and snapshot was accepted")
+    assert path.read_bytes() == content
+
+
+def test_final_request_preserves_decode_failure_vs_nonobject_status(tmp_path: Path) -> None:
+    """Raw-byte hashes must not merge the existing unreadable/invalid_snapshot contracts."""
+    for content, expected_status, expected_code in [
+        (b'{"truncated"', "unreadable", "context_snapshot_unreadable"),
+        (b"", "unreadable", "context_snapshot_unreadable"),
+        (b"\xff", "unreadable", "context_snapshot_unreadable"),
+        (b"[]", "invalid_snapshot", "context_snapshot_invalid_format"),
+    ]:
+        ref = hashlib.sha256(content).hexdigest()[:24]
+        path = tmp_path / ".polaris" / "runtime" / "contexts" / ref[:2] / ref
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        result = query_final_provider_request_audit(
+            QueryFinalProviderRequestAuditV1(workspace=str(tmp_path), context_snapshot_ref=ref)
+        )
+        assert result.status == expected_status
+        assert result.error_code == expected_code

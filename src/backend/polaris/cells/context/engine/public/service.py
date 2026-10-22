@@ -8,8 +8,6 @@ Architecture (P1-CTX-003 convergence):
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.context.engine.internal.precision_mode import (
@@ -40,7 +38,7 @@ from .contracts import (
     ResolveRoleContextQueryV1,
     RoleContextResultV1,
 )
-from .snapshot_paths import context_snapshot_candidates
+from .snapshot_paths import ContextSnapshotReadError, read_context_snapshot
 
 # TYPE_CHECKING block for type annotations only (P1-CTX-003 convergence)
 if TYPE_CHECKING:
@@ -258,52 +256,21 @@ def query_final_provider_request_audit(
             error_message=str(exc),
         )
 
-    storage_source = ""
-    file_path: Path | None = None
-    candidates = context_snapshot_candidates(query.workspace, context_hash)
-    for candidate_source, candidate_path in candidates:
-        if candidate_path.is_file():
-            storage_source = candidate_source
-            file_path = candidate_path
-            break
-
-    if file_path is None:
-        return FinalProviderRequestAuditResultV1(
-            ok=False,
-            status="not_found",
-            workspace=query.workspace,
-            context_snapshot_ref=query.context_snapshot_ref,
-            payload={
-                "context_hash": context_hash,
-                "searched_paths": [{"source": source, "context_path": str(path)} for source, path in candidates],
-            },
-            error_code="context_snapshot_not_found",
-            error_message=f"Context snapshot not found for hash {context_hash}.",
-        )
-
     try:
-        with open(file_path, encoding="utf-8") as handle:
-            snapshot_payload = json.load(handle)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        read = read_context_snapshot(query.workspace, context_hash)
+    except ContextSnapshotReadError as exc:
         return FinalProviderRequestAuditResultV1(
             ok=False,
-            status="unreadable",
+            status=exc.status,
             workspace=query.workspace,
             context_snapshot_ref=query.context_snapshot_ref,
-            payload={"context_hash": context_hash, "context_path": str(file_path), "storage_source": storage_source},
-            error_code="context_snapshot_unreadable",
+            payload=exc.details,
+            error_code=exc.code,
             error_message=str(exc),
         )
-    if not isinstance(snapshot_payload, dict):
-        return FinalProviderRequestAuditResultV1(
-            ok=False,
-            status="invalid_snapshot",
-            workspace=query.workspace,
-            context_snapshot_ref=query.context_snapshot_ref,
-            payload={"context_hash": context_hash, "context_path": str(file_path), "storage_source": storage_source},
-            error_code="context_snapshot_invalid_format",
-            error_message="Context snapshot payload must be an object.",
-        )
+    storage_source = read.storage_source
+    file_path = read.context_path
+    snapshot_payload = read.payload
 
     provider_request_raw = snapshot_payload.get("provider_request")
     provider_request = provider_request_raw if isinstance(provider_request_raw, dict) else {}

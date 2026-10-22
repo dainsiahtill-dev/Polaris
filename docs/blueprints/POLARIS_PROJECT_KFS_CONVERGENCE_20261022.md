@@ -82,3 +82,19 @@ Catalog按仓CI命令执行仍为exit1/new159、manifest mismatch0：CI所写基
 有限新进程实验中，32次原生单文件插入有25次目录七字段完全相同；32次KFS同seam插入有16次字段相同并返回旧枚举、16次字段变化并正确报drift。没有sleep、utime、重试或stat替身；这是可复现反例，不是总体概率估计，也不证明实际并发或消除了成员遗漏。独立审查据此确认测试前提过强；测试已改为原生mode确定变化、同目录FD观察并在finally恢复权限的场景，原始失败与反例保留。四个产品文件未因此修改。最终ROOT完整FS/存储复验484通过，八个冻结文件指纹一致；三项反馈独立复审闭环，Ruff/格式/mypy五个Python文件通过。接受仅限这三个基础读取接口，项目验收要求不变。
 
 证据：`.polaris/audits/project-storage-20261022/b2a/`中的`review/`、`root-integration/`、`root-integration-r3/`、`integration-triage/probe.json`及`integration-triage/report.json`。基础接口通过后还须迁移真实消费者，不能以这些测试声称运行时、缓存或截图链路已经全量统一。
+
+## B3a 当前交接边界
+
+普通ContextOS按hash查询存在两处初始化旁路：active candidate调用写入型root resolver；registry candidate查询构造`InstanceRegistry`，先`mkdir`再读。两处须连同共享读取一并迁移，保留既有registry严格解码和degraded错误投影。只读路径不得升级成writer，也不通过supervisor执行生命周期操作。
+
+两个hash HTTP入口及public final-request query应读取同一组guarded bytes，验证原始文件字节与24位key的绑定后再投影messages/provider request。已有producer实际使用compact UTF-8 JSON字节计算key，保持其算法、图像内容和存储owner。缺失、损坏、unsafe、身份变化及registry不可用要保留事实区分；已有有效canonical快照不应因无关的registry查询失败而失去可读性。
+
+本批接受范围是普通hash查询、其registry发现和冷恢复，不包含pin/stats/retention、工程SQLite、临时目录或共享主根迁移。普通查询已完成：复用原有registry严格解码器，新增显式只读读取，不创建supervisor、不探测进程、不发布事件；canonical快照有效时不访问registry。两个HTTP入口及public query共用KFS metadata与guarded bytes，实际字节绑定原key，首个存在但损坏的候选不会被历史副本掩盖。UTF-8/JSON解码错误保留原READ_ERROR语义；合法非object JSON仍为FORMAT_ERROR。
+
+作者定向95通过/33项真实生命周期测试未运行，相邻147通过，九个Python文件Ruff/格式/mypy通过。独立审查无阻断，并实际检验观察后删除registry或快照的错误分类及恢复后合法推进。冷进程回读实验没有产品写入，原字节与mtime不变；11项Python字节码缓存写入单独归入授权的项目`.polaris`。ROOT冻结11个文件后集成204通过，KernelOne ALL通过12阶段、368通过/1跳过，结束时指纹一致；此后只更新接受状态文档。真实服务、模型、浏览器与Bench未运行。
+
+证据：`.polaris/audits/project-storage-20261022/b3a/`中的`report.json`、`read-recovery-evidence.json`、`review/report.json`、`root-integration/results.json`和`root-integration/kernelone-release.json`。原外部writer fixture失败及中间失败保留，不能改写成首次通过。剩余路径继续记录，不能把本批说成全量ContextOS或平台已统一。
+
+## 仍在运行的主实例边界
+
+一次只读PID/FD与guarded registry观察见`.polaris/audits/project-storage-20261022/platform-root-observation/`：主backend runtime已在主仓`.polaris/runtime`；main/NATS配置的home、tmp、cache和已打开日志仍有外部路径。4个进程身份稳定，11个可写普通文件FD中8个在已证明owner项目`.polaris`外。配置和可写FD分别只证明路径意图与打开权限，不证明观察到了写效果。共享NATS仍归main平台owner，后续B5须协调既有owner离线切换，不热拷贝、不双写、不抢占现有锁或进程。

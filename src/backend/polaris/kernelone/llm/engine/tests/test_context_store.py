@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -991,9 +992,6 @@ class TestContextViewerRouter:
 
     def test_retrieves_existing_context(self, client, tmp_path) -> None:
         """Stored context is returned with enriched metadata."""
-        hash_key = "a1b2c3d4e5f6a7b8c9d0e1f2"
-        context_path = _context_snapshot_path(tmp_path, hash_key)
-        context_path.parent.mkdir(parents=True)
         payload = {
             "schema_version": 1,
             "trace_id": "trace-abc",
@@ -1001,7 +999,11 @@ class TestContextViewerRouter:
             "messages": [{"role": "system", "content": "hello"}],
             "stored_at": "2026-06-19T08:00:00+00:00",
         }
-        context_path.write_text(json.dumps(payload), encoding="utf-8")
+        content = json.dumps(payload).encode("utf-8")
+        hash_key = hashlib.sha256(content).hexdigest()[:24]
+        context_path = _context_snapshot_path(tmp_path, hash_key)
+        context_path.parent.mkdir(parents=True)
+        context_path.write_bytes(content)
 
         response = client.get(f"/v2/context/{hash_key}", params={"workspace": str(tmp_path)})
 
@@ -1028,11 +1030,12 @@ class TestContextViewerRouter:
 
     def test_corrupt_json_returns_500(self, client, tmp_path) -> None:
         """Corrupt JSON inside an existing context file must surface 500, not crash."""
-        hash_key = "b2c3d4e5f6a7b8c9d0e1f2a3"
+        content = b'{"trace_id": "x"'
+        hash_key = hashlib.sha256(content).hexdigest()[:24]
         context_path = _context_snapshot_path(tmp_path, hash_key)
         context_path.parent.mkdir(parents=True)
         # Truncated JSON — opens fine but json.load raises ValueError.
-        context_path.write_text('{"trace_id": "x"', encoding="utf-8")
+        context_path.write_bytes(content)
 
         response = client.get(f"/v2/context/{hash_key}", params={"workspace": str(tmp_path)})
 

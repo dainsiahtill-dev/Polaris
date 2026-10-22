@@ -15,7 +15,9 @@ Three layers of coverage:
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -121,10 +123,13 @@ def _seed_context_with_provider_request(workspace: Path, label: str) -> str:
     )
 
 
-def _write_context_snapshot(runtime_root: Path, hash_key: str, payload: dict) -> None:
+def _write_context_snapshot(runtime_root: Path, payload: dict) -> str:
+    content = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    hash_key = hashlib.sha256(content).hexdigest()[:24]
     target = runtime_root / "contexts" / hash_key[:2] / hash_key
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload), encoding="utf-8")
+    target.write_bytes(content)
+    return hash_key
 
 
 def test_workspace_acl_allows_with_no_header(tmp_path) -> None:
@@ -249,11 +254,11 @@ def test_workspace_query_falls_back_to_kernelone_system_cache(
     monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
     from polaris.cells.context.engine.public.snapshot_paths import default_kernelone_runtime_root
 
-    # Legacy external snapshots are an explicit fixture opt-in. The default
-    # writer remains the canonical workspace-local runtime, never a dual write.
-    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(default_kernelone_runtime_root(str(workspace_b))))
-    clear_storage_roots_cache()
-    hash_key = _seed_context(workspace_b, "B-default-cache", "default-cache-context")
+    # Synthetic historical bytes test discovery only; current writers reject external roots.
+    hash_key = _write_context_snapshot(
+        default_kernelone_runtime_root(str(workspace_b)),
+        {"schema_version": 1, "messages": [{"role": "user", "content": "default-cache-context"}]},
+    )
 
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(tmp_path / "server-runtime"))
     clear_storage_roots_cache()
@@ -278,10 +283,8 @@ def test_workspace_query_falls_back_to_registered_instance_runtime_root(
     runtime_root = tmp_path / "instances" / "bench-l1-10" / "runtime"
     workspace_a.mkdir()
     workspace_b.mkdir()
-    hash_key = "abcdefabcdefabcdefabcdef"
-    _write_context_snapshot(
+    hash_key = _write_context_snapshot(
         runtime_root,
-        hash_key,
         {
             "schema_version": 1,
             "trace_id": "trace-instance",
@@ -291,7 +294,7 @@ def test_workspace_query_falls_back_to_registered_instance_runtime_root(
         },
     )
     monkeypatch.setattr(
-        "polaris.cells.context.engine.public.snapshot_paths.list_instances",
+        "polaris.cells.context.engine.public.snapshot_paths.query_instance_records",
         lambda: [
             {
                 "instance_id": "bench-l1-10",
@@ -344,10 +347,8 @@ def test_final_request_uses_registered_instance_runtime_root(
     runtime_root = tmp_path / "instances" / "bench-l1-11" / "runtime"
     workspace_a.mkdir()
     workspace_b.mkdir()
-    hash_key = "1234567890abcdef12345678"
-    _write_context_snapshot(
+    hash_key = _write_context_snapshot(
         runtime_root,
-        hash_key,
         {
             "schema_version": 1,
             "trace_id": "trace-instance-final",
@@ -371,7 +372,7 @@ def test_final_request_uses_registered_instance_runtime_root(
         },
     )
     monkeypatch.setattr(
-        "polaris.cells.context.engine.public.snapshot_paths.list_instances",
+        "polaris.cells.context.engine.public.snapshot_paths.query_instance_records",
         lambda: [
             {
                 "instance_id": "bench-l1-11",
@@ -448,7 +449,7 @@ def test_validator_runs_before_layout(tmp_path) -> None:
         raise ValueError("simulated layout explosion")
 
     with patch(
-        "polaris.delivery.http.v2.context.context_snapshot_candidates",
+        "polaris.delivery.http.v2.context.read_context_snapshot",
         _explode,
     ):
         response = client.get("/v2/context/ZZZZZZZZZZZZZZZZZZZZZZZZ")
@@ -478,3 +479,120 @@ def test_validator_unit_layer_rejects_path_traversal() -> None:
     for raw in bad:
         with pytest.raises(ValueError):
             validate_context_hash(raw)
+
+
+@pytest.mark.parametrize("suffix", ["", "/final-request"])
+def test_cold_context_read_has_no_provisioning_effects(tmp_path, monkeypatch, suffix) -> None:
+    """Catches writable resolver/registry constructors on absent snapshot queries."""
+    workspace = tmp_path / "absent-project"
+    home = tmp_path / "absent-registry"
+    monkeypatch.setenv("KERNELONE_INSTANCE_HOME", str(home))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+    client = _build_client(str(workspace))
+    effects = []
+    original = Path.mkdir
+
+    def observe(path, *args, **kwargs):
+        effects.append(str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", observe)
+    response = client.get(f"/v2/context/{'a' * 24}{suffix}")
+    assert response.status_code == 404, response.text
+    details = response.json()["detail"]["details"]
+    assert details["workspace"] == str(workspace)
+    assert details["context_hash"] == "a" * 24
+    assert details["searched_paths"]
+    assert effects == []
+    assert not workspace.exists()
+    assert not home.exists()
+
+
+@pytest.mark.parametrize("suffix", ["", "/final-request"])
+def test_context_tamper_first_present_stops_before_valid_historical_copy(tmp_path, monkeypatch, suffix) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    ref = _seed_context_with_provider_request(workspace, "synthetic-tamper")
+    target = workspace / ".polaris" / "runtime" / "contexts" / ref[:2] / ref
+    historical = tmp_path / "historical"
+    copy = historical / "contexts" / ref[:2] / ref
+    copy.parent.mkdir(parents=True)
+    copy.write_bytes(target.read_bytes())
+    target.write_bytes(target.read_bytes() + b" ")
+    monkeypatch.setattr(
+        "polaris.cells.context.engine.public.snapshot_paths.query_instance_records",
+        lambda: [
+            {
+                "instance_id": "synthetic-history",
+                "workspace": str(workspace),
+                "runtime_root": str(historical),
+                "status": "running",
+            }
+        ],
+    )
+    response = _build_client(str(workspace)).get(f"/v2/context/{ref}{suffix}")
+    assert response.status_code == 500, response.text
+    detail = response.json()["detail"]
+    assert "hash_mismatch" in detail["code"].lower()
+    assert detail["details"]["context_path"] == str(target)
+    assert copy.exists()
+
+
+@pytest.mark.parametrize("kind", ["symlink", "dangling", "directory", "fifo", "hardlink"])
+def test_context_unsafe_first_present_file_is_not_absence(tmp_path, monkeypatch, kind) -> None:
+    workspace = tmp_path / "project"
+    runtime = workspace / ".polaris" / "runtime"
+    ref = "f" * 24
+    target = runtime / "contexts" / ref[:2] / ref
+    target.parent.mkdir(parents=True)
+    other = tmp_path / "other"
+    other.write_text("{}", encoding="utf-8")
+    if kind == "symlink":
+        target.symlink_to(other)
+    elif kind == "dangling":
+        target.symlink_to(tmp_path / "absent")
+    elif kind == "directory":
+        target.mkdir()
+    elif kind == "fifo":
+        os.mkfifo(target)
+    else:
+        os.link(other, target)
+    monkeypatch.setenv("KERNELONE_INSTANCE_HOME", str(tmp_path / "missing-registry"))
+    response = _build_client(str(workspace)).get(f"/v2/context/{ref}")
+    assert response.status_code == 500, response.text
+    assert response.json()["detail"]["details"]["context_path"] == str(target)
+
+
+@pytest.mark.parametrize("suffix", ["", "/final-request"])
+def test_context_registry_degradation_does_not_hide_valid_canonical_or_missing_history(
+    tmp_path, monkeypatch, suffix
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    ref = _seed_context_with_provider_request(workspace, "synthetic-registry-error")
+    monkeypatch.setattr(
+        "polaris.cells.context.engine.public.snapshot_paths.query_instance_records",
+        lambda: {"degraded": True, "items": [], "error": {"code": "synthetic_registry_unavailable"}},
+    )
+    client = _build_client(str(workspace))
+    assert client.get(f"/v2/context/{ref}{suffix}").status_code == 200
+    response = client.get(f"/v2/context/{'e' * 24}{suffix}")
+    assert response.status_code == 503, response.text
+    details = response.json()["detail"]["details"]
+    assert details["registry_errors"] == [{"code": "synthetic_registry_unavailable"}]
+    assert details["workspace"] == str(workspace)
+    assert details["searched_paths"]
+
+
+@pytest.mark.parametrize(
+    "content,code", [(b"[]", "CONTEXT_FORMAT_ERROR"), (b"\xff", "CONTEXT_READ_ERROR"), (b"", "CONTEXT_READ_ERROR")]
+)
+def test_context_preserves_decode_vs_object_format_error(tmp_path, content, code) -> None:
+    ref = hashlib.sha256(content).hexdigest()[:24]
+    target = tmp_path / ".polaris" / "runtime" / "contexts" / ref[:2] / ref
+    target.parent.mkdir(parents=True)
+    target.write_bytes(content)
+    response = _build_client(str(tmp_path)).get(f"/v2/context/{ref}")
+    assert response.status_code == 500
+    assert response.json()["detail"]["code"] == code

@@ -2571,3 +2571,93 @@ def test_fresh_public_supervisor_reaps_same_parent_process_without_handle_map(tm
         release.unlink(missing_ok=True)
         for child in children:
             child.wait(timeout=3)
+
+
+@pytest.mark.parametrize("operation", ["read", "delete", "replace", "lock", "write"])
+def test_readonly_registry_cold_query_never_provisions_or_upgrades(
+    tmp_path: Path, monkeypatch: Any, operation: str
+) -> None:
+    """Catches constructor mkdir and readonly mutation before any filesystem effect."""
+    home = tmp_path / "cold-parent" / "instances"
+    effects: list[str] = []
+    original_mkdir = Path.mkdir
+
+    def observe_mkdir(path: Path, *args: Any, **kwargs: Any) -> None:
+        effects.append(str(path))
+        original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", observe_mkdir)
+    registry = InstanceRegistry(home, read_only=True)
+    if operation == "read":
+        assert registry.list_records() == []
+    else:
+        with pytest.raises(RegistryReadError, match="read_only"):
+            if operation == "delete":
+                registry.delete("absent")
+            elif operation == "replace":
+                registry.replace_records([], action="must-not-publish")
+            elif operation == "write":
+                registry._write_raw({"schema_version": 1, "instances": []})
+            else:
+                with registry.mutation_lock():
+                    pytest.fail("readonly lock yielded")
+    assert effects == []
+    assert not home.parent.exists()
+
+
+def test_readonly_registry_uses_existing_writer_format_without_health_or_effects(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from polaris.cells.instances.public.service import query_instance_records
+
+    writer = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    record = InstanceRecord(
+        instance_id="synthetic-readonly",
+        name="Synthetic fixture",
+        kind="project",
+        polaris_root=str(tmp_path),
+        workspace=str(tmp_path / "project"),
+        runtime_root=str(tmp_path / "project" / ".polaris" / "runtime"),
+        backend_port=60901,
+        frontend_port=60902,
+        backend_url="http://127.0.0.1:60901",
+        frontend_url="http://127.0.0.1:60902",
+        token="synthetic-fixture-token",
+        status="running",
+    )
+    writer.save(record)
+    before = {
+        str(p.relative_to(tmp_path)): (p.stat().st_mtime_ns, p.read_bytes()) for p in tmp_path.rglob("*") if p.is_file()
+    }
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail("readonly query reached a write or process-health effect")
+
+    monkeypatch.setattr(instance_service, "ensure_absolute_dir", forbidden)
+    monkeypatch.setattr(instance_service, "publish_instances_update", forbidden)
+    monkeypatch.setattr(instance_service, "is_process_alive", forbidden)
+    result = query_instance_records(writer.home)
+    assert isinstance(result, list)
+    assert result[0]["workspace"] == record.workspace
+    assert result[0]["status"] == "running"
+    assert "token" not in result[0]
+    after = {
+        str(p.relative_to(tmp_path)): (p.stat().st_mtime_ns, p.read_bytes()) for p in tmp_path.rglob("*") if p.is_file()
+    }
+    assert after == before
+
+
+@pytest.mark.parametrize("content", [b"{broken", b"\xff", b'{"schema_version":2,"instances":[]}'])
+def test_readonly_registry_corruption_remains_degraded_and_bytes_unchanged(tmp_path: Path, content: bytes) -> None:
+    from polaris.cells.instances.public.service import query_instance_records
+
+    home = tmp_path / "instances"
+    home.mkdir()
+    path = home / "registry.json"
+    path.write_bytes(content)
+    result = query_instance_records(home)
+    assert isinstance(result, dict)
+    assert result["degraded"] is True
+    assert result["error"]["code"] == "instance_registry_corrupt"
+    assert path.read_bytes() == content
+    assert sorted(p.name for p in home.iterdir()) == ["registry.json"]

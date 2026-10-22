@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
@@ -68,6 +69,20 @@ def list_instances(home: Path | None = None) -> InstanceListResult:
     return get_instance_supervisor(home).list_instances()
 
 
+def query_instance_records(home: Path | None = None) -> InstanceListResult:
+    """Read registered records without provisioning, process probes or state refresh."""
+    try:
+        records = InstanceRegistry(home, read_only=True).list_records()
+    except InstanceRegistryError as exc:
+        return {"degraded": True, "items": [], "error": exc.to_dict()}
+    result: list[dict[str, Any]] = []
+    for record in records:
+        payload = asdict(record)
+        payload.pop("token", None)
+        result.append(payload)
+    return result
+
+
 __all__ = [
     "DegradedInstanceListProjection",
     "InstanceListResult",
@@ -81,4 +96,5 @@ __all__ = [
     "list_instances",
     "maybe_start_instance_watchdog",
     "normalize_instance_id",
+    "query_instance_records",
 ]

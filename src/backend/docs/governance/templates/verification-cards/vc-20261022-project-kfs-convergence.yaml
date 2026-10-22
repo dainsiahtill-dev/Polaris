@@ -1,7 +1,7 @@
 id: vc-20261022-project-kfs-convergence
 classification: pattern
 owner: storage.layout-and-kernelone.fs
-status: b1_b2a_scoped_qualified_consumers_and_remaining_capabilities_pending
+status: b1_b2a_b3a_scoped_qualified_remaining_owners_pending
 design: docs/blueprints/POLARIS_PROJECT_KFS_CONVERGENCE_20261022.md
 plan: docs/superpowers/plans/2026-10-22-project-kfs-convergence.md
 evidence_root: .polaris/audits/project-storage-20261022/
@@ -24,6 +24,7 @@ verification:
   - Real KFS effects and retained native adapter safety; inventory counts alone do not pass.
   - Scoped style,type,pytest and required release/catalog checks before final integration.
   - Fresh originalcatalog isolated delivery and independent ROOT quality after new version freeze.
+  - B3a shared ContextOS reader ROOT integration204passed and KernelOne ALL12stages368passed1skipped on frozen inputs; independent disappearance/progress and cold-read no-product-write evidence retained.
 acceptance: Each batch needs evidence for its own declared boundary; whole convergence remains incomplete until remaining owners and actual runtime roots are verified.
 remaining_unknown: Full dynamic I/O coverage,all6054 static candidates,Electron live roots,offline main data transition,all120 deliveries,physical HTTP totals,bill,human effort,and original13 cold-child failure causes.
 retained_failures:
@@ -31,3 +32,4 @@ retained_failures:
   - Official Catalog exit1 new159 is preserved; independent196-file BASE byte comparison identifies pre-existing findings without baseline edits.
   - Strict mypy three unchanged errors reproduced from HEAD; standard scoped mypy passes all11 Python changes.
   - B2a first fullFS integration1failed483passed remains preserved; EOF complete does not imply current membership, and native single insertion can leave all seven directory metadata fields unchanged.
+  - B3a initial historical external-writer fixture and intermediate failures are retained; pin,statistics,retention,DB,temp,main shared roots and native deliveries remain unqualified.

@@ -14,7 +14,7 @@ from polaris.cells.context.engine.public import (
     query_final_provider_request_audit,
 )
 from polaris.cells.context.engine.public.service import project_final_provider_request_snapshot
-from polaris.cells.context.engine.public.snapshot_paths import context_snapshot_candidates
+from polaris.cells.context.engine.public.snapshot_paths import ContextSnapshotReadError, read_context_snapshot
 from polaris.delivery.http.schemas.context import (
     ContextStoreStatsResponse,
     SweepReportResponse,
@@ -65,27 +65,6 @@ def _context_stats_response(stats: dict[str, Any], last_sweep_report: dict[str, 
         "last_sweep_at": stats["last_sweep_at"],
         "last_sweep_report": last_sweep_report,
     }
-
-
-def _load_context_payload(file_path: Path, canonical_hash: str) -> dict[str, Any]:
-    try:
-        with open(file_path, encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (RuntimeError, ValueError) as exc:
-        logger.error("Failed to read context snapshot %s: %s", canonical_hash, exc)
-        raise StructuredHTTPException(
-            status_code=500,
-            code="CONTEXT_READ_ERROR",
-            message="Failed to read context snapshot",
-        ) from exc
-
-    if not isinstance(payload, dict):
-        raise StructuredHTTPException(
-            status_code=500,
-            code="CONTEXT_FORMAT_ERROR",
-            message="Context snapshot has invalid format",
-        )
-    return payload
 
 
 @router.get(
@@ -141,6 +120,8 @@ def get_context_final_request_by_hash(request: Request, hash: str) -> dict[str, 
         status_code = 400
     elif result.status == "not_found":
         status_code = 404
+    elif result.status == "unavailable":
+        status_code = 503
     elif result.status == "missing_provider_request":
         status_code = 409
     raise StructuredHTTPException(
@@ -189,34 +170,23 @@ def get_context_by_hash(request: Request, hash: str) -> dict[str, Any]:
 
     workspace = _resolve_workspace(request)
 
-    storage_source = ""
-    file_path: Path | None = None
-    candidates = context_snapshot_candidates(workspace, canonical_hash)
-    for candidate_source, candidate_path in candidates:
-        if candidate_path.is_file():
-            storage_source = candidate_source
-            file_path = candidate_path
-            break
-
-    if file_path is None:
+    try:
+        read = read_context_snapshot(workspace, canonical_hash)
+    except ContextSnapshotReadError as exc:
+        status_code = 404 if exc.status == "not_found" else 503 if exc.status == "unavailable" else 500
+        code = {
+            "context_snapshot_not_found": "CONTEXT_NOT_FOUND",
+            "context_snapshot_unreadable": "CONTEXT_READ_ERROR",
+            "context_snapshot_invalid_format": "CONTEXT_FORMAT_ERROR",
+        }.get(exc.code, exc.code)
         raise StructuredHTTPException(
-            status_code=404,
-            code="CONTEXT_NOT_FOUND",
-            message=f"Context snapshot not found for hash {canonical_hash}",
-            details={
-                "context_hash": canonical_hash,
-                "workspace": workspace,
-                "searched_paths": [{"source": source, "context_path": str(path)} for source, path in candidates],
-            },
-        )
-    payload = _load_context_payload(file_path, canonical_hash)
-
-    if not isinstance(payload, dict):
-        raise StructuredHTTPException(
-            status_code=500,
-            code="CONTEXT_FORMAT_ERROR",
-            message="Context snapshot has invalid format",
-        )
+            status_code=status_code,
+            code=code,
+            message=str(exc),
+            details=exc.details,
+        ) from exc
+    payload = read.payload
+    storage_source = read.storage_source
 
     provider_request = payload.get("provider_request")
     projection = project_final_provider_request_snapshot(
