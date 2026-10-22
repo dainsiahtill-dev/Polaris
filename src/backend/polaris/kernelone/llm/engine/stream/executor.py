@@ -915,8 +915,10 @@ class StreamExecutor:
                     - payload_overhead
                     - 64,
                 )
-                visual_cost = visual_payload_cost(chat_messages)
                 request.context["visual_working_set"] = selection
+            # Admission and output allocation share the full structured input,
+            # including tool arguments when there are no image blocks.
+            visual_cost = visual_payload_cost(chat_messages)
             budgeted_chat_messages = compress_chat_messages_to_budget(
                 chat_messages,
                 budget_decision.allowed_prompt_tokens,
@@ -924,6 +926,8 @@ class StreamExecutor:
             )
             if budgeted_chat_messages is not None:
                 effective_chat_messages = budgeted_chat_messages
+                if effective_chat_messages != chat_messages:
+                    visual_cost = visual_payload_cost(effective_chat_messages)
                 invoke_cfg["chat_messages"] = effective_chat_messages
                 clamp_prompt_text = "\n".join(str(m.get("content") or "") for m in effective_chat_messages)
 

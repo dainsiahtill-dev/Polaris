@@ -1758,7 +1758,9 @@ def _build_tool_spec_from_dict(tool_name: str, spec_dict: dict[str, Any]) -> Too
     else:
         categories = ("read",)
 
-    arguments = spec_dict.get("arguments", [])
+    # Full JSON Schema is authoritative; legacy metadata may contain union
+    # types that are not legacy scalar type names and must not be decoded first.
+    arguments = [] if isinstance(spec_dict.get("parameters"), dict) else spec_dict.get("arguments", [])
     properties: dict[str, Any] = {}
     required: list[str] = []
 
@@ -1768,18 +1770,17 @@ def _build_tool_spec_from_dict(tool_name: str, spec_dict: dict[str, Any]) -> Too
             if not arg_name:
                 continue
             arg_type = arg.get("type", "string").lower()
+            # Argument metadata uses a boolean required flag; an object schema
+            # uses a required list. Keep nested/composed schema constraints intact.
             param_schema: dict[str, Any] = {
-                "type": arg_type,
-                "description": arg.get("description", ""),
+                key: deepcopy(value) for key, value in arg.items() if key not in {"name", "required"}
             }
-            if "enum" in arg:
-                param_schema["enum"] = arg["enum"]
-            if arg_type == "array" and "items" in arg:
-                param_schema["items"] = arg["items"]
-            if "default" in arg:
-                param_schema["default"] = arg["default"]
+            param_schema["type"] = arg_type
+            param_schema.setdefault("description", "")
+            if isinstance(arg.get("required"), list):
+                param_schema["required"] = deepcopy(arg["required"])
             properties[arg_name] = param_schema
-            if arg.get("required", False):
+            if arg.get("required") is True:
                 required.append(arg_name)
 
     parameters: dict[str, Any] = {
@@ -1791,6 +1792,11 @@ def _build_tool_spec_from_dict(tool_name: str, spec_dict: dict[str, Any]) -> Too
     parameter_any_of = spec_dict.get("parameter_any_of")
     if isinstance(parameter_any_of, list) and parameter_any_of:
         parameters["anyOf"] = deepcopy(parameter_any_of)
+    # Effective snapshots and direct ToolSpec registrations already own the
+    # complete schema. Rebuilding from argument metadata would lose nested
+    # required lists and root/composition constraints.
+    if isinstance(spec_dict.get("parameters"), dict):
+        parameters = deepcopy(spec_dict["parameters"])
 
     return ToolSpec(
         canonical_name=tool_name,
@@ -1825,6 +1831,7 @@ def _tool_spec_to_dict(spec: ToolSpec) -> dict[str, Any]:
         if len(spec.categories) > 1
         else (spec.categories[0] if spec.categories else "read"),
         "arguments": arguments,
+        "parameters": deepcopy(spec.parameters),
         "handler_module": spec.handler_module,
         "handler_function": spec.handler_function,
         "response_format_hint": spec.response_format_hint,

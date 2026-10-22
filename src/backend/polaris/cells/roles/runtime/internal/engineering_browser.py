@@ -86,6 +86,10 @@ try:
                 locator = page.locator(action['selector'])
                 if action['type'] == 'click':
                     locator.click()
+                elif action['type'] == 'fill':
+                    locator.fill(action['value'])
+                elif action['type'] == 'select_option':
+                    locator.select_option(value=action['value'])
                 else:
                     locator.press(action['key'])
                 if action['wait_ms']:
@@ -115,6 +119,46 @@ try:
                 'body_text': body.inner_text()[:2000] if body.count() else '',
                 'buttons': [text[:80] for text in page.get_by_role('button').all_text_contents()[:8]],
             }
+            # Read only public properties of rendered standard form controls.
+            # Prefix limits describe observations, never truncate supplied actions.
+            summary.update(page.locator('input, textarea, select').evaluate_all(r'''
+                elements => {
+                    const clip = (value, limit) => {
+                        const original = String(value ?? '');
+                        let text = original.slice(0, limit);
+                        if (text.length) {
+                            const last = text.charCodeAt(text.length - 1);
+                            if (last >= 0xD800 && last <= 0xDBFF) text = text.slice(0, -1);
+                        }
+                        return {text, length_utf16: original.length, truncated: text.length < original.length};
+                    };
+                    const rendered = elements.filter(element => element.type !== 'hidden'
+                        && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden');
+                    return {
+                        controls_total: rendered.length,
+                        controls_truncated: rendered.length > 32,
+                        control_limits: {count: 32, value_utf16_units: 512, identity_utf16_units: 128, selected_options: 8},
+                        controls: rendered.slice(0, 32).map(element => {
+                            const id = clip(element.id, 128), name = clip(element.name, 128);
+                            const observed = !['password', 'file'].includes(element.type);
+                            const value = observed ? clip(element.value, 512) : null;
+                            const selected = element.tagName === 'SELECT' ? Array.from(element.selectedOptions) : [];
+                            return {
+                                tag: element.tagName.toLowerCase(), type: element.type,
+                                id: id.text, id_truncated: id.truncated,
+                                name: name.text, name_truncated: name.truncated,
+                                value_observed: observed, value: value ? value.text : null,
+                                value_length_utf16: value ? value.length_utf16 : null,
+                                value_truncated: value ? value.truncated : false,
+                                checked: ['checkbox', 'radio'].includes(element.type) ? element.checked : null,
+                                disabled: element.disabled, read_only: Boolean(element.readOnly),
+                                selected_values: selected.slice(0, 8).map(option => clip(option.value, 512)),
+                                selected_values_total: selected.length, selected_values_truncated: selected.length > 8,
+                            };
+                        }),
+                    };
+                }
+            '''))
             result = {
                 'images': images,
                 'entry': settings['relative_entry'],
@@ -141,6 +185,17 @@ except Exception as error:
 def _text(value: object, *, label: str, maximum: int = 1024) -> str:
     if not isinstance(value, str) or not value.strip() or "\0" in value or len(value) > maximum:
         raise ValueError(f"{label} must be nonempty text of at most {maximum} characters without NUL")
+    return value
+
+
+def _action_value(value: object) -> str:
+    """Preserve literal DOM text, including empty values and surrounding spaces."""
+    if not isinstance(value, str) or "\0" in value:
+        raise ValueError("fill/select_option value must be a string without NUL")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError("fill/select_option value must be valid UTF-8 text") from error
     return value
 
 
@@ -182,24 +237,30 @@ def _settings(arguments: dict[str, Any], *, workspace: Path, scope: PermissionSc
     if frames != sorted(frames):
         raise ValueError("frame_times_ms must be ordered absolute offsets after the actions")
     supplied_actions = arguments.get("actions", [])
-    if not isinstance(supplied_actions, list) or len(supplied_actions) > 4:
-        raise ValueError("actions must be a list containing at most 4 actions")
+    if not isinstance(supplied_actions, list):
+        raise ValueError("actions must be a list")
     actions = []
     for action in supplied_actions:
-        if not isinstance(action, dict) or action.keys() - {"type", "selector", "key", "wait_ms"}:
+        if not isinstance(action, dict) or action.keys() - {"type", "selector", "key", "value", "wait_ms"}:
             raise ValueError("unsupported browser action fields")
         kind = action.get("type")
-        if kind not in {"click", "keypress"}:
-            raise ValueError("browser action type must be click or keypress")
+        if kind not in {"click", "keypress", "fill", "select_option"}:
+            raise ValueError("browser action type must be click, keypress, fill or select_option")
         normalized = {
             "type": kind,
             "selector": _text(action.get("selector"), label="action selector", maximum=512),
             "wait_ms": _integer(action.get("wait_ms", 0), label="action wait_ms", minimum=0, maximum=10000),
         }
         if kind == "keypress":
+            if "value" in action:
+                raise ValueError("keypress actions do not accept value")
             normalized["key"] = _text(action.get("key"), label="action key", maximum=64)
-        elif "key" in action:
-            raise ValueError("click actions do not accept key")
+        elif kind in {"fill", "select_option"}:
+            if "key" in action:
+                raise ValueError("fill/select_option actions do not accept key")
+            normalized["value"] = _action_value(action.get("value"))
+        elif "key" in action or "value" in action:
+            raise ValueError("click actions do not accept key or value")
         actions.append(normalized)
     if sum(action["wait_ms"] for action in actions) + frames[-1] > 10000:
         raise ValueError("browser action waits and frame offsets exceed the 10 second timing budget")

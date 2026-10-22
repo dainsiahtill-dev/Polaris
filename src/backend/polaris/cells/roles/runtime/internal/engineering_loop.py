@@ -367,6 +367,19 @@ async def run_engineering_loop(
                         ),
                     }
                 )
+            if command.role == "qa":
+                from polaris.cells.roles.runtime.internal.engineering_working_state import (
+                    QA_WORKING_STATE_EVENT_KINDS,
+                    qa_working_state_message,
+                )
+
+                run = store.load_run(command.session_id, workspace=command.workspace)
+                working_events = store.load_events(command.session_id, kinds=QA_WORKING_STATE_EVENT_KINDS)
+                options["messages"].append(
+                    qa_working_state_message(
+                        run, working_events, frame_seq=frame_seq, observed_at=time.time(), deadline=limits.deadline
+                    )
+                )
             request = AIRequest(
                 task_type=TaskType.DIALOGUE,
                 role=command.role,

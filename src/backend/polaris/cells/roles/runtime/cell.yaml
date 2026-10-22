@@ -126,6 +126,9 @@ verification:
   - polaris/cells/roles/runtime/tests/test_engineering_visual_projection.py
   - polaris/cells/roles/runtime/tests/test_engineering_event_selection.py
   - polaris/cells/roles/runtime/tests/test_engineering_budget_visibility.py
+  - polaris/cells/roles/runtime/tests/test_engineering_browser_complete_flow.py
+  - polaris/cells/roles/runtime/tests/test_engineering_visual_reinspection.py
+  - polaris/cells/roles/runtime/tests/test_engineering_qa_working_state.py
   - polaris/cells/roles/runtime/tests/test_engineering_events.py
   - polaris/tests/architecture/test_engineering_no_legacy_admission.py
   gaps:

@@ -1,5 +1,6 @@
 """Unit tests for ToolSpecRegistry - the single source of truth for tool definitions."""
 
+import json
 from contextvars import Context
 
 import pytest
@@ -924,3 +925,134 @@ class TestEffectiveToolSpecSnapshots:
                 canonical_name_view=FrozenSequenceV1(()),
                 alias_binding_view=FrozenMapV1((FrozenMapEntryV1("x", FrozenScalarV1("float", float("inf"))),)),
             )
+
+
+@pytest.mark.parametrize("format", ["openai", "anthropic"])
+def test_raw_nested_constraints_survive_native_projection(format: str) -> None:
+    """Object requirements belong to the object; metadata booleans to arguments."""
+    from jsonschema import Draft202012Validator
+
+    def check() -> None:
+        ToolSpecRegistry.register(
+            "nested_boundary_fixture",
+            {
+                "category": "read",
+                "arguments": [
+                    {"name": "mode", "type": "string", "required": True},
+                    {
+                        "name": "geometry",
+                        "type": "object",
+                        "properties": {"width": {"type": "integer", "minimum": 320, "maximum": 1600}},
+                        "required": ["width"],
+                        "additionalProperties": False,
+                    },
+                    {"name": "steps", "type": "array", "items": {"type": "string"}, "maxItems": 4},
+                    {"name": "saved_ids", "type": "array", "items": {"type": "string"}, "minItems": 1},
+                ],
+                "parameter_any_of": [
+                    {"not": {"required": ["saved_ids"]}},
+                    {
+                        "required": ["saved_ids"],
+                        "not": {"anyOf": [{"required": ["geometry"]}, {"required": ["steps"]}]},
+                    },
+                ],
+            },
+        )
+        schema = ToolSpecRegistry.get_llm_schema("nested_boundary_fixture", format=format)
+        assert schema is not None
+        parameters = schema["function"]["parameters"] if format == "openai" else schema["input_schema"]
+        assert parameters["required"] == ["mode"]
+        assert parameters["properties"]["geometry"]["required"] == ["width"]
+        validator = Draft202012Validator(parameters)
+        for arguments in [
+            {"mode": "observe"},
+            {"mode": "observe", "saved_ids": ["old"]},
+            {"mode": "observe", "geometry": {"width": 1600}, "steps": ["click"] * 4},
+        ]:
+            assert validator.is_valid(arguments), arguments
+        for arguments in [
+            {},
+            {"mode": "observe", "geometry": {"width": 1601}},
+            {"mode": "observe", "geometry": {}},
+            {"mode": "observe", "geometry": {"width": 500, "extra": 1}},
+            {"mode": "observe", "steps": ["click"] * 5},
+            {"mode": "observe", "saved_ids": []},
+            {"mode": "observe", "saved_ids": ["old"], "geometry": {"width": 500}},
+        ]:
+            assert not validator.is_valid(arguments), arguments
+
+    Context().run(check)
+
+
+def test_direct_toolspec_parameters_roundtrip_preserves_nested_required() -> None:
+    parameters = {
+        "type": "object",
+        "properties": {
+            "geometry": {
+                "type": "object",
+                "properties": {"width": {"type": "integer"}},
+                "required": ["width"],
+                "additionalProperties": False,
+            }
+        },
+        "required": ["geometry"],
+        "additionalProperties": False,
+    }
+
+    def check() -> None:
+        ToolSpecRegistry.register(ToolSpec("direct_nested_fixture", (), "", parameters, ("read",)))
+        schema = ToolSpecRegistry.get_llm_schema("direct_nested_fixture", format="anthropic")
+        assert schema is not None
+        assert schema["input_schema"] == parameters
+        from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
+
+        snapshot = ToolSpecRegistry.capture_effective_spec("direct_nested_fixture")
+        effective = frozen_node_to_value(snapshot.canonical_effective_spec)
+        restored = json.loads(json.dumps(effective, ensure_ascii=False))
+
+        def cold_restore() -> None:
+            ToolSpecRegistry.register("cold_nested_fixture", restored)
+            native = ToolSpecRegistry.get_llm_schema("cold_nested_fixture", format="anthropic")
+            assert native is not None
+            assert native["input_schema"] == parameters
+
+        Context().run(cold_restore)
+
+    Context().run(check)
+
+
+@pytest.mark.parametrize("format", ["openai", "anthropic"])
+@pytest.mark.parametrize("origin", ["direct", "parameters_only"])
+def test_authoritative_parameters_union_survives_effective_json_restore(format: str, origin: str) -> None:
+    """An authoritative schema must not be reinterpreted as legacy argument metadata."""
+    from polaris.kernelone.tool_execution.contracts import frozen_node_to_value
+
+    parameters = {
+        "type": "object",
+        "properties": {"value": {"type": ["string", "null"]}},
+        "required": ["value"],
+        "additionalProperties": False,
+    }
+
+    def check() -> None:
+        if origin == "direct":
+            ToolSpecRegistry.register(ToolSpec("union_fixture", (), "", parameters, ("read",)))
+        else:
+            ToolSpecRegistry.register("union_fixture", {"parameters": parameters, "category": "read"})
+        schema = ToolSpecRegistry.get_llm_schema("union_fixture", format=format)
+        assert schema is not None
+        assert (schema["function"]["parameters"] if format == "openai" else schema["input_schema"]) == parameters
+        snapshot = ToolSpecRegistry.capture_effective_spec("union_fixture")
+        effective = json.loads(json.dumps(frozen_node_to_value(snapshot.canonical_effective_spec), ensure_ascii=False))
+
+        def cold_restore() -> None:
+            ToolSpecRegistry.register("cold_union_fixture", effective)
+            restored = ToolSpecRegistry.get_llm_schema("cold_union_fixture", format=format)
+            assert restored is not None
+            assert (
+                restored["function"]["parameters"] if format == "openai" else restored["input_schema"]
+            ) == parameters
+
+        Context().run(cold_restore)
+
+    Context().run(check)

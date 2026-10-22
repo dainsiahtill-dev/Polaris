@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 # Core层契约导入
 from polaris.kernelone.llm.toolkit.contracts import TokenEstimatorPort
 
 _logger = logging.getLogger(__name__)
+_CJK_PATTERN = re.compile(r"[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]")
 
 
 class TokenEstimator:
@@ -80,14 +82,7 @@ class TokenEstimator:
             return 0
 
         # 检测 CJK 比例
-        cjk_count = sum(
-            1
-            for c in text
-            if "\u4e00" <= c <= "\u9fff"  # CJK 统一表意文字
-            or "\u3040" <= c <= "\u309f"  # 平假名
-            or "\u30a0" <= c <= "\u30ff"  # 片假名
-            or "\uac00" <= c <= "\ud7af"  # 韩文音节
-        )
+        cjk_count = sum(1 for _ in _CJK_PATTERN.finditer(text))
         cjk_ratio = cjk_count / text_len
 
         # 根据内容类型选择参数
@@ -166,14 +161,7 @@ class TokenEstimator:
         """获取文本的详细统计信息（用于调试）。"""
         text_len = len(text)
 
-        cjk_count = sum(
-            1
-            for c in text
-            if "\u4e00" <= c <= "\u9fff"
-            or "\u3040" <= c <= "\u309f"
-            or "\u30a0" <= c <= "\u30ff"
-            or "\uac00" <= c <= "\ud7af"
-        )
+        cjk_count = sum(1 for _ in _CJK_PATTERN.finditer(text))
 
         code_indicators = sum(1 for c in text if c in "{};()[]=<>+-*/%&|^~!")
 

@@ -63,7 +63,7 @@ def role_instruction(role: str, *, visual: bool = False, require_visual_review: 
             " You can use browser_observe to render a workspace-local HTML/SVG page and receive actual images. "
             "Inspect those images for appearance, composition, spatial relationships, clipping and motion; "
             "source text, a screenshot path and successful DOM tests do not establish visible correctness. "
-            "Use multiple times or viewports when relevant. Controls can be exercised through bounded click/keypress actions. "
+            "Use multiple times or viewports when relevant. Controls support click, keypress, fill and select_option actions. Supply literal value for fill/select_option, including empty values and spaces. A single call can perform a complete action sequence within the host deadline; every call starts a fresh context. "
             "Re-observe after changes; tell the user about unresolved visual limitations."
             " Saved capture IDs and frame metadata remain in tool results. To compare historical states, use "
             "browser_observe(revisit_call_ids=[capture IDs]) for any combination of your own session captures. "
@@ -139,14 +139,30 @@ def register_browser_observation_tool() -> None:
                 "no browser is launched and old bindings stay unchanged. Original capture IDs/frames remain in tool results. "
                 "No workspace writes or remote resources. Frames are captured at absolute milliseconds after load, "
                 "after optional bounded actions. Maximum four JPEG frames, 1 MiB total; excess fails explicitly. "
-                "Each call closes its browser and server. Inspect the images in your next turn before making a visual judgment."
+                "Use click/keypress or literal fill/select_option(value) actions; values retain exact text including empty strings and spaces. "
+                "Complete sequences run in one context within the host deadline and existing total wait budget. "
+                "Each call starts and closes a fresh context; no state carries between calls and no download artifact is returned. "
+                "DOM observations include at most 32 rendered standard controls and 512 UTF-16 units per value, with explicit truncation flags and lengths; password/file values are not exposed. "
+                "Inspect the images in your next turn before making a visual judgment."
             ),
+            "parameter_any_of": [
+                {
+                    "properties": {"entry": {}, "viewport": {}, "frame_times_ms": {}, "actions": {}},
+                    "additionalProperties": False,
+                },
+                {
+                    "properties": {"revisit_call_ids": {}},
+                    "required": ["revisit_call_ids"],
+                    "additionalProperties": False,
+                },
+            ],
             "arguments": [
                 {
                     "name": "revisit_call_ids",
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "minLength": 1, "pattern": r"\S"},
                     "minItems": 1,
+                    "uniqueItems": True,
                     "description": "Existing original capture call IDs for exact historical comparisons; exclusive with all capture arguments.",
                 },
                 {
@@ -175,17 +191,38 @@ def register_browser_observation_tool() -> None:
                 {
                     "name": "actions",
                     "type": "array",
-                    "maxItems": 4,
+                    "description": "Ordered actions in this call's single fresh context. Existing host deadline/process and total wait budget apply; no fixed action-count cap.",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "type": {"type": "string", "enum": ["click", "keypress"]},
-                            "selector": {"type": "string"},
-                            "key": {"type": "string"},
+                            "type": {"type": "string", "enum": ["click", "keypress", "fill", "select_option"]},
+                            "selector": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": r"\S"},
+                            "key": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": r"\S"},
+                            "value": {
+                                "type": "string",
+                                "pattern": r"^[^\u0000]*$",
+                                "description": "Exact literal input or option value; empty string and surrounding spaces are preserved.",
+                            },
                             "wait_ms": {"type": "integer", "minimum": 0, "maximum": 10000},
                         },
                         "required": ["type", "selector"],
                         "additionalProperties": False,
+                        "oneOf": [
+                            {
+                                "properties": {"type": {"const": "click"}},
+                                "not": {"anyOf": [{"required": ["key"]}, {"required": ["value"]}]},
+                            },
+                            {
+                                "properties": {"type": {"const": "keypress"}},
+                                "required": ["key"],
+                                "not": {"required": ["value"]},
+                            },
+                            {
+                                "properties": {"type": {"enum": ["fill", "select_option"]}},
+                                "required": ["value"],
+                                "not": {"required": ["key"]},
+                            },
+                        ],
                     },
                 },
             ],

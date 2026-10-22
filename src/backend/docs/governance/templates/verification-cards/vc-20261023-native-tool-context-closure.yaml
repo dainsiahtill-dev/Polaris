@@ -1,0 +1,38 @@
+id: vc-20261023-native-tool-context-closure
+classification: pattern
+owner: roles.runtime + existing KernelOne tool/LLM technical modules
+status: scoped_source_qualified_fresh_native_pending
+design: docs/blueprints/POLARIS_NATIVE_TOOL_CONTEXT_CLOSURE_20261023.md
+plan: docs/superpowers/plans/2026-10-23-native-tool-context-closure.md
+evidence_root: .polaris/audits/
+assumptions:
+- Same engineering journal remains the sole task owner.
+- Faithful schema projection is required independently of new browser verbs.
+- Hint-free CJK count optimization preserves estimates; no-image output budget consumes
+  the same message cost as admission.
+- QA working-state has one changed next-action pair and one negative pair; full convergence remains unproven.
+pre_mortem:
+- Only one schema/validator/protocol path is updated.
+- Blank fill values are rejected or Unicode silently changed.
+- Bigger raw action batches bypass cancellation/resource drain.
+- A pure CPU improvement is mislabeled native delivery improvement.
+- Working-state facts include events later than the original captured request.
+falsifiers:
+- Any frozen old-case evidence is overwritten.
+- Host scope/empty permissions or source/QA/candidate freshness can be expanded by
+  model text.
+- Same input estimates change under the pure counting optimization.
+- Invoke and stream still use inconsistent input/output cost.
+- Context-only pilot changes history/tools/images/model or produces unjustified approval.
+verification:
+- Actual schema producer/consumer regressions and prior negative cases
+- Real K1 sandbox browser atomic interaction plus permissions/network/cancel controls
+- Native invoke/stream transport and current-image/revisit/cold recovery regressions
+- Scoped Ruff/format/mypy and related pytest
+- Required architecture and KernelOne ALL plus independent review
+- Fresh frozen original L1-01 complete native and ROOT quality acceptance
+acceptance: Stop module research after counterexamples/adjacent consumers/necessary
+  controls pass; integrate and report fresh native outcome separately.
+remaining_unknown: All120 delivery, best role combination, full browser sessions/download,
+  native latency benefit, actual HTTP totals/billing/human minutes, QA working-state
+  benefit.

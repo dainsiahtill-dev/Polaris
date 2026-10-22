@@ -197,3 +197,21 @@ class TestEnsureTokenEstimatorRegistered:
         ensure_token_estimator_registered()
         second = ServiceLocator.get_token_estimator()
         assert first is second
+
+
+class TestCJKCountEquivalence:
+    def test_all_unicode_codepoints_keep_original_ranges(self) -> None:
+        """Supplementary CJK and surrogate code points stay outside original ranges."""
+        text = "".join(map(chr, range(0x110000)))
+        assert TokenEstimator.get_stats(text)["cjk_count"] == 32368
+        assert TokenEstimator.estimate(text) == 278528
+        assert TokenEstimator.estimate(text, content_type="code") == 371370
+        assert TokenEstimator.estimate(text, content_type="cjk") == 1114112
+
+    def test_mixed_ratio_thresholds_keep_original_discontinuities(self) -> None:
+        # 5% and 30% are deliberately strict boundaries in the existing contract.
+        for count, general, code in [(5, 25, 33), (6, 26, 26), (29, 31, 31), (30, 25, 33), (31, 100, 33)]:
+            text = "中" * count + "a" * (100 - count)
+            assert TokenEstimator.estimate(text) == general
+            assert TokenEstimator.estimate(text, content_type="code") == code
+            assert TokenEstimator.get_stats(text)["cjk_count"] == count

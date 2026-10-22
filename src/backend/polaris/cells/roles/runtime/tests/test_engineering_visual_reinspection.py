@@ -13,6 +13,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 import pytest
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RoleRunCommand, RunLimits
@@ -181,7 +182,9 @@ asyncio.run(main())
     assert "visual_input_sets" not in json.dumps(scripted_provider.requests)
     assert "visual_working_set" not in json.dumps(scripted_provider.requests)
     owner = Path(__file__).resolve().parents[7]
-    artifact = owner / ".polaris/audits/native-visual-working-set-20261023/implementation"
+    artifact = Path(os.environ.get("POLARIS_TEST_AUDIT_ROOT", str(owner / ".polaris/test-workspaces"))) / (
+        "visual-reinspection-" + uuid4().hex
+    )
     fs.write_text(
         str(artifact / "integrated-native-requests.json"),
         json.dumps(scripted_provider.requests, ensure_ascii=False, indent=2),
