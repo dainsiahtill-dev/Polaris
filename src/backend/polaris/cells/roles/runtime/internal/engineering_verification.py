@@ -164,7 +164,7 @@ class EngineeringVerification:
     def review_binding(self, session_id: str) -> dict[str, object]:
         """Host observations bind a review to exact current inputs, never model IDs."""
         row = self.store.load_run(session_id, workspace=self.workspace)
-        completed = [event for event in self.store.load_events(session_id) if event["kind"] == "verification_completed"]
+        completed = self.store.load_events(session_id, kinds=("verification_completed",))
         # The immutable completion already binds its effective commands. Keep
         # this shape compatible with existing, unchanged QA candidates.
         return {

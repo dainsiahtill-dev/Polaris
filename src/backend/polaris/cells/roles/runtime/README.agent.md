@@ -17,6 +17,8 @@ The single new-run fact store is `<workspace>/.polaris/runtime/engineering/sessi
 - `engineering_session.py`: durable observations, committed events and workspace execution lock.
 - `engineering_visual.py`: derives visual model input from the same journal. A complete same-role host capture binding can omit obsolete browser pixels while preserving their metadata, tool results and original stored images. All current capture sets, original user references and unattributed inputs remain; verification receipt sequence alone does not make an image stale. Explicit private host pins are supported, but a public historical-image comparison/retrieval workflow is not wired.
 
+The internal event reader supports optional kind/role selection in the existing SQLite query. Default reads retain the full journal; matching history is never truncated. Visual attribution, native turn checks, review binding and tool reconciliation consume their required kinds without decoding auxiliary requests. Selected payload errors still fail; a filtered read is not a whole-journal health check. This adds no cache, schema, event deletion or execution authority.
+
 No second controller, task table, ledger or role-session mirror is created for new runs. Legacy `runtime/roles/*` remains declared only to explain old owned history; it is not a writable namespace for engineering.
 
 ## Permissions and effects

@@ -173,7 +173,7 @@ class EngineeringRunService:
         turn_seq = context.get("turn_seq")
         if not any(
             event["seq"] == turn_seq and event["kind"] == "turn_started" and event["role"] == request.role
-            for event in self.store.load_events(session_id)
+            for event in self.store.load_events(session_id, kinds=("turn_started",), role=request.role)
         ):
             raise ValueError("native request observation has no matching host role turn")
         payload = dict(observation)

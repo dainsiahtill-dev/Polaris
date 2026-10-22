@@ -373,11 +373,26 @@ class EngineeringSessionStore:
         with self._transaction() as connection:
             return self._append_event(connection, session_id, kind=kind, role=role, payload=payload)
 
-    def load_events(self, session_id: str) -> list[dict[str, Any]]:
+    def load_events(
+        self, session_id: str, *, kinds: tuple[str, ...] | None = None, role: str | None = None
+    ) -> list[dict[str, Any]]:
         with self._connection() as connection:
             self._require_run(connection, session_id)
+            predicates = ["session_id=?"]
+            parameters = [session_id]
+            if kinds is not None:
+                if not kinds:
+                    return []
+                predicates.append("kind IN (" + ",".join("?" for _ in kinds) + ")")
+                parameters.extend(kinds)
+            if role is not None:
+                predicates.append("role=?")
+                parameters.append(role)
             rows = connection.execute(
-                "SELECT seq,kind,role,payload,created_at FROM events WHERE session_id=? ORDER BY seq", (session_id,)
+                "SELECT seq,kind,role,payload,created_at FROM events WHERE "
+                + " AND ".join(predicates)
+                + " ORDER BY seq",
+                parameters,
             ).fetchall()
         return [{**dict(row), "payload": json.loads(row["payload"])} for row in rows]
 
@@ -864,7 +879,7 @@ class EngineeringSessionStore:
             ).fetchall()
         reconciled = {
             (event["payload"]["turn_seq"], event["payload"]["call_id"])
-            for event in self.load_events(session_id)
+            for event in self.load_events(session_id, kinds=("tool_reconciled",))
             if event["kind"] == "tool_reconciled"
         }
         return [

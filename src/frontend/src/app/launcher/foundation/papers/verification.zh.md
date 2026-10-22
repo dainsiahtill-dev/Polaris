@@ -1,6 +1,6 @@
 # 当前验证、同任务修复与最终接受
 
-> **2026-10-22 版本边界**：以下 ExecutionBroker／VerificationGroup 等段落保留旧引擎分析。当前新工程的实际检查、候选绑定、独立 QA 与资源由 `EngineeringRunService` 的同一 SQLite 记录；不恢复旧合同准入。QA 现可在 host 授权下执行隔离只读检查，但两臂真实实验没有证明验收收益；r04 QA 的局部坐标推导错误也已封存。命令 exit 0、QA 拒绝或平台 accepted 都不能代替正确质量判断。详见仓库 `docs/experiments/POLARIS_QA_READONLY_EXECUTION_20261022.md`；当前仍没有动画网页完整交付成功结论。
+> **2026-10-22 当前证据边界**：下文 ExecutionBroker 等部分保留旧引擎分析。当前工程同一 owner 保存真实检查、当前候选及独立 QA；QA 只读计算能力已接通，验收收益尚未证明。r05 从未进入正式验证与 QA，不能把该失败归因于 QA 卡住。本次只过滤绑定所需事件，完整当前 manifest、权限与接受条件不变；532 项相关回归与 K1 ALL 不替代真实网页交付。详见仓库 docs/blueprints/POLARIS_ENGINEERING_EVENT_SELECTION_20261022.md。
 
 ## 5. 真实验证：许可、执行、证明与当前性分开
 

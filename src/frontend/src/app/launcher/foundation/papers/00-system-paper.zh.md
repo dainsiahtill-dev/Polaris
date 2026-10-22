@@ -1,6 +1,6 @@
 # Polaris：生成式决策与可审计工程执行之间的系统协议
 
-> **2026-10-22 版本边界**：下文保留 10 月 14 日旧引擎分析。当前新工程由 `EngineeringRunService` 和 workspace 内单份 `engineering/sessions.sqlite3` 管理，默认 Director、显式 PM／CE 协作；不以旧 TransactionTurn、DEO 或合同链作为新运行准入。KernelOne 工具／隔离、最终请求审计与 runtime.v2 继续复用。最新真实网页 r04 因历史图片累计触发本地预算拒绝，根质量也失败；当前图片投影已有只读反例实验，有界集成验证已通过，新项目收益尚待验证。这不是全平台完成或优于其它 Agent 的证明。当前方案及证据见仓库 `docs/blueprints/POLARIS_CURRENT_VISUAL_PROJECTION_20261022.md` 和 `docs/experiments/POLARIS_QA_READONLY_EXECUTION_20261022.md`。
+> **2026-10-22 当前证据边界**：下文保留 10 月 14 日旧引擎分析。当前新工程仍由 EngineeringRunService 与 workspace 单份 engineering SQLite 管理，复用 Cell／KernelOne；不恢复旧合同或 TransactionTurn 准入。r05 达原期限后 failed，未正式验证、未调用 QA，资源已关闭。本次仅完成四处按需读取迁移，532 项相关回归和 K1 ALL 通过；局部提速不等于项目交付或平台优越性。当前证据见仓库 docs/blueprints/POLARIS_ENGINEERING_EVENT_SELECTION_20261022.md。
 
 > 工程系统分析论文 · 中文版 · 2026-10-14 观察基线
 >

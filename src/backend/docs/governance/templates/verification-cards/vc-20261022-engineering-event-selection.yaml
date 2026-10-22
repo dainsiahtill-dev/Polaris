@@ -1,0 +1,27 @@
+id: vc-20261022-engineering-event-selection
+classification: pattern
+owner: roles.runtime
+status: bounded_qualified_native_delivery_pending
+design: docs/blueprints/POLARIS_ENGINEERING_EVENT_SELECTION_20261022.md
+plan: docs/superpowers/plans/2026-10-22-engineering-event-selection.md
+evidence_root: ~/.polaris/audit_archives/autonomous-delivery-20261018/engineering-v2-refactor-20261020/task22-engineering-read-path/
+assumptions:
+  - Four measured consumers need known kinds/roles, not every auxiliary payload.
+  - The existing SQLite owner, connection and original identity checks can remain unchanged.
+  - Valid-journal filtering preserves full-history joins and Python seq comparison.
+pre_mortem:
+  - Empty selection might skip unknown-run or inode guards.
+  - Tail filtering or SQLite type coercion might lose attribution or accept a wrong turn.
+  - Empty pending fixture cannot prove interrupted-effect recovery.
+  - Readonly experiment adapters cannot prove full production transaction performance.
+falsifiers:
+  - Any current image/tool/error/order/ambiguity or valid recovery differs.
+  - Original immutable input shows no meaningful local saving after real implementation.
+verification:
+  - tests/test_engineering_event_selection.py under roles.runtime
+  - Existing engineering visual, events, QA, verification, service and recovery regression
+  - Fresh-interpreter store reopening and no unknown-effect replay
+  - Actual immutable-prefix final-method output and timing comparison
+  - Scoped Ruff/format/Mypy and required KernelOne/catalog gates
+acceptance: Complete the bounded query/consumer migration and counterexamples, then independently review and integrate; native delivery remains unproven.
+remaining_unknown: End-to-end delivery benefit, physical HTTP/billing, model convergence, general all-history performance and manifest optimization.

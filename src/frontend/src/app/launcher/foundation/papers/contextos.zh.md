@@ -1,6 +1,6 @@
 # Polaris ContextOS：状态优先的上下文编译、预算与请求证据
 
-> **2026-10-22 版本边界**：本文以下描述 10 月 14 日旧引擎。新 Engineering 循环没有默认调用整套 StateFirst／TurnEngine；保留最终 provider request 审计。r04 的实际失败输入含 38 张旧候选图与 4 张当前图，历史像素累计触发本地结构化预算拒绝。当前修复在原 roles.runtime owner 内派生图片输入，原始 journal、调用／结果／错误与当前图片保留；真实只读输入实验通过原预算和两种 codec。该估算不是实际视觉 token，尚未证明交付率提高或比普通历史上下文更优，长期记忆暂不实施。方案与精确证据见仓库 `docs/blueprints/POLARIS_CURRENT_VISUAL_PROJECTION_20261022.md`。
+> **2026-10-22 当前证据边界**：下文保留旧 StateFirst／TurnEngine 研究。新工程继续最终 provider request 审计与当前图片投影，并在原 SQLite 内按消费者需要读取 kind／role，不裁剪已持久化历史、不另建缓存事实源。真实新接口对照保留当前 3 图、工具和错误，局部视觉读取生成约 2.13→0.43 秒；不证明真实图像 token／账单减少或交付率提升。r05 仍失败，长期记忆暂不做；详见仓库 docs/blueprints/POLARIS_ENGINEERING_EVENT_SELECTION_20261022.md。
 
 ## 摘要
 

@@ -333,7 +333,11 @@ async def run_engineering_loop(
             options: dict[str, Any] = {
                 "messages": build_visual_messages(
                     messages,
-                    events=store.load_events(command.session_id),
+                    events=store.load_events(
+                        command.session_id,
+                        kinds=("message", "tool_observed", "tool_started", "visual_observation_completed"),
+                        role=command.role,
+                    ),
                     role=command.role,
                     binding_provider=visual_binding if scope.browser is not None else None,
                     audit=visual_projection,
