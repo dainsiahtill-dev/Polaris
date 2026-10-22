@@ -12,6 +12,7 @@ from polaris.kernelone.storage import (
     UNSUPPORTED_PATH_PREFIX,
     clear_business_roots_resolver,
     clear_storage_roots_cache,
+    kernelone_home,
     register_business_roots_resolver,
     resolve_global_path,
     resolve_runtime_path,
@@ -58,7 +59,7 @@ def test_workspace_key_stable_and_not_collision_for_same_basename(tmp_path: Path
 def test_runtime_base_priority_explicit_runtime_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir(parents=True, exist_ok=True)
-    explicit_runtime = tmp_path / "runtime-explicit"
+    explicit_runtime = workspace / ".polaris" / "runtime"
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(explicit_runtime))
     monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
     monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
@@ -66,9 +67,9 @@ def test_runtime_base_priority_explicit_runtime_root(monkeypatch: pytest.MonkeyP
 
     roots = resolve_storage_roots(str(workspace))
     assert Path(roots.runtime_base) == explicit_runtime.resolve()
-    assert roots.runtime_mode == "explicit_runtime_root"
+    assert roots.runtime_mode == "project_local_explicit"
     runtime_root_posix = Path(roots.runtime_root).as_posix()
-    assert "/.polaris/projects/" in runtime_root_posix
+    assert runtime_root_posix == explicit_runtime.as_posix()
     assert runtime_root_posix.endswith("/runtime")
 
 
@@ -80,11 +81,11 @@ def test_runtime_base_rejects_workspace_scoped_explicit_root(monkeypatch: pytest
     monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
-    with pytest.raises(RuntimeError, match="must equal the canonical project runtime root"):
+    with pytest.raises(RuntimeError, match="canonical project-local root"):
         resolve_storage_roots(str(workspace))
 
 
-def test_runtime_base_priority_ramdisk_then_cache_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_runtime_base_refuses_ramdisk_and_cache_redirection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir(parents=True, exist_ok=True)
     ramdisk_root = tmp_path / "ramdisk"
@@ -97,22 +98,13 @@ def test_runtime_base_priority_ramdisk_then_cache_root(monkeypatch: pytest.Monke
     monkeypatch.setenv("KERNELONE_RAMDISK_ROOT", str(ramdisk_root))
     monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(cache_root))
 
-    # Use Cell layer API directly — this tests HP ramdisk behavior, not kernelone conditional delegation.
-    roots = resolve_polaris_roots(str(workspace), ramdisk_root=str(ramdisk_root))
-    assert Path(roots.runtime_base) == ramdisk_root.resolve()
-    assert roots.runtime_mode == "ramdisk"
-    runtime_root_posix = Path(roots.runtime_root).as_posix()
-    assert "/.polaris/projects/" in runtime_root_posix
-    assert runtime_root_posix.endswith("/runtime")
+    with pytest.raises(RuntimeError, match="canonical project-local"):
+        resolve_polaris_roots(str(workspace), ramdisk_root=str(ramdisk_root))
 
-    # Disable ramdisk: should fall back to explicit runtime cache root.
+    # Disabling RAM-disk does not authorize the old external cache writer.
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
-    roots_cache = resolve_polaris_roots(str(workspace), ramdisk_root=None)
-    assert Path(roots_cache.runtime_base) == cache_root.resolve()
-    assert roots_cache.runtime_mode == "explicit_runtime_cache"
-    cache_root_posix = Path(roots_cache.runtime_root).as_posix()
-    assert "/.polaris/projects/" in cache_root_posix
-    assert cache_root_posix.endswith("/runtime")
+    with pytest.raises(RuntimeError, match="canonical project-local"):
+        resolve_polaris_roots(str(workspace), ramdisk_root=None)
 
 
 def test_runtime_base_rejects_workspace_scoped_cache_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -125,7 +117,7 @@ def test_runtime_base_rejects_workspace_scoped_cache_root(monkeypatch: pytest.Mo
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
     monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(cache_root))
 
-    with pytest.raises(RuntimeError, match="must be outside the workspace"):
+    with pytest.raises(RuntimeError, match="canonical project-local"):
         resolve_storage_roots(str(workspace))
 
 
@@ -194,12 +186,12 @@ def test_storage_layout_exposes_global_project_runtime_taxonomy(tmp_path: Path) 
 
     roots = resolve_storage_roots(str(workspace))
     assert roots.storage_layout_mode == "project_local"
-    assert Path(roots.config_root).as_posix().endswith("/.polaris/config")
+    assert Path(roots.config_root) == Path(kernelone_home()) / "config"
     assert Path(roots.project_persistent_root).as_posix().endswith("/.polaris")
     assert Path(roots.runtime_project_root).as_posix().endswith("/runtime")
 
     global_cfg = resolve_global_path("config/settings.json")
-    assert Path(global_cfg).as_posix().endswith("/.polaris/config/settings.json")
+    assert Path(global_cfg) == Path(kernelone_home()) / "config" / "settings.json"
 
 
 def test_global_config_path_does_not_require_runtime_base(

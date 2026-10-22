@@ -36,16 +36,15 @@ def test_workspace_key_stable_and_distinct(tmp_path: Path) -> None:
     assert key_a_1.startswith("demo-")
 
 
-def test_workspace_runtime_identity_is_distinct_under_shared_global_runtime_base(
+def test_workspace_runtime_identity_is_distinct_for_project_local_roots(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    runtime_base = tmp_path / "global-project-cache"
     workspace_a = tmp_path / "fresh-a" / "l1-01"
     workspace_b = tmp_path / "fresh-b" / "l1-01"
     workspace_a.mkdir(parents=True)
     workspace_b.mkdir(parents=True)
-    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_base))
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
     clear_storage_roots_cache()
 
     identity_a = resolve_workspace_runtime_identity(str(workspace_a))
@@ -136,10 +135,8 @@ def test_runtime_base_writable_probe_is_concurrency_safe(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    runtime_root = tmp_path / "runtime-root"
-    runtime_root.mkdir()
-    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
-    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(runtime_root))
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
+    monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
     clear_storage_roots_cache()
 
     workspaces = []
@@ -153,8 +150,8 @@ def test_runtime_base_writable_probe_is_concurrency_safe(
         roots = [future.result() for future in as_completed(futures)]
 
     assert len(roots) == len(workspaces)
-    assert {root.runtime_mode for root in roots} == {"explicit_runtime_root"}
-    assert all(Path(root.runtime_base) == runtime_root for root in roots)
+    assert {root.runtime_mode for root in roots} == {"project_local"}
+    assert all(Path(root.runtime_base) == Path(root.workspace_abs) / ".polaris" / "runtime" for root in roots)
 
 
 def test_explicit_project_runtime_root_is_not_nested_again(
@@ -166,12 +163,10 @@ def test_explicit_project_runtime_root_is_not_nested_again(
     ``serve --runtime-root`` writes that path into the env. Re-appending
     ``projects/<key>/runtime`` creates a second empty factory store.
     """
-    cache_base = tmp_path / "runtime-cache"
-    cache_base.mkdir()
     workspace = tmp_path / "f21e79dac015d4f121370610"
     workspace.mkdir()
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
-    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(cache_base))
+    monkeypatch.delenv("KERNELONE_RUNTIME_ROOT", raising=False)
     clear_storage_roots_cache()
 
     canonical = resolve_storage_roots(str(workspace))
@@ -274,9 +269,7 @@ def test_global_path_ignores_appdata_by_default_on_windows_like_env(
     assert appdata not in cfg.parents
 
 
-def test_runtime_path_is_outside_workspace_when_external_runtime(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_runtime_path_rejects_external_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     workspace = tmp_path / "project"
     workspace.mkdir(parents=True, exist_ok=True)
 
@@ -284,9 +277,9 @@ def test_runtime_path_is_outside_workspace_when_external_runtime(
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
 
-    runtime_file = Path(resolve_runtime_path(str(workspace), "runtime/events/e.jsonl"))
-    assert workspace.resolve() not in runtime_file.parents
-    assert os.path.commonpath([str(runtime_root.resolve()), str(runtime_file)]) == str(runtime_root.resolve())
+    with pytest.raises(RuntimeError, match="canonical project-local"):
+        resolve_runtime_path(str(workspace), "runtime/events/e.jsonl")
+    assert not runtime_root.exists()
 
 
 def test_storage_layout_matches_runtime_roots_when_runtime_base_contains_metadata_dir(tmp_path: Path) -> None:

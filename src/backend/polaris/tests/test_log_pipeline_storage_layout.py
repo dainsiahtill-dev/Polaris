@@ -19,7 +19,7 @@ from polaris.kernelone.storage import (
 def test_log_writer_and_query_use_unified_runtime_root(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    runtime_root = tmp_path / "runtime_root"
+    runtime_root = workspace / ".polaris" / "runtime"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
@@ -60,7 +60,7 @@ def test_enrichment_worker_uses_project_local_runtime_root(tmp_path, monkeypatch
 def test_log_writer_recovers_sequence_only_once_per_process_run(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    runtime_root = tmp_path / "runtime_root"
+    runtime_root = workspace / ".polaris" / "runtime"
     runtime_root.mkdir(parents=True, exist_ok=True)
     run_id = "RUN-SEQ-ONCE"
 
@@ -94,7 +94,7 @@ def test_log_writer_recovers_sequence_only_once_per_process_run(tmp_path, monkey
 def test_logs_router_user_action_writes_to_runtime_layout(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    runtime_root = tmp_path / "runtime_root"
+    runtime_root = workspace / ".polaris" / "runtime"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
@@ -124,7 +124,7 @@ def test_logs_router_user_action_writes_to_runtime_layout(tmp_path, monkeypatch)
 def test_log_writer_extracts_workspace_key_from_storage_roots(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    runtime_root = tmp_path / "runtime_root"
+    runtime_root = workspace / ".polaris" / "runtime"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
@@ -140,7 +140,7 @@ def test_log_writer_extracts_workspace_key_from_storage_roots(tmp_path, monkeypa
 def test_log_writer_enqueues_jetstream_publish_with_canonical_workspace_key(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    runtime_root = tmp_path / "runtime_root"
+    runtime_root = workspace / ".polaris" / "runtime"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
@@ -177,7 +177,7 @@ def test_log_writer_enqueues_jetstream_publish_with_canonical_workspace_key(tmp_
 def test_log_writer_env_switch_enables_jetstream_publish(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    runtime_root = tmp_path / "runtime_root"
+    runtime_root = workspace / ".polaris" / "runtime"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
@@ -209,7 +209,7 @@ def test_log_writer_env_switch_enables_jetstream_publish(tmp_path, monkeypatch):
 def test_log_writer_env_switch_disables_jetstream_publish(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    runtime_root = tmp_path / "runtime_root"
+    runtime_root = workspace / ".polaris" / "runtime"
     runtime_root.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))

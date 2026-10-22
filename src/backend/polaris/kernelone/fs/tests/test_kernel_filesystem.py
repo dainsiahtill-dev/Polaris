@@ -94,7 +94,7 @@ def _build_kernel_fs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[K
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    runtime_root = tmp_path / "runtime-root"
+    runtime_root = workspace / ".polaris" / "runtime"
     runtime_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")

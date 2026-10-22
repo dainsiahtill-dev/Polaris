@@ -3,10 +3,10 @@
 Single source of truth for all runtime path taxonomy:
 - Global persistent data: `<~/.polaris>` (e.g. ~/.polaris/config)
 - Workspace persistent data: `<workspace>/.polaris/*`
-- Runtime hot data: `<ramdisk>/.polaris/projects/<workspace_key>/runtime/*`
+- Runtime hot data: `<workspace>/.polaris/runtime/*`
 
 Three-Layer Structure:
-- RamDisk:   <ramdisk_path>/.polaris/  (volatile runtime artifacts)
+- Runtime:   <workspace>/.polaris/runtime/ (project runtime artifacts)
 - Workspace: <workspace>/.polaris/      (persistent workspace artifacts)
 - Global:    ~/.polaris/               (global configuration)
 
@@ -567,7 +567,17 @@ _writable_base_cache_lock = threading.Lock()
 
 
 def _is_runtime_base_writable(base: str) -> bool:
-    """Check if a runtime base is writable with caching."""
+    """Prepare and probe the selected project root through guarded KFS effects.
+
+    Use physical KFS capabilities, not logical runtime paths: resolving those
+    paths here would recursively initialize this same storage layout.
+    """
+    from polaris.kernelone.fs import (
+        guarded_compare_and_create_regular_file,
+        guarded_compare_and_remove_regular_file,
+        guarded_create_directory,
+    )
+
     candidate = os.path.abspath(base)
 
     now = time.monotonic()
@@ -579,17 +589,17 @@ def _is_runtime_base_writable(base: str) -> bool:
                 return result
 
     try:
-        os.makedirs(candidate, exist_ok=True)
-        probe_dir = os.path.join(
+        # Retain the physical anchor so a cold workspace can be provisioned too.
+        # KFS walks every component without following symbolic links.
+        anchor = Path(candidate).anchor
+        guarded_create_directory(anchor, os.path.relpath(candidate, anchor), parents=True, exist_ok=True)
+        probe = guarded_compare_and_create_regular_file(
             candidate,
-            f"{get_workspace_metadata_dir_name()}-probe-{os.getpid()}-{threading.get_ident()}-{time.monotonic_ns()}",
+            f".write-probe-{os.getpid()}-{threading.get_ident()}-{time.monotonic_ns()}",
+            b"ok",
+            max_bytes=2,
         )
-        os.makedirs(probe_dir, exist_ok=True)
-        probe_file = os.path.join(probe_dir, ".write")
-        with open(probe_file, "w", encoding="utf-8") as handle:
-            handle.write("ok")
-        os.remove(probe_file)
-        os.rmdir(probe_dir)
+        guarded_compare_and_remove_regular_file(candidate, probe, max_bytes=2)
         with _writable_base_cache_lock:
             _writable_base_cache[candidate] = (True, now)
         return True
@@ -599,57 +609,53 @@ def _is_runtime_base_writable(base: str) -> bool:
         return False
 
 
-def _runtime_base_and_mode(workspace_abs: str, ramdisk_root: str | None, *, read_only: bool = False) -> tuple[str, str]:
-    def usable(base: str) -> bool:
-        return read_only or _is_runtime_base_writable(base)
-
-    metadata_dir_name = get_workspace_metadata_dir_name()
-    project_runtime_root = canonical_workspace_runtime_root(
-        workspace_abs,
-        metadata_dir_name=metadata_dir_name,
-    )
+def _project_runtime_writer_selection(workspace_abs: str, ramdisk_root: str | None) -> tuple[str, str]:
+    """Validate writer configuration before provisioning or consulting caches."""
+    project_runtime_root = canonical_workspace_runtime_root(workspace_abs)
     legacy_project_runtime_root = os.path.join(workspace_abs, "runtime")
     explicit_runtime_root = resolve_env_str("runtime_root")
     if explicit_runtime_root:
         base = os.path.abspath(os.path.expanduser(os.path.expandvars(explicit_runtime_root)))
-        if base == project_runtime_root and usable(base):
+        if base == project_runtime_root:
             return base, "project_local_explicit"
-        if base == legacy_project_runtime_root and usable(project_runtime_root):
+        if base == legacy_project_runtime_root:
             # ``<workspace>/runtime`` was a short-lived legacy launch claim,
             # never an external-storage opt-in.  Normalize at the lowest
             # write-capable resolver as well as at Launcher/CLI boundaries so
             # a stale parent environment or direct KernelOne caller cannot
             # recreate the retired bare workspace root.
             return project_runtime_root, "project_local_legacy_normalized"
-        if _is_within_path(workspace_abs, base):
-            raise RuntimeError(
-                "KERNELONE_RUNTIME_ROOT inside workspace must equal the canonical "
-                f"project runtime root: {project_runtime_root}"
-            )
-        if usable(base):
-            return base, "explicit_runtime_root"
+        raise RuntimeError(
+            f"KERNELONE_RUNTIME_ROOT must equal the canonical project-local root: {project_runtime_root}"
+        )
 
     if state_to_ramdisk_enabled():
-        # Normalization/default discovery are read-only; only usability probing
-        # differs between consumers. Both capabilities must bind the same root.
         ramdisk = resolve_ramdisk_root(ramdisk_root)
-        if ramdisk and os.path.exists(ramdisk) and not _is_within_path(workspace_abs, ramdisk) and usable(ramdisk):
-            return ramdisk, "ramdisk"
+        if ramdisk:
+            raise RuntimeError(
+                f"RAM-disk runtime redirection is retired; use the canonical project-local root: {project_runtime_root}"
+            )
 
     explicit_cache_root = resolve_env_str("runtime_cache_root")
     if explicit_cache_root:
-        base = os.path.abspath(os.path.expanduser(os.path.expandvars(explicit_cache_root)))
-        if _is_within_path(workspace_abs, base):
-            raise RuntimeError("KERNELONE_RUNTIME_CACHE_ROOT must be outside the workspace")
-        if usable(base):
-            return base, "explicit_runtime_cache"
+        raise RuntimeError(
+            f"KERNELONE_RUNTIME_CACHE_ROOT cannot redirect writers; use the canonical project-local root: {project_runtime_root}"
+        )
 
-    if usable(project_runtime_root):
-        return project_runtime_root, "project_local"
+    return project_runtime_root, "project_local"
+
+
+def _runtime_base_and_mode(workspace_abs: str, ramdisk_root: str | None, *, read_only: bool = False) -> tuple[str, str]:
+    if read_only:
+        return canonical_workspace_runtime_root(workspace_abs), "project_local"
+    project_runtime_root, mode = _project_runtime_writer_selection(workspace_abs, ramdisk_root)
+
+    if _is_runtime_base_writable(project_runtime_root):
+        return project_runtime_root, mode
 
     raise RuntimeError(
         "The project-local runtime root is not writable. Fix workspace permissions "
-        "or explicitly configure KERNELONE_RUNTIME_ROOT/KERNELONE_RUNTIME_CACHE_ROOT."
+        "at the canonical project-local runtime root."
     )
 
 
@@ -716,6 +722,10 @@ def _build_generic_storage_roots(
         metadata_dir_name=metadata_dir_name,
         workspace_abs=workspace_abs,
     )
+    if runtime_mode == "legacy_project_local":
+        # The public path builder normalizes the retired bare-root writer;
+        # evidence discovery must instead retain its actual historical path.
+        runtime_projects_root = runtime_project_root = runtime_base
     return StorageRoots(
         workspace_abs=workspace_abs,
         workspace_key=key,
@@ -805,7 +815,7 @@ def resolve_existing_storage_roots_read_only(
     """
     normalized_workspace = os.path.abspath(os.path.expanduser(workspace or os.getcwd()))
     cached = _peek_cached_storage_roots(normalized_workspace, ramdisk_root)
-    if cached is not None:
+    if cached is not None and cached.workspace_abs == normalized_workspace and os.path.isdir(cached.runtime_root):
         return cached
 
     for runtime_base, runtime_mode in _existing_runtime_base_candidates(
@@ -822,6 +832,22 @@ def resolve_existing_storage_roots_read_only(
     return None
 
 
+def _is_project_writer_roots(workspace_abs: str, roots: StorageRoots) -> bool:
+    canonical = canonical_workspace_runtime_root(workspace_abs)
+    return roots.workspace_abs == workspace_abs and all(
+        path == canonical
+        for path in (roots.runtime_base, roots.runtime_root, roots.runtime_project_root, roots.runtime_projects_root)
+    )
+
+
+def _require_project_writer_roots(workspace_abs: str, roots: StorageRoots) -> None:
+    if not _is_project_writer_roots(workspace_abs, roots):
+        raise RuntimeError(
+            f"Storage writer must retain its workspace and canonical project-local runtime root: "
+            f"{canonical_workspace_runtime_root(workspace_abs)}"
+        )
+
+
 def _resolve_storage_roots_impl(workspace: str, ramdisk_root: str | None = None) -> StorageRoots:
     """Internal resolver — replaceable via DI / patching for testing.
 
@@ -830,8 +856,10 @@ def _resolve_storage_roots_impl(workspace: str, ramdisk_root: str | None = None)
     needing to clear the module-level cache first.
     """
     normalized_workspace = os.path.abspath(os.path.expanduser(workspace or os.getcwd()))
+    _project_runtime_writer_selection(normalized_workspace, ramdisk_root)
     cached = _get_cached_storage_roots(normalized_workspace, ramdisk_root)
     if cached is not None:
+        _require_project_writer_roots(normalized_workspace, cached)
         return cached
 
     # Delegate to the registered business-layer resolver if available.
@@ -847,39 +875,34 @@ def _resolve_storage_roots_impl(workspace: str, ramdisk_root: str | None = None)
     # registered.  A resolver that does not own a workspace returns ``None``
     # and the generic fallback below remains the only fallback path.
     if resolver is not None:
-        try:
-            business_roots = resolver(normalized_workspace, ramdisk_root)
-            if business_roots is not None:
-                # Wrap in a standard StorageRoots for API compat if needed.
-                if isinstance(business_roots, StorageRoots):
-                    roots = business_roots
-                else:
-                    roots = StorageRoots(
-                        workspace_abs=business_roots.workspace_abs,
-                        workspace_key=business_roots.workspace_key,
-                        storage_layout_mode=business_roots.storage_layout_mode,
-                        home_root=business_roots.home_root,
-                        global_root=business_roots.global_root,
-                        config_root=business_roots.config_root,
-                        projects_root=business_roots.projects_root,
-                        project_root=business_roots.project_root,
-                        project_persistent_root=business_roots.project_persistent_root,
-                        runtime_projects_root=business_roots.runtime_projects_root,
-                        runtime_project_root=business_roots.runtime_project_root,
-                        workspace_persistent_root=business_roots.workspace_persistent_root,
-                        runtime_base=business_roots.runtime_base,
-                        runtime_root=business_roots.runtime_root,
-                        runtime_mode=business_roots.runtime_mode,
-                        history_root=business_roots.history_root,
-                    )
-                _set_cached_storage_roots(normalized_workspace, ramdisk_root, roots)
-                return roots
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _resolver_exc:
-            # Resolver raised unexpectedly — fall through to generic resolution.
-            _logger.debug(
-                "Business roots resolver raised; falling back to generic resolution: %s",
-                _resolver_exc,
-            )
+        business_roots = resolver(normalized_workspace, ramdisk_root)
+        if business_roots is not None:
+            # Wrap in a standard StorageRoots for API compat if needed.
+            if isinstance(business_roots, StorageRoots):
+                roots = business_roots
+            else:
+                roots = StorageRoots(
+                    workspace_abs=business_roots.workspace_abs,
+                    workspace_key=business_roots.workspace_key,
+                    storage_layout_mode=business_roots.storage_layout_mode,
+                    home_root=business_roots.home_root,
+                    global_root=business_roots.global_root,
+                    config_root=business_roots.config_root,
+                    projects_root=business_roots.projects_root,
+                    project_root=business_roots.project_root,
+                    project_persistent_root=business_roots.project_persistent_root,
+                    runtime_projects_root=business_roots.runtime_projects_root,
+                    runtime_project_root=business_roots.runtime_project_root,
+                    workspace_persistent_root=business_roots.workspace_persistent_root,
+                    runtime_base=business_roots.runtime_base,
+                    runtime_root=business_roots.runtime_root,
+                    runtime_mode=business_roots.runtime_mode,
+                    history_root=business_roots.history_root,
+                )
+            _require_project_writer_roots(normalized_workspace, roots)
+            _runtime_base_and_mode(normalized_workspace, ramdisk_root)
+            _set_cached_storage_roots(normalized_workspace, ramdisk_root, roots)
+            return roots
 
     workspace_abs = normalized_workspace
     runtime_base, runtime_mode = _runtime_base_and_mode(workspace_abs, ramdisk_root)
@@ -914,11 +937,11 @@ def resolve_storage_roots_read_only(workspace: str, ramdisk_root: str | None = N
     """Resolve the configured canonical namespace without probes or initialization.
 
     Absence is preserved for the reader; legacy discovery candidates never
-    replace the active namespace. Existing explicit external opt-in is honored.
+    replace the active namespace. External settings are history-only candidates.
     """
-    normalized = os.path.abspath(os.path.expanduser(workspace))
+    normalized = os.path.abspath(os.path.expanduser(workspace or os.getcwd()))
     cached = _peek_cached_storage_roots(normalized, ramdisk_root)
-    if cached is not None:
+    if cached is not None and _is_project_writer_roots(normalized, cached):
         return cached
     base, mode = _runtime_base_and_mode(normalized, ramdisk_root, read_only=True)
     return _build_generic_storage_roots(workspace_abs=normalized, runtime_base=base, runtime_mode=mode)

@@ -13,6 +13,7 @@ from threading import Thread
 from typing import Any
 
 import pytest
+from polaris.kernelone.fs import guarded_create_directory
 from polaris.kernelone.llm.engine.client import ProviderConfig, ResilientLLMClient
 from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, AIStreamEvent
 from polaris.kernelone.llm.engine.executor import AIExecutor
@@ -88,8 +89,12 @@ class ScriptedProvider:
 @pytest.fixture
 def isolated_workspace() -> Iterator[Path]:
     """All disposable test workspaces live under the authorized Polaris root."""
-    root = Path.home() / ".polaris" / "test-workspaces"
-    root.mkdir(parents=True, exist_ok=True)
+    # /tmp is masked by the command sandbox's private tmpfs. Keep physical
+    # workspaces below the repository owner regardless of pytest's basetemp.
+    owner = Path(__file__).resolve().parents[7]
+    relative_root = ".polaris/test-workspaces"
+    guarded_create_directory(str(owner), relative_root, parents=True, exist_ok=True)
+    root = owner / relative_root
     with TemporaryDirectory(prefix="engineering-native-", dir=root) as directory:
         yield Path(directory)
 

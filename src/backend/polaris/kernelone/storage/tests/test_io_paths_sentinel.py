@@ -34,6 +34,7 @@ def test_workspace_sentinel_default_is_current_contract() -> None:
     assert retired_phrase not in source
     assert 'current "docs" workspace marker' in source
 
+
 # ---------------------------------------------------------------------------
 # find_workspace_root
 # ---------------------------------------------------------------------------
@@ -52,9 +53,9 @@ class TestFindWorkspaceRoot:
         result = find_workspace_root(str(nested))
         assert os.path.abspath(result) == os.path.abspath(str(tmp_path))
 
-    def test_returns_empty_string_when_sentinel_absent(self, tmp_path: Path) -> None:
-        # No "docs" dir anywhere in the hierarchy
-        result = find_workspace_root(str(tmp_path))
+    def test_returns_empty_string_when_requested_sentinel_absent(self, tmp_path: Path) -> None:
+        # Test scratch now lives below the repository's own docs sentinel.
+        result = find_workspace_root(str(tmp_path), sentinel_dir=f"absent-sentinel-{tmp_path.name}")
         assert result == ""
 
     def test_custom_sentinel_dir_used(self, tmp_path: Path) -> None:
