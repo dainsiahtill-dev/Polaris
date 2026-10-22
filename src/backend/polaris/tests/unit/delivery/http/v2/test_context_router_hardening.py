@@ -596,3 +596,69 @@ def test_context_preserves_decode_vs_object_format_error(tmp_path, content, code
     response = _build_client(str(tmp_path)).get(f"/v2/context/{ref}")
     assert response.status_code == 500
     assert response.json()["detail"]["code"] == code
+
+
+def test_stats_missing_authority_returns_503_without_writes(tmp_path: Path) -> None:
+    workspace = tmp_path / "cold-unavailable"
+    response = _build_client(str(workspace)).get("/v2/context/stats")
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "CONTEXT_INVENTORY_UNAVAILABLE"
+    assert detail["details"]["inventory_complete"] is False
+    assert not workspace.exists()
+
+
+def test_stats_and_admin_stats_use_readonly_same_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from polaris.kernelone.fs import LockedRegularFileSetV1
+    from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshotAuditPinRepository
+
+    repository = ContextSnapshotAuditPinRepository(workspace=str(tmp_path))
+    repository.persist_snapshot_bytes("中文统计".encode())
+
+    def denied(**kwargs) -> None:
+        raise AssertionError("stats attempted authority provisioning")
+
+    monkeypatch.setattr(LockedRegularFileSetV1, "provision_authority", denied)
+    monkeypatch.setattr(LockedRegularFileSetV1, "enroll_stream_lock_keys", denied)
+    monkeypatch.setenv("KERNELONE_CONTEXT_ADMIN_ENABLED", "1")
+    client = _build_client(str(tmp_path))
+    for endpoint in ("/v2/context/stats", "/v2/context/admin/stats"):
+        response = client.get(endpoint)
+        assert response.status_code == 200, response.text
+        assert response.json()["file_count"] == 1
+        assert response.json()["total_bytes"] == len("中文统计".encode())
+
+
+def test_admin_partial_sweep_returns_503_with_true_effects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from polaris.delivery.http.v2 import context as module
+    from polaris.kernelone.llm.engine.context_store_retention import (
+        ContextSnapshotAuditPinRepository,
+        ContextStoreInventoryError,
+        ContextStoreRetention,
+        ContextStoreRetentionConfig,
+    )
+
+    repository = ContextSnapshotAuditPinRepository(workspace=str(tmp_path))
+    repository.persist_snapshot_bytes(b"real synthetic deletion")
+    retention = ContextStoreRetention(workspace=str(tmp_path), config=ContextStoreRetentionConfig(ttl_seconds=0))
+    inventory = retention._inventory
+    calls = 0
+
+    def final_failure(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ContextStoreInventoryError("synthetic final observation failure")
+        return inventory(*args, **kwargs)
+
+    monkeypatch.setattr(retention, "_inventory", final_failure)
+    monkeypatch.setattr(module, "_build_retention", lambda *args, **kwargs: retention)
+    monkeypatch.setenv("KERNELONE_CONTEXT_ADMIN_ENABLED", "1")
+    response = _build_client(str(tmp_path)).post("/v2/context/admin/sweep")
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "CONTEXT_INVENTORY_UNAVAILABLE"
+    assert detail["details"]["removed_files"] == 1
+    assert detail["details"]["removed_bytes"] == len(b"real synthetic deletion")
+    assert "total_bytes_after" not in detail["details"]
+    assert not Path(retention.sweep_state_path).exists()

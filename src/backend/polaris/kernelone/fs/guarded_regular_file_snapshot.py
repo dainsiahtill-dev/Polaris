@@ -909,6 +909,99 @@ def read_guarded_regular_file_snapshot(
         )
 
 
+def guarded_confirm_regular_file_durability(
+    root: str | PathLike[str],
+    expected: GuardedRegularFileSnapshotV1,
+    *,
+    max_bytes: int,
+) -> None:
+    """Fsync an exact existing file and its containing directory without rewriting.
+
+    Retained no-follow witnesses bind both sync effects to the expected root,
+    leaf and bytes. Revalidation follows each fsync. A failure never certifies
+    durability or rolls back already-performed sync work; its typed details
+    preserve the stage and completed work for reconciliation by the caller.
+    """
+    bound = _validated_max_bytes(max_bytes)
+    if type(expected) is not GuardedRegularFileSnapshotV1:
+        raise ValueError("expected must be an exact GuardedRegularFileSnapshotV1")
+    stage = "validation"
+    file_completed = False
+    parent_completed = False
+    try:
+        if expected.size != len(expected.content) or expected.size > bound:
+            raise _fail(
+                "guarded_sync_expected_invalid", "expected sync snapshot size/content is inconsistent or unbounded"
+            )
+        path_parts = _validated_relative_parts(expected.relative_path)
+        root_path, root_parts = _validated_root(root)
+        _require_descriptor_capabilities()
+        with ExitStack() as stack:
+            directories: list[_DirectoryWitness] = []
+            current = _retain_directory(stack, parent=None, entry_name="/", display_name="/")
+            directories.append(current)
+            display_parts: list[str] = []
+            for component in root_parts:
+                display_parts.append(component)
+                current = _retain_directory(
+                    stack, parent=current, entry_name=component, display_name="/" + "/".join(display_parts)
+                )
+                directories.append(current)
+            if (current.device, current.inode) != (expected.root_device, expected.root_inode):
+                raise _fail("guarded_sync_expected_mismatch", "durability sync root differs from expected snapshot")
+            relative_display: list[str] = []
+            for component in path_parts[:-1]:
+                relative_display.append(component)
+                current = _retain_directory(
+                    stack,
+                    parent=current,
+                    entry_name=component,
+                    display_name=f"{root_path.rstrip('/')}/{'/'.join(relative_display)}",
+                )
+                directories.append(current)
+            leaf_name = path_parts[-1]
+            leaf_fd = _open_descriptor(stack, leaf_name, parent_fd=current.fd, directory=False)
+
+            def revalidate() -> None:
+                _verify_expected_leaf(leaf_fd, parent_fd=current.fd, leaf_name=leaf_name, expected=expected)
+                for witness in directories:
+                    _verify_directory_witness(witness)
+
+            revalidate()
+            stage = "file_fsync"
+            os.fsync(leaf_fd)
+            file_completed = True
+            stage = "post_file_validation"
+            revalidate()
+            stage = "parent_fsync"
+            os.fsync(current.fd)
+            parent_completed = True
+            stage = "post_sync_validation"
+            revalidate()
+    except OSError as exc:
+        raise _fail(
+            f"guarded_sync_{stage}_failed",
+            "guarded durability sync failed; completion is unknown",
+            stage=stage,
+            durability_state="UNKNOWN",
+            file_fsync_completed=file_completed,
+            parent_fsync_completed=parent_completed,
+            errno=exc.errno,
+        ) from exc
+    except GuardedRegularFileSnapshotError as exc:
+        code = exc.code if exc.code.startswith("guarded_sync_") else "guarded_sync_expected_mismatch"
+        raise _fail(
+            code,
+            "guarded durability sync could not confirm the expected object; completion is unknown",
+            stage=stage,
+            durability_state="UNKNOWN",
+            file_fsync_completed=file_completed,
+            parent_fsync_completed=parent_completed,
+            source_error_code=exc.code,
+            source_details=exc.details,
+        ) from exc
+
+
 def guarded_compare_and_replace_regular_file(
     root: str | PathLike[str],
     expected: GuardedRegularFileSnapshotV1,

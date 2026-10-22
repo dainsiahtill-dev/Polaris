@@ -645,3 +645,34 @@ def test_final_request_preserves_decode_failure_vs_nonobject_status(tmp_path: Pa
         )
         assert result.status == expected_status
         assert result.error_code == expected_code
+
+
+def test_pin_query_missing_authority_is_unavailable_without_provisioning(tmp_path: Path) -> None:
+    workspace = tmp_path / "never-provisioned"
+    result = query_factory_run_context_snapshots(
+        QueryFactoryRunContextSnapshotsV1(workspace=str(workspace), factory_run_id="synthetic-unavailable")
+    )
+    assert result.status == "unavailable"
+    assert not result.ok
+    assert result.error_code == "factory_run_context_snapshot_query_failed"
+    assert not workspace.exists()
+
+
+def test_pin_query_available_then_missing_preserves_readonly_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from polaris.kernelone.fs import LockedRegularFileSetV1
+
+    repository = ContextSnapshotAuditPinRepository(workspace=str(tmp_path))
+    repository.persist_snapshot_bytes(b"ordinary synthetic fixture")
+
+    def denied(**kwargs: Any) -> None:
+        raise AssertionError("readonly query attempted authority mutation")
+
+    monkeypatch.setattr(LockedRegularFileSetV1, "provision_authority", denied)
+    monkeypatch.setattr(LockedRegularFileSetV1, "enroll_stream_lock_keys", denied)
+    result = query_factory_run_context_snapshots(
+        QueryFactoryRunContextSnapshotsV1(workspace=str(tmp_path), factory_run_id="absent-exact-run")
+    )
+    assert result.ok and result.status == "missing"
+    assert result.pins == ()

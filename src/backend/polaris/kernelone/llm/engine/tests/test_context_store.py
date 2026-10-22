@@ -1042,3 +1042,52 @@ class TestContextViewerRouter:
         assert response.status_code == 500
         detail = response.json().get("detail", {})
         assert detail.get("code") == "CONTEXT_READ_ERROR", detail
+
+
+def test_original_snapshot_bytes_and_inline_image_survive_owner_delegation(tmp_path, monkeypatch) -> None:
+    from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshotAuditPinRepository, get_retention
+
+    image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+    messages = [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "保留中文原字节"}, {"type": "image_url", "image_url": {"url": image}}],
+        }
+    ]
+    captured: list[bytes] = []
+    original = ContextSnapshotAuditPinRepository.persist_snapshot_bytes
+
+    def capture(repository, content):
+        captured.append(content)
+        return original(repository, content)
+
+    monkeypatch.setattr(ContextSnapshotAuditPinRepository, "persist_snapshot_bytes", capture)
+    retention = get_retention(str(tmp_path))
+    released: list[bool] = []
+
+    def gate():
+        reader = ContextSnapshotAuditPinRepository(workspace=str(tmp_path), read_only=True)
+        with reader._exclusive_lock():
+            released.append(True)
+        return {}
+
+    monkeypatch.setattr(retention, "on_read_gate", gate)
+    ref = AIExecutor._store_context_messages_sync(
+        workspace=str(tmp_path),
+        messages=messages,
+        trace_id="synthetic-byte-parity",
+        call_id="synthetic-call",
+        provider_request={"messages": messages},
+    )
+    assert released == [True]
+    assert len(captured) == 1
+    content = captured[0]
+    snapshot = json.loads(content.decode("utf-8"))
+    assert snapshot["messages"] == messages
+    assert snapshot["provider_request"]["messages"] == messages
+    assert image.encode("utf-8") in content
+    assert "保留中文原字节".encode() in content
+    assert content == json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    assert hashlib.sha256(content).hexdigest()[:24] == ref
+    repository = ContextSnapshotAuditPinRepository(workspace=str(tmp_path), read_only=True)
+    assert Path(repository.snapshot_path(ref)).read_bytes() == content

@@ -383,7 +383,9 @@ def query_factory_run_context_snapshots(
     """Read immutable final-request audit pins for one exact Factory run."""
 
     try:
-        pins = ContextSnapshotAuditPinRepository(workspace=query.workspace).query_factory_run_pins(query.factory_run_id)
+        pins = ContextSnapshotAuditPinRepository(workspace=query.workspace, read_only=True).query_factory_run_pins(
+            query.factory_run_id
+        )
     except (ContextSnapshotAuditPinError, OSError, RuntimeError, ValueError) as exc:
         return FactoryRunContextSnapshotsResultV1(
             ok=False,

@@ -95,6 +95,34 @@ Catalog按仓CI命令执行仍为exit1/new159、manifest mismatch0：CI所写基
 
 证据：`.polaris/audits/project-storage-20261022/b3a/`中的`report.json`、`read-recovery-evidence.json`、`review/report.json`、`root-integration/results.json`和`root-integration/kernelone-release.json`。原外部writer fixture失败及中间失败保留，不能改写成首次通过。剩余路径继续记录，不能把本批说成全量ContextOS或平台已统一。
 
+## B3b pin、统计与清理
+
+静态准备确认已有`ContextSnapshotAuditPinRepository`拥有pin与删除的共同authority；普通快照producer尚未经过它。下一切片在原owner中补只读构造和查询，把已序列化原字节委托原repository持久化，普通写入、pin与清理共用同一authority，producer释放后才尝试retention。保留原key算法、内联图像、锁根与身份规则；不另建图片仓库、控制器或锁authority。共享锁根的物理迁移仍属B5。
+
+统计使用已有KFS metadata、有限目录枚举及guarded bytes，不初始化目录；清理先完整观察再通过现有guarded compare-and-remove执行。目录EOF只证明枚举结束，共同锁只排除协作writer；逐文件身份与字节检查保障实际删除对象，不声称全局原子目录。读取不全、pin不可用或最终观察失败必须保留未知；部分删除后的报告保留实际计数并标记不可用，HTTP在成功数值投影前返回结构化503，不写伪造的完整统计或throttle。
+
+准备证据`.polaris/audits/project-storage-20261022/b3b-preparation/{plan.json,brief.md}`仅为静态方案。初始实现限定原retention/repository、executor原字节写入口、public pin query与HTTP stats/sweep及四个已有测试文件。接受需覆盖冷读零产品写入与恢复成功、原字节/图像、完整性错误、替换对象保护、同authority真实线程交接、TTL/count/bytes与部分效果，以及canonical writer/历史只读边界。
+
+初始八文件候选取得作者565通过（保留一个既有fork警告）和ROOT相邻260通过，但独立审查拒绝了它：实际create已经rename、目录fsync失败后，持续故障下的相同字节重试仍返回成功，目录同步尝试为零。可读取不等于完成原有持久化保证。另有ROOT KernelOne ALL结果367通过/1失败/1跳过，失败来自新增夹具空`pass`使既有预算245超出244；不修改预算。原候选、物理探针和失败均保留于`b3b/`，不声称接受。
+
+R1据此修正“已有KFS能力完全足够”的准备假设：在既有guarded regular-file模块补一个`guarded_confirm_regular_file_durability(root, expected, *, max_bytes)`，复用已持有的nofollow目录/文件身份与原字节检查，实际同步文件及父目录后复核；不创建、替换、重写、enroll或增加authority。已有StreamLease同步需要分别enroll逻辑文件，不能为此改变当前共同锁；已有text helper会吞同步错误，不能代用。consumer仅在写入发布时调用，新错误保留阶段、已做同步、未确认效果及原生OSError语义；只读查询不得调用它。相同故障下重试必须仍失败，解除故障后不重写原文件即可合法推进；旧失败事实不改写。限定三个既有KFS源码/测试文件和原retention源码/测试，原八文件中的其余六个保持指纹不变，另做独立R1复审和新候选回归。
+
+B3b现已通过上述限定范围的接受：R1作者592通过，保留一个既有fork警告；原异常预算检查1通过，阈值不变；11个Python文件Ruff/格式/mypy通过。独立R1复审实际重现持续故障下file/parent同步后返回EIO/UNKNOWN，解除故障后原字节、inode、mtime、ctime不变且成功，原P1与空夹具问题关闭。ROOT新候选集成391通过，KernelOne ALL12阶段通过、368通过/1跳过；验证期间14个冻结源码、测试、文档指纹不变，随后只更新接受文档。原首版失败未被覆盖。证据：`b3b/fix-round-1/`中的`report.json`、`review/report.json`、`review/durability-probe.json`、`root-integration/results.json`及`root-integration/kernelone-release.json`，均相对本文的项目审计根。
+
+该接受覆盖原pin/query/stats/retention和普通快照producer交接，不代表工程SQLite、源码原子写staging、命令/browser scratch、共享主根或全平台已统一；未运行真实模型或Bench。统计使用metadata，不整库读取快照payload；枚举工作预算1000000耗尽时明确不可用，大规模吞吐与成本尚未测量。原全120项批次仍为0项验收交付、1次取消、119项未启动，当前没有项目运行。
+
+## 后续原子写入与原生数据库边界
+
+下一基础切片先迁移具有明确workspace owner的`workspace_write_text_atomic`，由原KFS产生owner binding并交给现有adapter执行，staging置于owner`.polaris/runtime/fs/staging`。移除该路线的目标目录临时文件与手写fallback；逻辑config路径、path-only helper和guarded CAS待各自调用者绑定后再迁移，不能从目标祖先、cwd或环境猜owner。旧普通Local atomic路线没有CAS或fsync保证，不将其误写成已有机制；新路线要验证实际临时文件位置、UTF-8字节、普通覆盖语义、same-filesystem原子替换、失败前后效果和资源释放。
+
+真实rename后发生fsync/清理错误时，不能将效果已知未知混为普通“未执行”。现有工程owner有显式resume与单一write_file精确回读的恢复路径，但它是否能承接新增异常仍是未运行假设。有限接受实验必须实际rename后注入一次失败，检查原始durable call与同进程合法恢复；不能凭后来completed改写原调用事实，edit/command未知效果也不得被文件回读豁免。设计证据`.polaris/audits/project-storage-20261022/b2-staging-preparation/plan.json`。
+
+ROOT已对未修改的KFS facade/native adapter执行一次有限合成实验（两文件指纹与B3a提交一致）：实际临时文件分配在fixture源码父目录，未位于该owner`.polaris`；实际原子替换完成后，注入既有receipt路径投影ValueError，目标仍包含完整新字节。证据`.polaris/audits/project-storage-20261022/b2b-baseline/{probe.py,report.json}`。它证明现有两处机制问题及可达次序，不证明自然发生频率、修后收益或工程恢复已通过。首次准备遇到并发B3b冷import环，未写夹具即失败；修正后才执行该实验，原始错误保留。
+
+原生数据库后续以既有Session安全包络为基线：把目录、regular DB/lock身份和已持有句柄迁入KFS管理，由现有KernelDatabase/SqliteAdapter拥有native连接生命周期；Session继续拥有同一schema和事务，不建新DB或租约表。保留现有workspace.lock、WAL、nofollow、权限与恢复行为，不以任意同UID主机攻击者为由引入未经因果证据支持的自定义VFS或独立DB进程。有限裁决见`.polaris/audits/project-storage-20261022/b2-preparation/bounded-native-db-ruling-options.json`，这些迁移尚未实现。
+
 ## 仍在运行的主实例边界
 
 一次只读PID/FD与guarded registry观察见`.polaris/audits/project-storage-20261022/platform-root-observation/`：主backend runtime已在主仓`.polaris/runtime`；main/NATS配置的home、tmp、cache和已打开日志仍有外部路径。4个进程身份稳定，11个可写普通文件FD中8个在已证明owner项目`.polaris`外。配置和可写FD分别只证明路径意图与打开权限，不证明观察到了写效果。共享NATS仍归main平台owner，后续B5须协调既有owner离线切换，不热拷贝、不双写、不抢占现有锁或进程。
+
+source-only切换准备见同目录`transition-plan.json`。`KERNELONE_HOME`同时选择持久配置和NATS根，直接换HOME会隐式切配置；须在现有owner中拆清main共享runtime与显式config归属，子实例scratch/cache则按各自workspace绑定。现有NATS migration只接管原物理store，跨根transfer/rebind未具备接受证据；准备记录不是已部署迁移。原main外部env导出的启动脚本来源仍UNKNOWN，未来应提供显式可复现启动配方，不把找到该历史脚本作为新启动实现的前置条件。

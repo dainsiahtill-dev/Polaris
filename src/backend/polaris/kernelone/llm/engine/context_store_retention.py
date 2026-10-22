@@ -1,33 +1,11 @@
-"""TTL + capacity cleanup for ``runtime/contexts/``.
+"""ContextOS pin authority and bounded, fail-closed retention.
 
-The per-LLM context viewer (see ``AIExecutor._store_context_messages``)
-writes a new content-addressed JSON file to ``runtime/contexts/<shard>/<hash>``
-on every LLM call. Because the payload is content-addressed by SHA-256, the
-files are immutable — once nobody references a hash, the only cost is disk.
-
-This module provides a deterministic, testable retention policy for the
-``runtime/contexts/`` tree. The policy applies three caps in order, all
-oldest-first:
-
-1. **TTL** — drop files where ``now - mtime >= ttl_seconds``.
-2. **max_files** — after the TTL pass, if the file count still exceeds
-   ``max_files`` drop oldest until under the cap.
-3. **max_total_bytes** — after both caps, if the total bytes still exceed
-   ``max_total_bytes`` drop oldest until under the cap.
-
-The implementation mirrors the fail-closed pattern of
-``polaris.kernelone.akashic.hybrid_memory._cleanup_rotated_files``: every
-``os.*`` call is wrapped in ``try/except OSError`` that logs and
-continues, and the entire sweep never raises to the caller.
-
-Scope is strict: only files under ``storage.get_path('runtime',
-'contexts')`` are touched. Any path that resolves outside that subtree is
-rejected via a ``commonpath`` check. The atomic counter file
-``runtime/contexts/.sweep_state.json`` is the cheapest cross-process
-state — it records ``last_sweep_at`` and the last ``_gate_state`` snapshot
-so a follow-up ``sweep_if_needed()`` can decide whether to run a full
-sweep without scanning the directory tree at all when the cap thresholds
-are intact.
+Snapshots and pins retain their existing identity, token and physical lock key.
+Original producer bytes, inventory, reads, immutable creates, counters and exact
+CAS removals use KernelOne FS. Complete enumeration means EOF only; the shared
+authority excludes cooperating writers, not arbitrary native namespace changes.
+TTL, count and byte caps run in order. Unavailable observations preserve real
+removal effects and cannot publish success totals or throttle state.
 """
 
 from __future__ import annotations
@@ -37,6 +15,7 @@ import json
 import logging
 import os
 import re
+import stat
 import threading
 import time
 import weakref
@@ -47,9 +26,21 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.events.final_request_evidence import ContextSnapshotAuditPinV1
-from polaris.kernelone.fs import LockedRegularFileError, LockedRegularFileSetV1
+from polaris.kernelone.fs import (
+    DirectoryEntryV1,
+    FileMetadataV1,
+    GuardedMetadataError,
+    GuardedRegularFileSnapshotError,
+    GuardedRegularFileSnapshotV1,
+    LockedRegularFileError,
+    LockedRegularFileSetV1,
+    guarded_compare_and_create_regular_file,
+    guarded_compare_and_remove_regular_file,
+    guarded_compare_and_replace_regular_file,
+    guarded_confirm_regular_file_durability,
+    read_guarded_regular_file_snapshot,
+)
 from polaris.kernelone.fs.locked_regular_file import default_platform_lock_root
-from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.llm.engine.internal.context_hash import CONTEXT_HASH_PATTERN, validate_context_hash
 from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
@@ -85,13 +76,39 @@ class ContextSnapshotAuditPinError(RuntimeError):
     """Pinned ContextOS state is missing, corrupt, or bound elsewhere."""
 
 
+# Finite operational traversal allowance, not a snapshot/model admission quota.
+# Repeated enumeration work counts too; EOF never implies atomic membership.
+_DIRECTORY_INITIAL_BATCH = 256
+_INVENTORY_ENTRY_BUDGET = 1_000_000
+
+
+class ContextStoreInventoryError(OSError):
+    """An observation is unavailable; numeric subset totals are not authoritative."""
+
+    def __init__(self, message: str, *, code: str = "context_inventory_unavailable") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass
+class _InventoryBudget:
+    remaining: int = field(default_factory=lambda: _INVENTORY_ENTRY_BUDGET)
+
+
 class ContextSnapshotAuditPinRepository:
     """Workspace-bound immutable snapshot/pin store and deletion preflight."""
 
-    def __init__(self, *, workspace: str, runtime_root: str | None = None) -> None:
-        identity = resolve_workspace_runtime_identity(workspace)
-        selected_runtime_root = os.path.realpath(runtime_root or identity.runtime_root)
-        self.workspace_abs = os.path.realpath(identity.workspace_abs)
+    def __init__(self, *, workspace: str, runtime_root: str | None = None, read_only: bool = False) -> None:
+        self.read_only = read_only
+        identity = resolve_workspace_runtime_identity(workspace, read_only=True)
+        selected_runtime_root = os.path.abspath(runtime_root or identity.runtime_root)
+        if not read_only and selected_runtime_root != identity.runtime_root:
+            raise ContextSnapshotAuditPinError("snapshot writer runtime override is not canonical")
+        if not read_only:
+            current = resolve_workspace_runtime_identity(workspace)
+            if current != identity:
+                raise ContextSnapshotAuditPinError("context snapshot storage identity changed")
+        self.workspace_abs = identity.workspace_abs
         self.workspace_key = identity.workspace_key
         self.runtime_root = selected_runtime_root
         self.storage_identity_token = self._storage_token(
@@ -100,9 +117,85 @@ class ContextSnapshotAuditPinRepository:
             runtime_root=self.runtime_root,
         )
         self.contexts_root = os.path.join(self.runtime_root, "contexts")
+        from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+
+        self._fs = KernelFileSystem(self.runtime_root, get_default_adapter(), read_only_paths=True)
         self._lock_logical_path = _AUDIT_LOCK_LOGICAL_PATH
         self._platform_lock_root = default_platform_lock_root()
         self._process_lock = _audit_process_lock(self.storage_identity_token)
+
+    def _require_writable(self) -> None:
+        if self.read_only:
+            raise ContextSnapshotAuditPinError("readonly context snapshot repository cannot mutate")
+
+    def _metadata(self, path: str, *, optional: bool = False) -> FileMetadataV1 | None:
+        try:
+            return self._fs.workspace_lstat(path)
+        except GuardedMetadataError as exc:
+            if optional and exc.code == "guarded_metadata_missing" and exc.details.get("errno") == 2:
+                return None
+            raise ContextStoreInventoryError(str(exc), code=exc.code) from exc
+
+    @staticmethod
+    def _same_observation(left: FileMetadataV1, right: FileMetadataV1 | GuardedRegularFileSnapshotV1) -> bool:
+        return all(
+            getattr(left, key) == getattr(right, key)
+            for key in (
+                "root_device",
+                "root_inode",
+                "device",
+                "inode",
+                "size",
+                "mtime_ns",
+                "ctime_ns",
+            )
+        )
+
+    def _list_directory(
+        self, path: str, budget: _InventoryBudget, expected: FileMetadataV1 | None = None
+    ) -> tuple[DirectoryEntryV1, ...]:
+        bound = min(_DIRECTORY_INITIAL_BATCH, budget.remaining)
+        while bound > 0:
+            try:
+                listing = self._fs.workspace_list_directory(path, max_entries=bound)
+            except GuardedMetadataError as exc:
+                raise ContextStoreInventoryError(str(exc), code=exc.code) from exc
+            budget.remaining -= max(1, len(listing.entries))
+            if expected is not None and not self._same_observation(expected, listing.directory):
+                raise ContextStoreInventoryError("directory identity changed between observations")
+            if listing.complete:
+                return tuple(sorted(listing.entries, key=lambda entry: entry.name))
+            bound = min(bound * 2, budget.remaining)
+        raise ContextStoreInventoryError(
+            "directory enumeration exhausted operational entry budget", code="context_inventory_budget_exhausted"
+        )
+
+    def _read_snapshot(self, path: str, expected: FileMetadataV1 | None = None) -> GuardedRegularFileSnapshotV1:
+        metadata = expected or self._metadata(path)
+        if metadata is None or not stat.S_ISREG(metadata.mode) or metadata.nlink != 1:
+            raise ContextStoreInventoryError("context file must be a regular file with one link")
+        try:
+            snapshot = read_guarded_regular_file_snapshot(
+                self.runtime_root,
+                metadata.relative_path,
+                max_bytes=max(1, metadata.size),
+            )
+        except GuardedRegularFileSnapshotError as exc:
+            raise ContextStoreInventoryError(str(exc), code=exc.code) from exc
+        if not self._same_observation(metadata, snapshot):
+            raise ContextStoreInventoryError("context file changed between metadata and byte read")
+        return snapshot
+
+    def persist_snapshot_bytes(self, content: bytes) -> str:
+        """Publish original producer bytes under the existing pin authority."""
+        self._require_writable()
+        if type(content) is not bytes:
+            raise TypeError("snapshot content must be immutable bytes")
+        ref = hashlib.sha256(content).hexdigest()[:24]
+        with self._exclusive_lock():
+            self._assert_current_identity()
+            self._write_immutable(self.snapshot_path(ref), content, kind="snapshot")
+        return ref
 
     @property
     def lock_logical_path(self) -> str:
@@ -142,6 +235,7 @@ class ContextSnapshotAuditPinRepository:
         composite_request_hash: str,
         snapshot_source: str,
     ) -> ContextSnapshotAuditPinV1:
+        self._require_writable()
         content, context_ref = self.canonical_snapshot(snapshot)
         content_bytes = content.encode("utf-8")
         content_hash = hashlib.sha256(content_bytes).hexdigest()
@@ -170,7 +264,7 @@ class ContextSnapshotAuditPinRepository:
         with self._exclusive_lock():
             self._assert_current_identity()
             pin_directory = os.path.dirname(pin_path)
-            if os.path.exists(pin_directory):
+            if self._metadata(pin_directory, optional=True) is not None:
                 self._query_snapshot_pins_locked(context_ref)
             self._write_immutable(snapshot_path, content_bytes, kind="snapshot")
             self._write_immutable(pin_path, pin_bytes, kind="pin")
@@ -184,7 +278,7 @@ class ContextSnapshotAuditPinRepository:
 
     def query_snapshot_pins(self, context_snapshot_ref: str) -> tuple[ContextSnapshotAuditPinV1, ...]:
         ref = self._validated_ref(context_snapshot_ref)
-        with self._exclusive_lock():
+        with self._exclusive_lock(observe=True):
             self._assert_current_identity()
             return self._query_snapshot_pins_locked(ref)
 
@@ -200,79 +294,78 @@ class ContextSnapshotAuditPinRepository:
         requested_run_id = str(factory_run_id or "").strip()
         if not requested_run_id:
             raise ContextSnapshotAuditPinError("factory_run_id must be non-empty")
-        with self._exclusive_lock():
+        with self._exclusive_lock(observe=True):
             self._assert_current_identity()
-            pins_root = os.path.join(self.contexts_root, "pins")
-            if not os.path.exists(pins_root):
-                return ()
-            if not os.path.isdir(pins_root):
-                raise ContextSnapshotAuditPinError("context snapshot pins root is not a directory")
-            refs: list[str] = []
-            try:
-                with os.scandir(pins_root) as shards:
-                    shard_entries = sorted(shards, key=lambda entry: entry.name)
-                for shard in shard_entries:
-                    if not shard.is_dir(follow_symlinks=False) or not re.fullmatch(r"[0-9a-f]{2}", shard.name):
-                        raise ContextSnapshotAuditPinError("context snapshot pins root contains an invalid shard")
-                    with os.scandir(shard.path) as ref_dirs:
-                        for ref_entry in sorted(ref_dirs, key=lambda entry: entry.name):
-                            if not ref_entry.is_dir(follow_symlinks=False):
-                                raise ContextSnapshotAuditPinError("context snapshot pin shard contains a non-directory")
-                            ref = self._validated_ref(ref_entry.name)
-                            if ref[:2] != shard.name:
-                                raise ContextSnapshotAuditPinError("context snapshot pin shard/ref mismatch")
-                            refs.append(ref)
-            except OSError as exc:
-                raise ContextSnapshotAuditPinError("context snapshot pins root is unreadable") from exc
+            return tuple(pin for pin in self._all_pins_locked() if pin.factory_run_id == requested_run_id)
 
-            matched: list[ContextSnapshotAuditPinV1] = []
-            for ref in refs:
-                for pin in self._query_snapshot_pins_locked(ref):
-                    if pin.factory_run_id == requested_run_id:
-                        matched.append(pin)
-            return tuple(matched)
+    def _all_pins_locked(self, budget: _InventoryBudget | None = None) -> tuple[ContextSnapshotAuditPinV1, ...]:
+        budget = budget or _InventoryBudget()
+        pins_root = os.path.join(self.contexts_root, "pins")
+        metadata = self._metadata(pins_root, optional=True)
+        if metadata is None:
+            return ()
+        matched: list[ContextSnapshotAuditPinV1] = []
+        for shard in self._list_directory(pins_root, budget, metadata):
+            if not stat.S_ISDIR(shard.metadata.mode) or not re.fullmatch(r"[0-9a-f]{2}", shard.name):
+                raise ContextSnapshotAuditPinError("context snapshot pins root contains an invalid shard")
+            for entry in self._list_directory(os.path.join(pins_root, shard.name), budget, shard.metadata):
+                ref = self._validated_ref(entry.name)
+                if not stat.S_ISDIR(entry.metadata.mode) or ref[:2] != shard.name:
+                    raise ContextSnapshotAuditPinError("context snapshot pin shard/ref mismatch")
+                matched.extend(self._query_snapshot_pins_locked(ref, budget=budget, expected=entry.metadata))
+        return tuple(matched)
 
     def remove_snapshot_if_unpinned(self, snapshot_path: str) -> bool:
-        candidate = os.path.realpath(snapshot_path)
+        self._require_writable()
+        candidate = os.path.abspath(snapshot_path)
         with self._exclusive_lock():
             self._assert_current_identity()
             if not self._is_snapshot_path(candidate):
                 raise ContextSnapshotAuditPinError("snapshot deletion path is outside the ContextOS store")
-            ref = os.path.basename(candidate)
-            if CONTEXT_HASH_PATTERN.fullmatch(ref):
-                pins = self._query_snapshot_pins_locked(ref)
-                if pins:
-                    return False
-            try:
-                os.remove(candidate)
-            except FileNotFoundError:
+            if self._metadata(candidate, optional=True) is None:
                 return False
-            return True
+            return self._remove_snapshot_locked(self._read_snapshot(candidate), _InventoryBudget())
 
-    def _query_snapshot_pins_locked(self, context_snapshot_ref: str) -> tuple[ContextSnapshotAuditPinV1, ...]:
+    def _remove_snapshot_locked(self, expected: GuardedRegularFileSnapshotV1, budget: _InventoryBudget) -> bool:
+        self._require_writable()
+        candidate = os.path.join(self.runtime_root, expected.relative_path)
+        if not self._is_snapshot_path(candidate):
+            raise ContextSnapshotAuditPinError("snapshot deletion path is outside the ContextOS store")
+        ref = os.path.basename(candidate)
+        if CONTEXT_HASH_PATTERN.fullmatch(ref) and self._query_snapshot_pins_locked(ref, budget=budget):
+            return False
+        try:
+            guarded_compare_and_remove_regular_file(self.runtime_root, expected, max_bytes=max(1, expected.size))
+        except GuardedRegularFileSnapshotError as exc:
+            raise ContextStoreInventoryError(str(exc), code=exc.code) from exc
+        return True
+
+    def _query_snapshot_pins_locked(
+        self,
+        context_snapshot_ref: str,
+        *,
+        budget: _InventoryBudget | None = None,
+        expected: FileMetadataV1 | None = None,
+    ) -> tuple[ContextSnapshotAuditPinV1, ...]:
         ref = self._validated_ref(context_snapshot_ref)
         pin_directory = os.path.dirname(self.pin_path(ref, "probe"))
-        if not os.path.exists(pin_directory):
+        metadata = expected or self._metadata(pin_directory, optional=True)
+        if metadata is None:
             return ()
-        if not os.path.isdir(pin_directory):
-            raise ContextSnapshotAuditPinError("context snapshot pin state is not a directory")
-        try:
-            with os.scandir(pin_directory) as iterator:
-                entries = sorted(iterator, key=lambda entry: entry.name)
-        except OSError as exc:
-            raise ContextSnapshotAuditPinError("context snapshot pin directory is unreadable") from exc
+        entries = self._list_directory(pin_directory, budget or _InventoryBudget(), metadata)
         if not entries:
             raise ContextSnapshotAuditPinError("context snapshot pin directory is present but empty")
         pins: list[ContextSnapshotAuditPinV1] = []
         for entry in entries:
-            if not entry.is_file(follow_symlinks=False) or not entry.name.endswith(".json"):
+            if not stat.S_ISREG(entry.metadata.mode) or entry.metadata.nlink != 1 or not entry.name.endswith(".json"):
                 raise ContextSnapshotAuditPinError("context snapshot pin directory contains an invalid entry")
+            path = os.path.join(pin_directory, entry.name)
             try:
-                raw = json.loads(self._read_bytes(entry.path).decode("utf-8"))
+                raw = json.loads(self._read_snapshot(path, entry.metadata).content.decode("utf-8"))
                 pin = ContextSnapshotAuditPinV1.from_record(raw)
             except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
                 raise ContextSnapshotAuditPinError("context snapshot pin is corrupt or unreadable") from exc
-            self._validate_pin_binding(pin, entry.path)
+            self._validate_pin_binding(pin, path)
             pins.append(pin)
         snapshot_bytes = self._read_snapshot_bytes_for_pins(ref, pins)
         actual_hash = hashlib.sha256(snapshot_bytes).hexdigest()
@@ -314,65 +407,82 @@ class ContextSnapshotAuditPinRepository:
         return content
 
     def _write_immutable(self, path: str, expected: bytes, *, kind: str) -> None:
-        if os.path.exists(path):
-            try:
-                existing = self._read_bytes(path)
-            except OSError as exc:
-                raise ContextSnapshotAuditPinError(f"existing {kind} is unreadable") from exc
-            if existing != expected:
+        self._require_writable()
+        try:
+            metadata = self._metadata(path, optional=True)
+            if metadata is None:
+                relative = str(Path(path).relative_to(self.runtime_root))
+                guarded_compare_and_create_regular_file(
+                    self.runtime_root,
+                    relative,
+                    expected,
+                    max_bytes=max(1, len(expected)),
+                )
+            elif self._read_snapshot(path, metadata).content != expected:
                 raise ContextSnapshotAuditPinError(f"pinned {kind} is immutable and content differs")
-        else:
-            write_text_atomic(path, expected.decode("utf-8"), encoding="utf-8")
+        except (OSError, GuardedRegularFileSnapshotError) as exc:
+            raise ContextSnapshotAuditPinError(f"{kind} persistence unavailable: {exc}") from exc
+        # Preserve the established durability failure type for existing callers.
         self._fsync_and_verify(path, expected)
 
     def _fsync_and_verify(self, path: str, expected: bytes) -> None:
-        descriptor = os.open(path, os.O_RDONLY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        parent_descriptor = os.open(os.path.dirname(path), os.O_RDONLY)
-        try:
-            os.fsync(parent_descriptor)
-        finally:
-            os.close(parent_descriptor)
-        if self._read_bytes(path) != expected:
+        self._require_writable()
+        snapshot = self._read_snapshot(path)
+        if snapshot.content != expected:
             raise OSError("context snapshot or audit pin durable reread mismatch")
+        try:
+            # Readability after an interrupted create does not confirm durability.
+            # Sync the exact immutable object on every publication, including retry.
+            guarded_confirm_regular_file_durability(
+                self.runtime_root,
+                snapshot,
+                max_bytes=max(1, snapshot.size),
+            )
+        except GuardedRegularFileSnapshotError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, OSError):
+                raise OSError(
+                    cause.errno, f"ContextOS durability UNKNOWN at {exc.details.get('stage')}: {cause}"
+                ) from exc
+            raise ContextStoreInventoryError(
+                f"ContextOS durability UNKNOWN: {exc}",
+                code=exc.code,
+            ) from exc
 
-    @staticmethod
-    def _read_bytes(path: str) -> bytes:
-        with open(path, "rb") as handle:
-            return handle.read()
+    def _read_bytes(self, path: str) -> bytes:
+        return self._read_snapshot(path).content
 
     @contextmanager
-    def _exclusive_lock(self) -> Iterator[None]:
-        """Hold the registered KernelOne lock authority for all pin state I/O."""
-
+    def _exclusive_lock(self, *, observe: bool = False) -> Iterator[None]:
+        """Use the same authority; observations never provision or enroll keys."""
+        read_only = self.read_only or observe
         with self._process_lock:
             try:
-                LockedRegularFileSetV1.provision_authority(
-                    platform_lock_root=self._platform_lock_root,
-                    storage_identity_token=self.storage_identity_token,
-                    runtime_root=self.runtime_root,
-                )
-                LockedRegularFileSetV1.enroll_stream_lock_keys(
-                    platform_lock_root=self._platform_lock_root,
-                    storage_identity_token=self.storage_identity_token,
-                    runtime_root=self.runtime_root,
-                    logical_paths=(self._lock_logical_path,),
-                )
+                if not read_only:
+                    LockedRegularFileSetV1.provision_authority(
+                        platform_lock_root=self._platform_lock_root,
+                        storage_identity_token=self.storage_identity_token,
+                        runtime_root=self.runtime_root,
+                    )
+                    LockedRegularFileSetV1.enroll_stream_lock_keys(
+                        platform_lock_root=self._platform_lock_root,
+                        storage_identity_token=self.storage_identity_token,
+                        runtime_root=self.runtime_root,
+                        logical_paths=(self._lock_logical_path,),
+                    )
                 with LockedRegularFileSetV1.acquire(
                     runtime_root=self.runtime_root,
                     storage_identity_token=self.storage_identity_token,
                     logical_paths=(self._lock_logical_path,),
                     platform_lock_root=self._platform_lock_root,
+                    read_only=read_only,
                 ):
                     yield
             except LockedRegularFileError as exc:
                 raise ContextSnapshotAuditPinError(f"context snapshot audit lock unavailable: {exc.code}") from exc
 
     def _assert_current_identity(self) -> None:
-        current = resolve_workspace_runtime_identity(self.workspace_abs)
+        current = resolve_workspace_runtime_identity(self.workspace_abs, read_only=True)
         expected_token = self._storage_token(
             workspace_abs=os.path.realpath(current.workspace_abs),
             workspace_key=current.workspace_key,
@@ -382,6 +492,7 @@ class ContextSnapshotAuditPinRepository:
             os.path.realpath(current.workspace_abs) != self.workspace_abs
             or current.workspace_key != self.workspace_key
             or expected_token != self.storage_identity_token
+            or (not self.read_only and current.runtime_root != self.runtime_root)
         ):
             raise ContextSnapshotAuditPinError("context snapshot storage identity changed")
 
@@ -456,27 +567,17 @@ class SweepReport:
     total_bytes_after: int
     elapsed_ms: int
     triggers: list[str] = field(default_factory=list)
+    inventory_complete: bool = True
+    error_code: str | None = None
+    error_message: str | None = None
 
 
 class ContextStoreRetention:
-    """Manage TTL and capacity caps for ``runtime/contexts/``.
+    """Observe and prune ContextOS using its existing cooperative pin authority.
 
-    The retention class is intentionally cheap to instantiate: every
-    public method is stateless with respect to the in-memory state of the
-    instance (apart from the cached paths and the counter file). The
-    ``sweep_min_interval_seconds`` throttle and the counter file
-    ``.sweep_state.json`` together provide a cheap cross-process gate so
-    the hot read path is one ``os.scandir`` over at most a few hundred
-    files.
-
-    Args:
-        workspace: Workspace path or ``None`` (falls back to current
-            working directory).
-        config: Optional ``ContextStoreRetentionConfig`` — defaults applied
-            when ``None``.
-        runtime_base: Optional explicit runtime base. Defaults to
-            ``build_cache_root("", workspace)`` so the same root the
-            store uses is used by the reaper.
+    EOF inventories exclude cooperating writers while the authority is held.
+    External namespace changes remain possible; exact guarded CAS protects each
+    deletion. Incomplete observations never publish totals or throttle state.
     """
 
     def __init__(
@@ -484,35 +585,28 @@ class ContextStoreRetention:
         workspace: str | None = None,
         config: ContextStoreRetentionConfig | None = None,
         runtime_base: str | None = None,
+        *,
+        read_only: bool = False,
     ) -> None:
-        # Local imports to avoid import cycles (storage is heavy).
-        from pathlib import Path
-
         from polaris.kernelone.storage import StorageLayout
-        from polaris.kernelone.storage.io_paths import resolve_storage_roots
 
         self._workspace = workspace or "."
         self._config = config or ContextStoreRetentionConfig()
-        if runtime_base:
-            layout = StorageLayout(workspace=self._workspace, runtime_base=runtime_base)
-            contexts_root = layout.get_path("runtime", "contexts")
-            runtime_root = layout.runtime_root
-        else:
-            roots = resolve_storage_roots(self._workspace)
-            runtime_root = Path(roots.runtime_root)
-            contexts_root = runtime_root / "contexts"
-        # ``contexts_root`` is a Path — we want string paths for os.scandir.
-        self._contexts_root = str(contexts_root.resolve())
-        self._runtime_root = str(runtime_root.resolve())
-        self._sweep_state_path = os.path.join(self._contexts_root, SWEEP_STATE_FILENAME)
+        self._read_only = read_only
+        runtime_root = (
+            str(StorageLayout(workspace=self._workspace, runtime_base=runtime_base).runtime_root)
+            if runtime_base
+            else None
+        )
         self._pin_repository = ContextSnapshotAuditPinRepository(
             workspace=self._workspace,
-            runtime_root=self._runtime_root,
+            runtime_root=runtime_root,
+            read_only=read_only,
         )
+        self._contexts_root = self._pin_repository.contexts_root
+        self._runtime_root = self._pin_repository.runtime_root
+        self._sweep_state_path = os.path.join(self._contexts_root, SWEEP_STATE_FILENAME)
 
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
     @property
     def config(self) -> ContextStoreRetentionConfig:
         return self._config
@@ -531,424 +625,224 @@ class ContextStoreRetention:
 
     @property
     def pin_repository(self) -> ContextSnapshotAuditPinRepository:
-        """Return the generic typed audit-pin repository used by retention."""
-
         return self._pin_repository
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-    def _is_within_contexts_root(self, path: str) -> bool:
-        """Return True when ``path`` resolves inside ``contexts_root``."""
-        try:
-            resolved = os.path.realpath(path)
-            root = self._contexts_root
-            common = os.path.commonpath([resolved, root])
-            return common == root
-        except (OSError, ValueError):
-            return False
+    def _inventory(self, budget: _InventoryBudget | None = None) -> list[FileMetadataV1]:
+        repository = self._pin_repository
+        budget = budget or _InventoryBudget()
+        result: list[FileMetadataV1] = []
+        for shard in repository._list_directory(self._contexts_root, budget):
+            if shard.name in {"pins", SWEEP_STATE_FILENAME}:
+                required_type = stat.S_ISDIR if shard.name == "pins" else stat.S_ISREG
+                if not required_type(shard.metadata.mode) or (
+                    shard.name == SWEEP_STATE_FILENAME and shard.metadata.nlink != 1
+                ):
+                    raise ContextStoreInventoryError("unsafe ContextOS metadata entry")
+                continue
+            if not stat.S_ISDIR(shard.metadata.mode):
+                raise ContextStoreInventoryError("ContextOS shard is not a directory")
+            for entry in repository._list_directory(
+                os.path.join(self._contexts_root, shard.name), budget, shard.metadata
+            ):
+                if not stat.S_ISREG(entry.metadata.mode) or entry.metadata.nlink != 1:
+                    raise ContextStoreInventoryError("ContextOS shard contains an unsafe file")
+                if entry.name != SWEEP_STATE_FILENAME:
+                    result.append(entry.metadata)
+        return result
 
     def _iter_candidate_files(self) -> Iterator[tuple[str, float, int]]:
-        """Yield ``(path, mtime, size)`` for every regular file under
-        ``contexts_root``.
+        for metadata in self._inventory():
+            yield (os.path.join(self._runtime_root, metadata.relative_path), metadata.mtime_ns / 1e9, metadata.size)
 
-        Skips the ``.sweep_state.json`` counter file itself, and any file
-        that does not pass the within-root guard. The iteration uses
-        ``os.scandir`` so stat data is fetched in batched syscalls rather
-        than as one round-trip per file.
-
-        Yields:
-            ``(absolute_path, mtime, size)`` tuples. ``mtime`` is a
-            ``float`` seconds-since-epoch. ``size`` is an ``int`` in
-            bytes.
-        """
-        if not os.path.isdir(self._contexts_root):
-            return
-        try:
-            with os.scandir(self._contexts_root) as shard_iter:
-                for shard_entry in shard_iter:
-                    if not shard_entry.is_dir(follow_symlinks=False):
-                        continue
-                    try:
-                        with os.scandir(shard_entry.path) as file_iter:
-                            for file_entry in file_iter:
-                                if not file_entry.is_file(follow_symlinks=False):
-                                    continue
-                                if file_entry.name == SWEEP_STATE_FILENAME:
-                                    continue
-                                try:
-                                    stat = file_entry.stat(follow_symlinks=False)
-                                except OSError as exc:
-                                    logger.debug(
-                                        "context_retention: stat failed for %s: %s",
-                                        file_entry.path,
-                                        exc,
-                                    )
-                                    continue
-                                if not self._is_within_contexts_root(file_entry.path):
-                                    logger.warning(
-                                        "context_retention: skipping out-of-root file %s",
-                                        file_entry.path,
-                                    )
-                                    continue
-                                yield (file_entry.path, stat.st_mtime, stat.st_size)
-                    except OSError as exc:
-                        logger.debug(
-                            "context_retention: scan failed for shard %s: %s",
-                            shard_entry.path,
-                            exc,
-                        )
-                        continue
-        except (OSError, TimeoutError) as exc:
-            logger.debug(
-                "context_retention: top-level scan failed for %s: %s",
-                self._contexts_root,
-                exc,
-            )
+    @staticmethod
+    def _state_from_inventory(files: list[FileMetadataV1]) -> dict[str, Any]:
+        return {
+            "file_count": len(files),
+            "total_bytes": sum(item.size for item in files),
+            "oldest_mtime": min((item.mtime_ns / 1e9 for item in files), default=None),
+        }
 
     def _gate_state(self) -> dict[str, Any]:
-        """Return a cheap state snapshot of the contexts tree.
-
-        Uses ``os.scandir`` for batched stat retrieval — no file content
-        is read. The returned dict has the shape ``{"file_count": int,
-        "total_bytes": int, "oldest_mtime": float | None}`` suitable for
-        cheap cross-process persistence in the counter file.
-        """
-        file_count = 0
-        total_bytes = 0
-        oldest_mtime: float | None = None
-        for _path, mtime, size in self._iter_candidate_files():
-            file_count += 1
-            total_bytes += size
-            if oldest_mtime is None or mtime < oldest_mtime:
-                oldest_mtime = mtime
-        return {
-            "file_count": file_count,
-            "total_bytes": total_bytes,
-            "oldest_mtime": oldest_mtime,
-        }
+        return self._state_from_inventory(self._inventory())
 
     def _read_sweep_state(self) -> dict[str, Any]:
-        """Read the ``.sweep_state.json`` counter file, tolerant of
-        absence / corruption. Always returns a dict with the keys
-        ``last_sweep_at`` (float) and ``last_gate_state`` (dict)."""
         fallback: dict[str, Any] = {"last_sweep_at": 0.0, "last_gate_state": {}}
-        if not os.path.isfile(self._sweep_state_path):
+        metadata = self._pin_repository._metadata(self._sweep_state_path, optional=True)
+        if metadata is None:
             return fallback
         try:
-            with open(self._sweep_state_path, encoding="utf-8") as handle:
-                raw = json.load(handle)
-        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
-            logger.debug(
-                "context_retention: failed to read sweep state %s: %s",
-                self._sweep_state_path,
-                exc,
+            raw = json.loads(
+                self._pin_repository._read_snapshot(self._sweep_state_path, metadata).content.decode("utf-8")
             )
+            if not isinstance(raw, dict):
+                return fallback
+            last_sweep_at = float(raw.get("last_sweep_at", 0.0))
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
             return fallback
-        if not isinstance(raw, dict):
-            return fallback
-        last_sweep_at_raw = raw.get("last_sweep_at", 0.0)
-        try:
-            last_sweep_at = float(last_sweep_at_raw)
-        except (TypeError, ValueError):
-            last_sweep_at = 0.0
-        last_gate_state = raw.get("last_gate_state", {})
-        if not isinstance(last_gate_state, dict):
-            last_gate_state = {}
-        return {"last_sweep_at": last_sweep_at, "last_gate_state": last_gate_state}
+        gate = raw.get("last_gate_state", {})
+        return {"last_sweep_at": last_sweep_at, "last_gate_state": gate if isinstance(gate, dict) else {}}
 
     def _write_sweep_state(self, last_sweep_at: float, last_gate_state: dict[str, Any]) -> None:
-        """Persist ``last_sweep_at`` and ``last_gate_state`` atomically.
-
-        Uses the KernelOne FS atomic text helper, so a crash mid-write never
-        leaves a half-written counter file. All errors are swallowed (logged at
-        debug) — the gate is best-effort, not load-bearing.
-        """
-        payload = {
-            "last_sweep_at": last_sweep_at,
-            "last_gate_state": last_gate_state,
-        }
+        repository = self._pin_repository
+        repository._require_writable()
+        payload = json.dumps(
+            {"last_sweep_at": last_sweep_at, "last_gate_state": last_gate_state},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        metadata = repository._metadata(self._sweep_state_path, optional=True)
         try:
-            write_text_atomic(
-                self._sweep_state_path,
-                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-            )
-        except OSError as exc:
-            logger.debug(
-                "context_retention: failed to write sweep state %s: %s",
-                self._sweep_state_path,
-                exc,
-            )
+            if metadata is None:
+                guarded_compare_and_create_regular_file(
+                    self._runtime_root, "contexts/" + SWEEP_STATE_FILENAME, payload, max_bytes=max(1, len(payload))
+                )
+            else:
+                previous = repository._read_snapshot(self._sweep_state_path, metadata)
+                guarded_compare_and_replace_regular_file(
+                    self._runtime_root, previous, payload, max_bytes=max(1, len(payload), previous.size)
+                )
+        except GuardedRegularFileSnapshotError as exc:
+            raise ContextStoreInventoryError(str(exc), code=exc.code) from exc
 
-    # ------------------------------------------------------------------
-    # Public surface
-    # ------------------------------------------------------------------
     def get_stats(self) -> dict[str, Any]:
-        """Return the current stats snapshot (cheap path)."""
-        state = self._gate_state()
-        counter = self._read_sweep_state()
-        return {
-            "workspace": str(self._workspace),
-            "contexts_root": self._contexts_root,
-            "file_count": state["file_count"],
-            "total_bytes": state["total_bytes"],
-            "oldest_mtime": state["oldest_mtime"],
-            "newest_mtime": self._newest_mtime(),
-            "config": {
-                "ttl_seconds": self._config.ttl_seconds,
-                "max_total_bytes": self._config.max_total_bytes,
-                "max_files": self._config.max_files,
-                "sweep_min_interval_seconds": self._config.sweep_min_interval_seconds,
-                "enabled": self._config.enabled,
-            },
-            "last_sweep_at": counter["last_sweep_at"],
-        }
-
-    def _newest_mtime(self) -> float | None:
-        """Return the newest mtime across all candidate files, or None.
-
-        Used by the admin stats endpoint. O(n) over candidate files, but
-        a single scandir pass is fine for the admin path.
-        """
-        newest: float | None = None
-        for _path, mtime, _size in self._iter_candidate_files():
-            if newest is None or mtime > newest:
-                newest = mtime
-        return newest
-
-    def sweep(self, triggers: list[str] | None = None) -> SweepReport:
-        """Run a full sweep pass, applying TTL → max_files →
-        max_total_bytes in order.
-
-        Args:
-            triggers: Optional tag list to attach to the report. When
-                omitted, defaults to ``["manual"]``.
-
-        Returns:
-            A :class:`SweepReport` describing the pass. The function
-            never raises — every ``os.*`` call is OSError-guarded.
-        """
-        start = time.monotonic()
-        triggers = list(triggers) if triggers else ["manual"]
-        scanned = 0
-        removed = 0
-        removed_bytes = 0
-        kept_bytes = 0
-
-        candidates: list[tuple[float, str, int]] = []
-        for path, mtime, size in self._iter_candidate_files():
-            scanned += 1
-            candidates.append((mtime, path, size))
-            kept_bytes += size
-
-        # Sort by mtime ascending so the oldest is first.
-        candidates.sort(key=lambda item: item[0])
-
-        now = time.time()
-        ttl_cutoff = now - float(self._config.ttl_seconds)
-        max_files = int(self._config.max_files)
-        max_bytes = int(self._config.max_total_bytes)
-        kept_count = len(candidates)
-
-        def _remove(idx: int) -> bool:
-            nonlocal removed, removed_bytes, kept_count
-            _mtime, path, size = candidates[idx]
-            try:
-                if not self._is_within_contexts_root(path):
-                    logger.warning(
-                        "context_retention: refusing to remove out-of-root path %s",
-                        path,
-                    )
-                    return False
-                if not self._pin_repository.remove_snapshot_if_unpinned(path):
-                    return False
-                removed += 1
-                removed_bytes += size
-                kept_count -= 1
-                return True
-            except FileNotFoundError:
-                # Already gone — counting as not-removed is fine.
-                return False
-            except ContextSnapshotAuditPinError as exc:
-                logger.warning(
-                    "context_retention: keeping %s because audit-pin state failed closed: %s",
-                    path,
-                    exc,
-                )
-                return False
-            except OSError as exc:
-                logger.warning(
-                    "context_retention: failed to remove %s: %s",
-                    path,
-                    exc,
-                )
-                return False
-
-        # Phase 1: TTL
-        ttl_fired = False
-        idx = 0
-        for idx in range(len(candidates)):
-            mtime = candidates[idx][0]
-            if mtime >= ttl_cutoff:
-                break
-            ttl_fired = True
-        else:
-            idx = len(candidates)
-        if ttl_fired and "ttl" not in triggers:
-            triggers.append("ttl")
-        # Remove all indices [0, idx) where mtime < cutoff.
-        for _i in range(idx - 1, -1, -1):
-            _remove(_i)
-
-        # Recompute state after TTL pass; cheapest approach is to filter
-        # the candidate list in place. We re-derive from scratch using
-        # a scan since removal is best-effort (racing deletes are OK).
-        candidates = [item for item in candidates if (item[1] and os.path.isfile(item[1]))]
-        # Re-sort by mtime ascending (preserving oldest-first invariant).
-        candidates.sort(key=lambda item: item[0])
-
-        # Phase 2: max_files cap
-        if len(candidates) > max_files:
-            if "max_files" not in triggers:
-                triggers.append("max_files")
-            candidate_index = 0
-            while len(candidates) > max_files and candidate_index < len(candidates):
-                if _remove(candidate_index):
-                    candidates.pop(candidate_index)
-                else:
-                    candidate_index += 1
-
-        # Phase 3: max_total_bytes cap
-        if candidates:
-            total_bytes = sum(size for _mtime, _path, size in candidates)
-            if total_bytes > max_bytes:
-                if "max_total_bytes" not in triggers:
-                    triggers.append("max_total_bytes")
-                idx = 0
-                while total_bytes > max_bytes and idx < len(candidates):
-                    _mtime, path, size = candidates[idx]
-                    if not os.path.isfile(path):
-                        # Race: already gone, drop from candidate list.
-                        candidates.pop(idx)
-                        continue
-                    if _remove(idx):
-                        candidates.pop(idx)
-                        total_bytes -= size
-                        if not candidates:
-                            break
-                    else:
-                        idx += 1
-
-        kept_bytes_after = sum(size for _mtime, _path, size in candidates)
-        kept_count = len(candidates)
-        elapsed_ms = int((time.monotonic() - start) * 1000)
-
-        # Persist counter file last (cheap, never raises).
-        try:
-            self._write_sweep_state(
-                last_sweep_at=now,
-                last_gate_state={
-                    "file_count": kept_count,
-                    "total_bytes": kept_bytes_after,
-                    "oldest_mtime": candidates[0][0] if candidates else None,
+        with self._pin_repository._exclusive_lock(observe=True):
+            self._pin_repository._assert_current_identity()
+            files = self._inventory()
+            counter = self._read_sweep_state()
+            return {
+                "workspace": str(self._workspace),
+                "contexts_root": self._contexts_root,
+                **self._state_from_inventory(files),
+                "newest_mtime": max((item.mtime_ns / 1e9 for item in files), default=None),
+                "config": {
+                    "ttl_seconds": self._config.ttl_seconds,
+                    "max_total_bytes": self._config.max_total_bytes,
+                    "max_files": self._config.max_files,
+                    "sweep_min_interval_seconds": self._config.sweep_min_interval_seconds,
+                    "enabled": self._config.enabled,
                 },
-            )
-        except OSError as exc:
-            logger.debug(
-                "context_retention: counter write outer guard: %s",
-                exc,
-            )
+                "last_sweep_at": counter["last_sweep_at"],
+            }
 
-        report = SweepReport(
+    @staticmethod
+    def _failure_report(
+        exc: Exception, *, start: float, triggers: list[str], scanned: int = 0, removed: int = 0, removed_bytes: int = 0
+    ) -> SweepReport:
+        return SweepReport(
             scanned_files=scanned,
             removed_files=removed,
             removed_bytes=removed_bytes,
-            kept_files=kept_count,
-            total_bytes_after=kept_bytes_after,
-            elapsed_ms=elapsed_ms,
+            kept_files=0,
+            total_bytes_after=0,
+            elapsed_ms=int((time.monotonic() - start) * 1000),
             triggers=triggers,
+            inventory_complete=False,
+            error_code=getattr(exc, "code", "context_inventory_unavailable"),
+            error_message=str(exc),
         )
 
-        if removed > 0:
-            logger.info(
-                "context_retention: sweep removed=%d kept=%d bytes_removed=%d elapsed_ms=%d triggers=%s",
-                removed,
-                kept_count,
-                removed_bytes,
-                elapsed_ms,
-                ",".join(triggers),
+    def sweep(self, triggers: list[str] | None = None) -> SweepReport:
+        start = time.monotonic()
+        tags = list(triggers) if triggers else ["manual"]
+        scanned = removed = removed_bytes = 0
+        repository = self._pin_repository
+        try:
+            repository._require_writable()
+            with repository._exclusive_lock():
+                repository._assert_current_identity()
+                budget = _InventoryBudget()
+                files = self._inventory(budget)
+                scanned = len(files)
+                # Complete pin validation is a precondition, never an empty-on-error shortcut.
+                repository._all_pins_locked(budget)
+                candidates = sorted(files, key=lambda item: item.mtime_ns)
+                kept_count = len(candidates)
+                kept_bytes = sum(item.size for item in candidates)
+                now = time.time()
+                for phase in ("ttl", "max_files", "max_total_bytes"):
+                    survivors: list[FileMetadataV1] = []
+                    for metadata in candidates:
+                        selected = (
+                            metadata.mtime_ns / 1e9 < now - self._config.ttl_seconds
+                            if phase == "ttl"
+                            else kept_count > self._config.max_files
+                            if phase == "max_files"
+                            else kept_bytes > self._config.max_total_bytes
+                        )
+                        if selected:
+                            if phase not in tags:
+                                tags.append(phase)
+                            expected = repository._read_snapshot(
+                                os.path.join(self._runtime_root, metadata.relative_path), metadata
+                            )
+                            if repository._remove_snapshot_locked(expected, budget):
+                                removed += 1
+                                removed_bytes += expected.size
+                                kept_count -= 1
+                                kept_bytes -= expected.size
+                                continue
+                        survivors.append(metadata)
+                    candidates = survivors
+                final = self._inventory(budget)
+                state = self._state_from_inventory(final)
+                # Failure here also stays explicit; a successful delete is never replayed.
+                self._write_sweep_state(now, state)
+                return SweepReport(
+                    scanned_files=scanned,
+                    removed_files=removed,
+                    removed_bytes=removed_bytes,
+                    kept_files=state["file_count"],
+                    total_bytes_after=state["total_bytes"],
+                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                    triggers=tags,
+                )
+        except (OSError, ContextSnapshotAuditPinError, ValueError) as exc:
+            return self._failure_report(
+                exc, start=start, triggers=tags, scanned=scanned, removed=removed, removed_bytes=removed_bytes
             )
 
-        return report
-
     def sweep_if_needed(self) -> SweepReport | None:
-        """Run ``sweep`` only when the cheap gate says it's needed.
-
-        The gate fires when **any** of the following is true:
-
-        - ``file_count > max_files``
-        - ``total_bytes > max_total_bytes``
-        - ``oldest_mtime < now - ttl_seconds``
-        - ``last_sweep_at < now - sweep_min_interval_seconds``
-          (i.e. the throttle window has elapsed — guarantees the gate
-          runs at least once every ``sweep_min_interval_seconds``)
-
-        Otherwise this method is a no-op and returns ``None``.
-
-        The whole method never raises; OSError paths log and skip.
-        """
         if not self._config.enabled:
             return None
-        now = time.time()
+        start = time.monotonic()
         try:
-            state = self._gate_state()
-        except OSError as exc:
-            logger.debug("context_retention: gate scan failed: %s", exc)
-            return None
-        counter = self._read_sweep_state()
-        try:
-            last_sweep_at = float(counter.get("last_sweep_at", 0.0))
-        except (TypeError, ValueError):
-            last_sweep_at = 0.0
-        throttle_window = float(self._config.sweep_min_interval_seconds)
-        within_throttle = (now - last_sweep_at) < throttle_window
-
-        triggers: list[str] = []
-        file_count = int(state.get("file_count", 0))
-        total_bytes = int(state.get("total_bytes", 0))
-        oldest_mtime_raw = state.get("oldest_mtime")
-        try:
-            oldest_mtime = float(oldest_mtime_raw) if oldest_mtime_raw is not None else None
-        except (TypeError, ValueError):
-            oldest_mtime = None
-
-        if file_count > int(self._config.max_files):
-            triggers.append("max_files")
-        if total_bytes > int(self._config.max_total_bytes):
-            triggers.append("max_total_bytes")
-        if oldest_mtime is not None and oldest_mtime < (now - float(self._config.ttl_seconds)):
-            triggers.append("ttl")
-
-        if not triggers and within_throttle:
-            return None
-
-        return self.sweep(triggers=triggers)
+            self._pin_repository._require_writable()
+            with self._pin_repository._exclusive_lock():
+                self._pin_repository._assert_current_identity()
+                state = self._gate_state()
+                counter = self._read_sweep_state()
+            now = time.time()
+            triggers: list[str] = []
+            if state["file_count"] > self._config.max_files:
+                triggers.append("max_files")
+            if state["total_bytes"] > self._config.max_total_bytes:
+                triggers.append("max_total_bytes")
+            if state["oldest_mtime"] is not None and state["oldest_mtime"] < now - self._config.ttl_seconds:
+                triggers.append("ttl")
+            if not triggers and now - counter["last_sweep_at"] < self._config.sweep_min_interval_seconds:
+                return None
+            return self.sweep(triggers=triggers)
+        except (OSError, ContextSnapshotAuditPinError, ValueError) as exc:
+            return self._failure_report(exc, start=start, triggers=["gate"])
 
     def on_read_gate(self) -> dict[str, Any]:
-        """Cheap hot-path entry point invoked after every store.
-
-        Calls :meth:`sweep_if_needed` and returns the current gate state.
-        Never raises to the caller.
-        """
         try:
-            self.sweep_if_needed()
-        except (OSError, RuntimeError, ValueError, TypeError) as exc:  # pragma: no cover - belt + braces
-            logger.debug("context_retention: on_read_gate sweep failed: %s", exc)
-        try:
-            return self._gate_state()
-        except OSError as exc:
-            logger.debug("context_retention: on_read_gate state failed: %s", exc)
-            return {"file_count": 0, "total_bytes": 0, "oldest_mtime": None}
+            report = self.sweep_if_needed()
+            if report is not None and not report.inventory_complete:
+                return {
+                    "inventory_complete": False,
+                    "error_code": report.error_code,
+                    "error_message": report.error_message,
+                }
+            with self._pin_repository._exclusive_lock():
+                self._pin_repository._assert_current_identity()
+                return self._gate_state()
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            return {
+                "inventory_complete": False,
+                "error_code": getattr(exc, "code", "context_inventory_unavailable"),
+                "error_message": str(exc),
+            }
 
 
 # ---------------------------------------------------------------------------

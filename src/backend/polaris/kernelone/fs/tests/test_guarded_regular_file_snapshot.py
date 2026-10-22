@@ -863,3 +863,201 @@ def test_guarded_compare_replace_postread_detects_external_mutation(
     assert exc_info.value.code == "guarded_replace_postread_mismatch"
     assert target.read_bytes() == b"corrupt"
     assert list(root.glob(".plan.json.*.tmp")) == []
+
+
+def test_guarded_confirm_durability_syncs_exact_file_and_parent_without_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import stat
+
+    import polaris.kernelone.fs as public_fs
+
+    target = tmp_path / "nested" / "immutable.txt"
+    target.parent.mkdir()
+    target.write_bytes("原字节".encode())
+    expected = read_guarded_regular_file_snapshot(tmp_path, "nested/immutable.txt", 64)
+    before = target.stat()
+    real_fsync = snapshot_module.os.fsync
+    synced: list[tuple[int, int, bool]] = []
+
+    def observe(fd: int) -> None:
+        info = os.fstat(fd)
+        synced.append((info.st_dev, info.st_ino, stat.S_ISDIR(info.st_mode)))
+        real_fsync(fd)
+
+    monkeypatch.setattr(snapshot_module.os, "fsync", observe)
+    public_fs.guarded_confirm_regular_file_durability(tmp_path, expected, max_bytes=64)
+    assert synced == [
+        (before.st_dev, before.st_ino, False),
+        (target.parent.stat().st_dev, target.parent.stat().st_ino, True),
+    ]
+    assert target.read_bytes() == expected.content
+    after = target.stat()
+    assert (after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) == (
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    assert list(target.parent.iterdir()) == [target]
+    assert public_fs.guarded_confirm_regular_file_durability is snapshot_module.guarded_confirm_regular_file_durability
+
+
+@pytest.mark.parametrize("stage", ["file_fsync", "parent_fsync"])
+def test_guarded_confirm_durability_preserves_actual_io_failure_and_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    import stat
+
+    target = tmp_path / "file.bin"
+    target.write_bytes(b"immutable")
+    expected = read_guarded_regular_file_snapshot(tmp_path, "file.bin", 64)
+    real_fsync = snapshot_module.os.fsync
+    seen: list[str] = []
+
+    def fail(fd: int) -> None:
+        current = "parent_fsync" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file_fsync"
+        seen.append(current)
+        if current == stage:
+            raise OSError(errno.EIO, "native durable sync failed")
+        real_fsync(fd)
+
+    monkeypatch.setattr(snapshot_module.os, "fsync", fail)
+    with pytest.raises(GuardedRegularFileSnapshotError) as error:
+        snapshot_module.guarded_confirm_regular_file_durability(tmp_path, expected, max_bytes=64)
+    assert error.value.code == f"guarded_sync_{stage}_failed"
+    assert error.value.details["stage"] == stage
+    assert error.value.details["durability_state"] == "UNKNOWN"
+    assert error.value.details["file_fsync_completed"] is (stage == "parent_fsync")
+    assert error.value.details["parent_fsync_completed"] is False
+    assert isinstance(error.value.__cause__, OSError)
+    assert error.value.__cause__.errno == errno.EIO
+    assert seen == (["file_fsync"] if stage == "file_fsync" else ["file_fsync", "parent_fsync"])
+    assert target.read_bytes() == expected.content
+    monkeypatch.setattr(snapshot_module.os, "fsync", real_fsync)
+    snapshot_module.guarded_confirm_regular_file_durability(tmp_path, expected, max_bytes=64)
+    assert target.stat().st_ino == expected.inode
+
+
+@pytest.mark.parametrize("mutation", ["replacement", "in_place", "hardlink", "parent", "root"])
+@pytest.mark.parametrize("when", ["before", "during", "after_parent"])
+def test_guarded_confirm_durability_rejects_identity_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str, when: str
+) -> None:
+    root = tmp_path / "root"
+    target = root / "nested" / "file.bin"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"immutable")
+    expected = read_guarded_regular_file_snapshot(root, "nested/file.bin", 64)
+
+    def mutate() -> None:
+        if mutation == "replacement":
+            other = target.with_name("other")
+            other.write_bytes(b"replacement")
+            os.replace(other, target)
+        elif mutation == "in_place":
+            target.write_bytes(b"changed")
+        elif mutation == "hardlink":
+            os.link(target, target.with_name("linked"))
+        elif mutation == "parent":
+            target.parent.rename(root / "preserved-parent")
+            target.parent.mkdir()
+            target.write_bytes(b"replacement")
+        else:
+            root.rename(tmp_path / "preserved-root")
+            target.parent.mkdir(parents=True)
+            target.write_bytes(b"replacement")
+
+    real_fsync = snapshot_module.os.fsync
+    calls = 0
+
+    def mutate_during(fd: int) -> None:
+        nonlocal calls
+        calls += 1
+        real_fsync(fd)
+        if calls == (2 if when == "after_parent" else 1):
+            mutate()
+
+    if when == "before":
+        mutate()
+    else:
+        monkeypatch.setattr(snapshot_module.os, "fsync", mutate_during)
+    with pytest.raises(GuardedRegularFileSnapshotError) as error:
+        snapshot_module.guarded_confirm_regular_file_durability(root, expected, max_bytes=64)
+    assert error.value.details["durability_state"] == "UNKNOWN"
+    assert error.value.details["file_fsync_completed"] is (when != "before")
+    assert error.value.details["parent_fsync_completed"] is (when == "after_parent")
+    assert calls == (0 if when == "before" else 2 if when == "after_parent" else 1)
+    assert target.exists()
+
+
+@pytest.mark.parametrize("outcome", ["success", "file_failure", "parent_failure"])
+def test_guarded_confirm_durability_closes_retained_descriptors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    import stat
+
+    target = tmp_path / "file.bin"
+    target.write_bytes(b"exact")
+    expected = read_guarded_regular_file_snapshot(tmp_path, "file.bin", 64)
+    opened: list[int] = []
+    closed: list[int] = []
+    real_open = snapshot_module.os.open
+    real_close = snapshot_module.os.close
+    real_fsync = snapshot_module.os.fsync
+
+    def observe_open(*args: Any, **kwargs: Any) -> int:
+        fd = real_open(*args, **kwargs)
+        opened.append(fd)
+        return fd
+
+    def observe_close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+
+    def fail(fd: int) -> None:
+        directory = stat.S_ISDIR(os.fstat(fd).st_mode)
+        if (outcome == "file_failure" and not directory) or (outcome == "parent_failure" and directory):
+            raise OSError(errno.EIO, "sync fault")
+        real_fsync(fd)
+
+    monkeypatch.setattr(snapshot_module, "_has_required_descriptor_capabilities", lambda: True)
+    monkeypatch.setattr(snapshot_module.os, "open", observe_open)
+    monkeypatch.setattr(snapshot_module.os, "close", observe_close)
+    monkeypatch.setattr(snapshot_module.os, "fsync", fail)
+    if outcome == "success":
+        snapshot_module.guarded_confirm_regular_file_durability(tmp_path, expected, max_bytes=64)
+    else:
+        with pytest.raises(GuardedRegularFileSnapshotError):
+            snapshot_module.guarded_confirm_regular_file_durability(tmp_path, expected, max_bytes=64)
+    assert opened
+    assert sorted(opened) == sorted(closed)
+    for fd in opened:
+        with pytest.raises(OSError) as error:
+            os.fstat(fd)
+        assert error.value.errno == errno.EBADF
+
+
+@pytest.mark.parametrize("fault", ["missing", "symlink", "bound", "capability"])
+def test_guarded_confirm_durability_fails_before_sync_for_unsafe_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    target = tmp_path / "file.bin"
+    target.write_bytes(b"exact")
+    expected = read_guarded_regular_file_snapshot(tmp_path, "file.bin", 64)
+    if fault == "missing":
+        target.unlink()
+    elif fault == "symlink":
+        target.rename(tmp_path / "preserved")
+        target.symlink_to(tmp_path / "preserved")
+    elif fault == "capability":
+        monkeypatch.setattr(snapshot_module, "_has_required_descriptor_capabilities", lambda: False)
+    synced: list[int] = []
+    monkeypatch.setattr(snapshot_module.os, "fsync", lambda fd: synced.append(fd))
+    with pytest.raises(GuardedRegularFileSnapshotError) as error:
+        snapshot_module.guarded_confirm_regular_file_durability(
+            tmp_path, expected, max_bytes=1 if fault == "bound" else 64
+        )
+    assert not synced
+    assert error.value.details["file_fsync_completed"] is False
+    assert error.value.details["parent_fsync_completed"] is False

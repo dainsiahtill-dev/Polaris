@@ -80,8 +80,7 @@ def get_context_stats(request: Request) -> dict[str, Any]:
     fails with ``INVALID_HASH`` before reaching the stats handler.
     """
     workspace = _resolve_workspace(request)
-    retention = _build_retention(workspace)
-    return _context_stats_response(retention.get_stats(), last_sweep_report=None)
+    return _read_context_stats(workspace)
 
 
 @router.get("/v2/context/{hash}/final-request", dependencies=[Depends(require_auth)])
@@ -249,7 +248,7 @@ def _request_workspace_token(request: Request) -> str:
     return ""
 
 
-def _build_retention(workspace: str) -> ContextStoreRetention:
+def _build_retention(workspace: str, *, read_only: bool = True) -> ContextStoreRetention:
     """Construct a fresh :class:`ContextStoreRetention` for the workspace.
 
     The admin endpoints never share state with the on-read gate: each
@@ -269,7 +268,7 @@ def _build_retention(workspace: str) -> ContextStoreRetention:
         runtime_cfg = getattr(settings, "runtime", None)
         if runtime_cfg is not None:
             config = getattr(runtime_cfg, "context_store_retention", None)
-    return ContextStoreRetention(workspace=workspace, config=config)
+    return ContextStoreRetention(workspace=workspace, config=config, read_only=read_only)
 
 
 @router.get(
@@ -291,13 +290,24 @@ def get_context_admin_stats(request: Request) -> dict[str, Any]:
             message="Context admin surface is disabled. Set KERNELONE_CONTEXT_ADMIN_ENABLED=1 to enable.",
         )
     workspace = _resolve_workspace(request)
-    retention = _build_retention(workspace)
-    counter = retention._read_sweep_state()
-    last_report: dict[str, Any] | None = None
-    last_sweep_report = counter.get("last_sweep_report")
-    if isinstance(last_sweep_report, dict):
-        last_report = last_sweep_report
-    return _context_stats_response(retention.get_stats(), last_sweep_report=last_report)
+    return _read_context_stats(workspace)
+
+
+def _read_context_stats(workspace: str) -> dict[str, Any]:
+    try:
+        retention = _build_retention(workspace)
+        return _context_stats_response(retention.get_stats(), last_sweep_report=None)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise StructuredHTTPException(
+            status_code=503,
+            code="CONTEXT_INVENTORY_UNAVAILABLE",
+            message=str(exc),
+            details={
+                "workspace": workspace,
+                "inventory_complete": False,
+                "error_code": getattr(exc, "code", "context_inventory_unavailable"),
+            },
+        ) from exc
 
 
 @router.post(
@@ -318,9 +328,22 @@ def post_context_admin_sweep(request: Request, body: SweepRequest | None = None)
             message="Context admin surface is disabled. Set KERNELONE_CONTEXT_ADMIN_ENABLED=1 to enable.",
         )
     workspace = _resolve_workspace(request)
-    retention = _build_retention(workspace)
+    retention = _build_retention(workspace, read_only=False)
     triggers = (body.triggers if body and body.triggers else None) or ["admin"]
     report: SweepReport = retention.sweep(triggers=triggers)
+    if not report.inventory_complete:
+        raise StructuredHTTPException(
+            status_code=503,
+            code="CONTEXT_INVENTORY_UNAVAILABLE",
+            message=report.error_message or "ContextOS inventory unavailable",
+            details={
+                "workspace": workspace,
+                "inventory_complete": False,
+                "error_code": report.error_code,
+                "removed_files": report.removed_files,
+                "removed_bytes": report.removed_bytes,
+            },
+        )
     return {
         "scanned_files": report.scanned_files,
         "removed_files": report.removed_files,

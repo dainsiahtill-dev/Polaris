@@ -1,7 +1,7 @@
 id: vc-20261022-project-kfs-convergence
 classification: pattern
 owner: storage.layout-and-kernelone.fs
-status: b1_b2a_b3a_scoped_qualified_remaining_owners_pending
+status: b1_b2a_b3a_b3b_scoped_qualified_remaining_owners_pending
 design: docs/blueprints/POLARIS_PROJECT_KFS_CONVERGENCE_20261022.md
 plan: docs/superpowers/plans/2026-10-22-project-kfs-convergence.md
 evidence_root: .polaris/audits/project-storage-20261022/
@@ -9,6 +9,7 @@ assumptions:
   - The current layout resolver and existing KFS/DB/native adapters can remain the only technical boundaries.
   - A path string or a KFS import is not proof that a real file effect used KFS.
   - Project runtime/cache/temp/images belong below their owning workspace metadata root; shared service data belongs to the main project owner.
+  - Readable immutable bytes do not establish completed file and parent durability; existing-byte publication must confirm actual sync through KFS.
 pre_mortem:
   - A cached or business-resolver external namespace may bypass the strict writer path.
   - Reusing write-capable root resolution inside KFS provisioning could recurse or make a read mutate disk.
@@ -25,6 +26,7 @@ verification:
   - Scoped style,type,pytest and required release/catalog checks before final integration.
   - Fresh originalcatalog isolated delivery and independent ROOT quality after new version freeze.
   - B3a shared ContextOS reader ROOT integration204passed and KernelOne ALL12stages368passed1skipped on frozen inputs; independent disappearance/progress and cold-read no-product-write evidence retained.
+  - B3b R1 pin,stats,retention and producer closure independent APPROVED; ROOT391passed and KernelOne ALL12stages368passed1skipped with14frozenhashes unchanged; actual durable-retry failure then no-rewrite progress verified.
 acceptance: Each batch needs evidence for its own declared boundary; whole convergence remains incomplete until remaining owners and actual runtime roots are verified.
 remaining_unknown: Full dynamic I/O coverage,all6054 static candidates,Electron live roots,offline main data transition,all120 deliveries,physical HTTP totals,bill,human effort,and original13 cold-child failure causes.
 retained_failures:
@@ -33,3 +35,4 @@ retained_failures:
   - Strict mypy three unchanged errors reproduced from HEAD; standard scoped mypy passes all11 Python changes.
   - B2a first fullFS integration1failed483passed remains preserved; EOF complete does not imply current membership, and native single insertion can leave all seven directory metadata fields unchanged.
   - B3a initial historical external-writer fixture and intermediate failures are retained; pin,statistics,retention,DB,temp,main shared roots and native deliveries remain unqualified.
+  - B3b initial565author and260ROOT passes do not waive independent physical durability P1; first K1ALL367passed1failed1skipped retains added empty-fixture pass245over244 without budget changes. R1 closes both findings; original rejected candidate and physical evidence retained.

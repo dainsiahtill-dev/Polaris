@@ -18,7 +18,6 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from polaris.kernelone.events.final_request_evidence import structured_context_coverage_flags
-from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.trace import get_trace_id
 
 from .._timeout_config import get_invoke_timeout, get_max_concurrency
@@ -1257,10 +1256,10 @@ class AIExecutor:
         """
         from datetime import datetime, timezone
 
+        from polaris.kernelone.llm.engine.context_store_retention import ContextSnapshotAuditPinRepository
         from polaris.kernelone.llm.engine.internal.context_hash import (
             validate_context_hash,
         )
-        from polaris.kernelone.storage.io_paths import resolve_storage_roots
 
         payload = {
             "schema_version": 1,
@@ -1280,12 +1279,9 @@ class AIExecutor:
         hash_key = validate_context_hash(full_hash[:24])
 
         ws = AIExecutor._resolve_context_store_workspace(workspace)
-        runtime_root = os.path.abspath(resolve_storage_roots(ws).runtime_root)
-        # Shard to avoid directory explosion: runtime/contexts/ab/abcdef...
-        shard = hash_key[:2]
-        dir_path = os.path.join(runtime_root, "contexts", shard)
-        file_path = os.path.join(dir_path, hash_key)
-        write_text_atomic(file_path, content)
+        persisted_ref = ContextSnapshotAuditPinRepository(workspace=ws).persist_snapshot_bytes(content.encode("utf-8"))
+        if persisted_ref != hash_key:
+            raise ValueError("ContextOS persisted snapshot ref differs from original bytes")
         # Opportunistic retention sweep — cheap gate first, full sweep only
         # when the gate says it's needed and the throttle has elapsed.
         # This call MUST never raise to the caller; on_read_gate() is fail-closed.
