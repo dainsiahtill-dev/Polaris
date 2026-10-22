@@ -77,19 +77,79 @@ def test_native_replace_preserves_parent_modes_and_ordinary_overwrite(tmp_path: 
     assert (tmp_path / "existing/target.txt").read_text(encoding="utf-8") == "new"
 
 
-@pytest.mark.parametrize("kind", ["symlink", "hardlink", "fifo"])
+@pytest.mark.parametrize("kind", ["symlink", "fifo"])
 def test_unsafe_leaf_cannot_change_external_bytes(tmp_path: Path, kind: str) -> None:
     fs = _fs(tmp_path)
     fs.workspace_write_text("outside.txt", "keep")
     if kind == "symlink":
         (tmp_path / "target.txt").symlink_to(tmp_path / "outside.txt")
-    elif kind == "hardlink":
-        os.link(tmp_path / "outside.txt", tmp_path / "target.txt")
     else:
         os.mkfifo(tmp_path / "target.txt")
     with pytest.raises((RuntimeError, ValueError, PathSecurityError)):
         fs.workspace_write_text_atomic("target.txt", "new")
     assert (tmp_path / "outside.txt").read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.parametrize("outside_aliases", [1, 3])
+def test_atomic_hardlink_target_gets_new_inode_without_writing_outside_aliases(
+    tmp_path: Path, outside_aliases: int
+) -> None:
+    """Replacing an authorized name must not truncate its old shared inode."""
+    _fs(tmp_path).workspace_write_text("outside.txt", "outside bytes\n")
+    original = tmp_path / "outside.txt"
+    original.chmod(0o640)
+    aliases = [original]
+    for index in range(outside_aliases - 1):
+        alias = tmp_path / f"outside-{index}.txt"
+        alias.hardlink_to(original)
+        aliases.append(alias)
+    namespace = tmp_path / "workspace"
+    namespace.mkdir()
+    target = namespace / "target.txt"
+    target.hardlink_to(original)
+    before = original.stat()
+
+    receipt = _fs(namespace).workspace_write_text_atomic("target.txt", "新的 local bytes\n")
+
+    after = target.stat()
+    assert receipt.atomic is True
+    assert (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
+    assert after.st_nlink == 1 and stat.S_IMODE(after.st_mode) == 0o600
+    assert target.read_text(encoding="utf-8") == "新的 local bytes\n"
+    for alias in aliases:
+        info = alias.stat()
+        assert (info.st_dev, info.st_ino) == (before.st_dev, before.st_ino)
+        assert stat.S_IMODE(info.st_mode) == 0o640 and info.st_mtime_ns == before.st_mtime_ns
+        assert alias.read_bytes() == b"outside bytes\n"
+        assert info.st_nlink == outside_aliases
+
+
+@pytest.mark.parametrize("phase", ["stage", "committed"])
+def test_only_old_destination_may_have_multiple_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    """The old-target allowance must not weaken private/new-inode guards."""
+    fs = _fs(tmp_path)
+    fs.workspace_write_text("target.txt", "old")
+    real_sync = native._sync_directories
+    calls = 0
+
+    def add_adversarial_alias(directories: list[native._DirectoryWitness]) -> None:
+        nonlocal calls
+        calls += 1
+        real_sync(directories)
+        if phase == "stage" and calls == 1:
+            payload = next((tmp_path / ".polaris/runtime/fs/staging").glob("*/payload"))
+            (tmp_path / "adversarial-alias").hardlink_to(payload)
+        elif phase == "committed" and calls == 2:
+            (tmp_path / "adversarial-alias").hardlink_to(tmp_path / "target.txt")
+
+    monkeypatch.setattr(native, "_sync_directories", add_adversarial_alias)
+    error = native.AtomicWriteEffectUnknownError if phase == "committed" else RuntimeError
+    with pytest.raises(error):
+        fs.workspace_write_text_atomic("target.txt", "new")
+    assert (tmp_path / "target.txt").read_text(encoding="utf-8") == ("old" if phase == "stage" else "new")
+    assert (tmp_path / "adversarial-alias").read_text(encoding="utf-8") == "new"
 
 
 @pytest.mark.parametrize("component", ["parent", "owner", "staging"])

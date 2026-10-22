@@ -69,8 +69,11 @@ def _validate_target(parent: _DirectoryWitness, name: str) -> None:
         info = os.stat(name, dir_fd=parent.fd, follow_symlinks=False)
     except FileNotFoundError:
         return
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise ValueError("managed atomic target must be a regular file with one link")
+    # Ordinary replacement removes this authorized directory entry; it never
+    # writes the old inode shared by any other hardlink names. The private
+    # stage and committed replacement retain their separate single-link guards.
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("managed atomic target must be a regular file")
 
 
 def _clean_stage(
