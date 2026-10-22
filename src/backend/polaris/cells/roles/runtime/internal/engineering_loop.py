@@ -345,6 +345,23 @@ async def run_engineering_loop(
                 "tools": tools.schemas(),
                 "tool_choice": "auto",
             }
+            if command.role == "director" and limits.deadline is not None:
+                observed_at = time.time()
+                # Keep the original system/history prefix and durable messages
+                # unchanged; this observation belongs only to this request.
+                options["messages"].append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Host runtime budget observation (request preparation): "
+                            f"deadline_epoch_seconds={limits.deadline:.3f}; "
+                            f"observed_at_epoch_seconds={observed_at:.3f}; "
+                            f"approximate_remaining_seconds={max(0.0, limits.deadline - observed_at):.3f}. "
+                            "All work in this run shares the same run deadline. "
+                            "This is an observation at preparation time; remaining time may be lower when received."
+                        ),
+                    }
+                )
             request = AIRequest(
                 task_type=TaskType.DIALOGUE,
                 role=command.role,

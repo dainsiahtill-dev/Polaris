@@ -19,6 +19,8 @@ The single new-run fact store is `<workspace>/.polaris/runtime/engineering/sessi
 
 The internal event reader supports optional kind/role selection in the existing SQLite query. Default reads retain the full journal; matching history is never truncated. Visual attribution, native turn checks, review binding and tool reconciliation consume their required kinds without decoding auxiliary requests. Selected payload errors still fail; a filtered read is not a whole-journal health check. This adds no cache, schema, event deletion or execution authority.
 
+For Director requests with an existing run deadline, a transient user message at the end of the complete request-only view observes that saved deadline, preparation wall-clock and approximate remaining seconds. Native codecs may merge adjacent user content; original system, earlier content, tool pairing and images remain intact. The observation is rebuilt per request and never appended to durable conversation history. Other roles and absent deadlines keep the original input. This changes no actual timeout, output cap, retry, permission or completion policy. Preserving earlier prefix content does not prove cache hits or delivery benefit. Fresh-service recovery reuses the original persisted deadline, without claiming a new-process crash experiment.
+
 No second controller, task table, ledger or role-session mirror is created for new runs. Legacy `runtime/roles/*` remains declared only to explain old owned history; it is not a writable namespace for engineering.
 
 ## Permissions and effects

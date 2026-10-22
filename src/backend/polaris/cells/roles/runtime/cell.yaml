@@ -125,6 +125,7 @@ verification:
   - polaris/cells/roles/runtime/tests/test_engineering_context_audit.py
   - polaris/cells/roles/runtime/tests/test_engineering_visual_projection.py
   - polaris/cells/roles/runtime/tests/test_engineering_event_selection.py
+  - polaris/cells/roles/runtime/tests/test_engineering_budget_visibility.py
   - polaris/cells/roles/runtime/tests/test_engineering_events.py
   - polaris/tests/architecture/test_engineering_no_legacy_admission.py
   gaps:

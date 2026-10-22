@@ -111,7 +111,11 @@ async def test_failed_selected_checks_keep_their_origin_in_same_director_feedbac
         for message in reversed(scripted_provider.requests[2]["body"]["messages"])
         if message["role"] == "user"
     )
-    facts = json.loads(feedback.split("\n", 1)[1])
+    # The native codec merges adjacent user content, including the transient
+    # host budget after this unchanged feedback object.
+    payload = feedback.split("\n", 1)[1]
+    facts, end = json.JSONDecoder().raw_decode(payload)
+    assert payload[end:].strip().startswith("Host runtime budget observation")
     assert facts["required_checks"] == [required]
     assert facts["verification_commands"] == [required, bad]
     assert facts["checks"][1]["result"]["exit_code"] == 9

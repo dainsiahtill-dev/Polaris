@@ -1,0 +1,35 @@
+id: vc-20261022-runtime-budget-visibility
+classification: pattern
+owner: roles.runtime
+status: bounded_component_qualified_native_experiment_not_started
+design: docs/blueprints/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md
+plan: docs/superpowers/plans/2026-10-22-runtime-budget-visibility.md
+evidence_root: ~/.polaris/audit_archives/autonomous-delivery-20261018/engineering-v2-refactor-20261020/task24-runtime-budget-visibility/
+assumptions:
+  - The existing persisted RunLimits.deadline is the sole run time authority.
+  - Request-only budget observation can remain outside durable conversation history.
+  - Four observed r05 bodies lacked usable remaining-time values; other bodies remain unaudited for H2.
+pre_mortem:
+  - Reusing an old dynamic status might misstate current remaining time after another turn or cold recovery.
+  - Mutating original messages could accumulate stale status or alter tool and image history.
+  - A fresh run might still fail verification or independent quality despite visible time.
+falsifiers:
+  - Current request status differs from the original saved deadline and preparation clock.
+  - Scope, provider cap, timeout, retry, acceptance or current-image inputs change.
+  - Deadline or terminal occurs without the required current-candidate delivery and resource closure.
+verification:
+  - Meaningful old-code RED and new-code GREEN using the actual engineering loop and journal
+  - Original deadline recovery and unknown-effect refusal remain unchanged
+  - Actual native body contains current status without losing tool or visual inputs
+  - Relevant engineering regression and scoped style/type checks
+  - Required KernelOne release and explicit historical catalog-baseline checks
+  - One frozen fresh isolated native webpage run followed by independent ROOT quality review
+acceptance: Qualify the bounded mechanism, then report the actual native outcome without claiming H2 causal superiority.
+remaining_unknown: Full delivery benefit, best role combination, physical HTTP sends, actual bill and arbitrary workload reliability.
+qualification_limits:
+  - R1 full Python3.13 retained584 passed and5 test-side missing-PIL failures; native3.12 related36 passed.
+  - R2 full native3.12 integration retained588 passed and1 test JSON-tail assumption failure.
+  - Actual failure feedback was unchanged; only the test consumer was fixed and affected9 cases passed, without a third full rerun.
+  - R2 uses a transient tail user observation; preserving prefix content does not prove M3 cache hits or billing benefit.
+  - Fresh-service SQLite recovery is not a fresh interpreter or arbitrary crash proof.
+  - K1 ALL passed12 stages; strict catalog retained159 existing byte-identical issues and incremental introduced0.

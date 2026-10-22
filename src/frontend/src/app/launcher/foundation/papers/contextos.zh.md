@@ -1,5 +1,7 @@
 # Polaris ContextOS：状态优先的上下文编译、预算与请求证据
 
+> **2026-10-22 后续候选**：Director实际请求尾部新增原host deadline、观测时刻和近似剩余秒数，每次现算，不累积到会话历史。为保持稳定前缀，原system不变；这不保证M3 cache命中或账单改善，也不是新的时间／权限authority。两个native codec真实loopback body与物理快照已核对，替代模型输出不证明真实交付或更优上下文。原生实验待启动，见 docs/blueprints/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md；本次只更新论文源文，未验证主Launcher加载。
+
 > **2026-10-22 当前证据边界**：下文保留旧 StateFirst／TurnEngine 研究。新工程继续最终 provider request 审计与当前图片投影，并在原 SQLite 内按消费者需要读取 kind／role，不裁剪已持久化历史、不另建缓存事实源。真实新接口对照保留当前 3 图、工具和错误，局部视觉读取生成约 2.13→0.43 秒；不证明真实图像 token／账单减少或交付率提升。r05 仍失败，长期记忆暂不做；详见仓库 docs/blueprints/POLARIS_ENGINEERING_EVENT_SELECTION_20261022.md。
 
 ## 摘要
