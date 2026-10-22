@@ -113,7 +113,7 @@ B3b现已通过上述限定范围的接受：R1作者592通过，保留一个既
 
 ## 后续原子写入与原生数据库边界
 
-下一基础切片先迁移具有明确workspace owner的`workspace_write_text_atomic`，由原KFS产生owner binding并交给现有adapter执行，staging置于owner`.polaris/runtime/fs/staging`。移除该路线的目标目录临时文件与手写fallback；逻辑config路径、path-only helper和guarded CAS待各自调用者绑定后再迁移，不能从目标祖先、cwd或环境猜owner。旧普通Local atomic路线没有CAS或fsync保证，不将其误写成已有机制；新路线要验证实际临时文件位置、UTF-8字节、普通覆盖语义、same-filesystem原子替换、失败前后效果和资源释放。
+S1迁移具有明确runtime owner的`workspace_write_text_atomic`，由原KFS产生binding并交给现有adapter的`write_managed_text_atomic`执行，staging置于owner的canonical runtime下`fs/staging`。移除该路线的目标目录临时文件与手写fallback；逻辑config路径、path-only helper和guarded CAS待各自调用者绑定后再迁移，不能从目标祖先、cwd或环境猜owner。旧普通Local atomic路线没有CAS或fsync保证，不将其误写成已有机制；新路线验证实际临时文件位置、UTF-8字节、普通覆盖语义、same-filesystem原子替换、失败前后效果和资源释放。
 
 真实rename后发生fsync/清理错误时，不能将效果已知未知混为普通“未执行”。现有工程owner有显式resume与单一write_file精确回读的恢复路径，但它是否能承接新增异常仍是未运行假设。有限接受实验必须实际rename后注入一次失败，检查原始durable call与同进程合法恢复；不能凭后来completed改写原调用事实，edit/command未知效果也不得被文件回读豁免。设计证据`.polaris/audits/project-storage-20261022/b2-staging-preparation/plan.json`。
 
@@ -122,6 +122,10 @@ ROOT已对未修改的KFS facade/native adapter执行一次有限合成实验（
 S1调用方审计另发现原准备假设不完整：KFS构造仅保存路径，没有确立项目owner；Registry使用技术`home`作为文件命名空间，若直接据此创建staging，将新增`<registry-home>/.polaris/runtime`。因此须在同一现有KFS边界区分不可扩大的文件命名空间与host显式runtime owner。普通项目默认两者相同；Registry在构造时使用现有`default_polaris_root()`所绑定的共享Polaris owner，或host明确传入的owner，不能使用子实例record/workspace、目标祖先或cwd推断。只读Registry不解析或创建写入owner。
 
 staging必须消费现有`storage.layout.canonical_workspace_runtime_root`等无初始化路径能力，不在native writer重写`.polaris/runtime`解释。命名空间仍决定原有目标路径权限，runtime owner仅决定私有staging；不同owner不能扩大目标范围。Registry数据仍写原有唯一文件，本批不热迁移全局registry/NATS，不新建第二账本；旧数据位置的离线迁移仍属B5。已有managed process journal的`<workspace>/runtime/evidence`写读对也作为独立消费者迁移项保留，不把staging通过冒充其目标位置合规。S1初始九文件候选及其496通过结果仍需相邻owner调用方补齐后才接受。
+
+S1最终11个Python文件已完成限定接受：作者522通过、零跳过/排除，保留一个既有fork警告；Ruff/格式/mypy均通过。独立审查`APPROVED_SCOPED`，ROOT完整相关FS/storage、恢复、ContextOS、QA与安全Registry集成723通过（同一既有警告）；KernelOne ALL12阶段、368通过/1跳过。期间14个源码、测试和文档指纹一致，随后仅更新接受文档。初始九文件候选仍保留为未接受版本，owner修复的RED/GREEN与冷进程证据见`.polaris/audits/project-storage-20261022/b2b-s1/owner-integration/`。
+
+真实隔离T5证明：实际rename后同步失败保留原始write调用`started/NULL`与UNKNOWN；同一service恢复进行独立真实回读与reconciliation，不重放原写入，原调用事实不改写；后续`completed/not_run`不作验收成功。四份SYNTHETIC请求快照版本只对应两次观察到的loopback交换，不是四次真实模型请求；模型费用仍UNKNOWN。缺少完整项目在注入故障后的验收、power-cut与任意同UID攻击证明；逻辑atomic、CAS、path-only、原生DB、命令/browser缓存、legacy journal及共享主根仍待收敛。当前实跑Bench验收数不因此增加。
 
 原生数据库后续以既有Session安全包络为基线：把目录、regular DB/lock身份和已持有句柄迁入KFS管理，由现有KernelDatabase/SqliteAdapter拥有native连接生命周期；Session继续拥有同一schema和事务，不建新DB或租约表。保留现有workspace.lock、WAL、nofollow、权限与恢复行为，不以任意同UID主机攻击者为由引入未经因果证据支持的自定义VFS或独立DB进程。有限裁决见`.polaris/audits/project-storage-20261022/b2-preparation/bounded-native-db-ruling-options.json`，这些迁移尚未实现。
 
