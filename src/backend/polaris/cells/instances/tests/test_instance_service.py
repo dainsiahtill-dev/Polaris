@@ -38,6 +38,14 @@ def _disable_backend_identity_probe(monkeypatch: Any) -> None:
     monkeypatch.setattr(InstanceSupervisor, "_wait_for_frontend_identity", lambda _self, _record: None)
 
 
+@pytest.fixture(autouse=True)
+def _bind_registry_test_runtime_owner(tmp_path: Path, monkeypatch: Any) -> None:
+    """Keep new writer staging inside this test's explicit host fixture."""
+    owner = tmp_path / "host-runtime-owner"
+    owner.mkdir()
+    monkeypatch.setattr(instance_service, "default_polaris_root", lambda: owner)
+
+
 def _make_polaris_root(tmp_path: Path) -> Path:
     root = tmp_path / "polaris-root"
     (root / "src" / "backend" / "polaris").mkdir(parents=True)
@@ -262,6 +270,63 @@ def test_instance_registry_round_trip(tmp_path: Path) -> None:
 
     data = json.loads((tmp_path / "instances" / "registry.json").read_text(encoding="utf-8"))
     assert data["instances"][0]["instance_id"] == "project-a"
+
+
+@pytest.mark.parametrize("explicit_owner", [False, True])
+def test_registry_atomic_staging_uses_host_owner_without_moving_registry(
+    tmp_path: Path, monkeypatch: Any, explicit_owner: bool
+) -> None:
+    """Record workspace/root fields cannot choose control-plane staging owner."""
+    owner = tmp_path / "synthetic-main"
+    owner.mkdir()
+    child = tmp_path / "child-project"
+    child.mkdir()
+    home = tmp_path / "legacy-registry-home"
+    monkeypatch.setattr(instance_service, "default_polaris_root", lambda: owner)
+    registry = InstanceRegistry(
+        home, publish_events=False, **({"runtime_owner_workspace": owner} if explicit_owner else {})
+    )
+    original_replace = os.replace
+    seen: list[Path] = []
+
+    def observe(source: str, target: str, **kwargs: int) -> None:
+        seen.extend(tmp_path.rglob(source))
+        original_replace(source, target, **kwargs)
+
+    monkeypatch.setattr(os, "replace", observe)
+    record = InstanceRecord(
+        instance_id="child-record",
+        name="Child fixture",
+        kind="project",
+        polaris_root=str(child),
+        workspace=str(child),
+        runtime_root=str(child / ".polaris/runtime"),
+        backend_port=60901,
+        frontend_port=60902,
+        backend_url="http://127.0.0.1:60901",
+        frontend_url="http://127.0.0.1:60902",
+        token="synthetic-only",
+        start_frontend=False,
+    )
+    registry.save(record)
+    assert registry.registry_path == home / "registry.json"
+    assert registry.get(record.instance_id) is not None
+    assert seen and all(path.is_relative_to(owner / ".polaris/runtime/fs/staging") for path in seen)
+    assert not (home / ".polaris").exists()
+    assert not (child / ".polaris").exists()
+    assert not list((owner / ".polaris/runtime/fs/staging").iterdir())
+
+
+def test_readonly_registry_never_resolves_writer_runtime_owner(tmp_path: Path, monkeypatch: Any) -> None:
+    home = tmp_path / "cold-registry"
+
+    def forbidden() -> Path:
+        pytest.fail("readonly construction resolved a writer runtime owner")
+
+    monkeypatch.setattr(instance_service, "default_polaris_root", forbidden)
+    registry = InstanceRegistry(home, read_only=True)
+    assert registry.list_records() == []
+    assert not home.exists()
 
 
 def test_port_probe_enables_safe_rebind_for_restart(monkeypatch: Any) -> None:

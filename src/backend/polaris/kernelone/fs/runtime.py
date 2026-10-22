@@ -22,7 +22,13 @@ from .contracts import DurabilityMode, FileWriteReceipt, KernelFileSystemAdapter
 from .guarded_directory import guarded_create_directory
 from .guarded_metadata import list_guarded_directory, read_guarded_metadata, read_guarded_symlink
 from .text_ops import open_guarded_text_log_append
-from .types import DirectoryCreateReceipt, DirectoryListingV1, FileMetadataV1, SymlinkObservationV1
+from .types import (
+    AtomicWriteBindingV1,
+    DirectoryCreateReceipt,
+    DirectoryListingV1,
+    FileMetadataV1,
+    SymlinkObservationV1,
+)
 
 _CHANNEL_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -30,12 +36,26 @@ _CHANNEL_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 class KernelFileSystem:
     """Kernel-level file system boundary for all file effects."""
 
-    def __init__(self, workspace: str, adapter: KernelFileSystemAdapter, *, read_only_paths: bool = False) -> None:
+    def __init__(
+        self,
+        workspace: str,
+        adapter: KernelFileSystemAdapter,
+        *,
+        read_only_paths: bool = False,
+        runtime_owner_workspace: str | None = None,
+    ) -> None:
         # This selects non-initializing path resolution; write authorization
         # remains with the caller and the normal filesystem effect policies.
         self._read_only_paths = read_only_paths
         self._physical_workspace = str(Path(workspace).absolute())
         self.workspace = str(Path(workspace).resolve())
+        if runtime_owner_workspace is not None and not str(runtime_owner_workspace).strip():
+            raise ValueError("runtime_owner_workspace must be an explicit non-empty path")
+        self._runtime_owner_workspace = (
+            self._physical_workspace
+            if runtime_owner_workspace is None
+            else str(Path(runtime_owner_workspace).absolute())
+        )
         self._adapter = adapter
 
     def resolve_path(self, logical_path: str) -> Path:
@@ -449,44 +469,22 @@ class KernelFileSystem:
         self._require_utf8_encoding(encoding)
         path = self.resolve_workspace_path(relative_or_absolute_path)
         text = str(content)
-        try:
-            size = self._adapter.write_text(str(path), text, encoding=encoding, atomic=True)
-            relative = self.to_workspace_relative_path(str(path))
-            return FileWriteReceipt(
-                logical_path=relative,
-                absolute_path=str(path),
-                bytes_written=size,
-            )
-        except TypeError:
-            pass
-
-        parent_dir = Path(path).parent
-        parent_dir.mkdir(parents=True, exist_ok=True)
-
-        tmp_fd, tmp_path_str = tempfile.mkstemp(
-            dir=str(parent_dir),
-            prefix=".write_tmp_",
-            suffix=".txt",
+        # Complete fallible receipt projection before the adapter can commit.
+        relative = self.to_workspace_relative_path(str(path))
+        writer = getattr(self._adapter, "write_managed_text_atomic", None)
+        if not callable(writer):
+            raise NotImplementedError("adapter lacks managed atomic write capability")
+        size = writer(
+            AtomicWriteBindingV1(self._physical_workspace, relative, self._runtime_owner_workspace),
+            text,
+            encoding=encoding,
         )
-        try:
-            with os.fdopen(tmp_fd, "w", encoding=encoding) as tmp_file:
-                tmp_file.write(text)
-                tmp_file.flush()
-                os.fsync(tmp_fd)
-
-            target_path = Path(path)
-            tmp_path = Path(tmp_path_str)
-            tmp_path.replace(target_path)
-            relative = self.to_workspace_relative_path(str(path))
-            return FileWriteReceipt(
-                logical_path=relative,
-                absolute_path=str(path),
-                bytes_written=len(text.encode(encoding)),
-            )
-        except Exception:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path_str)
-            raise
+        return FileWriteReceipt(
+            logical_path=relative,
+            absolute_path=str(path),
+            bytes_written=size,
+            atomic=True,
+        )
 
     def workspace_append_text(
         self,

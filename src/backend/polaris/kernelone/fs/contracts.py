@@ -17,7 +17,7 @@ import os
 import tempfile
 from typing import Any, Literal, Protocol, TypeAlias, cast, runtime_checkable
 
-from polaris.kernelone.fs.types import FileWriteReceipt
+from polaris.kernelone.fs.types import AtomicWriteBindingV1, FileWriteReceipt
 
 DurabilityMode: TypeAlias = Literal["buffered", "flush", "fsync"]
 
@@ -107,6 +107,14 @@ class KernelFileSystemAdapter(Protocol):
         Parent directories are created if missing.
         """
         ...
+
+    def write_managed_text_atomic(self, binding: AtomicWriteBindingV1, content: str, *, encoding: str = "utf-8") -> int:
+        """Write through an explicit owner-bound native atomic capability.
+
+        Missing capability rejects before effects. Implementations must not
+        fall back to an unmanaged or non-atomic writer after a failure.
+        """
+        raise NotImplementedError("managed atomic writes are unavailable")
 
     def append_text(
         self,

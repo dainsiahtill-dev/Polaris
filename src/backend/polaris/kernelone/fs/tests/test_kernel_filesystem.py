@@ -10,6 +10,7 @@ from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.fs.contracts import DurabilityMode, FileWriteReceipt, KernelFileSystemAdapter
 from polaris.kernelone.fs.registry import get_default_adapter, set_default_adapter
+from polaris.kernelone.fs.types import AtomicWriteBindingV1
 
 
 class _TestFileSystemAdapter(KernelFileSystemAdapter):
@@ -20,6 +21,12 @@ class _TestFileSystemAdapter(KernelFileSystemAdapter):
 
     def read_text(self, path: str, *, encoding: str = "utf-8") -> str:
         return Path(path).read_text(encoding=encoding)
+
+    def write_managed_text_atomic(self, binding: AtomicWriteBindingV1, content: str, *, encoding: str = "utf-8") -> int:
+        # This fixture explicitly opts into the actual native managed contract.
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+
+        return LocalFileSystemAdapter().write_managed_text_atomic(binding, content, encoding=encoding)
 
     def read_bytes(self, path: str) -> bytes:
         return Path(path).read_bytes()

@@ -10,6 +10,15 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
+class AtomicWriteBindingV1:
+    """Target namespace and host runtime owner have separate physical scopes."""
+
+    target_workspace: str
+    relative_path: str
+    runtime_owner_workspace: str
+
+
+@dataclass(frozen=True, slots=True)
 class FileWriteReceipt:
     """Immutable receipt for a file write operation."""
 

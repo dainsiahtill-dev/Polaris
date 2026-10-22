@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.fs.contracts import DurabilityMode, FileDurabilityError, validate_durability
-from polaris.kernelone.fs.types import FileWriteReceipt
+from polaris.kernelone.fs.types import AtomicWriteBindingV1, FileWriteReceipt
 
 
 class LocalFileSystemAdapter:
@@ -76,6 +76,18 @@ class LocalFileSystemAdapter:
             with open(path, "wb") as handle:
                 handle.write(data)
         return len(data)
+
+    def write_managed_text_atomic(self, binding: AtomicWriteBindingV1, content: str, *, encoding: str = "utf-8") -> int:
+        """Commit an owner-bound write without legacy temporary-file fallback."""
+        from polaris.kernelone.fs.guarded_atomic_write import guarded_atomic_write
+
+        if type(self).write_managed_text_atomic is LocalFileSystemAdapter.write_managed_text_atomic and (
+            type(self).write_text is not LocalFileSystemAdapter.write_text or "write_text" in vars(self)
+        ):
+            raise NotImplementedError("legacy write policy requires an explicit managed atomic implementation")
+        if encoding.strip().lower().replace("_", "-") != "utf-8":
+            raise ValueError("managed atomic writes require UTF-8")
+        return guarded_atomic_write(binding, content.encode("utf-8"))
 
     def append_text(
         self,

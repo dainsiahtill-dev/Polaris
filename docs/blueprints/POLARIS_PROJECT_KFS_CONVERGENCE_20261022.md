@@ -119,6 +119,10 @@ B3b现已通过上述限定范围的接受：R1作者592通过，保留一个既
 
 ROOT已对未修改的KFS facade/native adapter执行一次有限合成实验（两文件指纹与B3a提交一致）：实际临时文件分配在fixture源码父目录，未位于该owner`.polaris`；实际原子替换完成后，注入既有receipt路径投影ValueError，目标仍包含完整新字节。证据`.polaris/audits/project-storage-20261022/b2b-baseline/{probe.py,report.json}`。它证明现有两处机制问题及可达次序，不证明自然发生频率、修后收益或工程恢复已通过。首次准备遇到并发B3b冷import环，未写夹具即失败；修正后才执行该实验，原始错误保留。
 
+S1调用方审计另发现原准备假设不完整：KFS构造仅保存路径，没有确立项目owner；Registry使用技术`home`作为文件命名空间，若直接据此创建staging，将新增`<registry-home>/.polaris/runtime`。因此须在同一现有KFS边界区分不可扩大的文件命名空间与host显式runtime owner。普通项目默认两者相同；Registry在构造时使用现有`default_polaris_root()`所绑定的共享Polaris owner，或host明确传入的owner，不能使用子实例record/workspace、目标祖先或cwd推断。只读Registry不解析或创建写入owner。
+
+staging必须消费现有`storage.layout.canonical_workspace_runtime_root`等无初始化路径能力，不在native writer重写`.polaris/runtime`解释。命名空间仍决定原有目标路径权限，runtime owner仅决定私有staging；不同owner不能扩大目标范围。Registry数据仍写原有唯一文件，本批不热迁移全局registry/NATS，不新建第二账本；旧数据位置的离线迁移仍属B5。已有managed process journal的`<workspace>/runtime/evidence`写读对也作为独立消费者迁移项保留，不把staging通过冒充其目标位置合规。S1初始九文件候选及其496通过结果仍需相邻owner调用方补齐后才接受。
+
 原生数据库后续以既有Session安全包络为基线：把目录、regular DB/lock身份和已持有句柄迁入KFS管理，由现有KernelDatabase/SqliteAdapter拥有native连接生命周期；Session继续拥有同一schema和事务，不建新DB或租约表。保留现有workspace.lock、WAL、nofollow、权限与恢复行为，不以任意同UID主机攻击者为由引入未经因果证据支持的自定义VFS或独立DB进程。有限裁决见`.polaris/audits/project-storage-20261022/b2-preparation/bounded-native-db-ruling-options.json`，这些迁移尚未实现。
 
 ## 仍在运行的主实例边界

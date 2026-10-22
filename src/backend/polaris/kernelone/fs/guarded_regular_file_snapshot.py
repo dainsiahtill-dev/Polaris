@@ -318,6 +318,7 @@ def _retain_or_mkdir_directory(
     parent: _DirectoryWitness,
     entry_name: str,
     display_name: str,
+    mode: int = 0o755,
 ) -> _DirectoryWitness:
     """Open an existing directory under parent, or create it when missing.
 
@@ -339,7 +340,7 @@ def _retain_or_mkdir_directory(
 
     parent_fd = parent.fd
     try:
-        os.mkdir(entry_name, 0o755, dir_fd=parent_fd)
+        os.mkdir(entry_name, mode, dir_fd=parent_fd)
     except FileExistsError:
         # Concurrent create: open and re-verify identity below.
         pass

@@ -401,7 +401,14 @@ class BackendProcessIdentity:
 
 
 class InstanceRegistry:
-    def __init__(self, home: Path | None = None, *, publish_events: bool = True, read_only: bool = False) -> None:
+    def __init__(
+        self,
+        home: Path | None = None,
+        *,
+        publish_events: bool = True,
+        read_only: bool = False,
+        runtime_owner_workspace: Path | None = None,
+    ) -> None:
         self._read_only = read_only
         selected_home = home or default_instance_home()
         self.home = (
@@ -410,7 +417,20 @@ class InstanceRegistry:
             else ensure_absolute_dir(selected_home)
         )
         self.registry_path = self.home / "registry.json"
-        self._fs = KernelFileSystem(str(self.home), get_default_adapter(), read_only_paths=read_only)
+        # Registry data/locks retain their existing namespace. Only private
+        # writer staging belongs to the trusted shared Polaris runtime owner.
+        # Read-only construction neither resolves nor provisions a writer owner.
+        owner = (
+            None
+            if read_only
+            else (runtime_owner_workspace if runtime_owner_workspace is not None else default_polaris_root())
+        )
+        self._fs = KernelFileSystem(
+            str(self.home),
+            get_default_adapter(),
+            read_only_paths=read_only,
+            runtime_owner_workspace=None if owner is None else str(owner),
+        )
         self.publish_events = publish_events
 
     def list_records(self) -> list[InstanceRecord]:

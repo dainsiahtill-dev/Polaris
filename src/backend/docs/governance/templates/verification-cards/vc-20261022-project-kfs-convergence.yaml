@@ -10,6 +10,7 @@ assumptions:
   - A path string or a KFS import is not proof that a real file effect used KFS.
   - Project runtime/cache/temp/images belong below their owning workspace metadata root; shared service data belongs to the main project owner.
   - Readable immutable bytes do not establish completed file and parent durability; existing-byte publication must confirm actual sync through KFS.
+  - A KFS technical file namespace is not automatically a runtime project owner; explicit host runtime-owner binding must not widen target namespace permissions.
 pre_mortem:
   - A cached or business-resolver external namespace may bypass the strict writer path.
   - Reusing write-capable root resolution inside KFS provisioning could recurse or make a read mutate disk.
@@ -36,3 +37,4 @@ retained_failures:
   - B2a first fullFS integration1failed483passed remains preserved; EOF complete does not imply current membership, and native single insertion can leave all seven directory metadata fields unchanged.
   - B3a initial historical external-writer fixture and intermediate failures are retained; pin,statistics,retention,DB,temp,main shared roots and native deliveries remain unqualified.
   - B3b initial565author and260ROOT passes do not waive independent physical durability P1; first K1ALL367passed1failed1skipped retains added empty-fixture pass245over244 without budget changes. R1 closes both findings; original rejected candidate and physical evidence retained.
+  - S1 initial9file candidate496passed but Registry technicalhome would create a new nested runtime; namespace-owner caller closure and expanded11file acceptance remain pending.
