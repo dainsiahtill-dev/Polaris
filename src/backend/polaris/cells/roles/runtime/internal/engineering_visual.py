@@ -13,6 +13,101 @@ from polaris.cells.roles.runtime.internal.engineering_verification import Candid
 from polaris.cells.roles.runtime.public.contracts.engineering_run import ImageObservation
 
 
+def original_visual_capture(events: Sequence[Mapping[str, Any]], role: str, identity: str) -> dict[str, Any]:
+    """Resolve one original same-role capture; reinspection never creates freshness."""
+    scoped = [event for event in events if event.get("role") == role]
+    observations = [
+        event
+        for event in scoped
+        if event.get("kind") == "tool_observed" and event["payload"].get("call_id") == identity
+    ]
+    if len(observations) != 1:
+        raise ValueError("original visual capture unavailable or ambiguous")
+    actual = observations[0]
+    value = actual["payload"]
+    if value.get("tool") != "browser_observe" or value.get("ok") is not True or value.get("interrupted"):
+        raise ValueError("original visual capture unavailable")
+    images = [ImageObservation(**raw) for raw in value.get("images", [])]
+    if not images:
+        raise ValueError("original visual capture has no valid images")
+    dispatched = [
+        event
+        for event in scoped
+        if event.get("kind") == "tool_started"
+        and event["seq"] < actual["seq"]
+        and event["payload"].get("call_id") == identity
+        and event["payload"].get("turn_seq") == value.get("turn_seq")
+        and event["payload"].get("tool") == "browser_observe"
+    ]
+    captures = [
+        event
+        for event in scoped
+        if event.get("kind") == "visual_observation_completed"
+        and event["seq"] < actual["seq"]
+        and event["payload"].get("ok") is True
+        and event["payload"].get("requested_by") == [value.get("turn_seq"), identity]
+        and event["payload"].get("image_sha256") == [image.sha256 for image in images]
+    ]
+    if len(dispatched) != 1 or len(captures) != 1 or dispatched[0]["seq"] >= captures[0]["seq"]:
+        raise ValueError("original visual capture provenance unavailable")
+    return {"observation": actual, "capture": captures[0], "dispatch": dispatched[0], "images": images}
+
+
+def _delivered(events: Sequence[Mapping[str, Any]], role: str, hashes: list[str], after_turn: int) -> bool:
+    """Auxiliary/prepared/failed/unknown sends cannot release mandatory pixels."""
+    return any(
+        event.get("kind") == "llm_request_observed"
+        and event.get("role") == role
+        and event["payload"].get("phase") == "terminal"
+        and event["payload"].get("status") == "completed"
+        and type(event["payload"].get("turn_seq")) is int
+        and event["payload"]["turn_seq"] > after_turn
+        and event["payload"].get("audit", {}).get("audit_scope") == "provider_native_wire"
+        and Counter(hashes) <= Counter(event["payload"].get("audit", {}).get("image_sha256", []))
+        for event in events
+    )
+
+
+def _pending_revisits(events: Sequence[Mapping[str, Any]], role: str | None) -> frozenset[str]:
+    pending: set[str] = set()
+    if role is None:
+        return frozenset()
+    for event in events:
+        value = event["payload"]
+        if (
+            event.get("role") != role
+            or event.get("kind") != "tool_observed"
+            or value.get("tool") != "browser_observe"
+            or value.get("ok") is not True
+            or value.get("interrupted")
+        ):
+            continue
+        try:
+            content = json.loads(value.get("content", ""))
+        except (ValueError, TypeError):
+            continue
+        identities = content.get("revisit_call_ids") if isinstance(content, dict) else None
+        if not isinstance(identities, list) or not identities:
+            continue
+        dispatch = [
+            item
+            for item in events
+            if item.get("role") == role
+            and item.get("kind") == "tool_started"
+            and item["seq"] < event["seq"]
+            and item["payload"].get("call_id") == value.get("call_id")
+            and item["payload"].get("turn_seq") == value.get("turn_seq")
+            and item["payload"].get("arguments") == {"revisit_call_ids": identities}
+        ]
+        if len(dispatch) != 1:
+            continue
+        for identity in identities:
+            original = original_visual_capture(events, role, identity)
+            if not _delivered(events, role, [image.sha256 for image in original["images"]], value["turn_seq"]):
+                pending.add(identity)
+    return frozenset(pending)
+
+
 def _visual_candidate_binding(binding: Mapping[str, Any]) -> dict[str, Any]:
     """A read-only verification receipt does not change the rendered candidate."""
     return {key: value for key, value in binding.items() if key != "verification_seq"}
@@ -39,8 +134,7 @@ def _visual_source_projection(
     """Join exact durable facts; missing or ambiguous attribution retains pixels."""
     identity = message.get("tool_call_id")
     result: dict[str, Any] = {"call_id": identity, "status": "retained", "reason": "unattributed"}
-    if identity in pinned_call_ids:
-        return {**result, "reason": "explicitly_pinned"}
+    pinned = identity in pinned_call_ids
     if role is None or current_binding is None or not _complete_candidate_binding(current_binding):
         return {**result, "reason": "current_binding_unavailable"}
     scoped = [event for event in events if event.get("role") == role]
@@ -89,9 +183,16 @@ def _visual_source_projection(
     previous, current = _visual_candidate_binding(binding), _visual_candidate_binding(current_binding)
     if previous.keys() != current.keys():
         return {**result, "reason": "binding_fields_incomparable"}
-    result.update(turn_seq=turn, visual_observation_seq=capture["seq"])
+    result.update(
+        turn_seq=turn,
+        visual_observation_seq=capture["seq"],
+        capture_arguments=dispatched[0]["payload"].get("arguments", {}),
+        frame_count=len(observation["images"]),
+    )
     if previous == current:
         return {**result, "reason": "current_candidate"}
+    if pinned:
+        return {**result, "reason": "explicitly_pinned"}
     return {
         **result,
         "status": "pixels_omitted",
@@ -124,19 +225,27 @@ def build_visual_messages(
     """
     result: list[dict[str, Any]] = []
     attachments: list[dict[str, Any]] = []
+    pending = _pending_revisits(events, role)
+    pinned_call_ids |= pending
+    attachment_sets: list[dict[str, Any]] = []
     visual_call_ids: set[str] = set()
     projection: dict[str, Any] = {
         "retained_image_count": 0,
         "omitted_image_count": 0,
         "observations": [],
+        "image_sets": [],
         "binding_observation": {"status": "provided" if current_binding is not None else "not_requested"},
     }
     binding_attempted = current_binding is not None
 
     def flush() -> None:
         if attachments:
+            for item in attachment_sets:
+                item["message_index"] = len(result)
+                projection["image_sets"].append(item)
             result.append({"role": "user", "content": list(attachments)})
             attachments.clear()
+            attachment_sets.clear()
 
     for original in messages:
         message = copy.deepcopy(dict(original))
@@ -190,19 +299,31 @@ def build_visual_messages(
                 pinned_call_ids=pinned_call_ids,
             )
             omitted = selection["status"] == "pixels_omitted"
+            delivered = bool(
+                role
+                and type(selection.get("turn_seq")) is int
+                and _delivered(events, role, [image.sha256 for image in validated], selection["turn_seq"])
+            )
+            # Existing full-binding staleness exclusion precedes delivery
+            # selection. It proves obsolescence, never that pixels were seen;
+            # explicit pins/reinspection can still restore their exact bytes.
             projection["observations"].append({**selection, "image_sha256": [image.sha256 for image in validated]})
             projection["omitted_image_count" if omitted else "retained_image_count"] += len(validated)
             metadata = []
+            positions = []
             for raw, image in zip(images, validated, strict=True):
                 metadata.append({key: value for key, value in raw.items() if key != "data_base64"})
                 if omitted:
                     continue
+                positions.append(len(attachments) + 1)
                 attachments.extend(
                     [
                         {
                             "type": "text",
                             "text": f"Browser observation {message.get('tool_call_id')}: {image.label} "
-                            f"({image.width}x{image.height}, sha256 {image.sha256}).",
+                            f"({image.width}x{image.height}, sha256 {image.sha256}). "
+                            f"Original capture arguments: {json.dumps(selection.get('capture_arguments'), ensure_ascii=False)}. "
+                            "Recover exact saved pixels with browser_observe(revisit_call_ids=[capture IDs]).",
                         },
                         {
                             "type": "image",
@@ -210,12 +331,53 @@ def build_visual_messages(
                         },
                     ]
                 )
+            if positions:
+                attachment_sets.append(
+                    {
+                        **selection,
+                        "block_indices": positions,
+                        "image_sha256": [image.sha256 for image in validated],
+                        "required": not delivered or message.get("tool_call_id") in pinned_call_ids,
+                    }
+                )
             observation["images"] = metadata
             if omitted:
                 observation["visual_projection"] = selection
             message["content"] = json.dumps(observation, ensure_ascii=False)
         result.append(message)
     flush()
+    # A new role frame may omit old tool pairs; reinspection adds reference
+    # images as a user attachment, never manufactures an unpaired tool result.
+    for identity in sorted(pending - visual_call_ids):
+        assert role is not None
+        original = original_visual_capture(events, role, identity)
+        blocks: list[dict[str, Any]] = [
+            {"type": "text", "text": f"Saved capture {identity}; original binding, not a new capture."}
+        ]
+        indices = []
+        for image in original["images"]:
+            indices.append(len(blocks))
+            blocks.append(
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": image.media_type, "data": image.data_base64},
+                }
+            )
+        projection["image_sets"].append(
+            {
+                "call_id": identity,
+                "required": True,
+                "reason": "pending_reinspection",
+                "message_index": len(result),
+                "block_indices": indices,
+                "image_sha256": [image.sha256 for image in original["images"]],
+            }
+        )
+        result.append({"role": "user", "content": blocks})
+        visual_call_ids.add(identity)
+    current = [item for item in projection["image_sets"] if item.get("reason") == "current_candidate"]
+    if current:
+        max(current, key=lambda item: item["visual_observation_seq"])["required"] = True
     if pinned_call_ids - visual_call_ids:
         raise ValueError("pinned visual input is unavailable in the supplied history")
     if audit is not None:

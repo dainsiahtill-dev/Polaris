@@ -1,8 +1,10 @@
 # Polaris 文档阅读入口
 
-最新更新：2026-10-22。
+最新更新：2026-10-23。
 
-最新原生结果：[运行预算可见性 r06](experiments/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md)在冻结 `b41245103c47dcfae9dc7f4063861cc1ee9b1cac` 下完成 `7dd30e15505e42c098daf90602625d94`：原生 completed／passed／QA approved／accepted，ROOT task_success=yes、质量中等，车2分、其余五维3分；后齿轮传动和 reduced-motion 控件不一致两项缺陷保留。原生与 ROOT 已知资源闭合，无外部代修或代跑原生验收。17行机制只呈现原host deadline与准备时刻余量，不增停止规则；预算已送达并被注意，但 r05/r06 同时存在 T22 和随机输出差异，不能证明 H2 因果收益。401条工具观察含16失败、0pending；397 prepared／397 terminal 相位不是HTTP数，harness用量仅覆盖18观察，总用量／HTTP／账单／人工分钟仍 UNKNOWN。资格记录仍为588通过／1消费测试失败后相关9项通过，没有单次589通过；详见[蓝图](blueprints/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md)。
+当前原120项进展：[v4 L1-01 实测与亲检](history/POLARIS_ORIGINAL120_V4_L101_20261023.md)。新隔离运行实际完成 PM／CE／Director，check／build／22项测试通过，但独立 QA 因历史图像预算中断，原生 interrupted／ProjectOutcome unknown；ROOT 真实页面亲检发现合法种子拒绝、虫数不生效及暂停调参提前生效，质量失败。本批0项交付、1项尝试、119项未启动，资源已闭合。[历史图像工作集与精确回看](superpowers/plans/2026-10-23-native-visual-working-set.md)，已通过244项相关回归、ROOT相邻96项／架构18项及KernelOne ALL12阶段，独立审查无阻断；尚无修后原生交付证据。原有规划、调度、恢复等[机制实验](experiments/POLARIS_FEATURE_EVALUATION_20261022.md)仍在范围内。
+
+此前特殊动画原生结果：[运行预算可见性 r06](experiments/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md)在冻结 `b41245103c47dcfae9dc7f4063861cc1ee9b1cac` 下完成 `7dd30e15505e42c098daf90602625d94`：原生 completed／passed／QA approved／accepted，ROOT task_success=yes、质量中等，车2分、其余五维3分；后齿轮传动和 reduced-motion 控件不一致两项缺陷保留。原生与 ROOT 已知资源闭合，无外部代修或代跑原生验收。17行机制只呈现原host deadline与准备时刻余量，不增停止规则；预算已送达并被注意，但 r05/r06 同时存在 T22 和随机输出差异，不能证明 H2 因果收益。401条工具观察含16失败、0pending；397 prepared／397 terminal 相位不是HTTP数，harness用量仅覆盖18观察，总用量／HTTP／账单／人工分钟仍 UNKNOWN。资格记录仍为588通过／1消费测试失败后相关9项通过，没有单次589通过；详见[蓝图](blueprints/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md)。
 
 最新对照：[Director 交接说明实验](experiments/POLARIS_HANDOFF_SEMANTICS_20261022.md)完成 3 组真实请求比较；两臂均 3/3 继续工具诊断，未观察到转向验证／交回的收益，暂不合入该提示词。全量原始请求、先评分后解盲及独立核证已保存；没有执行工具，不构成项目交付或架构优胜证据。
 

@@ -636,6 +636,7 @@ def compress_chat_messages_to_budget(
     allowed_prompt_tokens: int,
     *,
     content_type: str = "general",
+    payload_cost: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]] | None:
     """Compress the W1.5 structured message array to the prompt budget.
 
@@ -702,6 +703,8 @@ def compress_chat_messages_to_budget(
         )
         for message in normalized
     )
+    if payload_cost is not None:
+        total_tokens = int(payload_cost["admission_proxy_tokens"])
     if total_tokens <= int(allowed_prompt_tokens):
         return normalized
     # Tool calls/results form an indivisible executable protocol. Text trimming

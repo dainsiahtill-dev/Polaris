@@ -155,10 +155,14 @@ def test_image_messages_follow_all_correlated_tool_results(protocol: str) -> Non
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider_type", ["anthropic_compat", "openai_compat"])
+@pytest.mark.parametrize("stream", [False, True])
 async def test_real_native_http_body_and_snapshot_preserve_image_bytes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_type: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider_type: str, stream: bool
 ) -> None:
     """A local HTTP server replaces the remote model, not native conversion/capture."""
+    monkeypatch.setenv("KERNELONE_LIGHTWEIGHT_STREAM_SESSIONS", "0")
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "*")
     bodies: list[dict[str, Any]] = []
     observations: list[dict[str, Any]] = []
 
@@ -173,9 +177,47 @@ async def test_real_native_http_body_and_snapshot_preserve_image_bytes(
                     "usage": {"prompt_tokens": 17, "completion_tokens": 2, "total_tokens": 19},
                 }
             )
-            response = json.dumps(payload).encode("utf-8")
+            if stream:
+                chunks = (
+                    [
+                        {
+                            "type": "message_start",
+                            "message": {
+                                "id": "fixture",
+                                "type": "message",
+                                "role": "assistant",
+                                "model": "local-model",
+                                "content": [],
+                                "usage": {"input_tokens": 17, "output_tokens": 0},
+                            },
+                        },
+                        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": "observed"},
+                        },
+                        {"type": "content_block_stop", "index": 0},
+                        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 2}},
+                        {"type": "message_stop"},
+                    ]
+                    if provider_type == "anthropic_compat"
+                    else [
+                        {"choices": [{"delta": {"content": "observed"}, "finish_reason": None}]},
+                        {
+                            "choices": [{"delta": {}, "finish_reason": "stop"}],
+                            "usage": {"prompt_tokens": 17, "completion_tokens": 2, "total_tokens": 19},
+                        },
+                    ]
+                )
+                response = (
+                    "".join("data: " + json.dumps(chunk) + "\n\n" for chunk in chunks)
+                    + ("data: [DONE]\n\n" if provider_type == "openai_compat" else "")
+                ).encode("utf-8")
+            else:
+                response = json.dumps(payload).encode("utf-8")
             self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", "text/event-stream" if stream else "application/json")
             self.send_header("Content-Length", str(len(response)))
             self.end_headers()
             self.wfile.write(response)
@@ -199,12 +241,13 @@ async def test_real_native_http_body_and_snapshot_preserve_image_bytes(
                 provider_id="local-visual",
                 provider_type=provider_type,
                 model="local-model",
-                max_context_tokens=100000,
-                max_output_tokens=512,
+                max_context_tokens=4096,
+                max_output_tokens=4096,
                 supports_vision=True,
             )
 
     monkeypatch.setattr("polaris.kernelone.llm.engine.executor.get_provider_manager", Manager)
+    monkeypatch.setattr("polaris.kernelone.llm.providers.get_provider_manager", Manager)
     executor = AIExecutor(
         workspace=str(tmp_path),
         model_catalog=cast(ModelCatalog, Catalog()),
@@ -221,18 +264,41 @@ async def test_real_native_http_body_and_snapshot_preserve_image_bytes(
             "retries": 0,
         },
     )
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.engine.stream.executor.StreamExecutor._get_provider_config",
+        lambda _self, identity: executor._get_provider_config(identity),
+    )
+    messages = _history()
+    messages[5]["content"].append(_image())
     request = AIRequest(
         task_type=TaskType.DIALOGUE,
         role="qa",
         provider_id="local-visual",
         model="local-model",
         input="Inspect the current candidate.",
-        options={"messages": _history(), "max_tokens": 64, "max_retries": 0},
-        context={"workspace": str(tmp_path), "engine_version": "engineering_v2", "call_id": "visual-call"},
+        options={"messages": messages, "max_tokens": 4096, "max_retries": 0},
+        context={
+            "workspace": str(tmp_path),
+            "engine_version": "engineering_v2",
+            "call_id": "visual-call",
+            "visual_input_sets": [
+                {
+                    "call_id": "optional-old",
+                    "required": False,
+                    "message_index": 5,
+                    "block_indices": [2],
+                    "image_sha256": [_PNG_SHA256],
+                }
+            ],
+        },
     )
     try:
-        response = await executor.invoke(request)
-        assert response.ok, response.error
+        if stream:
+            chunks = [chunk async for chunk in executor.invoke_stream(request)]
+            assert not any(chunk.error for chunk in chunks), chunks
+        else:
+            response = await executor.invoke(request)
+            assert response.ok, response.error
         assert len(bodies) == 1
         ref = request.context["context_snapshot_ref"]
         runtime = Path(resolve_storage_roots(str(tmp_path)).runtime_root)
@@ -254,6 +320,13 @@ async def test_real_native_http_body_and_snapshot_preserve_image_bytes(
         audit = saved["final_request_context_audit"]
         assert audit["coverage_verification"] == "native_message_projection_matched"
         assert audit["image_sha256"] == [_PNG_SHA256]
+        selection = audit["visual_working_set"]
+        assert selection["omitted_call_ids"] == ["optional-old"]
+        cost = selection["cost"]
+        assert request.context["generation_budget"]["estimated_prompt_tokens"] == cost["admission_proxy_tokens"]
+        assert request.context["generation_budget"]["input_payload_cost"] == cost
+        assert cost["actual_visual_tokens"] is None
+        assert "visual_input_sets" not in json.dumps(bodies[0])
         assert audit["image_bytes"] == 68
         assert audit["final_request_token_estimate"] is None
         assert audit["context_window_utilization"] is None
@@ -265,3 +338,66 @@ async def test_real_native_http_body_and_snapshot_preserve_image_bytes(
         server.shutdown()
         server.server_close()
         worker.join(timeout=5)
+
+
+def test_optional_visual_working_set_preserves_required_and_whole_sets() -> None:
+    """Only host-attributed optional images can make budget room."""
+    import base64
+    import hashlib
+
+    from polaris.kernelone.llm.engine.visual_working_set import select_visual_working_set, visual_payload_cost
+
+    images = [base64.b64encode(bytes([index]) * 4000).decode("ascii") for index in range(4)]
+    messages = [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "original reference"}]
+            + [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": value}}
+                for value in images
+            ],
+        }
+    ]
+    origins = [
+        {
+            "call_id": "old",
+            "required": False,
+            "message_index": 0,
+            "block_indices": [1, 2],
+            "image_sha256": [hashlib.sha256(bytes([i]) * 4000).hexdigest() for i in (0, 1)],
+        },
+        {
+            "call_id": "current",
+            "required": True,
+            "message_index": 0,
+            "block_indices": [3, 4],
+            "image_sha256": [hashlib.sha256(bytes([i]) * 4000).hexdigest() for i in (2, 3)],
+        },
+    ]
+    selected, audit = select_visual_working_set(messages, origins, hard_allowance=5000, optional_allowance=3500)
+    assert len(selected[0]["content"]) == 4
+    assert selected[0]["content"][0] == messages[0]["content"][0]
+    assert selected[0]["content"][1:3] == messages[0]["content"][3:]
+    assert "old" in selected[0]["content"][-1]["text"]
+    assert len(messages[0]["content"]) == 5
+    assert audit["cost"] == visual_payload_cost(selected)
+    assert audit["cost"]["actual_visual_tokens"] is None
+    assert audit["omitted_call_ids"] == ["old"]
+
+
+def test_mandatory_visual_overflow_never_drops_original_reference() -> None:
+    import base64
+
+    import pytest
+    from polaris.kernelone.llm.engine.visual_working_set import select_visual_working_set
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "data": base64.b64encode(b"x" * 4000).decode("ascii")}}
+            ],
+        }
+    ]
+    with pytest.raises(ValueError, match="required_visual_input_budget_exceeded"):
+        select_visual_working_set(messages, [], hard_allowance=100, optional_allowance=50)

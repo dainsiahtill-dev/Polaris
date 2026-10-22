@@ -334,7 +334,13 @@ async def run_engineering_loop(
                     messages,
                     events=store.load_events(
                         command.session_id,
-                        kinds=("message", "tool_observed", "tool_started", "visual_observation_completed"),
+                        kinds=(
+                            "message",
+                            "tool_observed",
+                            "tool_started",
+                            "visual_observation_completed",
+                            "llm_request_observed",
+                        ),
                         role=command.role,
                     ),
                     role=command.role,
@@ -372,6 +378,7 @@ async def run_engineering_loop(
                     "engine_version": "engineering_v2",
                     "turn_seq": turn_seq,
                     "call_id": f"{command.session_id}:{command.role}:{turn_seq}",
+                    "visual_input_sets": visual_projection.get("image_sets", []),
                 },
             )
             store.append_event(

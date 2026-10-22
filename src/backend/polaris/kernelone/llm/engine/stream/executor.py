@@ -894,10 +894,33 @@ class StreamExecutor:
         # from the flattened prompt so provider-bound chat messages cannot
         # exceed the resolved window just because request.input fits.
         effective_chat_messages: list[Any] | None = None
+        visual_cost: dict[str, Any] | None = None
         if isinstance(chat_messages, list) and chat_messages:
+            from ..visual_working_set import select_visual_working_set, visual_payload_cost
+
+            if any(
+                isinstance(message.get("content"), list)
+                and any(
+                    isinstance(block, dict) and block.get("type") in {"image", "image_url"}
+                    for block in message["content"]
+                )
+                for message in chat_messages
+            ):
+                chat_messages, selection = select_visual_working_set(
+                    chat_messages,
+                    request.context.get("visual_input_sets", []),
+                    hard_allowance=budget_decision.allowed_prompt_tokens,
+                    optional_allowance=int(model_spec.max_context_tokens)
+                    - requested_output_tokens
+                    - payload_overhead
+                    - 64,
+                )
+                visual_cost = visual_payload_cost(chat_messages)
+                request.context["visual_working_set"] = selection
             budgeted_chat_messages = compress_chat_messages_to_budget(
                 chat_messages,
                 budget_decision.allowed_prompt_tokens,
+                payload_cost=visual_cost,
             )
             if budgeted_chat_messages is not None:
                 effective_chat_messages = budgeted_chat_messages
@@ -921,6 +944,7 @@ class StreamExecutor:
             clamp_prompt_text,
             overhead_tokens=payload_overhead,
             logger_prefix="[stream-executor]",
+            payload_cost=visual_cost,
         )
         planning_error = planning_output_budget_error(
             request.role,
@@ -941,6 +965,7 @@ class StreamExecutor:
             ceiling=requested_output_tokens,
             prompt_text=clamp_prompt_text,
             overhead_tokens=payload_overhead,
+            payload_cost=visual_cost,
         )
         if physical_dispatch_port is not None:
             route_binder = getattr(physical_dispatch_port, "bind_provider_route_authority", None)

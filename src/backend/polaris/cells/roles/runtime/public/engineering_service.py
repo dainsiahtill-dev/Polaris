@@ -621,6 +621,48 @@ class EngineeringRunService:
         if limits.deadline is not None and time.time() >= limits.deadline:
             raise ValueError("engineering run deadline exceeded")
         readonly = replace(permitted, write_roots=(), network_allowed=False)
+        if "revisit_call_ids" in arguments:
+            from polaris.cells.roles.runtime.internal.engineering_visual import original_visual_capture
+
+            identities = arguments["revisit_call_ids"]
+            if (
+                set(arguments) != {"revisit_call_ids"}
+                or not isinstance(identities, list)
+                or not identities
+                or any(not isinstance(identity, str) or not identity.strip() for identity in identities)
+                or len(set(identities)) != len(identities)
+            ):
+                raise ValueError(
+                    "revisit_call_ids must be distinct existing capture IDs, exclusive with capture arguments"
+                )
+            events = self.store.load_events(command.session_id, role=role)
+            provenance = []
+            tools = EngineeringTools(self.workspace, readonly, limits, cancel)
+            for identity in identities:
+                original = original_visual_capture(events, role, identity)
+                capture_arguments = original["dispatch"]["payload"]["arguments"]
+                tools._path(str(capture_arguments.get("entry", "index.html")), write=False)
+                provenance.append(
+                    {
+                        "call_id": identity,
+                        "role": role,
+                        "original_turn_seq": original["observation"]["payload"]["turn_seq"],
+                        "frame_count": len(original["images"]),
+                        "capture_arguments": capture_arguments,
+                        "image_sha256": [image.sha256 for image in original["images"]],
+                        "freshness": "original_binding_only_not_a_new_capture",
+                    }
+                )
+            # The existing tool journal stores references only. Projection reads
+            # exact original pixels; no capture/binding/second byte store exists.
+            return ToolObservation(
+                call_id,
+                "browser_observe",
+                True,
+                json.dumps({"revisit_call_ids": identities, "saved_captures": provenance}, ensure_ascii=False),
+                None,
+                False,
+            )
         verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(row))
         binding: dict[str, Any] = {}
         try:

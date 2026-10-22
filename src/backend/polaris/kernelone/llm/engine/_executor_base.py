@@ -13,7 +13,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from polaris.kernelone.errors import BudgetExceededError, ErrorCategory, classify_error
+from polaris.kernelone.errors import BudgetExceededError, ErrorCategory
+from polaris.kernelone.errors._base import classify_error as classify_error
 from polaris.kernelone.llm.runtime import normalize_provider_type, resolve_provider_api_key
 from polaris.kernelone.llm.runtime_config import get_role_model, get_role_provider_override
 from polaris.kernelone.shared.text_utils import normalize_timeout_seconds
@@ -622,6 +623,7 @@ def clamp_output_tokens_to_window(
     *,
     overhead_tokens: int = 0,
     logger_prefix: str = "[executor]",
+    payload_cost: Mapping[str, Any] | None = None,
 ) -> None:
     """Joint prompt+output window clamp (belt for token-estimation error).
 
@@ -649,7 +651,11 @@ def clamp_output_tokens_to_window(
         effective_text = "\n".join(str(m.get("content") or "") for m in chat_messages if isinstance(m, dict))
     else:
         effective_text = prompt_text or ""
-    prompt_tokens = TokenEstimator.estimate(effective_text)
+    prompt_tokens = (
+        int(payload_cost["admission_proxy_tokens"])
+        if payload_cost is not None
+        else TokenEstimator.estimate(effective_text)
+    )
     headroom = window - prompt_tokens - max(0, int(overhead_tokens)) - 64
     if headroom >= requested:
         return
@@ -714,6 +720,7 @@ def generation_output_budget(
     ceiling: int,
     prompt_text: str,
     overhead_tokens: int,
+    payload_cost: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Describe the admitted generation ceiling separately from its effective window budget.
 
@@ -747,7 +754,12 @@ def generation_output_budget(
         "model_output_limit_tokens": int(model_spec.max_output_tokens or 0),
         "model_limit_source": "resolved_configuration_metadata",
         "context_window_tokens": int(model_spec.max_context_tokens or 0),
-        "estimated_prompt_tokens": TokenEstimator.estimate(prompt_text),
+        "estimated_prompt_tokens": (
+            int(payload_cost["admission_proxy_tokens"])
+            if payload_cost is not None
+            else TokenEstimator.estimate(prompt_text)
+        ),
+        **({"input_payload_cost": dict(payload_cost)} if payload_cost is not None else {}),
         "payload_overhead_tokens": max(0, int(overhead_tokens)),
         "safety_reserve_tokens": 64,
         "adjustment_reasons": reasons,

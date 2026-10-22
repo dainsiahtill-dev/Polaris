@@ -65,6 +65,10 @@ def role_instruction(role: str, *, visual: bool = False, require_visual_review: 
             "source text, a screenshot path and successful DOM tests do not establish visible correctness. "
             "Use multiple times or viewports when relevant. Controls can be exercised through bounded click/keypress actions. "
             "Re-observe after changes; tell the user about unresolved visual limitations."
+            " Saved capture IDs and frame metadata remain in tool results. To compare historical states, use "
+            "browser_observe(revisit_call_ids=[capture IDs]) for any combination of your own session captures. "
+            "This returns exact original saved pixels in your next request without a new browser context; "
+            "it does not refresh old pixels or prove current correctness. Capture and reinspection arguments are exclusive."
         )
         if require_visual_review:
             if role == "director":
@@ -131,11 +135,20 @@ def register_browser_observation_tool() -> None:
             "category": "read",
             "description": (
                 "Render a workspace-local HTML or SVG entry in a fresh read-only offline browser and return actual images. "
+                "Alternatively supply only revisit_call_ids to inspect exact saved same-session same-role captures; "
+                "no browser is launched and old bindings stay unchanged. Original capture IDs/frames remain in tool results. "
                 "No workspace writes or remote resources. Frames are captured at absolute milliseconds after load, "
                 "after optional bounded actions. Maximum four JPEG frames, 1 MiB total; excess fails explicitly. "
                 "Each call closes its browser and server. Inspect the images in your next turn before making a visual judgment."
             ),
             "arguments": [
+                {
+                    "name": "revisit_call_ids",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "description": "Existing original capture call IDs for exact historical comparisons; exclusive with all capture arguments.",
+                },
                 {
                     "name": "entry",
                     "type": "string",

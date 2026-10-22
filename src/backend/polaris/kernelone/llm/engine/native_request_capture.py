@@ -69,7 +69,7 @@ def verified_native_capture_audit(*, request: Any, workspace: str | None) -> dic
         audit = provider_request["final_request_context_audit"]
         if audit.get("audit_scope") != "provider_native_wire":
             return None
-        resolved = copy.deepcopy(audit)
+        resolved: dict[str, Any] = copy.deepcopy(audit)
         if isinstance(resolved.get("final_request_evidence_coverage"), dict):
             resolved["final_request_evidence_coverage"]["context_snapshot_ref"] = ref
         return resolved
@@ -254,6 +254,8 @@ class NativeRequestCapturePort:
         else:
             protocol = ""
         audit = copy.deepcopy(self._provider_request.get("final_request_context_audit") or {})
+        if isinstance(self._request.context.get("visual_working_set"), dict):
+            audit["visual_working_set"] = copy.deepcopy(self._request.context["visual_working_set"])
         if protocol:
             audit.update(
                 provider_native_request_metrics(
@@ -435,6 +437,7 @@ class NativeRequestCapturePort:
         attempt = provider_request["physical_attempt"]
         audit = provider_request["final_request_context_audit"]
         metric_keys = (
+            "visual_working_set",
             "audit_scope",
             "native_protocol",
             "generation_budget",

@@ -13,7 +13,7 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
@@ -327,7 +327,7 @@ async def _get_global_semaphore() -> asyncio.Semaphore:
     return _global_llm_semaphore
 
 
-async def _invoke_with_timeout(coro, timeout: float | None = None) -> Any:
+async def _invoke_with_timeout(coro: Awaitable[Any], timeout: float | None = None) -> Any:
     """Execute a coroutine with timeout, falling back to asyncio.to_thread pattern.
 
     For sync functions wrapped in asyncio.to_thread, this adds explicit timeout control.
@@ -579,7 +579,7 @@ class AIExecutor:
             )
 
         # 获取 provider 配置 - provider_id is guaranteed non-None after check
-        provider_cfg = self._get_provider_config(provider_id)  # type: ignore[arg-type]
+        provider_cfg = self._get_provider_config(provider_id)
         provider_type = str(provider_cfg.get("type") or "").strip().lower()
 
         if not provider_type:
@@ -696,10 +696,33 @@ class AIExecutor:
         # unaffected.
         clamp_prompt_text = prompt_input if isinstance(prompt_input, str) else str(prompt_input)
         effective_chat_messages: list[Any] | None = None
+        visual_cost: dict[str, Any] | None = None
         if isinstance(chat_messages, list) and chat_messages:
+            from .visual_working_set import select_visual_working_set, visual_payload_cost
+
+            if any(
+                isinstance(message.get("content"), list)
+                and any(
+                    isinstance(block, dict) and block.get("type") in {"image", "image_url"}
+                    for block in message["content"]
+                )
+                for message in chat_messages
+            ):
+                chat_messages, selection = select_visual_working_set(
+                    chat_messages,
+                    request.context.get("visual_input_sets", []),
+                    hard_allowance=budget_decision.allowed_prompt_tokens,
+                    optional_allowance=int(model_spec.max_context_tokens)
+                    - requested_output_tokens
+                    - payload_overhead
+                    - 64,
+                )
+                visual_cost = visual_payload_cost(chat_messages)
+                request.context["visual_working_set"] = selection
             budgeted_chat_messages = compress_chat_messages_to_budget(
                 chat_messages,
                 budget_decision.allowed_prompt_tokens,
+                payload_cost=visual_cost,
             )
             if budgeted_chat_messages is not None:
                 effective_chat_messages = budgeted_chat_messages
@@ -723,6 +746,7 @@ class AIExecutor:
             clamp_prompt_text,
             overhead_tokens=payload_overhead,
             logger_prefix="[executor]",
+            payload_cost=visual_cost,
         )
         planning_error = planning_output_budget_error(
             request.role,
@@ -743,6 +767,7 @@ class AIExecutor:
             ceiling=requested_output_tokens,
             prompt_text=clamp_prompt_text,
             overhead_tokens=payload_overhead,
+            payload_cost=visual_cost,
         )
         if physical_dispatch_port is not None:
             route_binder = getattr(physical_dispatch_port, "bind_provider_route_authority", None)
