@@ -1,7 +1,7 @@
 id: vc-20261022-project-kfs-convergence
 classification: pattern
 owner: storage.layout-and-kernelone.fs
-status: b1_scoped_qualified_b2_to_b6_pending
+status: b1_b2a_scoped_qualified_consumers_and_remaining_capabilities_pending
 design: docs/blueprints/POLARIS_PROJECT_KFS_CONVERGENCE_20261022.md
 plan: docs/superpowers/plans/2026-10-22-project-kfs-convergence.md
 evidence_root: .polaris/audits/project-storage-20261022/
@@ -30,3 +30,4 @@ retained_failures:
   - Original native integration1053passed18failed1skipped is preserved; current full regression1071passed1skipped does not establish the original cold-failure cause.
   - Official Catalog exit1 new159 is preserved; independent196-file BASE byte comparison identifies pre-existing findings without baseline edits.
   - Strict mypy three unchanged errors reproduced from HEAD; standard scoped mypy passes all11 Python changes.
+  - B2a first fullFS integration1failed483passed remains preserved; EOF complete does not imply current membership, and native single insertion can leave all seven directory metadata fields unchanged.

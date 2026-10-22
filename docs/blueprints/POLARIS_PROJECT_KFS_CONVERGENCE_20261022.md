@@ -61,4 +61,24 @@ ROOT原生集成首轮1053通过/18失败/1跳过，原始结果保留。5项为
 
 Catalog按仓CI命令执行仍为exit1/new159、manifest mismatch0：CI所写基线路径不存在，实际issue基线为空，纠正路径也不能令历史债务消失。独立审查逐字节比对80个问题源文件及相关规则/输入，共196文件与BASE相同，159事件/115唯一指纹是B1之前已有问题；本批不改基线、不把该门禁声称通过。相应风险和原始报告继续保留。
 
-证据：`.polaris/audits/project-storage-20261022/b1/`，含原始RED/GREEN、独立审查、`root-integration/results.json`、`root-integration/kernelone-release.json`、`root-integration-r2/results.json`、`integration-triage.json`及`integration-followup/`。B1接受仅限本批根策略与准备机制。B2–B6尚未实施；主实例和NATS仍使用原活跃根，未停止或热迁移；没有新增Bench交付成功。
+证据：`.polaris/audits/project-storage-20261022/b1/`，含原始RED/GREEN、独立审查、`root-integration/results.json`、`root-integration/kernelone-release.json`、`root-integration-r2/results.json`、`integration-triage.json`及`integration-followup/`。B1接受仅限本批根策略与准备机制。B1冻结时B2–B6尚未实施；主实例和NATS仍使用原活跃根，未停止或热迁移；没有新增Bench交付成功。
+
+## 下一切片 B2a：只读观察能力
+
+现有KFS已公开`read_guarded_regular_file_snapshot`，直接复用，不再增加同义快照接口。缺口限定为`KernelFileSystem.workspace_lstat`、`workspace_list_directory(max_entries=...)`和`workspace_readlink(expected=...)`。
+
+元数据保留device/inode/mode/nlink/size/mtime_ns/ctime_ns及根身份；链接只读原始文本，不读取目标。单层枚举至多扫描限制值加一项，返回排序后的已观察子集及唯一`complete`标记；该标记只表示本次迭代器到达EOF，不证明返回时成员集一致。不承诺截断子集是全局排序前N项，不把不完整枚举绑定为完整manifest。根目录观察单独处理，不放宽现有写入的路径入口。
+
+实现复用原有descriptor和目录身份witness，初始缺失、观察后漂移、权限错误、能力不支持分别报错；不初始化runtime或缓存。现有快照对特殊文件/硬链接的限制保留，元数据观察本身不打开这些内容。即使是单向成员插入，也可能不改变七项目录字段；逐调用核对不能冒充目录或全树原子快照，后续manifest消费者仍须独立核对前后成员和文件内容。
+
+接受范围仅是基础读能力：六组有限真实文件系统反例、相邻回归、作用域类型/格式与独立审查。运行时消费者、SQLite、原子暂存及资源释放迁移仍是后续独立工作。现有Session保护和native连接生命周期将优先迁入KFS与KernelDatabase，不把未要求的任意同UID攻击防御或自定义VFS变成迁移前置门槛；实际未保证的能力不写成既有事实。
+
+后续ContextOS共享读取计划使用B2元数据中的实际文件大小，给现有guarded snapshot提供有限读取边界，再核对身份、大小和原始字节SHA256；不因迁移新增固定的小快照上限。源码核对未发现现有单快照字节准入限制，500MiB retention整树配额不是单次读取限制。此为待验证的兼容方案，不是已实现机制；也不改模型窗口或输出上限。相关只读决策保留在`.polaris/audits/project-storage-20261022/b3-context-preparation/read-bound-decision.json`。
+
+### B2a 当前实验边界
+
+实现及首轮修复已经产生136通过的定向/相邻检查，两个错误语义问题已独立复审：expected已观察身份失效保留drift，非法原生文件名以可UTF-8落盘且可还原的诊断表示。ROOT首轮完整FS/存储集成1失败/483通过的原始结果继续保留；同一冻结产品的KernelOne ALL通过12阶段、368通过/1跳过。该失败测试假定EOF后新增文件必使目录字段变化，前后stat未采样，因此原单例精确原因继续UNKNOWN。
+
+有限新进程实验中，32次原生单文件插入有25次目录七字段完全相同；32次KFS同seam插入有16次字段相同并返回旧枚举、16次字段变化并正确报drift。没有sleep、utime、重试或stat替身；这是可复现反例，不是总体概率估计，也不证明实际并发或消除了成员遗漏。独立审查据此确认测试前提过强；测试已改为原生mode确定变化、同目录FD观察并在finally恢复权限的场景，原始失败与反例保留。四个产品文件未因此修改。最终ROOT完整FS/存储复验484通过，八个冻结文件指纹一致；三项反馈独立复审闭环，Ruff/格式/mypy五个Python文件通过。接受仅限这三个基础读取接口，项目验收要求不变。
+
+证据：`.polaris/audits/project-storage-20261022/b2a/`中的`review/`、`root-integration/`、`root-integration-r3/`、`integration-triage/probe.json`及`integration-triage/report.json`。基础接口通过后还须迁移真实消费者，不能以这些测试声称运行时、缓存或截图链路已经全量统一。

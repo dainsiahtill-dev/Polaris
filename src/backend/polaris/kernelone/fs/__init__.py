@@ -6,7 +6,11 @@ from typing import Any
 
 __all__ = [
     "DirectoryCreateReceipt",
+    "DirectoryEntryV1",
+    "DirectoryListingV1",
+    "FileMetadataV1",
     "FileWriteReceipt",
+    "GuardedMetadataError",
     "GuardedRegularFileSnapshotError",
     "GuardedRegularFileSnapshotV1",
     "KernelFileSystem",
@@ -18,6 +22,7 @@ __all__ = [
     "LockedRegularFileError",
     "LockedRegularFileSetV1",
     "StreamLeaseV1",
+    "SymlinkObservationV1",
     "_atomic_write_json",
     "_atomic_write_text",
     "default_platform_lock_root",
@@ -33,6 +38,24 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
+    if name in {"DirectoryEntryV1", "DirectoryListingV1", "FileMetadataV1", "SymlinkObservationV1"}:
+        from polaris.kernelone.fs.types import (
+            DirectoryEntryV1,
+            DirectoryListingV1,
+            FileMetadataV1,
+            SymlinkObservationV1,
+        )
+
+        return {
+            "DirectoryEntryV1": DirectoryEntryV1,
+            "DirectoryListingV1": DirectoryListingV1,
+            "FileMetadataV1": FileMetadataV1,
+            "SymlinkObservationV1": SymlinkObservationV1,
+        }[name]
+    if name == "GuardedMetadataError":
+        from polaris.kernelone.fs.guarded_metadata import GuardedMetadataError
+
+        return GuardedMetadataError
     if name == "DirectoryCreateReceipt":
         from polaris.kernelone.fs.types import DirectoryCreateReceipt
 

@@ -49,3 +49,21 @@ Interfaces: existing `resolve_storage_roots`, `resolve_storage_roots_read_only`,
 Detailed code/API choices for later batches follow their concrete boundary evidence; their unchecked entries are not completed work or product gates.
 
 B1 integration note: first native result 1053 passed/18 failed/1 skipped retained; five fixture assumptions migrated; thirteen original cold-child failures remain causally UNKNOWN. Final full regression passed 1071 tests/1 skipped with all14 frozen hashes unchanged. Four representative recovery checks retained read-only SQLite evidence. KernelOne ALL passed 12 stages/368 tests/1 skipped on unchanged production SHA. ROOT Ruff/format/standard mypy passed all11 Python changes. Official Catalog still fails with159 pre-existing findings; independent196-file BASE byte comparison records that boundary without baseline changes. B2a read-only brief proposes only three missing metadata/list/readlink methods, reusing the already-public guarded snapshot. No B2 implementation yet.
+
+### Task 2a: KFS read observations
+
+Base: B1 integrated on main at `9b0ac540e5277de5f1398195e18c5119601021d2`. B2a implementation and scoped acceptance complete; remaining B2 capabilities and actual consumer migrations are still pending.
+
+Exclusive files: new `src/backend/polaris/kernelone/fs/guarded_metadata.py`, existing `fs/types.py`, `fs/runtime.py`, `fs/__init__.py`, new `fs/tests/test_guarded_metadata.py`. ROOT owns documentation. Existing public regular-file snapshot and its descriptor walker stay unchanged; no DB, staging, Session or Cell consumer changes.
+
+- [x] Preserve expected RED for the absent public observations on unchanged implementation.
+- [x] Implement `workspace_lstat`, `workspace_list_directory` and `workspace_readlink` using existing retained no-follow witnesses.
+- [x] Verify actual files, links, special files, root/parent/leaf replacement, enumeration limits, descriptor release and read-only progress.
+- [x] Verify adjacent guarded snapshot/directory/facade consumers and scoped style/types; independent review before integration.
+- [x] Integrate only the bounded capability on main. Actual consumer migration remains in B3 and later batches; new APIs alone do not mean their callers use KFS.
+
+Detailed preregistration: `.polaris/audits/project-storage-20261022/b2-preparation/b2a-implementation-brief.json`. Evidence belongs to `.polaris/audits/project-storage-20261022/b2a/`.
+
+Dependency refinement: B3 shared ContextOS readers depend on B2 metadata size/identity, then use the existing guarded snapshot with an actual-file size bound. No fixed small snapshot cap is introduced, and retention's aggregate quota is not reused as a read limit. B3 retention additionally needs bounded listing. This supersedes the earlier external plan's claim that complete B3a needed no B2 capability; no B3 code or experiment has run.
+
+R3 correction accepted: ROOT fullFS/storage first result1failed483passed is retained, while same-product KernelOne ALL passed12stages/368tests/1skip. The directory-membership test assumed every insertion changes its seven metadata fields. Sixty-four finite native fixtures refute that premise; original failed invocation lacks before/after metadata and remains causally UNKNOWN. The test now verifies an actual deterministic mode change with permissions restored; final fullFS/storage484passed with all8 frozen hashes unchanged. Four production hashes match the passed K1ALL. Preserve the requirement that future manifests compare members/content independently. No sleep, retry, timestamp forcing, production rescan or atomic-directory claim was added.

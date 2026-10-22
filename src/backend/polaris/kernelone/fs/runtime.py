@@ -20,8 +20,9 @@ from polaris.kernelone.utils import utc_now_str
 
 from .contracts import DurabilityMode, FileWriteReceipt, KernelFileSystemAdapter, validate_durability
 from .guarded_directory import guarded_create_directory
+from .guarded_metadata import list_guarded_directory, read_guarded_metadata, read_guarded_symlink
 from .text_ops import open_guarded_text_log_append
-from .types import DirectoryCreateReceipt
+from .types import DirectoryCreateReceipt, DirectoryListingV1, FileMetadataV1, SymlinkObservationV1
 
 _CHANNEL_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -344,6 +345,35 @@ class KernelFileSystem:
     def workspace_is_dir(self, relative_or_absolute_path: str) -> bool:
         path = self.resolve_workspace_path(relative_or_absolute_path)
         return self._adapter.is_dir(str(path))
+
+    def workspace_lstat(self, relative_or_absolute_path: str) -> FileMetadataV1:
+        """Return no-follow metadata without provisioning or opening leaf content."""
+        relative = (
+            "."
+            if relative_or_absolute_path == self._physical_workspace
+            else self._lexical_workspace_relative_path(relative_or_absolute_path)
+        )
+        return read_guarded_metadata(self._physical_workspace, relative)
+
+    def workspace_list_directory(self, relative_or_absolute_path: str, *, max_entries: int) -> DirectoryListingV1:
+        """Return bounded, verified membership; incomplete subsets have no global order."""
+        relative = (
+            "."
+            if relative_or_absolute_path == self._physical_workspace
+            else self._lexical_workspace_relative_path(relative_or_absolute_path)
+        )
+        return list_guarded_directory(self._physical_workspace, relative, max_entries=max_entries)
+
+    def workspace_readlink(
+        self, relative_or_absolute_path: str, *, expected: FileMetadataV1 | None = None
+    ) -> SymlinkObservationV1:
+        """Return exact link text as data, with optional prior-identity binding."""
+        relative = (
+            "."
+            if relative_or_absolute_path == self._physical_workspace
+            else self._lexical_workspace_relative_path(relative_or_absolute_path)
+        )
+        return read_guarded_symlink(self._physical_workspace, relative, expected=expected)
 
     def workspace_mkdir(
         self,
