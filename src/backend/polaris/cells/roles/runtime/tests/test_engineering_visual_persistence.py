@@ -27,11 +27,7 @@ from pydantic import ValidationError
 
 @pytest.fixture
 def workspace():
-    root = (
-        Path.home()
-        / ".polaris/audit_archives/autonomous-delivery-20261018/engineering-v2-refactor-20261020"
-        / "task17-native-vision/scope-persistence/workspaces"
-    )
+    root = Path(__file__).resolve().parents[7] / ".polaris/test-workspaces/visual-persistence"
     root.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix="visual-persistence-", dir=root) as directory:
         yield Path(directory)

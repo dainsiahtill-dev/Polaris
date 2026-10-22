@@ -190,7 +190,6 @@ async def run_engineering_loop(
     async def verify_current(commands: tuple[str, ...]) -> ToolObservation:
         if verify is None or active_dispatch is None or command.role != "director":
             raise ValueError("verify_project requires an active Director dispatch")
-        check_visual()
         return await verify(commands, *active_dispatch)
 
     async def observe_current(arguments: dict[str, Any]) -> ToolObservation:

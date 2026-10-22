@@ -13,10 +13,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-EVIDENCE_ROOT = (
-    Path.home()
-    / ".polaris/audit_archives/autonomous-delivery-20261018/engineering-v2-refactor-20261020/task17-native-vision/browser-implementation"
-)
+EVIDENCE_ROOT = Path(__file__).resolve().parents[7] / ".polaris/test-workspaces/browser"
 BROWSER = (
     Path.home()
     / ".cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell"

@@ -16,7 +16,7 @@ import pytest
 
 @pytest.fixture
 def workspace():
-    root = Path.home() / ".polaris" / "test-workspaces"
+    root = Path(__file__).resolve().parents[7] / ".polaris/test-workspaces"
     root.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix="engineering-session-", dir=root) as directory:
         yield Path(directory)

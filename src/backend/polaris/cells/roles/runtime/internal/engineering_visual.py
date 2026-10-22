@@ -303,5 +303,5 @@ def require_current_visual_input(
                 return
     raise ValueError(
         "current visual evidence is required: use browser_observe on the current candidate, "
-        "inspect the returned images in a later model turn, then verify or approve."
+        "inspect the returned images in a later model turn, then complete or approve."
     )

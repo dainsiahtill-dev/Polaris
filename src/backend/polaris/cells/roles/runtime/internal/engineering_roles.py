@@ -67,10 +67,15 @@ def role_instruction(role: str, *, visual: bool = False, require_visual_review: 
             "Re-observe after changes; tell the user about unresolved visual limitations."
         )
         if require_visual_review:
+            if role == "director":
+                text += (
+                    " This host requires visual review: run actual verification first, then capture the current "
+                    "candidate after the last output-changing check and inspect the returned images in a later "
+                    "turn before completion."
+                )
             text += (
-                " This host requires visual review: capture the current candidate and inspect the returned images "
-                "in a later turn before final verify_project or approval. "
-                "QA must capture independently in its own review; it cannot reuse Director's images."
+                " This host requires current visual evidence before approval. QA must capture independently "
+                "in its own review and inspect the returned images in a later turn; it cannot reuse Director's images."
             )
     return text
 

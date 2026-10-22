@@ -310,10 +310,14 @@ async def test_binding_authority_errors_still_stop_the_loop_before_provider(
     assert not client.requests
 
 
-async def test_unobservable_projection_does_not_soften_verification_visual_guard(isolated_workspace: Path) -> None:
-    """Catches reusing the input-retention fallback as permission to verify without current evidence."""
+@pytest.mark.parametrize("unsafe_input", [False, True], ids=["bindable-before-pixels", "fifo-refused"])
+async def test_verification_before_pixels_requires_fully_observable_inputs(
+    isolated_workspace: Path, unsafe_input: bool
+) -> None:
+    """Real checks need bindable inputs; visual review belongs after those checks."""
     store, command, scope, limits = _history(isolated_workspace)
-    os.mkfifo(isolated_workspace / "dev.sock")
+    if unsafe_input:
+        os.mkfifo(isolated_workspace / "dev.sock")
     assert scope.browser is not None
     scope = replace(
         scope,
@@ -329,7 +333,8 @@ async def test_unobservable_projection_does_not_soften_verification_visual_guard
             self.requests.append(request)
             if len(self.requests) == 1:
                 return AIResponse(
-                    ok=True, raw=_native(("verify-attempt", "verify_project", {"commands": ["must not execute"]}))
+                    ok=True,
+                    raw=_native(("verify-attempt", "verify_project", {"commands": ["printf REAL_BINDABLE_CHECK"]})),
                 )
             return AIResponse(
                 ok=True,
@@ -337,8 +342,18 @@ async def test_unobservable_projection_does_not_soften_verification_visual_guard
                 raw=_native(text="Cannot verify the current candidate."),
             )
 
-    async def verify(_commands: tuple[str, ...], _turn: int, _identity: str) -> ToolObservation:
-        raise AssertionError("The actual verifier must not run without current visual evidence.")
+    async def verify(commands: tuple[str, ...], turn: int, identity: str) -> ToolObservation:
+        from polaris.cells.roles.runtime.internal.engineering_verification import verification_observation
+
+        await verifier.run_verification(
+            commands, session_id=command.session_id, workspace_revision=0, requested_by=(turn, identity)
+        )
+        payload = next(
+            event["payload"]
+            for event in reversed(store.load_events(command.session_id))
+            if event["kind"] == "verification_completed"
+        )
+        return verification_observation(identity, payload, limits.max_tool_output_bytes)
 
     client = VerificationAttempt()
     result = await run_engineering_loop(
@@ -357,9 +372,18 @@ async def test_unobservable_projection_does_not_soften_verification_visual_guard
         for event in events
         if event["kind"] == "tool_observed" and event["payload"].get("call_id") == "verify-attempt"
     )
-    assert observed["ok"] is False and "cannot bind special input" in observed["content"]
-    assert not any(event["kind"] == "verification_completed" for event in events)
-    assert result.verification == "not_run"
+    children = [
+        event
+        for event in events
+        if event["kind"] == "tool_started" and event["payload"].get("tool") == "execute_command"
+    ]
+    if unsafe_input:
+        assert observed["ok"] is False and "cannot bind special input" in observed["content"]
+        assert not children
+    else:
+        assert observed["ok"] is True and "REAL_BINDABLE_CHECK" in observed["content"]
+        assert len(children) == 1
+    assert result.verification == ("unknown" if unsafe_input else "not_run")
     assert store.load_run(command.session_id, workspace=isolated_workspace)["project_outcome"] != "accepted"
 
 

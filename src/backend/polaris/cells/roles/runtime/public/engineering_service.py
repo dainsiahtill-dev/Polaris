@@ -578,13 +578,6 @@ class EngineeringRunService:
         if limits.deadline is not None and time.time() >= limits.deadline:
             raise ValueError("engineering run deadline exceeded")
         verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(row))
-        self._require_visual_input(
-            command.session_id,
-            role="director",
-            scope=scope,
-            current_binding=lambda: verifier.review_binding(command.session_id),
-            turn_seq=turn_seq,
-        )
         requested_by = (turn_seq, call_id)
         await verifier.run_verification(
             commands,
@@ -803,7 +796,7 @@ class EngineeringRunService:
             result = await self.run_role(
                 replace(
                     command,
-                    role=cast(Literal["pm", "chief_engineer"], role),
+                    role=role,
                     instruction=collaborative_instruction(instruction, pm_advice=advice.get("pm", "")),
                     workflow="direct",
                     required_checks=(),
@@ -1121,21 +1114,6 @@ class EngineeringRunService:
         )
         while result.status == "completed":
             current = self.store.load_run(command.session_id, workspace=self.workspace)
-            try:
-                self._require_visual_input(
-                    command.session_id,
-                    role="director",
-                    scope=scope,
-                    current_binding=lambda: verifier.review_binding(command.session_id),
-                )
-            except ValueError as error:
-                if cancel.is_set():
-                    return replace(result, status="cancelled")
-                if limits.deadline is not None and time.time() >= limits.deadline:
-                    return replace(result, status="failed", text=str(error))
-                result = await self._continue_director(command, str(error), scope=scope, limits=limits, cancel=cancel)
-                resume_review = False
-                continue
             commands = tuple(current["verification_commands"])
             revision = int(current["workspace_revision"])
             history = self.store.load_events(command.session_id)
@@ -1219,10 +1197,22 @@ class EngineeringRunService:
                             scope=scope,
                             current_binding=lambda: verifier.review_binding(command.session_id),
                         )
-                    except ValueError:
-                        # A real check may legitimately rebuild declared outputs.
-                        # Return current-image feedback on the next iteration;
-                        # current completed command evidence is not replayed.
+                    except ValueError as error:
+                        if limits.deadline is not None and time.time() >= limits.deadline:
+                            return replace(result, status="failed", text=str(error))
+                        # Checks can rebuild declared outputs. Ask for their
+                        # resulting pixels only after resolving durable checks;
+                        # the next finalization reuses this current receipt.
+                        result = await self._continue_director(
+                            command,
+                            "Current checks already passed. Capture the resulting current candidate with "
+                            "browser_observe, inspect the returned images in a later model turn, then finish. "
+                            "A new verification is not needed while this candidate and its checks remain current.\n"
+                            + str(error),
+                            scope=scope,
+                            limits=limits,
+                            cancel=cancel,
+                        )
                         continue
                 if not saved["require_qa"] or verification != "passed":
                     return result
