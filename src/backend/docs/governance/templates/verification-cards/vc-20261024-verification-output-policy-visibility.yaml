@@ -1,0 +1,28 @@
+id: vc-20261024-verification-output-policy-visibility
+classification: pattern
+status: component_qualified_main_integration_native_benefit_unverified
+owner: roles.runtime
+problem: Saved declared dist and construction-time absence are lost in effective-only model feedback.
+design_register: .polaris/audits/verification-output-policy-visibility-20261024/design.json
+ruling: .polaris/audits/verification-output-policy-visibility-20261024/ROOT-ruling.json
+timeline: Design and ruling preceded implementation; this documentation was synchronized after component implementation.
+assumptions:
+  proven: Actual native final body lacks original saved dist disclosure.
+  hypothesis: Readable historical declarations and actual attempt scope help legal next-action choice.
+  unknown: Real model latency cost quality and delivery benefit.
+pre_mortem:
+  - A display hint must not create a new permission or filesystem admission.
+  - Empty and unknown must not inherit current host declarations.
+  - New display metadata must not alter legacy profile or freshness comparison.
+verification:
+  - Actual_native_client_HTTP_final_physical_body_and_tool_feedback
+  - Actual_attempt_constructor_missing_existing_and_cold_snapshot_semantics
+  - Explicit_empty_unknown_legacy_completion_and_revocation_legalread_pair
+  - No_mkdir_or_permissiongrowth_symlink_and_path_refusals
+component_evidence: .polaris/audits/verification-output-policy-visibility-20261024/implementation/report.json
+new_tests: 12passed
+adjacent: 105passed
+ROOT_gates: architecture40_K1ALL12_catalog0new_passed
+independent: 12passed_no_P0_P1
+native_benefit: unverified
+stop: Qualified bounded interface then main integrate and fresh original L107; no additional business gate.

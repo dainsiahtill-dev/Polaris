@@ -7,6 +7,7 @@ import json
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Literal
 
 from polaris.cells.roles.runtime.internal.engineering_roles import register_consult_tool, role_instruction, role_scope
@@ -155,6 +156,7 @@ async def run_engineering_loop(
     client: ResilientLLMClient,
     consult: Callable[[str, str, int, str], Awaitable[str]] | None = None,
     verify: Callable[[tuple[str, ...], int, str], Awaitable[ToolObservation]] | None = None,
+    verification_output_declarations: tuple[Path, ...] | None = None,
     observe: Callable[[dict[str, Any], int, str], Awaitable[ToolObservation]] | None = None,
     visual_binding: Callable[[], dict[str, Any]] | None = None,
     authorize: Callable[[], None] | None = None,
@@ -351,6 +353,29 @@ async def run_engineering_loop(
                 "tools": tools.schemas(),
                 "tool_choice": "auto",
             }
+            if command.role == "director" and "verify_project" in tools.enabled:
+                # Saved ceiling only: no filesystem probe, current-host promise,
+                # permission change, or mutation of durable message history.
+                options["messages"].append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Host verification output declarations (original saved state, not current authorization): "
+                            + json.dumps(
+                                {
+                                    "declared_output_roots": (
+                                        [str(root) for root in verification_output_declarations]
+                                        if verification_output_declarations is not None
+                                        else None
+                                    ),
+                                    "existence_observed": False,
+                                    "grants_current_write_permission": False,
+                                },
+                                ensure_ascii=False,
+                            )
+                        ),
+                    }
+                )
             if command.role == "director" and limits.deadline is not None:
                 observed_at = time.time()
                 # Keep the original system/history prefix and durable messages

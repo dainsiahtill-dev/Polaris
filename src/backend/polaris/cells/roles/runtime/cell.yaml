@@ -122,6 +122,7 @@ verification:
   - polaris/cells/roles/runtime/tests/test_engineering_qa_handoff.py
   - polaris/cells/roles/runtime/tests/test_engineering_output_declarations.py
   - polaris/cells/roles/runtime/tests/test_engineering_provider_retry_delegation.py
+  - polaris/cells/roles/runtime/tests/test_engineering_verification_output_policy.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification_selection.py
   - polaris/cells/roles/runtime/tests/test_engineering_recovery.py

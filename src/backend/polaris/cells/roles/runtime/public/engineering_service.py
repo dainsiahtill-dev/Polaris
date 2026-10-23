@@ -514,6 +514,13 @@ class EngineeringRunService:
         )
         token = self._active_role.set(command.role)
         try:
+            # Historical declarations are readable context, not current grants.
+            # Keep current-host validation on the existing Verifier effect path.
+            saved_outputs = (
+                self.store.load_run(command.session_id, workspace=self.workspace).get("verification_output_roots")
+                if command.role == "director"
+                else None
+            )
             return await run_engineering_loop(
                 command,
                 scope=scope,
@@ -523,6 +530,9 @@ class EngineeringRunService:
                 client=client,
                 consult=self._consult_dispatch,
                 verify=self._verify_dispatch,
+                verification_output_declarations=(
+                    tuple(Path(root) for root in saved_outputs) if saved_outputs is not None else None
+                ),
                 observe=self._observe_dispatch if scope.browser is not None else None,
                 visual_binding=(
                     lambda: self._verification(

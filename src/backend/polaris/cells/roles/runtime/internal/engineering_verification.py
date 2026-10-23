@@ -64,6 +64,7 @@ def verification_observation(call_id: str, payload: dict[str, Any], max_output_b
         # Reflect the completed attempt's actual binding, never original
         # Director write permissions or a guessed historical profile.
         "execution_scope": binding.get("scope") if isinstance(binding.get("scope"), dict) else None,
+        "verification_output_policy": binding.get("verification_output_policy"),
         # Keep scope and a legal next step ahead of potentially long outputs.
         "detail": f"{_VERIFICATION_GUIDANCE}\n{payload.get('detail', '')}",
         "verification_commands": commands,
@@ -309,6 +310,20 @@ class EngineeringVerification:
             )
 
         run = self.store.load_run(session_id, workspace=self.workspace)
+        saved_declarations = run.get("verification_output_roots")
+        # These roots were observed when this Verifier constructed its command
+        # scope. Later manifest reads must not rewrite this attempt's policy.
+        absent = (
+            [str(root) for root in self._declared_output_roots if root not in self.output_roots]
+            if saved_declarations is not None
+            else None
+        )
+        binding["verification_output_policy"] = {
+            "declared_output_roots": list(saved_declarations) if saved_declarations is not None else None,
+            "effective_output_roots": [str(root) for root in self.output_roots],
+            "absent_output_roots": absent,
+            "absent_reason": "not_present_at_verifier_scope_construction" if absent else None,
+        }
         if requested_by is not None:
             if not self.store._valid_commands(commands, allow_empty=False):
                 raise ValueError("verify_project requires nonempty command strings")
