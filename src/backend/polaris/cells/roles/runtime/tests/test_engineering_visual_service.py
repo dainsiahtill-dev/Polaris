@@ -229,7 +229,7 @@ def _calls(*values: tuple[str, str, dict[str, Any]]) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_native_owner_repairs_missing_visual_input_and_accepts_only_independent_current_qa_images(
+async def test_native_owner_keeps_optional_director_capture_and_requires_independent_current_qa_images(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only the model and image capture are synthetic; HTTP, tools and owner stay real."""
@@ -253,11 +253,10 @@ async def test_native_owner_repairs_missing_visual_input_and_accepts_only_indepe
             "python3 -B -c \"from pathlib import Path; assert 'fixture' in Path('index.html').read_text(encoding='utf-8')\"",
         ),
     )
-    # A text-only completion must return feedback to the same Director before
-    # host automatic verification/acceptance can take a shortcut.
-    scripted_provider.enqueue_json(_text("Done, without looking."))
+    # Director may choose to inspect its own output before handing off.
+    # Mandatory independent QA still captures and consumes its own current pixels.
     scripted_provider.enqueue_json(_calls(("director-capture", "browser_observe", {"entry": "index.html"})))
-    scripted_provider.enqueue_json(_text("Observed the current frame; ready for required checks."))
+    scripted_provider.enqueue_json(_text("Observed my output; ready for required checks and independent QA."))
     # Same-batch capture plus approval must fail first; later consumption may pass.
     scripted_provider.enqueue_json(_calls(("qa-read", "read_file", {"file": "index.html"})))
     scripted_provider.enqueue_json(
@@ -287,7 +286,7 @@ async def test_native_owner_repairs_missing_visual_input_and_accepts_only_indepe
     assert early["payload"]["ok"] is False
     assert {event["role"] for event in events if event["kind"] == "visual_observation_completed"} == {"director", "qa"}
     assert not any(event["role"] in {"pm", "chief_engineer"} for event in events)
-    for index in (2, 5):
+    for index in (1, 4):
         content = scripted_provider.requests[index]["body"]["messages"][-1]["content"]
         block = next(item for item in content if item["type"] == "image_url")
         assert base64.b64decode(block["image_url"]["url"].split(",", 1)[1]) == base64.b64decode(_PNG)

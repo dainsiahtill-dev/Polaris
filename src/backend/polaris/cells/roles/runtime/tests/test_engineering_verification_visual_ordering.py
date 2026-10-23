@@ -22,13 +22,14 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
 from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
 from polaris.cells.roles.runtime.tests.engineering_support import (
     ScriptedProvider,
+    isolated_workspace as isolated_workspace,
     scripted_provider as scripted_provider,
 )
 from polaris.cells.roles.runtime.tests.test_engineering_autonomous_verification import _response
 from polaris.kernelone.fs import get_default_adapter, guarded_create_directory
 
 _ROOT = Path(__file__).resolve().parents[7]
-_ARTIFACT = ".polaris/audits/verification-visual-ordering-20261022/implementation"
+_ARTIFACT = ".polaris/audits/director-qa-handoff-20261023/implementation"
 _BROWSER = (
     Path.home()
     / ".cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell"
@@ -58,13 +59,18 @@ def _pixels(body: dict[str, Any]) -> list[bytes]:
 
 
 @pytest.mark.parametrize("mode", ["explicit", "implicit", "stale", "missing"])
+@pytest.mark.parametrize("require_qa", [False, True])
 async def test_real_checks_precede_current_own_pixels_and_reuse_receipt(
-    tmp_path: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch, mode: str
+    isolated_workspace: Path,
+    scripted_provider: ScriptedProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    require_qa: bool,
 ) -> None:
     """Removing ordering repair prevents child execution or causes another build."""
     assert _BROWSER.is_file() and (_PACKAGES / "playwright").is_dir()
-    workspace = tmp_path / "fixture"
-    guarded_create_directory(str(tmp_path), "fixture/dist", parents=True, exist_ok=True)
+    workspace = isolated_workspace / "fixture"
+    guarded_create_directory(str(isolated_workspace), "fixture/dist", parents=True, exist_ok=True)
     fs = get_default_adapter()
     fs.write_text(str(workspace / "dist/index.html"), _HTML, encoding="utf-8")
     fs.write_text(
@@ -95,28 +101,33 @@ async def test_real_checks_precede_current_own_pixels_and_reuse_receipt(
     if mode != "implicit":
         scripted_provider.enqueue_json(_response(text="Checks finished."))
     visual_responses = (
-        _response(("director-capture", "browser_observe", capture)),
-        _response(text="Inspected actual resulting page; ready for independent QA."),
-        _response(("qa-read", "read_file", {"file": "build.py"}), ("qa-capture", "browser_observe", capture)),
-        _response(
-            (
-                "qa-review",
-                "report_review",
-                {"approved": True, "feedback": "Current own pixels and current source inspected."},
-            )
-        ),
+        (
+            _response(("qa-read", "read_file", {"file": "build.py"}), ("qa-capture", "browser_observe", capture)),
+            _response(
+                (
+                    "qa-review",
+                    "report_review",
+                    {"approved": True, "feedback": "Current own pixels and current source inspected."},
+                )
+            ),
+        )
+        if require_qa
+        else (
+            _response(("director-capture", "browser_observe", capture)),
+            _response(text="Inspected actual resulting page; ready for completion."),
+        )
     )
     for response in () if mode == "missing" else visual_responses:
         scripted_provider.enqueue_json(response)
     scripted_provider.client("openai", workspace, monkeypatch)
     service = EngineeringRunService(
         workspace,
-        require_qa=True,
+        require_qa=require_qa,
         writable_output_roots=(workspace / "dist",),
         permission_resolver=lambda _row: _scope(workspace),
     )
     command = RoleRunCommand(
-        "ordering-" + mode,
+        "ordering-" + mode + "-" + str(require_qa),
         "director",
         "Verify and visually inspect the disposable webpage fixture.",
         workspace,
@@ -126,6 +137,7 @@ async def test_real_checks_precede_current_own_pixels_and_reuse_receipt(
     await service.wait(command.session_id, workspace=workspace)
     events = service.store.load_events(command.session_id)
     row = service.snapshot(command.session_id, workspace=workspace)
+    mode = mode + "-" + str(require_qa)
     for label, value in (("requests", scripted_provider.requests), ("events", events), ("snapshot", row)):
         fs.write_text(
             str(_ROOT / _ARTIFACT / f"{mode}-{label}.json"),
@@ -147,16 +159,17 @@ async def test_real_checks_precede_current_own_pixels_and_reuse_receipt(
     completed = [event for event in events if event["kind"] == "verification_completed"]
     assert len(completed) == 1 and completed[0]["payload"]["verification"] == "passed"
     assert all(check["exit_code"] == 0 for check in completed[0]["payload"]["checks"])
-    assert bool(completed[0]["payload"]["input_binding"].get("requested_by")) == (mode != "implicit")
-    if mode == "missing":
+    assert bool(completed[0]["payload"]["input_binding"].get("requested_by")) == (not mode.startswith("implicit-"))
+    if mode.startswith("missing-"):
         assert service.store.load_run(command.session_id, workspace=workspace)["verification"] == "passed"
         assert row["project_outcome"] != "accepted"
-        assert not any(event["kind"] == "role_started" and event["role"] == "qa" for event in events)
+        assert any(event["kind"] == "role_started" and event["role"] == "qa" for event in events) == require_qa
         assert not any(_pixels(request["body"]) for request in scripted_provider.requests)
-        assert "checks already passed" in json.dumps(scripted_provider.requests).lower()
+        assert ("checks already passed" in json.dumps(scripted_provider.requests).lower()) == (not require_qa)
         return
     assert row["project_outcome"] == "accepted", row
-    assert row["verification"] == "passed" and row["qa_verdict"] == "approved"
+    assert row["verification"] == "passed"
+    assert row["qa_verdict"] == ("approved" if require_qa else "not_run")
     prepared = [event for event in events if event["kind"] == "request_prepared"]
     assert len(prepared) == len(scripted_provider.requests)
     proofs = []
@@ -165,7 +178,8 @@ async def test_real_checks_precede_current_own_pixels_and_reuse_receipt(
         for event in events
         if event["kind"] == "tool_observed" and event["payload"].get("call_id") in {"director-capture", "qa-capture"}
     ]
-    assert len(captures) == 2
+    assert len(captures) == 1
+    assert captures[0]["role"] == ("qa" if require_qa else "director")
     for event in captures:
         images = event["payload"]["images"]
         raw = [base64.b64decode(image["data_base64"], validate=True) for image in images]
@@ -220,8 +234,8 @@ async def test_real_checks_precede_current_own_pixels_and_reuse_receipt(
         encoding="utf-8",
     )
     feedback = json.dumps(scripted_provider.requests, ensure_ascii=False)
-    assert "checks already passed" in feedback.lower()
-    if mode == "stale":
+    assert ("checks already passed" in feedback.lower()) == (not require_qa)
+    if mode.startswith("stale-"):
         projections = [
             event["payload"].get("visual_projection", {}) for event in events if event["kind"] == "request_prepared"
         ]

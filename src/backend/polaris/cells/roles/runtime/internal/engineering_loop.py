@@ -272,6 +272,7 @@ async def run_engineering_loop(
                     command.role,
                     visual="browser_observe" in tools.enabled,
                     require_visual_review=bool(scope.browser and scope.browser.require_visual_review),
+                    require_qa=bool(store.load_run(command.session_id, workspace=command.workspace)["require_qa"]),
                 ),
             },
             {"role": "user", "content": command.instruction},

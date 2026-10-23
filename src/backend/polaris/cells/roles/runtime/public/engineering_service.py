@@ -287,7 +287,7 @@ class EngineeringRunService:
                     scope, self._limits(row), asyncio.Event(), output_roots=self._saved_outputs(row)
                 )
                 current = verifier.current_verification(session_id)
-                if current == "passed":
+                if current == "passed" and not row.get("require_qa"):
                     self._require_visual_input(
                         session_id,
                         role="director",
@@ -1244,7 +1244,7 @@ class EngineeringRunService:
                 )
             if verification != "failed":
                 result = replace(result, verification=verification, checks=checks)
-                if verification == "passed":
+                if verification == "passed" and not saved["require_qa"]:
                     try:
                         self._require_visual_input(
                             command.session_id,

@@ -1,0 +1,42 @@
+id: vc-20261023-director-qa-handoff
+classification: pattern
+status: source_qualified_native_delivery_unverified
+owner: roles.runtime
+baseline_commit: cce3e862b90164ba60a235dc02cc2fdbbbc4e075
+problem: Repeated current-check and Director-image finalization blocks mandatory independent QA without business-content progress.
+first_divergence: EngineeringRunService._verify_director, Director visual precondition before mandatory QA.
+assumptions:
+  - repeated_content_unchanged: confirmed_three_cycles
+  - mechanical_deadlock: not_proven_legal_capture_only_path_exists
+  - required_QA_can_own_final_visual_acceptance: hypothesis
+pre_mortem:
+  - Missing or failed verification reaches QA.
+  - No-QA flow silently loses visual acceptance.
+  - QA missing source or physical images is accepted.
+  - Routing spy is misrepresented as real QA or delivery proof.
+mechanism: Only require Director final-frame visual when no mandatory independent QA follows; preserve QA guards.
+verification:
+  - seven_bounded_real_store_verifier_controls_with_explicit_model_spies
+  - production_regression_RED_then_GREEN
+  - adjacent_visual_QA_verification_recovery_tests
+  - ruff_format_mypy_architecture_and_required_release_checks
+  - fresh_frozen_native_and_personal_quality_review
+evidence:
+  - .polaris/audits/director-qa-handoff-20261023/
+  - ../polaris-bench-projects/original120-20261023-v9/L1-05/.polaris/audits/independent-v9-convergence/report.json
+stop_condition: Counterexample and required negative controls reproduced, minimal fix qualified and reviewed, then integrate and validate fresh native separately.
+unverified:
+  - real_model_convergence
+  - quality_and_cost_improvement
+  - full_120_delivery
+
+current_results:
+  controls: 7_observed_no_approval
+  production_RED: 4_failed_2_passed
+  production_GREEN: 6_new_94_adjacent_29_final_repeat
+  ROOT_roles: 136_passed
+  architecture: 40_passed
+  static: 6_files_passed
+  kernelone_all: all_12_stages_passed
+  catalog: 159_existing_115_unique_0_new_0_mismatch
+  independent_review: no_open_P0_P1_P2

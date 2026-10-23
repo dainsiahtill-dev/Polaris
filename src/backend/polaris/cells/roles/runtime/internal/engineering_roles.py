@@ -55,7 +55,9 @@ _PROMPTS = {
 }
 
 
-def role_instruction(role: str, *, visual: bool = False, require_visual_review: bool = False) -> str:
+def role_instruction(
+    role: str, *, visual: bool = False, require_visual_review: bool = False, require_qa: bool = False
+) -> str:
     """Choose only the current role's fixed identity."""
     text = _PROMPTS[role] + _COMMON
     if visual and role in {"director", "qa"}:
@@ -74,11 +76,17 @@ def role_instruction(role: str, *, visual: bool = False, require_visual_review: 
         )
         if require_visual_review:
             if role == "director":
-                text += (
-                    " This host requires visual review: run actual verification first, then capture the current "
-                    "candidate after the last output-changing check and inspect the returned images in a later "
-                    "turn before completion."
-                )
+                if require_qa:
+                    text += (
+                        " This run requires independent QA after current actual verification. You may use "
+                        "browser_observe whenever useful; final visual approval belongs to QA's own current review."
+                    )
+                else:
+                    text += (
+                        " This host requires visual review: run actual verification first, then capture the current "
+                        "candidate after the last output-changing check and inspect the returned images in a later "
+                        "turn before completion."
+                    )
             text += (
                 " This host requires current visual evidence before approval. QA must capture independently "
                 "in its own review and inspect the returned images in a later turn; it cannot reuse Director's images."
