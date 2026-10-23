@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -1160,15 +1161,19 @@ class EngineeringRunService:
                 return result
             saved = self.store.load_run(command.session_id, workspace=self.workspace)
             commands = tuple(saved["verification_commands"])
-        verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(saved))
         pending_review = self._pending_review(command.session_id)
-        resume_review = (
-            pending_review is not None
-            and pending_review["payload"].get("input_binding") == verifier.review_binding(command.session_id)
-            and verifier.current_verification(command.session_id) == "passed"
-        )
+        resume_review = False
         while result.status == "completed":
             current = self.store.load_run(command.session_id, workspace=self.workspace)
+            # Ordinary Director preparation can materialize declared outputs.
+            # A new attempt gets a fresh, then frozen effective write subset.
+            verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(current))
+            if pending_review is not None:
+                resume_review = (
+                    pending_review["payload"].get("input_binding") == verifier.review_binding(command.session_id)
+                    and verifier.current_verification(command.session_id) == "passed"
+                )
+                pending_review = None
             commands = tuple(current["verification_commands"])
             revision = int(current["workspace_revision"])
             history = self.store.load_events(command.session_id)
@@ -1250,7 +1255,7 @@ class EngineeringRunService:
                             command.session_id,
                             role="director",
                             scope=scope,
-                            current_binding=lambda: verifier.review_binding(command.session_id),
+                            current_binding=partial(verifier.review_binding, command.session_id),
                         )
                     except ValueError as error:
                         if limits.deadline is not None and time.time() >= limits.deadline:

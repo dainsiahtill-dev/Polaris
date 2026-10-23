@@ -1,6 +1,8 @@
 # Polaris 文档阅读入口
 
-最新更新：2026-10-23。
+最新更新：2026-10-24。
+
+最新：[v10 L1-06真实结果与亲检](history/POLARIS_ORIGINAL120_V10_L106_20261024.md)原生FAILED、正式验证/QA未到，资源闭合；ROOT20次现成CLI与六张图在所测场景通过，不能升级交付。原目录累计6项终态亲检（5产物FAIL、1所测场景通过），完整交付0，其余114未启动。[输出许可与推进](blueprints/POLARIS_OUTPUT_DECLARATION_LIVENESS_20261024.md)已完成真实反例/因果对照/最终修后夹具、21新回归/156相邻/ROOT47、架构40/K1 ALL及独审；待新冻结项目验证收益。
 
 当前新增：[v9 L1-05运行与亲检](history/POLARIS_ORIGINAL120_V9_L105_20261023.md)已终态 cancelled／QA not_run／结果unknown，ROOT实际运行现成CLI10次、查看四张原SVG后判建议与区域不一致，质量FAIL；资源闭合。与v8合计5个不同项目已终态亲检、严格通过0、未启动115。[Director与独立QA交接](blueprints/POLARIS_DIRECTOR_QA_HANDOFF_20261023.md)七场景控制已执行，生产最小迁移已完成组件回归与独审，待新版本正式项目验证；不得据此声称新版本真实交付或费用收益。
 

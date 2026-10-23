@@ -136,8 +136,8 @@ async def test_final_command_cannot_write_business_source_control_or_external(
         external.unlink()
 
 
-@pytest.mark.parametrize("kind", ["workspace", "control", "missing", "external", "symlink", "outside-grant"])
-def test_host_output_roots_require_preexisting_narrow_original_authority(isolated_workspace: Path, kind: str) -> None:
+@pytest.mark.parametrize("kind", ["workspace", "control", "external", "symlink", "outside-grant"])
+def test_host_output_roots_require_narrow_original_authority(isolated_workspace: Path, kind: str) -> None:
     output = isolated_workspace / "dist"
     output.mkdir()
     store = EngineeringSessionStore(isolated_workspace)
@@ -146,7 +146,6 @@ def test_host_output_roots_require_preexisting_narrow_original_authority(isolate
     candidate = {
         "workspace": isolated_workspace,
         "control": store.control_root,
-        "missing": isolated_workspace / "absent",
         "external": isolated_workspace.parent,
         "symlink": link,
         "outside-grant": output,

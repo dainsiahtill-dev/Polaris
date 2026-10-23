@@ -1,0 +1,39 @@
+id: vc-20261024-output-declaration-liveness
+classification: pattern
+status: source_qualified_native_delivery_unverified
+owner: roles.runtime
+baseline_commit: d152c0e49c94b23cf4fa170c5f684774fa4f87ca
+first_divergence: Verification constructor conflates future writable directory permission with present artifact and aborts next visual request.
+facts:
+  - authorized_dist_removal_observed_at_1354
+  - next_turn_failed_before_provider_at_1360
+  - examples_artifacts_retained_QA_notrun_native_failed_resources_closed
+hypothesis: Validate full declarations, use only current existing effective roots per attempt, preserve all authority and current-input guards.
+pre_mortem:
+  - Filtering forgets absent declaration and later symlink escapes validation.
+  - Implicit retries reuse stale empty effective roots after Director prepares directory.
+  - Old passed or QA survives removed or replaced output directory.
+  - Empty authority silently expands or query creates directories.
+verification:
+  - real_service_store_K1_browser_minimal_repro
+  - readonly_progress_and_write_refusal_then_legal_prepare
+  - explicit_implicit_cold_qa_invalidation_and_unknown_effect_counterexamples
+  - targeted_static_adjacent_architecture_kernelone_catalog_review
+stop_condition: Original counterexample and minimal fix plus adjacent safety/progress verified, then integrate and fresh native separately.
+not_proven:
+  - native_delivery_improvement
+  - quality_cost_superiority
+
+current_results:
+  original_capture_repro: failed_before_third_request_2_local_HTTP
+  original_nocapture_control: 10_local_HTTP_complete
+  final_capture_repro: 10_local_HTTP_complete_real_check_QA_fixture
+  new_regressions: 21_passed
+  adjacent: 156_passed
+  final_repeat: 36_passed_not_added
+  ROOT_related: 47_passed
+  architecture: 40_passed
+  kernelone_all: all_passed
+  project_config_mypy: 4_files_passed
+  extra_strict: 1_existing_test_helper_0_production_0_new_not_passed
+  independent_review: no_source_P0_P1_P2

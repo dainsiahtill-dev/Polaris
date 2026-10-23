@@ -1,0 +1,11 @@
+# 输出声明推进实施计划
+
+方案：[输出许可与推进](../../blueprints/POLARIS_OUTPUT_DECLARATION_LIVENESS_20261024.md)。用户授权main直接研发，不建分支；所有目标源只读。
+
+- [x] 封存真实1353/1354/1360请求、效果和异常，核输出真实缺失、资源闭合。
+- [x] ROOT审阅并运行最小真实组件反例；只有模型可脚本化，记录真实链路与精确首偏差。
+- [x] 写生产回归先见RED，再仅修改engineering_verification.py的声明/effective边界、engineering_service.py新attempt刷新；保留完整声明逐次验证，不新增持久模型。
+- [x] 运行推进/拒绝/原事实失效/冷读和相邻回归、Ruff/format/mypy、必需架构/发布/目录检查，独审后合入main。
+- [ ] ROOT亲检L1-06现成CLI和原SVG，记录真实质量。资格与当前边界闭合后冻结新批次再串行继续原120项。
+
+接受标准：不存在可选输出许可不再阻断下一合法工具与只读检查；实际写入依然限于当前真实挂载；Director准备后下一attempt可继续；旧验证/QA与缺失或替换候选不混用；无额外授权、query mkdir、未知效果重放或旧失败改写。

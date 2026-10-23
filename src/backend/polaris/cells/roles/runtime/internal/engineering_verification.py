@@ -23,6 +23,7 @@ from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTo
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RunLimits, ToolObservation
 from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 from polaris.kernelone.exceptions import PathSecurityError
+from polaris.kernelone.fs import GuardedMetadataError
 from polaris.kernelone.fs.runtime import KernelFileSystem
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
@@ -100,7 +101,10 @@ class EngineeringVerification:
         self.store = store
         self.scope = scope
         self.cancel = cancel
-        self.output_roots = self._validate_outputs(writable_output_roots)
+        # Declarations remain the original authority, including future paths.
+        # This attempt's command mounts never expand after construction.
+        self._declared_output_roots = writable_output_roots
+        self.output_roots = self._validate_outputs(self._declared_output_roots)
         # No file tools and no wholesale Director write grant in final checks.
         executable = any(ToolSpecRegistry.get_canonical(name) == "execute_command" for name in scope.enabled_tools)
         self.tools = EngineeringTools(
@@ -119,9 +123,20 @@ class EngineeringVerification:
         )
 
     def _validate_outputs(self, roots: tuple[Path, ...]) -> tuple[Path, ...]:
-        return self.validate_declarations(
-            self.workspace, roots, write_roots=self.scope.write_roots, require_exists=True
-        )
+        declarations = self.validate_declarations(self.workspace, roots, write_roots=self.scope.write_roots)
+        filesystem = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
+        effective: list[Path] = []
+        for root in declarations:
+            try:
+                metadata = filesystem.workspace_lstat(str(root))
+            except GuardedMetadataError as error:
+                if error.code == "guarded_metadata_missing":
+                    continue
+                raise ValueError(f"verification output is unavailable: {root}") from error
+            if not stat.S_ISDIR(metadata.mode):
+                raise ValueError("verification output must be a real workspace-local directory below source root")
+            effective.append(root)
+        return tuple(effective)
 
     @staticmethod
     def validate_declarations(
@@ -204,7 +219,7 @@ class EngineeringVerification:
 
     def _manifest(self, *, include_outputs: bool) -> dict[str, object]:
         """Observe actual declared inputs through KFS; never use a model digest."""
-        self._validate_outputs(self.output_roots)
+        self._validate_outputs(self._declared_output_roots)
         roots = {self.workspace, *(Path(root).expanduser().absolute() for root in self.scope.read_roots)}
         if any(root != root.resolve(strict=True) for root in roots):
             raise ValueError("verification input root changed or traverses a symlink")
