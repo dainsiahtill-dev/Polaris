@@ -1,6 +1,6 @@
 # Host 工具链目录的显式绑定
 
-状态：设计已选定，实施与接受证据待补；不是交付能力证明。基线 main `16c8dbf67a96c0960e323aba617d24209960629f`。原目录 v8 四次运行均已终态、个人复验与资源闭合；旧失败不改写。
+状态：当前源码接口资格通过，提交集成与新批次交付另行核对；不是项目交付能力证明。基线 main `16c8dbf67a96c0960e323aba617d24209960629f`。原目录 v8 四次运行均已终态、个人复验与资源闭合；旧失败不改写。
 
 ## 问题、事实与假设
 
@@ -50,3 +50,11 @@ ROOT 独占 K1 sandbox、process public export 与既有 sandbox tests；实现�
 不在本修改中改变 /tmp/HOME/cache 私有 tmpfs 的生命周期，不开放 host .polaris 给目标进程，不做长期记忆、自动安装、通用 env override、旧 TaskMarket 准入或 QA 提示词修改。已有匿名临时空间与用户项目持久根的语义差异保留为独立待核项。
 
 收益须通过新冻结运行实际确认：首次合法 compiler 使用、重复下载、真实检查、时间和全部尝试成本。HTTP 次数/账单未知仍 UNKNOWN；成功数为0时单次成功成本未定义。
+
+## 当前接受证据
+
+ROOT最终45个模块的联合回归740通过、1条既存pytest重写警告；13文件Ruff/格式/mypy通过，架构40通过，K1 ALL十二阶段通过。目录保持159条既存诊断/115唯一指纹，0新增、0manifest不一致。独立完整接口审查无P0/P1/P2，并以真实Settings路由与保存、参数注入拒绝、目录canonical漂移拒绝补证。
+
+真实已安装Go探针沿typedSettings/hostresolver→保存→新Service冷scope→真实Verifier完成bare go version、编译及运行，exit0；仅一次验证，源码与Go关键5文件不变，真实owner取消合成夹具且0pending。14745输入绑定，整次约35.9秒，首次绑定至耐久开始代理约11.85秒、取消投影约9.81秒；并发资格检查期间的观察，不是独立性能对照。缓存持久化、全量工具链字节资格和新项目收益未验证。旧已保存权限解码只读原事实，不以当前工具目录存在性为前提；恢复/副作用才复验当前目录和policy。
+
+原始记录、源码指纹和接受投影见 `.polaris/audits/host-toolchain-interface-20261023/root-acceptance.json`。原v8四次与所有FAILED/UNKNOWN不改写；新的源码/host配置必须另起冻结批次。

@@ -1,6 +1,6 @@
 id: vc-20261023-host-toolchain-binding
 classification: structural
-status: implementation_pending
+status: source_qualified_native_delivery_unverified
 owner: roles.runtime
 foundation: kernelone.process
 baseline_commit: 16c8dbf67a96c0960e323aba617d24209960629f
@@ -8,7 +8,7 @@ problem: Host-installed compiler is absent from declared sandbox mounts and fixe
 first_divergence: Host PermissionScope to actual K1 command environment.
 assumptions:
   - narrow_read_mount_visibility: confirmed_by_real_A_B
-  - explicit_path_binding_can_reuse_host_compiler: not_yet_verified
+  - explicit_path_binding_can_reuse_host_compiler: confirmed_by_real_Go_cold_scope_verifier
   - full_delivery_and_cost_benefit: unknown
 pre_mortem:
   - New field lost by role_scope or Verifier reconstruction.
@@ -32,3 +32,12 @@ unverified:
   - native_project_delivery_improvement
   - cache_persistence
   - provider_HTTP_totals_and_bill
+
+current_results:
+  combined: 740_passed_1_warning
+  architecture: 40_passed
+  kernelone_all: all_12_stages_passed
+  catalog: 159_existing_115_unique_0_new_0_mismatch
+  independent_review: no_P0_P1_P2
+  real_Go: one_actual_verification_exit0_fixture_cancelled_0pending
+  historical_readability: retained_after_toolchain_removed_current_execution_denied

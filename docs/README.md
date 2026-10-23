@@ -2,7 +2,7 @@
 
 最新更新：2026-10-23。
 
-当前原120项进展：[v8 四项运行与亲检报告](history/POLARIS_ORIGINAL120_V8_L101_L104_20261023.md)。冻结 `16c8dbf67a96c0960e323aba617d24209960629f` 已结束并亲检 L1-01 至 L1-04：3 项原生 accepted、1 项模型连接失败且未进入最终验证/QA；严格质量通过 0，四项资源均闭合，其余116项尚未在本批启动。真实公开交互暴露6个产品机制缺陷，未代修目标或改写原生事实。宿主工具链与实际沙箱环境的最小反例已验证；[显式工具链绑定设计](blueprints/POLARIS_HOST_TOOLCHAIN_BINDING_20261023.md)正在完成 host、执行、Verifier、QA、持久化与恢复接口资格，尚无新版本交付收益。
+当前原120项进展：[v8 四项运行与亲检报告](history/POLARIS_ORIGINAL120_V8_L101_L104_20261023.md)。冻结 `16c8dbf67a96c0960e323aba617d24209960629f` 已结束并亲检 L1-01 至 L1-04：3 项原生 accepted、1 项模型连接失败且未进入最终验证/QA；严格质量通过 0，四项资源均闭合，其余116项尚未在本批启动。真实公开交互暴露6个产品机制缺陷，未代修目标或改写原生事实。宿主工具链与实际沙箱环境的最小反例已验证；[显式工具链绑定设计](blueprints/POLARIS_HOST_TOOLCHAIN_BINDING_20261023.md)已完成 host、执行、Verifier、QA、持久化与恢复接口资格及一次真实Go编译组件验证，740项联合回归/K1 ALL/架构/目录增量和独立审查通过；尚无新版本项目交付或成本收益。
 
 历史v7记录：[v7运行与亲检报告](history/POLARIS_ORIGINAL120_V7_NATIVE_20261023.md)。本批冻结 `f71eb109a` 实际尝试L1-01，**0项有效交付、其余119项未在本批启动**；因验证后反复重写预览形成失效循环而正式取消，QA未调用、ProjectOutcome unknown，原生资源闭合。ROOT亲检94张原图中的11张，质量FAIL；历史[v5](history/POLARIS_ORIGINAL120_V5_NATIVE_20261023.md)等失败不改写。[离线Web入口方案](blueprints/POLARIS_OFFLINE_WEB_ORIGIN_20261023.md)已完成ToolSpec→KFS→隔离浏览器→持久化/冷重访接口、346项相关／40项架构回归、KernelOne ALL及独立复审，尚未取得新冻结交付。[实施计划](superpowers/plans/2026-10-23-offline-web-origin.md)与[机制实验记录](experiments/POLARIS_FEATURE_EVALUATION_20261022.md)分别记录组件和原生证据。
 
