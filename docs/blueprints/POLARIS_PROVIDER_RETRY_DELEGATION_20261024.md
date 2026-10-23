@@ -29,3 +29,7 @@ ROOT封存原R02最终body的SHA256为8ae94c425e5ef182ba921c76250cc5f9fb02104646
 ROOT最终Ruff/format、正确MYPYPATH的6文件mypy、40项架构、KernelOne ALL十二阶段、目录增量检查通过。目录159条既存/115种指纹、0新增、0manifest mismatch；没有宣称旧债清零。独审未发现P0/P1。union为31文件，资格和原始证据位于项目.polaris/audits/provider-529-recovery-20261024/（root-acceptance.json、combined-source-manifest.json、root/qualification、root/final-counter-comparison.json、implementation、independent-review）。
 
 源码接受标准已满足，研究停止并集成。下一项是相同原合同/模型/预算的全新隔离L1-06 R03，再由ROOT独立亲检质量与资源；R02 FAILED保持不变。长期过载、真实模型成本、全120项稳定性与优于其他Agent均未证。缓存单根和旧ContextOS保留策略为后续队列，不混入本次机制修复。
+
+## 新冻结运行的实际结果
+
+源码已在main 4ed8c06c集成。随后全新隔离v12 L1-06 R03完成原生PM/CE/Director/QA、六条当前真实配方和资源释放，native accepted；ROOT独立20CLI/6图后判质量FAIL（诗句语义与长文本排版）。详见[运行与亲检](../history/POLARIS_ORIGINAL120_V12_L106_R03_20261024.md)。本次没有因529终止；不能由这一次新运行推断真实上游重试恢复或总体交付率改善。原R02 FAILED与全部历史事实保留。模块的本地因果证据仍是相同原body/原caller预算的真实HTTP对照，不能与原生质量混为一项。
