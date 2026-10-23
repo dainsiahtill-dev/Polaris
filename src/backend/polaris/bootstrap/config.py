@@ -320,6 +320,7 @@ class EngineeringPermissionProfile(BaseModel):
     )
     network_allowed: bool = False
     browser: EngineeringBrowserObservationConfig | None = None
+    toolchain_bin_dirs: tuple[Path, ...] = ()
 
 
 class ServerConfig(BaseModel):

@@ -1,0 +1,34 @@
+id: vc-20261023-host-toolchain-binding
+classification: structural
+status: implementation_pending
+owner: roles.runtime
+foundation: kernelone.process
+baseline_commit: 16c8dbf67a96c0960e323aba617d24209960629f
+problem: Host-installed compiler is absent from declared sandbox mounts and fixed PATH; repeated private-temp downloads add failures and cost.
+first_divergence: Host PermissionScope to actual K1 command environment.
+assumptions:
+  - narrow_read_mount_visibility: confirmed_by_real_A_B
+  - explicit_path_binding_can_reuse_host_compiler: not_yet_verified
+  - full_delivery_and_cost_benefit: unknown
+pre_mortem:
+  - New field lost by role_scope or Verifier reconstruction.
+  - Cold old empty scope silently acquires newer profile directories.
+  - PATH addition exposes an undeclared or writable directory.
+  - Empty serialization changes old request keys or candidate bindings.
+  - Successful versionquery is overstated as compiler or project qualification.
+mechanism: Optional host-only toolchain_bin_dirs preserved by the existing owner and resolved by K1 inside preexisting readonly mounts.
+verification:
+  - polaris/kernelone/process/tests/test_workspace_sandbox.py
+  - polaris/cells/roles/runtime/tests/test_engineering_toolchain_binding.py
+  - adjacent_host_settings_role_verifier_recovery_tests
+  - ruff_and_mypy_changed_paths
+  - kernelone_release_gate_all
+  - catalog_fail_on_new_and_architecture_fences
+evidence:
+  - .polaris/audits/host-toolchain-mount-20261023/ROOT-result.json
+  - .polaris/bench/original120-20261023-v8/cases/004-L1-04/freeze-closed.json
+stop_condition: Real legal progression plus readonly/empty/revocation/cold-path counterexamples pass, adjacent interfaces qualified, independent review closed, then integrate and freeze a new batch.
+unverified:
+  - native_project_delivery_improvement
+  - cache_persistence
+  - provider_HTTP_totals_and_bill

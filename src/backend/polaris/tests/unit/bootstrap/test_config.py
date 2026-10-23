@@ -45,8 +45,10 @@ class TestFindWorkspaceRoot:
         result = find_workspace_root(str(subdir / "file.txt"))
         assert result == tmp_path.resolve()
 
-    def test_returns_resolved_path_if_no_docs(self, tmp_path: Path) -> None:
+    def test_returns_resolved_path_if_no_docs(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Should return resolved path when no docs/ directory found."""
+        # Private audit temp roots can have a repository docs/ ancestor.
+        monkeypatch.setattr(Path, "is_dir", lambda _path: False)
         result = find_workspace_root(str(tmp_path))
         assert result == tmp_path.resolve()
 

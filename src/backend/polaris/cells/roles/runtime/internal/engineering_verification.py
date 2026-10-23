@@ -111,6 +111,7 @@ class EngineeringVerification:
                 frozenset({"execute_command"}) if executable else frozenset(),
                 scope.network_allowed,
                 scope.browser,
+                toolchain_bin_dirs=scope.toolchain_bin_dirs,
             ),
             limits,
             cancel,
@@ -182,6 +183,11 @@ class EngineeringVerification:
             "output_roots": [str(root) for root in self.output_roots],
             "execute_command": "execute_command" in self.tools.enabled,
             "network_allowed": self.scope.network_allowed,
+            **(
+                {"toolchain_bin_dirs": [str(path) for path in self.tools.scope.toolchain_bin_dirs]}
+                if self.tools.scope.toolchain_bin_dirs
+                else {}
+            ),
         }
 
     @staticmethod

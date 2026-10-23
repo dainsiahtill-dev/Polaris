@@ -9,6 +9,7 @@ import os
 import subprocess
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapt
 from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.fs.runtime import KernelFileSystem
 from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
+from polaris.kernelone.process import resolve_toolchain_bin_dirs
 from polaris.kernelone.process.process_tree import (
     ProcessTreeCancelledError,
     ProcessTreeDrainError,
@@ -61,7 +63,15 @@ class EngineeringTools:
         authorize: Callable[[], None] | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
-        self.scope = scope
+        self.scope = replace(
+            scope,
+            toolchain_bin_dirs=resolve_toolchain_bin_dirs(
+                scope.toolchain_bin_dirs,
+                workspace=self.workspace,
+                read_roots=scope.read_roots,
+                write_roots=scope.write_roots,
+            ),
+        )
         self.limits = limits
         self.cancel = cancel
         self.consult = consult
@@ -374,6 +384,7 @@ class EngineeringTools:
             read_roots=self.scope.read_roots,
             write_roots=writes,
             network_allowed=self.scope.network_allowed,
+            toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
         )
         control = ProcessTreeRunControl()
         worker = asyncio.create_task(

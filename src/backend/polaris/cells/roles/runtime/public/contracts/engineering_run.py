@@ -44,6 +44,7 @@ class PermissionScope:
     enabled_tools: frozenset[str]
     network_allowed: bool
     browser: BrowserObservationConfig | None = None
+    toolchain_bin_dirs: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)

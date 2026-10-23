@@ -27,6 +27,7 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     ToolObservation,
     tool_observation_payload,
 )
+from polaris.kernelone.process import resolve_toolchain_bin_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,12 @@ class EngineeringSessionStore:
             raise ValueError("deadline must be a finite absolute epoch")
         if limits.max_output_bytes <= 0 or limits.max_tool_output_bytes <= 0:
             raise ValueError("output limits must be positive")
+        bins = resolve_toolchain_bin_dirs(
+            scope.toolchain_bin_dirs,
+            workspace=self.workspace,
+            read_roots=scope.read_roots,
+            write_roots=scope.write_roots,
+        )
         payload = {
             "workspace": str(self.workspace),
             "role": command.role,
@@ -210,6 +217,7 @@ class EngineeringSessionStore:
                     "enabled_tools": sorted(scope.enabled_tools),
                     "network_allowed": scope.network_allowed,
                     **({"browser": asdict(scope.browser)} if scope.browser is not None else {}),
+                    **({"toolchain_bin_dirs": [str(path) for path in bins]} if bins else {}),
                 }
             ),
             "limits": self._json(asdict(limits)),

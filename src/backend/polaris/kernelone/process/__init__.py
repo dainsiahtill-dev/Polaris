@@ -37,6 +37,7 @@ from .runtime_control import (
     terminate_external_loop_pm_processes,
     terminate_pid,
 )
+from .sandbox import resolve_toolchain_bin_dirs
 
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
@@ -61,6 +62,7 @@ __all__ = [
     "director_stop_flag_path",
     "isolated_process_group_kwargs",
     "list_external_loop_pm_pids",
+    "resolve_toolchain_bin_dirs",
     "run_process_tree_safe",
     "signal_process_tree",
     "terminate_external_loop_pm_processes",

@@ -95,6 +95,7 @@ def role_scope(role: str, scope: PermissionScope) -> PermissionScope:
             frozenset(name for name in scope.enabled_tools if ToolSpecRegistry.get_canonical(name) != "report_review"),
             scope.network_allowed,
             scope.browser,
+            toolchain_bin_dirs=scope.toolchain_bin_dirs,
         )
     allowed = _READ_TOOLS
     if role == "qa":
@@ -107,6 +108,7 @@ def role_scope(role: str, scope: PermissionScope) -> PermissionScope:
         frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools) & allowed,
         False,
         scope.browser if role == "qa" else None,
+        toolchain_bin_dirs=scope.toolchain_bin_dirs,
     )
 
 

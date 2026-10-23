@@ -23,6 +23,7 @@ from polaris.cells.roles.runtime.public.engineering_service import (
     EngineeringRunService,
     EngineeringSessionConflictError,
 )
+from polaris.kernelone.process import resolve_toolchain_bin_dirs
 
 
 def _roots(workspace: Path, configured: tuple[str, ...], *, future_outputs: bool = False) -> tuple[Path, ...]:
@@ -65,9 +66,14 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
     tools = frozenset(ToolSpecRegistry.get_canonical(name) for name in profile.enabled_tools)
     if tools - supported:
         raise ValueError("engineering profile contains unsupported tools: " + ", ".join(sorted(tools - supported)))
+    read_roots = _roots(workspace, profile.read_roots)
+    write_roots = _roots(workspace, profile.write_roots)
+    bins = resolve_toolchain_bin_dirs(
+        profile.toolchain_bin_dirs, workspace=workspace, read_roots=read_roots, write_roots=write_roots
+    )
     return PermissionScope(
-        _roots(workspace, profile.read_roots),
-        _roots(workspace, profile.write_roots),
+        read_roots,
+        write_roots,
         tools,
         profile.network_allowed,
         browser=BrowserObservationConfig(
@@ -78,6 +84,7 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
         )
         if profile.browser is not None
         else None,
+        toolchain_bin_dirs=bins,
     )
 
 

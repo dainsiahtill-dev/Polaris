@@ -122,6 +122,7 @@ verification:
   - polaris/cells/roles/runtime/tests/test_engineering_verification.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification_selection.py
   - polaris/cells/roles/runtime/tests/test_engineering_recovery.py
+  - polaris/cells/roles/runtime/tests/test_engineering_toolchain_binding.py
   - polaris/cells/roles/runtime/tests/test_engineering_context_audit.py
   - polaris/cells/roles/runtime/tests/test_engineering_visual_projection.py
   - polaris/cells/roles/runtime/tests/test_engineering_event_selection.py

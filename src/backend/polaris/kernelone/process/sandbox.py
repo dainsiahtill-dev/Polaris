@@ -69,6 +69,53 @@ def _reject_external_hardlinks(roots: set[Path], *, control: Path) -> None:
         raise ValueError("sandbox writable hardlink has an external, protected or unknown alias")
 
 
+def resolve_toolchain_bin_dirs(
+    toolchain_bin_dirs: Sequence[str | os.PathLike[str]],
+    *,
+    workspace: str | os.PathLike[str],
+    read_roots: Sequence[str | os.PathLike[str]],
+    write_roots: Sequence[str | os.PathLike[str]],
+) -> tuple[Path, ...]:
+    """Resolve explicit host search directories without adding filesystem grants.
+
+    Only existing directory read mounts and the existing system mounts qualify.
+    This validates the additional search paths, not the complete mount scope;
+    the sandbox builder must still apply its normal grant checks. Empty input
+    preserves the original command environment and never infers paths.
+    """
+    if isinstance(toolchain_bin_dirs, (str, bytes, os.PathLike)) or not isinstance(toolchain_bin_dirs, Sequence):
+        raise ValueError("sandbox toolchain_bin_dirs must be a sequence of absolute directories")
+    if not toolchain_bin_dirs:
+        return ()
+    project = _existing_path(workspace, label="workspace")
+    control = project / ".polaris"
+    reads = tuple(_existing_path(root, label="read root") for root in read_roots)
+    writes = tuple(_existing_path(root, label="write root") for root in write_roots)
+    system_reads = tuple(Path(root).resolve() for root in _TOOLCHAIN_ROOTS if Path(root).exists())
+    result: list[Path] = []
+    for value in toolchain_bin_dirs:
+        try:
+            raw = os.fspath(value)
+        except TypeError as exc:
+            raise ValueError("sandbox toolchain bin directory must be an absolute path") from exc
+        if not isinstance(raw, str) or not raw or "\0" in raw or ":" in raw or not Path(raw).is_absolute():
+            raise ValueError("sandbox toolchain bin directory must be absolute without NUL or PATH separators")
+        directory = _existing_path(raw, label="toolchain bin directory")
+        if ":" in str(directory):
+            raise ValueError("sandbox canonical toolchain bin directory contains a PATH separator")
+        if not directory.is_dir():
+            raise ValueError("sandbox toolchain bin directory must be a directory")
+        if directory.is_relative_to(control) or any(_overlaps(directory, Path(root)) for root in _RESERVED_ROOTS):
+            raise ValueError("sandbox toolchain bin directory overlaps a control or reserved mount")
+        if not any(root.is_dir() and directory.is_relative_to(root) for root in (*reads, *system_reads)):
+            raise ValueError("sandbox toolchain bin directory is outside existing read mounts")
+        if any(_overlaps(directory, root) for root in writes):
+            raise ValueError("sandbox toolchain bin directory overlaps a writable mount")
+        if directory not in result:
+            result.append(directory)
+    return tuple(result)
+
+
 def build_workspace_sandbox_argv(
     argv: Sequence[str],
     *,
@@ -77,6 +124,7 @@ def build_workspace_sandbox_argv(
     read_roots: Sequence[str | os.PathLike[str]],
     write_roots: Sequence[str | os.PathLike[str]],
     network_allowed: bool,
+    toolchain_bin_dirs: Sequence[str | os.PathLike[str]] = (),
 ) -> list[str]:
     """Build a fail-closed Linux command with explicit filesystem grants.
 
@@ -127,6 +175,9 @@ def build_workspace_sandbox_argv(
             raise ValueError("sandbox grants overlap a reserved mount")
     if any(not root.is_relative_to(project) for root in writes):
         raise ValueError("sandbox write roots must stay inside workspace")
+    extra_bins = resolve_toolchain_bin_dirs(
+        toolchain_bin_dirs, workspace=project, read_roots=tuple(reads), write_roots=tuple(writes)
+    )
     _reject_external_hardlinks(writes, control=control)
     arguments = [
         bubblewrap,
@@ -170,10 +221,14 @@ def build_workspace_sandbox_argv(
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
     }
+    if extra_bins:
+        environment["PATH"] = ":".join(
+            dict.fromkeys([*environment["PATH"].split(":"), *(str(path) for path in extra_bins)])
+        )
     for key, value in environment.items():
         arguments.extend(("--setenv", key, value))
     arguments.extend(("--chdir", str(directory), "--", *command))
     return arguments
 
 
-__all__ = ["WorkspaceSandboxUnavailableError", "build_workspace_sandbox_argv"]
+__all__ = ["WorkspaceSandboxUnavailableError", "build_workspace_sandbox_argv", "resolve_toolchain_bin_dirs"]

@@ -282,3 +282,135 @@ def test_hardlinks_fully_inside_write_roots_remain_writable(sandbox_workspace: P
     )
     assert result.returncode == 0, result.stderr
     assert (first / "source.txt").read_text(encoding="utf-8") == "after"
+
+
+def _toolchain_bin(workspace: Path, name: str = "host-toolchain", reply: str = "host-toolchain-ready") -> Path:
+    """Synthetic executable replaces a compiler; no real project is installed."""
+    directory = workspace.parent / name / "bin"
+    directory.mkdir(parents=True)
+    executable = directory / "polaris_toolchain_probe"
+    executable.write_text(f"#!/bin/sh\nprintf '%s\\n' '{reply}'\n", encoding="utf-8")
+    executable.chmod(0o755)
+    return directory
+
+
+def test_explicit_toolchain_path_runs_an_already_readable_compiler_without_write_authority(sandbox_workspace: Path):
+    bin_dir = _toolchain_bin(sandbox_workspace)
+    scope = {"read_roots": (sandbox_workspace, bin_dir.parent), "write_roots": ()}
+    absent = _run(sandbox_workspace, "polaris_toolchain_probe", **scope)
+    assert absent.returncode != 0, "read grants alone must not infer executable search paths"
+    observed = _run(sandbox_workspace, "polaris_toolchain_probe", toolchain_bin_dirs=(bin_dir,), **scope)
+    assert observed.returncode == 0, observed.stderr
+    assert observed.stdout == "host-toolchain-ready\n"
+    refused = _run(
+        sandbox_workspace,
+        f"printf overwritten > '{bin_dir}/polaris_toolchain_probe'",
+        toolchain_bin_dirs=(bin_dir,),
+        **scope,
+    )
+    assert refused.returncode != 0
+    assert "host-toolchain-ready" in (bin_dir / "polaris_toolchain_probe").read_text(encoding="utf-8")
+
+
+def test_empty_toolchain_paths_keep_the_original_sandbox_and_system_path(sandbox_workspace: Path):
+    argv = ["/usr/bin/printenv", "PATH"]
+    baseline = _sandbox(argv, sandbox_workspace, write_roots=())
+    explicit_empty = _sandbox(argv, sandbox_workspace, write_roots=(), toolchain_bin_dirs=())
+    assert explicit_empty == baseline
+    result = run_process_tree_safe(explicit_empty, timeout=10, cancel_control=ProcessTreeRunControl())
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
+
+
+def test_toolchain_directory_order_is_explicit_and_does_not_override_system_tools(sandbox_workspace: Path):
+    first = _toolchain_bin(sandbox_workspace, "first-toolchain", "first")
+    second = _toolchain_bin(sandbox_workspace, "second-toolchain", "second")
+    (first / "uname").write_text("#!/bin/sh\necho unexpected-shadow\n", encoding="utf-8")
+    (first / "uname").chmod(0o755)
+    result = _run(
+        sandbox_workspace,
+        "polaris_toolchain_probe; uname -s; /usr/bin/printenv PATH",
+        read_roots=(sandbox_workspace, first.parent, second.parent),
+        write_roots=(),
+        toolchain_bin_dirs=(second, first, second),
+    )
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0] == "second"
+    # A host-declared directory cannot replace an existing system executable.
+    assert lines[1] == "Linux"
+    assert lines[2].split(":") == [
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/local/sbin",
+        "/usr/sbin",
+        "/sbin",
+        str(second),
+        str(first),
+    ]
+
+
+@pytest.mark.parametrize(
+    "case", ["outside_read", "writable", "control", "private", "relative", "file", "colon", "colon_alias"]
+)
+def test_invalid_toolchain_paths_are_rejected_before_any_execution(sandbox_workspace: Path, case: str):
+    bin_dir = _toolchain_bin(sandbox_workspace)
+    candidate = bin_dir
+    reads: tuple[Path, ...] = (sandbox_workspace, bin_dir.parent)
+    writes: tuple[Path, ...] = ()
+    if case == "outside_read":
+        reads = (sandbox_workspace,)
+    elif case == "writable":
+        candidate = sandbox_workspace / "bin"
+        candidate.mkdir()
+        writes = (sandbox_workspace,)
+    elif case == "control":
+        candidate = sandbox_workspace / ".polaris"
+    elif case == "private":
+        candidate = Path("/tmp")
+    elif case == "relative":
+        candidate = Path("relative-bin")
+    elif case == "file":
+        candidate = bin_dir / "polaris_toolchain_probe"
+    elif case in ("colon", "colon_alias"):
+        candidate = bin_dir.parent / "bin:unsafe"
+        candidate.mkdir()
+        if case == "colon_alias":
+            alias = bin_dir.parent / "safe-looking-alias"
+            alias.symlink_to(candidate, target_is_directory=True)
+            candidate = alias
+    with pytest.raises(ValueError, match="toolchain"):
+        _sandbox(
+            ["/bin/sh", "-c", "printf forbidden > must-not-run"],
+            sandbox_workspace,
+            read_roots=reads,
+            write_roots=writes,
+            toolchain_bin_dirs=(candidate,),
+        )
+    assert not (sandbox_workspace / "must-not-run").exists()
+
+
+def test_toolchain_alias_is_canonical_and_retargeting_cannot_add_a_mount(sandbox_workspace: Path):
+    bin_dir = _toolchain_bin(sandbox_workspace)
+    alias = bin_dir.parent / "selected-bin"
+    alias.symlink_to(bin_dir, target_is_directory=True)
+    result = _run(
+        sandbox_workspace,
+        "polaris_toolchain_probe",
+        read_roots=(sandbox_workspace, bin_dir.parent),
+        write_roots=(),
+        toolchain_bin_dirs=(alias,),
+    )
+    assert result.returncode == 0, result.stderr
+    outside = _toolchain_bin(sandbox_workspace, "ungranted-toolchain")
+    alias.unlink()
+    alias.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="toolchain"):
+        _sandbox(
+            ["/bin/sh", "-c", "polaris_toolchain_probe"],
+            sandbox_workspace,
+            read_roots=(sandbox_workspace, bin_dir.parent),
+            write_roots=(),
+            toolchain_bin_dirs=(alias,),
+        )

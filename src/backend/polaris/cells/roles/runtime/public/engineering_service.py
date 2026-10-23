@@ -1491,6 +1491,25 @@ class EngineeringRunService:
         self._saved_outputs(row)
         original_scope = self._scope(row)
         current_scope = self._permission_resolver(row)
+        from polaris.kernelone.process import resolve_toolchain_bin_dirs
+
+        saved_bins = resolve_toolchain_bin_dirs(
+            original_scope.toolchain_bin_dirs,
+            workspace=self.workspace,
+            read_roots=original_scope.read_roots,
+            write_roots=original_scope.write_roots,
+        )
+        if saved_bins != original_scope.toolchain_bin_dirs:
+            raise PermissionError("saved toolchain directories changed canonical identity")
+        current_scope = replace(
+            current_scope,
+            toolchain_bin_dirs=resolve_toolchain_bin_dirs(
+                current_scope.toolchain_bin_dirs,
+                workspace=self.workspace,
+                read_roots=current_scope.read_roots,
+                write_roots=current_scope.write_roots,
+            ),
+        )
         if not self._scope_within(original_scope, current_scope) or original_scope.browser != current_scope.browser:
             raise PermissionError("saved scope exceeds current permission policy")
         return original_scope
@@ -1707,12 +1726,28 @@ class EngineeringRunService:
                 browser = BrowserObservationConfig(**{**browser, "python_paths": tuple(browser["python_paths"])})
             except (KeyError, TypeError, ValueError) as error:
                 raise ValueError("saved browser configuration is invalid") from error
+        reads = tuple(Path(root) for root in scope["read_roots"])
+        writes = tuple(Path(root) for root in scope["write_roots"])
+        raw_bins = scope.get("toolchain_bin_dirs", ())
+        if not isinstance(raw_bins, (list, tuple)):
+            raise ValueError("saved toolchain directories must be an ordered path sequence")
+        bins = []
+        for value in raw_bins:
+            if not isinstance(value, str) or not value or "\0" in value or ":" in value:
+                raise ValueError("saved toolchain directory is invalid")
+            path = Path(value)
+            if not path.is_absolute() or str(path) != value or ".." in path.parts:
+                raise ValueError("saved toolchain directory must be a canonical absolute path")
+            # Decode the saved fact without following today's filesystem.
+            # Recovery and every effect revalidate existence/mount authority.
+            bins.append(path)
         return PermissionScope(
-            tuple(Path(root) for root in scope["read_roots"]),
-            tuple(Path(root) for root in scope["write_roots"]),
+            reads,
+            writes,
             frozenset(scope["enabled_tools"]),
             scope["network_allowed"],
             browser,
+            toolchain_bin_dirs=tuple(bins),
         )
 
     @staticmethod
@@ -1738,8 +1773,13 @@ class EngineeringRunService:
         def roots_within(roots: tuple[Path, ...], ceiling: tuple[Path, ...]) -> bool:
             return all(any(root.resolve().is_relative_to(parent.resolve()) for parent in ceiling) for root in roots)
 
+        # PATH priority is an ordered authority. Retain original bins only;
+        # a new profile may add directories but cannot reorder/revoke saved ones.
+        remaining = iter(current.toolchain_bin_dirs)
+        toolchains_within = all(any(path == granted for granted in remaining) for path in saved.toolchain_bin_dirs)
         return (
-            {ToolSpecRegistry.get_canonical(name) for name in saved.enabled_tools}
+            toolchains_within
+            and {ToolSpecRegistry.get_canonical(name) for name in saved.enabled_tools}
             <= {ToolSpecRegistry.get_canonical(name) for name in current.enabled_tools}
             and (not saved.network_allowed or current.network_allowed)
             and roots_within(saved.read_roots, current.read_roots)
