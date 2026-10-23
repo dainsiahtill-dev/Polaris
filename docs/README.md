@@ -2,6 +2,8 @@
 
 最新更新：2026-10-24。
 
+最新实验：[QA批准含义六次对照](experiments/POLARIS_QA_APPROVAL_SEMANTICS_20261024.md)已完成真实请求。A两次为一次批准/一次继续取证；B两次仍批准必需GUI未验证的候选，正控均进一步取证而无verdict。未证收益，按停止条件不合入这段提示、不补样本，继续原L1-08。
+
 最新亲检：[v13 L1-07](history/POLARIS_ORIGINAL120_V13_L107_20261024.md)已原生accepted、约1600秒、资源闭合。ROOT16次CLI、真实Swing鼠标操作、三种性格及WAV/CSV比对在所测场景通过；但D/QA未实际验证必需GUI却批准，严格自主交付未通过，外部亲检不补原生收据。当前9次尝试/7个不同项目/9次终态亲检，严格通过0、113项未启动。QA批准含义的有限对照已预登记，随后继续原L1-08。以下为各版本历史检查点。
 
 最新亲检：[v12 L1-06 R03](history/POLARIS_ORIGINAL120_V12_L106_R03_20261024.md)已完整原生completed／passed／QA approved／accepted，约3480秒且资源闭合；ROOT20次只读CLI、6张图像后判质量FAIL：第三诗行被来源说明替代，长文本布局/一致性不足。原生接受与严格质量分列。当前8次尝试/6个不同项目/8次终态亲检，严格交付0、114项未启动。[验证目录可读交接](blueprints/POLARIS_VERIFICATION_OUTPUT_POLICY_VISIBILITY_20261024.md)已完成12新回归/105相邻、40架构/K1 ALL/目录0新增与独审，本次集成后新冻结L1-07；不再重跑同一C++题。以下记录适用于各自当时版本。
