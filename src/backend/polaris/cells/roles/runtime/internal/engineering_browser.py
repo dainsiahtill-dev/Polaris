@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import subprocess
+import zlib
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -37,9 +38,13 @@ _BROWSER_PROGRAM = r"""
 import base64
 import hashlib
 import json
+import mimetypes
 import sys
 import time
+import types
+import zlib
 from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit
 
 settings = json.loads(sys.argv[1])
 workspace = Path(settings['workspace'])
@@ -54,8 +59,28 @@ page_errors = []
 blocked_requests = []
 images = []
 context = None
+resource_reads = []
+resource_errors = []
+resource_count = 0
+resource_bytes = 0
+resource_remaining = 64 * 1024 * 1024
+resource_budget_error = None
+static_origin = 'https://polaris.invalid'
 
 try:
+    if settings.get('web_root') is not None:
+        compressed = base64.b64decode(settings['guard_source_compressed'], validate=True)
+        decoder = zlib.decompressobj()
+        source_bytes = decoder.decompress(compressed, 256 * 1024 + 1)
+        if len(source_bytes) > 256 * 1024 or not decoder.eof or decoder.unconsumed_tail or decoder.unused_data:
+            raise ValueError('trusted KFS runtime source exceeds its finite bound or is incomplete')
+        if hashlib.sha256(source_bytes).hexdigest() != settings['guard_source_sha256']:
+            raise ValueError('trusted KFS runtime source digest mismatch')
+        guard_module = types.ModuleType('_polaris_browser_kfs_guard')
+        sys.modules[guard_module.__name__] = guard_module
+        exec(compile(source_bytes.decode('utf-8'), '<trusted KFS snapshot runtime>', 'exec'), guard_module.__dict__)
+        read_snapshot = guard_module.read_guarded_regular_file_snapshot
+
     with sync_playwright() as playwright:
         try:
             context = playwright.chromium.launch_persistent_context(
@@ -69,19 +94,70 @@ try:
                 args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-extensions', '--disable-background-networking'],
             )
             def route_request(route):
-                url = route.request.url
-                if url.startswith(('http:', 'https:', 'ws:', 'wss:', 'ftp:')):
+                global resource_count, resource_bytes, resource_remaining, resource_budget_error
+                request = route.request
+                url = request.url
+                if settings.get('web_root') is None:
+                    if url.startswith(('http:', 'https:', 'ws:', 'wss:', 'ftp:')):
+                        if len(blocked_requests) < 20:
+                            blocked_requests.append(url[:500])
+                        route.abort()
+                    else:
+                        route.continue_()
+                    return
+                reserved = 0
+                try:
+                    parsed = urlsplit(url)
+                    if parsed.scheme != 'https' or parsed.netloc != 'polaris.invalid':
+                        raise ValueError('static origin rejects other origins and protocols')
+                    if request.method not in ('GET', 'HEAD'):
+                        raise ValueError('static origin rejects non-read method ' + request.method)
+                    path = unquote(parsed.path, errors='strict')
+                    parts = path.removeprefix('/').split('/')
+                    if (not path.startswith('/') or any(not p or p.startswith('.') for p in parts)
+                            or any(c in path for c in ('\\', '\0', '%'))
+                            or any(ord(c) < 32 or ord(c) == 127 for c in path)):
+                        raise ValueError('static resource path is hidden, encoded, or noncanonical')
+                    relative = '/'.join(parts)
+                    if resource_remaining <= 0:
+                        resource_budget_error = 'static resource total byte budget exceeded'
+                        raise ValueError(resource_budget_error)
+                    reserved = min(16 * 1024 * 1024, resource_remaining)
+                    resource_remaining -= reserved
+                    snapshot = read_snapshot(settings['web_root'], relative, max_bytes=reserved)
+                    resource_remaining += reserved - snapshot.size
+                    reserved = 0
+                    resource_bytes += snapshot.size
+                    resource_count += 1
+                    if len(resource_reads) < 64:
+                        resource_reads.append({'path': relative, 'method': request.method, 'size': snapshot.size,
+                            'sha256': hashlib.sha256(snapshot.content).hexdigest(),
+                            'mtime_ns': snapshot.mtime_ns, 'ctime_ns': snapshot.ctime_ns})
+                    content_type = mimetypes.guess_type(relative)[0] or 'application/octet-stream'
+                    if relative.lower().endswith(('.js', '.mjs')):
+                        content_type = 'text/javascript'
+                    route.fulfill(status=200, headers={'Content-Type': content_type,
+                        'Content-Length': str(snapshot.size), 'X-Content-Type-Options': 'nosniff'},
+                        body=b'' if request.method == 'HEAD' else snapshot.content)
+                except Exception as error:
+                    if reserved and isinstance(error.__cause__, FileNotFoundError):
+                        resource_remaining += reserved
+                    if getattr(error, 'code', '') == 'guarded_snapshot_max_bytes_exceeded':
+                        resource_budget_error = 'static resource single or total byte budget exceeded'
                     if len(blocked_requests) < 20:
                         blocked_requests.append(url[:500])
+                    if len(resource_errors) < 20:
+                        resource_errors.append({'url': url[:500], 'method': request.method[:16],
+                            'error': type(error).__name__ + ': ' + str(error)[:500]})
                     route.abort()
-                else:
-                    route.continue_()
             context.route('**/*', route_request)
             page = context.pages[0]
             page.set_default_timeout(2000)
             page.on('console', lambda message: console.append(message.text[:500]) if len(console) < 20 else None)
             page.on('pageerror', lambda error: page_errors.append(str(error)[:500]) if len(page_errors) < 20 else None)
-            page.goto(Path(settings['entry']).as_uri(), wait_until='load', timeout=4000)
+            entry_url = (static_origin + '/' + quote(settings['entry_in_web_root'], safe='/')
+                if settings.get('web_root') is not None else Path(settings['entry']).as_uri())
+            page.goto(entry_url, wait_until='load', timeout=4000)
             for action in settings['actions']:
                 locator = page.locator(action['selector'])
                 if action['type'] == 'click':
@@ -100,6 +176,8 @@ try:
                 remaining = offset - (time.monotonic() - started) * 1000
                 if remaining > 0:
                     page.wait_for_timeout(remaining)
+                if resource_budget_error:
+                    raise ValueError(resource_budget_error)
                 captured_ms = round((time.monotonic() - started) * 1000)
                 data = page.screenshot(type='jpeg', quality=75, full_page=False, timeout=3000)
                 total += len(data)
@@ -159,25 +237,47 @@ try:
                     };
                 }
             '''))
-            result = {
-                'images': images,
-                'entry': settings['relative_entry'],
-                'viewport': settings['viewport'],
-                'frame_times_ms': settings['frame_times_ms'],
-                'actions': settings['actions'],
-                'browser_version': context.browser.version if context.browser else 'unknown',
-                'network_allowed': False,
-                'console': console,
-                'page_errors': page_errors,
-                'blocked_requests': blocked_requests,
-                'dom': summary,
-            }
+            browser_version = context.browser.version if context.browser else 'unknown'
         finally:
             if context is not None:
                 context.close()
+    # Closing the context and exiting Playwright can still pump route callbacks.
+    # No browser operation may follow final budget validation or evidence freeze.
+    if resource_budget_error:
+        raise ValueError(resource_budget_error)
+    result = {
+        'images': images,
+        'entry': settings['relative_entry'],
+        'web_root': settings.get('relative_web_root'),
+        'origin_mode': 'static' if settings.get('web_root') is not None else 'file',
+        'static_origin': static_origin if settings.get('web_root') is not None else None,
+        'static_resources': {'read_count': resource_count, 'bytes_read': resource_bytes,
+            'reads': resource_reads, 'reads_truncated': resource_count > len(resource_reads),
+            'errors': resource_errors, 'max_resource_bytes': 16 * 1024 * 1024,
+            'max_total_bytes': 64 * 1024 * 1024, 'guard_source_sha256': settings.get('guard_source_sha256')}
+            if settings.get('web_root') is not None else None,
+        'viewport': settings['viewport'],
+        'frame_times_ms': settings['frame_times_ms'],
+        'actions': settings['actions'],
+        'browser_version': browser_version,
+        'network_allowed': False,
+        'console': console,
+        'page_errors': page_errors,
+        'blocked_requests': blocked_requests,
+        'dom': summary,
+    }
     print(json.dumps(result, ensure_ascii=False))
 except Exception as error:
-    print(json.dumps({'error': type(error).__name__ + ': ' + str(error)[:2000]}, ensure_ascii=False))
+    failure = {'error': type(error).__name__ + ': ' + (resource_budget_error or str(error))[:2000]}
+    if settings.get('web_root') is not None:
+        # Preserve bounded failure evidence within the existing stderr/stdout
+        # failure envelope; a failed capture never returns usable image frames.
+        failure = {'web_root': settings['relative_web_root'], 'origin_mode': 'static',
+            'static_resources': {'read_count': resource_count, 'bytes_read': resource_bytes,
+                'errors': resource_errors[:1], 'errors_truncated': len(resource_errors) > 1,
+                'max_resource_bytes': 16 * 1024 * 1024, 'max_total_bytes': 64 * 1024 * 1024},
+            'error': type(error).__name__ + ': ' + (resource_budget_error or str(error))[:1000]}
+    print(json.dumps(failure, ensure_ascii=False))
     raise SystemExit(2)
 """
 
@@ -210,7 +310,13 @@ def _settings(arguments: dict[str, Any], *, workspace: Path, scope: PermissionSc
         raise ValueError("browser observation unavailable: no host browser configuration")
     if "browser_observe" not in scope.enabled_tools:
         raise ValueError("browser observation unavailable: tool is not authorized")
-    if not isinstance(arguments, dict) or arguments.keys() - {"entry", "viewport", "frame_times_ms", "actions"}:
+    if not isinstance(arguments, dict) or arguments.keys() - {
+        "entry",
+        "web_root",
+        "viewport",
+        "frame_times_ms",
+        "actions",
+    }:
         raise ValueError("unsupported browser observation arguments")
     entry = _text(arguments.get("entry", "index.html"), label="entry")
     relative = Path(entry)
@@ -222,6 +328,28 @@ def _settings(arguments: dict[str, Any], *, workspace: Path, scope: PermissionSc
         raise ValueError("browser entry must be an authorized HTML or SVG source outside the control root")
     if not target.is_file() or not any(target.is_relative_to(Path(root).resolve()) for root in scope.read_roots):
         raise ValueError("browser entry is unavailable or outside read permission scope")
+
+    web_root: Path | None = None
+    guard_source = ""
+    if "web_root" in arguments:
+        root_text = _text(arguments["web_root"], label="web_root")
+        root_relative = Path(root_text)
+        if root_relative.is_absolute() or ".." in root_relative.parts or ":" in root_text or "\\" in root_text:
+            raise ValueError("web_root must be a workspace-relative directory")
+        if any(part.startswith(".") for part in root_relative.parts):
+            raise ValueError("web_root must be outside hidden control and secret paths")
+        web_root = filesystem.resolve_workspace_path(root_text)
+        if web_root != workspace / root_relative or target != workspace / relative:
+            raise ValueError("static root and entry must not use symlinks")
+        if not web_root.is_dir() or not any(web_root.is_relative_to(Path(root).resolve()) for root in scope.read_roots):
+            raise ValueError("web_root is unavailable or outside read permission scope")
+        if not target.is_relative_to(web_root):
+            raise ValueError("web_root must contain entry")
+        if any(part.startswith(".") for part in target.relative_to(web_root).parts):
+            raise ValueError("static entry must be outside hidden control and secret paths")
+        from polaris.kernelone.fs import get_guarded_snapshot_runtime_source
+
+        guard_source = get_guarded_snapshot_runtime_source()
 
     viewport = arguments.get("viewport", {"width": 1000, "height": 750})
     if not isinstance(viewport, dict) or viewport.keys() != {"width", "height"}:
@@ -295,6 +423,15 @@ def _settings(arguments: dict[str, Any], *, workspace: Path, scope: PermissionSc
         "workspace": str(workspace),
         "entry": str(target),
         "relative_entry": target.relative_to(workspace).as_posix(),
+        "web_root": str(web_root) if web_root is not None else None,
+        "relative_web_root": web_root.relative_to(workspace).as_posix() if web_root is not None else None,
+        "entry_in_web_root": target.relative_to(web_root).as_posix() if web_root is not None else None,
+        "guard_source_compressed": base64.b64encode(zlib.compress(guard_source.encode("utf-8"))).decode("ascii")
+        if web_root is not None
+        else None,
+        "guard_source_sha256": hashlib.sha256(guard_source.encode("utf-8")).hexdigest()
+        if web_root is not None
+        else None,
         "viewport": viewport,
         "frame_times_ms": frames,
         "actions": actions,

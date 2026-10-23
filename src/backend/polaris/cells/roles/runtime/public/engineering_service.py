@@ -637,11 +637,24 @@ class EngineeringRunService:
                 )
             events = self.store.load_events(command.session_id, role=role)
             provenance = []
-            tools = EngineeringTools(self.workspace, readonly, limits, cancel)
+            tools = EngineeringTools(
+                self.workspace,
+                readonly,
+                limits,
+                cancel,
+                observe=lambda args: self._observe_dispatch(args, turn_seq, call_id),
+            )
             for identity in identities:
                 original = original_visual_capture(events, role, identity)
                 capture_arguments = original["dispatch"]["payload"]["arguments"]
-                tools._path(str(capture_arguments.get("entry", "index.html")), write=False)
+                # Historical dispatch preserves native arguments. Reapply the
+                # same registry normalization before current host authorization.
+                _, authorized_arguments = tools.normalize("browser_observe", dict(capture_arguments))
+                entry = tools._path(str(authorized_arguments.get("entry", "index.html")), write=False)
+                if "web_root" in authorized_arguments:
+                    web_root = tools._path(str(authorized_arguments["web_root"]), write=False)
+                    if not entry.is_relative_to(web_root):
+                        raise ValueError("saved browser web_root must contain entry")
                 provenance.append(
                     {
                         "call_id": identity,

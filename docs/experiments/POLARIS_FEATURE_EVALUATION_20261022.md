@@ -246,3 +246,12 @@ A 三次调用的报告 total tokens 合计 42235，调用耗时之和 13.29 秒
 - `task19-feature-evaluation/native-candidate-next/native-web-r03/`：原任务全新隔离运行；`batch-freeze.json`、`native-observer/final-report.json`、`runtime-audits/terminal-evidence/`、`root-quality-review.json` 分别保存冻结、真实运行、当前 QA／请求／资源和根质量失败；`runtime-audits/root-quality-instrument/` 为原始画面、几何与独立数值复核。
 
 QA 只读执行与候选版本的相邻接口已收尾；两臂漏验实验未证收益，先定位主动臂重复检查的第一偏差，并继续全新网页。任务派发和上下文策略的扩大实验排在其后；原 120 项串行验收不是本轮模块实验的完成项。
+
+
+## 原120 v7与下一条接口：真实页面观察优先
+
+原目录L1-01 v7的正式PM→CE→Director已经成立，实际请求继承原任务与建议，代码、依赖、28项核心测试和构建均由Polaris生成/执行。但file-origin模块加载失败迫使模型重做inline preview；随后同字节重写改变mtime/ctime，合法失效验证，反复复验仍未进入QA。ROOT封存第一偏差后正式取消；本批0项交付、119项未启动，QA未调用，ProjectOutcome unknown。资源与9480文件冻结已核对闭合。[完整记录](../history/POLARIS_ORIGINAL120_V7_NATIVE_20261023.md)保留ROOT质量FAIL、全部尝试和未知账单。
+
+这说明必须同时检查“工具观察真实页面”和“最终验收当前候选”，不能用ok响应或放宽元数据绑定掩盖加载缺口。[离线Web入口](../blueprints/POLARIS_OFFLINE_WEB_ORIGIN_20261023.md)复用现有工具/授权/KFS/隔离进程和唯一工程owner，在不写目标、不开放网络的条件下支持普通模块资源；独立审查又复现了截图后超限仍成功的时序缺口，组件修复与最终资格分开保留。当前尚无新原生收益结论，不能宣称更快、质量更好或更省钱。
+
+原特性研究继续按真实依赖推进：PM/CE内容交接、同任务返工、独立视觉QA、最终请求、单根存储和恢复已接入；旧TaskMarket领取/派发及Scout不能因模块存在就称当前产品已消费。交接质量、受限Scout检索和TaskMarket真实claim/receipt消费者是三项有触发条件的后续实验，原始准备在`.polaris/audits/native-tool-context-integration-20261023/feature-next/report.json`。不新增必经角色/合同维护/控制器，不恢复旧业务协议，不做长期记忆，也不把待证机制变成下一项目的启动门槛。

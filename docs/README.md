@@ -2,7 +2,7 @@
 
 最新更新：2026-10-23。
 
-当前原120项进展：[v5运行与亲检报告](history/POLARIS_ORIGINAL120_V5_NATIVE_20261023.md)。v5冻结 `ab592bdf6` 已尝试L1-01／L1-02，**0项有效交付、118项未启动**。L1-01预算结束、QA unknown、ROOT质量FAIL；L1-02因重复检查正式取消、QA unknown、ROOT质量PARTIAL，两者资源闭合。真实下载和页面操作已亲检，不能据此补成原生交付。[当前修复蓝图](blueprints/POLARIS_NATIVE_TOOL_CONTEXT_CLOSURE_20261023.md)覆盖ToolSpec冷恢复、原子浏览器操作、预算一致性及候选QA短期工作状态；已完成436项相关／40项架构回归与KernelOne ALL12阶段的组件验证，正收尾主线提交；新冻结项目交付仍待实测。[机制实验](experiments/POLARIS_FEATURE_EVALUATION_20261022.md)保留完整历史与边界；[此前v4失败](history/POLARIS_ORIGINAL120_V4_L101_20261023.md)不改写。
+当前原120项进展：[v7运行与亲检报告](history/POLARIS_ORIGINAL120_V7_NATIVE_20261023.md)。本批冻结 `f71eb109a` 实际尝试L1-01，**0项有效交付、其余119项未在本批启动**；因验证后反复重写预览形成失效循环而正式取消，QA未调用、ProjectOutcome unknown，原生资源闭合。ROOT亲检94张原图中的11张，质量FAIL；历史[v5](history/POLARIS_ORIGINAL120_V5_NATIVE_20261023.md)等失败不改写。[离线Web入口方案](blueprints/POLARIS_OFFLINE_WEB_ORIGIN_20261023.md)已完成ToolSpec→KFS→隔离浏览器→持久化/冷重访接口、346项相关／40项架构回归、KernelOne ALL及独立复审，尚未取得新冻结交付。[实施计划](superpowers/plans/2026-10-23-offline-web-origin.md)与[机制实验记录](experiments/POLARIS_FEATURE_EVALUATION_20261022.md)分别记录组件和原生证据。
 
 此前特殊动画原生结果：[运行预算可见性 r06](experiments/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md)在冻结 `b41245103c47dcfae9dc7f4063861cc1ee9b1cac` 下完成 `7dd30e15505e42c098daf90602625d94`：原生 completed／passed／QA approved／accepted，ROOT task_success=yes、质量中等，车2分、其余五维3分；后齿轮传动和 reduced-motion 控件不一致两项缺陷保留。原生与 ROOT 已知资源闭合，无外部代修或代跑原生验收。17行机制只呈现原host deadline与准备时刻余量，不增停止规则；预算已送达并被注意，但 r05/r06 同时存在 T22 和随机输出差异，不能证明 H2 因果收益。401条工具观察含16失败、0pending；397 prepared／397 terminal 相位不是HTTP数，harness用量仅覆盖18观察，总用量／HTTP／账单／人工分钟仍 UNKNOWN。资格记录仍为588通过／1消费测试失败后相关9项通过，没有单次589通过；详见[蓝图](blueprints/POLARIS_RUNTIME_BUDGET_VISIBILITY_20261022.md)。
 

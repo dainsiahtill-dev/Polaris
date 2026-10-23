@@ -61,6 +61,8 @@ def role_instruction(role: str, *, visual: bool = False, require_visual_review: 
     if visual and role in {"director", "qa"}:
         text += (
             " You can use browser_observe to render a workspace-local HTML/SVG page and receive actual images. "
+            "For built pages with absolute assets, ES modules or CSS, supply web_root: a workspace-relative document "
+            "root containing entry. This provides an offline Web origin without regenerating the page; omit it for file mode. "
             "Inspect those images for appearance, composition, spatial relationships, clipping and motion; "
             "source text, a screenshot path and successful DOM tests do not establish visible correctness. "
             "Use multiple times or viewports when relevant. Controls support click, keypress, fill and select_option actions. Supply literal value for fill/select_option, including empty values and spaces. A single call can perform a complete action sequence within the host deadline; every call starts a fresh context. "
@@ -137,6 +139,10 @@ def register_browser_observation_tool() -> None:
                 "Render a workspace-local HTML or SVG entry in a fresh read-only offline browser and return actual images. "
                 "Alternatively supply only revisit_call_ids to inspect exact saved same-session same-role captures; "
                 "no browser is launched and old bindings stay unchanged. Original capture IDs/frames remain in tool results. "
+                "Use optional web_root for built-page absolute assets, ES modules and CSS: it is an authorized workspace "
+                "directory containing entry, served under a contained offline static origin without a server or target rewrites. "
+                "Omitting web_root retains file mode. Static mode accepts only same-origin GET/HEAD regular files, "
+                "blocks hidden paths and links, and limits snapshot reads to 16 MiB each/64 MiB total. "
                 "No workspace writes or remote resources. Frames are captured at absolute milliseconds after load, "
                 "after optional bounded actions. Maximum four JPEG frames, 1 MiB total; excess fails explicitly. "
                 "Use click/keypress or literal fill/select_option(value) actions; values retain exact text including empty strings and spaces. "
@@ -147,7 +153,7 @@ def register_browser_observation_tool() -> None:
             ),
             "parameter_any_of": [
                 {
-                    "properties": {"entry": {}, "viewport": {}, "frame_times_ms": {}, "actions": {}},
+                    "properties": {"entry": {}, "web_root": {}, "viewport": {}, "frame_times_ms": {}, "actions": {}},
                     "additionalProperties": False,
                 },
                 {
@@ -169,6 +175,14 @@ def register_browser_observation_tool() -> None:
                     "name": "entry",
                     "type": "string",
                     "description": "Workspace-relative HTML/SVG path, default index.html.",
+                },
+                {
+                    "name": "web_root",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": r"\S",
+                    "description": "Optional workspace-relative static document-root directory containing entry; same-origin offline assets only. Omit for file mode; exclusive with revisit_call_ids.",
                 },
                 {
                     "name": "viewport",

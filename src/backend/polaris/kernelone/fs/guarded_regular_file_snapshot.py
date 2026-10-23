@@ -910,6 +910,26 @@ def read_guarded_regular_file_snapshot(
         )
 
 
+def get_guarded_snapshot_runtime_source() -> str:
+    """Return this installed module's canonical source for a trusted runtime.
+
+    This bounded package-source read is independent of target-data read roots.
+    The returned UTF-8 source is the same implementation, not a second reader.
+    It includes write helpers and grants no authority: consumers must retain
+    their OS sandbox and invoke only the operations their policy authorizes.
+
+    Raises:
+        GuardedRegularFileSnapshotError: Package source cannot be read safely
+            or exceeds 256 KiB, including unavailable descriptor capabilities.
+        ValueError: The installed package path is not canonical.
+        UnicodeDecodeError: Package source is not strict UTF-8.
+    """
+
+    source_root = os.path.dirname(os.path.abspath(__file__))
+    snapshot = read_guarded_regular_file_snapshot(source_root, "guarded_regular_file_snapshot.py", 256 * 1024)
+    return snapshot.content.decode("utf-8")
+
+
 def guarded_confirm_regular_file_durability(
     root: str | PathLike[str],
     expected: GuardedRegularFileSnapshotV1,
