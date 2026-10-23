@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from polaris.kernelone.errors import ErrorCategory
+
 from .engine.contracts import Usage
 
 
@@ -16,6 +18,7 @@ class InvokeResult:
     raw: dict[str, Any] | None = None
     streaming: bool = False
     thinking: str | None = None
+    error_category: ErrorCategory | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -31,6 +34,8 @@ class InvokeResult:
             payload["raw"] = self.raw
         if self.thinking is not None:
             payload["thinking"] = self.thinking
+        if self.error_category is not None:
+            payload["error_category"] = self.error_category.value
         return payload
 
 

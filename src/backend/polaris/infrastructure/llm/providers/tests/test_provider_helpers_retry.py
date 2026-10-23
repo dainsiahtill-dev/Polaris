@@ -10,6 +10,7 @@ import requests
 from polaris.infrastructure.llm.providers import provider_helpers
 from polaris.infrastructure.llm.providers.provider_helpers import CircuitBreaker, invoke_with_retry
 from polaris.kernelone.common.clock import MockClock
+from polaris.kernelone.errors import ErrorCategory
 from polaris.kernelone.llm.engine.contracts import Usage, bind_physical_provider_dispatch_port
 
 
@@ -216,6 +217,7 @@ def test_http_5xx_returns_retryable_failure_without_local_backoff(monkeypatch) -
 
     assert result.ok is False
     assert "500 Server Error" in str(result.error)
+    assert getattr(result, "error_category", None) is ErrorCategory.SERVICE_UNAVAILABLE
     assert calls == 1
     assert clock.sleep_calls == []
 

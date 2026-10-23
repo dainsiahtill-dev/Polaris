@@ -1,0 +1,47 @@
+id: vc-20261024-provider-retry-delegation
+classification: structural
+status: component_qualified_main_integration_native_benefit_unverified
+owner: kernelone.llm
+producer: infrastructure.llm.shared_provider_helper
+baseline_commit: 27a5074135a22359707781686a93702f3839c043
+problem: Trusted delegated5xx failure becomes generic nonretryable PROVIDER_ERROR before existing request resilience.
+facts:
+  - NativeR02FAILED529_resources_closed_original_upper_env_UNKNOWN
+  - provider_retries2_timeout360_not_platform_budget
+  - actual_control_managers_attempts1_and2_no_environment_override
+  - same_original_body_200_success1_529_then200_failure1_402_failure1
+pre_mortem:
+  - Adding helper retries or globally retrying generic provider errors multiplies attempts.
+  - Mixing provider retries and request retry max changes original budget.
+  - Inferring category from arbitrary supplier text or changing body/tools/caps.
+  - Missing perattempt finalrequest evidence or rewriting historical state.
+mechanism: Optional typed delegated SERVICE_UNAVAILABLE through existing result/executor/request retry owner; actual policy audit in existing metadata.
+verification:
+  - current_route_exactbody_loopback_baseline_and_finalcandidate
+  - InvokeResult_default_encoding_compatibility_and_typed_producer_consumer
+  - caller_budget_exhaustion_explicit0_401_402_429_deadline_cancel_circuit
+  - real_engineering_tool_effect_atmostonce_after_model_recovery
+  - perdispatch_wire_snapshot_and_policy_metadata_body_unchanged
+stop_condition: Baseline and boundedcounterexamples/finalqualifiedcandidate pass beforemainintegration/freshnative.
+unverified:
+  - actual_upstream_recovery_and_delivery_benefit
+  - historical_native_upper_retry_budget
+results:
+  production_files: 3
+  actual_outer_inner_attempts: [1, 2]
+  baseline_529_then_200: 1POST_failed
+  candidate_529_then_200: 2POST_success
+  candidate_402: 1POST_failed
+  candidate_persistent_529: 2POST_failed_budget_exhausted
+  synthetic_engineering: 3POST_1tool_effect_not_project_acceptance
+  safety: 27passed
+  adjacent: 141passed
+  callback_final_cell: 13passed
+  root_static: ruff_format_mypy6_passed
+  root_architecture: 40passed
+  root_kernelone: ALL_12stages_passed
+  root_catalog: 159existing_115unique_0new_0mismatch
+  combined_manifest_files: 31
+  independent_review: no_P0_P1_found
+  native_delivery_success: false
+evidence_root: .polaris/audits/provider-529-recovery-20261024

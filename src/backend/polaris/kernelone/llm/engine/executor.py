@@ -14,6 +14,8 @@ import os
 import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
@@ -69,6 +71,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 FinalRequestReceiptSink = Callable[[dict[str, Any]], None]
+
+# Host-produced audit only: request/model metadata cannot supply this policy.
+_effective_caller_policy: ContextVar[dict[str, Any] | None] = ContextVar("llm_effective_caller_policy", default=None)
 
 _UNDERUTILIZED_WINDOW_THRESHOLD = 8000
 _UNDERUTILIZED_RATIO = 0.2
@@ -360,6 +365,7 @@ class AIExecutor:
         self.workspace = workspace
         self.telemetry = telemetry
         self.resilience = resilience or ResilienceManager()
+        self._host_resilience_policy = resilience is not None
         self.model_catalog = model_catalog or ModelCatalog(workspace=workspace or ".")
         self.token_budget = token_budget or TokenBudgetManager()
         self.final_request_receipt_sink = final_request_receipt_sink
@@ -526,10 +532,34 @@ class AIExecutor:
             )
 
         resilience = self._build_request_resilience(request)
-        return await resilience.execute_with_resilience(
-            _do_invoke,
-            operation_name=f"invoke_{request.task_type.value}",
-        )
+        retry = resilience.retry_config
+        timeout = resilience.timeout_config
+        policy = {
+            "owner": "AIExecutor.request",
+            "source": "self.resilience" if resilience is self.resilience else "request_options_and_provider_config",
+            "max_attempts": retry.max_attempts,
+            "retryable_categories": [category.value for category in retry.retryable_errors],
+            "transport_only": retry.transport_only,
+            "backoff": {
+                "base_delay": retry.base_delay,
+                "max_delay": retry.max_delay,
+                "exponential_base": retry.exponential_base,
+                "jitter": retry.jitter,
+            },
+            "timeout": {
+                "request_timeout": timeout.request_timeout,
+                "total_timeout": timeout.total_timeout,
+                "connect_timeout": timeout.connect_timeout,
+            },
+        }
+        token = _effective_caller_policy.set(policy)
+        try:
+            return await resilience.execute_with_resilience(
+                _do_invoke,
+                operation_name=f"invoke_{request.task_type.value}",
+            )
+        finally:
+            _effective_caller_policy.reset(token)
 
     def _build_request_resilience(self, request: AIRequest) -> ResilienceManager:
         """基于请求 options 构建弹性策略，确保 timeout/retry 配置生效。"""
@@ -551,10 +581,21 @@ class AIExecutor:
             # options contains invalid/unexpected values; fall back to default resilience manager
             return self.resilience
 
+        # Only this freshly constructed request policy accepts the helper's
+        # typed delegation. Explicit host category restrictions remain binding.
+        categories = list(
+            self.resilience.retry_config.retryable_errors
+            if self._host_resilience_policy
+            else retry_config.retryable_errors
+        )
+        if not self._host_resilience_policy and ErrorCategory.SERVICE_UNAVAILABLE not in categories:
+            categories.append(ErrorCategory.SERVICE_UNAVAILABLE)
+        retry_config = replace(retry_config, retryable_errors=categories)
         return ResilienceManager(
             timeout_config=timeout_config,
             retry_config=retry_config,
             truncation_config=self.resilience.truncation_config,
+            circuit_breaker=self.resilience.circuit_breaker,
         )
 
     async def _execute_invoke(
@@ -957,9 +998,10 @@ class AIExecutor:
                 metadata=self._traceability_metadata(request.context),
             )
         else:
+            category = getattr(result, "error_category", None)
             return AIResponse.failure(
                 error=str(result.error or "invoke_failed"),
-                category=ErrorCategory.PROVIDER_ERROR,
+                category=category if isinstance(category, ErrorCategory) else ErrorCategory.PROVIDER_ERROR,
                 latency_ms=latency_ms,
                 trace_id=trace_id,
                 # Carry the reasoning channel through the failure path so a
@@ -1163,6 +1205,11 @@ class AIExecutor:
         return {
             "schema_version": "llm.provider_request_snapshot.v1",
             "source": "kernelone.llm.engine.executor",
+            **(
+                {"effective_caller_policy": deepcopy(_effective_caller_policy.get())}
+                if _effective_caller_policy.get() is not None
+                else {}
+            ),
             "role": str(request.role or ""),
             "provider_id": str(model_spec.provider_id or ""),
             "provider_type": str(model_spec.provider_type or ""),

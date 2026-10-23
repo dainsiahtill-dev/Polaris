@@ -1,0 +1,9 @@
+# ADR：让现有request resilience拥有临时服务错误的重试
+
+状态：accepted；三个生产文件已实现，ROOT最终资格和独审通过，本次集成main；真实交付收益未证。现有shared helper有意只返回5xx可恢复失败，Executor的generic分类却使现有request retry owner无法接棒。InvokeResult当前无法携带该语义。
+
+决定：复用KernelOne错误类别与request ResilienceManager，通过可选typed错误类别贯通producer/result/executor/consumer；不在helper增加本地5xx循环、不提高任一预算、不新建工程控制器或重写历史FAILED。外层保持原策略，只有request级接委派，避免nested重试相乘。
+
+代价与验证：需迁移技术结果编码、未知旧结果、完整调用与逐attempt观测，执行政策写既有snapshot metadata而非模型prompt。相同原body下local529→200、budget耗尽、402与取消/期限/circuit反例完成后才能接受。原生上层环境未封存保持UNKNOWN。完整方案见根docs/blueprints/POLARIS_PROVIDER_RETRY_DELEGATION_20261024.md。
+
+接受证据：相同原body/deadline的本地529→200从1POST失败变2POST成功，连续529在原caller2耗尽、402仍1；工程夹具成功写入后恢复仅一次工具效果。27安全/141相邻、ROOT静态/架构40/K1 ALL十二阶段/目录0新增通过。原native预算UNKNOWN保留；源码与证据详见完整方案，不能声称真实上游或项目已恢复。

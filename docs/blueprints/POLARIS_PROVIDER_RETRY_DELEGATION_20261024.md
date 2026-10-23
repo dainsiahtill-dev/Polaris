@@ -1,0 +1,31 @@
+# 模型服务临时故障的重试委派
+
+状态：组件已实现并通过ROOT最终资格与独立审查；本次随源码直接集成main，真实项目收益待下一冻结批次验证。基线27a5074135a22359707781686a93702f3839c043。
+
+L1-06 R02（d179a72b2e3743fb9df2f7e23f2ab001）以529 overloaded_error终止，产物只有部分头文件/两个.cpp，正式验证和QA未到；FAILED与资源闭合事实保留。外部服务过载是真事实，不保证重试一定成功。shared helper的既有测试明确5xx无本地backoff、向上委派；Executor却把失败一概变PROVIDER_ERROR，上层request resilience拒绝重试。第一偏差是错误语义交接，不是retry次数太小。
+
+事实基线：原provider retries2/timeout360，native外层尝试1。原native上层环境值未归档，UNKNOWN。ROOT本地完整client/Executor/HTTP/capture实验：相同原final body，200为1POST成功，529→200为1POST失败、后续200未消费，402为1POST失败；每POST均有可读prepared/terminal最终请求。实读实际使用的两层manager分别max_attempts1/2，当前环境未设KERNELONE_PLATFORM_RETRY_MAX；provider retries2不等于平台的1次重试。后续耗尽对照按实际caller2，不照旧准备稿猜3。
+
+核心不变量：已由可信transport委派的临时故障不能在接口中丢失；只有现有AIExecutor request ResilienceManager承担该委派。保留shared helper无localbackoff意图、native外层1、所有配置/输出上限/工具/当前body/原deadline；不让inner/outer重试相乘，不把所有PROVIDER_ERROR变可重试，不改旧失败状态，不重播任何已经执行的工具。
+
+有限方案：复用已有ErrorCategory.SERVICE_UNAVAILABLE，在技术InvokeResult末尾增加可选typed error_category（默认None、旧编码不新增空字段、位置参数兼容）。shared helper只有真实HTTP5xx委派路径填写；不是根据供应商任意文本猜类别。Executor保留该类别，opaque/永久/语义错误继续原分类；仅request级retry policy消费SERVICE_UNAVAILABLE，避免改所有outer默认类别。401/402、429 Retry-After、circuit、取消/原deadline、显式0保持。无新controller、run表、ledger或模型需填写的业务协议。
+
+执行政策审计从现有实际request resilience对象产生，附在既有provider_request metadata，不能改模型body或授权；如需collector小迁移也服务这条边界。记录层级、实际max_attempts/退避/错误集合及来源；不能将当前默认推给历史。现有NativeRequestCapturePort逐dispatch复用，按call_id下capture_id/provider_request_id/dispatch_attempt_number对账，不把相位快照数当HTTP数。
+
+生产者：shared provider helper；契约：KernelOne InvokeResult；消费者：Executor、request resilience与既有snapshot builder；状态owner均复用现有KernelOne，工程事实仍由EngineeringRunService/SQLite拥有。旧未分类结果保留generic，不推断授权新retry；旧快照缺政策记UNKNOWN，读取不能补写。
+
+接受实验：ROOT原body loopback在旧源码529→200只1POST，修后在同实际caller预算下2POST成功；连续529只消费既有caller max_attempts（当前控制2），无第三；402仍1、200仍1；每请求相位/原body/作用域和期限一致。再以真实工程夹具验证模型请求恢复不会重复先前工具效果。source已存在的helper委派unit必须保留。覆盖explicit0、deadline/cancel/circuit、429与语义失败不retry；原预算耗尽仍可安全失败，不额外fallback模型。
+
+停止条件：原反例RED、最小修后GREEN、相邻接口/持久读取/政策审计、必要安全推进反例与发布检查通过，独审后main集成另开冻结批次。长期过载属于外部边界，不能用无限重试掩盖。此处不混入目录/缓存/长期记忆/其他语言功能；输出目录修复的完整原生收益仍未证。
+
+## 实施证据与适用边界
+
+实际只改三个生产文件：InvokeResult可选typed类别、真实5xx producer、Executor request级消费者与实际政策审计。政策来自选中的manager，通过请求级ContextVar隔离，finally复位；不读取模型伪造的政策，也不进入provider body。旧None编码和未知快照保持兼容。
+
+ROOT封存原R02最终body的SHA256为8ae94c425e5ef182ba921c76250cc5f9fb02104646cfde0a7ddf5b8abf23d7ac；相同body、原绝对deadline、provider2/360下，本地真实HTTP基线529后200只1POST失败，最终候选2POST成功；402仍1POST失败，连续529在2POST耗尽且第三响应未消费。实际manager外层1、内层2，未增加预算；原native上层环境仍UNKNOWN。所有POST与prepared/terminal快照的body、wire hash及capture身份已由ROOT和独审核对。这里替换了服务端响应和endpoint/key，不能证明真实上游恢复。
+
+回归记录：有效RED6失败/5通过，最终安全组27通过，callback类型修后Cell13通过，相邻141通过；各组重叠，不合计为独立数量。真实EngineeringRunService合成夹具先成功write，再529/200，总3POST、仅1工具启动/观察，产物只写一次；它没有正式验证/独立QA，不能算交付。
+
+ROOT最终Ruff/format、正确MYPYPATH的6文件mypy、40项架构、KernelOne ALL十二阶段、目录增量检查通过。目录159条既存/115种指纹、0新增、0manifest mismatch；没有宣称旧债清零。独审未发现P0/P1。union为31文件，资格和原始证据位于项目.polaris/audits/provider-529-recovery-20261024/（root-acceptance.json、combined-source-manifest.json、root/qualification、root/final-counter-comparison.json、implementation、independent-review）。
+
+源码接受标准已满足，研究停止并集成。下一项是相同原合同/模型/预算的全新隔离L1-06 R03，再由ROOT独立亲检质量与资源；R02 FAILED保持不变。长期过载、真实模型成本、全120项稳定性与优于其他Agent均未证。缓存单根和旧ContextOS保留策略为后续队列，不混入本次机制修复。

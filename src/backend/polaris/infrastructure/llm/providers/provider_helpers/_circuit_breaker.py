@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import requests
 from polaris.kernelone.common.clock import ClockPort, RealClock
+from polaris.kernelone.errors import ErrorCategory
 from polaris.kernelone.llm.engine.contracts import get_physical_provider_dispatch_port
 from polaris.kernelone.llm.response_parser import LLMResponseParser
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage
@@ -413,6 +414,7 @@ def invoke_with_retry(
                         error=(
                             f"{status_code} Server Error from {url}: {error_body[:500] if error_body else '(empty)'}"
                         ),
+                        error_category=ErrorCategory.SERVICE_UNAVAILABLE,
                     )
                 if isinstance(status_code, int) and status_code == 429:
                     # Rate limiting (429) is transient, NOT a hard client error:
