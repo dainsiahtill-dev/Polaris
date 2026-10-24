@@ -1,6 +1,8 @@
 # Polaris 文档阅读入口
 
-最新机制：[Verifier管道失败传播](blueprints/POLARIS_VERIFIER_EXECUTION_POLICY_20261024.md)已完成实际生产链RED/GREEN、18项回归、冷恢复/旧编码修复、独审及ROOT最终架构40/KernelOne ALL十二阶段/catalog零新增；普通Director/QA仍POSIX。只证明限定执行语义，新的L1-10尚未启动。
+最新实测：[v16 L1-10](history/POLARIS_ORIGINAL120_V16_L110_20261024.md)原生completed/passed/QA approved/accepted，10项正式验证、资源自动闭合；ROOT真实网页拖画和四份下载SVG亲检发现100%单一情绪色轮消失，产物FAIL。12次尝试/10项目/12次终态质量判断，严格交付仍1项、110项未启动。下一原目录L2-11尚未启动。
+
+机制进展：[Verifier管道失败传播](blueprints/POLARIS_VERIFIER_EXECUTION_POLICY_20261024.md)已在本项真实运行消费并持久绑定，首败后同Director合法推进；源代码资格仍见原实验。QA获取真实导出图的路径存在缺口，待有限反例/正控验证，不能用增加合同替代。以下旧条目是各自当时的历史检查点。
 
 
 最新实测：[v15 L1-09](history/POLARIS_ORIGINAL120_V15_L109_20261024.md)原生interrupted、最新四项检查真实通过、QA超时unknown，资源需外部协助；ROOT35次只读CLI/5图发现温度身份错配及公开规则不一致，产物FAIL2。累计11次尝试/9项目/11次终态亲检，严格交付仍1项、111项未启动。管道假绿已实证复现；该冻结版本未包含修复。最小Rust目录模块对照在能力/图像保持时将该组绑定49.66秒降至3.95秒，不代表全平台提速。
