@@ -188,7 +188,7 @@ def _normalize_workspace_alias_path(value: Any) -> str:
     # Keep non-leading ``./`` segments and do not invent absolute roots.
     while token.startswith("./"):
         token = token[2:]
-    return token
+    return token or "."
 
 
 # ============================================================================

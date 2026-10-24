@@ -1,6 +1,6 @@
 # Engineering observation and resource settlement
 
-Status: implementation on main under ROOT integration qualification. Targeted component checks and independent task reviews have run; final qualification and fresh unattended acceptance are pending. Baseline main: `fbc96f8e106522c6e685f66264b920c3dd292e16`.
+Status: qualified and validated in the fresh frozen v20 L2-13 run at `52f09d48e60f016ebdd3bf16314e899628d178a0`: current candidate61 accepted, automatic resource closure, and ROOT's12 finite business groups passed with nonblocking UX findings. This is bounded module/project evidence, not platform-wide stability or causal performance proof. Baseline main: `fbc96f8e106522c6e685f66264b920c3dd292e16`. See [the native and personal quality report](../history/POLARIS_ORIGINAL120_V20_L213_20261024.md).
 
 ## Problem and first deviation
 
@@ -66,7 +66,7 @@ Research stops when the minimum counterexamples fail old/pass new and adjacent s
 
 ## Component evidence and limits
 
-ROOT independently repeated the actual32-file K1/Store/KFS fixture: two captures/64reads/524288bytes became one capture/32reads/262144bytes, with verification, synthetic rejected QA and outcome unchanged. Counts establish this mechanism only; tiny-fixture elapsed time does not establish native latency benefit. Task A's original20-file regression passed385tests after narrowly correcting scripted-provider exhaustion and a test producer's leaked process environment; one intermediate cold-child exit remains unexplained and preserved. Task B's generic-envelope and partial-stop counterexamples have separate RED/GREEN and independent review records. Final candidate gates and a fresh frozen run remain required.
+ROOT independently repeated the actual32-file K1/Store/KFS fixture: two captures/64reads/524288bytes became one capture/32reads/262144bytes, with verification, synthetic rejected QA and outcome unchanged. Counts establish this mechanism only; tiny-fixture elapsed time does not establish native latency benefit. Task A's original20-file regression passed385tests after narrowly correcting scripted-provider exhaustion and a test producer's leaked process environment; one intermediate cold-child exit remains unexplained and preserved. Task B's generic-envelope and partial-stop counterexamples have separate RED/GREEN and independent review records. These component results must be read together with the later qualification and frozen v20 native evidence linked above; they did not by themselves establish unattended delivery.
 
 Initial synchronous observations inside create/admission, wait and cancel/resume orchestration remain outside this candidate's read-adapter scheduling guarantee. No blanket all-workload responsiveness, superior QA quality, lower cost or full-platform completion is asserted.
 

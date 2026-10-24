@@ -1,6 +1,10 @@
 # Polaris 文档阅读入口
 
-当前机制：[命令产物与独立QA视觉交接](blueprints/POLARIS_COMMAND_ARTIFACT_HANDOFF_20261024.md)已完成生产交接、原子提交/冷读/权限/真实图像请求实验，ROOT554相关回归/40架构/K1 ALL十二阶段/目录零新增和完整独审通过；真实模型收益及新冻结L2-11尚未验收，不升级历史L1-10。
+当前实测：[v20 L2-13 完整交付与个人复核](history/POLARIS_ORIGINAL120_V20_L213_20261024.md)：冻结52f09d48e，原生completed/passed/QA approved/accepted、自动资源闭合；ROOT12组业务/69次HTTP/六张原图亲检在观察范围通过，JSON表单反馈和状态用词两项体验问题保留。累计16次尝试/13项目/2次限定范围严格交付，107项未启动；不同版本数据不是稳定成功率，旧v19超时/人工收尾不改写。
+
+当前机制：[工程观察与资源收尾](blueprints/POLARIS_ENGINEERING_OBSERVATION_SETTLEMENT_20261024.md)已通过真实模块反例、622相关回归、40架构、K1 ALL及独审，并完成上述新冻结项目验证。[命令产物与QA视觉交接](blueprints/POLARIS_COMMAND_ARTIFACT_HANDOFF_20261024.md)首次在该原生运行中实际导出SVG并供QA浏览器消费，实际图像进入最终请求；不据此宣称比其他上下文/Agent更优。以下条目保留各自历史检查点。
+
+历史机制检查点：[命令产物与独立QA视觉交接](blueprints/POLARIS_COMMAND_ARTIFACT_HANDOFF_20261024.md)当时已完成生产交接、原子提交/冷读/权限/真实图像请求实验，ROOT554相关回归/40架构/K1 ALL十二阶段/目录零新增和完整独审通过；当时真实模型收益及新冻结L2-11尚未验收，不升级历史L1-10。
 
 最新实测：[v16 L1-10](history/POLARIS_ORIGINAL120_V16_L110_20261024.md)原生completed/passed/QA approved/accepted，10项正式验证、资源自动闭合；ROOT真实网页拖画和四份下载SVG亲检发现100%单一情绪色轮消失，产物FAIL。12次尝试/10项目/12次终态质量判断，严格交付仍1项、110项未启动。下一原目录L2-11尚未启动。
 
