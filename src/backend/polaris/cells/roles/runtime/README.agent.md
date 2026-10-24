@@ -61,6 +61,14 @@ Committed engineering facts publish as `event.engineering` through the existing 
 
 The existing `request_prepared` event records derived visual selection counts and attribution reasons. It is auxiliary input-production evidence, not a sent provider body. KernelOne budget and native protocol guards still decide admission; required/current/reference content that exceeds the budget remains an explicit failure. Serialized estimates are not actual visual token costs. This projection does not restore the retired StateFirst/TurnEngine business chain.
 
+## Current observation and resource settlement candidate
+
+The observation/settlement change shares one host-captured KFS input manifest within a public query's verification, QA and visual applicability checks. It resets on exit; later queries, ordinary verifier calls and cold reads still capture actual inputs. No model or HTTP argument can supply that authoritative observation. HTTP run/current/request reads and final action-response projection/encoding use the existing bounded KernelOne IO pool. Initial synchronous observations inside admission/wait/cancel/resume are outside this candidate's scheduling guarantee and remain a known limitation.
+
+`public.engineering_resource_state.query_engineering_resource_state` is a read-only facet of the existing canonical engineering store, without creating/migrating/recovering a run. Exact terminal/drain/release/quiescence facts can permit settlement through InstanceSupervisor even if fresh artifact observation is unavailable. That does not produce accepted: current source/QA uncertainty stays UNKNOWN. Missing identity, unsupported historical release evidence, active work and unresolved effects remain fenced. Partial process closure is recorded by the existing instance owner and only explains its own confirmed monotonic progress; it never makes replacement or unknown processes safe to signal.
+
+Implementation evidence and limits are tracked in `.polaris/audits/engineering-observation-liveness-20261024/` and [the blueprint](../../../../../../docs/blueprints/POLARIS_ENGINEERING_OBSERVATION_SETTLEMENT_20261024.md). Targeted checks and task reviews are not final source qualification or fresh unattended delivery. Historical L2-13 remains native completed/QA approved but observation-timeout/ROOT-assisted resource closure; its finite business checks do not upgrade that lifecycle failure.
+
 ## Historical compatibility and optional utilities
 
 `public/service.py`, old DTO exports and declared dependencies on role/kernel/session/task-market/Factory cells describe retained historical readers, serialization and explicitly optional utilities. Their presence is not new-run admission. Legacy writable `RoleRuntimeService`, `execute_role_session`, `RoleExecutionKernel` and Factory protocol paths are retired for new execution; old in-flight runs remain on their original frozen owner.

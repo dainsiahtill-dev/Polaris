@@ -6,6 +6,7 @@ exclude this directory from both direct writes and command sandbox mounts.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -15,7 +16,7 @@ import sqlite3
 import stat
 import time
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager, suppress
+from contextlib import closing, contextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
 from threading import RLock
@@ -1241,3 +1242,149 @@ class EngineeringSessionStore:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
         finally:
             os.close(descriptor)
+
+
+_RESOURCE_QUERY_LIMIT = 256
+
+
+def query_resource_state(
+    workspace: Path | str, *, session_id: str | None = None, request_key: str | None = None
+) -> dict[str, Any]:
+    """Read lifecycle facts from this owner's existing store without initializing it.
+
+    ``run_ended.release_allowed`` is emitted only after the execution owner's
+    physical drain succeeded. It is lifecycle evidence, never fresh acceptance.
+    SQLite supplies one consistent snapshot; namespace checks fence replacement.
+    """
+    result: dict[str, Any] = {
+        "schema_version": "engineering.resource_state.v1",
+        "status": "unknown",
+        "acceptance": "unknown",
+        "safe_to_stop": False,
+        "active_runs": [],
+        "pending_tool_calls": [],
+        "reconciled_tool_calls": [],
+    }
+    try:
+        from polaris.kernelone.storage.layout import resolve_storage_roots_read_only
+
+        root = Path(workspace).expanduser().resolve(strict=True)
+        roots = resolve_storage_roots_read_only(str(root))
+        runtime = Path(roots.runtime_root)
+        result.update(workspace=str(root), runtime_root=str(runtime))
+        # The current session writer owns this project-local namespace. A
+        # differently configured namespace cannot be silently replaced by it.
+        if runtime != root / ".polaris" / "runtime":
+            raise PermissionError("engineering runtime namespace differs from session owner")
+        database = runtime / "engineering" / "sessions.sqlite3"
+        identities = {}
+        for path in (root, root / ".polaris", runtime, database.parent, database):
+            metadata = path.lstat()
+            expected_kind = stat.S_ISREG if path == database else stat.S_ISDIR
+            if not expected_kind(metadata.st_mode) or (path == database and metadata.st_nlink != 1):
+                raise PermissionError("unsafe engineering resource namespace")
+            identities[path] = (metadata.st_dev, metadata.st_ino)
+        result["namespace_identity"] = {str(path): list(identity) for path, identity in identities.items()}
+        deadline = time.monotonic() + 1.0
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.1)) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+            connection.execute("PRAGMA query_only=ON")
+            connection.execute("BEGIN")
+            active = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT session_id,status FROM runs WHERE status IN ('pending','running') LIMIT ?",
+                    (_RESOURCE_QUERY_LIMIT + 1,),
+                )
+            ]
+            started = connection.execute(
+                "SELECT session_id,turn_seq,call_id,tool,status FROM tool_calls WHERE status='started' LIMIT ?",
+                (_RESOURCE_QUERY_LIMIT + 1,),
+            ).fetchall()
+            if len(active) > _RESOURCE_QUERY_LIMIT or len(started) > _RESOURCE_QUERY_LIMIT:
+                raise ValueError("engineering resource facts exceed bounded query")
+            pending, reconciled = [], []
+            for call in started:
+                events = connection.execute(
+                    "SELECT payload FROM events WHERE session_id=? AND kind='tool_reconciled' "
+                    "AND json_extract(payload,'$.turn_seq')=? AND json_extract(payload,'$.call_id')=? LIMIT 2",
+                    (call["session_id"], call["turn_seq"], call["call_id"]),
+                ).fetchall()
+                payload = json.loads(events[0]["payload"]) if len(events) == 1 else None
+                if (
+                    isinstance(payload, dict)
+                    and payload.get("original_effect") == "unknown"
+                    and payload.get("continuation_basis") == "current_file_matches_requested_write"
+                ):
+                    reconciled.append(
+                        {
+                            **dict(call),
+                            "original_effect": "unknown",
+                            "continuation_basis": payload["continuation_basis"],
+                        }
+                    )
+                else:
+                    pending.append(dict(call))
+            result.update(
+                status="readable", active_runs=active, pending_tool_calls=pending, reconciled_tool_calls=reconciled
+            )
+            row = None
+            if session_id or request_key:
+                rows = connection.execute(
+                    "SELECT session_id,workspace,engine_version,request_key,status,instruction,workflow,required_checks,permission_profile_id FROM runs "
+                    "WHERE (? IS NULL OR session_id=?) AND (? IS NULL OR request_key=?) LIMIT 2",
+                    (session_id, session_id, request_key, request_key),
+                ).fetchall()
+                if len(rows) != 1:
+                    raise ValueError("engineering resource identity missing or ambiguous")
+                row = rows[0]
+                if row["workspace"] != str(root):
+                    raise PermissionError("stored engineering resource workspace mismatch")
+                result.update(
+                    run_id=row["session_id"],
+                    engine_version=row["engine_version"],
+                    run_status=row["status"],
+                    request_identity={
+                        "request_key": row["request_key"],
+                        "instruction_sha256": hashlib.sha256(row["instruction"].encode("utf-8")).hexdigest(),
+                        "workflow": row["workflow"],
+                        "required_checks": json.loads(row["required_checks"]),
+                        "permission_profile_id": row["permission_profile_id"],
+                    },
+                )
+                terminal = connection.execute(
+                    "SELECT seq,kind,payload FROM events WHERE session_id=? AND kind='run_ended' ORDER BY seq DESC LIMIT 1",
+                    (row["session_id"],),
+                ).fetchone()
+                if terminal is not None:
+                    payload = json.loads(terminal["payload"])
+                    if not isinstance(payload, dict):
+                        raise ValueError("engineering terminal event payload must be an object")
+                    release = payload.get("release_allowed") is True and payload.get("drain_reporting_error") is None
+                    later_work = connection.execute(
+                        "SELECT 1 FROM events WHERE session_id=? AND seq>? AND kind IN ('run_started','run_resumed','role_started','tool_started','verification_started') LIMIT 1",
+                        (row["session_id"], terminal["seq"]),
+                    ).fetchone()
+                    result.update(
+                        latest_terminal={"seq": terminal["seq"], "kind": terminal["kind"], "payload": payload},
+                        release_allowed=release,
+                        drain_confirmed=release,
+                    )
+                    result["safe_to_stop"] = bool(
+                        row["engine_version"] == "engineering_v2"
+                        and row["status"] in {"completed", "cancelled", "failed", "interrupted"}
+                        and payload.get("status") == row["status"]
+                        and release
+                        and later_work is None
+                        and not active
+                        and not pending
+                    )
+            for path, identity in identities.items():
+                metadata = path.lstat()
+                if (metadata.st_dev, metadata.st_ino) != identity:
+                    raise PermissionError("engineering resource namespace changed during query")
+        return result
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError, sqlite3.Error) as error:
+        result.update(status="unknown", safe_to_stop=False, error_type=type(error).__name__)
+        return result

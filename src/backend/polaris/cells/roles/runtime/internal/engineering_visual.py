@@ -404,7 +404,9 @@ def require_current_visual_input(
     # A later read-only check creates a receipt sequence without changing the
     # rendered candidate. Every actual input, scope and revision still binds.
     candidate = _visual_candidate_binding(current_binding)
-    events = store.load_events(session_id)
+    events = store.load_events(
+        session_id, kinds=("visual_observation_completed", "tool_observed", "llm_request_observed"), role=role
+    )
     physical: Counter[str] = Counter()
     for event in events:
         payload = event["payload"]

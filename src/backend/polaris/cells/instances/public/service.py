@@ -45,8 +45,11 @@ class PublicInstanceSupervisor:
     def start_instance(self, request: dict[str, Any]) -> dict[str, Any]:
         return self._delegate.start_instance(request)
 
-    def stop_instance(self, instance_id: str) -> dict[str, Any]:
-        return self._delegate.stop_instance(instance_id)
+    def stop_instance(
+        self, instance_id: str, *, engineering_settlement: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Forward optional engineering.resource_settlement.v1 proof to the owner."""
+        return self._delegate.stop_instance(instance_id, engineering_settlement=engineering_settlement)
 
     def restart_instance(self, instance_id: str) -> dict[str, Any]:
         return self._delegate.restart_instance(instance_id)

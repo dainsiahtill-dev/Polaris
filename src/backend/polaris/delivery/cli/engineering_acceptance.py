@@ -12,7 +12,6 @@ import hashlib
 import json
 import os
 import re
-import sqlite3
 import stat
 import sys
 import time
@@ -24,6 +23,7 @@ from typing import Any, Protocol
 from urllib.parse import quote, urlencode, urlparse
 from uuid import uuid4
 
+from polaris.cells.roles.runtime.public.engineering_resource_state import query_engineering_resource_state
 from polaris.kernelone.fs.text_ops import write_text_atomic
 
 PROJECT_BUDGET_SECONDS = 5400
@@ -78,9 +78,13 @@ class LaunchInputs:
 
 
 class SupervisorPort(Protocol):
+    """Platform instance effects; settlement accepts engineering.resource_settlement.v1."""
+
     def start_instance(self, request: dict[str, Any]) -> dict[str, Any]: ...
     def health(self, instance_id: str) -> dict[str, Any]: ...
-    def stop_instance(self, instance_id: str) -> dict[str, Any]: ...
+    def stop_instance(
+        self, instance_id: str, *, engineering_settlement: dict[str, Any] | None = None
+    ) -> dict[str, Any]: ...
 
 
 class HTTPPort(Protocol):
@@ -772,7 +776,7 @@ def observe(
                 )
                 report = _observed_result(binding, snapshot, client, now())
             except Exception as error:  # noqa: BLE001 - preserve unknown boundary outcomes without replay.
-                report = {"harness_status": "UNKNOWN", "exit_code": 2, "error_type": type(error).__name__}
+                report = _resource_unknown(binding, error)
             if wait and now() >= binding["overall_deadline_epoch"]:
                 report.update(harness_status="TIMEOUT", exit_code=124, implicit_cancel=False)
                 return _record(binding, report)
@@ -784,7 +788,7 @@ def observe(
                 return _record(binding, report)
             sleep(1)
     except Exception as error:  # noqa: BLE001 - recovery reads never imply a safe mutation replay.
-        return _record(binding, {"harness_status": "UNKNOWN", "exit_code": 2, "error_type": type(error).__name__})
+        return _record(binding, _resource_unknown(binding, error))
     finally:
         if client is not None:
             client.close()
@@ -816,45 +820,45 @@ def cancel(
 
 
 def _read_activity(workspace: Path) -> dict[str, Any]:
-    database = workspace / ".polaris" / "runtime" / "engineering" / "sessions.sqlite3"
-    try:
-        # Read-only canonical SQL is an independent internal operational check,
-        # never a second execution store or a source of acceptance verdicts.
-        with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
-            connection.row_factory = sqlite3.Row
-            active = [
-                dict(row)
-                for row in connection.execute(
-                    "SELECT session_id,status FROM runs WHERE status IN ('pending','running')"
-                )
-            ]
-            started = [
-                dict(row)
-                for row in connection.execute(
-                    "SELECT session_id,turn_seq,call_id,tool,status FROM tool_calls WHERE status='started'"
-                )
-            ]
-            reconciled = {
-                (row["session_id"], payload["turn_seq"], payload["call_id"])
-                for row in connection.execute("SELECT session_id,payload FROM events WHERE kind='tool_reconciled'")
-                if isinstance((payload := json.loads(row["payload"])), dict)
-                and isinstance(payload.get("turn_seq"), int)
-                and isinstance(payload.get("call_id"), str)
-            }
-        pending = [row for row in started if (row["session_id"], row["turn_seq"], row["call_id"]) not in reconciled]
-        retained = [
-            {**row, "original_effect": "unknown", "continuation_basis": "canonical_tool_reconciled_event"}
-            for row in started
-            if (row["session_id"], row["turn_seq"], row["call_id"]) in reconciled
-        ]
-        return {
-            "status": "readable",
-            "active_runs": active,
-            "pending_tool_calls": pending,
-            "reconciled_tool_calls": retained,
+    """Compatibility activity projection; semantics remain with the store owner."""
+    return query_engineering_resource_state(workspace)
+
+
+def _resource_state(binding: dict[str, Any]) -> dict[str, Any]:
+    plan = binding["plan"]
+    state = query_engineering_resource_state(
+        plan["workspace"],
+        session_id=binding.get("run_id"),
+        request_key=binding["request_key"],
+    )
+    if state.get("status") != "readable":
+        return state
+    if not binding.get("run_id"):
+        expected = {
+            "request_key": binding["request_key"],
+            "instruction_sha256": hashlib.sha256(plan["instruction"].encode("utf-8")).hexdigest(),
+            "workflow": plan.get("workflow", "collaborative"),
+            "required_checks": plan["required_checks"],
+            "permission_profile_id": plan["permission_profile_id"],
         }
-    except (OSError, ValueError, sqlite3.Error) as error:
-        return {"status": "unknown", "error_type": type(error).__name__}
+        if state.get("engine_version") != "engineering_v2" or state.get("request_identity") != expected:
+            return {**state, "status": "unknown", "safe_to_stop": False}
+        binding["run_id"] = state["run_id"]
+        binding["request_recovered"] = True
+        _write(Path(plan["evidence_dir"]) / "binding.json", binding)
+    return state
+
+
+def _resource_unknown(binding: dict[str, Any], error: Exception) -> dict[str, Any]:
+    state = _resource_state(binding)
+    return {
+        "harness_status": "UNKNOWN",
+        "exit_code": 2,
+        "error_type": type(error).__name__,
+        "platform": {"status": state.get("run_status"), "project_outcome": "unknown", "verification": "unknown"},
+        "resource_state": state,
+        "delivery_proven": False,
+    }
 
 
 def _process_alive(pid: int) -> bool | None:
@@ -881,18 +885,10 @@ def stop(
     try:
         _recover_instance(binding, owner)
         before_request = binding.get("request_attempted") is False and not binding.get("run_id")
-        snapshot: dict[str, Any] = {}
-        if not before_request:
-            client = http_factory(binding)
-            _recover_request(binding, client)
-            snapshot = client.request(
-                "GET",
-                f"/v2/engineering/runs/{binding['run_id']}?" + urlencode({"workspace": binding["plan"]["workspace"]}),
-            )
-            _validate_snapshot(snapshot, binding)
         activity = activity_reader(Path(binding["plan"]["workspace"]))
+        resource = _resource_state(binding) if not before_request else activity
         if (
-            (not before_request and snapshot.get("status") not in _TERMINAL)
+            (not before_request and resource.get("safe_to_stop") is not True)
             or activity.get("status") != "readable"
             or activity.get("active_runs")
             or activity.get("pending_tool_calls")
@@ -902,13 +898,22 @@ def stop(
                 {
                     "harness_status": "UNKNOWN",
                     "exit_code": 2,
-                    "platform": _platform_fields(snapshot),
-                    "resources": {"stop_performed": False, "canonical_activity": activity},
+                    "resources": {"stop_performed": False, "canonical_activity": activity, "resource_state": resource},
                 },
             )
         current = owner.health(binding["plan"]["instance_id"])
         _validate_instance(current, binding)
-        owner.stop_instance(binding["plan"]["instance_id"])
+        owner.stop_instance(
+            binding["plan"]["instance_id"],
+            engineering_settlement={
+                "schema_version": "engineering.resource_settlement.v1",
+                "instance": binding["instance"],
+                "run_id": binding.get("run_id"),
+                "request_key": binding["request_key"],
+                "request_attempted": not before_request,
+                "resource_namespace_identity": resource.get("namespace_identity"),
+            },
+        )
         after = owner.health(binding["plan"]["instance_id"])
         _validate_instance(after, binding)
         pids = [
@@ -926,7 +931,11 @@ def stop(
             {
                 "harness_status": "STOPPED" if released else "UNKNOWN",
                 "exit_code": 0 if released else 2,
-                "platform": _platform_fields(snapshot),
+                "platform": {
+                    "status": resource.get("run_status"),
+                    "project_outcome": "unknown",
+                    "verification": "unknown",
+                },
                 "resources": {
                     "stop_performed": True,
                     "instance_after": _public_instance(after),

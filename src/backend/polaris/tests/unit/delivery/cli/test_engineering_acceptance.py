@@ -79,6 +79,7 @@ class FakeSupervisor:
     def __init__(self) -> None:
         self.starts: list[dict[str, Any]] = []
         self.stops: list[str] = []
+        self.settlements: list[dict[str, Any] | None] = []
         self.record: dict[str, Any] = {}
         self.start_environment: dict[str, str | None] = {}
 
@@ -106,8 +107,14 @@ class FakeSupervisor:
     def health(self, _instance_id: str) -> dict[str, Any]:
         return dict(self.record)
 
-    def stop_instance(self, instance_id: str) -> dict[str, Any]:
+    def stop_instance(
+        self, instance_id: str, *, engineering_settlement: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        assert engineering_settlement is not None
+        assert engineering_settlement["schema_version"] == "engineering.resource_settlement.v1"
+        assert not ({"plan", "owner_id", "internal_test_only"} & engineering_settlement.keys())
         self.stops.append(instance_id)
+        self.settlements.append(engineering_settlement)
         self.record.update(
             status="stopped", backend_alive=False, frontend_alive=False, backend_pid=None, frontend_pid=None
         )
@@ -310,7 +317,12 @@ def test_stop_refuses_live_work_and_stops_only_exact_owned_terminal_instance(tmp
     supervisor = FakeSupervisor()
     http = FakeHTTP(inputs.workspace)
     module.launch(inputs, supervisor=supervisor, http_factory=lambda _binding: http)
-    http.snapshot.update(status="running", project_outcome="not_accepted")
+    from polaris.cells.roles.runtime.tests.test_engineering_resource_state import create
+
+    store = create(inputs.workspace, session_id="server-run", status="running")
+    binding = json.loads((inputs.evidence_dir / "binding.json").read_text(encoding="utf-8"))
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("UPDATE runs SET request_key=?", (binding["request_key"],))
     result = module.stop(
         inputs.evidence_dir / "binding.json",
         supervisor=supervisor,
@@ -319,7 +331,13 @@ def test_stop_refuses_live_work_and_stops_only_exact_owned_terminal_instance(tmp
         process_probe=lambda _pid: False,
     )
     assert result["harness_status"] == "UNKNOWN" and not supervisor.stops
-    http.snapshot.update(status="cancelled")
+    store.update_run("server-run", status="cancelled")
+    store.append_event(
+        "server-run",
+        kind="run_ended",
+        role="director",
+        payload={"status": "cancelled", "release_allowed": True, "drain_reporting_error": None},
+    )
     result = module.stop(
         inputs.evidence_dir / "binding.json",
         supervisor=supervisor,
@@ -340,7 +358,7 @@ def test_stop_refuses_live_work_and_stops_only_exact_owned_terminal_instance(tmp
         process_probe=lambda _pid: False,
     )
     assert result["harness_status"] == "STOPPED" and supervisor.stops == ["acceptance-case-1"]
-    assert result["platform"]["project_outcome"] == "not_accepted"
+    assert result["platform"]["project_outcome"] == "unknown"
 
 
 def test_internal_test_flag_is_required_before_any_launch() -> None:
@@ -482,7 +500,14 @@ def test_readonly_activity_respects_committed_reconciliation_without_erasing_unk
             (
                 "run",
                 "tool_reconciled",
-                json.dumps({"turn_seq": 3, "call_id": "old-write", "original_effect": "unknown"}),
+                json.dumps(
+                    {
+                        "turn_seq": 3,
+                        "call_id": "old-write",
+                        "original_effect": "unknown",
+                        "continuation_basis": "current_file_matches_requested_write",
+                    }
+                ),
             ),
         )
     result = module._read_activity(tmp_path)
@@ -601,6 +626,7 @@ class LostCreateReplyHTTP(FakeHTTP):
 
     def __init__(self, workspace: Path) -> None:
         super().__init__(workspace)
+        self.workspace = workspace
         self.identity: dict[str, Any] = {}
         self.lookup_error: Exception | None = None
 
@@ -615,6 +641,37 @@ class LostCreateReplyHTTP(FakeHTTP):
                 "required_checks": list(payload["required_checks"]),
                 "permission_profile_id": payload["permission_profile_id"],
             }
+            from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
+            from polaris.cells.roles.runtime.public.contracts.engineering_run import (
+                PermissionScope,
+                RoleRunCommand,
+                RunLimits,
+            )
+
+            self.workspace.mkdir(parents=True, exist_ok=True)
+            store = EngineeringSessionStore(self.workspace)
+            store.create_run(
+                RoleRunCommand(
+                    "server-run",
+                    "director",
+                    payload["instruction"],
+                    self.workspace,
+                    payload["workflow"],
+                    tuple(payload["required_checks"]),
+                ),
+                scope=PermissionScope((self.workspace,), (), frozenset({"read_file"}), False),
+                limits=RunLimits(1900000000.0, 10000, 2000),
+                engine_version="engineering_v2",
+                request_key=payload["request_key"],
+                permission_profile_id=payload["permission_profile_id"],
+            )
+            store.update_run("server-run", status="completed", verification="passed")
+            store.append_event(
+                "server-run",
+                kind="run_ended",
+                role="director",
+                payload={"status": "completed", "release_allowed": True, "drain_reporting_error": None},
+            )
             raise TimeoutError("synthetic durable create succeeded; HTTP response lost")
         if method == "GET" and path.startswith("/v2/engineering/requests/"):
             self.calls.append((method, path, payload))
@@ -735,10 +792,13 @@ def test_lost_create_reply_recovers_exact_request_before_observe_cancel_or_stop(
     assert recovered["run_id"] == "server-run"
     assert recovered["request_key"] == before["request_key"]
     assert recovered["overall_deadline_epoch"] == before["overall_deadline_epoch"]
-    lookup = http.calls[1]
-    assert lookup[0] == "GET"
-    assert urlparse(lookup[1]).path == "/v2/engineering/requests/" + before["request_key"]
-    assert parse_qs(urlparse(lookup[1]).query) == {"workspace": [str(inputs.workspace)]}
+    if operation != "stop":
+        lookup = http.calls[1]
+        assert lookup[0] == "GET"
+        assert urlparse(lookup[1]).path == "/v2/engineering/requests/" + before["request_key"]
+        assert parse_qs(urlparse(lookup[1]).query) == {"workspace": [str(inputs.workspace)]}
+    else:
+        assert len(http.calls) == 1, "resource settlement must not depend on artifact HTTP"
     assert sum(method == "POST" and path == "/v2/engineering/runs" for method, path, _ in http.calls) == 1
     assert not any("/runs/None" in path for _method, path, _body in http.calls)
     if operation == "stop":
@@ -783,6 +843,7 @@ def test_absent_lookup_keeps_inflight_request_unknown_and_never_stops_or_reposts
     http = LostCreateReplyHTTP(inputs.workspace)
     module.launch(inputs, supervisor=supervisor, http_factory=lambda _binding: http)
     http.lookup_error = LookupError("synthetic lookup404; request may still commit")
+    (inputs.workspace / ".polaris/runtime/engineering/sessions.sqlite3").unlink()
     result = module.stop(
         inputs.evidence_dir / "binding.json",
         supervisor=supervisor,
@@ -791,11 +852,10 @@ def test_absent_lookup_keeps_inflight_request_unknown_and_never_stops_or_reposts
     )
     assert result["harness_status"] == "UNKNOWN"
     assert not supervisor.stops
-    assert len(http.calls) == 2
-    assert http.calls[1][0] == "GET" and "/requests/" in http.calls[1][1]
+    assert len(http.calls) == 1, "missing canonical identity refuses without replay or HTTP inference"
 
 
-@pytest.mark.parametrize("changed", ["polaris_root", "endpoint", "shared_backend"])
+@pytest.mark.parametrize("changed", ["polaris_root", "endpoint", "shared_backend", "owner"])
 def test_stop_refuses_changed_source_endpoint_or_shared_backend_despite_same_nonce(
     tmp_path: Path, changed: str
 ) -> None:
@@ -804,10 +864,19 @@ def test_stop_refuses_changed_source_endpoint_or_shared_backend_despite_same_non
     supervisor = FakeSupervisor()
     http = FakeHTTP(inputs.workspace)
     module.launch(inputs, supervisor=supervisor, http_factory=lambda _binding: http)
+    from polaris.cells.roles.runtime.tests.test_engineering_resource_state import create
+
+    store = create(inputs.workspace, session_id="server-run")
+    binding = json.loads((inputs.evidence_dir / "binding.json").read_text(encoding="utf-8"))
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("UPDATE runs SET request_key=?", (binding["request_key"],))
+
     if changed == "polaris_root":
         supervisor.record["polaris_root"] = str(tmp_path / "other-source")
     elif changed == "endpoint":
         supervisor.record.update(backend_port=50124, backend_url="http://127.0.0.1:50124")
+    elif changed == "owner":
+        supervisor.record["metadata"]["acceptance_owner"] = "foreign-owner"
     else:
         supervisor.record["metadata"] = {
             **supervisor.record["metadata"],
@@ -820,5 +889,68 @@ def test_stop_refuses_changed_source_endpoint_or_shared_backend_despite_same_non
         activity_reader=lambda _workspace: {"status": "readable", "active_runs": [], "pending_tool_calls": []},
         process_probe=lambda _pid: False,
     )
+    assert result["harness_status"] == "UNKNOWN"
+    assert supervisor.stops == []
+
+
+def test_terminal_resource_settlement_bypasses_unavailable_http(tmp_path: Path) -> None:
+    from polaris.cells.roles.runtime.tests.test_engineering_resource_state import create
+
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    supervisor = FakeSupervisor()
+    http = FakeHTTP(inputs.workspace)
+    module.launch(inputs, supervisor=supervisor, http_factory=lambda _binding: http)
+    store = create(inputs.workspace, session_id="server-run")
+    binding = json.loads((inputs.evidence_dir / "binding.json").read_text(encoding="utf-8"))
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("UPDATE runs SET request_key=?", (binding["request_key"],))
+
+    def unavailable(_binding):
+        raise TimeoutError("fresh artifact HTTP unavailable")
+
+    observed = module.observe(
+        inputs.evidence_dir / "binding.json",
+        wait=True,
+        http_factory=unavailable,
+        supervisor=supervisor,
+        sleep=lambda _: pytest.fail("terminal resource must reach cleanup"),
+    )
+    assert observed["harness_status"] == "UNKNOWN"
+    assert observed["platform"]["status"] == "completed"
+    assert observed["resource_state"]["safe_to_stop"] is True
+    assert observed["delivery_proven"] is False
+    stopped = module.stop(
+        inputs.evidence_dir / "binding.json",
+        supervisor=supervisor,
+        http_factory=unavailable,
+        process_probe=lambda _: False,
+    )
+    assert stopped["harness_status"] == "STOPPED"
+    assert stopped["acceptance_unchanged_by_cleanup"] is True
+    assert store.load_run("server-run", workspace=inputs.workspace)["verification"] == "passed"
+
+    settlement = supervisor.settlements[0]
+    assert settlement["schema_version"] == "engineering.resource_settlement.v1"
+    assert set(settlement) == {
+        "schema_version",
+        "instance",
+        "run_id",
+        "request_key",
+        "request_attempted",
+        "resource_namespace_identity",
+    }
+    assert settlement["instance"]["instance_id"] == inputs.instance_id
+
+
+def test_known_run_with_different_committed_request_cannot_authorize_stop(tmp_path: Path) -> None:
+    from polaris.cells.roles.runtime.tests.test_engineering_resource_state import create
+
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    supervisor = FakeSupervisor()
+    module.launch(inputs, supervisor=supervisor, http_factory=lambda _: FakeHTTP(inputs.workspace))
+    create(inputs.workspace, session_id="server-run")  # Same run text, different immutable request key.
+    result = module.stop(inputs.evidence_dir / "binding.json", supervisor=supervisor, process_probe=lambda _: False)
     assert result["harness_status"] == "UNKNOWN"
     assert supervisor.stops == []

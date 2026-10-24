@@ -1642,6 +1642,7 @@ cells:
     - single-owner
     current_modules:
     - polaris.cells.roles.runtime.public.engineering_service
+    - polaris.cells.roles.runtime.public.engineering_resource_state
     - polaris.cells.roles.runtime.public.contracts.engineering_run
     - polaris.cells.roles.runtime.internal.engineering_loop
     - polaris.cells.roles.runtime.internal.engineering_session
@@ -1655,6 +1656,7 @@ cells:
       modules:
       - polaris.cells.roles.runtime.public.contracts
       - polaris.cells.roles.runtime.public.contracts.engineering_run
+      - polaris.cells.roles.runtime.public.engineering_resource_state
       commands:
       - RoleRunCommand
       - InstantiateRoleRuntimeObjectCommandV1
@@ -1748,6 +1750,9 @@ cells:
       - polaris/cells/roles/runtime/tests/test_engineering_loop.py
       - polaris/cells/roles/runtime/tests/test_engineering_artifact_persistence.py
       - polaris/cells/roles/runtime/tests/test_engineering_artifact_handoff.py
+      - polaris/cells/roles/runtime/tests/test_engineering_observation.py
+      - polaris/cells/roles/runtime/tests/test_engineering_resource_state.py
+      - polaris/delivery/http/tests/test_engineering_observation_responsiveness.py
       - polaris/cells/roles/runtime/tests/test_engineering_roles.py
       - polaris/cells/roles/runtime/tests/test_engineering_qa_execution.py
       - polaris/cells/roles/runtime/tests/test_engineering_qa_execution_recovery.py
@@ -1786,6 +1791,9 @@ cells:
           - start
           - observe
           - snapshot
+          - current_snapshot
+          - current_session_id
+          - request_identity
           - find_request
           - wait
           - cancel

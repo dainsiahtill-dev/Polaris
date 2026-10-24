@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
+import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from polaris.bootstrap.config import Settings
 from polaris.bootstrap.engineering_runtime import (
     engineering_error_status,
@@ -16,6 +18,7 @@ from polaris.bootstrap.engineering_runtime import (
 )
 from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
 from polaris.delivery.http.dependencies import require_auth
+from polaris.kernelone.concurrency import get_concurrency_manager
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/v2/engineering", tags=["engineering"], dependencies=[Depends(require_auth)])
@@ -57,6 +60,20 @@ def _error(error: Exception) -> HTTPException:
     return HTTPException(status_code=engineering_error_status(error), detail=str(error))
 
 
+async def _read_response(request: Request, read: Callable[[EngineeringRunService, Path], object]) -> JSONResponse:
+    """Keep workspace resolution, KFS/SQL reads and JSON encoding off ASGI.
+
+    Reuse K1's bounded IO pool. A cancelled request may finish its read there;
+    the worker owns no execution/cancellation handles or persistent cache.
+    """
+
+    def response() -> JSONResponse:
+        service, _settings, workspace = _bound(request)
+        return JSONResponse(read(service, workspace))
+
+    return await asyncio.get_running_loop().run_in_executor(get_concurrency_manager().get_io_pool(), response)
+
+
 @router.post("/runs")
 async def create_run(payload: EngineeringRunRequest, request: Request) -> dict[str, Any]:
     try:
@@ -67,45 +84,44 @@ async def create_run(payload: EngineeringRunRequest, request: Request) -> dict[s
 
 
 @router.get("/requests/{request_key}")
-async def find_request(request_key: str, request: Request) -> dict[str, Any]:
+async def find_request(request_key: str, request: Request) -> JSONResponse:
     """Find a committed request; absence cannot resolve an in-flight effect."""
-    try:
-        service, _settings, workspace = _bound(request)
-        row = service.find_request(request_key, workspace=workspace)
-        if row is None:
+
+    def read(service: EngineeringRunService, workspace: Path) -> dict[str, Any]:
+        identity = service.request_identity(request_key, workspace=workspace)
+        if identity is None:
             raise KeyError(f"no committed engineering request found: {request_key}")
         return {
-            **observe_engineering_run(service, row["session_id"], workspace),
-            "request_identity": {
-                "request_key": row["request_key"],
-                "instruction_sha256": hashlib.sha256(row["instruction"].encode("utf-8")).hexdigest(),
-                "workflow": row["workflow"],
-                "required_checks": row["required_checks"],
-                "permission_profile_id": row.get("permission_profile_id"),
-            },
+            **observe_engineering_run(service, identity["session_id"], workspace),
+            "request_identity": {key: value for key, value in identity.items() if key != "session_id"},
         }
+
+    try:
+        return await _read_response(request, read)
     except (KeyError, OSError, ValueError, RuntimeError) as error:
         raise _error(error) from error
 
 
 @router.get("/runs/current")
-async def get_current_run(request: Request) -> dict[str, Any] | None:
+async def get_current_run(request: Request) -> JSONResponse:
     """Read current workspace facts through the injected engineering owner."""
+
+    def read(service: EngineeringRunService, workspace: Path) -> dict[str, Any] | None:
+        session_id = service.current_session_id(workspace=workspace)
+        return observe_engineering_run(service, session_id, workspace) if session_id is not None else None
+
     try:
-        service, _settings, workspace = _bound(request)
-        row = service.current_snapshot(workspace=workspace)
-        if row is None:
-            return None
-        return observe_engineering_run(service, row["session_id"], workspace)
+        return await _read_response(request, read)
     except (KeyError, OSError, ValueError, RuntimeError) as error:
         raise _error(error) from error
 
 
 @router.get("/runs/{session_id}")
-async def get_run(session_id: str, request: Request) -> dict[str, Any]:
+async def get_run(session_id: str, request: Request) -> JSONResponse:
     try:
-        service, _settings, workspace = _bound(request)
-        return observe_engineering_run(service, session_id, workspace)
+        return await _read_response(
+            request, lambda service, workspace: observe_engineering_run(service, session_id, workspace)
+        )
     except (KeyError, OSError, ValueError, RuntimeError) as error:
         raise _error(error) from error
 
@@ -113,11 +129,11 @@ async def get_run(session_id: str, request: Request) -> dict[str, Any]:
 @router.post("/runs/{session_id}/cancel")
 async def cancel_run(
     session_id: str, request: Request, payload: EngineeringRunActionRequest | None = None
-) -> dict[str, Any]:
+) -> JSONResponse:
     try:
         service, _settings, workspace = _bound(request, payload.workspace if payload is not None else None)
         await service.cancel(session_id, workspace=workspace)
-        return observe_engineering_run(service, session_id, workspace)
+        return await _read_response(request, lambda owner, bound: observe_engineering_run(owner, session_id, bound))
     except (KeyError, OSError, ValueError, RuntimeError) as error:
         raise _error(error) from error
 
@@ -125,10 +141,10 @@ async def cancel_run(
 @router.post("/runs/{session_id}/resume")
 async def resume_run(
     session_id: str, request: Request, payload: EngineeringRunActionRequest | None = None
-) -> dict[str, Any]:
+) -> JSONResponse:
     try:
         service, _settings, workspace = _bound(request, payload.workspace if payload is not None else None)
         await service.resume(session_id, workspace=workspace)
-        return observe_engineering_run(service, session_id, workspace)
+        return await _read_response(request, lambda owner, bound: observe_engineering_run(owner, session_id, bound))
     except (KeyError, OSError, ValueError, RuntimeError) as error:
         raise _error(error) from error

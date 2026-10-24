@@ -12,6 +12,23 @@ from polaris.delivery.cli import engineering_acceptance as acceptance
 from scripts.factory_bench._bench_lib import chain, cli
 
 
+@pytest.fixture(autouse=True)
+def synthetic_source_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+    """Keep all scratch files private while retaining the source/target fence."""
+    if request.node.name == "test_compatibility_wrapper_exposes_current_adapter":
+        return
+    root = tmp_path / "synthetic-polaris"
+    (root / "src/backend").mkdir(parents=True)
+    prepare = chain.prepare_engineering_case
+
+    def prepare_synthetic(*args: Any, **kwargs: Any) -> acceptance.LaunchInputs:
+        kwargs.setdefault("polaris_root", root)
+        return prepare(*args, **kwargs)
+
+    monkeypatch.setattr(chain, "prepare_engineering_case", prepare_synthetic)
+    monkeypatch.setattr(cli, "prepare_engineering_case", prepare_synthetic)
+
+
 def _configs(tmp_path: Path) -> tuple[Path, Path]:
     host = tmp_path / "host.json"
     host.write_text(
@@ -72,7 +89,12 @@ class SyntheticSupervisor:
         assert instance_id == self.record["instance_id"]
         return dict(self.record)
 
-    def stop_instance(self, instance_id: str) -> dict[str, Any]:
+    def stop_instance(
+        self, instance_id: str, *, engineering_settlement: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        assert engineering_settlement is not None
+        assert engineering_settlement["schema_version"] == "engineering.resource_settlement.v1"
+        assert not ({"plan", "owner_id", "internal_test_only"} & engineering_settlement.keys())
         self.stops.append(instance_id)
         self.record.update(status="stopped", backend_alive=False, frontend_alive=False)
         return dict(self.record)
@@ -81,6 +103,8 @@ class SyntheticSupervisor:
 class SyntheticHTTP:
     def __init__(self, workspace: Path, *, unknown: bool = False, running: bool = False) -> None:
         self.calls: list[tuple[str, str, Any]] = []
+        self.workspace = workspace
+        self.store: Any = None
         self.unknown, self.running = unknown, running
         self.snapshot: dict[str, Any] = {
             "run_id": "owned-run",
@@ -99,14 +123,55 @@ class SyntheticHTTP:
             "last_seq": 0,
         }
 
+    def _persist_request(self, payload: dict[str, Any]) -> None:
+        from polaris.cells.roles.runtime.internal.engineering_session import EngineeringSessionStore
+        from polaris.cells.roles.runtime.public.contracts.engineering_run import (
+            PermissionScope,
+            RoleRunCommand,
+            RunLimits,
+        )
+
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        self.store = EngineeringSessionStore(self.workspace)
+        self.store.create_run(
+            RoleRunCommand(
+                "owned-run",
+                "director",
+                payload["instruction"],
+                self.workspace,
+                payload["workflow"],
+                tuple(payload["required_checks"]),
+            ),
+            scope=PermissionScope((self.workspace,), (), frozenset({"read_file"}), False),
+            limits=RunLimits(1900000000.0, 10000, 2000),
+            engine_version="engineering_v2",
+            request_key=payload["request_key"],
+            permission_profile_id=payload["permission_profile_id"],
+        )
+        self._persist_status()
+
+    def _persist_status(self) -> None:
+        if self.store is not None:
+            status = self.snapshot["status"]
+            self.store.update_run("owned-run", status=status)
+            if status in {"completed", "cancelled", "failed", "interrupted"}:
+                self.store.append_event(
+                    "owned-run",
+                    kind="run_ended",
+                    role="director",
+                    payload={"status": status, "release_allowed": True, "drain_reporting_error": None},
+                )
+
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         self.calls.append((method, path, payload))
         if path == "/v2/engineering/runs" and self.unknown:
             raise TimeoutError("synthetic unknown POST")
         if path == "/v2/engineering/runs" and payload is not None:
             self.snapshot["workflow"] = payload["workflow"]
+            self._persist_request(payload)
         if path.endswith("/cancel"):
             self.snapshot.update(status="cancelled")
+        self._persist_status()
         return dict(self.snapshot)
 
     def close(self) -> None:
@@ -165,7 +230,7 @@ def test_shared_adapter_exact_formal_api_and_workflow(tmp_path: Path, workflow: 
     assert report["cleanup"]["harness_status"] == "STOPPED"
     assert report["exit_code"] != 0
     assert supervisor.stops == [inputs.instance_id]
-    assert not inputs.workspace.exists()
+    assert sorted(path.name for path in inputs.workspace.iterdir()) == [".polaris"]
     assert "synthetic-secret" not in json.dumps(report)
 
 
@@ -391,7 +456,7 @@ def test_active_runner_never_calls_retired_host_helpers(tmp_path: Path, monkeypa
         )
         == 1
     )
-    assert not (tmp_path / "batch" / "workspaces").exists()
+    assert not list((tmp_path / "batch" / "workspaces").rglob("*.py"))
 
 
 def test_compatibility_wrapper_exposes_current_adapter() -> None:
@@ -481,6 +546,7 @@ def test_unknown_create_ack_recovers_same_running_run_to_acceptance(tmp_path: Pa
                     "required_checks": payload["required_checks"],
                     "permission_profile_id": payload["permission_profile_id"],
                 }
+                self._persist_request(payload)
                 raise TimeoutError("synthetic response lost after owner committed create")
             return super().request(method, path, payload)
 

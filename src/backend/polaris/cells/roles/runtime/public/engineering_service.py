@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -212,8 +213,29 @@ class EngineeringRunService:
     def current_snapshot(self, *, workspace: Path) -> dict[str, Any] | None:
         """Discover current identity, then apply the same read-only freshness checks."""
         self._assert_workspace(workspace)
-        session_id = self.store.find_current_session_id(workspace=workspace, engine_version=self.engine_version)
+        session_id = self.current_session_id(workspace=workspace)
         return self.snapshot(session_id, workspace=workspace) if session_id is not None else None
+
+    def current_session_id(self, *, workspace: Path) -> str | None:
+        """Resolve committed current identity without claiming fresh acceptance."""
+        self._assert_workspace(workspace)
+        return self.store.find_current_session_id(workspace=workspace, engine_version=self.engine_version)
+
+    def request_identity(self, request_key: str, *, workspace: Path) -> dict[str, Any] | None:
+        """Read committed request identity only; it carries no current verdict."""
+        self._assert_workspace(workspace)
+        session_id = self.store.find_request(request_key)
+        if session_id is None:
+            return None
+        row = self.store.load_run(session_id, workspace=self.workspace)
+        return {
+            "session_id": session_id,
+            "request_key": row["request_key"],
+            "instruction_sha256": hashlib.sha256(row["instruction"].encode("utf-8")).hexdigest(),
+            "workflow": row["workflow"],
+            "required_checks": row["required_checks"],
+            "permission_profile_id": row.get("permission_profile_id"),
+        }
 
     def find_request(self, request_key: str, *, workspace: Path) -> dict[str, Any] | None:
         """Read saved request identity through the same workspace owner."""
@@ -281,13 +303,30 @@ class EngineeringRunService:
         return self._fresh_verification(row)
 
     def _fresh_verification(self, row: dict[str, Any]) -> dict[str, Any]:
-        session_id = str(row["session_id"])
-        if row["verification"] == "passed":
+        needs_qa = row.get("require_qa") and row.get("qa_verdict") in {"approved", "rejected"}
+        if row["verification"] == "passed" or needs_qa:
             try:
                 scope = self._revalidated_scope(row) if self._permission_resolver is not None else self._scope(row)
                 verifier = self._verification(
                     scope, self._limits(row), asyncio.Event(), output_roots=self._saved_outputs(row)
                 )
+                with verifier._observe_current_inputs():
+                    return self._observed_verification(row, verifier=verifier, scope=scope)
+            except (OSError, ValueError, RuntimeError, PathSecurityError) as error:
+                if row["verification"] == "passed":
+                    row["verification"] = "unknown"
+                    row["verification_detail"] = f"Cannot observe current verification inputs: {error}"
+                if needs_qa:
+                    row["qa_verdict"] = "unknown"
+        if row["verification"] == "unknown" or (row.get("require_qa") and row.get("qa_verdict") == "unknown"):
+            row.update(project_outcome="unknown", acceptance_basis=None)
+        return row
+
+    def _observed_verification(self, row: dict[str, Any], *, verifier: Any, scope: PermissionScope) -> dict[str, Any]:
+        """Apply existing verdict predicates to this query's actual KFS inputs."""
+        session_id = str(row["session_id"])
+        if row["verification"] == "passed":
+            try:
                 current = verifier.current_verification(session_id)
                 if current == "passed" and not row.get("require_qa"):
                     self._require_visual_input(
@@ -306,12 +345,7 @@ class EngineeringRunService:
         if row.get("require_qa") and row.get("qa_verdict") in {"approved", "rejected"}:
             try:
                 scope = self._revalidated_scope(row)
-                verifier = self._verification(
-                    self._scope(row), self._limits(row), asyncio.Event(), output_roots=self._saved_outputs(row)
-                )
-                decisions = [
-                    event for event in self.store.load_events(session_id) if event["kind"] == "qa_review_completed"
-                ]
+                decisions = self.store.load_events(session_id, kinds=("qa_review_completed",))
                 if (
                     (row["qa_verdict"] == "approved" and row["verification"] != "passed")
                     or not decisions
@@ -322,10 +356,8 @@ class EngineeringRunService:
                     decision = decisions[-1]["payload"]
                     reports = [
                         event
-                        for event in self.store.load_events(session_id)
-                        if event["kind"] == "tool_observed"
-                        and event["role"] == "qa"
-                        and event["payload"].get("call_id") == decision.get("report_call_id")
+                        for event in self.store.load_events(session_id, kinds=("tool_observed",), role="qa")
+                        if event["payload"].get("call_id") == decision.get("report_call_id")
                         and event["payload"].get("tool") == "report_review"
                     ]
                     if scope.browser is not None and scope.browser.require_visual_review:
@@ -840,7 +872,7 @@ class EngineeringRunService:
             return
         from polaris.cells.roles.runtime.internal.engineering_visual import require_current_visual_input
 
-        events = self.store.load_events(session_id)
+        events = self.store.load_events(session_id, kinds=("role_started", "turn_started"), role=role)
         starts = [event for event in events if event["kind"] == "role_started" and event["role"] == role]
         if frame_seq is None:
             frame_seq = starts[-1]["seq"] if starts else 0
@@ -1184,11 +1216,7 @@ class EngineeringRunService:
         if saved is None:
             # Older rows can already carry an exact output declaration in their
             # durable verification binding. Never infer it from today's host.
-            completed = [
-                event
-                for event in self.store.load_events(str(row["session_id"]))
-                if event["kind"] == "verification_completed"
-            ]
+            completed = self.store.load_events(str(row["session_id"]), kinds=("verification_completed",))
             saved = (
                 completed[-1]["payload"].get("input_binding", {}).get("scope", {}).get("output_roots", [])
                 if completed

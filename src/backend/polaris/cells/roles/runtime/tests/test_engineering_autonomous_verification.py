@@ -434,7 +434,7 @@ async def test_real_process_restart_closes_only_durable_verification_and_never_r
     )
     scripted_provider.enqueue_json(_response(("crash-verify", "verify_project", {"commands": [actual]})))
     child = r"""
-import asyncio, os, sys, time
+import asyncio, json, os, sys, time
 from pathlib import Path
 import pytest
 from polaris.cells.roles.runtime.tests.engineering_support import ScriptedProvider
@@ -463,7 +463,29 @@ async def main():
     service.store.record_verification = completion
     command = RoleRunCommand('cold-verify', 'director', 'Deliver actual artifact2.', workspace)
     await service.start(command, scope=_scope(workspace), limits=RunLimits(time.time()+45,1000000,64000))
-    await service.wait(command.session_id, workspace=workspace)
+    result = await service.wait(command.session_id, workspace=workspace)
+    fields = {
+        'provider_response': ('turn_seq', 'ok', 'error'),
+        'role_error': ('error_type', 'error'),
+        'role_finished': ('status', 'text'),
+        'run_ended': ('status', 'verification', 'release_allowed', 'drain_reporting_error'),
+        'tool_started': ('turn_seq', 'call_id', 'tool'),
+        'llm_request_observed': ('turn_seq', 'call_id', 'role', 'phase', 'status',
+            'context_snapshot_ref', 'physical_send_count'),
+    }
+    events = service.store.load_events(command.session_id, kinds=tuple(fields))
+    print(json.dumps({
+        'diagnostic': 'expected_crash_hook_not_reached',
+        'cut': cut,
+        'wait_result': {key: getattr(result, key) for key in
+            ('session_id', 'role', 'status', 'verification', 'text')},
+        'events': [
+            {'seq': event['seq'], 'kind': event['kind'], 'role': event['role'],
+             'payload': {key: event['payload'][key] for key in fields[event['kind']]
+                 if key in event['payload']}}
+            for event in events[-16:]
+        ],
+    }, ensure_ascii=False), flush=True)
 asyncio.run(main())
 """
     stopped = await asyncio.to_thread(
@@ -475,7 +497,7 @@ asyncio.run(main())
         encoding="utf-8",
         timeout=25,
     )
-    assert stopped.returncode == 73, stopped.stderr
+    assert stopped.returncode == 73, stopped.stdout + stopped.stderr
     assert counter.read_text(encoding="utf-8") == "1"
 
     scripted_provider.client("openai", isolated_workspace, monkeypatch)

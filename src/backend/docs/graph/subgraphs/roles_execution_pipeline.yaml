@@ -31,6 +31,11 @@ relations:
   type: emits
   contract: event.engineering
   note: Committed engineering events on existing Nats-JetStream runtime.v2; transport does not own execution facts.
+- from: delivery.cli
+  to: roles.runtime
+  type: queries
+  contract: query_engineering_resource_state
+  note: Read-only terminal, physical drain and quiescence from the same canonical store; no artifact-freshness or acceptance inference.
 critical_contracts:
 - RoleRunCommand
 - PermissionScope
@@ -53,6 +58,9 @@ verify_targets:
   - polaris/cells/roles/runtime/tests/test_engineering_loop.py
   - polaris/cells/roles/runtime/tests/test_engineering_artifact_persistence.py
   - polaris/cells/roles/runtime/tests/test_engineering_artifact_handoff.py
+  - polaris/cells/roles/runtime/tests/test_engineering_observation.py
+  - polaris/cells/roles/runtime/tests/test_engineering_resource_state.py
+  - polaris/delivery/http/tests/test_engineering_observation_responsiveness.py
   - polaris/cells/roles/runtime/tests/test_engineering_roles.py
   - polaris/cells/roles/runtime/tests/test_engineering_service.py
   - polaris/cells/roles/runtime/tests/test_engineering_qa_handoff.py
@@ -91,3 +99,5 @@ migration_notes:
 - Graph declaration/focused tests do not prove final release or all workloads; actual KernelOne ALL/catalog and
   fresh formal results must be reported separately.
 - Captured output bytes and original input binding commit in the existing engineering tool journal. Same-run browser references consume saved bytes, and cold reads never replay the producing command.
+- Current verification, QA and visual checks share one query-local actual input observation. New queries revalidate; the HTTP reader and JSON encoder use the existing bounded K1 worker facility.
+- Safe resource settlement is independent of fresh artifact acceptance. The public resource facet remains in roles.runtime; actual process effects stay in the existing InstanceSupervisor with partial closure and identity guards.

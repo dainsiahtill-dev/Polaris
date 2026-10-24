@@ -1252,6 +1252,8 @@ def test_refresh_instance_states_keeps_recent_partial_startup_as_starting(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
+    # Synthetic PID fixture must not inspect an unrelated live /proc entry.
+    monkeypatch.setattr(instance_service, "_read_linux_process_text", lambda _pid: "")
     monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid == 61001)
     root = _make_polaris_root(tmp_path)
     registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
@@ -1291,6 +1293,8 @@ def test_refresh_instance_states_fails_stale_partial_startup(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
+    # Synthetic PID fixture must not inspect an unrelated live /proc entry.
+    monkeypatch.setattr(instance_service, "_read_linux_process_text", lambda _pid: "")
     published: list[dict[str, Any]] = []
 
     class FakePublisher:
@@ -1565,6 +1569,8 @@ def test_start_instance_builds_backend_and_frontend_processes(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
+    # Synthetic PID fixture must not inspect an unrelated live /proc entry.
+    monkeypatch.setattr(instance_service, "_read_linux_process_text", lambda _pid: "")
     root = _make_polaris_root(tmp_path)
     calls: list[dict[str, Any]] = []
 
@@ -2143,6 +2149,8 @@ def test_external_backend_without_pid_is_observed(tmp_path: Path, monkeypatch: A
 
 
 def test_registered_external_frontend_url_counts_as_alive(tmp_path: Path, monkeypatch: Any) -> None:
+    # Synthetic PID fixture must not inspect an unrelated live /proc entry.
+    monkeypatch.setattr(instance_service, "_read_linux_process_text", lambda _pid: "")
     registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
     supervisor = InstanceSupervisor(registry)
 
@@ -2179,6 +2187,8 @@ def test_registered_external_frontend_url_counts_as_alive(tmp_path: Path, monkey
 
 
 def test_backend_process_without_http_health_is_starting(tmp_path: Path, monkeypatch: Any) -> None:
+    # Synthetic PID fixture must not inspect an unrelated live /proc entry.
+    monkeypatch.setattr(instance_service, "_read_linux_process_text", lambda _pid: "")
     registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
     supervisor = InstanceSupervisor(registry)
     monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid == 61001)
@@ -2210,6 +2220,8 @@ def test_backend_process_without_http_health_is_starting(tmp_path: Path, monkeyp
 
 
 def test_current_backend_process_does_not_http_probe_itself(tmp_path: Path, monkeypatch: Any) -> None:
+    # Synthetic PID fixture must not inspect an unrelated live /proc entry.
+    monkeypatch.setattr(instance_service, "_read_linux_process_text", lambda _pid: "")
     registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
     supervisor = InstanceSupervisor(registry)
     current_pid = 61001
@@ -2250,6 +2262,8 @@ def test_current_backend_process_does_not_http_probe_itself(tmp_path: Path, monk
 
 
 def test_current_backend_reloader_parent_does_not_http_probe_itself(tmp_path: Path, monkeypatch: Any) -> None:
+    # Synthetic PID fixture must not inspect an unrelated live /proc entry.
+    monkeypatch.setattr(instance_service, "_read_linux_process_text", lambda _pid: "")
     registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
     supervisor = InstanceSupervisor(registry)
     current_pid = 61001
@@ -2430,10 +2444,9 @@ def test_restart_waits_for_old_ports_before_starting_replacement(
         wait_backend: bool | None = None,
         wait_frontend: bool | None = None,
     ) -> None:
-        assert wait_backend is True
-        assert wait_frontend is True
+        assert (wait_backend, wait_frontend) in {(False, True), (True, False)}
         assert not any(item.startswith("popen:") for item in events)
-        events.append(f"wait:{record.backend_port}:{record.frontend_port}")
+        events.append("wait:" + str(record.backend_port if wait_backend else record.frontend_port))
 
     monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: events.append(f"term:{pid}")))
@@ -2470,13 +2483,15 @@ def test_restart_waits_for_old_ports_before_starting_replacement(
     record = supervisor.restart_instance("factory-bench-l1-06")
 
     assert record["status"] == "running"
-    assert events == ["term:62102", "term:62101", "wait:59931:59932", "popen:59931", "popen:59932"]
+    assert events == ["term:62102", "wait:59932", "term:62101", "wait:59931", "popen:59931", "popen:59932"]
 
 
 def test_restart_isolated_bench_project_does_not_reuse_reserved_main_ports(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
+    # Explicit synthetic Popen PIDs must not read unrelated live /proc entries.
+    monkeypatch.setattr(instance_service, "_read_linux_process_text", lambda _pid: "")
     root = _make_polaris_root(tmp_path)
     registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
     supervisor = InstanceSupervisor(registry)
@@ -2560,8 +2575,13 @@ def test_unconfirmed_process_exit_preserves_instance_registry_identity(tmp_path:
     saved = registry.get(record.instance_id)
     assert saved is not None
     assert (saved.status, saved.backend_pid, saved.frontend_pid) == ("running", 998811, 998812)
-    assert signals == [(998812, signal.SIGTERM), (998812, signal.SIGKILL)]
-    assert budgets == [5.0, 1.0]
+    assert signals == [
+        (998812, signal.SIGTERM),
+        (998812, signal.SIGKILL),
+        (998811, signal.SIGTERM),
+        (998811, signal.SIGKILL),
+    ]
+    assert budgets == [5.0, 1.0, 5.0, 1.0]
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires exact POSIX child reap")
@@ -2726,3 +2746,441 @@ def test_readonly_registry_corruption_remains_degraded_and_bytes_unchanged(tmp_p
     assert result["error"]["code"] == "instance_registry_corrupt"
     assert path.read_bytes() == content
     assert sorted(p.name for p in home.iterdir()) == ["registry.json"]
+
+
+def test_frontend_exit_error_still_attempts_owned_backend(tmp_path: Path, monkeypatch: Any) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    record = supervisor._build_record(
+        {"instance_id": "partial-stop", "polaris_root": str(root), "workspace": str(tmp_path / "work")}
+    )
+    record.status = "running"
+    record.backend_pid, record.frontend_pid = 998821, 998822
+    registry.save(record)
+    attempted = []
+
+    def terminate(pid):
+        attempted.append(pid)
+        if pid == 998822:
+            raise RuntimeError("frontend exit not confirmed")
+
+    monkeypatch.setattr(InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda *_a, **_k: True))
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(terminate))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda _: None))
+    with pytest.raises(RuntimeError, match="frontend exit not confirmed"):
+        supervisor.stop_instance(record.instance_id)
+    assert attempted == [998822, 998821]
+    saved = registry.get(record.instance_id)
+    assert saved is not None and saved.status != "stopped"
+    assert saved.frontend_pid == 998822 and saved.backend_pid is None
+    assert saved.metadata["stop_errors"][0]["process_kind"] == "frontend"
+
+
+def _settlement_fixture(tmp_path: Path):
+    from polaris.cells.roles.runtime.tests.test_engineering_resource_state import create
+
+    workspace = tmp_path / "synthetic-workspace"
+    store = create(workspace)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    record = supervisor._build_record(
+        {
+            "instance_id": "auto-settle",
+            "kind": "project",
+            "polaris_root": str(_make_polaris_root(tmp_path)),
+            "workspace": str(workspace),
+            "backend_port": 60181,
+            "frontend_port": 60182,
+            "metadata": {},
+        }
+    )
+    record.backend_pid, record.frontend_pid, record.status = 998831, 998832, "running"
+    registry.save(record)
+    settlement = {
+        "schema_version": "engineering.resource_settlement.v1",
+        "run_id": "run-1",
+        "request_key": "request-run-1",
+        "request_attempted": True,
+        "instance": record.to_dict(),
+    }
+    return supervisor, registry, record, store, settlement
+
+
+@pytest.mark.parametrize("process_kind", ["backend", "frontend"])
+def test_automatic_settlement_missing_pid_refuses_occupied_port(
+    tmp_path: Path, monkeypatch: Any, process_kind: str
+) -> None:
+    supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
+    signals = []
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: signals.append(pid)))
+    with socket.socket() as occupied, socket.socket() as free:
+        occupied.bind(("127.0.0.1", 0))
+        occupied.listen()
+        free.bind(("127.0.0.1", 0))
+        free_port = free.getsockname()[1]
+        free.close()
+        occupied_port = occupied.getsockname()[1]
+        record.backend_pid = record.frontend_pid = None
+        record.backend_port = occupied_port if process_kind == "backend" else free_port
+        record.frontend_port = occupied_port if process_kind == "frontend" else free_port
+        record.start_frontend = process_kind == "frontend"
+        record.backend_url = f"http://127.0.0.1:{record.backend_port}"
+        record.frontend_url = f"http://127.0.0.1:{record.frontend_port}"
+        registry.save(record)
+        settlement["instance"] = record.to_dict()
+        assert instance_service.is_port_free(occupied_port) is False
+
+        with pytest.raises(RuntimeError, match="port did not become free"):
+            supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+
+        saved = registry.get(record.instance_id)
+        assert saved is not None and saved.status != "stopped" and not saved.last_stopped_at
+        assert saved.backend_pid is None and saved.frontend_pid is None
+        assert saved.metadata["stop_errors"][0]["process_kind"] == process_kind
+        assert instance_service.is_port_free(occupied_port) is False
+        assert signals == []
+
+
+def test_automatic_settlement_missing_pids_confirm_free_ports(tmp_path: Path, monkeypatch: Any) -> None:
+    supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
+    signals = []
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: signals.append(pid)))
+    with socket.socket() as backend, socket.socket() as frontend:
+        backend.bind(("127.0.0.1", 0))
+        frontend.bind(("127.0.0.1", 0))
+        record.backend_port = backend.getsockname()[1]
+        record.frontend_port = frontend.getsockname()[1]
+    record.backend_pid = record.frontend_pid = None
+    record.start_frontend = True
+    record.backend_url = f"http://127.0.0.1:{record.backend_port}"
+    record.frontend_url = f"http://127.0.0.1:{record.frontend_port}"
+    registry.save(record)
+    settlement["instance"] = record.to_dict()
+    stopped = supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    assert stopped["status"] == "stopped" and stopped["last_stopped_at"]
+    assert "engineering_stop_progress" not in stopped["metadata"], (
+        "missing PIDs must not invent original PID provenance"
+    )
+    assert registry.get(record.instance_id).status == "stopped"
+    supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    assert signals == []
+
+
+def test_automatic_settlement_missing_pid_ignores_disabled_frontend_port(tmp_path: Path, monkeypatch: Any) -> None:
+    supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
+    signals = []
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: signals.append(pid)))
+    with socket.socket() as frontend, socket.socket() as backend:
+        frontend.bind(("127.0.0.1", 0))
+        frontend.listen()
+        backend.bind(("127.0.0.1", 0))
+        record.frontend_port = frontend.getsockname()[1]
+        record.backend_port = backend.getsockname()[1]
+        backend.close()
+        record.backend_pid = record.frontend_pid = None
+        record.start_frontend = False
+        record.backend_url = f"http://127.0.0.1:{record.backend_port}"
+        record.frontend_url = f"http://127.0.0.1:{record.frontend_port}"
+        registry.save(record)
+        settlement["instance"] = record.to_dict()
+
+        stopped = supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+
+        assert stopped["status"] == "stopped" and registry.get(record.instance_id).status == "stopped"
+        assert instance_service.is_port_free(record.frontend_port) is False
+        assert "engineering_stop_progress" not in stopped["metadata"]
+        assert signals == []
+
+
+def test_generic_admin_stop_missing_pids_retains_existing_port_semantics(tmp_path: Path, monkeypatch: Any) -> None:
+    supervisor, registry, record, _, _ = _settlement_fixture(tmp_path)
+    signals = []
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: signals.append(pid)))
+    with socket.socket() as backend, socket.socket() as frontend:
+        backend.bind(("127.0.0.1", 0))
+        backend.listen()
+        frontend.bind(("127.0.0.1", 0))
+        frontend.listen()
+        record.backend_port = backend.getsockname()[1]
+        record.frontend_port = frontend.getsockname()[1]
+        record.backend_pid = record.frontend_pid = None
+        record.start_frontend = True
+        registry.save(record)
+
+        stopped = supervisor.stop_instance(record.instance_id)
+
+        assert stopped["status"] == "stopped" and registry.get(record.instance_id).status == "stopped"
+        assert instance_service.is_port_free(record.backend_port) is False
+        assert instance_service.is_port_free(record.frontend_port) is False
+        assert signals == []
+
+
+@pytest.mark.parametrize("change", ["active", "release", "workspace", "nonce", "pid", "envelope"])
+def test_automatic_settlement_owner_refuses_unproven_scope_or_release(
+    tmp_path: Path, monkeypatch: Any, change: str
+) -> None:
+    supervisor, registry, record, store, settlement = _settlement_fixture(tmp_path)
+    if change == "active":
+        store.update_run("run-1", status="running")
+    elif change == "release":
+        store.append_event(
+            "run-1", kind="run_ended", role="director", payload={"status": "completed", "release_allowed": False}
+        )
+    elif change == "workspace":
+        settlement["instance"]["workspace"] = str(tmp_path / "foreign")
+    elif change == "nonce":
+        settlement["instance"]["token"] = "foreign-token"
+    elif change == "pid":
+        record.backend_pid = 998839
+        registry.save(record)
+    else:
+        settlement["schema_version"] = "invalid.resource_settlement"
+    before = registry.registry_path.read_bytes()
+    attempted = []
+    monkeypatch.setattr(InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda *_a, **_k: True))
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: attempted.append(pid)))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda _: None))
+    with pytest.raises(RuntimeError):
+        supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    assert attempted == []
+    assert registry.registry_path.read_bytes() == before
+    assert registry.get(record.instance_id).status != "stopped"
+
+
+def test_automatic_settlement_revalidates_backend_after_frontend_failure(tmp_path: Path, monkeypatch: Any) -> None:
+    supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
+    attempted = []
+
+    def terminate(pid):
+        attempted.append(pid)
+        replacement = registry.get(record.instance_id)
+        replacement.backend_pid = 998839
+        registry.save(replacement)
+        raise RuntimeError("frontend exit unknown and backend replaced")
+
+    monkeypatch.setattr(InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda *_a, **_k: True))
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(terminate))
+    with pytest.raises(RuntimeError, match="identity changed"):
+        supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    assert attempted == [998832]
+    assert registry.get(record.instance_id).backend_pid == 998839
+
+
+def test_automatic_released_settlement_uses_existing_supervisor_without_acceptance(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
+    attempted = []
+    monkeypatch.setattr(InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda *_a, **_k: True))
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: attempted.append(pid)))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda _: None))
+    stopped = supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    assert attempted == [998832, 998831]
+    assert stopped["status"] == "stopped" and stopped["backend_pid"] is None and stopped["frontend_pid"] is None
+    assert "project_outcome" not in stopped
+    assert registry.get(record.instance_id).status == "stopped"
+
+
+def _first_partial_automatic_stop(tmp_path: Path, monkeypatch: Any):
+    supervisor, registry, record, store, settlement = _settlement_fixture(tmp_path)
+    attempted = []
+    frontend_attempts = 0
+
+    def terminate(pid):
+        nonlocal frontend_attempts
+        attempted.append(pid)
+        if pid == 998832:
+            frontend_attempts += 1
+            if frontend_attempts == 1:
+                raise RuntimeError("first frontend exit unconfirmed")
+
+    monkeypatch.setattr(
+        InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda _record, pid, **_k: bool(pid))
+    )
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(terminate))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda _: None))
+    with pytest.raises(RuntimeError, match="first frontend exit unconfirmed"):
+        supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    saved = registry.get(record.instance_id)
+    assert saved.backend_pid is None and saved.frontend_pid == 998832
+    return supervisor, registry, record, store, settlement, attempted
+
+
+def test_partial_automatic_stop_retry_closes_only_authorized_residual_child(tmp_path: Path, monkeypatch: Any) -> None:
+    supervisor, registry, record, _, settlement, attempted = _first_partial_automatic_stop(tmp_path, monkeypatch)
+    stopped = supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    assert attempted == [998832, 998831, 998832]
+    assert stopped["status"] == "stopped" and stopped["backend_pid"] is None and stopped["frontend_pid"] is None
+    assert stopped["metadata"]["stop_errors"][0]["error"] == "first frontend exit unconfirmed"
+    assert registry.get(record.instance_id).status == "stopped"
+
+    supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    assert attempted == [998832, 998831, 998832], "confirmed children must not be replayed"
+
+
+def test_partial_automatic_stop_retry_closes_backend_after_confirmed_frontend(tmp_path: Path, monkeypatch: Any) -> None:
+    supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
+    attempted = []
+    backend_attempts = 0
+
+    def terminate(pid):
+        nonlocal backend_attempts
+        attempted.append(pid)
+        if pid == 998831:
+            backend_attempts += 1
+            if backend_attempts == 1:
+                raise RuntimeError("first backend exit unconfirmed")
+
+    monkeypatch.setattr(
+        InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda _record, pid, **_k: bool(pid))
+    )
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(terminate))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda _: None))
+    with pytest.raises(RuntimeError, match="first backend exit unconfirmed"):
+        supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    saved = registry.get(record.instance_id)
+    assert saved.backend_pid == 998831 and saved.frontend_pid is None and saved.status != "stopped"
+
+    stopped = supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+
+    assert attempted == [998832, 998831, 998831]
+    assert stopped["status"] == "stopped" and stopped["backend_pid"] is None and stopped["frontend_pid"] is None
+    assert stopped["metadata"]["stop_errors"][0]["error"] == "first backend exit unconfirmed"
+    supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    assert attempted == [998832, 998831, 998831], "confirmed frontend must not be replayed"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "untracked_none",
+        "request",
+        "replacement",
+        "incarnation",
+        "release",
+        "foreign",
+        "tampered_receipt",
+        "reoccupied_port",
+    ],
+)
+def test_partial_stop_retry_refuses_untracked_or_changed_authority(
+    tmp_path: Path, monkeypatch: Any, change: str
+) -> None:
+    supervisor, registry, record, store, settlement, attempted = _first_partial_automatic_stop(tmp_path, monkeypatch)
+    current = registry.get(record.instance_id)
+    if change == "untracked_none":
+        current.metadata.pop("engineering_stop_progress", None)
+        registry.save(current)
+    elif change == "request":
+        settlement["request_key"] = "foreign-request"
+    elif change == "replacement":
+        current.backend_pid = 998839
+        registry.save(current)
+    elif change == "incarnation":
+        current.last_started_at = "2099-01-01T00:00:00+00:00"
+        registry.save(current)
+    elif change == "release":
+        store.append_event(
+            "run-1",
+            kind="run_ended",
+            role="director",
+            payload={"status": "completed", "release_allowed": False, "drain_reporting_error": None},
+        )
+    elif change == "tampered_receipt":
+        current.metadata["engineering_stop_progress"]["closed_children"]["backend"]["confirmed"] = False
+        registry.save(current)
+    elif change == "reoccupied_port":
+
+        def occupied(port):
+            if port == current.backend_port:
+                raise RuntimeError("previously closed backend port no longer released")
+
+        monkeypatch.setattr(InstanceSupervisor, "_wait_for_port_free", staticmethod(occupied))
+    else:
+        monkeypatch.setattr(
+            InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda *_a, **_k: False)
+        )
+        monkeypatch.setattr(instance_service, "is_process_alive", lambda _pid: True)
+    with pytest.raises(RuntimeError):
+        supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    assert attempted == [998832, 998831]
+    assert registry.get(record.instance_id).status != "stopped"
+
+
+def test_generic_project_settlement_needs_no_internal_harness_metadata(tmp_path: Path, monkeypatch: Any) -> None:
+    supervisor, registry, record, _, previous = _settlement_fixture(tmp_path)
+    record.kind = "project"
+    record.metadata = {}
+    registry.save(record)
+    settlement = {
+        "schema_version": "engineering.resource_settlement.v1",
+        "instance": record.to_dict(),
+        "run_id": previous["run_id"],
+        "request_key": previous["request_key"],
+        "request_attempted": True,
+    }
+    attempted = []
+    monkeypatch.setattr(
+        InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda _record, pid, **_k: bool(pid))
+    )
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: attempted.append(pid)))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda _: None))
+    stopped = supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    assert stopped["status"] == "stopped" and attempted == [998832, 998831]
+    assert "acceptance_owner" not in stopped["metadata"] and "internal_test_only" not in stopped["metadata"]
+
+
+def test_internal_acceptance_binding_cannot_be_supervisor_settlement(tmp_path: Path, monkeypatch: Any) -> None:
+    supervisor, registry, record, _, internal_binding = _settlement_fixture(tmp_path)
+    # Reconstruct an otherwise valid historical harness binding so schema
+    # rejection, rather than an unrelated identity mismatch, fences this input.
+    record.kind = "bench_project"
+    record.metadata = {
+        "internal_test_only": True,
+        "backend_binding": "isolated_backend_instance",
+        "acceptance_owner": "synthetic-owner",
+    }
+    registry.save(record)
+    internal_binding = {
+        **internal_binding,
+        "instance": record.to_dict(),
+        "schema_version": "engineering.acceptance_binding.v1",
+        "internal_test_only": True,
+        "owner_id": "synthetic-owner",
+        "plan": {"instance_id": record.instance_id, "workspace": record.workspace, "polaris_root": record.polaris_root},
+    }
+    attempted = []
+    monkeypatch.setattr(InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda *_a, **_k: True))
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: attempted.append(pid)))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda _: None))
+    before = registry.registry_path.read_bytes()
+    with pytest.raises(RuntimeError):
+        supervisor.stop_instance(record.instance_id, engineering_settlement=internal_binding)
+    assert attempted == [] and registry.registry_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("protected", ["main", "current", "reserved", "shared_observed"])
+def test_generic_project_settlement_preserves_protected_instance_fences(
+    tmp_path: Path, monkeypatch: Any, protected: str
+) -> None:
+    supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
+    if protected == "main":
+        record.instance_id = "main"
+    elif protected == "current":
+        record.backend_pid = os.getpid()
+    elif protected == "reserved":
+        record.backend_port = 49977
+        record.backend_url = "http://127.0.0.1:49977"
+    else:
+        record.metadata["backend_binding"] = "shared_backend_workspace_switch"
+    registry.save(record)
+    settlement["instance"] = record.to_dict()
+    before = registry.registry_path.read_bytes()
+    attempted = []
+    monkeypatch.setattr(InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda *_a, **_k: True))
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: attempted.append(pid)))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda _: None))
+    with pytest.raises(RuntimeError):
+        supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    assert attempted == [] and registry.registry_path.read_bytes() == before

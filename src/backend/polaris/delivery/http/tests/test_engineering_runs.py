@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
@@ -291,6 +292,10 @@ def test_real_app_factory_registers_eager_workspace_owner(
 ) -> None:
     from polaris.delivery.http.app_factory import create_app
 
+    # create_app intentionally synchronizes process-wide runtime roots. Keep
+    # that real bootstrap effect inside this fixture's temporary workspace;
+    # later HTTP tests must not inherit its removed ContextOS/CAS root.
+    monkeypatch.setattr(os, "environ", os.environ.copy())
     monkeypatch.delenv("KERNELONE_INSTANCE_WORKSPACE", raising=False)
     monkeypatch.setenv("KERNELONE_LLM_CONFIG", str(isolated_workspace / ".polaris" / "runtime" / "llm-config.json"))
     settings = _settings(isolated_workspace)

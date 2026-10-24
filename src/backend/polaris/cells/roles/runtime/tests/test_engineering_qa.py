@@ -742,6 +742,11 @@ async def main():
     command=RoleRunCommand("qa-task","director","The artifact must contain value2. Independently review real implementation.",workspace,required_checks=("python3 -c \"from pathlib import Path; assert int(Path('value.txt').read_text(encoding='utf-8'))>0\"",))
     await service.start(command,scope=_scope(workspace),limits=RunLimits(time.time()+45,1000000,64000),request_key="cold-batch")
     await service.wait("qa-task",workspace=workspace)
+    # Reaching here is unexpected: keep the real terminal facts when the child
+    # never reaches the crash trigger, instead of an empty exit0 assertion.
+    import json
+    print(json.dumps({"unexpected_terminal":service.store.load_run("qa-task",workspace=workspace),
+                      "events":service.store.load_events("qa-task",kinds=("role_finished","verification_completed","qa_review_completed","run_ended"))},ensure_ascii=False))
 asyncio.run(main())
 """
     child_result = await asyncio.to_thread(
@@ -753,8 +758,17 @@ asyncio.run(main())
         encoding="utf-8",
         timeout=25,
     )
-    assert child_result.returncode == 87, child_result.stderr
+    assert child_result.returncode == 87, child_result.stdout + child_result.stderr
     assert len(scripted_provider.requests) == 3
+    if batch != "duplicate_approval":
+        # Rejection returns to Director. End this decision-recovery probe with
+        # one explicit permanent provider error, rather than the server's
+        # implicit retryable HTTP500 after its three queued replies run out.
+        # A normal completion would start another QA frame and change this case.
+        scripted_provider.enqueue_json(
+            {"error": {"type": "invalid_request_error", "message": "Fixture ends after recovered QA rejection."}},
+            status=400,
+        )
     cold = _service(isolated_workspace, scripted_provider, monkeypatch)
     saved = [
         event

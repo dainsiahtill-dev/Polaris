@@ -1,0 +1,31 @@
+id: vc-20261024-engineering-observation-settlement
+classification: structural
+status: implementation_component_green_integration_native_pending
+owners: [roles.runtime, delivery.api_gateway, delivery.cli, existing_instance_supervisor]
+baseline_commit: fbc96f8e106522c6e685f66264b920c3dd292e16
+blueprint: docs/blueprints/POLARIS_ENGINEERING_OBSERVATION_SETTLEMENT_20261024.md
+baseline_evidence:
+  real_failure: .polaris/bench/original120-20261024-v19/cases/013-L2-13/postterminal-liveness-audit/report.json
+  query_counter: .polaris/audits/engineering-observation-liveness-20261024/research/baseline-result.json
+  safe_partial_stop: .polaris/bench/original120-20261024-v19/cases/013-L2-13/root-assisted-closeout/operational-stop-after-reconciliation.json
+assumptions:
+  proven: [three_manifest_source_path, two_real_manifest_toy_counterexample, canonical_terminal_drained, heavy_HTTP_blocks_stop_order, frontend_exception_skips_backend]
+  hypothesis: one_query_observation_and_worker_execution_restore_responsiveness
+  unknown: [exclusive_live_python_stack, original_frontend_zombie_state, global_QA_or_cost_improvement]
+pre_mortem:
+  - Request-local reuse must not become cross-request stale cache or trust model-supplied manifests.
+  - Threaded observation and encoding must preserve workspace/role/binding checks and bounded execution.
+  - SQL terminal/passed is not accepted; release needs exact positive drain and quiescence.
+  - Missing old release evidence and unknown process identity stay UNKNOWN.
+  - Frontend error cannot authorize signalling foreign or reused backend processes.
+verification_targets:
+  - polaris/cells/roles/runtime/tests/test_engineering_observation.py
+  - polaris/delivery/http/tests/test_engineering_observation_responsiveness.py
+  - polaris/cells/roles/runtime/tests/test_engineering_resource_state.py
+  - polaris/tests/unit/delivery/cli/test_engineering_acceptance.py
+  - polaris/cells/instances/tests/test_instance_service.py
+  - polaris/cells/roles/runtime/tests/test_engineering_recovery.py
+  - scripts/factory_bench/test_engineering_bench_runner.py
+  - scripts/factory_bench/test_native_supervisor_transport.py
+stop: old_counterexamples_RED_new_GREEN_adjacent_safety_and_cold_paths_then_integrate_and_fresh_native
+not_proven: unattended_delivery_or_platform_superiority

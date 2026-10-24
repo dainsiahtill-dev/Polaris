@@ -8,6 +8,7 @@ factory_bench may create instances, but Bench is not a production concept here.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -1124,20 +1125,207 @@ class InstanceSupervisor:
             )
         return False
 
-    def stop_instance(self, instance_id: str) -> dict[str, Any]:
+    @staticmethod
+    def _engineering_stop_binding(settlement: dict[str, Any]) -> str:
+        """Bind host-recorded closure to the exact original launch and request."""
+        identity = {key: settlement.get(key) for key in ("run_id", "request_key", "request_attempted", "instance")}
+        return hashlib.sha256(
+            json.dumps(identity, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+    def _validate_engineering_settlement(self, record: InstanceRecord, settlement: dict[str, Any]) -> None:
+        """Add terminal/quiescence proof to an already-authorized instance stop.
+
+        The platform envelope contains an exact expected instance snapshot and
+        engineering request identity. Internal harness bindings are not inputs.
+        """
+        from polaris.cells.roles.runtime.public.engineering_resource_state import query_engineering_resource_state
+
+        original = settlement.get("instance")
+        required = {"schema_version", "instance", "run_id", "request_key", "request_attempted"}
+        if (
+            settlement.get("schema_version") != "engineering.resource_settlement.v1"
+            or not required.issubset(settlement)
+            or not set(settlement).issubset(required | {"resource_namespace_identity"})
+            or not isinstance(original, dict)
+            or type(settlement.get("request_attempted")) is not bool
+            or (
+                settlement.get("resource_namespace_identity") is not None
+                and not isinstance(settlement["resource_namespace_identity"], dict)
+            )
+        ):
+            raise RuntimeError("engineering resource settlement binding missing or invalid")
+        before_request = settlement["request_attempted"] is False
+        if (before_request and settlement["run_id"] is not None) or (
+            not before_request
+            and (
+                not isinstance(settlement["run_id"], str)
+                or not settlement["run_id"]
+                or not isinstance(settlement["request_key"], str)
+                or not settlement["request_key"]
+            )
+        ):
+            raise RuntimeError("engineering resource settlement request identity unknown")
+        if (
+            record.instance_id == "main"
+            or self._record_is_current_backend(record)
+            or record.backend_port in {49977, 5173, 59977}
+            or record.frontend_port in {49977, 5173, 59977}
+            or record.metadata.get("backend_binding") == "shared_backend_workspace_switch"
+        ):
+            raise RuntimeError("engineering settlement scope rejected")
+        identity_fields = (
+            "instance_id",
+            "kind",
+            "workspace",
+            "runtime_root",
+            "polaris_root",
+            "backend_url",
+            "frontend_url",
+            "backend_port",
+            "frontend_port",
+            "token",
+            "backend_pid",
+            "frontend_pid",
+            "created_at",
+            "last_started_at",
+        )
+        if not set(identity_fields).issubset(original):
+            raise RuntimeError("engineering resource settlement expected instance snapshot incomplete")
+        progress = record.metadata.get("engineering_stop_progress", {})
+        progress_bound = (
+            isinstance(progress, dict)
+            and progress.get("schema_version") == "instance.engineering_stop_progress.v1"
+            and progress.get("binding") == self._engineering_stop_binding(settlement)
+            and isinstance(progress.get("closed_children"), dict)
+        )
+        for key in identity_fields:
+            if getattr(record, key) == original.get(key):
+                continue
+            # Only this owner's positively confirmed monotonic child closure
+            # can explain an original PID becoming None. No None wildcard.
+            kind = key.removesuffix("_pid")
+            closure = progress["closed_children"].get(kind) if progress_bound else None
+            if (
+                key not in {"backend_pid", "frontend_pid"}
+                or getattr(record, key) is not None
+                or type(original.get(key)) is not int
+                or original[key] <= 0
+                or not isinstance(closure, dict)
+                or closure.get("original_pid") != original[key]
+                or closure.get("port") != original.get(kind + "_port")
+                or closure.get("confirmed") is not True
+                or not isinstance(closure.get("confirmed_at"), str)
+            ):
+                raise RuntimeError("engineering settlement original instance identity changed")
+            # A recorded earlier drain does not waive current resource checks.
+            self._wait_for_record_ports_free(record, wait_backend=kind == "backend", wait_frontend=kind == "frontend")
+        state = query_engineering_resource_state(
+            record.workspace,
+            session_id=None if before_request else settlement["run_id"],
+            request_key=None if before_request else settlement["request_key"],
+        )
+        previous_namespace = settlement.get("resource_namespace_identity")
+        if (
+            state.get("status") != "readable"
+            or state.get("active_runs")
+            or state.get("pending_tool_calls")
+            or state.get("runtime_root") != record.runtime_root
+            or (previous_namespace is not None and state.get("namespace_identity") != previous_namespace)
+        ):
+            raise RuntimeError("engineering settlement canonical quiescence unknown")
+        if not before_request and state.get("safe_to_stop") is not True:
+            raise RuntimeError("engineering settlement terminal release unknown")
+
+    def stop_instance(
+        self, instance_id: str, *, engineering_settlement: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         record = self._require_record(instance_id)
         if self._record_is_current_backend(record):
             raise RuntimeError("current backend instance cannot stop itself")
-        frontend_owned = self._pid_looks_like_instance_process(record, record.frontend_pid, process_kind="frontend")
-        backend_owned = self._pid_looks_like_instance_process(record, record.backend_pid, process_kind="backend")
-        if frontend_owned:
-            self._terminate_pid(record.frontend_pid)
-        if backend_owned:
-            self._terminate_pid(record.backend_pid)
-        if backend_owned or frontend_owned:
-            self._wait_for_record_ports_free(record, wait_backend=backend_owned, wait_frontend=frontend_owned)
-        record.frontend_pid = None
-        record.backend_pid = None
+        if engineering_settlement is not None:
+            self._validate_engineering_settlement(record, engineering_settlement)
+        original = record.to_dict()
+        errors: list[dict[str, str]] = []
+        for process_kind in ("frontend", "backend"):
+            try:
+                # Frontend failure cannot waive identity/policy for the backend.
+                current = self._require_record(instance_id)
+                identity_fields = (
+                    "instance_id",
+                    "workspace",
+                    "runtime_root",
+                    "polaris_root",
+                    "backend_pid",
+                    "frontend_pid",
+                    "backend_port",
+                    "frontend_port",
+                    "token",
+                    "created_at",
+                    "last_started_at",
+                    "metadata",
+                )
+                if any(
+                    getattr(current, key) != original[key] for key in identity_fields
+                ) or self._record_is_current_backend(current):
+                    raise RuntimeError("instance identity changed during stop")
+                if engineering_settlement is not None:
+                    self._validate_engineering_settlement(current, engineering_settlement)
+                pid = getattr(record, process_kind + "_pid")
+                owned = self._pid_looks_like_instance_process(current, pid, process_kind=process_kind)
+                if owned:
+                    self._terminate_pid(pid)
+                    self._wait_for_record_ports_free(
+                        current, wait_backend=process_kind == "backend", wait_frontend=process_kind == "frontend"
+                    )
+                elif engineering_settlement is not None:
+                    if pid and is_process_alive(pid):
+                        raise RuntimeError("engineering settlement process identity unknown")
+                    # An initially absent PID proves no physical port closure.
+                    # Disabled, PID-less frontends own no configured listener.
+                    self._wait_for_record_ports_free(
+                        current,
+                        wait_backend=process_kind == "backend",
+                        wait_frontend=process_kind == "frontend" and bool(current.start_frontend or pid),
+                    )
+                if engineering_settlement is not None and pid:
+                    binding = self._engineering_stop_binding(engineering_settlement)
+                    progress = record.metadata.get("engineering_stop_progress", {})
+                    closed = (
+                        dict(progress["closed_children"])
+                        if isinstance(progress, dict)
+                        and progress.get("schema_version") == "instance.engineering_stop_progress.v1"
+                        and progress.get("binding") == binding
+                        and isinstance(progress.get("closed_children"), dict)
+                        else {}
+                    )
+                    closed[process_kind] = {
+                        "original_pid": pid,
+                        "port": getattr(record, process_kind + "_port"),
+                        "confirmed": True,
+                        "confirmed_at": utc_timestamp(),
+                    }
+                    record.metadata = {
+                        **record.metadata,
+                        "engineering_stop_progress": {
+                            "schema_version": "instance.engineering_stop_progress.v1",
+                            "binding": binding,
+                            "closed_children": closed,
+                        },
+                    }
+                setattr(record, process_kind + "_pid", None)
+            except Exception as error:  # noqa: BLE001 - preserve partial effects and independently revalidate residual resources.
+                errors.append({"process_kind": process_kind, "error_type": type(error).__name__, "error": str(error)})
+        # Never overwrite a concurrent replacement or erase uncertain identities.
+        latest = self._require_record(instance_id)
+        if any(getattr(latest, key) != original[key] for key in identity_fields):
+            raise RuntimeError("instance identity changed during stop")
+        if errors:
+            record.metadata = {**record.metadata, "stop_errors": [*record.metadata.get("stop_errors", []), *errors]}
+            self.registry.save(record)
+            raise RuntimeError("; ".join(error["error"] for error in errors))
         record.status = "stopped"
         record.last_stopped_at = utc_timestamp()
         self.registry.save(record)

@@ -14,7 +14,9 @@ import hashlib
 import json
 import os
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +105,11 @@ class EngineeringVerification:
         self.store = store
         self.scope = scope
         self.cancel = cancel
+        # Only a host query may install an actual capture, never a caller's
+        # binding. Context-local lifetime also isolates concurrent readers.
+        self._observed_inputs: ContextVar[dict[str, object] | None] = ContextVar(
+            "engineering_current_inputs", default=None
+        )
         # Declarations remain the original authority, including future paths.
         # This attempt's command mounts never expand after construction.
         self._declared_output_roots = writable_output_roots
@@ -179,6 +186,23 @@ class EngineeringVerification:
                 raise ValueError(f"verification output is unavailable: {supplied}") from error
         return tuple(sorted(outputs))
 
+    @contextmanager
+    def _observe_current_inputs(self) -> Iterator[None]:
+        """Share one actual KFS capture within a synchronous host read only.
+
+        Execution before/after captures still call _manifest directly. Reset
+        even on errors; ordinary calls and the next public query stay fresh.
+        """
+        token = self._observed_inputs.set(self._manifest(include_outputs=True))
+        try:
+            yield
+        finally:
+            self._observed_inputs.reset(token)
+
+    def _current_manifest(self) -> dict[str, object]:
+        observed = self._observed_inputs.get()
+        return observed if observed is not None else self._manifest(include_outputs=True)
+
     def review_binding(self, session_id: str) -> dict[str, object]:
         """Host observations bind a review to exact current inputs, never model IDs."""
         row = self.store.load_run(session_id, workspace=self.workspace)
@@ -191,7 +215,7 @@ class EngineeringVerification:
             "required_checks": row["required_checks"],
             "scope": row["scope"],
             "profile": self._profile(),
-            "inputs": self._manifest(include_outputs=True),
+            "inputs": self._current_manifest(),
         }
 
     def _profile(self) -> dict[str, object]:
@@ -433,7 +457,7 @@ class EngineeringVerification:
         run = self.store.load_run(session_id, workspace=self.workspace)
         if run["verification"] not in {"passed", "failed"}:
             return None
-        completed = [event for event in self.store.load_events(session_id) if event["kind"] == "verification_completed"]
+        completed = self.store.load_events(session_id, kinds=("verification_completed",))
         if not completed:
             return None
         payload = completed[-1]["payload"]
@@ -448,7 +472,7 @@ class EngineeringVerification:
         ):
             return None
         try:
-            return payload if binding.get("result_manifest") == self._manifest(include_outputs=True) else None
+            return payload if binding.get("result_manifest") == self._current_manifest() else None
         except (OSError, ValueError, RuntimeError, PathSecurityError):
             return None
 
