@@ -87,6 +87,8 @@ class EngineeringSessionStore:
                 connection.execute("ALTER TABLE runs ADD COLUMN require_qa INTEGER NOT NULL DEFAULT 0")
             if "verification_output_roots" not in columns:
                 connection.execute("ALTER TABLE runs ADD COLUMN verification_output_roots TEXT")
+            if "verification_execution_policy" not in columns:
+                connection.execute("ALTER TABLE runs ADD COLUMN verification_execution_policy TEXT")
             connection.execute("""CREATE TABLE IF NOT EXISTS events (
                 session_id TEXT NOT NULL REFERENCES runs(session_id), seq INTEGER NOT NULL,
                 kind TEXT NOT NULL, role TEXT NOT NULL, payload TEXT NOT NULL, created_at REAL NOT NULL,
@@ -184,7 +186,11 @@ class EngineeringSessionStore:
         permission_profile_id: str | None = None,
         require_qa: bool = False,
         verification_output_roots: tuple[Path, ...] | None = None,
+        verification_execution_policy: str | None = None,
     ) -> str:
+        from polaris.cells.roles.runtime.internal.engineering_execution_policy import resolve_execution_policy
+
+        resolve_execution_policy(verification_execution_policy)
         self._assert_workspace(command.workspace)
         if not command.session_id.strip() or not command.instruction.strip():
             raise ValueError("session_id and instruction must be non-empty")
@@ -227,6 +233,7 @@ class EngineeringSessionStore:
             "verification_output_roots": self._json([str(root) for root in verification_output_roots])
             if verification_output_roots is not None
             else None,
+            "verification_execution_policy": verification_execution_policy,
         }
         with self._transaction() as connection:
             identity_row = connection.execute("SELECT * FROM runs WHERE session_id=?", (command.session_id,)).fetchone()
@@ -580,6 +587,14 @@ class EngineeringSessionStore:
                 if requested_by is not None
                 else list(commands)
             )
+            from polaris.cells.roles.runtime.internal.engineering_execution_policy import resolve_execution_policy
+
+            saved_policy = row["verification_execution_policy"]
+            expected_execution = resolve_execution_policy(saved_policy).binding(effective)
+            if (saved_policy is not None or "execution_policy" in input_binding) and input_binding.get(
+                "execution_policy"
+            ) != expected_execution:
+                raise ValueError("verification execution policy does not match saved host policy")
             if requested_by is not None:
                 parent = self._verification_parent(connection, session_id, requested_by, effective)
                 if parent is None or parent["status"] != "started":
@@ -635,6 +650,18 @@ class EngineeringSessionStore:
         checks = payload.get("checks", [])
         commands = binding.get("commands", [])
         if not self._valid_commands(commands, allow_empty=False) or not isinstance(checks, list):
+            return False
+        from polaris.cells.roles.runtime.internal.engineering_execution_policy import resolve_execution_policy
+
+        saved_policy = self._require_run(connection, session_id)["verification_execution_policy"]
+        try:
+            expected_execution = resolve_execution_policy(saved_policy).binding(commands)
+        except ValueError:
+            return False
+        # Old absent policy/evidence remains POSIX history, never upgraded.
+        if (saved_policy is not None or "execution_policy" in binding) and binding.get(
+            "execution_policy"
+        ) != expected_execution:
             return False
         attempt = binding.get("attempt_seq")
         if attempt is None and checks:

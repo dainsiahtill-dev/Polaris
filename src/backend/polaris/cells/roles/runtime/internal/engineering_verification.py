@@ -65,6 +65,7 @@ def verification_observation(call_id: str, payload: dict[str, Any], max_output_b
         # Director write permissions or a guessed historical profile.
         "execution_scope": binding.get("scope") if isinstance(binding.get("scope"), dict) else None,
         "verification_output_policy": binding.get("verification_output_policy"),
+        **({"execution_policy": binding["execution_policy"]} if "execution_policy" in binding else {}),
         # Keep scope and a legal next step ahead of potentially long outputs.
         "detail": f"{_VERIFICATION_GUIDANCE}\n{payload.get('detail', '')}",
         "verification_commands": commands,
@@ -310,6 +311,9 @@ class EngineeringVerification:
             )
 
         run = self.store.load_run(session_id, workspace=self.workspace)
+        from polaris.cells.roles.runtime.internal.engineering_execution_policy import resolve_execution_policy
+
+        execution_policy = resolve_execution_policy(run.get("verification_execution_policy"))
         saved_declarations = run.get("verification_output_roots")
         # These roots were observed when this Verifier constructed its command
         # scope. Later manifest reads must not rewrite this attempt's policy.
@@ -332,6 +336,7 @@ class EngineeringVerification:
                 raise PermissionError("verify_project and execute_command require explicit host permission")
             binding["commands"] = self.store._merge_commands(run["required_checks"], commands)
             binding["requested_by"] = list(requested_by)
+        binding["execution_policy"] = execution_policy.binding(list(binding["commands"]))
         if not commands:
             record("not_run", "No final checks declared.")
             return ()
@@ -378,7 +383,9 @@ class EngineeringVerification:
                     arguments=arguments,
                     role="director",
                 )
-                observation = await self.tools.execute(call_id, "execute_command", arguments)
+                observation = await self.tools.execute(
+                    call_id, "execute_command", arguments, execution_policy=execution_policy
+                )
                 self.store.record_tool_observation(
                     session_id, turn_seq=turn_seq, observation=observation, role="director"
                 )

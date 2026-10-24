@@ -13,6 +13,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from polaris.cells.roles.runtime.internal.engineering_execution_policy import (
+    CommandExecutionPolicy,
+    resolve_execution_policy,
+)
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RunLimits, ToolObservation
 from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 from polaris.kernelone.exceptions import PathSecurityError
@@ -177,7 +181,14 @@ class EngineeringTools:
             raise ValueError(f"engineering tool disabled: {name}")
         return name, normalized
 
-    async def execute(self, call_id: str, tool: str, arguments: dict[str, Any]) -> ToolObservation:
+    async def execute(
+        self,
+        call_id: str,
+        tool: str,
+        arguments: dict[str, Any],
+        *,
+        execution_policy: CommandExecutionPolicy | None = None,
+    ) -> ToolObservation:
         """Execute one call in source order; errors remain explicit observations."""
         name = tool
         try:
@@ -242,7 +253,9 @@ class EngineeringTools:
                     maximum=COMMAND_TIMEOUT_MAXIMUM,
                 )
                 completed = await self._process(
-                    ["/bin/sh", "-c", command], timeout=timeout, writes=self.scope.write_roots
+                    (execution_policy or resolve_execution_policy(None)).argv(command),
+                    timeout=timeout,
+                    writes=self.scope.write_roots,
                 )
                 content = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
                 return self._observation(call_id, name, completed.returncode == 0, content, completed.returncode)

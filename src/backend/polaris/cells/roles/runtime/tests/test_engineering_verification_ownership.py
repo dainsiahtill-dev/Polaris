@@ -112,10 +112,16 @@ async def test_failed_selected_checks_keep_their_origin_in_same_director_feedbac
         if message["role"] == "user"
     )
     # The native codec merges adjacent user content, including the transient
-    # host budget after this unchanged feedback object.
+    # host declarations and budget after this unchanged feedback object.
     payload = feedback.split("\n", 1)[1]
     facts, end = json.JSONDecoder().raw_decode(payload)
-    assert payload[end:].strip().startswith("Host runtime budget observation")
+    trailing = payload[end:].strip()
+    declaration = "Host verification output declarations (original saved state, not current authorization): "
+    if trailing.startswith(declaration):
+        declaration_payload = trailing[len(declaration) :]
+        _declared, declaration_end = json.JSONDecoder().raw_decode(declaration_payload)
+        trailing = declaration_payload[declaration_end:].strip()
+    assert trailing.startswith("Host runtime budget observation")
     assert facts["required_checks"] == [required]
     assert facts["verification_commands"] == [required, bad]
     assert facts["checks"][1]["result"]["exit_code"] == 9

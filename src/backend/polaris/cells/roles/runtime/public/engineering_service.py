@@ -388,10 +388,12 @@ class EngineeringRunService:
             self.workspace, self._writable_output_roots, write_roots=scope.write_roots
         )
         declared_outputs: tuple[Path, ...] | None = self._writable_output_roots
+        execution_policy: str | None = "bash_pipefail_v1"
         existing_id = self.store.find_request(request_key) if request_key is not None else command.session_id
         if existing_id is not None:
             try:
                 existing = self.store.load_run(existing_id, workspace=self.workspace)
+                execution_policy = existing.get("verification_execution_policy")
                 if existing.get("verification_output_roots") is None and not self._writable_output_roots:
                     declared_outputs = None
             except KeyError:
@@ -405,6 +407,7 @@ class EngineeringRunService:
             permission_profile_id=permission_profile_id,
             require_qa=self._require_qa,
             verification_output_roots=declared_outputs,
+            verification_execution_policy=execution_policy,
         )
         row = self.observe(session_id, workspace=self.workspace)
         if session_id in self._tasks or row["status"] in _TERMINAL or row["status"] == "running":
@@ -944,6 +947,9 @@ class EngineeringRunService:
         row = self.observe(session_id, workspace=workspace)
         if row["engine_version"] != self.engine_version:
             raise ValueError("engineering run cannot change engine version on resume")
+        from polaris.cells.roles.runtime.internal.engineering_execution_policy import resolve_execution_policy
+
+        resolve_execution_policy(row.get("verification_execution_policy"))
         original_scope = self._revalidated_scope(row)
         if session_id in self._tasks or (
             row["status"] == "completed" and row["verification"] != "unknown" and row.get("qa_verdict") != "unknown"
