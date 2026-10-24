@@ -1014,3 +1014,198 @@ async def test_cold_cli_usage_uses_actual_provider_and_durable_attempt_once(
     # Reopening both consumers cannot accumulate phases, snapshots or old reads.
     assert module._measurements(EngineeringRunService(tmp_path).snapshot(session_id, workspace=tmp_path)) == metrics
     assert all(path.read_bytes() == original for path, original in sealed.items())
+
+
+def _stop_diagnostic_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any, FakeSupervisor]:
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    inputs = _inputs(module, tmp_path)
+    supervisor = FakeSupervisor()
+    module.launch(inputs, supervisor=supervisor, http_factory=lambda _: FakeHTTP(inputs.workspace))
+    monkeypatch.setattr(
+        module,
+        "_resource_state",
+        lambda _: {"safe_to_stop": True, "run_status": "completed", "namespace_identity": "synthetic"},
+    )
+    return module, inputs, supervisor
+
+
+@pytest.mark.parametrize(
+    "stage,dispatched,returned",
+    [
+        ("recover_instance", False, False),
+        ("canonical_read", False, False),
+        ("admission_health", False, False),
+        ("settlement_prepare", False, False),
+        ("owner_stop", True, False),
+        ("closure_health", True, True),
+        ("closure_confirmation", True, True),
+        ("report_write", True, True),
+    ],
+)
+def test_stop_diagnostic_phase_and_progress_without_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    dispatched: bool,
+    returned: bool,
+) -> None:
+    module, inputs, supervisor = _stop_diagnostic_setup(tmp_path, monkeypatch)
+    secret = "synthetic-private-stop-diagnostic"
+    private_url = "https://example.invalid/private?token=" + secret
+    failure = RuntimeError("injected detail " + private_url)
+    health_calls = 0
+    record_calls = 0
+    original_health = supervisor.health
+    original_stop = supervisor.stop_instance
+    original_record = module._record
+
+    def fail(*_args: Any, **_kwargs: Any) -> Any:
+        raise failure
+
+    def health(instance_id: str) -> dict[str, Any]:
+        nonlocal health_calls
+        health_calls += 1
+        if (stage == "admission_health" and health_calls == 1) or (stage == "closure_health" and health_calls == 2):
+            raise failure
+        return original_health(instance_id)
+
+    def stop_instance(instance_id: str, *, engineering_settlement: dict[str, Any] | None = None) -> dict[str, Any]:
+        result = original_stop(instance_id, engineering_settlement=engineering_settlement)
+        if stage == "owner_stop":
+            raise failure  # The fake memory effect occurred, but the call did not return.
+        return result
+
+    def record(binding: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
+        nonlocal record_calls
+        record_calls += 1
+        if stage == "report_write" and record_calls == 1:
+            raise failure
+        return original_record(binding, report)
+
+    def activity(_workspace: Path) -> dict[str, Any]:
+        if stage == "canonical_read":
+            raise failure
+        return {"status": "readable", "active_runs": [], "pending_tool_calls": []}
+
+    def probe(_pid: int) -> bool:
+        if stage == "closure_confirmation":
+            raise failure
+        return False
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail("unexpected real supervisor, process, resource or HTTP dependency")
+
+    monkeypatch.setattr(supervisor, "health", health)
+    monkeypatch.setattr(supervisor, "stop_instance", stop_instance)
+    monkeypatch.setattr(module, "_record", record)
+    monkeypatch.setattr(module, "_supervisor", forbidden)
+    monkeypatch.setattr(module, "_process_alive", forbidden)
+    monkeypatch.setattr(module, "query_engineering_resource_state", forbidden)
+    if stage == "recover_instance":
+        monkeypatch.setattr(module, "_recover_instance", fail)
+    if stage == "settlement_prepare":
+        # Model a missing binding field after unchanged admission checks.
+        binding = module._read_binding(inputs.evidence_dir / "binding.json")
+        binding.pop("request_key")
+        monkeypatch.setattr(module, "_read_binding", lambda _: binding)
+    result = module.stop(
+        inputs.evidence_dir / "binding.json",
+        supervisor=supervisor,
+        http_factory=forbidden,
+        activity_reader=activity,
+        process_probe=probe,
+    )
+    # These assertions are RED against frozen EE2; no Source fix is needed to run them.
+    assert result["failure_stage"] == stage
+    assert result["stop_dispatch_started"] is dispatched
+    assert result["stop_call_returned"] is returned
+    assert result["error_code"] == "unclassified_stop_failure"
+    assert result["harness_status"] == "UNKNOWN" and result["exit_code"] == 2
+    assert result["stop_replayed"] is False
+    assert "resources" not in result
+    assert supervisor.stops == ([inputs.instance_id] if dispatched else [])
+    emitted = json.dumps(result) + (inputs.evidence_dir / "report.json").read_text(encoding="utf-8")
+    emitted += "".join(p.read_text(encoding="utf-8") for p in (inputs.evidence_dir / "operations").glob("*.json"))
+    assert secret not in emitted and private_url not in emitted
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [
+        ("base", "instance_registry_error"),
+        ("read", "instance_registry_read_error"),
+        ("corrupt", "instance_registry_corrupt"),
+        ("spoofed", "unclassified_stop_failure"),
+    ],
+)
+def test_stop_diagnostic_allowlists_error_types_not_dynamic_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, expected: str
+) -> None:
+    from polaris.cells.instances.public.service import InstanceRegistryError, RegistryCorruptionError, RegistryReadError
+
+    module, inputs, supervisor = _stop_diagnostic_setup(tmp_path, monkeypatch)
+    secret = "synthetic-error-detail-must-not-escape"
+    if kind == "spoofed":
+
+        class SpoofedError(RuntimeError):
+            code = secret
+
+        error: Exception = SpoofedError(secret)
+    else:
+        error_type = {"base": InstanceRegistryError, "read": RegistryReadError, "corrupt": RegistryCorruptionError}[
+            kind
+        ]
+        registry_error = error_type(tmp_path / secret, reason=secret, detail="https://example.invalid/" + secret)
+        registry_error.code = secret  # Dynamic code is not an allowlisted diagnostic.
+        error = registry_error
+
+    def health(_instance_id: str) -> dict[str, Any]:
+        raise error
+
+    monkeypatch.setattr(supervisor, "health", health)
+    result = module.stop(
+        inputs.evidence_dir / "binding.json",
+        supervisor=supervisor,
+        activity_reader=lambda _: {"status": "readable", "active_runs": [], "pending_tool_calls": []},
+        process_probe=lambda _: False,
+    )
+    assert result["error_code"] == expected
+    assert result["failure_stage"] == "admission_health"
+    assert result["stop_dispatch_started"] is False and result["stop_call_returned"] is False
+    assert result["harness_status"] == "UNKNOWN" and result["stop_replayed"] is False
+    assert not supervisor.stops
+    emitted = json.dumps(result) + (inputs.evidence_dir / "report.json").read_text(encoding="utf-8")
+    emitted += "".join(p.read_text(encoding="utf-8") for p in (inputs.evidence_dir / "operations").glob("*.json"))
+    assert secret not in emitted
+
+
+def test_stop_diagnostic_preserves_baseexception_without_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module, inputs, supervisor = _stop_diagnostic_setup(tmp_path, monkeypatch)
+
+    class GuardAbort(BaseException):
+        pass
+
+    calls = 0
+    original_stop = supervisor.stop_instance
+
+    def stop_instance(instance_id: str, *, engineering_settlement: dict[str, Any] | None = None) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        original_stop(instance_id, engineering_settlement=engineering_settlement)
+        raise GuardAbort("synthetic guard")
+
+    monkeypatch.setattr(supervisor, "stop_instance", stop_instance)
+    report_before = (inputs.evidence_dir / "report.json").read_bytes()
+    operations_before = set((inputs.evidence_dir / "operations").glob("*.json"))
+    with pytest.raises(GuardAbort):
+        module.stop(
+            inputs.evidence_dir / "binding.json",
+            supervisor=supervisor,
+            activity_reader=lambda _: {"status": "readable", "active_runs": [], "pending_tool_calls": []},
+            process_probe=lambda _: False,
+        )
+    assert calls == 1 and supervisor.stops == [inputs.instance_id]
+    assert (inputs.evidence_dir / "report.json").read_bytes() == report_before
+    assert set((inputs.evidence_dir / "operations").glob("*.json")) == operations_before

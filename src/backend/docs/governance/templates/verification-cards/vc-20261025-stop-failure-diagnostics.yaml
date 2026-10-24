@@ -1,0 +1,25 @@
+id: vc-20261025-stop-failure-diagnostics
+classification: pattern
+status: qualified_source_only
+owner: delivery.cli.engineering_acceptance
+spec: docs/blueprints/POLARIS_STOP_FAILURE_DIAGNOSTICS_20261025.md
+assumptions:
+  - stage_and_local_call_progress_are_not_physical_effect_or_closure_receipts
+  - Supervisor_and_engineering_resource_query_keep_existing_authority
+  - repeated_report_storage_failure_can_prevent_durable_diagnostics
+observed:
+  - owner_exception_after_synthetic_effect_and_confirmation_exception_after_return_had_same_UNKNOWN_projection
+  - historical_L214_RuntimeError_throw_site_remains_UNKNOWN
+mechanism_candidate: preserve_finite_stop_stage_and_dispatch_return_flags_with_fixed_public_error_type_codes
+verification:
+  - actual_existing_stop_adapter_missing_field_RED_then_GREEN
+  - before_dispatch_owner_post_return_and_report_write_faults_with_KFS_persistence
+  - at_most_one_stop_no_extra_probes_and_unchanged_positive_closure
+  - typed_error_spoofing_and_private_error_text_omitted
+  - BaseException_propagates_without_report_or_replay
+  - adjacent_CLI_instance_resource_architecture_and_KernelOne_gates
+premortem:
+  - no_new_controller_ledger_retry_or_automatic_replay
+  - no_historical_receipt_or_acceptance_rewrite
+  - no_raw_exception_message_code_URL_or_traceback_serialization
+  - flags_cannot_prove_owner_internal_progress_or_resources_closed

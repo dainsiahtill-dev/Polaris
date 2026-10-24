@@ -871,6 +871,23 @@ def _process_alive(pid: int) -> bool | None:
         return None
 
 
+def _stop_error_code(error: Exception) -> str:
+    """Project known public error types without exposing arbitrary error text."""
+    from polaris.cells.instances.public.service import (
+        InstanceRegistryError,
+        RegistryCorruptionError,
+        RegistryReadError,
+    )
+
+    if isinstance(error, RegistryCorruptionError):
+        return "instance_registry_corrupt"
+    if isinstance(error, RegistryReadError):
+        return "instance_registry_read_error"
+    if isinstance(error, InstanceRegistryError):
+        return "instance_registry_error"
+    return "unclassified_stop_failure"
+
+
 def stop(
     binding_file: Path,
     *,
@@ -882,9 +899,13 @@ def stop(
     binding = _read_binding(binding_file)
     client: HTTPPort | None = None
     owner = supervisor or _supervisor(binding["plan"]["registry_home"])
+    failure_stage = "recover_instance"
+    stop_dispatch_started = False
+    stop_call_returned = False
     try:
         _recover_instance(binding, owner)
         before_request = binding.get("request_attempted") is False and not binding.get("run_id")
+        failure_stage = "canonical_read"
         activity = activity_reader(Path(binding["plan"]["workspace"]))
         resource = _resource_state(binding) if not before_request else activity
         if (
@@ -893,6 +914,7 @@ def stop(
             or activity.get("active_runs")
             or activity.get("pending_tool_calls")
         ):
+            failure_stage = "report_write"
             return _record(
                 binding,
                 {
@@ -901,21 +923,27 @@ def stop(
                     "resources": {"stop_performed": False, "canonical_activity": activity, "resource_state": resource},
                 },
             )
+        failure_stage = "admission_health"
         current = owner.health(binding["plan"]["instance_id"])
         _validate_instance(current, binding)
-        owner.stop_instance(
-            binding["plan"]["instance_id"],
-            engineering_settlement={
-                "schema_version": "engineering.resource_settlement.v1",
-                "instance": binding["instance"],
-                "run_id": binding.get("run_id"),
-                "request_key": binding["request_key"],
-                "request_attempted": not before_request,
-                "resource_namespace_identity": resource.get("namespace_identity"),
-            },
-        )
+        failure_stage = "settlement_prepare"
+        settlement: dict[str, Any] = {
+            "schema_version": "engineering.resource_settlement.v1",
+            "instance": binding["instance"],
+            "run_id": binding.get("run_id"),
+            "request_key": binding["request_key"],
+            "request_attempted": not before_request,
+            "resource_namespace_identity": resource.get("namespace_identity"),
+        }
+        failure_stage = "owner_stop"
+        # Call progress only: dispatch does not prove any physical effect.
+        stop_dispatch_started = True
+        owner.stop_instance(binding["plan"]["instance_id"], engineering_settlement=settlement)
+        stop_call_returned = True
+        failure_stage = "closure_health"
         after = owner.health(binding["plan"]["instance_id"])
         _validate_instance(after, binding)
+        failure_stage = "closure_confirmation"
         pids = [
             pid for key in ("backend_pid", "frontend_pid") if isinstance((pid := current.get(key)), int) and pid > 0
         ]
@@ -926,6 +954,7 @@ def stop(
             and after.get("frontend_alive") is False
             and all(value is False for value in process_states.values())
         )
+        failure_stage = "report_write"
         return _record(
             binding,
             {
@@ -949,7 +978,16 @@ def stop(
     except Exception as error:  # noqa: BLE001 - preserve unknown boundary outcomes without replay.
         return _record(
             binding,
-            {"harness_status": "UNKNOWN", "exit_code": 2, "error_type": type(error).__name__, "stop_replayed": False},
+            {
+                "harness_status": "UNKNOWN",
+                "exit_code": 2,
+                "error_type": type(error).__name__,
+                "stop_replayed": False,
+                "failure_stage": failure_stage,
+                "stop_dispatch_started": stop_dispatch_started,
+                "stop_call_returned": stop_call_returned,
+                "error_code": _stop_error_code(error),
+            },
         )
     finally:
         if client is not None:
