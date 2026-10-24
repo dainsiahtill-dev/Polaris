@@ -2033,6 +2033,9 @@ def test_start_instance_restarts_alive_record_when_workspace_changes(tmp_path: P
     monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(instance_service, "allocate_port", fake_allocate_port)
     monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: bool(pid))
+    # These allocated ports and child processes are entirely synthetic.
+    # Physical listener closure is covered by the real-socket settlement tests.
+    monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
     monkeypatch.setattr(InstanceSupervisor, "_http_ok", staticmethod(lambda _url, _token: True))
     monkeypatch.setattr(
         InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: terminated.append(int(pid or 0)))

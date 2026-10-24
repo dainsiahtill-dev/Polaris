@@ -1,6 +1,6 @@
 # Engineering observation and resource settlement
 
-Status: implementation candidate under ROOT integration qualification. Targeted component checks and independent task reviews have run; main integration and fresh unattended acceptance are not yet claimed. Baseline main: `fbc96f8e106522c6e685f66264b920c3dd292e16`.
+Status: implementation on main under ROOT integration qualification. Targeted component checks and independent task reviews have run; final qualification and fresh unattended acceptance are pending. Baseline main: `fbc96f8e106522c6e685f66264b920c3dd292e16`.
 
 ## Problem and first deviation
 
@@ -69,3 +69,7 @@ Research stops when the minimum counterexamples fail old/pass new and adjacent s
 ROOT independently repeated the actual32-file K1/Store/KFS fixture: two captures/64reads/524288bytes became one capture/32reads/262144bytes, with verification, synthetic rejected QA and outcome unchanged. Counts establish this mechanism only; tiny-fixture elapsed time does not establish native latency benefit. Task A's original20-file regression passed385tests after narrowly correcting scripted-provider exhaustion and a test producer's leaked process environment; one intermediate cold-child exit remains unexplained and preserved. Task B's generic-envelope and partial-stop counterexamples have separate RED/GREEN and independent review records. Final candidate gates and a fresh frozen run remain required.
 
 Initial synchronous observations inside create/admission, wait and cancel/resume orchestration remain outside this candidate's read-adapter scheduling guarantee. No blanket all-workload responsiveness, superior QA quality, lower cost or full-platform completion is asserted.
+
+Whole-change review reproduced a missing-PID counterexample with real SQLite and an occupied loopback listener: automatic settlement incorrectly persisted stopped. The scoped correction confirms configured backend and enabled frontend ports even when the original PID is absent, preserves disabled-frontend and generic administrative behavior, and creates no invented PID provenance. Its real-listener RED/GREEN evidence is separate from the still-required fresh project run.
+
+The first combined regression retained615passes and one failed crash-injection case. A controlled provider delay reproduces an earlier request timeout that prevents the child reaching its expected crash hook; the original failure's cause remains UNKNOWN because its temporary database was already removed. The test now reports the actual wait result and selected durable event/context references if the hook is not reached, without changing timeouts, exit assertions or production recovery. Final qualification runs the regression separately from heavy gates to avoid measurement contention; a pass cannot retroactively explain or erase that original failure. One entirely synthetic instance-start test also isolates its fake port probe from host port availability; physical closure remains covered by the real-listener tests.
