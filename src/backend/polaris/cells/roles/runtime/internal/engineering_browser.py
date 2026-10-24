@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
+    ArtifactObservation,
     ImageObservation,
     PermissionScope,
     ToolObservation,
@@ -47,6 +48,15 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
 settings = json.loads(sys.argv[1])
+saved_bytes = None
+if settings.get('saved_artifact') is not None:
+    encoded = ''.join(sys.argv[2:])
+    if len(encoded) > 1333336:
+        raise ValueError('saved artifact wire size exceeded')
+    saved_bytes = base64.b64decode(encoded, validate=True)
+    if (not saved_bytes or len(saved_bytes) > 1000000 or len(saved_bytes) != settings['saved_artifact']['size']
+            or hashlib.sha256(saved_bytes).hexdigest() != settings['saved_artifact']['sha256']):
+        raise ValueError('saved artifact bytes or digest mismatch')
 workspace = Path(settings['workspace'])
 sys.path[:] = [path for path in sys.path if path and not Path(path).resolve().is_relative_to(workspace)]
 for path in reversed(settings['python_paths']):
@@ -97,6 +107,16 @@ try:
                 global resource_count, resource_bytes, resource_remaining, resource_budget_error
                 request = route.request
                 url = request.url
+                if saved_bytes is not None:
+                    if request.url == settings['saved_artifact']['url'] and request.method in ('GET', 'HEAD'):
+                        route.fulfill(status=200, headers={'Content-Type': settings['saved_artifact']['media_type'],
+                            'Content-Length': str(len(saved_bytes)), 'X-Content-Type-Options': 'nosniff'},
+                            body=b'' if request.method == 'HEAD' else saved_bytes)
+                    else:
+                        if len(blocked_requests) < 20:
+                            blocked_requests.append(url[:500])
+                        route.abort()
+                    return
                 if settings.get('web_root') is None:
                     if url.startswith(('http:', 'https:', 'ws:', 'wss:', 'ftp:')):
                         if len(blocked_requests) < 20:
@@ -155,8 +175,9 @@ try:
             page.set_default_timeout(2000)
             page.on('console', lambda message: console.append(message.text[:500]) if len(console) < 20 else None)
             page.on('pageerror', lambda error: page_errors.append(str(error)[:500]) if len(page_errors) < 20 else None)
-            entry_url = (static_origin + '/' + quote(settings['entry_in_web_root'], safe='/')
-                if settings.get('web_root') is not None else Path(settings['entry']).as_uri())
+            entry_url = (settings['saved_artifact']['url'] if saved_bytes is not None else
+                (static_origin + '/' + quote(settings['entry_in_web_root'], safe='/')
+                 if settings.get('web_root') is not None else Path(settings['entry']).as_uri()))
             page.goto(entry_url, wait_until='load', timeout=4000)
             for action in settings['actions']:
                 locator = page.locator(action['selector'])
@@ -249,7 +270,8 @@ try:
         'images': images,
         'entry': settings['relative_entry'],
         'web_root': settings.get('relative_web_root'),
-        'origin_mode': 'static' if settings.get('web_root') is not None else 'file',
+        'origin_mode': 'saved_artifact' if saved_bytes is not None else 'static' if settings.get('web_root') is not None else 'file',
+        'saved_artifact': settings.get('saved_artifact'),
         'static_origin': static_origin if settings.get('web_root') is not None else None,
         'static_resources': {'read_count': resource_count, 'bytes_read': resource_bytes,
             'reads': resource_reads, 'reads_truncated': resource_count > len(resource_reads),
@@ -305,29 +327,49 @@ def _integer(value: object, *, label: str, minimum: int, maximum: int) -> int:
     return value
 
 
-def _settings(arguments: dict[str, Any], *, workspace: Path, scope: PermissionScope) -> dict[str, Any]:
+def _settings(
+    arguments: dict[str, Any],
+    *,
+    workspace: Path,
+    scope: PermissionScope,
+    saved_artifact: ArtifactObservation | None = None,
+) -> dict[str, Any]:
     if scope.browser is None:
         raise ValueError("browser observation unavailable: no host browser configuration")
     if "browser_observe" not in scope.enabled_tools:
         raise ValueError("browser observation unavailable: tool is not authorized")
     if not isinstance(arguments, dict) or arguments.keys() - {
         "entry",
+        "artifact_ref",
         "web_root",
         "viewport",
         "frame_times_ms",
         "actions",
     }:
         raise ValueError("unsupported browser observation arguments")
-    entry = _text(arguments.get("entry", "index.html"), label="entry")
-    relative = Path(entry)
-    if relative.is_absolute() or ".." in relative.parts or ":" in entry or "\\" in entry:
-        raise ValueError("browser entry must be a workspace-relative local HTML or SVG path")
-    filesystem = KernelFileSystem(str(workspace), LocalFileSystemAdapter(), read_only_paths=True)
-    target = filesystem.resolve_workspace_path(entry)
-    if target.is_relative_to(workspace / ".polaris") or target.suffix.lower() not in {".html", ".htm", ".svg"}:
-        raise ValueError("browser entry must be an authorized HTML or SVG source outside the control root")
-    if not target.is_file() or not any(target.is_relative_to(Path(root).resolve()) for root in scope.read_roots):
-        raise ValueError("browser entry is unavailable or outside read permission scope")
+    if saved_artifact is not None:
+        if (
+            arguments.get("artifact_ref") != saved_artifact.artifact_ref
+            or {"entry", "web_root", "revisit_call_ids"} & arguments.keys()
+        ):
+            raise ValueError("artifact_ref is exclusive with entry, web_root and revisit_call_ids")
+        if saved_artifact.media_type not in {"image/svg+xml", "text/html", "image/png", "image/jpeg"}:
+            raise ValueError("saved artifact must be self-contained SVG, HTML, PNG or JPEG")
+        target = workspace / saved_artifact.name
+        relative = Path(saved_artifact.name)
+    else:
+        if "artifact_ref" in arguments:
+            raise ValueError("artifact_ref requires host-verified saved bytes")
+        entry = _text(arguments.get("entry", "index.html"), label="entry")
+        relative = Path(entry)
+        if relative.is_absolute() or ".." in relative.parts or ":" in entry or "\\" in entry:
+            raise ValueError("browser entry must be a workspace-relative local HTML or SVG path")
+        filesystem = KernelFileSystem(str(workspace), LocalFileSystemAdapter(), read_only_paths=True)
+        target = filesystem.resolve_workspace_path(entry)
+        if target.is_relative_to(workspace / ".polaris") or target.suffix.lower() not in {".html", ".htm", ".svg"}:
+            raise ValueError("browser entry must be an authorized HTML or SVG source outside the control root")
+        if not target.is_file() or not any(target.is_relative_to(Path(root).resolve()) for root in scope.read_roots):
+            raise ValueError("browser entry is unavailable or outside read permission scope")
 
     web_root: Path | None = None
     guard_source = ""
@@ -420,6 +462,15 @@ def _settings(arguments: dict[str, Any], *, workspace: Path, scope: PermissionSc
     python = trusted_path(scope.browser.python_executable)
     paths = [str(trusted_path(path, directory=True, search_path=True)) for path in scope.browser.python_paths]
     return {
+        "saved_artifact": {
+            "artifact_ref": saved_artifact.artifact_ref,
+            "sha256": saved_artifact.sha256,
+            "size": len(base64.b64decode(saved_artifact.data_base64, validate=True)),
+            "media_type": saved_artifact.media_type,
+            "url": "https://polaris.invalid/saved-artifact",
+        }
+        if saved_artifact is not None
+        else None,
         "workspace": str(workspace),
         "entry": str(target),
         "relative_entry": target.relative_to(workspace).as_posix(),
@@ -479,6 +530,7 @@ async def capture_browser_observation(
     workspace: Path,
     scope: PermissionScope,
     run_process: Callable[[list[str], float], Awaitable[subprocess.CompletedProcess[str]]],
+    saved_artifact: ArtifactObservation | None = None,
 ) -> ToolObservation:
     """Capture actual local pixels; the caller retains the physical effect owner.
 
@@ -487,7 +539,9 @@ async def capture_browser_observation(
     must never invoke this port using an unsandboxed process implementation.
     """
     try:
-        settings = _settings(arguments, workspace=workspace.resolve(strict=True), scope=scope)
+        settings = _settings(
+            arguments, workspace=workspace.resolve(strict=True), scope=scope, saved_artifact=saved_artifact
+        )
         completed = await run_process(
             [
                 settings["python_executable"],
@@ -496,6 +550,14 @@ async def capture_browser_observation(
                 "-c",
                 _BROWSER_PROGRAM,
                 json.dumps(settings, ensure_ascii=False),
+                *(
+                    [
+                        saved_artifact.data_base64[index : index + 32768]
+                        for index in range(0, len(saved_artifact.data_base64), 32768)
+                    ]
+                    if saved_artifact is not None
+                    else []
+                ),
             ],
             30.0,
         )

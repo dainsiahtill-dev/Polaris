@@ -1352,6 +1352,8 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         # ambiguous shell/input deferred to the coercer pass per the normalization blueprint).
         "arg_aliases": {
             "cmd": "command",
+            "capture_artifacts": "artifacts",
+            "output_files": "artifacts",
             "timeout": "timeout",
             "command_line": "command",
             "cmdline": "command",
@@ -1362,6 +1364,15 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "arguments": [
             {"name": "command", "type": "string", "required": True},
             {"name": "timeout", "type": "integer", "required": False, "default": 30},
+            {
+                "name": "artifacts",
+                "type": "array",
+                "required": False,
+                "items": {"type": "string", "minLength": 1},
+                "maxItems": 16,
+                "uniqueItems": True,
+                "description": "Optional relative files under POLARIS_SANDBOX_OUTPUT to save as actual bounded command artifacts; requires host capture support.",
+            },
         ],
         "response_format_hint": "Command output with exit code",
         "required_any": [("command",)],

@@ -22,6 +22,7 @@ from polaris.cells.roles.runtime.internal.engineering_session import (
     WorkspaceBusyError,
 )
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
+    ArtifactObservation,
     BrowserObservationConfig,
     PermissionScope,
     RoleRunCommand,
@@ -537,7 +538,7 @@ class EngineeringRunService:
                     tuple(Path(root) for root in saved_outputs) if saved_outputs is not None else None
                 ),
                 observe=self._observe_dispatch if scope.browser is not None else None,
-                visual_binding=(
+                artifact_binding=(
                     lambda: self._verification(
                         scope,
                         limits,
@@ -545,6 +546,18 @@ class EngineeringRunService:
                         output_roots=self._saved_outputs(
                             self.store.load_run(command.session_id, workspace=self.workspace)
                         ),
+                    ).review_binding(command.session_id)
+                ),
+                visual_binding=(
+                    lambda: self._verification(
+                        scope,
+                        limits,
+                        cancel,
+                        output_roots=self._saved_outputs(
+                            self.store.load_run(command.session_id, workspace=self.workspace)
+                        )
+                        if scope.browser is not None
+                        else None,
                     ).review_binding(command.session_id)
                 )
                 if scope.browser is not None
@@ -611,6 +624,57 @@ class EngineeringRunService:
             raise RuntimeError("verify_project has no matching durable verification completion")
         return verification_observation(call_id, completed[-1], limits.max_tool_output_bytes)
 
+    def _saved_artifact(
+        self, session_id: str, reference: object, binding: Mapping[str, Any], *, require_current: bool = True
+    ) -> ArtifactObservation:
+        """Resolve committed bytes against their original producer and current inputs."""
+        import base64
+        import hashlib
+
+        from polaris.cells.roles.runtime.internal.engineering_artifacts import inputs_digest
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        if not isinstance(reference, str) or re.fullmatch(r"artifact_[0-9a-f]{32}", reference) is None:
+            raise ValueError("invalid artifact_ref")
+        artifact = self.store.artifact(session_id, reference)
+        producer = self.store.artifact_producer(session_id, reference)
+        if artifact is None or producer is None:
+            raise ValueError("artifact_ref has no committed producer in this run")
+        if ToolSpecRegistry.get_canonical(str(producer.get("tool"))) != "execute_command":
+            raise ValueError("artifact_ref does not originate in a command observation")
+        completed = [
+            event
+            for event in self.store.load_events(session_id, kinds=("tool_output_capture_completed",))
+            if event["payload"].get("call_id") == producer["call_id"]
+            and event["payload"].get("turn_seq") == producer["turn_seq"]
+            and event["role"] == producer["role"]
+            and reference in event["payload"].get("artifact_refs", [])
+            and event["seq"] > producer["tool_observed_event_seq"]
+        ]
+        if len(completed) != 1:
+            raise ValueError("artifact_ref capture has no unique durable completion")
+        original = completed[0]["payload"].get("input_binding")
+        if (
+            not isinstance(original, dict)
+            or artifact.source_digest is None
+            or artifact.source_digest != inputs_digest(original)
+        ):
+            raise ValueError("artifact_ref original source binding is unknown")
+
+        def comparable(value: Mapping[str, Any]) -> dict[str, Any]:
+            return {key: item for key, item in value.items() if key != "verification_seq"}
+
+        previous, current = comparable(original), comparable(binding)
+        if not require_current:
+            previous = {key: value for key, value in previous.items() if key not in {"workspace_revision", "inputs"}}
+            current = {key: value for key, value in current.items() if key not in {"workspace_revision", "inputs"}}
+        if previous != current:
+            raise ValueError("artifact_ref is stale or current host authority changed")
+        data = base64.b64decode(artifact.data_base64, validate=True)
+        if hashlib.sha256(data).hexdigest() != artifact.sha256:
+            raise ValueError("artifact_ref saved bytes failed integrity verification")
+        return artifact
+
     async def _observe_dispatch(self, arguments: Mapping[str, Any], turn_seq: int, call_id: str) -> ToolObservation:
         """Bind an authorized read-only capture before its durable tool result."""
         from polaris.cells.roles.runtime.internal.engineering_browser import capture_browser_observation
@@ -664,10 +728,20 @@ class EngineeringRunService:
                 # Historical dispatch preserves native arguments. Reapply the
                 # same registry normalization before current host authorization.
                 _, authorized_arguments = tools.normalize("browser_observe", dict(capture_arguments))
-                entry = tools._path(str(authorized_arguments.get("entry", "index.html")), write=False)
+                if "artifact_ref" in authorized_arguments:
+                    verifier = self._verification(scope, limits, cancel, output_roots=self._saved_outputs(row))
+                    self._saved_artifact(
+                        command.session_id,
+                        authorized_arguments["artifact_ref"],
+                        verifier.review_binding(command.session_id),
+                        require_current=False,
+                    )
+                    entry = None
+                else:
+                    entry = tools._path(str(authorized_arguments.get("entry", "index.html")), write=False)
                 if "web_root" in authorized_arguments:
                     web_root = tools._path(str(authorized_arguments["web_root"]), write=False)
-                    if not entry.is_relative_to(web_root):
+                    if entry is None or not entry.is_relative_to(web_root):
                         raise ValueError("saved browser web_root must contain entry")
                 provenance.append(
                     {
@@ -699,8 +773,18 @@ class EngineeringRunService:
             async def run_process(argv: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
                 return await tools._process(argv, timeout=timeout, writes=())
 
+            saved_artifact = (
+                self._saved_artifact(command.session_id, arguments["artifact_ref"], binding)
+                if "artifact_ref" in arguments
+                else None
+            )
             observed = await capture_browser_observation(
-                call_id, dict(arguments), workspace=self.workspace, scope=readonly, run_process=run_process
+                call_id,
+                dict(arguments),
+                workspace=self.workspace,
+                scope=readonly,
+                run_process=run_process,
+                **({"saved_artifact": saved_artifact} if saved_artifact is not None else {}),
             )
             if observed.call_id != call_id or observed.tool != "browser_observe":
                 raise ValueError("browser observation identity mismatch")

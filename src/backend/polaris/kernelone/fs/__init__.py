@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .guarded_remove_tree import guarded_remove_tree
+
 __all__ = [
     "DirectoryCreateReceipt",
     "DirectoryEntryV1",
@@ -34,6 +36,7 @@ __all__ = [
     "guarded_compare_and_replace_regular_file",
     "guarded_confirm_regular_file_durability",
     "guarded_create_directory",
+    "guarded_remove_tree",
     "read_guarded_regular_file_snapshot",
     "set_default_adapter",
 ]

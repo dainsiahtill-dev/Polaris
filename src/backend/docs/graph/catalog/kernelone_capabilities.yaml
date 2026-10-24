@@ -142,7 +142,7 @@ entries:
     kind: capability
     public_entry: polaris.kernelone.fs
     allowed_new_files: true
-    notes: UTF-8 filesystem runtime and locked-file I/O
+    notes: UTF-8 filesystem runtime, locked-file I/O and expected-identity directory cleanup for exclusively owned drained resources
   - id: kernelone.learning
     path: learning
     kind: legacy_or_overlap
@@ -208,7 +208,7 @@ entries:
     kind: capability
     public_entry: polaris.kernelone.process
     allowed_new_files: true
-    notes: Process and command control
+    notes: Process and command control; optional canonical runtime output capture with bounded KFS byte export and post-commit cleanup or explicit uncertain retention
   - id: kernelone.prompts
     path: prompts
     kind: support

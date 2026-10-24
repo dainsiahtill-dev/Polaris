@@ -125,6 +125,7 @@ def build_workspace_sandbox_argv(
     write_roots: Sequence[str | os.PathLike[str]],
     network_allowed: bool,
     toolchain_bin_dirs: Sequence[str | os.PathLike[str]] = (),
+    capture_output_root: Path | None = None,
 ) -> list[str]:
     """Build a fail-closed Linux command with explicit filesystem grants.
 
@@ -179,6 +180,10 @@ def build_workspace_sandbox_argv(
         toolchain_bin_dirs, workspace=project, read_roots=tuple(reads), write_roots=tuple(writes)
     )
     _reject_external_hardlinks(writes, control=control)
+    if capture_output_root is not None:
+        from .output_capture import validate_command_output_root
+
+        validate_command_output_root(project, capture_output_root, empty=True)
     arguments = [
         bubblewrap,
         "--die-with-parent",
@@ -204,7 +209,10 @@ def build_workspace_sandbox_argv(
             arguments.extend(("--ro-bind", filename, filename))
     arguments.extend(("--proc", "/proc", "--dev", "/dev"))
     for private_root in _PRIVATE_ROOTS:
-        arguments.extend(("--tmpfs", private_root))
+        if private_root == "/sandbox-output" and capture_output_root is not None:
+            arguments.extend(("--bind", str(capture_output_root), private_root))
+        else:
+            arguments.extend(("--tmpfs", private_root))
     arguments.extend(("--dir", str(project)))
     for root in sorted(reads, key=lambda path: (len(path.parts), str(path))):
         arguments.extend(("--ro-bind", str(root), str(root)))

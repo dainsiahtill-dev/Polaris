@@ -5,8 +5,9 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import re
 from dataclasses import asdict, dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Literal
 
 
@@ -83,6 +84,47 @@ class ImageObservation:
 
 
 @dataclass(frozen=True)
+class ArtifactObservation:
+    """Bounded original command output, identified and bound by the host."""
+
+    artifact_ref: str
+    name: str
+    media_type: str
+    data_base64: str
+    sha256: str
+    source_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.artifact_ref, str) or re.fullmatch(r"artifact_[0-9a-f]{32}", self.artifact_ref) is None:
+            raise ValueError("observed artifact reference is invalid")
+        if (
+            not isinstance(self.name, str)
+            or not self.name
+            or len(self.name) > 4096
+            or "\\" in self.name
+            or "\0" in self.name
+            or self.name.startswith("/")
+            or PureWindowsPath(self.name).drive
+            or any(part in {"", ".", ".."} for part in self.name.split("/"))
+        ):
+            raise ValueError("observed artifact name must be a canonical relative file path")
+        if self.media_type not in {"image/svg+xml", "text/html", "image/png", "image/jpeg"}:
+            raise ValueError("unsupported observed artifact type")
+        if self.source_digest is not None and (
+            not isinstance(self.source_digest, str) or re.fullmatch(r"[0-9a-f]{64}", self.source_digest) is None
+        ):
+            raise ValueError("observed artifact source digest is invalid")
+        if not isinstance(self.data_base64, str) or len(self.data_base64) > 1_333_336:
+            raise ValueError("observed artifact bytes exceed the supported bound")
+        try:
+            raw = base64.b64decode(self.data_base64, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise ValueError("observed artifact is not valid base64") from error
+        if len(raw) > 1_000_000 or hashlib.sha256(raw).hexdigest() != self.sha256:
+            raise ValueError("observed artifact bytes do not match their integrity evidence")
+
+
+@dataclass(frozen=True)
 class ToolObservation:
     call_id: str
     tool: str
@@ -94,6 +136,7 @@ class ToolObservation:
     # cancelled run or an unobserved effect. Missing historical values stay false.
     timed_out: bool = False
     images: tuple[ImageObservation, ...] = ()
+    artifacts: tuple[ArtifactObservation, ...] = ()
 
 
 def tool_observation_payload(observation: ToolObservation) -> dict[str, Any]:
@@ -101,6 +144,8 @@ def tool_observation_payload(observation: ToolObservation) -> dict[str, Any]:
     payload = asdict(observation)
     if not observation.images:
         payload.pop("images")
+    if not observation.artifacts:
+        payload.pop("artifacts")
     return payload
 
 

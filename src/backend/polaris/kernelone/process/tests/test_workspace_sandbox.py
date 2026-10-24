@@ -26,7 +26,7 @@ from polaris.kernelone.process.process_tree import (
 
 @pytest.fixture
 def sandbox_workspace() -> Iterator[Path]:
-    private = Path.home() / ".polaris" / "tmp"
+    private = Path(__file__).resolve().parents[6] / ".polaris/test-workspaces/sandbox"
     private.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="workspace-sandbox-", dir=private) as name:
         workspace = Path(name) / "project"

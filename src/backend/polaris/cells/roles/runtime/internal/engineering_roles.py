@@ -147,6 +147,7 @@ def register_browser_observation_tool() -> None:
             "category": "read",
             "description": (
                 "Render a workspace-local HTML or SVG entry in a fresh read-only offline browser and return actual images. "
+                "Or supply artifact_ref to render exact saved self-contained SVG/HTML/PNG/JPEG bytes from a command in this run; exclusive with entry/web_root/revisit_call_ids. "
                 "Alternatively supply only revisit_call_ids to inspect exact saved same-session same-role captures; "
                 "no browser is launched and old bindings stay unchanged. Original capture IDs/frames remain in tool results. "
                 "Use optional web_root for built-page absolute assets, ES modules and CSS: it is an authorized workspace "
@@ -163,6 +164,11 @@ def register_browser_observation_tool() -> None:
             ),
             "parameter_any_of": [
                 {
+                    "properties": {"artifact_ref": {}, "viewport": {}, "frame_times_ms": {}, "actions": {}},
+                    "required": ["artifact_ref"],
+                    "additionalProperties": False,
+                },
+                {
                     "properties": {"entry": {}, "web_root": {}, "viewport": {}, "frame_times_ms": {}, "actions": {}},
                     "additionalProperties": False,
                 },
@@ -173,6 +179,12 @@ def register_browser_observation_tool() -> None:
                 },
             ],
             "arguments": [
+                {
+                    "name": "artifact_ref",
+                    "type": "string",
+                    "pattern": "^artifact_[0-9a-f]{32}$",
+                    "description": "Saved actual command artifact in this run; exclusive with entry, web_root and revisit_call_ids.",
+                },
                 {
                     "name": "revisit_call_ids",
                     "type": "array",

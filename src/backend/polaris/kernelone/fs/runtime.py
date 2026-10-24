@@ -21,6 +21,7 @@ from polaris.kernelone.utils import utc_now_str
 from .contracts import DurabilityMode, FileWriteReceipt, KernelFileSystemAdapter, validate_durability
 from .guarded_directory import guarded_create_directory
 from .guarded_metadata import list_guarded_directory, read_guarded_metadata, read_guarded_symlink
+from .guarded_remove_tree import guarded_remove_tree
 from .text_ops import open_guarded_text_log_append
 from .types import (
     AtomicWriteBindingV1,
@@ -518,6 +519,11 @@ class KernelFileSystem:
             absolute_path=str(path),
             bytes_written=size,
         )
+
+    def workspace_remove_tree(self, relative_or_absolute_path: str, *, expected: FileMetadataV1) -> None:
+        """Clean a physically drained owned directory using its original identity."""
+        relative = self._lexical_workspace_relative_path(relative_or_absolute_path)
+        guarded_remove_tree(self._physical_workspace, relative, expected=expected)
 
     def workspace_remove(
         self,

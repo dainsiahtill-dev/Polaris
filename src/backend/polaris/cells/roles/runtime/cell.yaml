@@ -47,6 +47,7 @@ public_contracts:
   results:
   - RoleRunResult
   - ToolObservation
+  - ArtifactObservation
   - RoleRuntimeObjectResultV1
   - RoleTaskMarketLifecycleResultV1
   - RoleCapabilityInvocationResultV1
@@ -108,6 +109,7 @@ effects_allowed:
 - fs.write:workspace/**
 - fs.read:runtime/**
 - fs.write:runtime/engineering/*
+- fs.write:runtime/command-output/*
 - llm.invoke:roles/*
 - process.spawn:engineering/*
 - ws.outbound:runtime/*
@@ -115,6 +117,8 @@ effects_allowed:
 verification:
   tests:
   - polaris/cells/roles/runtime/tests/test_engineering_loop.py
+  - polaris/cells/roles/runtime/tests/test_engineering_artifact_persistence.py
+  - polaris/cells/roles/runtime/tests/test_engineering_artifact_handoff.py
   - polaris/cells/roles/runtime/tests/test_engineering_roles.py
   - polaris/cells/roles/runtime/tests/test_engineering_qa_execution.py
   - polaris/cells/roles/runtime/tests/test_engineering_qa_execution_recovery.py
@@ -169,4 +173,5 @@ notes:
   semantic patch, JobToken/DEO/Run Ledger admission or automatic deterministic-repair fallback.
 - Historical runtime/roles state is read-only; existing frozen legacy owners are not migrated or resumed by the
   engineering owner. Engineering events publish committed snapshots through event.engineering on runtime.v2.
+- Host command artifacts reuse the existing observation JSON; UUID scratch under canonical runtime/command-output is an execution resource, never another fact store.
 generated_artifacts: []

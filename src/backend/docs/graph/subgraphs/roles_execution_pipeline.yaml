@@ -36,6 +36,7 @@ critical_contracts:
 - PermissionScope
 - RunLimits
 - ToolObservation
+- ArtifactObservation
 - RoleRunResult
 state_boundaries:
 - owner: roles.runtime
@@ -50,6 +51,8 @@ state_boundaries:
 verify_targets:
   tests:
   - polaris/cells/roles/runtime/tests/test_engineering_loop.py
+  - polaris/cells/roles/runtime/tests/test_engineering_artifact_persistence.py
+  - polaris/cells/roles/runtime/tests/test_engineering_artifact_handoff.py
   - polaris/cells/roles/runtime/tests/test_engineering_roles.py
   - polaris/cells/roles/runtime/tests/test_engineering_service.py
   - polaris/cells/roles/runtime/tests/test_engineering_qa_handoff.py
@@ -71,6 +74,7 @@ verify_targets:
   - PermissionScope
   - RunLimits
   - ToolObservation
+  - ArtifactObservation
   - RoleRunResult
 migration_notes:
 - New runs default to one Director engineering loop; explicit collaborative PM/Chief Engineer/Director and one-level
@@ -86,3 +90,4 @@ migration_notes:
   Missing physical HTTP/billing evidence remains UNKNOWN.
 - Graph declaration/focused tests do not prove final release or all workloads; actual KernelOne ALL/catalog and
   fresh formal results must be reported separately.
+- Captured output bytes and original input binding commit in the existing engineering tool journal. Same-run browser references consume saved bytes, and cold reads never replay the producing command.

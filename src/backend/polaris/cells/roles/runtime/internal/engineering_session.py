@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+import re
 import sqlite3
 import stat
 import time
@@ -21,6 +22,7 @@ from threading import RLock
 from typing import Any, cast
 
 from polaris.cells.roles.runtime.public.contracts.engineering_run import (
+    ArtifactObservation,
     PermissionScope,
     RoleRunCommand,
     RunLimits,
@@ -459,9 +461,89 @@ class EngineeringSessionStore:
         turn_seq: int,
         observation: ToolObservation,
         role: str,
+        capture_completion: Mapping[str, Any] | None = None,
+        advance_workspace_revision: bool = False,
+        expected_workspace_revision: int | None = None,
     ) -> None:
+        """Commit actual bytes and their candidate/resource completion together."""
         with self._transaction() as connection:
+            if capture_completion is None:
+                if advance_workspace_revision or expected_workspace_revision is not None:
+                    raise ValueError("capture revision metadata requires capture completion")
+                self._record_tool_observation(
+                    connection, session_id, turn_seq=turn_seq, observation=observation, role=role
+                )
+                return
+            from polaris.cells.roles.runtime.internal.engineering_artifacts import inputs_digest
+
+            if (
+                set(capture_completion) != {"input_binding"}
+                or type(expected_workspace_revision) is not int
+                or type(advance_workspace_revision) is not bool
+            ):
+                raise ValueError("invalid host command capture completion")
+            run = self._require_run(connection, session_id)
+            call = connection.execute(
+                "SELECT status,observation FROM tool_calls WHERE session_id=? AND turn_seq=? AND call_id=?",
+                (session_id, turn_seq, observation.call_id),
+            ).fetchone()
+            payload = self._json(tool_observation_payload(observation))
+            saved_completion = connection.execute(
+                "SELECT payload FROM events WHERE session_id=? AND kind='tool_output_capture_completed' AND role=?",
+                (session_id, role),
+            ).fetchall()
+            matching = [
+                json.loads(event["payload"])
+                for event in saved_completion
+                if json.loads(event["payload"]).get("turn_seq") == turn_seq
+                and json.loads(event["payload"]).get("call_id") == observation.call_id
+            ]
+            # Capture-specific retries may acknowledge the same committed facts,
+            # but must never advance the candidate or append an event twice.
+            if call is not None and call["status"] == "observed":
+                if call["observation"] == payload and len(matching) == 1:
+                    original_binding = capture_completion.get("input_binding")
+                    committed_binding = matching[0].get("input_binding")
+                    expected_binding = dict(original_binding) if isinstance(original_binding, dict) else None
+                    if expected_binding is not None:
+                        expected_binding["workspace_revision"] = expected_workspace_revision + int(
+                            advance_workspace_revision
+                        )
+                    if committed_binding == expected_binding:
+                        return
+                raise ValueError("conflicting or incomplete committed capture observation")
+            if int(run["workspace_revision"]) != expected_workspace_revision:
+                raise ValueError("command capture candidate revision changed before commit")
+            binding = capture_completion.get("input_binding")
+            if binding is not None:
+                if not isinstance(binding, dict) or binding.get("workspace_revision") != expected_workspace_revision:
+                    raise ValueError("command capture input binding revision mismatch")
+                if not observation.artifacts or any(
+                    item.source_digest != inputs_digest(binding) for item in observation.artifacts
+                ):
+                    raise ValueError("command capture input binding does not match original artifact source")
+                binding = dict(binding)
             self._record_tool_observation(connection, session_id, turn_seq=turn_seq, observation=observation, role=role)
+            if advance_workspace_revision:
+                connection.execute(
+                    "UPDATE runs SET workspace_revision=workspace_revision+1,verification='not_run',checks='[]',updated_at=? WHERE session_id=?",
+                    (time.time(), session_id),
+                )
+            actual_revision = int(self._require_run(connection, session_id)["workspace_revision"])
+            if binding is not None:
+                binding["workspace_revision"] = actual_revision
+            self._append_event(
+                connection,
+                session_id,
+                kind="tool_output_capture_completed",
+                role=role,
+                payload={
+                    "turn_seq": turn_seq,
+                    "call_id": observation.call_id,
+                    "artifact_refs": [item.artifact_ref for item in observation.artifacts],
+                    "input_binding": binding,
+                },
+            )
 
     def _record_tool_observation(
         self, connection: sqlite3.Connection, session_id: str, *, turn_seq: int, observation: ToolObservation, role: str
@@ -483,6 +565,70 @@ class EngineeringSessionStore:
         self._append_event(
             connection, session_id, kind="tool_observed", role=role, payload={"turn_seq": turn_seq, **payload}
         )
+
+    def artifact(self, session_id: str, artifact_ref: str) -> ArtifactObservation | None:
+        """Read validated committed output in this exact run without replaying its producer."""
+        record = self._artifact_record(session_id, artifact_ref)
+        return record[0] if record is not None else None
+
+    def artifact_producer(self, session_id: str, artifact_ref: str) -> dict[str, Any] | None:
+        """Read the original producing call identity from the same committed observation."""
+        record = self._artifact_record(session_id, artifact_ref)
+        return record[1] if record is not None else None
+
+    def _artifact_record(self, session_id: str, artifact_ref: str) -> tuple[ArtifactObservation, dict[str, Any]] | None:
+        if not isinstance(artifact_ref, str) or re.fullmatch(r"artifact_[0-9a-f]{32}", artifact_ref) is None:
+            return None
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            run = self._require_run(connection, session_id)
+            if run["workspace"] != str(self.workspace):
+                raise PermissionError("stored engineering session workspace mismatch")
+            calls = connection.execute(
+                "SELECT turn_seq,call_id,tool,arguments,observation FROM tool_calls "
+                "WHERE session_id=? AND status='observed' ORDER BY turn_seq,call_id",
+                (session_id,),
+            ).fetchall()
+            events = connection.execute(
+                "SELECT seq,role,payload FROM events WHERE session_id=? AND kind='tool_observed' ORDER BY seq",
+                (session_id,),
+            ).fetchall()
+        observed_events = [(event, json.loads(event["payload"])) for event in events]
+        result: tuple[ArtifactObservation, dict[str, Any]] | None = None
+        for call in calls:
+            payload = json.loads(call["observation"])
+            raw_artifacts = payload.get("artifacts", [])
+            if not isinstance(raw_artifacts, list):
+                raise ValueError("stored observed artifacts must be a sequence")
+            for raw in raw_artifacts:
+                if not isinstance(raw, dict):
+                    raise ValueError("stored observed artifact must be an object")
+                artifact = ArtifactObservation(**raw)
+                if artifact.artifact_ref != artifact_ref:
+                    continue
+                if result is not None:
+                    raise ValueError("ambiguous observed artifact reference")
+                if payload.get("call_id") != call["call_id"] or payload.get("tool") != call["tool"]:
+                    raise ValueError("observed artifact producing call identity mismatch")
+                matching = [
+                    event
+                    for event, event_payload in observed_events
+                    if event_payload == {"turn_seq": call["turn_seq"], **payload}
+                ]
+                if len(matching) != 1:
+                    raise ValueError("observed artifact has no unique committed observation event")
+                result = (
+                    artifact,
+                    {
+                        "turn_seq": call["turn_seq"],
+                        "call_id": call["call_id"],
+                        "tool": call["tool"],
+                        "arguments": json.loads(call["arguments"]),
+                        "role": matching[0]["role"],
+                        "tool_observed_event_seq": matching[0]["seq"],
+                    },
+                )
+        return result
 
     @staticmethod
     def _valid_commands(commands: object, *, allow_empty: bool = True) -> bool:

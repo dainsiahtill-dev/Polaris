@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from collections.abc import Awaitable, Callable
@@ -159,6 +160,7 @@ async def run_engineering_loop(
     verification_output_declarations: tuple[Path, ...] | None = None,
     observe: Callable[[dict[str, Any], int, str], Awaitable[ToolObservation]] | None = None,
     visual_binding: Callable[[], dict[str, Any]] | None = None,
+    artifact_binding: Callable[[], dict[str, Any]] | None = None,
     authorize: Callable[[], None] | None = None,
     pending_ancestors: frozenset[tuple[int, str]] = frozenset(),
     project_run: bool = True,
@@ -242,6 +244,7 @@ async def run_engineering_loop(
         verify=verify_current if verify is not None and command.role == "director" else None,
         observe=observe_current if observe is not None and command.role in {"director", "qa"} else None,
         authorize=authorize,
+        artifact_binding=artifact_binding,
     )
     events = store.load_events(command.session_id)
     starts = [event for event in events if event["kind"] == "role_started" and event["role"] == command.role]
@@ -515,34 +518,98 @@ async def run_engineering_loop(
                     arguments=call.arguments,
                     role=command.role,
                 )
-                active_dispatch = (turn_seq, call.id)
-                try:
-                    observation = await tools.execute(call.id, call.name, call.arguments)
-                finally:
-                    active_dispatch = None
-                store.record_tool_observation(
-                    command.session_id, turn_seq=turn_seq, observation=observation, role=command.role
+                from polaris.cells.roles.runtime.internal.engineering_artifacts import (
+                    inputs_digest,
+                    model_tool_payload,
+                    requested_artifacts,
                 )
+                from polaris.kernelone.process import CommandOutputCapture, open_command_output_capture
+
+                capture_context: contextlib.AbstractContextManager[CommandOutputCapture | None] = (
+                    contextlib.nullcontext(None)
+                )
+                try:
+                    canonical, normalized = tools.normalize(call.name, call.arguments)
+                    if canonical == "execute_command" and requested_artifacts(normalized.get("artifacts", [])):
+                        if tools.artifact_binding is None:
+                            raise ValueError("artifact capture has no host candidate binding")
+                        if authorize is not None:
+                            authorize()
+                        tools._remaining()
+                        if not cancel.is_set():
+                            capture_context = open_command_output_capture(command.workspace)
+                except (ValueError, OSError):
+                    # The normal execution adapter records the same rejection.
+                    # No scratch is allocated before real authorization.
+                    pass
+                with capture_context as output_capture:
+                    if output_capture is not None:
+                        store.append_event(
+                            command.session_id,
+                            kind="tool_output_capture_prepared",
+                            role=command.role,
+                            payload={
+                                "turn_seq": turn_seq,
+                                "call_id": call.id,
+                                "scratch_path": str(output_capture.root),
+                            },
+                        )
+                    try:
+                        active_dispatch = (turn_seq, call.id)
+                        try:
+                            if output_capture is not None:
+                                observation = await tools.execute(
+                                    call.id, call.name, call.arguments, output_capture=output_capture
+                                )
+                            else:
+                                observation = await tools.execute(call.id, call.name, call.arguments)
+                        finally:
+                            active_dispatch = None
+                        advances_revision = (observation.tool in {"write_file", "edit_file"} and observation.ok) or (
+                            observation.tool == "execute_command"
+                            and bool(tools.scope.write_roots or tools.scope.network_allowed)
+                            and (observation.exit_code is not None or observation.interrupted or observation.timed_out)
+                        )
+                        if output_capture is not None:
+                            run = store.load_run(command.session_id, workspace=command.workspace)
+                            binding = artifact_binding() if artifact_binding is not None else {}
+                            digest = inputs_digest(binding) if binding else None
+                            stable = bool(observation.artifacts) and all(
+                                item.source_digest == digest for item in observation.artifacts
+                            )
+                            store.record_tool_observation(
+                                command.session_id,
+                                turn_seq=turn_seq,
+                                observation=observation,
+                                role=command.role,
+                                capture_completion={"input_binding": binding if stable else None},
+                                advance_workspace_revision=advances_revision,
+                                expected_workspace_revision=int(run["workspace_revision"]),
+                            )
+                        else:
+                            store.record_tool_observation(
+                                command.session_id, turn_seq=turn_seq, observation=observation, role=command.role
+                            )
+                            if advances_revision:
+                                run = store.load_run(command.session_id, workspace=command.workspace)
+                                store.update_run(
+                                    command.session_id,
+                                    workspace_revision=int(run["workspace_revision"]) + 1,
+                                    verification="not_run",
+                                    checks=(),
+                                )
+                    except BaseException:
+                        if output_capture is not None:
+                            output_capture.retain_for_reconciliation()
+                        raise
                 if observation.tool == "report_review" and observation.ok and not observation.interrupted:
                     review_reports.append(tool_observation_payload(observation))
-                if (observation.tool in {"write_file", "edit_file"} and observation.ok) or (
-                    observation.tool == "execute_command"
-                    # The actual K1 scope, never command text or a model claim,
-                    # determines whether this execution can change the candidate.
-                    and (tools.scope.write_roots or tools.scope.network_allowed)
-                    and (observation.exit_code is not None or observation.interrupted or observation.timed_out)
-                ):
-                    run = store.load_run(command.session_id, workspace=command.workspace)
-                    store.update_run(
-                        command.session_id,
-                        workspace_revision=int(run["workspace_revision"]) + 1,
-                        verification="not_run",
-                        checks=(),
-                    )
                 message = {
                     "role": "tool",
                     "tool_call_id": call.id,
-                    "content": json.dumps(tool_observation_payload(observation), ensure_ascii=False),
+                    "content": json.dumps(
+                        model_tool_payload(tool_observation_payload(observation)), ensure_ascii=False
+                    ),
                 }
                 messages.append(message)
                 store.append_message(command.session_id, role=command.role, message=message)

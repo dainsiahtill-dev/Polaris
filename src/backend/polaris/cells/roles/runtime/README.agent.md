@@ -72,3 +72,16 @@ The new loop never falls back to PM contracts, CE portfolio/hash/semantic patche
 `cell.yaml` and graph catalog list current engineering tests and the no-legacy-admission architecture proof. Existing historical tests remain historical evidence; declarations do not mean commands passed. Root integration must run relevant tests, KernelOne ALL and catalog audit from the final candidate.
 
 `descriptor_surface` limits generated Agent capabilities to audited `EngineeringRunService` operations; legacy DTOs remain in `public_contracts` for decoding. The canonical descriptor generator is `polaris.cells.context.catalog.internal.descriptor_pack_generator`; its CLI traverses all Cells and writes descriptor packs plus receipts, so do not run it broadly for this Cell. `docs/scripts/generate_polaris_cell_assets.py` is a scaffold generator that may overwrite contracts/README/cell assets, not a safe refresh command. Missing context/verify/descriptor packs are reported as absent; none are fabricated by this document.
+
+
+## Actual command artifacts and saved-byte vision
+
+`execute_command(artifacts=["report.svg"])` requests bounded actual files from `POLARIS_SANDBOX_OUTPUT`. The host uses an opaque canonical runtime/command-output directory and the existing K1 sandbox; source write authority is unchanged. Omitted/empty artifact requests keep the old command path. At most16 unique relative files and1_000_000 decoded bytes are exported; this is not a command disk quota.
+
+Host `ArtifactObservation` values preserve raw bytes and integrity in the same observation JSON. The existing SQLite transaction commits the observed command, actual revision invalidation and capture completion binding; no new table/ledger/controller. Cleanup follows durable commit and known physical drain. Commit/drain uncertainty retains scratch for reconciliation and never triggers command replay.
+
+`browser_observe(artifact_ref=...)` resolves a committed same-run artifact and original source binding, then renders the saved bytes rather than a same-name workspace file. No `.polaris` source path grant or model-supplied blob is accepted. Current permission and candidate checks still apply; re-rendering does not renew an old binding. Historical artifact-backed `revisit_call_ids` remains an exact-pixel reference, preserving original freshness and never satisfying a missing fresh current QA capture.
+
+Raw artifact blobs stay out of model tool text and public projections. Actual rendered PNG/JPEG follows the existing image history, native provider request audit and same-frame independent QA requirements. `artifact_` references are not ContextOS24hex snapshot keys. Browser configuration/permission remains explicit; raw command retention can work without browser availability. Static self-contained files are supported; dynamic services and bundle semantics remain separate.
+
+Current qualification evidence belongs under `.polaris/audits/qa-artifact-handoff-20261024/`. Focused synthetic Service/HTTP/OS/SQLite/browser fixtures prove transport and recovery only; final gates and a new frozen original catalog case must be reported separately. Earlier L1-10 remains nativeaccepted/ROOTqualityFAIL.

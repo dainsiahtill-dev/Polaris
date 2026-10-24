@@ -19,6 +19,7 @@ __all__ = [
     "AggregateRuntimeEntrypointCheckV1",
     "AggregateRuntimeIntegrationV1",
     "AggregateTakeoverDirectiveV1",
+    "ArtifactObservation",
     "AssembleRoleRuntimeChainCommandV1",
     "AuditAggregateRuntimeIntegrationsQueryV1",
     "BuildAggregateRolePlanQueryV1",
@@ -185,7 +186,9 @@ _LEGACY_EXPORTS = frozenset(
         "register_protocol_fsm_factory",
     ]
 )
-_ENGINEERING_EXPORTS = frozenset(["RoleRunCommand", "PermissionScope", "RunLimits", "ToolObservation", "RoleRunResult"])
+_ENGINEERING_EXPORTS = frozenset(
+    ["ArtifactObservation", "RoleRunCommand", "PermissionScope", "RunLimits", "ToolObservation", "RoleRunResult"]
+)
 
 
 def __getattr__(name: str) -> Any:

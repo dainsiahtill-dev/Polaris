@@ -20,9 +20,10 @@ from polaris.cells.roles.runtime.internal.engineering_execution_policy import (
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RunLimits, ToolObservation
 from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 from polaris.kernelone.exceptions import PathSecurityError
+from polaris.kernelone.fs import GuardedRegularFileSnapshotError
 from polaris.kernelone.fs.runtime import KernelFileSystem
 from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
-from polaris.kernelone.process import resolve_toolchain_bin_dirs
+from polaris.kernelone.process import CommandOutputCapture, resolve_toolchain_bin_dirs
 from polaris.kernelone.process.process_tree import (
     ProcessTreeCancelledError,
     ProcessTreeDrainError,
@@ -65,6 +66,7 @@ class EngineeringTools:
         verify: Callable[[tuple[str, ...]], Awaitable[ToolObservation]] | None = None,
         observe: Callable[[dict[str, Any]], Awaitable[ToolObservation]] | None = None,
         authorize: Callable[[], None] | None = None,
+        artifact_binding: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self.workspace = workspace.resolve(strict=True)
         self.scope = replace(
@@ -83,6 +85,7 @@ class EngineeringTools:
         self.verify = verify
         self.observe = observe
         self.authorize = authorize
+        self.artifact_binding = artifact_binding
         self.filesystem = KernelFileSystem(str(self.workspace), LocalFileSystemAdapter())
         self.enabled = frozenset(ToolSpecRegistry.get_canonical(name) for name in scope.enabled_tools) & (
             ENGINEERING_TOOLS
@@ -131,6 +134,8 @@ class EngineeringTools:
                 function["description"] = "Replace one unique exact occurrence of search with replace in a UTF-8 file."
             if name == "execute_command":
                 function = schema["function"]
+                if self.artifact_binding is None:
+                    function["parameters"]["properties"].pop("artifacts", None)
                 persistence = (
                     "For persistence, save files only within authorized workspace write roots: "
                     + json.dumps([str(root) for root in self.scope.write_roots], ensure_ascii=False)
@@ -150,6 +155,11 @@ class EngineeringTools:
                         else "Network access is disabled. "
                     )
                     + "Command execution is also bounded by the remaining run deadline."
+                    + (
+                        " Select artifacts as relative file names under POLARIS_SANDBOX_OUTPUT to save bounded actual bytes for later browser_observe(artifact_ref)."
+                        if self.artifact_binding is not None
+                        else ""
+                    )
                 )
                 function["parameters"]["properties"]["timeout"].update(
                     default=COMMAND_TIMEOUT_DEFAULT,
@@ -188,6 +198,7 @@ class EngineeringTools:
         arguments: dict[str, Any],
         *,
         execution_policy: CommandExecutionPolicy | None = None,
+        output_capture: CommandOutputCapture | None = None,
     ) -> ToolObservation:
         """Execute one call in source order; errors remain explicit observations."""
         name = tool
@@ -243,7 +254,16 @@ class EngineeringTools:
                     raise ValueError("consult_role requires PM or Chief Engineer and an active session owner")
                 return self._observation(call_id, name, True, await self.consult(role, question))
             if name == "execute_command":
-                self._keys(args, {"command", "timeout"})
+                self._keys(args, {"command", "timeout", "artifacts"})
+                from polaris.cells.roles.runtime.internal.engineering_artifacts import (
+                    capture_artifacts,
+                    requested_artifacts,
+                )
+
+                names = requested_artifacts(args["artifacts"]) if "artifacts" in args else ()
+                if names and (output_capture is None or self.artifact_binding is None):
+                    raise ValueError("artifact capture requires the active host output binding")
+                before = self.artifact_binding() if names and self.artifact_binding is not None else {}
                 command = self._text(args, "command")
                 timeout = self._integer(
                     args,
@@ -256,9 +276,21 @@ class EngineeringTools:
                     (execution_policy or resolve_execution_policy(None)).argv(command),
                     timeout=timeout,
                     writes=self.scope.write_roots,
+                    **({"capture_output_root": output_capture.root} if output_capture is not None else {}),
                 )
                 content = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
-                return self._observation(call_id, name, completed.returncode == 0, content, completed.returncode)
+                observation = self._observation(call_id, name, completed.returncode == 0, content, completed.returncode)
+                if names and output_capture is not None and self.artifact_binding is not None:
+                    try:
+                        artifacts = capture_artifacts(output_capture, names, before, self.artifact_binding())
+                        observation = replace(observation, artifacts=artifacts)
+                    except (ValueError, OSError, PathSecurityError, GuardedRegularFileSnapshotError) as error:
+                        observation = replace(
+                            observation,
+                            ok=False,
+                            content=observation.content + f"\nArtifact capture failed: {type(error).__name__}: {error}",
+                        )
+                return observation
             if name == "repo_rg":
                 self._keys(args, {"pattern", "paths", "path", "max_results", "glob", "context_lines", "case_sensitive"})
                 pattern = self._text(args, "pattern")
@@ -388,7 +420,7 @@ class EngineeringTools:
             return self._observation(call_id, name, False, f"{type(exc).__name__}: {exc}")
 
     async def _process(
-        self, argv: list[str], *, timeout: float, writes: tuple[Path, ...]
+        self, argv: list[str], *, timeout: float, writes: tuple[Path, ...], capture_output_root: Path | None = None
     ) -> subprocess.CompletedProcess[str]:
         prepared = build_workspace_sandbox_argv(
             argv,
@@ -398,6 +430,7 @@ class EngineeringTools:
             write_roots=writes,
             network_allowed=self.scope.network_allowed,
             toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
+            **({"capture_output_root": capture_output_root} if capture_output_root is not None else {}),
         )
         control = ProcessTreeRunControl()
         worker = asyncio.create_task(

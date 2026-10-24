@@ -20,6 +20,7 @@ from .contracts import (
     ShellDisallowedError,
     SubprocessCommandExecutor,
 )
+from .output_capture import CapturedOutput, CommandOutputCapture, open_command_output_capture
 from .process_tree import (
     ProcessTreeCancelledError,
     ProcessTreeDrainError,
@@ -43,7 +44,9 @@ __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "AsyncProcessHandle",
     "AsyncProcessRunnerPort",
+    "CapturedOutput",
     "CommandExecutorPort",
+    "CommandOutputCapture",
     "CommandResult",
     "ProcessControlPort",
     "ProcessInfo",
@@ -62,6 +65,7 @@ __all__ = [
     "director_stop_flag_path",
     "isolated_process_group_kwargs",
     "list_external_loop_pm_pids",
+    "open_command_output_capture",
     "resolve_toolchain_bin_dirs",
     "run_process_tree_safe",
     "signal_process_tree",
