@@ -15,6 +15,7 @@ import os
 import secrets
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -25,7 +26,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, TextIO
 
 from polaris.cells.storage.layout.public import canonical_project_runtime_root
 from polaris.kernelone.fs import (
@@ -37,6 +38,7 @@ from polaris.kernelone.fs import (
 )
 from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.process import signal_process_tree, wait_for_process_exit
+from polaris.kernelone.storage import resolve_storage_roots_read_only
 
 SCHEMA_VERSION = 1
 DEFAULT_BACKEND_PORT = 49977
@@ -298,13 +300,30 @@ def validate_polaris_root(path: Path) -> Path:
     return root
 
 
-def tail_text(path: Path, lines: int) -> str:
-    if not path.is_file():
-        return ""
+def tail_text(path: Path, lines: int, *, workspace: Path) -> str | None:
+    """Read a mutable log through KFS; only initial absence permits legacy lookup."""
+    fs = KernelFileSystem(str(workspace), get_default_adapter(), read_only_paths=True)
+    try:
+        metadata = fs.workspace_lstat(str(path))
+    except GuardedMetadataError as exc:
+        if exc.code == "guarded_metadata_missing":
+            return None
+        raise
+    if not stat.S_ISREG(metadata.mode) or metadata.nlink != 1:
+        raise ValueError("instance log must be a regular single-link file")
+    content = fs.workspace_read_bytes(str(path))
+    after = fs.workspace_lstat(str(path))
+    identity_fields = ("device", "inode", "mode", "nlink", "root_device", "root_inode")
+    if (
+        any(getattr(metadata, field) != getattr(after, field) for field in identity_fields)
+        or after.size < metadata.size
+        or not metadata.size <= len(content) <= after.size
+        or (after.size == metadata.size and (after.mtime_ns, after.ctime_ns) != (metadata.mtime_ns, metadata.ctime_ns))
+    ):
+        raise ValueError("instance log identity changed during read")
     line_count = max(1, min(int(lines or 200), 5000))
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        content = handle.readlines()
-    return "".join(content[-line_count:])
+    text = content.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+    return "".join(text.splitlines(keepends=True)[-line_count:])
 
 
 def _read_linux_process_text(pid: int) -> str:
@@ -823,8 +842,7 @@ class InstanceSupervisor:
                 # port and making the Launcher URL lie.
                 return None
 
-            log_dir = ensure_absolute_dir(self._instance_dir(record.instance_id) / "logs")
-            frontend_pid = self._start_frontend(record, log_dir / "frontend.log")
+            frontend_pid = self._start_frontend(record, self._instance_log_path(record, "frontend"))
             record.frontend_pid = frontend_pid
             record.status = "starting"
             record.metadata["frontend_recovery_count"] = int(record.metadata.get("frontend_recovery_count") or 0) + 1
@@ -926,14 +944,12 @@ class InstanceSupervisor:
                 )
                 self.registry.save(record)
 
-            instance_dir = self._instance_dir(record.instance_id)
-            log_dir = ensure_absolute_dir(instance_dir / "logs")
             try:
-                backend_pid = self._start_backend(record, log_dir / "backend.log")
+                backend_pid = self._start_backend(record, self._instance_log_path(record, "backend"))
                 record.backend_pid = backend_pid
                 self._wait_for_backend_identity(record)
                 if record.start_frontend:
-                    record.frontend_pid = self._start_frontend(record, log_dir / "frontend.log")
+                    record.frontend_pid = self._start_frontend(record, self._instance_log_path(record, "frontend"))
                     self._wait_for_frontend_identity(record)
                 self._commit_start_reservation(record)
             except Exception as exc:
@@ -1351,8 +1367,12 @@ class InstanceSupervisor:
     def get_logs(self, instance_id: str, stream: str, tail_lines: int = 200) -> str:
         record = self._require_record(instance_id)
         stream_name = "frontend" if stream == "frontend" else "backend"
-        log_path = self._instance_dir(record.instance_id) / "logs" / f"{stream_name}.log"
-        return tail_text(log_path, tail_lines)
+        log_path = self._instance_log_path(record, stream_name)
+        current = tail_text(log_path, tail_lines, workspace=Path(record.workspace))
+        if current is not None:
+            return current
+        legacy_path = self.registry.home / sanitize_instance_id(record.instance_id) / "logs" / f"{stream_name}.log"
+        return tail_text(legacy_path, tail_lines, workspace=self.registry.home) or ""
 
     def health(self, instance_id: str) -> dict[str, Any]:
         return self._with_health(self._require_record(instance_id), probe_http=True).to_dict()
@@ -1513,7 +1533,7 @@ class InstanceSupervisor:
                 "http://localhost:5173",
             ]
         )
-        with log_path.open("a", encoding="utf-8") as log:
+        with self._open_instance_log(record, log_path, "backend") as log:
             process = subprocess.Popen(
                 command,
                 cwd=str(backend_root),
@@ -1545,7 +1565,7 @@ class InstanceSupervisor:
         env["VITE_POLARIS_INSTANCE_ID"] = record.instance_id
         env["VITE_POLARIS_WORKSPACE"] = record.workspace
         env["VITE_WORKSPACE"] = record.workspace
-        with log_path.open("a", encoding="utf-8") as log:
+        with self._open_instance_log(record, log_path, "frontend") as log:
             process = subprocess.Popen(
                 command,
                 cwd=record.polaris_root,
@@ -1674,8 +1694,25 @@ class InstanceSupervisor:
         env_instance_id = str(os.environ.get("KERNELONE_INSTANCE_ID", "") or "").strip()
         return bool(env_instance_id and record.instance_id == env_instance_id)
 
-    def _instance_dir(self, instance_id: str) -> Path:
-        return ensure_absolute_dir(self.registry.home / sanitize_instance_id(instance_id))
+    @staticmethod
+    def _instance_log_path(record: InstanceRecord, stream: str) -> Path:
+        """Bind every log producer/reader to the workspace's current storage root."""
+        runtime_root = Path(resolve_storage_roots_read_only(record.workspace).runtime_root)
+        if Path(os.path.abspath(record.runtime_root)) != runtime_root:
+            raise ValueError("instance runtime_root does not match workspace storage layout")
+        return runtime_root / "instances" / sanitize_instance_id(record.instance_id) / "logs" / f"{stream}.log"
+
+    def _open_instance_log(self, record: InstanceRecord, log_path: Path, stream: str) -> TextIO:
+        if log_path != self._instance_log_path(record, stream):
+            raise ValueError("instance log path does not match workspace storage layout")
+        fs = KernelFileSystem(
+            record.workspace,
+            get_default_adapter(),
+            read_only_paths=True,
+            runtime_owner_workspace=record.workspace,
+        )
+        fs.workspace_mkdir(str(log_path.parent), parents=True, exist_ok=True)
+        return fs.workspace_open_log_append(str(log_path))
 
     @staticmethod
     def _wait_for_port_free(port: int, *, timeout_seconds: float = PORT_RELEASE_TIMEOUT_SECONDS) -> None:

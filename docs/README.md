@@ -1,5 +1,9 @@
 # Polaris 文档阅读入口
 
+当前实测：[v22 L2-14 恢复与个人质量反例](history/POLARIS_ORIGINAL120_V22_L214_20261025.md)：冻结83cb38d7f，原始模型连接失败保留；同任务人工恢复后验证/QA/accepted和资源关闭，但ROOT110次公开CLI及七种实际画面亲检发现收入更新破坏预算约束、九类别海图遮挡金额，质量FAIL。当前批次18次全新尝试/14项目/2次严格交付/106项未启动，另记1次人工恢复；不宣称稳定性或成本优势。后续修复尚未启动。
+
+以下保留各冻结版本的历史检查点。
+
 当前实测：[v20 L2-13 完整交付与个人复核](history/POLARIS_ORIGINAL120_V20_L213_20261024.md)：冻结52f09d48e，原生completed/passed/QA approved/accepted、自动资源闭合；ROOT12组业务/69次HTTP/六张原图亲检在观察范围通过，JSON表单反馈和状态用词两项体验问题保留。累计16次尝试/13项目/2次限定范围严格交付，107项未启动；不同版本数据不是稳定成功率，旧v19超时/人工收尾不改写。
 
 当前机制：[工程观察与资源收尾](blueprints/POLARIS_ENGINEERING_OBSERVATION_SETTLEMENT_20261024.md)已通过真实模块反例、622相关回归、40架构、K1 ALL及独审，并完成上述新冻结项目验证。[命令产物与QA视觉交接](blueprints/POLARIS_COMMAND_ARTIFACT_HANDOFF_20261024.md)首次在该原生运行中实际导出SVG并供QA浏览器消费，实际图像进入最终请求；不据此宣称比其他上下文/Agent更优。以下条目保留各自历史检查点。

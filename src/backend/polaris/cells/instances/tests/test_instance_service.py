@@ -71,6 +71,327 @@ def test_new_instance_defaults_runtime_to_target_polaris_directory(tmp_path: Pat
     assert Path(record.runtime_root).resolve() == (workspace / ".polaris" / "runtime").resolve()
 
 
+def test_start_instance_appends_process_output_only_to_project_runtime_logs(tmp_path: Path, monkeypatch: Any) -> None:
+    """Synthetic Popen writes to the real stdout fd; no service is launched."""
+    root = _make_polaris_root(tmp_path)
+    workspace = tmp_path / "project"
+    log_dir = workspace / ".polaris" / "runtime" / "instances" / "local-logs" / "logs"
+    log_dir.mkdir(parents=True)
+    prefix = "已有日志\n"
+    for stream in ("backend", "frontend"):
+        (log_dir / f"{stream}.log").write_text(prefix, encoding="utf-8")
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+
+    def synthetic_popen(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        stream = "frontend" if command[0] == "npm" else "backend"
+        os.write(kwargs["stdout"].fileno(), f"{stream} 新输出\n".encode())
+        return SimpleNamespace(pid=61001 if stream == "backend" else 61002)
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", synthetic_popen)
+    monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
+    monkeypatch.setattr(InstanceSupervisor, "_with_health", lambda _self, record, **_kwargs: record)
+
+    result = supervisor.start_instance(
+        {
+            "instance_id": "local-logs",
+            "polaris_root": str(root),
+            "workspace": str(workspace),
+            "backend_port": 51021,
+            "frontend_port": 61021,
+            "start_frontend": True,
+        }
+    )
+
+    assert result["status"] == "running"
+    for stream in ("backend", "frontend"):
+        expected = prefix + f"{stream} 新输出\n"
+        assert (log_dir / f"{stream}.log").read_text(encoding="utf-8") == expected
+        assert supervisor.get_logs("local-logs", stream) == expected
+    assert not (registry.home / "local-logs").exists()
+
+
+@pytest.mark.parametrize("current_text", ["当前项目\n", ""])
+def test_get_logs_prefers_project_runtime_over_legacy_global_history(tmp_path: Path, current_text: str) -> None:
+    root = _make_polaris_root(tmp_path)
+    workspace = tmp_path / "project"
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    record = supervisor._build_record(
+        {"instance_id": "local-history", "polaris_root": str(root), "workspace": str(workspace)}
+    )
+    registry.save(record)
+    current = workspace / ".polaris" / "runtime" / "instances" / "local-history" / "logs"
+    legacy = registry.home / "local-history" / "logs"
+    current.mkdir(parents=True)
+    legacy.mkdir(parents=True)
+    (current / "backend.log").write_text(current_text, encoding="utf-8")
+    (legacy / "backend.log").write_text("历史全局\n", encoding="utf-8")
+
+    assert supervisor.get_logs("local-history", "backend") == current_text
+    assert (legacy / "backend.log").read_text(encoding="utf-8") == "历史全局\n"
+
+
+def test_get_logs_missing_stream_creates_no_log_directories(tmp_path: Path) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    record = supervisor._build_record(
+        {"instance_id": "missing-logs", "polaris_root": str(root), "workspace": str(tmp_path / "project")}
+    )
+    registry.save(record)
+    current = Path(record.runtime_root) / "instances" / "missing-logs"
+    legacy = registry.home / "missing-logs"
+
+    assert supervisor.get_logs("missing-logs", "backend") == ""
+    assert not current.exists()
+    assert not legacy.exists()
+
+
+def test_get_logs_tolerates_append_after_metadata_observation(tmp_path: Path, monkeypatch: Any) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    record = supervisor._build_record(
+        {"instance_id": "growing-log", "polaris_root": str(root), "workspace": str(tmp_path / "project")}
+    )
+    registry.save(record)
+    log = Path(record.runtime_root) / "instances" / "growing-log" / "logs" / "backend.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("起始\n", encoding="utf-8")
+    actual_lstat = instance_service.KernelFileSystem.workspace_lstat
+    appended = False
+
+    def append_after_observation(fs: Any, path: str) -> Any:
+        nonlocal appended
+        metadata = actual_lstat(fs, path)
+        if path == str(log) and not appended:
+            appended = True
+            with log.open("a", encoding="utf-8") as output:
+                output.write("并发追加\n")
+        return metadata
+
+    monkeypatch.setattr(instance_service.KernelFileSystem, "workspace_lstat", append_after_observation)
+
+    assert supervisor.get_logs(record.instance_id, "backend") == "起始\n并发追加\n"
+
+
+@pytest.mark.parametrize("mutation", ["replace", "overwrite"])
+def test_get_logs_rejects_identity_or_static_content_change_without_legacy_fallback(
+    tmp_path: Path, monkeypatch: Any, mutation: str
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    record = supervisor._build_record(
+        {"instance_id": "changed-log", "polaris_root": str(root), "workspace": str(tmp_path / "project")}
+    )
+    registry.save(record)
+    log = Path(record.runtime_root) / "instances" / "changed-log" / "logs" / "backend.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("before\n", encoding="utf-8")
+    legacy = registry.home / record.instance_id / "logs" / "backend.log"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("legacy\n", encoding="utf-8")
+    actual_read = instance_service.KernelFileSystem.workspace_read_bytes
+
+    def mutate_after_read(fs: Any, path: str) -> bytes:
+        content: bytes = actual_read(fs, path)
+        if path == str(log):
+            if mutation == "replace":
+                log.unlink()
+            log.write_text("after!\n", encoding="utf-8")
+        return content
+
+    monkeypatch.setattr(instance_service.KernelFileSystem, "workspace_read_bytes", mutate_after_read)
+
+    with pytest.raises(ValueError, match="log identity changed"):
+        supervisor.get_logs(record.instance_id, "backend")
+    assert legacy.read_text(encoding="utf-8") == "legacy\n"
+
+
+def test_cold_supervisor_reads_absent_only_legacy_history_without_creating_runtime(tmp_path: Path) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    record = InstanceSupervisor(registry)._build_record(
+        {"instance_id": "old-logs", "polaris_root": str(root), "workspace": str(tmp_path / "project")}
+    )
+    registry.save(record)
+    # The normal launch builder provisions an empty runtime; model a cold
+    # historical record without allowing the reader to recreate that tree.
+    Path(record.runtime_root).rmdir()
+    Path(record.runtime_root).parent.rmdir()
+    legacy = registry.home / "old-logs" / "logs"
+    legacy.mkdir(parents=True)
+    log = legacy / "backend.log"
+    log.write_text("历史一\n历史二\n", encoding="utf-8")
+    before = {path.relative_to(registry.home): path.stat().st_mtime_ns for path in registry.home.rglob("*")}
+    reader = InstanceSupervisor(InstanceRegistry(registry.home, read_only=True, publish_events=False))
+
+    assert reader.get_logs("old-logs", "backend", tail_lines=1) == "历史二\n"
+    assert reader.get_logs("old-logs", "frontend") == ""
+    assert not (Path(record.workspace) / ".polaris").exists()
+    assert log.read_text(encoding="utf-8") == "历史一\n历史二\n"
+    assert {path.relative_to(registry.home): path.stat().st_mtime_ns for path in registry.home.rglob("*")} == before
+
+
+@pytest.mark.parametrize("stream", ["backend", "frontend"])
+def test_instance_log_descriptor_captures_real_child_utf8_output(tmp_path: Path, monkeypatch: Any, stream: str) -> None:
+    """Replace only long-running executable; real Popen inherits the real KFS fd."""
+    root = _make_polaris_root(tmp_path)
+    workspace = tmp_path / "project"
+    supervisor = InstanceSupervisor(InstanceRegistry(tmp_path / "instances", publish_events=False))
+    record = supervisor._build_record(
+        {"instance_id": "physical-log", "polaris_root": str(root), "workspace": str(workspace)}
+    )
+    log = workspace / ".polaris" / "runtime" / "instances" / "physical-log" / "logs" / f"{stream}.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("保留原字节\n", encoding="utf-8")
+    actual_popen = subprocess.Popen
+    marker = "实际子进程输出\n".encode()
+
+    def marker_child(_command: list[str], **kwargs: Any) -> subprocess.Popen[str]:
+        child = actual_popen([sys.executable, "-B", "-c", f"import os; os.write(1, {marker!r})"], **kwargs)
+        assert child.wait(timeout=5) == 0
+        return child
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", marker_child)
+    if stream == "backend":
+        supervisor._start_backend(record, log)
+    else:
+        supervisor._start_frontend(record, log)
+
+    assert log.read_bytes() == "保留原字节\n实际子进程输出\n".encode()
+    assert not (supervisor.registry.home / record.instance_id).exists()
+
+
+@pytest.mark.parametrize("unsafe_kind", ["file_symlink", "directory_symlink", "hardlink"])
+def test_unsafe_current_log_fails_closed_before_spawn_and_never_reads_legacy(
+    tmp_path: Path, monkeypatch: Any, unsafe_kind: str
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    workspace = tmp_path / "project"
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    request = {
+        "instance_id": "unsafe-log",
+        "polaris_root": str(root),
+        "workspace": str(workspace),
+        "backend_port": 51021,
+        "start_frontend": False,
+    }
+    record = supervisor._build_record(request)
+    registry.save(record)
+    current = workspace / ".polaris" / "runtime" / "instances" / "unsafe-log" / "logs"
+    target_dir = tmp_path / "outside-log"
+    target_dir.mkdir()
+    target = target_dir / "backend.log"
+    target.write_text("不可改写\n", encoding="utf-8")
+    if unsafe_kind == "directory_symlink":
+        current.parent.mkdir(parents=True)
+        current.symlink_to(target_dir, target_is_directory=True)
+    else:
+        current.mkdir(parents=True)
+        if unsafe_kind == "file_symlink":
+            (current / "backend.log").symlink_to(target)
+        else:
+            os.link(target, current / "backend.log")
+    legacy = registry.home / "unsafe-log" / "logs"
+    legacy.mkdir(parents=True)
+    (legacy / "backend.log").write_text("不可回退\n", encoding="utf-8")
+
+    def forbidden_spawn(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("unsafe log reached process spawn")
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", forbidden_spawn)
+    monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
+    with pytest.raises((OSError, ValueError, RuntimeError)):
+        supervisor.start_instance(request)
+    failed = registry.get(record.instance_id)
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.backend_pid is None
+    assert failed.metadata[instance_service.RESERVATION_LEASE_METADATA_KEY]["state"] == "released"
+    with pytest.raises((OSError, ValueError, RuntimeError)):
+        InstanceSupervisor(InstanceRegistry(registry.home, read_only=True)).get_logs(record.instance_id, "backend")
+    assert target.read_text(encoding="utf-8") == "不可改写\n"
+    assert (legacy / "backend.log").read_text(encoding="utf-8") == "不可回退\n"
+
+
+@pytest.mark.parametrize("operation", ["start", "read", "recover"])
+def test_instance_log_rejects_mismatching_record_runtime_before_spawn(
+    tmp_path: Path, monkeypatch: Any, operation: str
+) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+    record = supervisor._build_record(
+        {"instance_id": "wrong-runtime", "polaris_root": str(root), "workspace": str(tmp_path / "project")}
+    )
+    record.runtime_root = str(tmp_path / "wrong-runtime-root")
+    if operation == "recover":
+        record.backend_pid = os.getpid()
+        monkeypatch.setenv("KERNELONE_INSTANCE_ID", record.instance_id)
+        monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid == os.getpid())
+    registry.save(record)
+    before_paths = set(Path(record.workspace).rglob("*"))
+
+    def forbidden_spawn(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("mismatching runtime reached process spawn")
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", forbidden_spawn)
+    monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
+    if operation == "start":
+        monkeypatch.setattr(supervisor, "_build_record", lambda _request: record)
+    with pytest.raises(ValueError, match="runtime_root does not match"):
+        if operation == "start":
+            supervisor.start_instance({})
+        elif operation == "recover":
+            supervisor.recover_current_frontend()
+        else:
+            supervisor.get_logs(record.instance_id, "backend")
+    assert not Path(record.runtime_root).exists()
+    assert set(Path(record.workspace).rglob("*")) == before_paths
+    if operation == "start":
+        failed = registry.get(record.instance_id)
+        assert failed is not None
+        assert failed.status == "failed"
+        assert failed.metadata[instance_service.RESERVATION_LEASE_METADATA_KEY]["state"] == "released"
+
+
+def test_same_instance_id_keeps_logs_isolated_when_workspace_changes(tmp_path: Path, monkeypatch: Any) -> None:
+    root = _make_polaris_root(tmp_path)
+    registry = InstanceRegistry(tmp_path / "instances", publish_events=False)
+    supervisor = InstanceSupervisor(registry)
+
+    def synthetic_popen(_command: list[str], **kwargs: Any) -> SimpleNamespace:
+        marker = Path(kwargs["env"]["KERNELONE_WORKSPACE"]).name + "\n"
+        os.write(kwargs["stdout"].fileno(), marker.encode("utf-8"))
+        return SimpleNamespace(pid=61001)
+
+    monkeypatch.setattr(instance_service.subprocess, "Popen", synthetic_popen)
+    monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
+    monkeypatch.setattr(instance_service, "is_process_alive", lambda _pid: False)
+    monkeypatch.setattr(InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda *_a, **_k: False))
+    monkeypatch.setattr(InstanceSupervisor, "_with_health", lambda _self, record, **_kwargs: record)
+    for project_name in ("project-a", "project-b"):
+        supervisor.start_instance(
+            {
+                "instance_id": "same-id",
+                "polaris_root": str(root),
+                "workspace": str(tmp_path / project_name),
+                "backend_port": 51021,
+                "start_frontend": False,
+            }
+        )
+        reader = InstanceSupervisor(InstanceRegistry(registry.home, read_only=True))
+        assert reader.get_logs("same-id", "backend") == project_name + "\n"
+    for project_name in ("project-a", "project-b"):
+        log = tmp_path / project_name / ".polaris" / "runtime" / "instances" / "same-id" / "logs" / "backend.log"
+        assert log.read_text(encoding="utf-8") == project_name + "\n"
+    assert not (registry.home / "same-id").exists()
+
+
 def test_legacy_workspace_runtime_request_is_canonicalized(tmp_path: Path) -> None:
     root = _make_polaris_root(tmp_path)
     workspace = tmp_path / "project"
@@ -166,8 +487,7 @@ def test_backend_spawn_overwrites_launcher_workspace_runtime_environment(
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", "/launcher/.polaris/runtime")
     monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", "/launcher/cache")
     monkeypatch.setattr(instance_service.subprocess, "Popen", fake_popen)
-    log_path = tmp_path / "logs" / "backend.log"
-    log_path.parent.mkdir(parents=True)
+    log_path = runtime_root / "instances" / record.instance_id / "logs" / "backend.log"
 
     pid = InstanceSupervisor(InstanceRegistry(tmp_path / "instances-2", publish_events=False))._start_backend(
         record,
@@ -1421,13 +1741,12 @@ def test_watchdog_recovers_missing_frontend_for_current_main_instance(
     monkeypatch.setenv("KERNELONE_INSTANCE_ID", "main")
     monkeypatch.setattr(instance_service, "is_process_alive", lambda pid: pid in {os.getpid(), 62002})
     monkeypatch.setattr(instance_service, "is_port_free", lambda _port: True)
-    started: list[tuple[str, Path]] = []
 
-    def fake_start_frontend(_self: InstanceSupervisor, record: InstanceRecord, log_path: Path) -> int:
-        started.append((record.instance_id, log_path))
-        return 62002
+    def synthetic_frontend(_command: list[str], **kwargs: Any) -> SimpleNamespace:
+        os.write(kwargs["stdout"].fileno(), b"frontend recovered\n")
+        return SimpleNamespace(pid=62002)
 
-    monkeypatch.setattr(InstanceSupervisor, "_start_frontend", fake_start_frontend)
+    monkeypatch.setattr(instance_service.subprocess, "Popen", synthetic_frontend)
     monkeypatch.setattr(
         InstanceSupervisor,
         "_pid_looks_like_instance_process",
@@ -1439,7 +1758,10 @@ def test_watchdog_recovers_missing_frontend_for_current_main_instance(
     stored = registry.get("main")
     assert recovered is not None
     assert stored is not None
-    assert started == [("main", registry.home / "main" / "logs" / "frontend.log")]
+    log = root / ".polaris" / "runtime" / "instances" / "main" / "logs" / "frontend.log"
+    assert log.read_text(encoding="utf-8") == "frontend recovered\n"
+    assert InstanceSupervisor(registry).get_logs("main", "frontend") == "frontend recovered\n"
+    assert not (registry.home / "main").exists()
     assert stored.frontend_pid == 62002
     assert stored.status == "running"
     assert stored.metadata["frontend_health"] == "process"
