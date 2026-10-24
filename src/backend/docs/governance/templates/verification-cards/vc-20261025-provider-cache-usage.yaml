@@ -1,0 +1,29 @@
+id: vc-20261025-provider-cache-usage
+classification: pattern
+status: implementation_candidate
+owner: infrastructure.llm.providers.AnthropicProvider_and_kernelone.NativeRequestCapture
+spec: docs/blueprints/POLARIS_PROVIDER_USAGE_BOUNDARY_20261025.md
+assumptions:
+  - canonical_Usage_prompt_includes_Anthropic_input_plus_cache_creation_plus_cache_read
+  - raw_provider_response_remains_the_observed_counter_source
+  - cache_read_workload_is_not_unique_context_or_a_billed_amount
+observed:
+  - real_816_input_725_output_143597_cache_read_maps_to_816_prompt_0_cached
+  - capture_whitelist_drops_raw_cache_read_and_creation
+  - existing_KernelOne_normalizer_produces_144413_prompt_143597_cached_145138_total
+mechanism_candidate: reuse_existing_canonical_usage_mapping_and_preserve_raw_cache_fields
+verification:
+  - exact_real_fixture_producer_and_capture_RED_then_GREEN
+  - actual_provider_to_native_event_CAS_and_cold_consumer_path
+  - explicit_zero_missing_creation_positive_and_OpenAI_no_doublecount_controls
+  - actual_producer_rejects_bool_negative_and_malformed_cache_before_reported_arithmetic
+  - replay_185_actual_raw_responses_without_historical_rewrite
+  - raw_inputs_and_old_snapshots_unchanged
+  - independent_review_and_next_frozen_native_boundary_consumption
+premortem:
+  - no_second_usage_ledger_or_model_config_permission_retry_change
+  - no_ui_only_arithmetic_or_physical_POST_and_bill_inference
+  - no_hotfix_or_historical_CAS_SQLite_rewrite
+sources:
+  - https://platform.minimax.io/docs/api-reference/text-prompt-caching
+  - https://platform.claude.com/docs/en/build-with-claude/prompt-caching

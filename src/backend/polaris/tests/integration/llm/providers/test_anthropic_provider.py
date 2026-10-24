@@ -70,6 +70,166 @@ class TestAnthropicProviderHappyPath:
         assert result.usage.prompt_tokens == 10
         assert result.usage.completion_tokens == 8
 
+    def test_invoke_preserves_observed_anthropic_cache_usage(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        # Actual Director response event 1705 from run 6d51da0262c241038fd624920378875d.
+        raw_usage = {
+            "input_tokens": 816,
+            "output_tokens": 725,
+            "cache_read_input_tokens": 143597,
+            "cache_creation_input_tokens": 0,
+            "service_tier": "standard",
+        }
+        response = {**sample_anthropic_response, "usage": dict(raw_usage)}
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.status_code = 200
+        mock_response.json.return_value = response
+        mock_response.raise_for_status.return_value = None
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            lambda _url, _headers, _payload, _timeout: mock_response,
+        )
+
+        prompt = "Inspect the current candidate."
+        result = AnthropicProvider().invoke(prompt, "MiniMax-M3", anthropic_compat_config)
+
+        assert result.ok is True
+        assert result.raw["usage"] == raw_usage
+        assert response["usage"] == raw_usage
+        assert result.usage.to_dict() == {
+            "prompt_tokens": 144413,
+            "completion_tokens": 725,
+            "cached_tokens": 143597,
+            "total_tokens": 145138,
+            "estimated": False,
+            "prompt_chars": len(prompt),
+            "completion_chars": len(result.output),
+        }
+
+    @pytest.mark.parametrize(
+        ("raw_usage", "expected_counts", "estimated"),
+        [
+            pytest.param(
+                {
+                    "input_tokens": 10,
+                    "output_tokens": 2,
+                    "cache_read_input_tokens": 7,
+                    "cache_creation_input_tokens": 5,
+                },
+                (22, 2, 7, 24),
+                False,
+                id="synthetic-positive-cache-creation",
+            ),
+            pytest.param(
+                {"input_tokens": "10", "output_tokens": "2", "cache_read_input_tokens": 7},
+                (17, 2, 7, 19),
+                False,
+                id="legacy-input-output-numeric-coercion-preserved",
+            ),
+            pytest.param({"input_tokens": 10, "output_tokens": 8}, (10, 8, 0, 18), False, id="noncache-missing-total"),
+            pytest.param(
+                {"prompt_tokens": 100, "completion_tokens": 4, "cached_tokens": 80},
+                (100, 4, 80, 104),
+                False,
+                id="inclusive-prompt-flat-cached-compatibility-alias",
+            ),
+            pytest.param(
+                {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+                (0, 0, 0, 0),
+                False,
+                id="explicit-zero",
+            ),
+            pytest.param(
+                {"input_tokens": 10, "output_tokens": 8, "total_tokens": 99}, (10, 8, 0, 99), False, id="reported-total"
+            ),
+            pytest.param(None, (7, 8, 0, 15), True, id="missing-usage-estimate"),
+            pytest.param("invalid", (7, 8, 0, 15), True, id="invalid-usage-estimate"),
+            pytest.param(
+                {"input_tokens": "invalid", "output_tokens": 8}, (7, 8, 0, 15), True, id="invalid-input-estimate"
+            ),
+            pytest.param(
+                {"input_tokens": 10, "output_tokens": 8, "total_tokens": "invalid"},
+                (7, 8, 0, 15),
+                True,
+                id="invalid-total-estimate",
+            ),
+        ],
+    )
+    def test_invoke_usage_compatibility(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+        raw_usage: Any,
+        expected_counts: tuple[int, int, int, int],
+        estimated: bool,
+    ) -> None:
+        response = dict(sample_anthropic_response)
+        if raw_usage is None:
+            response.pop("usage")
+        else:
+            response["usage"] = raw_usage
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.status_code = 200
+        mock_response.json.return_value = response
+        mock_response.raise_for_status.return_value = None
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            lambda _url, _headers, _payload, _timeout: mock_response,
+        )
+
+        result = AnthropicProvider().invoke("Inspect the current candidate.", "local-fixture", anthropic_compat_config)
+
+        assert result.ok is True
+        assert (
+            result.usage.prompt_tokens,
+            result.usage.completion_tokens,
+            result.usage.cached_tokens,
+            result.usage.total_tokens,
+        ) == expected_counts
+        assert result.usage.estimated is estimated
+        assert result.usage.prompt_chars == 30
+        assert result.usage.completion_chars == 32
+        assert response.get("usage") == raw_usage
+
+    def test_invoke_keeps_openai_native_inclusive_prompt_without_double_counting(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        # OpenAI's native nested cache subset must not be added to its inclusive
+        # prompt. Mapping that subset is a separate, uncorrected provider concern.
+        raw_usage = {
+            "prompt_tokens": 100,
+            "completion_tokens": 4,
+            "prompt_tokens_details": {"cached_tokens": 80},
+        }
+        response = {**sample_anthropic_response, "usage": raw_usage}
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.status_code = 200
+        mock_response.json.return_value = response
+        mock_response.raise_for_status.return_value = None
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            lambda _url, _headers, _payload, _timeout: mock_response,
+        )
+
+        result = AnthropicProvider().invoke("Inspect.", "local-fixture", anthropic_compat_config)
+
+        assert result.ok is True
+        assert result.usage.prompt_tokens == 100
+        assert result.usage.completion_tokens == 4
+        assert result.usage.total_tokens == 104
+        assert result.raw["usage"] == raw_usage
+
     def test_factory_chat_messages_match_exact_anthropic_native_projection(
         self,
         monkeypatch: pytest.MonkeyPatch,

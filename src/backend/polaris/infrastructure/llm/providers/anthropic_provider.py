@@ -5,6 +5,7 @@ import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.llm.engine.normalizer import ResponseNormalizer
 from polaris.kernelone.llm.engine.provider_native_request import (
     FactoryProviderNativeRequestProjectionError,
     build_anthropic_native_messages,
@@ -696,17 +697,24 @@ def _usage_from_response(prompt: str, output: str, data: dict[str, Any]) -> Usag
     try:
         usage = data.get("usage") if isinstance(data, dict) else None
         if isinstance(usage, dict):
-            prompt_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
-            completion_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-            total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
-            return Usage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                estimated=False,
-                prompt_chars=len(prompt or ""),
-                completion_chars=len(output or ""),
-            )
+            # Cache counters are reported integers, not values to coerce into
+            # arithmetic. Preserve legacy input/output coercion in the normalizer.
+            for key in (
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+                "cached_tokens",
+                "cached_prompt_tokens",
+            ):
+                value = usage.get(key)
+                if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+                    return Usage.estimate(prompt, output)
+            # Reuse KernelOne's inclusive Anthropic prompt/cache semantics without
+            # re-parsing the provider's content or tool actions.
+            normalized = ResponseNormalizer.normalize_response({"usage": usage})
+            if normalized.ok:
+                normalized.usage.prompt_chars = len(prompt or "")
+                normalized.usage.completion_chars = len(output or "")
+                return normalized.usage
     except (RuntimeError, ValueError):
         logger.debug("DEBUG: anthropic_provider.py:{592} {exc} (swallowed)")
     return Usage.estimate(prompt, output)

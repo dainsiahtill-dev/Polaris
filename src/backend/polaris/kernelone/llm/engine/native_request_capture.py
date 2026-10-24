@@ -411,6 +411,8 @@ class NativeRequestCapturePort:
             "cached_tokens",
             "input_tokens",
             "output_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
         )
         known = {
             key: value
@@ -422,10 +424,29 @@ class NativeRequestCapturePort:
             for key, value in (raw_usage.items() if isinstance(raw_usage, Mapping) else ())
             if key in token_keys and isinstance(value, int) and not isinstance(value, bool) and value >= 0
         }
+        cache_read_values: list[Any] = []
+        if isinstance(raw_usage, Mapping):
+            cache_read_values.extend(
+                raw_usage.get(key) for key in ("cached_tokens", "cached_prompt_tokens", "cache_read_input_tokens")
+            )
+            details = raw_usage.get("prompt_tokens_details")
+            if isinstance(details, Mapping):
+                cache_read_values.append(details.get("cached_tokens"))
+        reported_cache_reads = [
+            value
+            for value in cache_read_values
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        ]
+        # Usage.cached_tokens defaults to zero. Only expose that zero as reported
+        # when a raw cache-read counter confirms it; creation alone cannot do so.
+        if known.get("cached_tokens") == 0 and not (
+            reported_cache_reads and all(value == 0 for value in reported_cache_reads)
+        ):
+            known.pop("cached_tokens")
         estimated = values.get("estimated") is True
         # Usage() is a convenience default, not proof that an unreported call
         # consumed zero tokens. Explicit raw zero-valued usage remains reported.
-        available = bool(reported) or estimated or any(known.values())
+        available = bool(reported) or bool(reported_cache_reads) or estimated or any(known.values())
         return {
             "usage": {**known, "estimated": estimated} if available else None,
             "usage_status": "estimated" if estimated else "reported" if available else "unknown",

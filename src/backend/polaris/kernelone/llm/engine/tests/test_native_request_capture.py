@@ -49,17 +49,150 @@ class _Budget:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw_usage", "expected_raw_usage", "expected_usage_status", "expected_cached_evidence"),
+    [
+        pytest.param(
+            {"input_tokens": 11, "output_tokens": 2},
+            {"input_tokens": 11, "output_tokens": 2},
+            "reported",
+            False,
+            id="noncached",
+        ),
+        pytest.param(
+            # Actual Director response event 1705, run 6d51da0262c241038fd624920378875d.
+            {
+                "input_tokens": 816,
+                "output_tokens": 725,
+                "cache_read_input_tokens": 143597,
+                "cache_creation_input_tokens": 0,
+                "service_tier": "standard",
+            },
+            {
+                "input_tokens": 816,
+                "output_tokens": 725,
+                "cache_read_input_tokens": 143597,
+                "cache_creation_input_tokens": 0,
+            },
+            "reported",
+            True,
+            id="observed-cache-read-and-explicit-zero-creation",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cache_read_input_tokens": 7, "cache_creation_input_tokens": 5},
+            {"input_tokens": 10, "output_tokens": 2, "cache_read_input_tokens": 7, "cache_creation_input_tokens": 5},
+            "reported",
+            True,
+            id="synthetic-positive-cache-creation",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cache_read_input_tokens": True},
+            {"input_tokens": 10, "output_tokens": 2},
+            "estimated",
+            False,
+            id="malformed-cache-read-bool",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cache_read_input_tokens": -1},
+            {"input_tokens": 10, "output_tokens": 2},
+            "estimated",
+            False,
+            id="malformed-cache-read-negative",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cache_creation_input_tokens": True},
+            {"input_tokens": 10, "output_tokens": 2},
+            "estimated",
+            False,
+            id="malformed-cache-creation-bool",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cache_creation_input_tokens": -1},
+            {"input_tokens": 10, "output_tokens": 2},
+            "estimated",
+            False,
+            id="malformed-cache-creation-negative",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cached_tokens": True},
+            {"input_tokens": 10, "output_tokens": 2},
+            "estimated",
+            False,
+            id="malformed-cached-alias-bool",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cached_tokens": -1},
+            {"input_tokens": 10, "output_tokens": 2},
+            "estimated",
+            False,
+            id="malformed-cached-alias-negative",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cached_prompt_tokens": True},
+            {"input_tokens": 10, "output_tokens": 2},
+            "estimated",
+            False,
+            id="malformed-cached-prompt-alias-bool",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cached_prompt_tokens": -1},
+            {"input_tokens": 10, "output_tokens": 2},
+            "estimated",
+            False,
+            id="malformed-cached-prompt-alias-negative",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cache_read_input_tokens": "7"},
+            {"input_tokens": 10, "output_tokens": 2},
+            "estimated",
+            False,
+            id="malformed-cache-read-numeric-string",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cache_creation_input_tokens": 1.5},
+            {"input_tokens": 10, "output_tokens": 2},
+            "estimated",
+            False,
+            id="malformed-cache-creation-float",
+        ),
+        pytest.param(
+            {
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "cache_read_input_tokens": None,
+                "cache_creation_input_tokens": None,
+            },
+            {"input_tokens": 10, "output_tokens": 2},
+            "reported",
+            False,
+            id="optional-null-cache-is-unreported",
+        ),
+        pytest.param(
+            {"input_tokens": 10, "output_tokens": 2, "cache_creation_input_tokens": 5},
+            {"input_tokens": 10, "output_tokens": 2, "cache_creation_input_tokens": 5},
+            "reported",
+            False,
+            id="creation-only-does-not-report-cache-read-zero",
+        ),
+    ],
+)
 async def test_ordinary_http_native_body_is_persisted_without_factory_authority(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raw_usage: dict[str, Any],
+    expected_raw_usage: dict[str, int],
+    expected_usage_status: str,
+    expected_cached_evidence: bool,
 ) -> None:
     observed: list[dict[str, Any]] = []
+    native_observations: list[dict[str, Any]] = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
             observed.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
-            response = json.dumps(
-                {"content": [{"type": "text", "text": "accepted"}], "usage": {"input_tokens": 11, "output_tokens": 2}}
-            ).encode("utf-8")
+            response = json.dumps({"content": [{"type": "text", "text": "accepted"}], "usage": raw_usage}).encode(
+                "utf-8"
+            )
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(response)))
@@ -84,6 +217,7 @@ async def test_ordinary_http_native_body_is_persisted_without_factory_authority(
         workspace=str(tmp_path),
         model_catalog=cast(ModelCatalog, _Catalog()),
         token_budget=cast(TokenBudgetManager, _Budget()),
+        native_request_observer=lambda _request, observation: native_observations.append(dict(observation)),
     )
     monkeypatch.setattr(
         executor,
@@ -115,6 +249,11 @@ async def test_ordinary_http_native_body_is_persisted_without_factory_authority(
     try:
         result = await executor.invoke(request)
         assert result.ok, result.error
+        assert result.raw is not None
+        assert result.raw["usage"] == raw_usage
+        assert result.usage.estimated is (expected_usage_status == "estimated")
+        if expected_usage_status == "estimated":
+            assert (result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens) == (7, 2, 9)
         assert len(observed) == 1
         ref = request.context["context_snapshot_ref"]
         runtime = Path(resolve_storage_roots(str(tmp_path)).runtime_root)
@@ -131,6 +270,15 @@ async def test_ordinary_http_native_body_is_persisted_without_factory_authority(
         assert provider_request["execution_qualified"] is False
         assert provider_request["physical_attempt"]["status"] == "completed"
         assert "factory_final_request" not in provider_request
+        assert provider_request["usage_observation"]["raw_provider_usage"] == expected_raw_usage
+        assert native_observations[-1]["phase"] == "terminal"
+        assert native_observations[-1]["raw_provider_usage"] == expected_raw_usage
+        for evidence in (provider_request["usage_observation"], native_observations[-1]):
+            assert evidence["usage_status"] == expected_usage_status
+            assert ("cached_tokens" in evidence["usage"]) is expected_cached_evidence
+        assert raw_usage == result.raw["usage"]
+        assert native_observations[-1]["physical_send_count"] is None
+        assert native_observations[-1]["physical_send_count_status"] == "unknown"
     finally:
         server.shutdown()
         server.server_close()
@@ -397,6 +545,12 @@ async def test_ordinary_stream_preserves_native_capture_and_cleanup(
 
     monkeypatch.setattr("polaris.kernelone.llm.providers.get_provider_manager", Manager)
     monkeypatch.setenv("KERNELONE_LIGHTWEIGHT_STREAM_SESSIONS", "0")
+    # Other provider tests can cache the lightweight transport before this real
+    # loopback test; changing its environment flag alone cannot replace that cache.
+    monkeypatch.setattr("polaris.infrastructure.llm.providers.provider_helpers._http_pooling._aiohttp_module", None)
+    monkeypatch.setattr(
+        "polaris.infrastructure.llm.providers.provider_helpers._http_pooling._REAL_CLIENT_SESSION_TYPE", None
+    )
     executor = StreamExecutor(
         workspace=str(tmp_path),
         model_catalog=cast(ModelCatalog, _Catalog()),
@@ -676,6 +830,65 @@ def test_terminal_snapshot_failure_is_unavailable_without_repeating_send(tmp_pat
     assert observed[-1]["snapshot_status"] == "unavailable"
     assert observed[-1]["context_snapshot_ref"] is None
     assert "context_snapshot_ref" not in request.context
+
+
+@pytest.mark.parametrize(
+    ("cache_fields", "reported_cache_fields", "normalized_cache_reported"),
+    [
+        pytest.param({}, {}, False, id="absent-cache-is-not-reported-zero"),
+        pytest.param({"cache_read_input_tokens": 0}, {"cache_read_input_tokens": 0}, True, id="explicit-read-zero"),
+        pytest.param(
+            {"cache_creation_input_tokens": 0},
+            {"cache_creation_input_tokens": 0},
+            False,
+            id="creation-zero-does-not-report-read-zero",
+        ),
+        pytest.param(
+            {"cache_read_input_tokens": True, "cache_creation_input_tokens": -1},
+            {},
+            False,
+            id="invalid-cache-counters-not-reported",
+        ),
+        pytest.param({"cached_prompt_tokens": 0}, {}, True, id="explicit-cached-prompt-alias-zero"),
+        pytest.param({"prompt_tokens_details": {"cached_tokens": 0}}, {}, True, id="explicit-openai-cache-detail-zero"),
+        pytest.param(
+            {"prompt_tokens_details": {"cached_tokens": True}}, {}, False, id="invalid-openai-cache-detail-not-reported"
+        ),
+        pytest.param(
+            {"cache_read_input_tokens": 3},
+            {"cache_read_input_tokens": 3},
+            False,
+            id="raw-positive-does-not-confirm-normalized-zero",
+        ),
+    ],
+)
+def test_native_cache_usage_evidence_preserves_reported_zero_and_unknown_fields(
+    tmp_path: Path,
+    cache_fields: dict[str, Any],
+    reported_cache_fields: dict[str, int],
+    normalized_cache_reported: bool,
+) -> None:
+    from polaris.kernelone.llm.engine.contracts import Usage
+
+    observed: list[dict[str, Any]] = []
+    port, request = _capture_port(tmp_path, lambda _request, observation: observed.append(dict(observation)))
+    raw_usage = {"input_tokens": 11, "output_tokens": 2, **cache_fields}
+    result = SimpleNamespace(
+        usage=Usage(prompt_tokens=11, completion_tokens=2, total_tokens=13),
+        raw={"usage": dict(raw_usage)},
+    )
+    port.dispatch_sync(wire_request=_wire(), send=lambda _: result)
+
+    runtime = Path(resolve_storage_roots(str(tmp_path)).runtime_root)
+    ref = request.context["context_snapshot_ref"]
+    snapshot = json.loads((runtime / "contexts" / ref[:2] / ref).read_text(encoding="utf-8"))
+    for evidence in (observed[-1], snapshot["provider_request"]["usage_observation"]):
+        assert evidence["usage_status"] == "reported"
+        assert evidence["raw_provider_usage"] == {"input_tokens": 11, "output_tokens": 2, **reported_cache_fields}
+        assert ("cached_tokens" in evidence["usage"]) is normalized_cache_reported
+        if normalized_cache_reported:
+            assert evidence["usage"]["cached_tokens"] == 0
+    assert result.raw["usage"] == raw_usage
 
 
 def test_unreported_usage_stays_unknown_in_native_observation(tmp_path: Path) -> None:

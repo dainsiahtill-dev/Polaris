@@ -1,4 +1,4 @@
-"""Fake clients prove harness mapping only, never real model/instance acceptance."""
+"""Synthetic harness and loopback component proofs; never real model/instance acceptance."""
 
 from __future__ import annotations
 
@@ -15,6 +15,10 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from polaris.cells.roles.runtime.tests.engineering_support import (
+    ScriptedProvider,
+    scripted_provider as scripted_provider,
+)
 
 
 def _inputs(module: Any, tmp_path: Path) -> Any:
@@ -931,6 +935,7 @@ def test_terminal_resource_settlement_bypasses_unavailable_http(tmp_path: Path) 
     assert store.load_run("server-run", workspace=inputs.workspace)["verification"] == "passed"
 
     settlement = supervisor.settlements[0]
+    assert settlement is not None
     assert settlement["schema_version"] == "engineering.resource_settlement.v1"
     assert set(settlement) == {
         "schema_version",
@@ -954,3 +959,58 @@ def test_known_run_with_different_committed_request_cannot_authorize_stop(tmp_pa
     result = module.stop(inputs.evidence_dir / "binding.json", supervisor=supervisor, process_probe=lambda _: False)
     assert result["harness_status"] == "UNKNOWN"
     assert supervisor.stops == []
+
+
+@pytest.mark.parametrize(
+    "raw_usage,reported_subtotal",
+    [
+        # Same raw counters as event 1705 / run 6d51da0262c241038fd624920378875d;
+        # only finite loopback replay, never another actual model-run receipt.
+        pytest.param(
+            {
+                "input_tokens": 816,
+                "output_tokens": 725,
+                "cache_read_input_tokens": 143597,
+                "cache_creation_input_tokens": 0,
+            },
+            {"prompt_tokens": 144413, "completion_tokens": 725, "total_tokens": 145138, "cached_tokens": 143597},
+            id="observed-cache-read",
+        ),
+        pytest.param(
+            {"input_tokens": 816, "output_tokens": 725},
+            {"prompt_tokens": 816, "completion_tokens": 725, "total_tokens": 1541},
+            id="cache-unreported",
+        ),
+        pytest.param(
+            {"input_tokens": 816, "output_tokens": 725, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+            {"prompt_tokens": 816, "completion_tokens": 725, "total_tokens": 1541, "cached_tokens": 0},
+            id="cache-explicit-zero",
+        ),
+    ],
+)
+async def test_cold_cli_usage_uses_actual_provider_and_durable_attempt_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scripted_provider: ScriptedProvider,
+    raw_usage: dict[str, int],
+    reported_subtotal: dict[str, int],
+) -> None:
+    from polaris.cells.roles.runtime.public.engineering_service import EngineeringRunService
+    from polaris.cells.roles.runtime.tests.test_engineering_context_audit import _record_native_usage_run
+
+    module = importlib.import_module("polaris.delivery.cli.engineering_acceptance")
+    session_id, _response, sealed = await _record_native_usage_run(tmp_path, monkeypatch, scripted_provider, raw_usage)
+    snapshot = EngineeringRunService(tmp_path).snapshot(session_id, workspace=tmp_path)
+    metrics = module._measurements(snapshot)
+    assert metrics["observed_dispatch_attempts"] == 1
+    assert metrics["event_coverage_status"] == "complete"
+    assert len(metrics["materialized_snapshot_refs"]) == 2
+    assert metrics["usage_known_subtotal"] == {"reported": reported_subtotal, "estimated": {}}
+    assert metrics["observed_attempts"][0]["raw_provider_usage"] == raw_usage
+    assert metrics["unknown_usage_attempts"] == 0
+    assert metrics["physical_http_sends"] is None
+    assert metrics["physical_http_sends_status"] == "unknown"
+    assert metrics["bill"] is None and metrics["bill_status"] == "unknown"
+    # Reopening both consumers cannot accumulate phases, snapshots or old reads.
+    assert module._measurements(EngineeringRunService(tmp_path).snapshot(session_id, workspace=tmp_path)) == metrics
+    assert all(path.read_bytes() == original for path, original in sealed.items())
