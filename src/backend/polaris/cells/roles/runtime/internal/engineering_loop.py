@@ -354,8 +354,9 @@ async def run_engineering_loop(
                     audit=visual_projection,
                 ),
                 "tools": tools.schemas(),
-                "tool_choice": "auto",
             }
+            if options["tools"]:
+                options["tool_choice"] = "auto"
             if command.role == "director" and "verify_project" in tools.enabled:
                 # Saved ceiling only: no filesystem probe, current-host promise,
                 # permission change, or mutation of durable message history.

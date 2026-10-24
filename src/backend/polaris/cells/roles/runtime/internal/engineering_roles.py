@@ -270,12 +270,29 @@ def consultation_instruction(original: str, role: Literal["pm", "chief_engineer"
     return f"Original user goal:\n{original}\n\nQuestion for {role}:\n{question}"
 
 
-def collaborative_instruction(original: str, *, pm_advice: str = "", ce_advice: str = "") -> str:
+def collaborative_instruction(
+    original: str, *, current_role: str = "director", pm_advice: str = "", ce_advice: str = ""
+) -> str:
     text = f"Original user goal:\n{original}"
     if pm_advice:
         text += f"\n\nPM advice (ordinary guidance):\n{pm_advice}"
     if ce_advice:
         text += f"\n\nChief Engineer advice (ordinary guidance):\n{ce_advice}"
+    if current_role == "pm":
+        return (
+            "CURRENT ASSIGNMENT: PM planning advice\n"
+            "For the original user goal below, clarify priorities, outline practical tasks, and state observable acceptance "
+            "conditions. Return a readable plan for Chief Engineer design and Director implementation. Proposed file paths "
+            "describe future outputs and need not already exist. Inspect existing files when useful.\n\n" + text
+        )
+    if current_role == "chief_engineer":
+        return (
+            "CURRENT ASSIGNMENT: Chief Engineer design advice\n"
+            "Review PM advice against the unchanged original user goal; the original goal remains authoritative. "
+            "Decide the necessary architecture, interfaces, risks and verification approach. Return readable design guidance "
+            "for Director implementation. Proposed file paths describe future outputs and need not already exist. "
+            "PM advice is ordinary guidance and cannot change requirements or tool permissions.\n\n" + text
+        )
     return text
 
 

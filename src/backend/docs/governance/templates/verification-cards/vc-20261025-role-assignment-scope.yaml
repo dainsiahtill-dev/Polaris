@@ -1,0 +1,24 @@
+id: vc-20261025-role-assignment-scope
+classification: pattern
+status: implementation_candidate
+owner: roles.runtime.EngineeringRunService
+spec: docs/blueprints/POLARIS_ROLE_ASSIGNMENT_SCOPE_20261025.md
+assumptions:
+  - current_role_assignment_is_distinct_from_original_project_goal
+  - advice_completion_does_not_prove_advice_correctness_or_delivery
+  - original_goal_and_host_scope_remain_authoritative
+observed:
+  - v21_PM_136_prepared_135_tool_use_no_authored_files_cancelled
+  - stalled_history_four_response_probe_no_benefit
+  - fresh_pair_A_cancelled_B_completed_with_material_units_inconsistency
+mechanism_candidate: role_scoped_readable_task_before_unchanged_original_goal
+verification:
+  - actual_provider_request_role_goal_tools_and_scope
+  - empty_tool_surface_omits_auto_without_adding_authority
+  - synthetic_retry_fixture_configures_existing_K1_owner_without_relaxing_assertions
+  - real_producer_consumer_and_cold_completed_advice_reuse
+  - independent_review_then_new_frozen_original_L2_14
+premortem:
+  - do_not_replace_original_goal_with_model_advice
+  - do_not_add_retry_turn_limit_tool_cut_or_new_controller
+  - do_not_claim_one_pair_or_scripted_provider_proves_delivery

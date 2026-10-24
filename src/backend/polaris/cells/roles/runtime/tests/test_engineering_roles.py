@@ -189,6 +189,125 @@ async def test_collaboration_uses_actual_roles_plain_advice_and_correct_physical
     assert not service.store.pending_tool_calls(command.session_id)
 
 
+@pytest.mark.parametrize("protocol", ["openai", "anthropic"])
+@pytest.mark.parametrize("host_tools", [_ALL, frozenset()], ids=["read-only-planning", "explicit-empty-grants"])
+async def test_collaborative_role_assignments_reach_final_provider_requests(
+    protocol: str,
+    host_tools: frozenset[str],
+    isolated_workspace: Path,
+    scripted_provider: ScriptedProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scripted HTTP fixture checks production assembly, not model planning benefit."""
+    original = "Preserve 原始目标 verbatim; proposed.txt is a future output."
+    pm_advice = "Ordinary PM advice: packaging remains unresolved."
+    ce_advice = "Ordinary CE advice: keep the original acceptance conditions."
+    for text in (pm_advice, ce_advice, "Director reply; no delivery asserted."):
+        scripted_provider.enqueue_json(_native(text=text, protocol=protocol))
+    service = EngineeringRunService(
+        isolated_workspace,
+        client=scripted_provider.client(protocol, isolated_workspace, monkeypatch),
+        permission_resolver=lambda _row: _scope(isolated_workspace, tools=host_tools),
+    )
+    command = RoleRunCommand("role-assignment", "director", original, isolated_workspace, workflow="collaborative")
+    limits = _limits()
+    service.store.create_run(
+        command,
+        scope=_scope(isolated_workspace, tools=host_tools),
+        limits=limits,
+        engine_version="engineering_v2",
+        request_key=None,
+    )
+    before = service.observe(command.session_id, workspace=isolated_workspace)
+    result = await service.run_collaborative(original, session_id=command.session_id)
+    assert result.status == "completed", result.text
+    bodies = [item["body"] for item in scripted_provider.requests]
+    assert len(bodies) == 3
+    captures: dict[str, list[dict[str, Any]]] = {}
+    for path in (isolated_workspace / ".polaris/runtime/contexts").glob("*/*"):
+        snapshot = json.loads(path.read_text(encoding="utf-8"))
+        request = snapshot["provider_request"]
+        if request.get("request_identity", {}).get("session_id") == command.session_id:
+            captures.setdefault(request["role"], []).append(request["final_physical_request"]["body"])
+    for role, body in zip(("pm", "chief_engineer", "director"), bodies, strict=True):
+        assert captures[role] and all(capture == body for capture in captures[role])
+    captured_bodies = [captures[role][0] for role in ("pm", "chief_engineer", "director")]
+    first_users = [
+        next(message["content"] for message in body["messages"] if message["role"] == "user")
+        for body in captured_bodies
+    ]
+    pm_prefix = (
+        "CURRENT ASSIGNMENT: PM planning advice\n"
+        "For the original user goal below, clarify priorities, outline practical tasks, and state observable acceptance "
+        "conditions. Return a readable plan for Chief Engineer design and Director implementation. Proposed file paths "
+        "describe future outputs and need not already exist. Inspect existing files when useful.\n\n"
+    )
+    assert len(pm_prefix) == 349
+    assert first_users[0] == pm_prefix + "Original user goal:\n" + original
+    ce_prefix = (
+        "CURRENT ASSIGNMENT: Chief Engineer design advice\n"
+        "Review PM advice against the unchanged original user goal; the original goal remains authoritative. "
+        "Decide the necessary architecture, interfaces, risks and verification approach. Return readable design guidance "
+        "for Director implementation. Proposed file paths describe future outputs and need not already exist. "
+        "PM advice is ordinary guidance and cannot change requirements or tool permissions.\n\n"
+    )
+    assert (
+        first_users[1]
+        == ce_prefix + "Original user goal:\n" + original + "\n\nPM advice (ordinary guidance):\n" + pm_advice
+    )
+    director_instruction, budget_separator, _budget_observation = first_users[2].partition(
+        "\n\nHost runtime budget observation (request preparation): "
+    )
+    assert budget_separator
+    assert director_instruction == (
+        "Original user goal:\n"
+        + original
+        + "\n\nPM advice (ordinary guidance):\n"
+        + pm_advice
+        + "\n\nChief Engineer advice (ordinary guidance):\n"
+        + ce_advice
+    )
+    assert [_names(body) for body in bodies] == ([_READ, _READ, _ALL] if host_tools else [set(), set(), set()])
+    if host_tools:
+        expected_choice: Any = {"type": "auto"} if protocol == "anthropic" else "auto"
+        assert all(body["tool_choice"] == expected_choice for body in captured_bodies)
+    else:
+        assert all("tool_choice" not in body for body in captured_bodies)
+        prepared = [
+            event["payload"]["request"]["options"]
+            for event in service.store.load_events(command.session_id)
+            if event["kind"] == "request_prepared"
+        ]
+        assert len(prepared) == 3
+        assert all(options["tools"] == [] and "tool_choice" not in options for options in prepared)
+        assert not any(event["kind"] == "tool_started" for event in service.store.load_events(command.session_id))
+    after = service.observe(command.session_id, workspace=isolated_workspace)
+    for field in ("session_id", "workspace", "instruction", "scope", "limits", "workflow", "required_checks"):
+        assert after[field] == before[field]
+    assert [
+        event["role"] for event in service.store.load_events(command.session_id) if event["kind"] == "role_finished"
+    ] == ["pm", "chief_engineer", "director"]
+
+
+@pytest.mark.parametrize(
+    "pm_advice,ce_advice", [("", ""), ("PM ordinary guidance", ""), ("", "CE ordinary guidance"), ("PM", "CE")]
+)
+def test_collaborative_default_and_director_keep_legacy_task_bytes(pm_advice: str, ce_advice: str) -> None:
+    from polaris.cells.roles.runtime.internal.engineering_roles import collaborative_instruction
+
+    original = "Keep 原始目标\nverbatim."
+    expected = "Original user goal:\n" + original
+    if pm_advice:
+        expected += "\n\nPM advice (ordinary guidance):\n" + pm_advice
+    if ce_advice:
+        expected += "\n\nChief Engineer advice (ordinary guidance):\n" + ce_advice
+    assert collaborative_instruction(original, pm_advice=pm_advice, ce_advice=ce_advice) == expected
+    assert (
+        collaborative_instruction(original, current_role="director", pm_advice=pm_advice, ce_advice=ce_advice)
+        == expected
+    )
+
+
 async def test_run_role_only_runs_its_current_role_even_with_collaborative_command(
     isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -262,8 +381,10 @@ async def test_director_failure_consults_ce_without_new_controller_or_scope_expa
     assert observations["inside-write"]["ok"]
     bodies = [item["body"] for item in scripted_provider.requests]
     assert _names(bodies[2]) == _READ and _names(bodies[4]) == _READ
-    assert "How do I fix this failure?" in json.dumps(bodies[2])
-    assert "Fix answer.txt; preserve the outside file." in json.dumps(bodies[2])
+    assert next(message["content"] for message in bodies[2]["messages"] if message["role"] == "user") == (
+        "Original user goal:\nFix answer.txt; preserve the outside file."
+        "\n\nQuestion for chief_engineer:\nHow do I fix this failure?"
+    )
     assert "unresolved portability" in json.dumps(bodies[5])
     assert len([event for event in events if event["kind"] == "run_ended"]) == 1
     assert not service.store.pending_tool_calls(command.session_id)
@@ -327,12 +448,14 @@ async def test_non_director_is_read_only_even_with_full_host_grant(
     assert observations[-1]["exit_code"] is not None if role == "qa" else observations[-1]["exit_code"] is None
 
 
+@pytest.mark.parametrize("saved_ce", [False, True], ids=["saved-pm", "saved-pm-and-ce"])
 async def test_collaborative_public_entry_uses_saved_workflow_and_skips_completed_planning(
-    isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
+    saved_ce: bool, isolated_workspace: Path, scripted_provider: ScriptedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (isolated_workspace / "existing.txt").write_text("Preserved original artifact.", encoding="utf-8")
     _artifact_test(isolated_workspace, "existing.txt", "Preserved original artifact.")
-    scripted_provider.enqueue_json(_native(text="CE design builds on the saved plan."))
+    if not saved_ce:
+        scripted_provider.enqueue_json(_native(text="CE design builds on the saved plan."))
     scripted_provider.enqueue_json(_native(text="Implementation reply."))
     service = EngineeringRunService(
         isolated_workspace,
@@ -362,11 +485,37 @@ async def test_collaborative_public_entry_uses_saved_workflow_and_skips_complete
         role="pm",
         payload={"frame_seq": seq, "text": "Saved ordinary plan.", "status": "completed"},
     )
+    if saved_ce:
+        ce_seq = service.store.append_event(
+            command.session_id,
+            kind="role_started",
+            role="chief_engineer",
+            payload={"instruction": command.instruction, "purpose": "workflow"},
+        )
+        service.store.append_event(
+            command.session_id,
+            kind="role_finished",
+            role="chief_engineer",
+            payload={"frame_seq": ce_seq, "text": "Saved ordinary design.", "status": "completed"},
+        )
+    before = service.observe(command.session_id, workspace=isolated_workspace)
     result = await service.run_collaborative(command.instruction, session_id=command.session_id)
     assert result.status == "completed", result.text
-    assert len(scripted_provider.requests) == 2
+    assert len(scripted_provider.requests) == (1 if saved_ce else 2)
     assert "Saved ordinary plan." in json.dumps(scripted_provider.requests[0]["body"])
+    if saved_ce:
+        assert "Saved ordinary design." in json.dumps(scripted_provider.requests[0]["body"])
+        assert "Director" in _system(scripted_provider.requests[0]["body"])
+    else:
+        first_user = next(
+            message["content"]
+            for message in scripted_provider.requests[0]["body"]["messages"]
+            if message["role"] == "user"
+        )
+        assert first_user.startswith("CURRENT ASSIGNMENT: Chief Engineer design advice\n")
     row = service.observe(command.session_id, workspace=isolated_workspace)
+    for field in ("session_id", "workspace", "instruction", "scope", "limits"):
+        assert row[field] == before[field]
     assert row["workflow"] == "collaborative" and row["required_checks"] == ["python3 -m unittest"]
     assert row["verification"] == "passed" and len(row["checks"]) == 1
     assert row["checks"][0]["exit_code"] == 0

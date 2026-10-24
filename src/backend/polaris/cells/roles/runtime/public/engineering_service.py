@@ -982,7 +982,9 @@ class EngineeringRunService:
                 replace(
                     command,
                     role=role,
-                    instruction=collaborative_instruction(instruction, pm_advice=advice.get("pm", "")),
+                    instruction=collaborative_instruction(
+                        instruction, current_role=role, pm_advice=advice.get("pm", "")
+                    ),
                     workflow="direct",
                     required_checks=(),
                 ),

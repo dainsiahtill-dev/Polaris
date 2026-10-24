@@ -74,6 +74,8 @@ class ScriptedProvider:
             "timeout": 3,
             "retries": 0,
         }
+        # Finite scripts consume one response per call; K1 owns aggregate retries.
+        monkeypatch.setenv("KERNELONE_PLATFORM_RETRY_MAX", "0")
         executor = AIExecutor(workspace=str(workspace))
         stream_executor = StreamExecutor(workspace=str(workspace))
         monkeypatch.setattr(AIExecutor, "_get_provider_config", lambda _self, _provider_id: dict(config))
