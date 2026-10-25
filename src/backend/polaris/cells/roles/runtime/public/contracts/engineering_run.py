@@ -46,6 +46,11 @@ class PermissionScope:
     network_allowed: bool
     browser: BrowserObservationConfig | None = None
     toolchain_bin_dirs: tuple[Path, ...] = ()
+    command_cache: Literal["disabled", "read_only", "read_write"] = "disabled"
+
+    def __post_init__(self) -> None:
+        if type(self.command_cache) is not str or self.command_cache not in ("disabled", "read_only", "read_write"):
+            raise ValueError("command cache mode must be disabled, read_only or read_write")
 
 
 @dataclass(frozen=True)

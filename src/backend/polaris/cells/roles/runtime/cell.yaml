@@ -112,6 +112,7 @@ effects_allowed:
 - fs.read:runtime/**
 - fs.write:runtime/engineering/*
 - fs.write:runtime/command-output/*
+- fs.write:runtime/command-cache/data/**
 - llm.invoke:roles/*
 - process.spawn:engineering/*
 - ws.outbound:runtime/*
@@ -133,6 +134,8 @@ verification:
   - polaris/cells/roles/runtime/tests/test_engineering_provider_retry_delegation.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification_output_policy.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification_execution_policy.py
+  - polaris/cells/roles/runtime/tests/test_engineering_command_cache.py
+  - polaris/cells/roles/runtime/tests/test_engineering_command_cache_authority.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification_selection.py
   - polaris/cells/roles/runtime/tests/test_engineering_recovery.py
@@ -184,4 +187,5 @@ notes:
 - Host command artifacts reuse the existing observation JSON; UUID scratch under canonical runtime/command-output is an execution resource, never another fact store.
 - A current observation shares one actual KFS input capture within that query only; later queries and cold readers reobserve. HTTP read projection and JSON encoding use the existing bounded KernelOne IO pool.
 - The public engineering resource query reads the same canonical SQLite read-only. Terminal/drain/quiescence facts can authorize existing Supervisor settlement, never fresh acceptance; unknown or active work remains fenced.
+- Explicit host command_cache persists only exact runtime/command-cache/data. Read-only roles, helpers and Verifier cap at RO; existing current/QA/artifact input manifests bind actual cache bytes and topology. Qualification pending; no native-delivery claim.
 generated_artifacts: []

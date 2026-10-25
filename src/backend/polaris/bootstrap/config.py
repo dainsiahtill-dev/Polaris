@@ -6,7 +6,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from polaris.bootstrap.config_alias_audit import record_config_alias_migration
 from polaris.config.director_config import DirectorConfig
@@ -321,6 +321,7 @@ class EngineeringPermissionProfile(BaseModel):
     network_allowed: bool = False
     browser: EngineeringBrowserObservationConfig | None = None
     toolchain_bin_dirs: tuple[Path, ...] = ()
+    command_cache: Literal["disabled", "read_only", "read_write"] = "disabled"
 
 
 class ServerConfig(BaseModel):

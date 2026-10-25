@@ -27,6 +27,7 @@ from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapt
 from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.fs import GuardedMetadataError
 from polaris.kernelone.fs.runtime import KernelFileSystem
+from polaris.kernelone.process.command_cache import resolve_command_cache
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
 
@@ -125,6 +126,7 @@ class EngineeringVerification:
                 scope.network_allowed,
                 scope.browser,
                 toolchain_bin_dirs=scope.toolchain_bin_dirs,
+                command_cache="disabled" if scope.command_cache == "disabled" else "read_only",
             ),
             limits,
             cancel,
@@ -224,6 +226,7 @@ class EngineeringVerification:
             "output_roots": [str(root) for root in self.output_roots],
             "execute_command": "execute_command" in self.tools.enabled,
             "network_allowed": self.scope.network_allowed,
+            **({"command_cache": self.tools.scope.command_cache} if self.scope.command_cache != "disabled" else {}),
             **(
                 {"toolchain_bin_dirs": [str(path) for path in self.tools.scope.toolchain_bin_dirs]}
                 if self.tools.scope.toolchain_bin_dirs
@@ -262,18 +265,18 @@ class EngineeringVerification:
                 not include_outputs and any(path.is_relative_to(root) for root in self.output_roots)
             )
 
-        def inspect(path: Path, filesystem: KernelFileSystem) -> None:
-            if ignored(path):
+        def inspect(path: Path, filesystem: KernelFileSystem, *, cache_input: bool = False) -> None:
+            if not cache_input and ignored(path):
                 return
             before = path.lstat()
             metadata = self._metadata(before)
             if stat.S_ISLNK(before.st_mode):
                 value: object = {"metadata": metadata, "symlink": os.readlink(path)}
             elif stat.S_ISDIR(before.st_mode):
-                children = sorted(child for child in path.iterdir() if not ignored(child))
+                children = sorted(child for child in path.iterdir() if cache_input or not ignored(child))
                 value = {"metadata": metadata, "children": [child.name for child in children]}
                 for child in children:
-                    inspect(child, filesystem)
+                    inspect(child, filesystem, cache_input=cache_input)
             elif stat.S_ISREG(before.st_mode):
                 content = filesystem.workspace_read_bytes(str(path))
                 value = {"metadata": metadata, "sha256": hashlib.sha256(content).hexdigest()}
@@ -287,6 +290,15 @@ class EngineeringVerification:
             filesystem_root = root if root.is_dir() else root.parent
             filesystem = KernelFileSystem(str(filesystem_root), LocalFileSystemAdapter())
             inspect(root, filesystem)
+        # Keep general control hiding unchanged. Only the host-authorized exact
+        # cache leaf is an executable/dependency input, including its link and
+        # mode metadata. Read observations must never allocate or repair it.
+        cache = resolve_command_cache(self.workspace, self.tools.scope.command_cache)
+        if cache is not None:
+            cache.validate()
+            filesystem = KernelFileSystem(str(cache.root), LocalFileSystemAdapter(), read_only_paths=True)
+            inspect(cache.root, filesystem, cache_input=True)
+            cache.validate()
         return entries
 
     def _source_view(self, manifest: dict[str, object]) -> dict[str, object]:

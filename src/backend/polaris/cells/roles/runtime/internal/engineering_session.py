@@ -227,6 +227,7 @@ class EngineeringSessionStore:
                     "network_allowed": scope.network_allowed,
                     **({"browser": asdict(scope.browser)} if scope.browser is not None else {}),
                     **({"toolchain_bin_dirs": [str(path) for path in bins]} if bins else {}),
+                    **({"command_cache": scope.command_cache} if scope.command_cache != "disabled" else {}),
                 }
             ),
             "limits": self._json(asdict(limits)),

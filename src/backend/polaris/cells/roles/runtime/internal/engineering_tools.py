@@ -23,7 +23,12 @@ from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.fs import GuardedRegularFileSnapshotError
 from polaris.kernelone.fs.runtime import KernelFileSystem
 from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
-from polaris.kernelone.process import CommandOutputCapture, resolve_toolchain_bin_dirs
+from polaris.kernelone.process import (
+    CommandCacheUnavailableError,
+    CommandOutputCapture,
+    resolve_command_cache,
+    resolve_toolchain_bin_dirs,
+)
 from polaris.kernelone.process.process_tree import (
     ProcessTreeCancelledError,
     ProcessTreeDrainError,
@@ -137,7 +142,11 @@ class EngineeringTools:
                 if self.artifact_binding is None:
                     function["parameters"]["properties"].pop("artifacts", None)
                 persistence = (
-                    "For persistence, save files only within authorized workspace write roots: "
+                    (
+                        "For persistence, save files only within authorized workspace write roots: "
+                        if self.scope.command_cache == "disabled"
+                        else "Workspace files may persist only within authorized workspace write roots: "
+                    )
                     + json.dumps([str(root) for root in self.scope.write_roots], ensure_ascii=False)
                     + ". Path/security checks still apply; .polaris control files are inaccessible. "
                     if self.scope.write_roots
@@ -149,6 +158,17 @@ class EngineeringTools:
                     "discarded after that call. Shell variables, cd, and files in those private directories do not "
                     "persist across calls. "
                     + persistence
+                    + (
+                        "Host persistent command cache is available at POLARIS_COMMAND_CACHE "
+                        "(/polaris-command-cache); its contents persist across calls. "
+                        + (
+                            "Cache writes are authorized. "
+                            if self.scope.command_cache == "read_write"
+                            else "Cache is read-only. "
+                        )
+                        if self.scope.command_cache != "disabled"
+                        else ""
+                    )
                     + (
                         "Network access is allowed by host. "
                         if self.scope.network_allowed
@@ -276,6 +296,7 @@ class EngineeringTools:
                     (execution_policy or resolve_execution_policy(None)).argv(command),
                     timeout=timeout,
                     writes=self.scope.write_roots,
+                    command_cache_write=True,
                     **({"capture_output_root": output_capture.root} if output_capture is not None else {}),
                 )
                 content = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
@@ -416,12 +437,29 @@ class EngineeringTools:
                 interrupted=self.cancel.is_set(),
                 timed_out=True,
             )
+        except CommandCacheUnavailableError as exc:
+            return self._observation(
+                call_id, name, False, f"{type(exc).__name__}: {exc}", interrupted=self.cancel.is_set()
+            )
         except (ValueError, OSError, UnicodeError, PathSecurityError, WorkspaceSandboxUnavailableError) as exc:
             return self._observation(call_id, name, False, f"{type(exc).__name__}: {exc}")
 
     async def _process(
-        self, argv: list[str], *, timeout: float, writes: tuple[Path, ...], capture_output_root: Path | None = None
+        self,
+        argv: list[str],
+        *,
+        timeout: float,
+        writes: tuple[Path, ...],
+        capture_output_root: Path | None = None,
+        command_cache_write: bool = False,
     ) -> subprocess.CompletedProcess[str]:
+        self._remaining()
+        cache_mode = self.scope.command_cache
+        if cache_mode == "read_write" and not command_cache_write:
+            cache_mode = "read_only"
+        # Validate the ordinary command's containment before allocating any
+        # persistent resource. Unsupported platforms or invalid source grants
+        # must leave even an explicitly granted cache absent.
         prepared = build_workspace_sandbox_argv(
             argv,
             workspace=self.workspace,
@@ -432,6 +470,21 @@ class EngineeringTools:
             toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
             **({"capture_output_root": capture_output_root} if capture_output_root is not None else {}),
         )
+        command_cache = resolve_command_cache(
+            self.workspace, cache_mode, create=command_cache_write and cache_mode == "read_write"
+        )
+        if command_cache is not None:
+            prepared = build_workspace_sandbox_argv(
+                argv,
+                workspace=self.workspace,
+                cwd=self.workspace,
+                read_roots=self.scope.read_roots,
+                write_roots=writes,
+                network_allowed=self.scope.network_allowed,
+                toolchain_bin_dirs=self.scope.toolchain_bin_dirs,
+                command_cache=command_cache,
+                **({"capture_output_root": capture_output_root} if capture_output_root is not None else {}),
+            )
         control = ProcessTreeRunControl()
         worker = asyncio.create_task(
             asyncio.to_thread(
@@ -448,12 +501,22 @@ class EngineeringTools:
             done, _pending = await asyncio.wait({worker, cancellation}, return_when=asyncio.FIRST_COMPLETED)
             if cancellation in done:
                 control.cancel()
-            return await asyncio.shield(worker)
+            try:
+                result = await asyncio.shield(worker)
+            except (ProcessTreeCancelledError, subprocess.TimeoutExpired):
+                if command_cache is not None:
+                    command_cache.validate()
+                raise
+            if command_cache is not None:
+                command_cache.validate()
+            return result
         except asyncio.CancelledError:
             self.cancel.set()
             control.cancel()
             with contextlib.suppress(ProcessTreeCancelledError, subprocess.TimeoutExpired):
                 await asyncio.shield(worker)
+            if command_cache is not None:
+                command_cache.validate()
             raise
         finally:
             cancellation.cancel()

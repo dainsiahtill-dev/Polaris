@@ -568,7 +568,11 @@ async def run_engineering_loop(
                             active_dispatch = None
                         advances_revision = (observation.tool in {"write_file", "edit_file"} and observation.ok) or (
                             observation.tool == "execute_command"
-                            and bool(tools.scope.write_roots or tools.scope.network_allowed)
+                            and bool(
+                                tools.scope.write_roots
+                                or tools.scope.network_allowed
+                                or tools.scope.command_cache == "read_write"
+                            )
                             and (observation.exit_code is not None or observation.interrupted or observation.timed_out)
                         )
                         if output_capture is not None:

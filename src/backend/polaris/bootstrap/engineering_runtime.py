@@ -85,6 +85,7 @@ def resolve_engineering_profile(settings: Settings, workspace: Path, profile_id:
         if profile.browser is not None
         else None,
         toolchain_bin_dirs=bins,
+        command_cache=profile.command_cache,
     )
 
 

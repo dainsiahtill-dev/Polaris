@@ -16,6 +16,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from .command_cache import COMMAND_CACHE_ALIAS, CommandCacheMount
+
 
 class WorkspaceSandboxUnavailableError(RuntimeError):
     """The platform cannot provide the required OS containment."""
@@ -23,7 +25,7 @@ class WorkspaceSandboxUnavailableError(RuntimeError):
 
 _TOOLCHAIN_ROOTS = ("/usr", "/bin", "/sbin", "/lib", "/lib64")
 _PRIVATE_ROOTS = ("/tmp", "/sandbox-home", "/sandbox-cache", "/sandbox-output")
-_RESERVED_ROOTS = ("/proc", "/dev", "/etc", *_PRIVATE_ROOTS)
+_RESERVED_ROOTS = ("/proc", "/dev", "/etc", COMMAND_CACHE_ALIAS, *_PRIVATE_ROOTS)
 _SYSTEM_JVM_ROOT = Path("/usr/lib/jvm")
 _SYSTEM_ETC_ROOT = Path("/etc")
 
@@ -195,6 +197,7 @@ def build_workspace_sandbox_argv(
     network_allowed: bool,
     toolchain_bin_dirs: Sequence[str | os.PathLike[str]] = (),
     capture_output_root: Path | None = None,
+    command_cache: CommandCacheMount | None = None,
 ) -> list[str]:
     """Build a fail-closed Linux command with explicit filesystem grants.
 
@@ -253,6 +256,10 @@ def build_workspace_sandbox_argv(
         from .output_capture import validate_command_output_root
 
         validate_command_output_root(project, capture_output_root, empty=True)
+    if command_cache is not None:
+        if not isinstance(command_cache, CommandCacheMount) or command_cache.workspace != project:
+            raise ValueError("sandbox command cache must belong to this workspace")
+        command_cache.validate()
     arguments = [
         bubblewrap,
         "--die-with-parent",
@@ -289,7 +296,16 @@ def build_workspace_sandbox_argv(
         arguments.extend(("--ro-bind", str(root), str(root)))
     for root in sorted(writes, key=lambda path: (len(path.parts), str(path))):
         arguments.extend(("--bind", str(root), str(root)))
-    arguments.extend(("--tmpfs", str(control), "--remount-ro", str(control), "--remount-ro", "/"))
+    arguments.extend(("--tmpfs", str(control), "--remount-ro", str(control)))
+    if command_cache is not None:
+        arguments.extend(
+            (
+                "--bind" if command_cache.mode == "read_write" else "--ro-bind",
+                str(command_cache.root),
+                COMMAND_CACHE_ALIAS,
+            )
+        )
+    arguments.extend(("--remount-ro", "/"))
     environment = {
         "HOME": "/sandbox-home",
         "XDG_CACHE_HOME": "/sandbox-cache",
@@ -304,6 +320,8 @@ def build_workspace_sandbox_argv(
         environment["PATH"] = ":".join(
             dict.fromkeys([*environment["PATH"].split(":"), *(str(path) for path in extra_bins)])
         )
+    if command_cache is not None:
+        environment["POLARIS_COMMAND_CACHE"] = COMMAND_CACHE_ALIAS
     for key, value in environment.items():
         arguments.extend(("--setenv", key, value))
     arguments.extend(("--chdir", str(directory), "--", *command))

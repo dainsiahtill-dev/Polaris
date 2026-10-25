@@ -104,6 +104,7 @@ def role_scope(role: str, scope: PermissionScope) -> PermissionScope:
             scope.network_allowed,
             scope.browser,
             toolchain_bin_dirs=scope.toolchain_bin_dirs,
+            command_cache=scope.command_cache,
         )
     allowed = _READ_TOOLS
     if role == "qa":
@@ -117,6 +118,7 @@ def role_scope(role: str, scope: PermissionScope) -> PermissionScope:
         False,
         scope.browser if role == "qa" else None,
         toolchain_bin_dirs=scope.toolchain_bin_dirs,
+        command_cache="disabled" if scope.command_cache == "disabled" else "read_only",
     )
 
 

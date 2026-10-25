@@ -1,0 +1,18 @@
+id: vc-20261025-command-cache-boundary
+status: implementation_authorized_not_verified
+classification: structural
+baseline: 2cdda5a0b4580981ab6dc7bf75c846aef964ad61
+blueprint: docs/blueprints/PROJECT_COMMAND_CACHE_BOUNDARY_20261025.md
+problem: per-call tmp loses preparation and SDK then pollutes source
+first_deviation: missing durable command preparation storage in the final tool schema
+owners: existing host PermissionScope; KernelOne process; engineering verifier
+facts: L216 tmp loss and source SDK; verifier ignores all .polaris
+hypothesis: explicit exact cache mount plus existing input manifest closes persistence and provenance
+unknown: whole SDK hashing performance
+reproduce: real host profile and two ordinary commands prepare then execute tiny cached executable
+falsifier: control exposure; readonly cache mutation; stale verification survives cache mutation
+mechanism: persisted host opt-in; exact contained mount; readonly projection; existing actual input manifest
+pre_mortem: writable verifier outputs imply cache RW; cold scope upgrades defaults; unsafe links; omitted dependency hashes
+validation: real process persistence/readonly/output controls; mutation/cold current/QA binding; Settings/store/policy controls; adjacent tests; Ruff; mypy; architecture; KernelOne all-mode gate
+stop: same RED and finite protocol pass, review blockers closed and required gates pass; then fresh frozen serial Bench
+limits: synthetic tests are not unattended delivery; historical failures retained

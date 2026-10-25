@@ -46,9 +46,9 @@ ScriptedProvider(base_url=base_url).client('openai', workspace, patch)
 service = EngineeringRunService(workspace, require_qa=True, permission_resolver=lambda row: scope)
 process_entries = []
 real_process = EngineeringTools._process
-async def observe_process(self, argv, *, timeout, writes):
+async def observe_process(self, argv, *, timeout, writes, command_cache_write=False):
     process_entries.append({'argv': argv, 'writes': [str(path) for path in writes]})
-    return await real_process(self, argv, timeout=timeout, writes=writes)
+    return await real_process(self, argv, timeout=timeout, writes=writes, command_cache_write=command_cache_write)
 EngineeringTools._process = observe_process
 
 async def main():

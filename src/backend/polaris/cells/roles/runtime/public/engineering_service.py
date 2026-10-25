@@ -730,7 +730,12 @@ class EngineeringRunService:
             raise asyncio.CancelledError
         if limits.deadline is not None and time.time() >= limits.deadline:
             raise ValueError("engineering run deadline exceeded")
-        readonly = replace(permitted, write_roots=(), network_allowed=False)
+        readonly = replace(
+            permitted,
+            write_roots=(),
+            network_allowed=False,
+            command_cache="disabled" if permitted.command_cache == "disabled" else "read_only",
+        )
         if "revisit_call_ids" in arguments:
             from polaris.cells.roles.runtime.internal.engineering_visual import original_visual_capture
 
@@ -1883,6 +1888,7 @@ class EngineeringRunService:
             scope["network_allowed"],
             browser,
             toolchain_bin_dirs=tuple(bins),
+            command_cache=scope.get("command_cache", "disabled"),
         )
 
     @staticmethod
@@ -1912,8 +1918,10 @@ class EngineeringRunService:
         # a new profile may add directories but cannot reorder/revoke saved ones.
         remaining = iter(current.toolchain_bin_dirs)
         toolchains_within = all(any(path == granted for granted in remaining) for path in saved.toolchain_bin_dirs)
+        cache_rank = {"disabled": 0, "read_only": 1, "read_write": 2}
         return (
             toolchains_within
+            and cache_rank[saved.command_cache] <= cache_rank[current.command_cache]
             and {ToolSpecRegistry.get_canonical(name) for name in saved.enabled_tools}
             <= {ToolSpecRegistry.get_canonical(name) for name in current.enabled_tools}
             and (not saved.network_allowed or current.network_allowed)

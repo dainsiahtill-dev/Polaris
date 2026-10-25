@@ -11,6 +11,7 @@ from .async_contracts import (
     StreamResult,
     SubprocessAsyncRunner,
 )
+from .command_cache import COMMAND_CACHE_ALIAS, CommandCacheMount, CommandCacheUnavailableError, resolve_command_cache
 from .contracts import (
     DEFAULT_TIMEOUT_SECONDS,
     CommandExecutorPort,
@@ -41,10 +42,13 @@ from .runtime_control import (
 from .sandbox import resolve_toolchain_bin_dirs
 
 __all__ = [
+    "COMMAND_CACHE_ALIAS",
     "DEFAULT_TIMEOUT_SECONDS",
     "AsyncProcessHandle",
     "AsyncProcessRunnerPort",
     "CapturedOutput",
+    "CommandCacheMount",
+    "CommandCacheUnavailableError",
     "CommandExecutorPort",
     "CommandOutputCapture",
     "CommandResult",
@@ -66,6 +70,7 @@ __all__ = [
     "isolated_process_group_kwargs",
     "list_external_loop_pm_pids",
     "open_command_output_capture",
+    "resolve_command_cache",
     "resolve_toolchain_bin_dirs",
     "run_process_tree_safe",
     "signal_process_tree",

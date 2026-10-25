@@ -68,6 +68,8 @@ verify_targets:
   - polaris/cells/roles/runtime/tests/test_engineering_provider_retry_delegation.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification_output_policy.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification_execution_policy.py
+  - polaris/cells/roles/runtime/tests/test_engineering_command_cache.py
+  - polaris/cells/roles/runtime/tests/test_engineering_command_cache_authority.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification.py
   - polaris/cells/roles/runtime/tests/test_engineering_verification_selection.py
   - polaris/cells/roles/runtime/tests/test_engineering_recovery.py
@@ -101,3 +103,4 @@ migration_notes:
 - Captured output bytes and original input binding commit in the existing engineering tool journal. Same-run browser references consume saved bytes, and cold reads never replay the producing command.
 - Current verification, QA and visual checks share one query-local actual input observation. New queries revalidate; the HTTP reader and JSON encoder use the existing bounded K1 worker facility.
 - Safe resource settlement is independent of fresh artifact acceptance. The public resource facet remains in roles.runtime; actual process effects stay in the existing InstanceSupervisor with partial closure and identity guards.
+- Host command_cache is default-disabled original scope authority; exact project runtime data mount and readonly consumer cap reuse KernelOne. Existing manifest binds cache inputs; no new state owner. Qualification pending.

@@ -1741,6 +1741,7 @@ cells:
     - fs.read:runtime/**
     - fs.write:runtime/engineering/*
     - fs.write:runtime/command-output/*
+    - fs.write:runtime/command-cache/data/**
     - llm.invoke:roles/*
     - process.spawn:engineering/*
     - ws.outbound:runtime/*
@@ -1762,6 +1763,8 @@ cells:
       - polaris/cells/roles/runtime/tests/test_engineering_provider_retry_delegation.py
       - polaris/cells/roles/runtime/tests/test_engineering_verification_output_policy.py
       - polaris/cells/roles/runtime/tests/test_engineering_verification_execution_policy.py
+      - polaris/cells/roles/runtime/tests/test_engineering_command_cache.py
+      - polaris/cells/roles/runtime/tests/test_engineering_command_cache_authority.py
       - polaris/cells/roles/runtime/tests/test_engineering_verification.py
       - polaris/cells/roles/runtime/tests/test_engineering_verification_selection.py
       - polaris/cells/roles/runtime/tests/test_engineering_recovery.py
@@ -1811,6 +1814,7 @@ cells:
     - Historical runtime/roles state is read-only; existing frozen legacy owners are not migrated or resumed by the
       engineering owner. Engineering events publish committed snapshots through event.engineering on runtime.v2.
     - Host command artifacts reuse the existing observation JSON; canonical runtime/command-output scratch is an execution resource, not another fact store.
+    - Explicit host command_cache grants only exact runtime/command-cache/data. Read-only roles/helpers/Verifier cap RO; current/QA/artifact manifests bind cache inputs. Qualification pending.
 
   - id: roles.adapters
     title: Roles Adapters
