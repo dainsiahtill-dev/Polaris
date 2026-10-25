@@ -9,6 +9,7 @@ groups alone cannot contain descendants which call setsid().
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import stat
 import sys
@@ -23,6 +24,74 @@ class WorkspaceSandboxUnavailableError(RuntimeError):
 _TOOLCHAIN_ROOTS = ("/usr", "/bin", "/sbin", "/lib", "/lib64")
 _PRIVATE_ROOTS = ("/tmp", "/sandbox-home", "/sandbox-cache", "/sandbox-output")
 _RESERVED_ROOTS = ("/proc", "/dev", "/etc", *_PRIVATE_ROOTS)
+_SYSTEM_JVM_ROOT = Path("/usr/lib/jvm")
+_SYSTEM_ETC_ROOT = Path("/etc")
+
+
+def _trusted_system_java_path(path: Path) -> bool:
+    """System runtime policy may expose only real administrator-owned paths."""
+    try:
+        if path.resolve(strict=True) != path:
+            return False
+        for candidate in (path, *path.parents):
+            information = candidate.lstat()
+            if (
+                information.st_uid != 0
+                or information.st_mode & 0o022
+                or not (stat.S_ISREG(information.st_mode) or stat.S_ISDIR(information.st_mode))
+            ):
+                return False
+    except (OSError, RuntimeError):
+        return False
+    return True
+
+
+def _system_java_config_roots() -> tuple[Path, ...]:
+    """Complete trusted Debian/Ubuntu modular JVMs' existing system read surface.
+
+    These exact readonly configuration roots are built-in runtime policy, not
+    project grants. Never infer mounts from JAVA_HOME or arbitrary conf links.
+    Other children share the administrator trust boundary of the existing /usr
+    mount; their symlinks do not authorize additional destination mounts.
+    """
+    if not _trusted_system_java_path(_SYSTEM_JVM_ROOT):
+        return ()
+    try:
+        entries = sorted(_SYSTEM_JVM_ROOT.iterdir())
+    except OSError:
+        return ()
+    roots: set[Path] = set()
+    for entry in entries:
+        try:
+            if not entry.is_dir():
+                continue
+            home = entry.resolve(strict=True)
+            if not home.is_relative_to(_SYSTEM_JVM_ROOT):
+                continue
+            release, executable = home / "release", home / "bin/java"
+            security = home / "conf/security/java.security"
+            if not release.is_file() or not executable.is_file() or not security.is_symlink():
+                continue
+            if not all(_trusted_system_java_path(path) for path in (release, executable, security.parent)):
+                continue
+            if security.lstat().st_uid != 0:
+                continue
+            match = re.search(
+                r'^JAVA_VERSION="([1-9][0-9]*)(?:[.\-+_][^"\r\n]*)?"$',
+                release.read_text(encoding="utf-8"),
+                re.MULTILINE,
+            )
+            if match is None or int(match.group(1)) < 9:
+                continue
+            config = _SYSTEM_ETC_ROOT / f"java-{match.group(1)}-openjdk"
+            target = config / "security/java.security"
+            if security.resolve(strict=True) == target and _trusted_system_java_path(target):
+                roots.add(config)
+        except (OSError, RuntimeError, UnicodeError):
+            # Optional discovery grants nothing for unsupported/broken entries;
+            # unrelated commands must retain their existing contained execution.
+            continue
+    return tuple(sorted(roots))
 
 
 def _existing_path(value: str | os.PathLike[str], *, label: str) -> Path:
@@ -207,6 +276,8 @@ def build_workspace_sandbox_argv(
     for filename in ("/etc/alternatives", "/etc/ssl/certs", "/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf"):
         if Path(filename).exists():
             arguments.extend(("--ro-bind", filename, filename))
+    for java_config in _system_java_config_roots():
+        arguments.extend(("--ro-bind", str(java_config), str(java_config)))
     arguments.extend(("--proc", "/proc", "--dev", "/dev"))
     for private_root in _PRIVATE_ROOTS:
         if private_root == "/sandbox-output" and capture_output_root is not None:

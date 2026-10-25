@@ -1,0 +1,55 @@
+task_id: JAVA-SANDBOX-01
+classification: pattern
+status: component_verified_frozen_for_independent_review
+owner: kernelone.process.sandbox
+scope:
+  product:
+    - src/backend/polaris/kernelone/process/sandbox.py
+    - src/backend/polaris/kernelone/process/tests/test_workspace_sandbox.py
+  current_writes:
+    - .polaris/audits/java-runtime-boundary-20261025
+assumptions:
+  - id: missing_distro_configuration
+    evidence: java-toolchain-preflight-20261025/report.json
+    state: observed_java_security_missing
+  - id: modular_compiler_present
+    evidence: /usr/lib/jvm/java-21-openjdk-amd64/release
+    state: jdk.compiler_in_modules
+  - id: policy_fix_is_sufficient
+    evidence: .polaris/audits/java-runtime-boundary-20261025/final/report.json
+    state: confirmed_for_bounded_synthetic_compile_and_run
+premortem:
+  - arbitrary_configuration_symlink_could_expose_private_host_files
+  - trusting_directory_name_without_installed_metadata_could_mount_unrelated_etc
+  - readonly_mount_does_not_prevent_untrusted_host_users_mutating_source_config
+  - mount_only_test_could_be_mistaken_for_functional_compiler_or_bench_acceptance
+invariants:
+  - no_broad_etc_mount
+  - no_target_source_changes
+  - no_permission_scope_expansion
+  - no_uncontained_execution
+  - no_arbitrary_external_config_symlink_following
+  - no_writable_or_non_root_owned_validated_runtime_configuration_paths
+verification:
+  red:
+    - private_test_actual_builder_missing_matching_readonly_mount
+    - foreign_java_configuration_blocked_actual_sandboxed_python
+  green:
+    - full_workspace_sandbox_file_59_passed
+    - private_actual_builder_2_passed
+    - ruff_check_exit_0
+    - ruff_format_check_exit_0
+    - final_engineering_tools_java_compile_and_run_exit_0_each
+    - empty_tools_and_empty_command_denied_zero_processes_each
+    - unsafe_private_config_unrelated_etc_and_config_writes_denied
+    - malformed_or_unsupported_jvm_does_not_block_python
+    - owner_normal_return_drain_contract_and_no_fixture_cwd_matches
+  pending:
+    - root_independent_review
+    - root_broader_integration_architecture_and_kernelone_release_gates
+    - root_commit_and_fresh_engineering_acceptance
+authority:
+  permission_owner: existing_host_permission_scope
+  process_owner: existing_kernelone_process_owner
+  added_surface: exact_matching_trusted_system_java_config_roots_readonly
+  product_source_freeze: refrozen_for_root_independent_review

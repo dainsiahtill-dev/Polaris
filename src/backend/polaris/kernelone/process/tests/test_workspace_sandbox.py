@@ -414,3 +414,189 @@ def test_toolchain_alias_is_canonical_and_retargeting_cannot_add_a_mount(sandbox
             write_roots=(),
             toolchain_bin_dirs=(alias,),
         )
+
+
+@pytest.fixture
+def system_java_layout(sandbox_workspace: Path, monkeypatch):
+    """Real symlinks/modes; emulate root ownership without changing host /etc."""
+    module = importlib.import_module("polaris.kernelone.process.sandbox")
+    base = sandbox_workspace.parent / "system-java"
+    jvms, etc = base / "usr/lib/jvm", base / "etc"
+    home, config = jvms / "java-21-openjdk-test", etc / "java-21-openjdk"
+    (home / "bin").mkdir(parents=True)
+    (home / "conf/security").mkdir(parents=True)
+    (config / "security").mkdir(parents=True)
+    (home / "bin/java").write_text("#!/bin/sh\n", encoding="utf-8")
+    (home / "bin/java").chmod(0o755)
+    (home / "release").write_text('JAVA_VERSION="21.0.9"\n', encoding="utf-8")
+    (config / "security/java.security").write_text("# trusted system configuration\n", encoding="utf-8")
+    security = home / "conf/security/java.security"
+    security.symlink_to(config / "security/java.security")
+    untrusted: set[Path] = set()
+    original_lstat = Path.lstat
+
+    def system_lstat(path: Path):
+        information = original_lstat(path)
+        if path.is_relative_to(base) or base.is_relative_to(path):
+            values = list(information)
+            values[4] = 1000 if path in untrusted else 0
+            return os.stat_result(values)
+        return information
+
+    monkeypatch.setattr(Path, "lstat", system_lstat)
+    monkeypatch.setattr(module, "_SYSTEM_JVM_ROOT", jvms)
+    monkeypatch.setattr(module, "_SYSTEM_ETC_ROOT", etc)
+    return module, home, config, untrusted
+
+
+def test_matching_system_java_configuration_adds_one_readonly_mount(sandbox_workspace: Path, system_java_layout):
+    module, home, config, _ = system_java_layout
+    (home.parent / "default-java").symlink_to(home, target_is_directory=True)
+    argv = _sandbox(["/usr/bin/true"], sandbox_workspace, write_roots=())
+    mounts = [tuple(argv[index : index + 3]) for index, arg in enumerate(argv) if arg in ("--bind", "--ro-bind")]
+    assert mounts.count(("--ro-bind", str(config), str(config))) == 1
+    assert ("--bind", str(config), str(config)) not in mounts
+    assert module._system_java_config_roots() == (config,)
+    result = _run(sandbox_workspace, f"cat '{config}/security/java.security'", write_roots=())
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "# trusted system configuration\n"
+    result = _run(sandbox_workspace, f"printf forged > '{config}/security/java.security'", write_roots=())
+    assert result.returncode != 0
+    assert (config / "security/java.security").read_text(encoding="utf-8") == "# trusted system configuration\n"
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "config_root_symlink",
+        "security_directory_symlink",
+        "private_target",
+        "unrelated_etc_target",
+        "wrong_version",
+        "writable_config_root",
+        "writable_security_directory",
+        "writable_security_file",
+        "untrusted_release",
+        "untrusted_config_root",
+        "malformed_release",
+        "invalid_utf8_release",
+    ],
+)
+def test_unsafe_system_java_configuration_is_not_mounted_and_python_still_runs(
+    sandbox_workspace: Path, system_java_layout, case: str
+):
+    module, home, config, untrusted = system_java_layout
+    security = home / "conf/security/java.security"
+    target = config / "security/java.security"
+    if case == "config_root_symlink":
+        relocated = config.parent / "private-config"
+        config.rename(relocated)
+        config.symlink_to(relocated, target_is_directory=True)
+    elif case == "security_directory_symlink":
+        relocated = config.parent / "private-security"
+        target.parent.rename(relocated)
+        target.parent.symlink_to(relocated, target_is_directory=True)
+    elif case in ("private_target", "unrelated_etc_target", "wrong_version"):
+        if case == "private_target":
+            target = sandbox_workspace.parent / "private/java.security"
+        elif case == "unrelated_etc_target":
+            target = config.parent / "ssh/java.security"
+        else:
+            target = config.parent / "java-17-openjdk/security/java.security"
+        target.parent.mkdir(parents=True)
+        target.write_text("private host configuration", encoding="utf-8")
+        security.unlink()
+        security.symlink_to(target)
+    elif case.startswith("writable_"):
+        candidate = {
+            "writable_config_root": config,
+            "writable_security_directory": target.parent,
+            "writable_security_file": target,
+        }[case]
+        candidate.chmod(0o777 if candidate.is_dir() else 0o666)
+    elif case == "malformed_release":
+        (home / "release").write_text('JAVA_VERSION="../private"\n', encoding="utf-8")
+    elif case == "invalid_utf8_release":
+        (home / "release").write_bytes(b"\xff")
+    else:
+        untrusted.add(home / "release" if case == "untrusted_release" else config)
+    assert module._system_java_config_roots() == ()
+    observed = _run(sandbox_workspace, '/usr/bin/python3 -c "print(42)"', write_roots=())
+    assert observed.returncode == 0, observed.stderr
+    assert observed.stdout == "42\n"
+    denied = _run(sandbox_workspace, f"test ! -e '{security.resolve()}'", write_roots=())
+    assert denied.returncode == 0, denied.stderr
+
+
+def test_embedded_java_configuration_adds_no_external_mount(system_java_layout):
+    module, home, _, _ = system_java_layout
+    security = home / "conf/security/java.security"
+    security.unlink()
+    security.write_text("# embedded runtime configuration\n", encoding="utf-8")
+    assert module._system_java_config_roots() == ()
+
+
+def test_foreign_java_configuration_does_not_block_python(sandbox_workspace: Path, system_java_layout):
+    _, home, _, _ = system_java_layout
+    private = sandbox_workspace.parent / "private/java.security"
+    private.parent.mkdir()
+    private.write_text("private host configuration", encoding="utf-8")
+    security = home / "conf/security/java.security"
+    security.unlink()
+    security.symlink_to(private)
+    result = _run(sandbox_workspace, '/usr/bin/python3 -c "print(42)"', write_roots=())
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "42\n"
+    denied = _run(sandbox_workspace, f"test ! -e '{private}'", write_roots=())
+    assert denied.returncode == 0, denied.stderr
+
+
+def test_unsupported_jvm_does_not_hide_another_installed_configuration(system_java_layout):
+    module, home, config, _ = system_java_layout
+    foreign = home.parent / "aaa-foreign-java"
+    shutil.copytree(home, foreign, symlinks=True)
+    (foreign / "release").write_text('JAVA_VERSION="25.0.1"\n', encoding="utf-8")
+    assert module._system_java_config_roots() == (config,)
+
+
+def test_java_config_child_symlink_cannot_add_private_read_authority(sandbox_workspace: Path, system_java_layout):
+    module, _, config, _ = system_java_layout
+    private = sandbox_workspace.parent / "private-config-secret"
+    private.write_text("private host configuration", encoding="utf-8")
+    (config / "private-alias").symlink_to(private)
+    assert module._system_java_config_roots() == (config,)
+    denied = _run(sandbox_workspace, f"test ! -e '{config}/private-alias'", write_roots=())
+    assert denied.returncode == 0, denied.stderr
+
+
+def test_system_java_discovery_ignores_jvm_alias_into_private_home(system_java_layout):
+    module, home, _, _ = system_java_layout
+    security = home / "conf/security/java.security"
+    security.unlink()
+    security.write_text("# embedded runtime configuration\n", encoding="utf-8")
+    private = home.parents[3] / "private-jvm"
+    private.mkdir()
+    (private / "release").write_bytes(b"\xff not trusted metadata")
+    (home.parent / "private-alias").symlink_to(private, target_is_directory=True)
+    assert module._system_java_config_roots() == ()
+
+
+def test_installed_modular_java_compiles_and_runs_with_system_config(sandbox_workspace: Path):
+    executable = shutil.which("java")
+    if executable is None:
+        pytest.skip("system Java is not installed")
+    release = Path(executable).resolve().parent.parent / "release"
+    if not release.is_file() or "jdk.compiler" not in release.read_text(encoding="utf-8").split():
+        pytest.skip("installed Java image lacks jdk.compiler")
+    (sandbox_workspace / "Hello.java").write_text(
+        'public class Hello { public static void main(String[] args) { System.out.println("SYSTEM_JAVA_READY"); } }\n',
+        encoding="utf-8",
+    )
+    compiled = _run(sandbox_workspace, "java -m jdk.compiler/com.sun.tools.javac.Main -d dist Hello.java")
+    assert compiled.returncode == 0, compiled.stderr
+    assert (sandbox_workspace / "dist/Hello.class").read_bytes().startswith(bytes.fromhex("cafebabe"))
+    observed = _run(sandbox_workspace, "java -cp dist Hello", write_roots=())
+    assert observed.returncode == 0, observed.stderr
+    assert observed.stdout == "SYSTEM_JAVA_READY\n"
+    denied = _run(sandbox_workspace, "test ! -e /etc/passwd && test ! -e /etc/ssh && test ! -e /etc/shadow")
+    assert denied.returncode == 0, denied.stderr
