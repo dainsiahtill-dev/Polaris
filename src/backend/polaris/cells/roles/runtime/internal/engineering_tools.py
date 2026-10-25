@@ -454,9 +454,9 @@ class EngineeringTools:
         command_cache_write: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         self._remaining()
-        cache_mode = self.scope.command_cache
-        if cache_mode == "read_write" and not command_cache_write:
-            cache_mode = "read_only"
+        # Fixed source-reader helpers do not consume persistent command inputs.
+        # Only ordinary execute_command uses the explicit host cache grant.
+        cache_mode = self.scope.command_cache if command_cache_write else "disabled"
         # Validate the ordinary command's containment before allocating any
         # persistent resource. Unsupported platforms or invalid source grants
         # must leave even an explicitly granted cache absent.

@@ -11,11 +11,13 @@ The existing input manifest records exact cache bytes, identity, mode and links.
 Actual evidence under `.polaris/audits/persistent-command-cache-boundary-20261025/`:
 
 - Initial Root RED:6failed/1passed at absent scope field; authority RED28failed before implementation. Other migration failures retained in ROOT-defects.json.
-- Final joint204passed across actual command/process/SQLite/HTTP/browser/recovery/verifier/QA/artifact consumers. One pytest plugin assertion-rewrite warning remains; no skipped joint check.
+- Initial joint204passed across actual command/process/SQLite/HTTP/browser/recovery/verifier/QA/artifact consumers. One pytest plugin assertion-rewrite warning remains; no skipped joint check.
 - Frozen final KernelOne ALL:12stages passed,368passed/1skipped. Mypy16files, Ruff and format passed. Independent source review has no open blocker; Root rechecked all source pins.
 - Actual synthetic SDK experiment: prepare, fresh execute and readonly Verifier all exit0; opaque absolute SDK symlink and two cache-internal hardlinks execute and both dependency hashes bind. This is synthetic component evidence, not a generated delivery.
 - Real PM/CE/Director/QA chain with seven scripted loopback provider requests produced actual command output/SVG/verification/QA. Cache dependency mutation makes cold verification/QA/outcome UNKNOWN and saved artifact stale, with original approved history unchanged. Only provider replies/config were substituted; model judgment is unproved.
 - Full optional catalog audit:43other architecture checks passed, catalog FAIL. An immutable no-.git parent HEAD snapshot produces exactly the same159issue occurrences/115unique fingerprints; introduced0, manifest/catalog mismatches0. Baselines unchanged. This remains historical governance debt, not a green catalog claim.
+
+Final prelaunch CACHE-007: the same PM source search passed with cache disabled but failed before execution when granted cache was missing. Fixed source-reader helpers now omit cache mount/env; actual execute_command and Verifier/QA/artifact binding remain unchanged. Missing and unsafe cache no longer block PM/CE/QA source inspection. Root counterexample GREEN, final joint270passed (including40architecture), final K1 ALL12stages/368passed1skipped, changed2files types/style/format and independent review passed. Initial qualification is retained separately; no Native was started before the correction. Readonly actual commands/Verifier still require prepared enabled cache; no broader optional-input redesign is claimed.
 
 Important preintegration catches: cache-only writes must advance candidate revision; cancellation must validate after physical drain; refused commands must not allocate cache; enabled tool descriptions must not contradict persistence. The old recovery-test process observer was migrated to forward the new keyword, preserving actual execution/crash/no-replay behavior.
 

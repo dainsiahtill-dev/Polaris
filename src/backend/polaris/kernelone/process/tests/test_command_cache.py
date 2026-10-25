@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+from polaris.cells.roles.runtime.internal.engineering_roles import role_scope
 from polaris.cells.roles.runtime.internal.engineering_tools import EngineeringTools
 from polaris.cells.roles.runtime.public.contracts.engineering_run import PermissionScope, RunLimits
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
@@ -98,6 +99,44 @@ async def test_readonly_missing_cache_is_unavailable_without_creation(cache_work
     assert not (cache_workspace / ".polaris/runtime/command-cache").exists()
 
 
+@pytest.mark.parametrize("role", ["pm", "chief_engineer", "qa"])
+@pytest.mark.parametrize("cache_state", ["missing", "unsafe"])
+async def test_readonly_role_source_search_ignores_unavailable_cache(
+    cache_workspace: Path, role: str, cache_state: str
+) -> None:
+    filesystem = KernelFileSystem(str(cache_workspace), get_default_adapter(), read_only_paths=True)
+    source = "CACHE_HELPER_SENTINEL\n"
+    filesystem.workspace_write_text_atomic("source.txt", source, encoding="utf-8")
+    if cache_state == "unsafe":
+        cache = resolve_command_cache(cache_workspace, "read_write", create=True)
+        assert cache is not None
+        (cache.root / "unsafe").symlink_to(cache_workspace / ".polaris/runtime/engineering/sessions.sqlite3")
+    host = PermissionScope(
+        (cache_workspace,),
+        (cache_workspace,),
+        frozenset({"repo_rg", "execute_command", "write_file"}),
+        False,
+        command_cache="read_write",
+    )
+    scope = role_scope(role, host)
+    assert scope.command_cache == "read_only" and scope.write_roots == ()
+    tools = EngineeringTools(cache_workspace, scope, RunLimits(None, 100_000, 16_000), asyncio.Event())
+    result = await tools.execute("source-search", "repo_rg", {"pattern": "CACHE_HELPER_SENTINEL", "paths": ["."]})
+    assert result.ok and result.exit_code == 0, result.content
+    assert "source.txt:1:CACHE_HELPER_SENTINEL" in result.content
+    denied = await tools._process(["/bin/sh", "-c", "printf changed > source.txt"], timeout=10, writes=())
+    assert denied.returncode != 0
+    assert filesystem.workspace_read_text("source.txt", encoding="utf-8") == source
+    search_schema = next(schema["function"] for schema in tools.schemas() if schema["function"]["name"] == "repo_rg")
+    assert "POLARIS_COMMAND_CACHE" not in search_schema["description"]
+    if cache_state == "missing":
+        assert not (cache_workspace / ".polaris/runtime/command-cache").exists()
+    else:
+        assert (cache_workspace / ".polaris/runtime/command-cache/data/unsafe").is_symlink()
+        with pytest.raises(CommandCacheUnavailableError):
+            resolve_command_cache(cache_workspace, "read_only")
+
+
 async def test_actual_readonly_cache_reads_but_cannot_write(cache_workspace: Path) -> None:
     writer = _tools(cache_workspace, "read_write")
     assert (await _execute(writer, 'printf before > "$POLARIS_COMMAND_CACHE/value"')).ok
@@ -110,19 +149,29 @@ async def test_actual_readonly_cache_reads_but_cannot_write(cache_workspace: Pat
     assert (root / "value").read_text(encoding="utf-8") == "before"
 
 
-async def test_readonly_helper_never_inherits_cache_write_authority(cache_workspace: Path) -> None:
+async def test_readonly_source_helper_has_no_cache_mount_or_environment(cache_workspace: Path) -> None:
     tools = _tools(cache_workspace, "read_write")
     assert (await _execute(tools, 'printf before > "$POLARIS_COMMAND_CACHE/value"')).ok
+    (cache_workspace / "source.txt").write_text("readable", encoding="utf-8")
     result = await tools._process(
-        ["/bin/sh", "-c", 'printf changed > "$POLARIS_COMMAND_CACHE/value"'], timeout=10, writes=()
+        ["/bin/sh", "-c", 'test -z "${POLARIS_COMMAND_CACHE-}" && test ! -e /polaris-command-cache && cat source.txt'],
+        timeout=10,
+        writes=(),
     )
-    assert result.returncode != 0
+    assert result.returncode == 0 and result.stdout == "readable", result.stderr
+    denied = await tools._process(["/bin/sh", "-c", "printf changed > source.txt"], timeout=10, writes=())
+    assert denied.returncode != 0
+    assert (cache_workspace / "source.txt").read_text(encoding="utf-8") == "readable"
     assert (cache_workspace / ".polaris/runtime/command-cache/data/value").read_text(encoding="utf-8") == "before"
 
 
 async def test_helper_does_not_allocate_missing_rw_cache(cache_workspace: Path) -> None:
-    with pytest.raises(CommandCacheUnavailableError):
-        await _tools(cache_workspace, "read_write")._process(["/bin/true"], timeout=10, writes=())
+    result = await _tools(cache_workspace, "read_write")._process(
+        ["/bin/sh", "-c", 'test -z "${POLARIS_COMMAND_CACHE-}" && test ! -e /polaris-command-cache'],
+        timeout=10,
+        writes=(),
+    )
+    assert result.returncode == 0, result.stderr
     assert not (cache_workspace / ".polaris/runtime/command-cache").exists()
 
 
