@@ -19,17 +19,22 @@ _CONTRACTS: dict[str, list[str]] = {
     "commands": [
         "AppendFactEventCommandV1",
         "AppendIfGuardedSnapshotCommandV1",
+        "AppendPayloadFactEventCommandV1",
         "AppendSegmentedFactEventCommandV1",
         "EnsureSegmentedFactLedgerCommandV1",
+        "StoreFactPayloadCommandV1",
     ],
     "queries": [
         "QueryFactEventsV1",
+        "QueryPayloadFactByIdempotencyKeyV1",
+        "QueryPayloadFactEventsV1",
         "QuerySegmentedFactEventsV1",
         "QuerySegmentedFactLedgerHeadV1",
         "ReadGuardedFactSnapshotCommandV1",
     ],
     "events": ["FactEventAppendedV1", "GuardedFactEventV1", "SegmentedFactEventAppendedV1"],
     "results": [
+        "FactPayloadReferenceV1",
         "FactStreamHeadV1",
         "SegmentedFactLedgerHeadV1",
         "SegmentedFactLedgerReadyV1",
@@ -41,11 +46,13 @@ _CONTRACT_EXPORTS = [item for values in _CONTRACTS.values() for item in values]
 _PUBLIC_EXPORTS = [
     "AppendFactEventCommandV1",
     "AppendIfGuardedSnapshotCommandV1",
+    "AppendPayloadFactEventCommandV1",
     "AppendSegmentedFactEventCommandV1",
     "BootstrapFactStreamWorkspaceCommandV1",
     "EnrollFactStreamStreamsCommandV1",
     "EnsureSegmentedFactLedgerCommandV1",
     "FactEventAppendedV1",
+    "FactPayloadReferenceV1",
     "FactStreamError",
     "FactStreamHeadV1",
     "FactStreamLockIdentityV1",
@@ -61,6 +68,8 @@ _PUBLIC_EXPORTS = [
     "ProvisionFactStreamLockAuthorityCommandV1",
     "QueryFactEventsV1",
     "QueryFactStreamHeadV1",
+    "QueryPayloadFactByIdempotencyKeyV1",
+    "QueryPayloadFactEventsV1",
     "QuerySegmentedFactEventsV1",
     "QuerySegmentedFactLedgerHeadV1",
     "ReadGuardedFactSnapshotCommandV1",
@@ -68,8 +77,10 @@ _PUBLIC_EXPORTS = [
     "SegmentedFactLedgerHeadV1",
     "SegmentedFactLedgerReadyV1",
     "SegmentedFactQueryResultV1",
+    "StoreFactPayloadCommandV1",
     "append_fact_event",
     "append_if_guarded_snapshot",
+    "append_payload_fact_event",
     "append_segmented_fact_event",
     "bootstrap_fact_stream_workspace",
     "configure_debug_tracing",
@@ -83,11 +94,15 @@ _PUBLIC_EXPORTS = [
     "provision_fact_stream_lock_authority",
     "query_fact_events",
     "query_fact_stream_head",
+    "query_payload_fact_by_idempotency_key",
+    "query_payload_fact_events",
+    "query_payload_fact_ledger_presence",
     "query_segmented_fact_events",
     "query_segmented_fact_ledger_head",
     "read_guarded_fact_snapshot",
     "sanitize_headers",
     "set_debug_tracing_enabled",
+    "store_fact_payload",
 ]
 _PUBLIC_MODULES = [
     "polaris.cells.events.fact_stream.public",
@@ -112,14 +127,32 @@ def _write_surface_fixture(repo_root: Path) -> None:
     public_root.mkdir(parents=True)
     context_root.mkdir()
 
-    (public_root / "__init__.py").write_text(
-        "__all__ = " + _python_list(_PUBLIC_EXPORTS),
-        encoding="utf-8",
+    contract_bindings = [name for name in _PUBLIC_EXPORTS if name[0].isupper()]
+    service_bindings = [
+        name for name in _PUBLIC_EXPORTS if name[0].islower()
+        and name not in {"fact_stream_bootstrap_streams", "bootstrap_fact_stream_workspace"}
+    ]
+    origins = {
+        "contracts": contract_bindings,
+        "service": service_bindings,
+        "catalog": ["fact_stream_bootstrap_streams"],
+        "workspace_bootstrap": ["bootstrap_fact_stream_workspace"],
+    }
+    public_imports = "".join(f"from .{module} import {', '.join(names)}\n" for module, names in origins.items())
+    (public_root / "__init__.py").write_text(public_imports + "\n__all__ = " + _python_list(_PUBLIC_EXPORTS), encoding="utf-8")
+    definitions = "".join(
+        f"class {name}({'RuntimeError' if name == 'FactStreamError' else 'object'}):\n    pass\n\n"
+        for name in contract_bindings
     )
     (public_root / "contracts.py").write_text(
-        "class FactStreamError(RuntimeError):\n    pass\n\n__all__ = " + _python_list(_CONTRACT_EXPORTS),
+        definitions + "__all__ = " + _python_list(_CONTRACT_EXPORTS),
         encoding="utf-8",
     )
+    for module in ("service", "catalog", "workspace_bootstrap"):
+        (public_root / f"{module}.py").write_text(
+            "".join(f"def {name}():\n    pass\n\n" for name in origins[module]),
+            encoding="utf-8",
+        )
     imports = ", ".join(_PUBLIC_EXPORTS)
     (cell_root / "__init__.py").write_text(
         f"from .public import {imports}\n\n__all__ = " + _python_list(_PUBLIC_EXPORTS),
@@ -217,7 +250,7 @@ def test_missing_root_export_is_a_structured_surface_failure() -> None:
 def test_paired_public_facade_removal_fails_for_contract_support_and_service(
     removed_export: str,
 ) -> None:
-    """The 37-name invariant catches matching root/public removals by symbol kind."""
+    """The approved inventory catches matching root/public removals by symbol kind."""
     with tempfile.TemporaryDirectory() as tmpdir:
         repo_root = Path(tmpdir)
         _write_surface_fixture(repo_root)
@@ -233,7 +266,7 @@ def test_paired_public_facade_removal_fails_for_contract_support_and_service(
 
         issues = _surface_issues(repo_root)
 
-        assert any("must expose exactly 49 names" in issue.message for issue in issues)
+        assert any("must expose exactly 59 names" in issue.message for issue in issues)
 
 
 @pytest.mark.parametrize("artifact", ("manifest", "catalog", "context pack", "README"))
@@ -309,3 +342,58 @@ def test_missing_required_effect_is_reported_from_structured_metadata() -> None:
         assert any(
             "context pack effects_allowed drift: missing=fs.write:runtime/events/*" in issue.message for issue in issues
         )
+
+
+@pytest.mark.parametrize("attack", ("missing_import", "wrong_alias", "missing_implementation"))
+def test_public_exports_require_their_actual_approved_binding(attack: str, tmp_path: Path) -> None:
+    """A matching __all__ count cannot stand in for a callable implementation."""
+    _write_surface_fixture(tmp_path)
+    public_root = tmp_path / "polaris/cells/events/fact_stream/public"
+    path = public_root / ("service.py" if attack == "missing_implementation" else "__init__.py")
+    content = path.read_text(encoding="utf-8")
+    if attack == "missing_import":
+        content = content.replace("query_payload_fact_events, ", "", 1)
+    elif attack == "wrong_alias":
+        content = content.replace(
+            "query_payload_fact_events, ",
+            "query_payload_fact_by_idempotency_key as query_payload_fact_events, ",
+            1,
+        )
+    else:
+        content = content.replace("def query_payload_fact_events():\n    pass\n\n", "", 1)
+    path.write_text(content, encoding="utf-8")
+
+    messages = [issue.message for issue in _surface_issues(tmp_path)]
+
+    assert any("public binding" in message and "query_payload_fact_events" in message for message in messages)
+
+
+@pytest.mark.parametrize("replacement", ("phantom_payload_query", "query_payload_fact_events"))
+def test_same_count_export_substitution_cannot_change_approved_inventory(replacement: str, tmp_path: Path) -> None:
+    _write_surface_fixture(tmp_path)
+    for relative_path in (
+        "polaris/cells/events/fact_stream/public/__init__.py",
+        "polaris/cells/events/fact_stream/__init__.py",
+    ):
+        path = tmp_path / relative_path
+        path.write_text(
+            path.read_text(encoding="utf-8").replace('"append_fact_event"', f'"{replacement}"'),
+            encoding="utf-8",
+        )
+
+    messages = [issue.message for issue in _surface_issues(tmp_path)]
+
+    assert any("approved public inventory" in message for message in messages)
+
+
+def test_payload_contract_discovery_cannot_omit_existing_dto(tmp_path: Path) -> None:
+    _write_surface_fixture(tmp_path)
+    path = tmp_path / "polaris/cells/events/fact_stream/public/contracts.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace('    "StoreFactPayloadCommandV1",\n', ""),
+        encoding="utf-8",
+    )
+
+    messages = [issue.message for issue in _surface_issues(tmp_path)]
+
+    assert any("nonexistent commands: StoreFactPayloadCommandV1" in message for message in messages)
