@@ -15,6 +15,7 @@ from polaris.kernelone.shared import truncate_text
 
 # Context store retention
 from .context_store_retention import (
+    ContextSnapshotAuditPinRepository,
     ContextStoreRetention,
     ContextStoreRetentionConfig,
     SweepReport,
@@ -100,6 +101,7 @@ __all__ = [
     "AIStreamGenerator",
     "CompressionResult",
     "CompressionRouter",
+    "ContextSnapshotAuditPinRepository",
     "ContextStoreRetention",
     "ContextStoreRetentionConfig",
     "ErrorCategory",

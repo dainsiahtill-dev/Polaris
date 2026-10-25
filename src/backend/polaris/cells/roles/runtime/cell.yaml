@@ -113,6 +113,7 @@ effects_allowed:
 - fs.write:runtime/engineering/*
 - fs.write:runtime/command-output/*
 - fs.write:runtime/command-cache/data/**
+- fs.write:runtime/contexts/**
 - llm.invoke:roles/*
 - process.spawn:engineering/*
 - ws.outbound:runtime/*

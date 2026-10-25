@@ -19,7 +19,10 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from polaris.kernelone.events.final_request_evidence import structured_context_coverage_flags
+from polaris.kernelone.events.final_request_evidence import (
+    ContextSnapshotReferenceOwnerV1,
+    structured_context_coverage_flags,
+)
 from polaris.kernelone.trace import get_trace_id
 
 from .._timeout_config import get_invoke_timeout, get_max_concurrency
@@ -361,6 +364,7 @@ class AIExecutor:
         token_budget: TokenBudgetManager | None = None,
         final_request_receipt_sink: FinalRequestReceiptSink | None = None,
         native_request_observer: Callable[[AIRequest, Mapping[str, Any]], None] | None = None,
+        context_reference_owner: Callable[[AIRequest, str], ContextSnapshotReferenceOwnerV1] | None = None,
     ) -> None:
         self.workspace = workspace
         self.telemetry = telemetry
@@ -370,6 +374,7 @@ class AIExecutor:
         self.token_budget = token_budget or TokenBudgetManager()
         self.final_request_receipt_sink = final_request_receipt_sink
         self.native_request_observer = native_request_observer
+        self.context_reference_owner = context_reference_owner
 
     async def invoke(
         self,
@@ -475,6 +480,7 @@ class AIExecutor:
                 token_budget=self.token_budget,
                 final_request_receipt_sink=self.final_request_receipt_sink,
                 native_request_observer=self.native_request_observer,
+                context_reference_owner=self.context_reference_owner,
             )
 
             owned_stream = stream_executor.invoke_stream(
@@ -926,6 +932,7 @@ class AIExecutor:
                 persist=self._store_context_messages_sync,
                 workspace=self.workspace,
                 native_request_observer=self.native_request_observer,
+                context_reference_owner=self.context_reference_owner,
             )
 
         # Propagate worker_id from caller (request.context) or environment
@@ -1313,6 +1320,7 @@ class AIExecutor:
         trace_id: str,
         call_id: str | None = None,
         provider_request: dict[str, Any] | None = None,
+        reference_owner: ContextSnapshotReferenceOwnerV1 | None = None,
     ) -> str:
         """Store compressed chat messages to runtime/contexts/ by SHA-256 hash.
 
@@ -1355,7 +1363,9 @@ class AIExecutor:
         hash_key = validate_context_hash(full_hash[:24])
 
         ws = AIExecutor._resolve_context_store_workspace(workspace)
-        persisted_ref = ContextSnapshotAuditPinRepository(workspace=ws).persist_snapshot_bytes(content.encode("utf-8"))
+        persisted_ref = ContextSnapshotAuditPinRepository(workspace=ws).persist_snapshot_bytes(
+            content.encode("utf-8"), reference_owner=reference_owner
+        )
         if persisted_ref != hash_key:
             raise ValueError("ContextOS persisted snapshot ref differs from original bytes")
         # Opportunistic retention sweep — cheap gate first, full sweep only
@@ -1380,6 +1390,7 @@ class AIExecutor:
         trace_id: str,
         call_id: str | None = None,
         provider_request: dict[str, Any] | None = None,
+        reference_owner: ContextSnapshotReferenceOwnerV1 | None = None,
     ) -> str:
         """Async-safe variant of ``_store_context_messages_sync``.
 
@@ -1396,6 +1407,7 @@ class AIExecutor:
             trace_id,
             call_id,
             provider_request,
+            reference_owner,
         )
 
     @staticmethod

@@ -31,7 +31,9 @@ from polaris.cells.roles.runtime.public.contracts.engineering_run import (
     RunLimits,
     ToolObservation,
 )
+from polaris.kernelone.events.final_request_evidence import ContextSnapshotReferenceOwnerV1
 from polaris.kernelone.exceptions import PathSecurityError
+from polaris.kernelone.llm.engine import ContextSnapshotAuditPinRepository
 from polaris.kernelone.llm.engine.client import ProviderConfig, ResilientLLMClient
 from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, TaskType
 from polaris.kernelone.llm.engine.executor import AIExecutor
@@ -53,6 +55,7 @@ def _native_client(
     workspace: Path,
     limits: RunLimits,
     native_request_observer: Callable[[AIRequest, Mapping[str, Any]], None] | None = None,
+    context_reference_owner: Callable[[AIRequest, str], ContextSnapshotReferenceOwnerV1] | None = None,
 ) -> ResilientLLMClient:
     # K1 owns model selection and provider timeouts. This one-provider wrapper
     # adds no fallback or retries and cannot shorten a provider's configured
@@ -61,7 +64,11 @@ def _native_client(
     return ResilientLLMClient(
         [
             (
-                _NativeEngineProvider(workspace=str(workspace), native_request_observer=native_request_observer),
+                _NativeEngineProvider(
+                    workspace=str(workspace),
+                    native_request_observer=native_request_observer,
+                    context_reference_owner=context_reference_owner,
+                ),
                 ProviderConfig(provider_name="kernelone_native"),
             )
         ],
@@ -116,6 +123,96 @@ class EngineeringRunService:
         self._pending_ancestors: ContextVar[frozenset[tuple[int, str]]] = ContextVar(
             "engineering_pending_ancestors", default=frozenset()
         )
+        self.context_reference_recovery: dict[str, Any] = {"status": "pending"}
+        try:
+            with self.store.acquire_workspace(self.workspace):
+                self._reconcile_context_references()
+        except WorkspaceBusyError:
+            # A read observer must not steal an active owner's lock. Its next
+            # execution reconciles after acquiring the original workspace lock.
+            self.context_reference_recovery = {"status": "deferred_active_owner"}
+
+    def _reference_owner(
+        self, session_id: str, role: str, turn_seq: int, provider_request_id: str
+    ) -> ContextSnapshotReferenceOwnerV1:
+        if role not in {"pm", "chief_engineer", "director", "qa"} or type(turn_seq) is not int or turn_seq < 1:
+            raise ValueError("invalid host context reference role/turn")
+        if (
+            not isinstance(provider_request_id, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", provider_request_id) is None
+        ):
+            raise ValueError("invalid host provider request identity")
+        return ContextSnapshotReferenceOwnerV1(
+            "engineering",
+            session_id,
+            json.dumps([role, turn_seq, provider_request_id], separators=(",", ":")),
+            str(self.workspace),
+        )
+
+    def context_reference_owner_resolver(
+        self, session_id: str
+    ) -> Callable[[AIRequest, str], ContextSnapshotReferenceOwnerV1]:
+        """Bind original host run; request fields can only narrow/deny authority."""
+        saved = self.store.load_run(session_id, workspace=self.workspace)
+        if saved["engine_version"] != self.engine_version:
+            raise ValueError("context reference owner engine mismatch")
+
+        def resolve(request: AIRequest, provider_request_id: str) -> ContextSnapshotReferenceOwnerV1:
+            if self.context_reference_recovery.get("status") != "reconciled":
+                raise RuntimeError("context reference cold reconciliation incomplete")
+            # Derive role/turn from current host SQLite, never from AIRequest.context.
+            turns = self.store.load_events(session_id, kinds=("turn_started",))
+            if not turns:
+                raise ValueError("context reference has no host turn")
+            host = turns[-1]
+            context = request.context
+            if (
+                context.get("session_id") != session_id
+                or context.get("workspace") != str(self.workspace)
+                or context.get("engine_version") != self.engine_version
+                or context.get("turn_seq") != host["seq"]
+                or request.role != host["role"]
+            ):
+                raise PermissionError("context reference request differs from current host identity")
+            return self._reference_owner(session_id, host["role"], host["seq"], provider_request_id)
+
+        return resolve
+
+    def _reconcile_context_references(self) -> None:
+        self.context_reference_recovery = {"status": "reconciling"}
+        events = self.store.context_reference_events()
+        references = []
+        for event in events:
+            if event["engine_version"] != self.engine_version:
+                continue
+            payload = event["payload"]
+            references.append(
+                (
+                    payload["context_snapshot_ref"],
+                    self._reference_owner(
+                        event["session_id"], event["role"], payload["turn_seq"], payload["provider_request_id"]
+                    ),
+                )
+            )
+
+        def validate(content: bytes, owner: ContextSnapshotReferenceOwnerV1) -> None:
+            snapshot = json.loads(content.decode("utf-8"))
+            provider = snapshot.get("provider_request", {})
+            identity = provider.get("request_identity", {})
+            role, turn, provider_id = json.loads(owner.reference_id)
+            if (
+                identity.get("workspace") != str(self.workspace)
+                or identity.get("session_id") != owner.owner_id
+                or identity.get("engine_version") != self.engine_version
+                or identity.get("turn_seq") != turn
+                or provider.get("role") != role
+                or provider.get("physical_attempt", {}).get("provider_request_id") != provider_id
+            ):
+                raise PermissionError("cold context snapshot host identity mismatch")
+
+        self.context_reference_recovery = ContextSnapshotAuditPinRepository(
+            workspace=str(self.workspace)
+        ).reconcile_references(references, validate_snapshot=validate)
 
     def _assert_workspace(self, workspace: Path) -> None:
         if Path(workspace).resolve() != self.workspace:
@@ -186,6 +283,23 @@ class EngineeringRunService:
         ):
             payload.pop("context_snapshot_ref", None)
             payload["snapshot_status"] = "invalid_reference"
+        elif payload.get("snapshot_status") == "available":
+            try:
+                expected = self._reference_owner(
+                    session_id, str(request.role), turn_seq, str(payload.get("provider_request_id") or "")
+                )
+                pins = ContextSnapshotAuditPinRepository(
+                    workspace=str(self.workspace), read_only=True
+                ).query_reference_pins(reference)
+                if not any(pin.owner == expected for pin in pins):
+                    raise ValueError("available native context has no matching durable host pin")
+            except (OSError, RuntimeError, TypeError, ValueError) as error:
+                payload["context_snapshot_ref"] = None
+                payload["snapshot_status"] = "unavailable"
+                payload["snapshot_error"] = {
+                    "code": "context_reference_pin_unavailable",
+                    "error_type": type(error).__name__,
+                }
         payload.update({"turn_seq": turn_seq, "call_id": context.get("call_id"), "role": request.role})
         self.store.append_event(session_id, kind="llm_request_observed", role=str(request.role), payload=payload)
 
@@ -208,6 +322,7 @@ class EngineeringRunService:
             "last_seq": snapshot["last_seq"],
             "event_delivery_error": self.event_delivery_error,
             "native_observation_error": self._native_observation_error,
+            "context_reference_recovery": self.context_reference_recovery,
         }
 
     def current_snapshot(self, *, workspace: Path) -> dict[str, Any] | None:
@@ -1704,10 +1819,16 @@ class EngineeringRunService:
         drain_error: ProcessTreeDrainError | None = None
         drain_reporting_error: str | None = None
         try:
+            self._reconcile_context_references()
             client = (
                 self._client
                 if self._client is not None
-                else _native_client(self.workspace, limits, self._observe_native_request)
+                else _native_client(
+                    self.workspace,
+                    limits,
+                    self._observe_native_request,
+                    self.context_reference_owner_resolver(command.session_id),
+                )
             )
             token = self._owner.set((command, scope, limits, cancel, client))
             try:

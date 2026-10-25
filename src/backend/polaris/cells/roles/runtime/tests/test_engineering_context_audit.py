@@ -295,7 +295,11 @@ async def _record_native_usage_run(
         path = runtime / "contexts" / ref[:2] / ref
         sealed[path] = path.read_bytes()
 
-    executor = AIExecutor(workspace=str(workspace), native_request_observer=record)
+    executor = AIExecutor(
+        workspace=str(workspace),
+        native_request_observer=record,
+        context_reference_owner=service.context_reference_owner_resolver(session_id),
+    )
     _configure(executor, scripted_provider.base_url, "anthropic", monkeypatch)
     request = _request()
     request.context.update(workspace=str(workspace), session_id=session_id, turn_seq=turn_seq)

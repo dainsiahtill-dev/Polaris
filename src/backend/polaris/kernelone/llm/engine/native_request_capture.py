@@ -12,7 +12,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, AsyncContextManager, TypeVar
 
-from polaris.kernelone.events.final_request_evidence import redact_provider_transport
+from polaris.kernelone.events.final_request_evidence import ContextSnapshotReferenceOwnerV1, redact_provider_transport
 
 from .contracts import AIRequest, ModelSpec, _deep_freeze_provider_value
 from .internal.context_hash import validate_context_hash
@@ -210,6 +210,7 @@ class NativeRequestCapturePort:
         workspace: str | None,
         prepared_surface: Mapping[str, Any] | None = None,
         native_request_observer: NativeRequestObserver | None = None,
+        context_reference_owner: Callable[[AIRequest, str], ContextSnapshotReferenceOwnerV1] | None = None,
     ) -> None:
         self._request = request
         self._model_spec = model_spec
@@ -232,6 +233,7 @@ class NativeRequestCapturePort:
         self._attempts = 0
         self._capture_id = uuid.uuid4().hex
         self._observer = native_request_observer
+        self._reference_owner = context_reference_owner
         self._final: tuple[str, dict[str, Any]] | None = None
 
     def _capture(self, wire_request: Mapping[str, Any]) -> tuple[Mapping[str, Any], dict[str, Any]]:
@@ -561,6 +563,11 @@ class NativeRequestCapturePort:
             if isinstance((value := self._request.context.get(key)), (str, int)) and not isinstance(value, bool)
         }
         try:
+            ownership = {}
+            if self._reference_owner is not None:
+                ownership["reference_owner"] = self._reference_owner(
+                    self._request, provider_request["physical_attempt"]["provider_request_id"]
+                )
             ref = validate_context_hash(
                 self._persist(
                     workspace=self._workspace,
@@ -568,6 +575,7 @@ class NativeRequestCapturePort:
                     trace_id=self._trace_id,
                     call_id=self._request.context.get("call_id"),
                     provider_request=provider_request,
+                    **ownership,
                 )
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:

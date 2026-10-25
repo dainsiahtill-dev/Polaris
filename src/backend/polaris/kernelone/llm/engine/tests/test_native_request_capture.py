@@ -509,9 +509,18 @@ async def test_cancel_during_capture_waits_for_preparation_and_never_sends(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("host_owned", [False, True])
+@pytest.mark.parametrize("outer_executor", [False, True])
 async def test_ordinary_stream_preserves_native_capture_and_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_owned: bool, outer_executor: bool
 ) -> None:
+    from polaris.kernelone.events.final_request_evidence import ContextSnapshotReferenceOwnerV1
+    from polaris.kernelone.llm.engine.context_store_retention import (
+        ContextSnapshotAuditPinRepository,
+        ContextStoreRetention,
+        ContextStoreRetentionConfig,
+    )
+
     observed: list[dict[str, Any]] = []
     observations: list[dict[str, Any]] = []
 
@@ -551,16 +560,23 @@ async def test_ordinary_stream_preserves_native_capture_and_cleanup(
     monkeypatch.setattr(
         "polaris.infrastructure.llm.providers.provider_helpers._http_pooling._REAL_CLIENT_SESSION_TYPE", None
     )
-    executor = StreamExecutor(
+    executor = (AIExecutor if outer_executor else StreamExecutor)(
         workspace=str(tmp_path),
         model_catalog=cast(ModelCatalog, _Catalog()),
         token_budget=cast(TokenBudgetManager, _Budget()),
         native_request_observer=lambda _request, observation: observations.append(dict(observation)),
+        context_reference_owner=(
+            lambda _request, provider: ContextSnapshotReferenceOwnerV1(
+                "synthetic-stream-host", "host-run", provider, str(tmp_path)
+            )
+        )
+        if host_owned
+        else None,
     )
     monkeypatch.setattr(
-        executor,
+        StreamExecutor,
         "_get_provider_config",
-        lambda _: {
+        lambda self, _: {
             "type": "anthropic_compat",
             "base_url": f"http://127.0.0.1:{server.server_port}",
             "api_key": "private-stream-key",
@@ -568,7 +584,7 @@ async def test_ordinary_stream_preserves_native_capture_and_cleanup(
             "retries": 0,
         },
     )
-    monkeypatch.setattr(executor, "_resolve_provider_model", lambda _: ("local-native", "local-model"))
+    monkeypatch.setattr(StreamExecutor, "_resolve_provider_model", lambda self, _: ("local-native", "local-model"))
     request = AIRequest(
         task_type=TaskType.GENERATION,
         role="director",
@@ -593,6 +609,12 @@ async def test_ordinary_stream_preserves_native_capture_and_cleanup(
         assert observations[-1]["context_snapshot_ref"] == ref
         assert observations[-1]["usage_status"] == "reported"
         assert observations[-1]["raw_provider_usage"] == {"output_tokens": 2}
+        assert "synthetic-stream-host" not in json.dumps(observed[0]), "host owner leaked into provider body"
+        repository = ContextSnapshotAuditPinRepository(workspace=str(tmp_path), read_only=True)
+        assert bool(repository.query_reference_pins(ref)) is host_owned
+        report = ContextStoreRetention(str(tmp_path), ContextStoreRetentionConfig(ttl_seconds=0)).sweep()
+        assert report.inventory_complete
+        assert (runtime / "contexts" / ref[:2] / ref).exists() is host_owned
     finally:
         server.shutdown()
         server.server_close()

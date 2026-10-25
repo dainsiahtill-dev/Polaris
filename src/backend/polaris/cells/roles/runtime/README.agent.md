@@ -99,3 +99,11 @@ Host `ArtifactObservation` values preserve raw bytes and integrity in the same o
 Raw artifact blobs stay out of model tool text and public projections. Actual rendered PNG/JPEG follows the existing image history, native provider request audit and same-frame independent QA requirements. `artifact_` references are not ContextOS24hex snapshot keys. Browser configuration/permission remains explicit; raw command retention can work without browser availability. Static self-contained files are supported; dynamic services and bundle semantics remain separate.
 
 Current qualification evidence belongs under `.polaris/audits/qa-artifact-handoff-20261024/`. Focused synthetic Service/HTTP/OS/SQLite/browser fixtures prove transport and recovery only; final gates and a new frozen original catalog case must be reported separately. Earlier L1-10 remains nativeaccepted/ROOTqualityFAIL.
+
+## Durable native request references (implementation candidate)
+
+EngineeringRunService supplies a host-only opaque reference owner to the existing K1 capture producer. The existing CAS repository saves original bytes and a validated generic V2 pin under its shared lock, before retention and available-event publication. The engineering observer validates that pin before committing an available reference. Host audit writes under runtime/contexts are declared technical effects; PermissionScope and model target-write/tool authority do not change.
+
+Engineering SQLite remains the only run/event owner. Pins are retention metadata, not a second execution ledger. V1 audit pins keep their compatibility/query semantics; new runs do not generate Factory contracts. Owner metadata stays outside messages/tools/provider bodies. Quiescent cold initialization protects still-present old references; missing bytes are reported and never restored or replayed. Reads do not mint pins. Crash-after-pin orphans are retained, not automatically unpinned. Protected-over-budget stats are explicit rather than silently deleting referenced evidence.
+
+Current implementation and tests remain candidates until Root independent review, required gates and new frozen actual requests. Historical L2-18 missing refs and failed full acceptance remain unchanged. See root docs/blueprints/CONTEXT_DURABLE_REFERENCE_RETENTION_20261025.md.

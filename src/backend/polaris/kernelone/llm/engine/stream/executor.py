@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.events.final_request_evidence import ContextSnapshotReferenceOwnerV1
 from polaris.kernelone.telemetry import debug_stream as _debug_stream_module
 from polaris.kernelone.trace import get_trace_id
 
@@ -157,6 +158,7 @@ class StreamExecutor:
         config: StreamConfig | None = None,
         final_request_receipt_sink: Callable[[dict[str, Any]], None] | None = None,
         native_request_observer: Callable[[AIRequest, Mapping[str, Any]], None] | None = None,
+        context_reference_owner: Callable[[AIRequest, str], ContextSnapshotReferenceOwnerV1] | None = None,
     ) -> None:
         self.workspace = workspace
         self.telemetry = telemetry
@@ -165,6 +167,7 @@ class StreamExecutor:
         self._config = config or StreamConfig.from_env()
         self.final_request_receipt_sink = final_request_receipt_sink
         self.native_request_observer = native_request_observer
+        self.context_reference_owner = context_reference_owner
 
     @property
     def config(self) -> StreamConfig:
@@ -1041,6 +1044,7 @@ class StreamExecutor:
                 persist=AIExecutor._store_context_messages_sync,
                 workspace=self.workspace,
                 native_request_observer=self.native_request_observer,
+                context_reference_owner=self.context_reference_owner,
             )
 
         async def bind_capture(stream: AIStreamGenerator) -> AIStreamGenerator:

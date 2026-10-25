@@ -104,3 +104,6 @@ migration_notes:
 - Current verification, QA and visual checks share one query-local actual input observation. New queries revalidate; the HTTP reader and JSON encoder use the existing bounded K1 worker facility.
 - Safe resource settlement is independent of fresh artifact acceptance. The public resource facet remains in roles.runtime; actual process effects stay in the existing InstanceSupervisor with partial closure and identity guards.
 - Host command_cache is default-disabled original scope authority; exact project runtime data mount and readonly consumer cap reuse KernelOne. Existing manifest binds cache inputs; no new state owner. Component qualified; fresh native benefit unverified.
+
+- Native request reference retention candidate reuses KernelOne CAS/pins: trusted host ownership protects original bytes before GC/available publication; roles.runtime validates before committing the same SQLite event. No model contract or second fact owner.
+- Quiescent cold migration protects present same-workspace refs only; missing historical objects remain missing. ContextOS reads stay read-only, V1 compatibility remains, and protected budget pressure is explicit. Component/source/native acceptance remain separate.

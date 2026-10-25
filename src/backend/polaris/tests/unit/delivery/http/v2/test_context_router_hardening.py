@@ -34,6 +34,64 @@ class _AllowAllAuth:
         return True
 
 
+def test_admin_projects_real_protected_over_budget_without_deleting_facts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from polaris.kernelone.events.final_request_evidence import ContextSnapshotReferenceOwnerV1
+    from polaris.kernelone.llm.engine.context_store_retention import (
+        ContextSnapshotAuditPinRepository,
+        ContextStoreRetention,
+        ContextStoreRetentionConfig,
+    )
+
+    repository = ContextSnapshotAuditPinRepository(workspace=str(tmp_path))
+    content = b"synthetic protected HTTP projection" * 3000
+    owner = ContextSnapshotReferenceOwnerV1("synthetic-http", "host", "reference", str(tmp_path))
+    ref = repository.persist_snapshot_bytes(content, reference_owner=owner)
+    retention = ContextStoreRetention(str(tmp_path), ContextStoreRetentionConfig(max_total_bytes=65536))
+    monkeypatch.setenv("KERNELONE_CONTEXT_ADMIN_ENABLED", "1")
+    monkeypatch.setattr("polaris.delivery.http.v2.context._build_retention", lambda *args, **kwargs: retention)
+    client = _build_client(str(tmp_path))
+    for result in (client.get("/v2/context/admin/stats"), client.post("/v2/context/admin/sweep")):
+        assert result.status_code == 200, result.text
+        value = result.json()
+        assert value["protected_bytes"] == value["unreclaimable_bytes"] == len(content)
+        assert value["budget_satisfied"] is False
+    assert Path(repository.snapshot_path(ref)).read_bytes() == content
+
+
+def test_old_stats_missing_pressure_fields_stays_unknown() -> None:
+    from polaris.delivery.http.schemas.context import ContextStoreStatsResponse, SweepReportResponse
+    from polaris.delivery.http.v2.context import _context_stats_response
+    from polaris.kernelone.llm.engine.context_store_retention import SweepReport
+
+    unmeasured = SweepReport(0, 0, 0, 0, 0, 0)
+    assert unmeasured.protected_bytes is unmeasured.unreclaimable_bytes is unmeasured.budget_satisfied is None
+
+    result = _context_stats_response(
+        {
+            "workspace": "/synthetic",
+            "contexts_root": "/synthetic/contexts",
+            "file_count": 0,
+            "total_bytes": 0,
+            "oldest_mtime": None,
+            "newest_mtime": None,
+            "config": {},
+            "last_sweep_at": 0,
+        },
+        None,
+    )
+    for name in ("protected_bytes", "unreclaimable_bytes", "budget_satisfied"):
+        assert result[name] is None
+        assert ContextStoreStatsResponse(**result).model_dump()[name] is None
+        assert (
+            SweepReportResponse(
+                scanned_files=0, removed_files=0, removed_bytes=0, kept_files=0, total_bytes_after=0, elapsed_ms=0
+            ).model_dump()[name]
+            is None
+        )
+
+
 def _build_client(workspace: str) -> TestClient:
     app = FastAPI()
     app.include_router(context_router)

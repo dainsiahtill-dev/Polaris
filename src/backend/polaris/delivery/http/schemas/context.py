@@ -39,6 +39,9 @@ class SweepReportResponse(BaseModel):
     total_bytes_after: int
     elapsed_ms: int
     triggers: list[str] = Field(default_factory=list)
+    protected_bytes: int | None = None
+    unreclaimable_bytes: int | None = None
+    budget_satisfied: bool | None = None
 
 
 class ContextStoreStatsResponse(BaseModel):
@@ -54,6 +57,9 @@ class ContextStoreStatsResponse(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
     last_sweep_at: float
     last_sweep_report: dict[str, Any] | None = None
+    protected_bytes: int | None = None
+    unreclaimable_bytes: int | None = None
+    budget_satisfied: bool | None = None
 
 
 __all__ = [

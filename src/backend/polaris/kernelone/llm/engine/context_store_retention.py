@@ -19,13 +19,18 @@ import stat
 import threading
 import time
 import weakref
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
-from polaris.kernelone.events.final_request_evidence import ContextSnapshotAuditPinV1
+from polaris.kernelone.events.final_request_evidence import (
+    ContextSnapshotAuditPinV1,
+    ContextSnapshotReferenceOwnerV1,
+    ContextSnapshotReferencePinV2,
+    canonical_final_request_hash,
+)
 from polaris.kernelone.fs import (
     DirectoryEntryV1,
     FileMetadataV1,
@@ -45,6 +50,7 @@ from polaris.kernelone.llm.engine.internal.context_hash import CONTEXT_HASH_PATT
 from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 logger = logging.getLogger(__name__)
+SnapshotPin: TypeAlias = ContextSnapshotAuditPinV1 | ContextSnapshotReferencePinV2
 
 SWEEP_STATE_FILENAME = ".sweep_state.json"
 _PROVIDER_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -186,7 +192,9 @@ class ContextSnapshotAuditPinRepository:
             raise ContextStoreInventoryError("context file changed between metadata and byte read")
         return snapshot
 
-    def persist_snapshot_bytes(self, content: bytes) -> str:
+    def persist_snapshot_bytes(
+        self, content: bytes, *, reference_owner: ContextSnapshotReferenceOwnerV1 | None = None
+    ) -> str:
         """Publish original producer bytes under the existing pin authority."""
         self._require_writable()
         if type(content) is not bytes:
@@ -194,8 +202,95 @@ class ContextSnapshotAuditPinRepository:
         ref = hashlib.sha256(content).hexdigest()[:24]
         with self._exclusive_lock():
             self._assert_current_identity()
+            if reference_owner is not None:
+                self._reference_pin(ref, content, reference_owner)
             self._write_immutable(self.snapshot_path(ref), content, kind="snapshot")
+            if reference_owner is not None:
+                self._pin_reference_locked(ref, content, reference_owner)
         return ref
+
+    def _reference_pin(
+        self, ref: str, content: bytes, owner: ContextSnapshotReferenceOwnerV1
+    ) -> ContextSnapshotReferencePinV2:
+        return ContextSnapshotReferencePinV2.create(
+            owner=owner,
+            workspace_abs=self.workspace_abs,
+            runtime_root=self.runtime_root,
+            snapshot_logical_path=f"runtime/contexts/{ref[:2]}/{ref}",
+            snapshot_absolute_path=self.snapshot_path(ref),
+            snapshot_source="host_reference",
+            context_snapshot_ref=ref,
+            storage_identity_token=self.storage_identity_token,
+            snapshot_content_hash=hashlib.sha256(content).hexdigest(),
+        )
+
+    def reference_pin_path(self, ref: str, owner: ContextSnapshotReferenceOwnerV1) -> str:
+        return self.pin_path(ref, "reference-" + canonical_final_request_hash(owner.to_record()))
+
+    def _pin_reference_locked(
+        self, ref: str, content: bytes, owner: ContextSnapshotReferenceOwnerV1
+    ) -> ContextSnapshotReferencePinV2:
+        pin = self._reference_pin(ref, content, owner)
+        path = self.reference_pin_path(ref, owner)
+        if self._metadata(os.path.dirname(path), optional=True) is not None:
+            self._query_snapshot_pins_locked(ref)
+        encoded = json.dumps(pin.to_record(), ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        self._write_immutable(path, encoded, kind="pin")
+        if pin not in self._query_snapshot_pins_locked(ref):
+            raise ContextSnapshotAuditPinError("durable reference pin reread mismatch")
+        return pin
+
+    def reconcile_references(
+        self,
+        references: Iterable[tuple[str, ContextSnapshotReferenceOwnerV1]],
+        *,
+        validate_snapshot: Callable[[bytes, ContextSnapshotReferenceOwnerV1], None],
+    ) -> dict[str, Any]:
+        """Protect present host refs under one GC lock; never restore missing bytes.
+
+        Caller must hold its original owner quiescence lock before enumerating.
+        A failure aborts activation; pins already committed remain conservative.
+        """
+        self._require_writable()
+        present = 0
+        missing: list[str] = []
+        committed: set[tuple[str, ContextSnapshotReferenceOwnerV1]] = set()
+        with self._exclusive_lock():
+            self._assert_current_identity()
+            for ref, owner in references:
+                path = self.snapshot_path(ref)
+                committed.add((ref, owner))
+                if self._metadata(path, optional=True) is None:
+                    missing.append(ref)
+                    continue
+                content = self._read_bytes(path)
+                if hashlib.sha256(content).hexdigest()[:24] != ref:
+                    raise ContextSnapshotAuditPinError("reference snapshot ref/content mismatch")
+                validate_snapshot(content, owner)
+                self._fsync_and_verify(path, content)
+                self._pin_reference_locked(ref, content, owner)
+                present += 1
+            orphan_pins = sum(
+                isinstance(pin, ContextSnapshotReferencePinV2)
+                and (pin.context_snapshot_ref, pin.owner) not in committed
+                for pin in self._all_pins_locked()
+            )
+        return {
+            "status": "reconciled",
+            "present_references": present,
+            "unavailable_references": missing,
+            "orphan_pins_retained": orphan_pins,
+            "replayed_operations": 0,
+        }
+
+    def query_reference_pins(self, context_snapshot_ref: str) -> tuple[ContextSnapshotReferencePinV2, ...]:
+        with self._exclusive_lock(observe=True):
+            self._assert_current_identity()
+            return tuple(
+                pin
+                for pin in self._query_snapshot_pins_locked(context_snapshot_ref)
+                if isinstance(pin, ContextSnapshotReferencePinV2)
+            )
 
     @property
     def lock_logical_path(self) -> str:
@@ -270,7 +365,10 @@ class ContextSnapshotAuditPinRepository:
             self._write_immutable(pin_path, pin_bytes, kind="pin")
             pins = self._query_snapshot_pins_locked(context_ref)
             for persisted in pins:
-                if persisted.provider_request_id == provider_request_id:
+                if (
+                    isinstance(persisted, ContextSnapshotAuditPinV1)
+                    and persisted.provider_request_id == provider_request_id
+                ):
                     if persisted != pin:
                         raise ContextSnapshotAuditPinError("persisted pin binding mismatch")
                     return persisted
@@ -280,7 +378,9 @@ class ContextSnapshotAuditPinRepository:
         ref = self._validated_ref(context_snapshot_ref)
         with self._exclusive_lock(observe=True):
             self._assert_current_identity()
-            return self._query_snapshot_pins_locked(ref)
+            return tuple(
+                pin for pin in self._query_snapshot_pins_locked(ref) if isinstance(pin, ContextSnapshotAuditPinV1)
+            )
 
     def query_factory_run_pins(self, factory_run_id: str) -> tuple[ContextSnapshotAuditPinV1, ...]:
         """Return validated snapshot pins bound to one exact Factory run.
@@ -296,15 +396,19 @@ class ContextSnapshotAuditPinRepository:
             raise ContextSnapshotAuditPinError("factory_run_id must be non-empty")
         with self._exclusive_lock(observe=True):
             self._assert_current_identity()
-            return tuple(pin for pin in self._all_pins_locked() if pin.factory_run_id == requested_run_id)
+            return tuple(
+                pin
+                for pin in self._all_pins_locked()
+                if isinstance(pin, ContextSnapshotAuditPinV1) and pin.factory_run_id == requested_run_id
+            )
 
-    def _all_pins_locked(self, budget: _InventoryBudget | None = None) -> tuple[ContextSnapshotAuditPinV1, ...]:
+    def _all_pins_locked(self, budget: _InventoryBudget | None = None) -> tuple[SnapshotPin, ...]:
         budget = budget or _InventoryBudget()
         pins_root = os.path.join(self.contexts_root, "pins")
         metadata = self._metadata(pins_root, optional=True)
         if metadata is None:
             return ()
-        matched: list[ContextSnapshotAuditPinV1] = []
+        matched: list[SnapshotPin] = []
         for shard in self._list_directory(pins_root, budget, metadata):
             if not stat.S_ISDIR(shard.metadata.mode) or not re.fullmatch(r"[0-9a-f]{2}", shard.name):
                 raise ContextSnapshotAuditPinError("context snapshot pins root contains an invalid shard")
@@ -346,7 +450,7 @@ class ContextSnapshotAuditPinRepository:
         *,
         budget: _InventoryBudget | None = None,
         expected: FileMetadataV1 | None = None,
-    ) -> tuple[ContextSnapshotAuditPinV1, ...]:
+    ) -> tuple[SnapshotPin, ...]:
         ref = self._validated_ref(context_snapshot_ref)
         pin_directory = os.path.dirname(self.pin_path(ref, "probe"))
         metadata = expected or self._metadata(pin_directory, optional=True)
@@ -355,14 +459,18 @@ class ContextSnapshotAuditPinRepository:
         entries = self._list_directory(pin_directory, budget or _InventoryBudget(), metadata)
         if not entries:
             raise ContextSnapshotAuditPinError("context snapshot pin directory is present but empty")
-        pins: list[ContextSnapshotAuditPinV1] = []
+        pins: list[SnapshotPin] = []
         for entry in entries:
             if not stat.S_ISREG(entry.metadata.mode) or entry.metadata.nlink != 1 or not entry.name.endswith(".json"):
                 raise ContextSnapshotAuditPinError("context snapshot pin directory contains an invalid entry")
             path = os.path.join(pin_directory, entry.name)
             try:
                 raw = json.loads(self._read_snapshot(path, entry.metadata).content.decode("utf-8"))
-                pin = ContextSnapshotAuditPinV1.from_record(raw)
+                pin = (
+                    ContextSnapshotReferencePinV2.from_record(raw)
+                    if isinstance(raw, dict) and raw.get("schema_version") == "llm.context_snapshot_reference_pin.v2"
+                    else ContextSnapshotAuditPinV1.from_record(raw)
+                )
             except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
                 raise ContextSnapshotAuditPinError("context snapshot pin is corrupt or unreadable") from exc
             self._validate_pin_binding(pin, path)
@@ -373,10 +481,14 @@ class ContextSnapshotAuditPinRepository:
             raise ContextSnapshotAuditPinError("pinned context snapshot content hash mismatch")
         return tuple(pins)
 
-    def _validate_pin_binding(self, pin: ContextSnapshotAuditPinV1, pin_path: str) -> None:
+    def _validate_pin_binding(self, pin: SnapshotPin, pin_path: str) -> None:
         expected_snapshot_path = self.snapshot_path(pin.context_snapshot_ref)
         expected_logical_path = f"runtime/contexts/{pin.context_snapshot_ref[:2]}/{pin.context_snapshot_ref}"
-        expected_pin_path = self.pin_path(pin.context_snapshot_ref, pin.provider_request_id)
+        expected_pin_path = (
+            self.reference_pin_path(pin.context_snapshot_ref, pin.owner)
+            if isinstance(pin, ContextSnapshotReferencePinV2)
+            else self.pin_path(pin.context_snapshot_ref, pin.provider_request_id)
+        )
         if os.path.realpath(pin_path) != os.path.realpath(expected_pin_path):
             raise ContextSnapshotAuditPinError("context snapshot pin filename/provider binding mismatch")
         if (
@@ -393,7 +505,7 @@ class ContextSnapshotAuditPinRepository:
     def _read_snapshot_bytes_for_pins(
         self,
         context_snapshot_ref: str,
-        pins: list[ContextSnapshotAuditPinV1],
+        pins: list[SnapshotPin],
     ) -> bytes:
         if not pins:
             raise ContextSnapshotAuditPinError("context snapshot pins are required")
@@ -570,6 +682,9 @@ class SweepReport:
     inventory_complete: bool = True
     error_code: str | None = None
     error_message: str | None = None
+    protected_bytes: int | None = None
+    unreclaimable_bytes: int | None = None
+    budget_satisfied: bool | None = None
 
 
 class ContextStoreRetention:
@@ -709,10 +824,17 @@ class ContextStoreRetention:
             self._pin_repository._assert_current_identity()
             files = self._inventory()
             counter = self._read_sweep_state()
+            state = self._state_from_inventory(files)
+            protected_refs = {pin.context_snapshot_ref for pin in self._pin_repository._all_pins_locked()}
+            protected_bytes = sum(item.size for item in files if os.path.basename(item.relative_path) in protected_refs)
             return {
                 "workspace": str(self._workspace),
                 "contexts_root": self._contexts_root,
-                **self._state_from_inventory(files),
+                **state,
+                "protected_bytes": protected_bytes,
+                "unreclaimable_bytes": protected_bytes,
+                "budget_satisfied": state["total_bytes"] <= self._config.max_total_bytes
+                and state["file_count"] <= self._config.max_files,
                 "newest_mtime": max((item.mtime_ns / 1e9 for item in files), default=None),
                 "config": {
                     "ttl_seconds": self._config.ttl_seconds,
@@ -754,7 +876,8 @@ class ContextStoreRetention:
                 files = self._inventory(budget)
                 scanned = len(files)
                 # Complete pin validation is a precondition, never an empty-on-error shortcut.
-                repository._all_pins_locked(budget)
+                all_pins = repository._all_pins_locked(budget)
+                protected_refs = {pin.context_snapshot_ref for pin in all_pins}
                 candidates = sorted(files, key=lambda item: item.mtime_ns)
                 kept_count = len(candidates)
                 kept_bytes = sum(item.size for item in candidates)
@@ -785,6 +908,13 @@ class ContextStoreRetention:
                     candidates = survivors
                 final = self._inventory(budget)
                 state = self._state_from_inventory(final)
+                protected_bytes = sum(
+                    item.size for item in final if os.path.basename(item.relative_path) in protected_refs
+                )
+                budget_satisfied = (
+                    state["total_bytes"] <= self._config.max_total_bytes
+                    and state["file_count"] <= self._config.max_files
+                )
                 # Failure here also stays explicit; a successful delete is never replayed.
                 self._write_sweep_state(now, state)
                 return SweepReport(
@@ -795,6 +925,9 @@ class ContextStoreRetention:
                     total_bytes_after=state["total_bytes"],
                     elapsed_ms=int((time.monotonic() - start) * 1000),
                     triggers=tags,
+                    protected_bytes=protected_bytes,
+                    unreclaimable_bytes=protected_bytes,
+                    budget_satisfied=budget_satisfied,
                 )
         except (OSError, ContextSnapshotAuditPinError, ValueError) as exc:
             return self._failure_report(

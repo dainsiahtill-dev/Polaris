@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from polaris.kernelone.events.final_request_evidence._constants import (
@@ -120,6 +121,112 @@ class ContextSnapshotAuditPinV1:
             raise ValueError("context snapshot audit pin retention mismatch")
         if record.get("pin_hash") != created.pin_hash:
             raise ValueError("context snapshot audit pin hash mismatch")
+        return created
+
+    def to_record(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSnapshotReferenceOwnerV1:
+    """Bounded host-only reference identity, never provider/model authority."""
+
+    namespace: str
+    owner_id: str
+    reference_id: str
+    workspace_abs: str
+
+    def __post_init__(self) -> None:
+        for value in (self.namespace, self.owner_id, self.reference_id, self.workspace_abs):
+            if not isinstance(value, str) or not value.strip() or len(value) > 4096 or any(ord(c) < 32 for c in value):
+                raise ValueError("reference owner fields must be bounded nonempty host identities")
+        if not Path(self.workspace_abs).is_absolute():
+            raise ValueError("reference owner workspace must be absolute")
+
+    def to_record(self) -> dict[str, str]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextSnapshotReferencePinV2:
+    schema_version: str
+    workspace_abs: str
+    runtime_root: str
+    snapshot_logical_path: str
+    snapshot_absolute_path: str
+    snapshot_source: str
+    owner: ContextSnapshotReferenceOwnerV1
+    context_snapshot_ref: str
+    storage_identity_token: str
+    snapshot_content_hash: str
+    retention: str
+    pin_hash: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        owner: ContextSnapshotReferenceOwnerV1,
+        workspace_abs: str,
+        runtime_root: str,
+        snapshot_logical_path: str,
+        snapshot_absolute_path: str,
+        snapshot_source: str,
+        context_snapshot_ref: str,
+        storage_identity_token: str,
+        snapshot_content_hash: str,
+    ) -> ContextSnapshotReferencePinV2:
+        if type(owner) is not ContextSnapshotReferenceOwnerV1 or owner.workspace_abs != workspace_abs:
+            raise ValueError("reference owner workspace mismatch")
+        _validate_exact_context_snapshot_hash(context_snapshot_ref)
+        _validate_exact_context_snapshot_hash(storage_identity_token)
+        if not _EXACT_HASH_64_RE.fullmatch(snapshot_content_hash):
+            raise ValueError("snapshot_content_hash must be exactly 64 lowercase hex")
+        payload = {
+            "schema_version": "llm.context_snapshot_reference_pin.v2",
+            "workspace_abs": workspace_abs,
+            "runtime_root": runtime_root,
+            "snapshot_logical_path": snapshot_logical_path,
+            "snapshot_absolute_path": snapshot_absolute_path,
+            "snapshot_source": snapshot_source,
+            "owner": owner.to_record(),
+            "context_snapshot_ref": context_snapshot_ref,
+            "storage_identity_token": storage_identity_token,
+            "snapshot_content_hash": snapshot_content_hash,
+            "retention": "pinned_reference_no_delete",
+        }
+        if any(not isinstance(payload[key], str) or not payload[key] for key in payload if key != "owner"):
+            raise ValueError("reference pin bindings must be nonempty strings")
+        return cls(
+            schema_version="llm.context_snapshot_reference_pin.v2",
+            workspace_abs=workspace_abs,
+            runtime_root=runtime_root,
+            snapshot_logical_path=snapshot_logical_path,
+            snapshot_absolute_path=snapshot_absolute_path,
+            snapshot_source=snapshot_source,
+            owner=owner,
+            context_snapshot_ref=context_snapshot_ref,
+            storage_identity_token=storage_identity_token,
+            snapshot_content_hash=snapshot_content_hash,
+            retention="pinned_reference_no_delete",
+            pin_hash=canonical_final_request_hash(payload),
+        )
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> ContextSnapshotReferencePinV2:
+        if not isinstance(record, Mapping) or set(record) != set(cls.__dataclass_fields__):
+            raise ValueError("reference pin fields mismatch")
+        owner = record.get("owner")
+        if not isinstance(owner, dict) or set(owner) != set(ContextSnapshotReferenceOwnerV1.__dataclass_fields__):
+            raise ValueError("reference owner fields mismatch")
+        arguments = {
+            key: value
+            for key, value in record.items()
+            if key not in {"schema_version", "retention", "pin_hash", "owner"}
+        }
+        created = cls.create(owner=ContextSnapshotReferenceOwnerV1(**owner), **arguments)
+        if dict(record) != created.to_record():
+            raise ValueError("reference pin schema, retention or hash mismatch")
         return created
 
     def to_record(self) -> dict[str, Any]:

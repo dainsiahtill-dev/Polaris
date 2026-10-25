@@ -64,6 +64,9 @@ def _context_stats_response(stats: dict[str, Any], last_sweep_report: dict[str, 
         "config": stats["config"],
         "last_sweep_at": stats["last_sweep_at"],
         "last_sweep_report": last_sweep_report,
+        "protected_bytes": stats.get("protected_bytes"),
+        "unreclaimable_bytes": stats.get("unreclaimable_bytes"),
+        "budget_satisfied": stats.get("budget_satisfied"),
     }
 
 
@@ -352,4 +355,7 @@ def post_context_admin_sweep(request: Request, body: SweepRequest | None = None)
         "total_bytes_after": report.total_bytes_after,
         "elapsed_ms": report.elapsed_ms,
         "triggers": list(report.triggers),
+        "protected_bytes": getattr(report, "protected_bytes", None),
+        "unreclaimable_bytes": getattr(report, "unreclaimable_bytes", None),
+        "budget_satisfied": getattr(report, "budget_satisfied", None),
     }

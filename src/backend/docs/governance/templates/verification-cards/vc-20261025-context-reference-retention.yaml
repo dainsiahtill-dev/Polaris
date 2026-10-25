@@ -1,0 +1,24 @@
+id: vc-20261025-context-reference-retention
+classification: structural
+status: implementation_pending
+owner: roles.runtime.EngineeringRunService_and_existing_KernelOne_ContextSnapshotAuditPinRepository
+spec: docs/blueprints/CONTEXT_DURABLE_REFERENCE_RETENTION_20261025.md
+assumptions:
+  - durable_event_refs_require_readable_original_snapshot_bytes
+  - ordinary_event_append_does_not_currently_protect_GC_objects
+  - host_reference_owner_is_not_model_authority
+observed:
+  - L218_882_refs_323_readable_559_missing_no_restore
+  - synthetic_A_ref_survives_blob_eviction_B_pin_preserves_blob_and_collects_garbage
+mechanism_candidate: same_lock_immutable_bytes_and_generic_pin_before_GC_and_available
+verification:
+  - real_capture_and_existing_SQLite_red_before_green_synthetic_provider_only
+  - same_workspace_cold_API_reads_and_V1_V2_compatibility
+  - byte_TTL_file_pressure_unreferenced_GC_and_protected_budget_report
+  - real_process_lock_concurrency_and_crash_boundaries_no_replay
+  - permission_symlink_corrupt_pin_and_workspace_owner_mismatch_denials
+premortem:
+  - observer_only_pin_is_too_late
+  - never_restore_private_copies_or_infer_authority_from_model_context
+  - never_treat_invalid_pin_as_unpinned_or_change_original_bytes
+  - protected_orphans_and_disk_pressure_are_explicit_not_false_success

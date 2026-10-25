@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from polaris.kernelone.events.final_request_evidence._audit_pin import (
     ContextSnapshotAuditPinV1,
+    ContextSnapshotReferenceOwnerV1,
+    ContextSnapshotReferencePinV2,
 )
 from polaris.kernelone.events.final_request_evidence._constants import (
     AUDIT_REFS_SCHEMA,
@@ -94,6 +96,8 @@ __all__ = [
     "ROLE_FINAL_REQUEST_POLICY_PROMPT_SCHEMA",
     "ROLE_FINAL_REQUEST_POLICY_SCHEMA",
     "ContextSnapshotAuditPinV1",
+    "ContextSnapshotReferenceOwnerV1",
+    "ContextSnapshotReferencePinV2",
     "RoleFinalRequestEvidenceAnchorV1",
     "RoleFinalRequestEvidenceSlotV1",
     "RoleFinalRequestPolicyFactsV1",

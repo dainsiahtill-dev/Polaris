@@ -392,6 +392,32 @@ class EngineeringSessionStore:
         with self._transaction() as connection:
             return self._append_event(connection, session_id, kind=kind, role=role, payload=payload)
 
+    def context_reference_events(self, *, limit: int = 100000) -> tuple[dict[str, Any], ...]:
+        """Read bounded original refs and matching host turns; never rewrite history."""
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            rows = connection.execute(
+                "SELECT e.session_id,e.seq,e.role,e.payload,r.workspace,r.engine_version FROM events e "
+                "JOIN runs r ON r.session_id=e.session_id WHERE e.kind='llm_request_observed' "
+                "ORDER BY e.session_id,e.seq LIMIT ?",
+                (limit + 1,),
+            ).fetchall()
+            if len(rows) > limit:
+                raise ValueError("context reference reconciliation exceeds bounded event inventory")
+            result = []
+            for row in rows:
+                payload = json.loads(row["payload"])
+                if not payload.get("context_snapshot_ref") or payload.get("snapshot_status") != "available":
+                    continue
+                turn = connection.execute(
+                    "SELECT role FROM events WHERE session_id=? AND seq=? AND kind='turn_started'",
+                    (row["session_id"], payload.get("turn_seq")),
+                ).fetchone()
+                if row["workspace"] != str(self.workspace) or turn is None or turn["role"] != row["role"]:
+                    raise PermissionError("stored context reference host identity mismatch")
+                result.append({**dict(row), "payload": payload})
+        return tuple(result)
+
     def load_events(
         self, session_id: str, *, kinds: tuple[str, ...] | None = None, role: str | None = None
     ) -> list[dict[str, Any]]:
