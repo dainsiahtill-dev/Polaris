@@ -23,7 +23,7 @@ export const historyExperienceTopics: FoundationTopic[] = [
     id: 'history-experience-report',
     title: '历史经验报告',
     subtitle: '2026-10-20 原报告 · 含 2026-10-25 证据续记',
-    summary: '保留历代演进、68 个案例与原验证边界；补记 2026-10-25 L2-17 业务、原生、UI 与缓存证据，分别标注通过和未闭合。',
+    summary: '保留历代演进、68 个案例与原验证边界；补记 2026-10-25 L2-17／L2-18 的原生与亲验证据，保留刷新丢数据、快照缺口和停止 UNKNOWN。',
     markdown: [
       '**分章阅读**',
       ...chapterLabels.map(([label], index) => `- [${String(index + 1).padStart(2, '0')} ${label}](/launcher?view=foundation&topic=history-experience-${index + 1})`),
@@ -48,7 +48,7 @@ export const historyExperiencePaper: FoundationPaper = {
   id: 'history-experience-report',
   title: '历史经验报告',
   subtitle: '历代经验与验证边界 · 含 2026-10-25 证据续记',
-  abstract: '保留原报告 68 个案例与历史验证边界，追加 2026-10-25 L2-17 的实际业务与原生证据、UI／缓存未闭合和 UNKNOWN；不以文档整理替代交付验收。',
+  abstract: '保留原报告 68 个案例与历史验证边界，追加 2026-10-25 L2-17／L2-18 的实际原生和亲检结果、缓存与快照缺口、停止 UNKNOWN；QA批准不冒充完整交付。',
   markdown: historyExperienceMarkdown,
   filename: '历史经验报告.md',
 };

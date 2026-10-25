@@ -3132,6 +3132,105 @@ def _settlement_fixture(tmp_path: Path):
     return supervisor, registry, record, store, settlement
 
 
+@pytest.mark.parametrize("refresh_after", ["frontend", "backend"])
+@pytest.mark.parametrize("backend_failure", [False, True])
+def test_stop_settlement_preserves_health_refresh_and_confirmed_drain(
+    tmp_path: Path, monkeypatch: Any, refresh_after: str, backend_failure: bool
+) -> None:
+    """Real registry interleaving; synthetic process adapters do not prove OS exit."""
+    supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
+    observer = InstanceRegistry(registry.home, publish_events=False)
+    attempted: list[int] = []
+    released: list[int] = []
+    refreshed = False
+
+    def terminate(pid: int) -> None:
+        attempted.append(pid)
+        if backend_failure and pid == 998831:
+            raise RuntimeError("synthetic backend exit unconfirmed")
+
+    def released_port(port: int) -> None:
+        nonlocal refreshed
+        released.append(port)
+        barrier_port = 60182 if refresh_after == "frontend" else 60181
+        if not refreshed and (port == barrier_port or (backend_failure and port == 60182)):
+            current = observer.get(record.instance_id)
+            assert current is not None
+            current.metadata.update(
+                backend_health="starting", frontend_health="stopped", status_reason="health observer refresh"
+            )
+            observer.save(current)
+            refreshed = True
+
+    monkeypatch.setattr(InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda *_a, **_k: True))
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(terminate))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_port_free", staticmethod(released_port))
+    if backend_failure:
+        with pytest.raises(RuntimeError, match="synthetic backend exit unconfirmed"):
+            supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    else:
+        stopped = supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+        assert stopped["status"] == "stopped" and stopped["last_stopped_at"]
+
+    saved = registry.get(record.instance_id)
+    assert saved is not None and refreshed
+    assert attempted == [998832, 998831]
+    assert released == ([60182] if backend_failure else [60182, 60181])
+    assert saved.metadata["backend_health"] == "starting"
+    assert saved.metadata["frontend_health"] == "stopped"
+    assert saved.metadata["status_reason"] == "health observer refresh"
+    assert saved.frontend_pid is None
+    progress = saved.metadata["engineering_stop_progress"]["closed_children"]
+    assert progress["frontend"]["original_pid"] == 998832 and progress["frontend"]["confirmed"] is True
+    if backend_failure:
+        assert saved.backend_pid == 998831 and not saved.last_stopped_at
+        assert saved.status != "stopped" and "backend" not in progress
+        assert saved.metadata["stop_errors"][-1]["error"] == "synthetic backend exit unconfirmed"
+    else:
+        assert saved.backend_pid is None and saved.status == "stopped"
+        assert progress["backend"]["original_pid"] == 998831 and progress["backend"]["confirmed"] is True
+
+
+@pytest.mark.parametrize("changed_field", ["token", "backend_pid", "workspace", "last_started_at", "birth"])
+def test_stop_settlement_health_refresh_does_not_allow_owner_replacement(
+    tmp_path: Path, monkeypatch: Any, changed_field: str
+) -> None:
+    """A replacement during synthetic drain must fence the next child and commit."""
+    supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
+    observer = InstanceRegistry(registry.home, publish_events=False)
+    attempted: list[int] = []
+
+    def terminate(pid: int) -> None:
+        attempted.append(pid)
+        current = observer.get(record.instance_id)
+        assert current is not None
+        current.metadata["frontend_health"] = "stopped"
+        if changed_field == "birth":
+            current.metadata["backend_process_identity"] = {"pid": 998831, "started_at": "replacement"}
+        else:
+            setattr(
+                current,
+                changed_field,
+                998839
+                if changed_field == "backend_pid"
+                else "2099-01-01"
+                if changed_field == "last_started_at"
+                else "replacement",
+            )
+        observer.save(current)
+
+    monkeypatch.setattr(InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda *_a, **_k: True))
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(terminate))
+    monkeypatch.setattr(InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda _: None))
+    with pytest.raises(RuntimeError, match="identity changed"):
+        supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+    saved = registry.get(record.instance_id)
+    assert saved is not None and attempted == [998832]
+    assert saved.frontend_pid == 998832 and not saved.last_stopped_at
+    assert saved.metadata["frontend_health"] == "stopped"
+    assert "engineering_stop_progress" not in saved.metadata
+
+
 @pytest.mark.parametrize("process_kind", ["backend", "frontend"])
 def test_automatic_settlement_missing_pid_refuses_occupied_port(
     tmp_path: Path, monkeypatch: Any, process_kind: str
@@ -3190,6 +3289,62 @@ def test_automatic_settlement_missing_pids_confirm_free_ports(tmp_path: Path, mo
     assert registry.get(record.instance_id).status == "stopped"
     supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
     assert signals == []
+
+
+def test_automatic_settlement_disabled_frontend_ignores_reserved_unowned_port(tmp_path: Path, monkeypatch: Any) -> None:
+    """A disabled, explicitly PID-less frontend owns no reserved listener."""
+    supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
+    record.start_frontend = False
+    record.frontend_pid = None
+    record.frontend_port = 5173
+    record.frontend_url = "http://127.0.0.1:5173"
+    registry.save(record)
+    settlement["instance"] = record.to_dict()
+    attempted: list[int] = []
+    checked_ports: list[int] = []
+    # Synthetic process adapters; the Registry and settlement owner remain real.
+    monkeypatch.setattr(
+        InstanceSupervisor, "_pid_looks_like_instance_process", staticmethod(lambda _record, pid, **_k: bool(pid))
+    )
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda pid: attempted.append(pid)))
+    monkeypatch.setattr(
+        InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda port: checked_ports.append(port))
+    )
+
+    stopped = supervisor.stop_instance(record.instance_id, engineering_settlement=settlement)
+
+    assert attempted == [998831] and checked_ports == [60181]
+    assert stopped["status"] == "stopped" and stopped["last_stopped_at"]
+    saved = registry.get(record.instance_id)
+    assert saved is not None and saved.backend_pid is None and saved.frontend_pid is None
+    assert saved.status == "stopped" and saved.last_stopped_at
+    closed = saved.metadata["engineering_stop_progress"]["closed_children"]
+    assert set(closed) == {"backend"}
+    assert closed["backend"]["original_pid"] == 998831 and closed["backend"]["confirmed"] is True
+
+
+@pytest.mark.parametrize("enabled,pid", [(True, None), (False, 998832), (False, 0)])
+def test_automatic_settlement_reserved_frontend_requires_disabled_and_explicitly_absent_pid(
+    tmp_path: Path, monkeypatch: Any, enabled: bool, pid: int | None
+) -> None:
+    supervisor, registry, record, _, settlement = _settlement_fixture(tmp_path)
+    record.start_frontend = enabled
+    record.frontend_pid = pid
+    record.frontend_port = 5173
+    record.frontend_url = "http://127.0.0.1:5173"
+    settlement["instance"] = record.to_dict()
+    before = registry.registry_path.read_bytes()
+    # Registry rejects PID zero already. Exercise the owner's boundary directly
+    # too: only None can establish absence, including for malformed caller data.
+    monkeypatch.setattr(InstanceSupervisor, "_terminate_pid", staticmethod(lambda _pid: pytest.fail("process effect")))
+    monkeypatch.setattr(
+        InstanceSupervisor, "_wait_for_port_free", staticmethod(lambda _port: pytest.fail("port probe"))
+    )
+
+    with pytest.raises(RuntimeError, match="engineering settlement scope rejected"):
+        supervisor._validate_engineering_settlement(record, settlement)
+
+    assert registry.registry_path.read_bytes() == before
 
 
 def test_automatic_settlement_missing_pid_ignores_disabled_frontend_port(tmp_path: Path, monkeypatch: Any) -> None:

@@ -1188,7 +1188,10 @@ class InstanceSupervisor:
             record.instance_id == "main"
             or self._record_is_current_backend(record)
             or record.backend_port in {49977, 5173, 59977}
-            or record.frontend_port in {49977, 5173, 59977}
+            or (
+                (record.start_frontend or record.frontend_pid is not None)
+                and record.frontend_port in {49977, 5173, 59977}
+            )
             or record.metadata.get("backend_binding") == "shared_backend_workspace_switch"
         ):
             raise RuntimeError("engineering settlement scope rejected")
@@ -1264,29 +1267,44 @@ class InstanceSupervisor:
         if engineering_settlement is not None:
             self._validate_engineering_settlement(record, engineering_settlement)
         original = record.to_dict()
+        identity_fields = (
+            "instance_id",
+            "kind",
+            "workspace",
+            "runtime_root",
+            "polaris_root",
+            "backend_url",
+            "frontend_url",
+            "backend_pid",
+            "frontend_pid",
+            "backend_port",
+            "frontend_port",
+            "token",
+            "created_at",
+            "last_started_at",
+            "start_frontend",
+            "backend_reload",
+            "frontend_vite",
+        )
+        # Health refresh owns these projections, not the launch/process identity.
+        health_fields = {"backend_health", "frontend_health", "status_reason"}
+        original_metadata = {key: value for key, value in original["metadata"].items() if key not in health_fields}
+
+        def require_same_owner(current: InstanceRecord) -> None:
+            current_metadata = {key: value for key, value in current.metadata.items() if key not in health_fields}
+            if (
+                any(getattr(current, key) != original[key] for key in identity_fields)
+                or current_metadata != original_metadata
+                or self._record_is_current_backend(current)
+            ):
+                raise RuntimeError("instance identity changed during stop")
+
         errors: list[dict[str, str]] = []
         for process_kind in ("frontend", "backend"):
             try:
                 # Frontend failure cannot waive identity/policy for the backend.
                 current = self._require_record(instance_id)
-                identity_fields = (
-                    "instance_id",
-                    "workspace",
-                    "runtime_root",
-                    "polaris_root",
-                    "backend_pid",
-                    "frontend_pid",
-                    "backend_port",
-                    "frontend_port",
-                    "token",
-                    "created_at",
-                    "last_started_at",
-                    "metadata",
-                )
-                if any(
-                    getattr(current, key) != original[key] for key in identity_fields
-                ) or self._record_is_current_backend(current):
-                    raise RuntimeError("instance identity changed during stop")
+                require_same_owner(current)
                 if engineering_settlement is not None:
                     self._validate_engineering_settlement(current, engineering_settlement)
                 pid = getattr(record, process_kind + "_pid")
@@ -1335,16 +1353,22 @@ class InstanceSupervisor:
             except Exception as error:  # noqa: BLE001 - preserve partial effects and independently revalidate residual resources.
                 errors.append({"process_kind": process_kind, "error_type": type(error).__name__, "error": str(error)})
         # Never overwrite a concurrent replacement or erase uncertain identities.
-        latest = self._require_record(instance_id)
-        if any(getattr(latest, key) != original[key] for key in identity_fields):
-            raise RuntimeError("instance identity changed during stop")
-        if errors:
-            record.metadata = {**record.metadata, "stop_errors": [*record.metadata.get("stop_errors", []), *errors]}
+        with self.registry.mutation_lock():
+            latest = self._require_record(instance_id)
+            require_same_owner(latest)
+            # Merge only this stop's confirmed facts into the current projection.
+            progress = record.metadata.get("engineering_stop_progress")
+            record.metadata = dict(latest.metadata)
+            if progress is not None:
+                record.metadata["engineering_stop_progress"] = progress
+            if errors:
+                record.metadata = {**record.metadata, "stop_errors": [*record.metadata.get("stop_errors", []), *errors]}
+            else:
+                record.status = "stopped"
+                record.last_stopped_at = utc_timestamp()
             self.registry.save(record)
+        if errors:
             raise RuntimeError("; ".join(error["error"] for error in errors))
-        record.status = "stopped"
-        record.last_stopped_at = utc_timestamp()
-        self.registry.save(record)
         return record.to_dict()
 
     def restart_instance(self, instance_id: str) -> dict[str, Any]:
