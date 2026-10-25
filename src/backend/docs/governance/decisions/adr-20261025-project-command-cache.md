@@ -1,6 +1,6 @@
 # Project command cache through existing execution authority
 
-Status: accepted for implementation; qualification pending, 2026-10-25.
+Status: implemented; component qualified, fresh native benefit pending, 2026-10-25.
 
 Add one explicit persisted host capability to PermissionScope and one exact KernelOne sandbox mount. Cache data lives under layout-resolved project runtime; readonly consumers cap to RO. Exact cache inputs join the existing candidate manifest. EngineeringRunService and its SQLite remain sole engineering owner/facts.
 

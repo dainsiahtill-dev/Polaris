@@ -41,7 +41,7 @@ For service-owned native tools and final verification, the existing owner rechec
 
 `fs.write:workspace/**` in the graph declares effect kind, not ambient authorization: each operation still needs the saved host grant. Engineering state writes stay under `runtime/engineering/*`; provider requests, tools and durable observations are auditable. KernelOne provides provider/native codecs, ToolSpec aliases/arg aliases, KFS/storage, sandbox/process and budget primitives, without importing the old business execution protocol.
 
-## Project command cache (qualification in progress)
+## Project command cache (component qualified; native benefit pending)
 
 Host-only `command_cache` grants `disabled` (default), `read_only` or `read_write` through the existing PermissionScope/profile and saved scope JSON. Missing historical fields remain disabled, and current host policy can revoke but never upgrade original authority. Normal authorized commands may prepare dependencies under the exact layout-resolved `<workspace>/.polaris/runtime/command-cache/data`; only `/polaris-command-cache` is mounted and advertised as `POLARIS_COMMAND_CACHE`. HOME/XDG/tmp stay per-call, and the cache adds no source roots, tools, PATH or network access.
 

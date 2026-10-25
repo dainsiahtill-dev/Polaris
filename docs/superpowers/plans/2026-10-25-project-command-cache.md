@@ -9,3 +9,5 @@ Baseline main 2cdda5a0b; previous freeze released. Main only, no target edits or
 5. Inspect all diffs; Ruff/format/mypy/targeted and adjacent tests/architecture/KernelOne all-mode gate; independent review. Update graph/Cell/docs/evidence. Freeze new source+explicit host opt-in and run one fresh serial original Bench. Synthetic success is not native delivery or personal quality.
 
 Workers have mutually exclusive files, no commits/push/target changes. Audit artifacts under owning .polaris via KFS. Shared tests/docs owned by Root. Stop actual experiment on protected access, RO cache write, or stale accepted binding.
+
+Execution: all three buckets implemented and independently reviewed; final204joint/K1 ALL/types/style passed. Catalog unchanged FAIL is separately attributed at immutable parent HEAD. Evidence ROOT-acceptance.json; main integration and fresh native pending.

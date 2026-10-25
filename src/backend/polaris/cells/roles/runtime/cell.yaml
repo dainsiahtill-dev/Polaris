@@ -187,5 +187,5 @@ notes:
 - Host command artifacts reuse the existing observation JSON; UUID scratch under canonical runtime/command-output is an execution resource, never another fact store.
 - A current observation shares one actual KFS input capture within that query only; later queries and cold readers reobserve. HTTP read projection and JSON encoding use the existing bounded KernelOne IO pool.
 - The public engineering resource query reads the same canonical SQLite read-only. Terminal/drain/quiescence facts can authorize existing Supervisor settlement, never fresh acceptance; unknown or active work remains fenced.
-- Explicit host command_cache persists only exact runtime/command-cache/data. Read-only roles, helpers and Verifier cap at RO; existing current/QA/artifact input manifests bind actual cache bytes and topology. Qualification pending; no native-delivery claim.
+- Explicit host command_cache persists only exact runtime/command-cache/data. Read-only roles, helpers and Verifier cap at RO; existing current/QA/artifact input manifests bind actual cache bytes and topology. Component qualified; fresh native benefit unverified; no native-delivery claim.
 generated_artifacts: []

@@ -1,5 +1,5 @@
 id: vc-20261025-command-cache-boundary
-status: implementation_authorized_not_verified
+status: component_qualified_fresh_native_pending
 classification: structural
 baseline: 2cdda5a0b4580981ab6dc7bf75c846aef964ad61
 blueprint: docs/blueprints/PROJECT_COMMAND_CACHE_BOUNDARY_20261025.md
@@ -16,3 +16,5 @@ pre_mortem: writable verifier outputs imply cache RW; cold scope upgrades defaul
 validation: real process persistence/readonly/output controls; mutation/cold current/QA binding; Settings/store/policy controls; adjacent tests; Ruff; mypy; architecture; KernelOne all-mode gate
 stop: same RED and finite protocol pass, review blockers closed and required gates pass; then fresh frozen serial Bench
 limits: synthetic tests are not unattended delivery; historical failures retained
+evidence: .polaris/audits/persistent-command-cache-boundary-20261025/ROOT-acceptance.json
+actual_results: 204joint passed; K1 ALL12stages passed; mypy16files and Ruff passed; catalog FAIL identical parent fingerprints zero introduced

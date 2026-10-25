@@ -1814,7 +1814,7 @@ cells:
     - Historical runtime/roles state is read-only; existing frozen legacy owners are not migrated or resumed by the
       engineering owner. Engineering events publish committed snapshots through event.engineering on runtime.v2.
     - Host command artifacts reuse the existing observation JSON; canonical runtime/command-output scratch is an execution resource, not another fact store.
-    - Explicit host command_cache grants only exact runtime/command-cache/data. Read-only roles/helpers/Verifier cap RO; current/QA/artifact manifests bind cache inputs. Qualification pending.
+    - Explicit host command_cache grants only exact runtime/command-cache/data. Read-only roles/helpers/Verifier cap RO; current/QA/artifact manifests bind cache inputs. Component qualified; fresh native benefit unverified.
 
   - id: roles.adapters
     title: Roles Adapters
