@@ -1,6 +1,6 @@
 id: vc-20261025-context-reference-retention
 classification: structural
-status: implementation_pending
+status: component_qualified_native_pending
 owner: roles.runtime.EngineeringRunService_and_existing_KernelOne_ContextSnapshotAuditPinRepository
 spec: docs/blueprints/CONTEXT_DURABLE_REFERENCE_RETENTION_20261025.md
 assumptions:

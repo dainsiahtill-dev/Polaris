@@ -133,7 +133,7 @@ class EngineeringRunService:
             self.context_reference_recovery = {"status": "deferred_active_owner"}
 
     def _reference_owner(
-        self, session_id: str, role: str, turn_seq: int, provider_request_id: str
+        self, session_id: str, role: str, turn_seq: int, provider_request_id: str, host_call_id: str
     ) -> ContextSnapshotReferenceOwnerV1:
         if role not in {"pm", "chief_engineer", "director", "qa"} or type(turn_seq) is not int or turn_seq < 1:
             raise ValueError("invalid host context reference role/turn")
@@ -145,7 +145,7 @@ class EngineeringRunService:
         return ContextSnapshotReferenceOwnerV1(
             "engineering",
             session_id,
-            json.dumps([role, turn_seq, provider_request_id], separators=(",", ":")),
+            json.dumps([role, turn_seq, provider_request_id, host_call_id], separators=(",", ":")),
             str(self.workspace),
         )
 
@@ -165,6 +165,7 @@ class EngineeringRunService:
             if not turns:
                 raise ValueError("context reference has no host turn")
             host = turns[-1]
+            host_call_id = self.store.context_request_call_id(session_id, role=host["role"], turn_seq=host["seq"])
             context = request.context
             if (
                 context.get("session_id") != session_id
@@ -174,13 +175,15 @@ class EngineeringRunService:
                 or request.role != host["role"]
             ):
                 raise PermissionError("context reference request differs from current host identity")
-            return self._reference_owner(session_id, host["role"], host["seq"], provider_request_id)
+            if context.get("call_id") != host_call_id:
+                raise PermissionError("context reference call identity mismatch")
+            return self._reference_owner(session_id, host["role"], host["seq"], provider_request_id, host_call_id)
 
         return resolve
 
     def _reconcile_context_references(self) -> None:
         self.context_reference_recovery = {"status": "reconciling"}
-        events = self.store.context_reference_events()
+        events = self.store.context_reference_events(engine_version=self.engine_version)
         references = []
         for event in events:
             if event["engine_version"] != self.engine_version:
@@ -190,7 +193,11 @@ class EngineeringRunService:
                 (
                     payload["context_snapshot_ref"],
                     self._reference_owner(
-                        event["session_id"], event["role"], payload["turn_seq"], payload["provider_request_id"]
+                        event["session_id"],
+                        event["role"],
+                        payload["turn_seq"],
+                        payload["provider_request_id"],
+                        event["host_call_id"],
                     ),
                 )
             )
@@ -199,7 +206,9 @@ class EngineeringRunService:
             snapshot = json.loads(content.decode("utf-8"))
             provider = snapshot.get("provider_request", {})
             identity = provider.get("request_identity", {})
-            role, turn, provider_id = json.loads(owner.reference_id)
+            role, turn, provider_id, host_call_id = json.loads(owner.reference_id)
+            if snapshot.get("call_id") != host_call_id or identity.get("call_id") != host_call_id:
+                raise PermissionError("cold context snapshot call identity mismatch; unresolved")
             if (
                 identity.get("workspace") != str(self.workspace)
                 or identity.get("session_id") != owner.owner_id
@@ -276,6 +285,9 @@ class EngineeringRunService:
             for event in self.store.load_events(session_id, kinds=("turn_started",), role=request.role)
         ):
             raise ValueError("native request observation has no matching host role turn")
+        host_call_id = self.store.context_request_call_id(session_id, role=str(request.role), turn_seq=turn_seq)
+        if context.get("call_id") != host_call_id:
+            raise PermissionError("native request observation call identity mismatch")
         payload = dict(observation)
         reference = payload.get("context_snapshot_ref")
         if reference is not None and (
@@ -286,7 +298,7 @@ class EngineeringRunService:
         elif payload.get("snapshot_status") == "available":
             try:
                 expected = self._reference_owner(
-                    session_id, str(request.role), turn_seq, str(payload.get("provider_request_id") or "")
+                    session_id, str(request.role), turn_seq, str(payload.get("provider_request_id") or ""), host_call_id
                 )
                 pins = ContextSnapshotAuditPinRepository(
                     workspace=str(self.workspace), read_only=True
@@ -300,7 +312,7 @@ class EngineeringRunService:
                     "code": "context_reference_pin_unavailable",
                     "error_type": type(error).__name__,
                 }
-        payload.update({"turn_seq": turn_seq, "call_id": context.get("call_id"), "role": request.role})
+        payload.update({"turn_seq": turn_seq, "call_id": host_call_id, "role": request.role})
         self.store.append_event(session_id, kind="llm_request_observed", role=str(request.role), payload=payload)
 
     def _observe_native_request(self, request: AIRequest, observation: Mapping[str, Any]) -> None:

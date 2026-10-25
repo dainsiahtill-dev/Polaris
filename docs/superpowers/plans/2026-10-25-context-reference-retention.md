@@ -27,14 +27,16 @@
 **Files:** existing K1 final_request_evidence/_audit_pin.py+__init__.py, llm/engine/context_store_retention.py+executor.py+native_request_capture.py and scopedtests; roles/runtime/public/engineering_service.py, internal/engineering_session.py and scopedcontexttests. Only necessary owned Cell metadata/subgraph notes after Rootreview.
 **Interface:** generic ContextSnapshotReferenceOwnerV1/PinV2; optional host resolver and reference_owner argument, existingV1wrapper/query unchanged. Pin in same existing immutable-byte lock beforeGC/available.
 
-- [ ] Read actual public/internal call paths and exact V1 consumers; write integrated red test on existing capture+SQLite with synthetic provider input and small bytecap. Preserve actual red before code.
-- [ ] Implement generic contract, atomic pin+bytes, both producer paths, host resolver and event validation together. No partial cutover.
-- [ ] Implement bounded sameworkspace cold reference reconciliation before new GC; preserve missing refs and orphan unknowns without operation replay.
-- [ ] Add cold/API/V1compatibility/pressure/protected-budget/process concurrency/crash/security counterexamples; run scopedtests/staticchecks.
-- [ ] Return exact report and Sourcepins; stop edits for fresh independent review. Root owns integration/docs.
+- [x] Read actual public/internal call paths and exact V1 consumers; write integrated red test on existing capture+SQLite with synthetic provider input and small bytecap. Preserve actual red before code.
+- [x] Implement generic contract, atomic pin+bytes, both producer paths, host resolver and event validation together. No partial cutover.
+- [x] Implement bounded sameworkspace cold reference reconciliation before new GC; preserve missing refs and orphan unknowns without operation replay.
+- [x] Add cold/API/V1compatibility/pressure/protected-budget/process concurrency/crash/security counterexamples; run scopedtests/staticchecks.
+- [x] Return exact report and Sourcepins; stop edits for fresh independent review. Root owns integration/docs.
 
 ### Task 2: Integrate and verify new evidence
 
-- [ ] Independently review authority, lock/publication ordering, migration, bytes and recovery; fix actual blockers.
-- [ ] Required architecture/K1 gates; evaluate affected descriptors/catalog without broad regeneration.
+- [x] Independently review authority, lock/publication ordering, migration, bytes and recovery; fix actual blockers.
+- [x] Required architecture/K1 gates; evaluate affected descriptors/catalog without broad regeneration.
 - [ ] Commit on main, freeze new Source/config. Fresh bounded formal run thencold-read every new event ref and actualprovider body; historicalL218 gaps unchanged. This last step remains product acceptance, not Sourcequalification.
+
+Component closeout: all producers and cold/read consumers migrated; AUTH-CALL-01 and both storage suggestions closed; 17 pins matched; final K1 all 368pass/1skip and no-new catalog gate passed. Last commit/freeze/native step remains pending actual action.

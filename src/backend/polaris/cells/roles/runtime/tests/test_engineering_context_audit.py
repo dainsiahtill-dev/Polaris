@@ -303,6 +303,12 @@ async def _record_native_usage_run(
     _configure(executor, scripted_provider.base_url, "anthropic", monkeypatch)
     request = _request()
     request.context.update(workspace=str(workspace), session_id=session_id, turn_seq=turn_seq)
+    service.store.append_event(
+        session_id,
+        kind="request_prepared",
+        role="director",
+        payload={"turn_seq": turn_seq, "request": request.to_dict()},
+    )
     response = await executor.invoke(request)
     assert response.ok, response.error
     assert not response.metadata.get("native_request_observer_errors")

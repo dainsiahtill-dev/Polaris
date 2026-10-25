@@ -414,6 +414,7 @@ def test_runtime_observation_uses_bound_host_request_and_same_events(isolated_wo
             "workspace": str(isolated_workspace),
             "engine_version": "engineering_v2",
             "turn_seq": turn,
+            "call_id": f"events:director:{turn}",
         },
     )
     service.record_native_request_observation(

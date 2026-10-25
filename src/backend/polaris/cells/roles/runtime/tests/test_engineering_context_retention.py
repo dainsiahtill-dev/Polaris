@@ -48,6 +48,9 @@ def _captured(
             "call_id": "host-call",
         },
     )
+    service.store.append_event(
+        session, kind="request_prepared", role=role, payload={"turn_seq": turn, "request": request.to_dict()}
+    )
     pressure = retention.ContextStoreRetention(
         str(tmp_path), retention.ContextStoreRetentionConfig(max_total_bytes=65536, sweep_min_interval_seconds=0)
     )
@@ -92,11 +95,148 @@ def _captured(
     return service, session, request, capture
 
 
+def test_spoofed_call_id_rejected_before_pin_publication_or_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, session, request, capture = _captured(tmp_path, monkeypatch)
+    before = service.store.load_events(session, kinds=("llm_request_observed",))
+    request.context["call_id"] = "forged-call-not-host-turn"
+    sent = []
+    with pytest.raises(RuntimeError, match="native_request_capture_persist_failed"):
+        capture.dispatch_sync(wire_request={"body": {"messages": []}}, send=lambda _: sent.append("sent"))
+    assert sent == []
+    assert service.store.load_events(session, kinds=("llm_request_observed",)) == before
+
+
+@pytest.mark.parametrize("mismatch", ["event", "snapshot"])
+def test_cold_reconciliation_rejects_call_id_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mismatch: str
+) -> None:
+    service, session, _, _ = _captured(tmp_path, monkeypatch)
+    payload = dict(service.store.load_events(session, kinds=("llm_request_observed",))[0]["payload"])
+    if mismatch == "event":
+        payload["call_id"] = "forged-call-not-host-turn"
+    else:
+        repository = retention.ContextSnapshotAuditPinRepository(workspace=str(tmp_path))
+        snapshot = json.loads(
+            Path(repository.snapshot_path(payload["context_snapshot_ref"])).read_text(encoding="utf-8")
+        )
+        snapshot["call_id"] = "forged-call-not-host-turn"
+        snapshot["provider_request"]["request_identity"]["call_id"] = "forged-call-not-host-turn"
+        payload["context_snapshot_ref"] = repository.persist_snapshot_bytes(
+            json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
+        )
+    service.store.append_event(session, kind="llm_request_observed", role="director", payload=payload)
+    original = service.store.load_events(session)
+    with pytest.raises(PermissionError, match="call identity mismatch"):
+        EngineeringRunService(tmp_path)
+    assert service.store.load_events(session) == original
+
+
+def test_consumer_rejects_changed_call_id_before_available_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, session, request, _ = _captured(tmp_path, monkeypatch)
+    before = service.store.load_events(session, kinds=("llm_request_observed",))
+    observation = dict(before[-1]["payload"])
+    request.context["call_id"] = "forged-call-not-host-turn"
+    with pytest.raises(PermissionError, match="call identity mismatch"):
+        service.record_native_request_observation(request, observation)
+    assert service.store.load_events(session, kinds=("llm_request_observed",)) == before
+
+
+def test_valid_previous_owner_correlation_is_retained_during_cold_call_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    service, session, _, _ = _captured(tmp_path, monkeypatch)
+    payload = service.store.load_events(session, kinds=("llm_request_observed",))[0]["payload"]
+    ref = payload["context_snapshot_ref"]
+    repository = retention.ContextSnapshotAuditPinRepository(workspace=str(tmp_path))
+    original = Path(repository.snapshot_path(ref)).read_bytes()
+    current = repository.query_reference_pins(ref)[0].owner
+    previous = replace(current, reference_id=json.dumps(json.loads(current.reference_id)[:3], separators=(",", ":")))
+    repository.persist_snapshot_bytes(original, reference_owner=previous)
+    Path(repository.reference_pin_path(ref, current)).unlink()
+    cold = EngineeringRunService(tmp_path)
+    assert cold.context_reference_recovery["present_references"] == 2
+    assert {pin.owner for pin in repository.query_reference_pins(ref)} == {previous, current}
+    assert Path(repository.snapshot_path(ref)).read_bytes() == original
+
+
 @pytest.mark.parametrize("role", ["pm", "chief_engineer", "director", "qa"])
 def test_native_capture_available_sqlite_refs_survive_producer_gc(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, role: str
 ) -> None:
     _captured(tmp_path, monkeypatch, role)
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_missing_prepared_call_field_uses_canonical_host_identity(tmp_path: Path, prepared: bool) -> None:
+    service = EngineeringRunService(tmp_path)
+    session = "synthetic-canonical-host"
+    service.store.create_run(
+        RoleRunCommand(session, "director", "Synthetic identity only.", tmp_path),
+        scope=PermissionScope((tmp_path,), (), frozenset(), False),
+        limits=RunLimits(None, 10000, 2000),
+        engine_version=service.engine_version,
+        request_key=None,
+    )
+    turn = service.store.append_event(session, kind="turn_started", role="director", payload={})
+    if prepared:
+        service.store.append_event(
+            session, kind="request_prepared", role="director", payload={"turn_seq": turn, "request": {"context": {}}}
+        )
+    call_id = f"{session}:director:{turn}"
+    request = AIRequest(
+        task_type=TaskType.GENERATION,
+        role="director",
+        input="Synthetic identity only.",
+        context={
+            "session_id": session,
+            "workspace": str(tmp_path),
+            "engine_version": service.engine_version,
+            "turn_seq": turn,
+            "call_id": call_id,
+        },
+    )
+    resolver = service.context_reference_owner_resolver(session)
+    assert json.loads(resolver(request, "provider").reference_id)[-1] == call_id
+    request.context["call_id"] = "context-must-not-grant-call-identity"
+    with pytest.raises(PermissionError, match="call identity mismatch"):
+        resolver(request, "provider")
+
+
+def test_cold_call_binding_keeps_other_engine_history_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _, _, _ = _captured(tmp_path, monkeypatch)
+    session = "synthetic-historical-engine"
+    service.store.create_run(
+        RoleRunCommand(session, "director", "Historical read only.", tmp_path),
+        scope=PermissionScope((tmp_path,), (), frozenset(), False),
+        limits=RunLimits(None, 10000, 2000),
+        engine_version="synthetic_frozen_old_engine",
+        request_key=None,
+    )
+    turn = service.store.append_event(session, kind="turn_started", role="director", payload={})
+    service.store.append_event(
+        session,
+        kind="llm_request_observed",
+        role="director",
+        payload={
+            "turn_seq": turn,
+            "call_id": "historical-call-with-own-format",
+            "context_snapshot_ref": "f" * 24,
+            "snapshot_status": "available",
+            "provider_request_id": "historical-provider",
+        },
+    )
+    before = service.store.load_events(session)
+    cold = EngineeringRunService(tmp_path)
+    assert cold.context_reference_recovery["present_references"] == 2
+    assert cold.store.load_events(session) == before
 
 
 def test_cold_process_migrates_present_refs_preserves_missing_and_both_read_apis(

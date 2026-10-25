@@ -392,15 +392,51 @@ class EngineeringSessionStore:
         with self._transaction() as connection:
             return self._append_event(connection, session_id, kind=kind, role=role, payload=payload)
 
-    def context_reference_events(self, *, limit: int = 100000) -> tuple[dict[str, Any], ...]:
+    @staticmethod
+    def _context_request_call_id(connection: sqlite3.Connection, session_id: str, role: str, turn_seq: int) -> str:
+        turn = connection.execute(
+            "SELECT role FROM events WHERE session_id=? AND seq=? AND kind='turn_started'", (session_id, turn_seq)
+        ).fetchone()
+        if type(turn_seq) is not int or turn is None or turn["role"] != role:
+            raise PermissionError("context reference has no matching host role turn")
+        prepared = connection.execute(
+            "SELECT payload FROM events WHERE session_id=? AND kind='request_prepared' AND role=? "
+            "AND seq>? AND json_extract(payload,'$.turn_seq')=? ORDER BY seq LIMIT 2",
+            (session_id, role, turn_seq, turn_seq),
+        ).fetchall()
+        if len(prepared) > 1:
+            raise PermissionError("context reference host call identity is ambiguous")
+        # This is the existing engineering-loop host identity. Missing historical
+        # preparation fields never make mutable AIRequest.context authoritative.
+        call_id = f"{session_id}:{role}:{turn_seq}"
+        if prepared:
+            payload = json.loads(prepared[0]["payload"])
+            request = payload.get("request", {})
+            context = request.get("context", {}) if isinstance(request, dict) else {}
+            if isinstance(context, dict) and "call_id" in context:
+                call_id = context["call_id"]
+        if not isinstance(call_id, str) or not call_id.strip() or len(call_id) > 4096:
+            raise PermissionError("context reference host call identity is invalid")
+        return call_id
+
+    def context_request_call_id(self, session_id: str, *, role: str, turn_seq: int) -> str:
+        """Read the trusted prepared/canonical host call identity for one turn."""
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            row = self._require_run(connection, session_id)
+            if row["workspace"] != str(self.workspace):
+                raise PermissionError("stored context reference workspace mismatch")
+            return self._context_request_call_id(connection, session_id, role, turn_seq)
+
+    def context_reference_events(self, *, engine_version: str, limit: int = 100000) -> tuple[dict[str, Any], ...]:
         """Read bounded original refs and matching host turns; never rewrite history."""
         with self._connection() as connection:
             connection.execute("BEGIN")
             rows = connection.execute(
                 "SELECT e.session_id,e.seq,e.role,e.payload,r.workspace,r.engine_version FROM events e "
-                "JOIN runs r ON r.session_id=e.session_id WHERE e.kind='llm_request_observed' "
+                "JOIN runs r ON r.session_id=e.session_id WHERE e.kind='llm_request_observed' AND r.engine_version=? "
                 "ORDER BY e.session_id,e.seq LIMIT ?",
-                (limit + 1,),
+                (engine_version, limit + 1),
             ).fetchall()
             if len(rows) > limit:
                 raise ValueError("context reference reconciliation exceeds bounded event inventory")
@@ -415,7 +451,12 @@ class EngineeringSessionStore:
                 ).fetchone()
                 if row["workspace"] != str(self.workspace) or turn is None or turn["role"] != row["role"]:
                     raise PermissionError("stored context reference host identity mismatch")
-                result.append({**dict(row), "payload": payload})
+                host_call_id = self._context_request_call_id(
+                    connection, row["session_id"], row["role"], payload["turn_seq"]
+                )
+                if payload.get("call_id") != host_call_id:
+                    raise PermissionError("stored context reference call identity mismatch; unresolved")
+                result.append({**dict(row), "payload": payload, "host_call_id": host_call_id})
         return tuple(result)
 
     def load_events(

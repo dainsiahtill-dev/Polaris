@@ -1,6 +1,6 @@
 # ContextOS 持久引用的保留边界
 
-状态：实验已复现，生产修复待实施。基线main 0afe97f18；不涉及长期记忆。
+状态：组件修复、独立审阅与发布门禁通过；真实模型／原生交付待验证。原始基线main 0afe97f18；不涉及长期记忆。
 
 ## 问题、事实与反证
 
@@ -35,3 +35,11 @@ KernelOne既有final_request_evidence合同/导出、context_store_retention、e
 先用真实生产capture+工程SQLite、合成provider输入复现GC后available引用不可读的红例；修后通过。再验证sameworkspace冷进程与两个ContextOS读取面、V1/V2共存、普通垃圾回收、全部受保护超预算、跨进程writer/pinner/sweeper、pin/事件前后故障与权限/symlink/corrupt pin反例。
 
 这些都属于本条持久引用边界，不能用更多Bench或配额上调替代。收益是对象与合法引用同寿命；代价是持久证据占用磁盘及保守孤儿保留，分别计量。不以组件结果宣称旧559缺口恢复、平台完成或ContextOS比较优势。相关门禁和独立审查通过后结束本主题，冻结新版本再做有限真实运行核对所有新引用。
+
+## 组件证据与当前限制
+
+完整生产者/消费者/pin仓储/冷恢复/读取投影迁移已实现，原字节与provider body保持不变。独立审阅发现并关闭AUTH-CALL-01：使用持久request_prepared中的host call_id或既有canonical host标识，拒绝可变context伪造值；事件提交与冷恢复也重验。旧V1和原三段owner pin保留，合法当前引用获得完整关联，缺失对象未重建。
+
+核心343、证据57、扩展61及修后相关50测试通过，集合互相覆盖，不相加为独立总数。Root复核17个源码/测试指纹；双域独立复审无剩余发现；最终KernelOne12阶段368通过/1skip。目录治理保留159处/115个旧指纹、无新增、manifest mismatch0。原始红例、准备失败、review反例和修后证据均保留在主仓`.polaris/audits/context-reference-retention-implementation-20261025/`。
+
+这只是组件资格；尚未用新冻结真实模型链路签发项目交付。pin-only孤儿保留及受保护证据磁盘占用是明确限制，自动删除/压缩/分层未实现。历史L2-18仍559引用缺失、Root质量失败、停止UNKNOWN，不由此修复追改。

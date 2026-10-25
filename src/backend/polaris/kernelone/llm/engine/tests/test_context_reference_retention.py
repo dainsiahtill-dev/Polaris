@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import multiprocessing
 import os
-import time
 from pathlib import Path
 from typing import Any
 
@@ -129,26 +128,44 @@ def _writer(workspace: str, entered: Any, release: Any, output: Any) -> None:
     output.put(ref)
 
 
-def _sweeper(workspace: str, started: Any, output: Any) -> None:
-    started.set()
+def _sweeper(workspace: str, attempted: Any, acquired: Any, output: Any) -> None:
+    from polaris.kernelone.fs import locked_regular_file
+
+    # Provision/enrollment can contend on the same physical authority before
+    # acquire() is reached. Observe a real OS rejection, never fake the lock.
+    real_flock = locked_regular_file.fcntl.flock
+    blocked_fd: int | None = None
+
+    def observed_flock(fd: int, operation: int) -> None:
+        nonlocal blocked_fd
+        try:
+            real_flock(fd, operation)
+        except BlockingIOError:
+            blocked_fd = fd
+            attempted.set()
+            raise
+        if fd == blocked_fd and not operation & locked_regular_file.fcntl.LOCK_UN:
+            acquired.set()
+
+    locked_regular_file.fcntl.flock = observed_flock
     output.put(ContextStoreRetention(workspace, ContextStoreRetentionConfig(ttl_seconds=0)).sweep().removed_files)
 
 
 def test_real_process_sweeper_waits_for_original_bytes_and_pin(tmp_path: Path) -> None:
     # A separate OS process must not delete the between-write-and-pin snapshot.
     context = multiprocessing.get_context("fork")
-    entered, release, started = context.Event(), context.Event(), context.Event()
+    entered, release, attempted, acquired = context.Event(), context.Event(), context.Event(), context.Event()
     writer_output, sweep_output = context.Queue(), context.Queue()
     writer = context.Process(target=_writer, args=(str(tmp_path), entered, release, writer_output))
-    sweeper = context.Process(target=_sweeper, args=(str(tmp_path), started, sweep_output))
+    sweeper = context.Process(target=_sweeper, args=(str(tmp_path), attempted, acquired, sweep_output))
     writer.start()
     try:
         assert entered.wait(5)
         sweeper.start()
-        assert started.wait(5)
-        time.sleep(0.05)
-        assert sweeper.is_alive(), "sweeper bypassed the shared physical CAS lock"
+        assert attempted.wait(5), "sweeper did not physically contend on the existing lock authority"
+        assert not acquired.wait(0.05), "sweeper acquired shared physical CAS lock before writer released"
         release.set()
+        assert acquired.wait(5)
         writer.join(5)
         sweeper.join(5)
         assert writer.exitcode == sweeper.exitcode == 0
@@ -163,6 +180,22 @@ def test_real_process_sweeper_waits_for_original_bytes_and_pin(tmp_path: Path) -
             if child.is_alive():
                 child.terminate()
                 child.join(5)
+
+
+def test_two_generic_owners_keep_identical_original_bytes_after_cold_reopen(tmp_path: Path) -> None:
+    repository = ContextSnapshotAuditPinRepository(workspace=str(tmp_path))
+    content = b"synthetic identical bytes with independent host references"
+    first, second = owner(tmp_path, "first-reference"), owner(tmp_path, "second-reference")
+    ref = repository.persist_snapshot_bytes(content, reference_owner=first)
+    assert repository.persist_snapshot_bytes(content, reference_owner=second) == ref
+    assert repository.reference_pin_path(ref, first) != repository.reference_pin_path(ref, second)
+    cold = ContextSnapshotAuditPinRepository(workspace=str(tmp_path), read_only=True)
+    assert {pin.owner for pin in cold.query_reference_pins(ref)} == {first, second}
+    assert cold.query_snapshot_pins(ref) == ()
+    report = ContextStoreRetention(str(tmp_path), ContextStoreRetentionConfig(ttl_seconds=0, max_total_bytes=0)).sweep()
+    assert report.inventory_complete and report.budget_satisfied is False
+    assert report.protected_bytes == len(content)
+    assert Path(cold.snapshot_path(ref)).read_bytes() == content
 
 
 def _crash_writer(workspace: str, stage: str) -> None:

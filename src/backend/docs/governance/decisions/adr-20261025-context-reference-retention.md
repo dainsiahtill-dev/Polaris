@@ -1,6 +1,6 @@
 # 持久工程引用先保留对象再发布
 
-状态：accepted design，implementation pending。日期：2026-10-25。
+状态：implemented，component qualified；fresh native pending。日期：2026-10-25。
 
 A/B组件实验已复现SQLite事件保留而普通CAS对象可被现有byte GC删除。L2-18历史559缺口的逐文件删除原因仍推断，不能回填成成功。
 
