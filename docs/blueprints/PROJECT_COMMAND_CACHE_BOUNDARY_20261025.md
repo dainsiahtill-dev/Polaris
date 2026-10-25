@@ -41,3 +41,7 @@ Detailed facts, failed fixtures and limits: docs/history/POLARIS_COMMAND_CACHE_B
 ## First fresh native adoption result: L217
 
 Frozen3285 L217 completed/verified/QAapproved/accepted and released its isolated resources without external target repair. The fixed source-reader path worked before cache preparation. This does not qualify adoption: the model persisted574761648 bytes of browserSDK under source .pwbrowsers while exact platform cache remainedempty. Root business checks passed in finite scope with one minor visual defect; strict full-requirement delivery didnot pass. Original component proofs remain valid and immutable. Read docs/history/POLARIS_ORIGINAL120_V26_L217_20261025.md and currentproject .polaris/audits/terminal-integrity for provenance. Next finitepolicy wording experiment must prove a changed proposal before product adoption; no target moves, hotpatch or added package framework.
+
+## Finite cache-policy proposal pilot
+
+The subsequentfixedA/B/B/A4actualresponses preserved the historical107messages9tools/M3/.4/max524288body, varyingonlyoneexecute-descriptionpolicy sentence. BothAandBsupportedcacheproposal0/2; all4choseSourcebrowserarchivedirectories. No toolsdispatched, no targeteffects, no productpromptadoption oraddedpositive-seeking samples. Componentpermissions/mount proofs remainvalid; actualunifiedstoragepolicy remainsopen. See docs/experiments/POLARIS_CACHE_POLICY_ADOPTION_PILOT_20261025.md. ContinueoriginalserialL218withthisknownlimittracked; furthermechanismresearch needsnewboundedprotocol.
