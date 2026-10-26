@@ -3,126 +3,53 @@
 Covers GET /v2/runtime/storage/layout, POST /v2/runtime/clear,
 GET /v2/runtime/migration/status, and POST /v2/runtime/reset/tasks.
 External services are mocked to avoid storage and runtime dependencies.
+
+Fixture contract
+----------------
+* This module reuses the shared router fixtures in this package's
+  ``conftest.py``: ``mock_settings`` is a REAL, JSON-serialisable
+  :class:`Settings` instance bound to a project-private workspace, and
+  ``client`` builds the real application through ``create_app``.
+* A local ``MagicMock(spec=Settings)`` cannot be used here: ``create_app``
+  really constructs the ``EngineeringRunService`` owner, and that owner
+  serialises the settings snapshot into the workspace LLM config, so a mock
+  fails closed with ``TypeError: Object of type MagicMock is not JSON
+  serializable`` before any router assertion runs.
+* The shared fixture also keeps the engineering owner away from the Polaris
+  main repository: the private workspace is created under the pytest
+  basetemp, and the global KernelOne config root is redirected to a private
+  KernelOne home.
+* No fake Pydantic response models are installed into
+  ``polaris.delivery.http.schemas.common``.  The six conversation/message
+  response models that this module used to inject already exist as real
+  production classes, so the injection was dead weight that permanently
+  replaced the public schema classes for every later test in the same
+  process.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-from polaris.bootstrap.config import Settings
-from polaris.cells.runtime.state_owner.public.service import AppState
+from httpx import AsyncClient
+from polaris.tests.unit.delivery.http.routers.conftest import _DirectorRouterTestSettings
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def mock_settings() -> Settings:
-    """Create a minimal Settings instance for testing."""
-    from polaris.bootstrap.config import ServerConfig, Settings
-    from polaris.config.nats_config import NATSConfig
+def _bind_windows_ramdisk(settings: _DirectorRouterTestSettings, literal: str) -> None:
+    """Bind a Windows-style ramdisk literal without cwd resolution.
 
-    settings = MagicMock(spec=Settings)
-    settings.workspace = "."
-    settings.workspace_path = "."
-    settings.ramdisk_root = ""
-    settings.nats = NATSConfig(enabled=False, required=False, url="")
-    settings.server = ServerConfig(cors_origins=["*"])
-    settings.qa_enabled = True
-    settings.debug_tracing = False
-    settings.logging = MagicMock()
-    settings.logging.enable_debug_tracing = False
-    return settings
-
-
-@pytest.fixture
-def mock_app_state(mock_settings: Settings) -> AppState:
-    """Create a minimal AppState for testing."""
-    return AppState(settings=mock_settings)
-
-
-@pytest.fixture
-async def client(mock_settings: Settings, mock_app_state: AppState) -> AsyncIterator[AsyncClient]:
-    """Create an async test client with mocked lifespan."""
-    # Pre-patch broken imports before create_app triggers router imports.
-    # conversations.py imports response models that don't exist in common.py yet.
-    # We inject minimal Pydantic models so FastAPI route registration succeeds.
-    import polaris.delivery.http.schemas.common as _common_mod
-    from pydantic import BaseModel
-
-    class _ConversationListResponse(BaseModel):
-        conversations: list = []
-        total: int = 0
-
-    class _ConversationResponse(BaseModel):
-        model_config = {"extra": "allow"}
-
-    class _ConversationDeleteResponse(BaseModel):
-        ok: bool = True
-        deleted_id: str = ""
-
-    class _MessageResponse(BaseModel):
-        model_config = {"extra": "allow"}
-
-    class _MessageBatchResponse(BaseModel):
-        ok: bool = True
-        added_count: int = 0
-
-    class _MessageDeleteResponse(BaseModel):
-        ok: bool = True
-        deleted_id: str = ""
-
-    _common_mod.ConversationListResponse = _ConversationListResponse  # type: ignore[attr-defined]
-    _common_mod.ConversationResponse = _ConversationResponse  # type: ignore[attr-defined]
-    _common_mod.ConversationDeleteResponse = _ConversationDeleteResponse  # type: ignore[attr-defined]
-    _common_mod.MessageResponse = _MessageResponse  # type: ignore[attr-defined]
-    _common_mod.MessageBatchResponse = _MessageBatchResponse  # type: ignore[attr-defined]
-    _common_mod.MessageDeleteResponse = _MessageDeleteResponse  # type: ignore[attr-defined]
-
-    from polaris.delivery.http.app_factory import create_app
-
-    app = create_app(settings=mock_settings)
-
-    class _AllowAllAuth:
-        def check(self, _auth_header: str) -> bool:
-            return True
-
-    app.state.auth = _AllowAllAuth()
-
-    with (
-        patch(
-            "polaris.infrastructure.messaging.nats.server_runtime.ensure_local_nats_runtime",
-            new_callable=AsyncMock,
-        ),
-        patch(
-            "polaris.bootstrap.assembly.assemble_core_services",
-        ),
-        patch(
-            "polaris.kernelone.process.terminate_external_loop_pm_processes",
-            return_value=[],
-        ),
-        patch(
-            "polaris.delivery.http.app_factory.sync_process_settings_environment",
-        ),
-        patch(
-            "polaris.delivery.http.routers.primary.get_settings",
-            return_value=mock_settings,
-        ),
-        patch.dict(
-            "os.environ",
-            {
-                "KERNELONE_METRICS_ENABLED": "false",
-                "KERNELONE_RATE_LIMIT_ENABLED": "false",
-            },
-        ),
-    ):
-        async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as ac:
-            yield ac
+    ``Settings.ramdisk_root`` resolves its argument against the process
+    working directory, which would rewrite ``"C:/Ram"`` into an absolute
+    POSIX path and destroy the literal the runtime router contract asserts.
+    The underlying runtime field keeps the literal verbatim.
+    """
+    settings.runtime.ramdisk_root = Path(literal)
 
 
 def _make_mock_storage_roots() -> MagicMock:
@@ -195,10 +122,10 @@ async def test_v2_runtime_storage_layout_success(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_v2_runtime_storage_layout_prefers_active_workspace_path(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Storage layout should inspect the active desktop workspace_path first."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Product"
     mock_roots = _make_mock_storage_roots()
 
@@ -301,12 +228,12 @@ async def test_v2_runtime_clear_default_scope(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_v2_runtime_clear_prefers_active_workspace_path(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Runtime clear should clear active workspace runtime state."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Product"
-    mock_settings.ramdisk_root = "C:/Ram"
+    _bind_windows_ramdisk(mock_settings, "C:/Ram")
 
     with (
         patch(
@@ -403,10 +330,10 @@ async def test_v2_runtime_migration_status_with_version_file(client: AsyncClient
 @pytest.mark.asyncio
 async def test_v2_runtime_migration_status_prefers_active_workspace_path(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Migration status should read active workspace storage roots."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Product"
     mock_roots = MagicMock()
     mock_roots.workspace_persistent_root = "/workspace/.polaris"
@@ -440,7 +367,7 @@ async def test_v2_runtime_reset_tasks_success(client: AsyncClient) -> None:
 
     container = MagicMock()
 
-    def resolve_side_effect(cls):
+    def resolve_side_effect(cls: type) -> MagicMock:
         if cls.__name__ == "PMService":
             return pm_service
         if cls.__name__ == "DirectorService":
@@ -449,7 +376,7 @@ async def test_v2_runtime_reset_tasks_success(client: AsyncClient) -> None:
 
     container.resolve = resolve_side_effect
 
-    async def _mock_get_container():
+    async def _mock_get_container() -> MagicMock:
         return container
 
     with (
@@ -529,7 +456,7 @@ async def test_v2_runtime_reset_tasks_no_services_running(client: AsyncClient) -
 
     container = MagicMock()
 
-    def resolve_side_effect(cls):
+    def resolve_side_effect(cls: type) -> MagicMock:
         if cls.__name__ == "PMService":
             return pm_service
         if cls.__name__ == "DirectorService":
@@ -538,7 +465,7 @@ async def test_v2_runtime_reset_tasks_no_services_running(client: AsyncClient) -
 
     container.resolve = resolve_side_effect
 
-    async def _mock_get_container():
+    async def _mock_get_container() -> MagicMock:
         return container
 
     with (
@@ -604,7 +531,7 @@ async def test_v2_runtime_reset_tasks_can_preserve_planning_contracts(client: As
 
     container = MagicMock()
 
-    def resolve_side_effect(cls):
+    def resolve_side_effect(cls: type) -> MagicMock:
         if cls.__name__ == "PMService":
             return pm_service
         if cls.__name__ == "DirectorService":
@@ -613,7 +540,7 @@ async def test_v2_runtime_reset_tasks_can_preserve_planning_contracts(client: As
 
     container.resolve = resolve_side_effect
 
-    async def _mock_get_container():
+    async def _mock_get_container() -> MagicMock:
         return container
 
     with (
@@ -678,7 +605,7 @@ async def test_v2_runtime_reset_tasks_services_not_found(client: AsyncClient) ->
     container = MagicMock()
     container.resolve = MagicMock(side_effect=RuntimeError("Service not found"))
 
-    async def _mock_get_container():
+    async def _mock_get_container() -> MagicMock:
         return container
 
     with (
@@ -734,17 +661,17 @@ async def test_v2_runtime_reset_tasks_services_not_found(client: AsyncClient) ->
 @pytest.mark.asyncio
 async def test_v2_runtime_reset_tasks_prefers_active_workspace_path(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Runtime task reset should clear stop flags and records for workspace_path."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Product"
-    mock_settings.ramdisk_root = "C:/Ram"
+    _bind_windows_ramdisk(mock_settings, "C:/Ram")
 
     container = MagicMock()
     container.resolve = MagicMock(side_effect=RuntimeError("Service not found"))
 
-    async def _mock_get_container():
+    async def _mock_get_container() -> MagicMock:
         return container
 
     with (

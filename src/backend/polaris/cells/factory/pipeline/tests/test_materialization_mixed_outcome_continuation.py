@@ -22,6 +22,9 @@ from polaris.cells.factory.pipeline.internal import (
     factory_materialization_impl as materialization,
     factory_workspace_quality_impl as quality,
 )
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (
+    _run_bound_workspace_quality_commands,
+)
 from polaris.cells.factory.pipeline.tests.test_materialization_contract_verifiers import _fixture
 from polaris.cells.factory.pipeline.tests.test_materialization_llm_continuation import (
     bound_director_scope as bound_director_scope,
@@ -406,7 +409,10 @@ async def test_engine_http_mixed_cli_failure_keeps_test_progress_and_repairs_ent
             monkeypatch.setattr(
                 executor,
                 "_workspace_quality_commands",
-                lambda _context, *, run=None: [shlex.split(c) for c in commands],
+                _run_bound_workspace_quality_commands(
+                    run.id,
+                    [shlex.split(c) for c in commands],
+                ),
             )
             monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
             monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)

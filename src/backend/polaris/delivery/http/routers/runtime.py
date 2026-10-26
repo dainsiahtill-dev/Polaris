@@ -6,10 +6,13 @@ import re
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from polaris.cells.events.fact_stream.public.contracts import EnrollFactStreamStreamsCommandV1
 from polaris.cells.events.fact_stream.public.service import (
     AppendFactEventCommandV1,
+    FactStreamError,
     QueryFactEventsV1,
     append_fact_event,
+    enroll_fact_stream_streams,
     query_fact_events,
 )
 from polaris.cells.runtime.projection.public.service import build_director_runtime_status
@@ -25,6 +28,12 @@ from polaris.delivery.http.schemas.common import (
     RuntimeResetTasksResponse,
     RuntimeStorageLayoutResponse,
 )
+
+# Import the workspace resolver from its defining module rather than through
+# the ``_shared`` re-export: the re-export carries no ``__all__``, so a
+# strict type check rejects it as an implicit re-export.  This is the same
+# function object and changes no behaviour.
+from polaris.delivery.http.workspace import active_workspace_value
 from polaris.kernelone._runtime_config import resolve_env_str
 from polaris.kernelone.process import (
     clear_director_stop_flag,
@@ -43,7 +52,7 @@ from polaris.kernelone.storage.layout import resolve_runtime_path
 from polaris.kernelone.traceability.public.service import create_traceability_service
 from pydantic import BaseModel
 
-from ._shared import active_workspace_value, get_state, require_auth
+from ._shared import get_state, require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +262,24 @@ async def v2_runtime_fact_stream_probe(
     stream = "e2e.fact_stream_probe"
     event_type = "probe.appended"
     marker = str(payload.marker or "").strip() or "e2e-fact-stream-probe"
+
+    # The probe stream is a fixed, route-owned namespace and is deliberately
+    # NOT part of the platform's static bootstrap catalog.  Enroll it here
+    # through the public FactStream maintenance owner so the real append can
+    # acquire its stream lock.  Enrollment is idempotent ("created" ->
+    # "already_present") and the caller cannot influence the stream name.
+    # This never provisions a lock authority: a workspace without one still
+    # fails closed, so an unauthorized workspace is not silently authorized.
+    try:
+        enroll_fact_stream_streams(
+            EnrollFactStreamStreamsCommandV1(
+                workspace=workspace,
+                streams=(stream,),
+                maintenance_reason="runtime_fact_stream_probe_enrollment",
+            )
+        )
+    except FactStreamError as exc:
+        raise HTTPException(status_code=503, detail=f"fact stream enrollment failed: {exc.code}") from exc
 
     appended = append_fact_event(
         AppendFactEventCommandV1(

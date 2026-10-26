@@ -201,3 +201,109 @@ class TestLocalFileSystemAdapterRemove:
             result = adapter.remove("/tmp/test.txt", missing_ok=False)
         assert result is False
         mock_remove.assert_called_once_with("/tmp/test.txt")
+
+    def test_remove_permission_denied_is_not_reported_as_success(self):
+        """A real operation failure must not be masked as a successful delete."""
+        adapter = LocalFileSystemAdapter()
+        with patch("os.remove", side_effect=PermissionError("denied")) as mock_remove, pytest.raises(PermissionError):
+            adapter.remove("/tmp/test.txt")
+        mock_remove.assert_called_once_with("/tmp/test.txt")
+
+    def test_remove_permission_denied_is_not_reported_as_success_when_missing_ok_false(self):
+        """missing_ok only tolerates an absent file, never a denied removal."""
+        adapter = LocalFileSystemAdapter()
+        with patch("os.remove", side_effect=PermissionError("denied")) as mock_remove, pytest.raises(PermissionError):
+            adapter.remove("/tmp/test.txt", missing_ok=False)
+        mock_remove.assert_called_once_with("/tmp/test.txt")
+
+    def test_remove_io_error_propagates_cause(self):
+        """An unknown/failed effect keeps its original cause and is not retried."""
+        adapter = LocalFileSystemAdapter()
+        with (
+            patch("os.remove", side_effect=OSError("I/O error")) as mock_remove,
+            pytest.raises(OSError, match="I/O error"),
+        ):
+            adapter.remove("/tmp/test.txt")
+        mock_remove.assert_called_once_with("/tmp/test.txt")
+
+    def test_remove_real_file_removes_it_from_disk(self, tmp_path: Path):
+        """Physical evidence: a real removal deletes the file and reports success."""
+        adapter = LocalFileSystemAdapter()
+        target = tmp_path / "removable.txt"
+        target.write_text("data", encoding="utf-8")
+
+        assert adapter.remove(str(target)) is True
+        assert not target.exists()
+
+    def test_remove_real_missing_file_keeps_both_established_conventions(self, tmp_path: Path):
+        """A genuinely absent file keeps missing_ok=True -> True and False -> False."""
+        adapter = LocalFileSystemAdapter()
+        absent = tmp_path / "absent.txt"
+        assert not absent.exists()
+
+        assert adapter.remove(str(absent), missing_ok=True) is True
+        assert adapter.remove(str(absent), missing_ok=False) is False
+
+    def test_remove_real_file_permission_denied_keeps_file_on_disk(self, tmp_path: Path):
+        """Physical evidence: a denied removal keeps the file and raises."""
+        adapter = LocalFileSystemAdapter()
+        target = tmp_path / "locked.txt"
+        target.write_text("data", encoding="utf-8")
+
+        def _denied(path, *args, **kwargs):
+            raise PermissionError(f"injected remove denial: {path}")
+
+        with patch("os.remove", _denied), pytest.raises(PermissionError):
+            adapter.remove(str(target))
+
+        assert target.exists()
+        assert target.read_text(encoding="utf-8") == "data"
+
+
+class TestLocalFileSystemAdapterRemoveThroughKernelFileSystem:
+    """The KFS layer must surface the adapter failure instead of a false success."""
+
+    def _kernel_fs(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        from polaris.kernelone.fs import KernelFileSystem
+        from polaris.kernelone.fs.registry import get_default_adapter
+
+        workspace = tmp_path / "workspace"
+        runtime_root = workspace / ".polaris" / "runtime"
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+        monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+        monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
+        monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
+        return KernelFileSystem(str(workspace), get_default_adapter()), runtime_root
+
+    def test_kernel_fs_remove_propagates_permission_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        kernel_fs, runtime_root = self._kernel_fs(tmp_path, monkeypatch)
+        target = runtime_root / "artifact.bin"
+        target.write_bytes(b"data")
+
+        with patch("os.remove", side_effect=PermissionError("denied")), pytest.raises(PermissionError):
+            kernel_fs.remove("runtime/artifact.bin")
+
+        assert target.exists()
+
+    def test_kernel_fs_remove_missing_ok_false_still_reports_absent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        kernel_fs, _runtime_root = self._kernel_fs(tmp_path, monkeypatch)
+
+        assert kernel_fs.remove("runtime/absent.bin", missing_ok=True) is True
+        assert kernel_fs.remove("runtime/absent.bin", missing_ok=False) is False
+
+    def test_kernel_fs_workspace_remove_propagates_permission_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        kernel_fs, _runtime_root = self._kernel_fs(tmp_path, monkeypatch)
+        target = tmp_path / "workspace" / "artifact.bin"
+        target.write_bytes(b"data")
+
+        with patch("os.remove", side_effect=PermissionError("denied")), pytest.raises(PermissionError):
+            kernel_fs.workspace_remove("artifact.bin")
+
+        assert target.exists()

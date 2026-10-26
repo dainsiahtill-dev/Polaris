@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +25,7 @@ from polaris.cells.factory.pipeline.internal.factory_workspace_quality_impl impo
 )
 from polaris.cells.factory.pipeline.tests._characterization_helpers import (
     _executor,
-    _factory_stage_context,
+    _run_bound_workspace_quality_commands,
     _with_task_runtime_authority,
 )
 from polaris.cells.roles.adapters.internal.director.quality_gate._candidate_guard import (
@@ -35,27 +34,6 @@ from polaris.cells.roles.adapters.internal.director.quality_gate._candidate_guar
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TaskRuntimeExecutionAttemptIdentityV1,
 )
-
-
-def _run_bound_workspace_quality_commands(
-    expected_run_id: str,
-    commands: list[list[str]],
-) -> Callable[..., list[list[str]]]:
-    """Return a workspace-quality command substitute that keeps the run binding.
-
-    Production resolves workspace quality commands with the current Factory run
-    identity so the authenticated Chief Engineer verifier recipe stays bound to
-    that exact run. A substitute must accept the same keyword and prove the
-    identity it was given instead of swallowing it.
-    """
-
-    def resolve(context: dict[str, Any], *, run: FactoryRun | None = None) -> list[list[str]]:
-        del context
-        assert run is not None
-        assert run.id == expected_run_id
-        return [list(command) for command in commands]
-
-    return resolve
 
 
 class TestRunWorkspaceQualityChecks:
@@ -207,7 +185,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "",
             }
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-repair",
+                [["npm", "run", "build"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
 
@@ -290,7 +275,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-repair-still-failing",
+                [["npm", "run", "build"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
@@ -445,7 +437,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-depth-contract",
+                [["npm", "test"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
         monkeypatch.setattr(
@@ -578,7 +577,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-llm-repair",
+                [["npm", "test"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
@@ -688,7 +694,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-owner-rebind",
+                [["npm", "test"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -823,7 +836,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-residual-owner-handoff",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -972,7 +992,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["cargo", "test"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-reactivated-owner-handoff",
+                [["cargo", "test"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -4378,7 +4405,14 @@ class TestRunWorkspaceQualityChecks:
             timeline.append("artifact:registered")
             return ({"obligation_id": "artifact.rules", "path": "engine/rules.go"},)
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-post-verifier-settlement",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
@@ -4486,7 +4520,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["python", "-m", "unittest"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-preserve-test-owner",
+                [["python", "-m", "unittest"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
@@ -4570,7 +4611,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-no-mutation",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -4656,7 +4704,14 @@ class TestRunWorkspaceQualityChecks:
                 "write_tool_evidence": False,
             }
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["python", "src/main.py"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-owner-rotation-cap",
+                [["python", "src/main.py"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
@@ -4746,7 +4801,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "source_compile_regression: rejected candidate",
             }
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["ctest"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-rejected-frontier-handoff",
+                [["ctest"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
@@ -4848,7 +4910,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["python", "src/main.py"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-mutation-owner-rotation-cap",
+                [["python", "src/main.py"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
@@ -4953,7 +5022,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-stagnation",
+                [["npm", "run", "build"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -5056,7 +5132,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-go-timing-jitter",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
@@ -5157,7 +5240,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-regression-guard",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
@@ -5290,7 +5380,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-aba-regression-synthesis",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
@@ -5464,7 +5561,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["cargo", "test"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-rejected-candidate-rollback",
+                [["cargo", "test"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
@@ -5611,7 +5715,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda _context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-count-changing-aba",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda _run, _context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
@@ -5745,7 +5856,14 @@ class TestRunWorkspaceQualityChecks:
                 }
             return {"status": "coverage_gap", "plannable_source_tools": []}
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-go-plannable-unmask",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -5851,7 +5969,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["cargo", "test", "--quiet"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-rust-unmask",
+                [["cargo", "test", "--quiet"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -5956,7 +6081,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["cargo", "test", "--quiet"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-rust-oscillation",
+                [["cargo", "test", "--quiet"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -6081,7 +6213,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-mixed-nonprogress",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -6180,7 +6319,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["python", "-m", "unittest"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-mixed-nonprogress-cap",
+                [["python", "-m", "unittest"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -6270,7 +6416,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-provider-timeout-retry",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -6350,7 +6503,14 @@ class TestRunWorkspaceQualityChecks:
                 "write_tool_evidence": False,
             }
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-provider-timeout-exhausted",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_workspace_quality_task_boundary_blocker", lambda run, context: None)
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
@@ -6907,7 +7067,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-deterministic-no-write",
+                [["npm", "test"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
         monkeypatch.setattr(
@@ -7013,7 +7180,14 @@ class TestRunWorkspaceQualityChecks:
             post_repair_calls += 1
             return []
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-task-boundary-triage",
+                [["npm", "run", "build"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
@@ -7165,7 +7339,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-local-task-boundary-triage",
+                [["npm", "run", "build"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
@@ -7313,7 +7494,14 @@ class TestRunWorkspaceQualityChecks:
                 },
             )
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["go", "test", "./..."]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-cached-interface-probe",
+                [["go", "test", "./..."]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda context: None)
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
@@ -7583,52 +7771,6 @@ class TestRunWorkspaceQualityChecks:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
-        from polaris.cells.chief_engineer.blueprint.public import (
-            BuildChiefEngineerBlueprintPortfolioCommandV1,
-            ChiefEngineerPortfolioTaskV1,
-            build_chief_engineer_blueprint_portfolio,
-        )
-        from polaris.cells.chief_engineer.blueprint.public.tests.library_completion_fixture import (
-            build_library_completion_requirements,
-        )
-        from polaris.cells.chief_engineer.blueprint.public.tests.test_public_contractsa import (
-            _portfolio_command_authority,
-        )
-
-        probe_test_path = tmp_path / "tests" / "test_index.ts"
-        probe_test_path.parent.mkdir(parents=True, exist_ok=True)
-        probe_test_path.write_text("export const ok = true;\n", encoding="utf-8")
-        probe_tasks = (
-            ChiefEngineerPortfolioTaskV1(
-                task_id="TASK-1",
-                objective="Probe",
-                target_files=("src/index.ts", "src/models/moonphase.ts", "tests/test_index.ts"),
-            ),
-        )
-        probe_portfolio = build_chief_engineer_blueprint_portfolio(
-            BuildChiefEngineerBlueprintPortfolioCommandV1(
-                workspace=str(tmp_path),
-                run_id=run.id,
-                tasks=probe_tasks,
-                **_portfolio_command_authority(
-                    tasks=probe_tasks, project_kind="library", workspace=tmp_path, run_id=run.id
-                ),
-                llm_blueprint={
-                    "construction_plan": {"project_interface_contract": {}},
-                    "project_completion_contract": build_library_completion_requirements(
-                        "src/index.ts",
-                        "src/models/moonphase.ts",
-                        owner_task_ids=("TASK-1", "TASK-1"),
-                        test_path="tests/test_index.ts",
-                        test_owner_task_id="TASK-1",
-                    ),
-                    "risk_flags": [],
-                },
-            )
-        )
-        run.metadata["stage_results"] = {
-            "chief_engineer_review": {"status": "success", "artifacts": [probe_portfolio.portfolio_path]}
-        }
         calls: list[list[str]] = []
 
         def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
@@ -7678,7 +7820,25 @@ class TestRunWorkspaceQualityChecks:
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
 
-        passed, artifact = await executor._run_workspace_quality_checks(run, _factory_stage_context())
+        async def fake_apply_workspace_quality_deterministic_repairs(
+            *,
+            run: FactoryRun,
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del repair_attempt
+            return executor._apply_workspace_quality_repairs(
+                run_id=run.id,
+                artifact_quality_errors=artifact_quality_errors,
+            )
+
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_deterministic_repairs",
+            fake_apply_workspace_quality_deterministic_repairs,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(run, {})
 
         assert passed is False
         assert calls == [["npm", "run", "build"]]
@@ -7755,7 +7915,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "",
             }
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-enum-repair",
+                [["npm", "run", "build"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
 
@@ -7843,7 +8010,14 @@ class TestRunWorkspaceQualityChecks:
                 "error": "",
             }
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-unresolved-identifier-repair",
+                [["npm", "run", "build"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
 

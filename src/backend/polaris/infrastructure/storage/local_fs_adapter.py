@@ -160,9 +160,31 @@ class LocalFileSystemAdapter:
         return os.path.isdir(path)
 
     def remove(self, path: str, *, missing_ok: bool = True) -> bool:
-        """Remove a file."""
+        """Remove a file.
+
+        Only a genuinely absent file is tolerated. ``missing_ok`` decides how
+        that absence is reported; it never converts a real operation failure
+        into a success.  A permission denial, an I/O error or an unknown
+        outcome propagates unchanged so the caller keeps the true cause and can
+        decide whether the effect state is unknown.
+
+        Args:
+            path: Absolute or relative path of the file to remove.
+            missing_ok: When True an absent file reports True (the file is
+                gone, which is the requested end state); when False an absent
+                file reports False.
+
+        Returns:
+            True when the file was removed or was already absent and
+            ``missing_ok`` is True; False when the file was already absent and
+            ``missing_ok`` is False.
+
+        Raises:
+            OSError: The removal failed for any reason other than the file
+                being absent.  The original exception is propagated unchanged.
+        """
         try:
             os.remove(path)
             return True
-        except OSError:
+        except FileNotFoundError:
             return bool(missing_ok)

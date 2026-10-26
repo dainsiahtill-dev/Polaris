@@ -208,6 +208,12 @@ class _ProbeSpy:
         self._reports.append(report)
         return report
 
+    def close(self) -> None:
+        """Release the wrapped service's resources (the cell exposes close())."""
+        closer = getattr(self._inner, "close", None)
+        if callable(closer):
+            closer()
+
 
 def _install_scout_spy(
     monkeypatch: pytest.MonkeyPatch,
@@ -220,10 +226,12 @@ def _install_scout_spy(
     workspaces: list[str] = []
     queries: list[str] = []
     reports: list[ScoutReportV1] = []
+    authorities: list[object] = []
 
-    def _spy_factory(workspace: str) -> Any:
+    def _spy_factory(workspace: str, **kwargs: Any) -> Any:
         workspaces.append(workspace)
-        return _ProbeSpy(real_factory(workspace), queries, reports)
+        authorities.append(kwargs.get("authority"))
+        return _ProbeSpy(real_factory(workspace, **kwargs), queries, reports)
 
     monkeypatch.setattr(scout_service, "build_default_scout_service", _spy_factory)
     return workspaces, queries, reports

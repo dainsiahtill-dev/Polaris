@@ -25,6 +25,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
 from polaris.cells.factory.pipeline.tests._characterization_helpers import (
     _executor,
     _factory_stage_context,
+    _run_bound_workspace_quality_commands,
     _with_task_runtime_authority,
     _write_handoff_ready_review_for_tasks,
 )
@@ -948,7 +949,10 @@ class TestQualityGateDeadlineHandling:
         monkeypatch.setattr(
             executor,
             "_workspace_quality_commands",
-            lambda _context, *, run=None: [["npm", "run", "build"]],
+            _run_bound_workspace_quality_commands(
+                "run-workspace-repair-deadline",
+                [["npm", "run", "build"]],
+            ),
         )
         monkeypatch.setattr(
             executor,
@@ -1038,7 +1042,10 @@ class TestQualityGateDeadlineHandling:
         monkeypatch.setattr(
             executor,
             "_workspace_quality_commands",
-            lambda _context, *, run=None: [["npm", "run", "build"]],
+            _run_bound_workspace_quality_commands(
+                "run-workspace-command-deadline",
+                [["npm", "run", "build"]],
+            ),
         )
         monkeypatch.setattr(
             executor,

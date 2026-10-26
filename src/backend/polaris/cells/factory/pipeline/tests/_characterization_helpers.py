@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import json
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 from typing import Any
@@ -79,6 +80,7 @@ __all__ = [
     "_invalid_chief_engineer_stream_result",
     "_invalid_structured_transport_chief_engineer_result",
     "_library_completion_requirements",
+    "_run_bound_workspace_quality_commands",
     "_single_task_chief_engineer_result",
     "_thinking_only_chief_engineer_result",
     "_verified_delivery_recovery_authority",
@@ -94,12 +96,25 @@ __all__ = [
 #: explicitly to the shared fixture instead of duplicating the input builder.
 _FACTORY_LIBRARY_BUILD_ARGV: tuple[str, ...] = ("python", "-m", "compileall", ".")
 
+#: Synthetic Factory run label used by the characterization authority port when
+#: the caller does not supply its own run identity.
+_CHARACTERIZATION_FACTORY_RUN_ID = "characterization-run"
 
-def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
+
+def _characterization_authority_port(
+    *,
+    factory_run_id: str = _CHARACTERIZATION_FACTORY_RUN_ID,
+) -> FactoryRoleEvidenceAuthorityPort:
     """Initialize the real port; grants remain explicit test-only observations.
 
     ``bindings`` is the sole synthetic grant count. No production grant,
     cutoff, physical attempt or persisted receipt is created by this helper.
+
+    ``factory_run_id`` only labels the synthetic stage authority and its
+    minted bindings. Callers that exercise a run-scoped owner check must pass
+    the run identity they actually use, because the runtime owner compares the
+    minted binding against the current Factory run id. The default keeps the
+    historical label so existing callers are unaffected.
     """
 
     bindings: list[FactoryRoleEvidenceAuthorityBindingV1] = []
@@ -140,7 +155,7 @@ def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
     port = FactoryRoleEvidenceAuthorityPort(
         workspace=Path.cwd(),
         authority=FactoryRoleEvidenceStageAuthorityV1(
-            factory_run_id="characterization-run",
+            factory_run_id=factory_run_id,
             stage="quality_gate",
             workspace_fencing_token=1,
             stage_claim_attempt=1,
@@ -152,7 +167,7 @@ def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
         source_authority=io,
         fact_stream=io,
         physical_attempt_coordinator=FactoryPhysicalAttemptLiveControlPort(
-            factory_run_id="characterization-run",
+            factory_run_id=factory_run_id,
             revalidate_active_stage_claim=reject_physical_attempt,
         ),
     )
@@ -192,7 +207,7 @@ def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
         binding = FactoryRoleEvidenceAuthorityBindingV1(
             schema_version=FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
             verification_scope="factory",
-            factory_run_id="characterization-run",
+            factory_run_id=factory_run_id,
             role=role,
             cutoff_port=port,
             physical_attempt_control_port=port,
@@ -224,11 +239,43 @@ def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
     return port
 
 
-def _factory_stage_context(context: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Explicitly bind an exact test cutoff port for one direct stage call."""
+def _run_bound_workspace_quality_commands(
+    expected_run_id: str,
+    commands: list[list[str]],
+) -> Callable[..., list[list[str]]]:
+    """Return a workspace-quality command substitute that keeps the run binding.
+
+    Production resolves workspace quality commands with the current Factory run
+    identity so the authenticated Chief Engineer verifier recipe stays bound to
+    that exact run. A substitute must accept the same keyword and prove the
+    identity it was given instead of swallowing it.
+    """
+
+    def resolve(context: dict[str, Any], *, run: FactoryRun | None = None) -> list[list[str]]:
+        del context
+        assert run is not None
+        assert run.id == expected_run_id
+        return [list(command) for command in commands]
+
+    return resolve
+
+
+def _factory_stage_context(
+    context: dict[str, Any] | None = None,
+    *,
+    factory_run_id: str = _CHARACTERIZATION_FACTORY_RUN_ID,
+) -> dict[str, Any]:
+    """Explicitly bind an exact test cutoff port for one direct stage call.
+
+    ``factory_run_id`` labels the synthetic stage authority and its minted
+    bindings with the run identity the caller actually uses, so a run-scoped
+    owner check compares against the same run instead of a fixed label.
+    """
 
     result = dict(context or {})
-    result[stage_executor_module.FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY] = _characterization_authority_port()
+    result[stage_executor_module.FACTORY_ROLE_EVIDENCE_CUTOFF_PORT_CONTEXT_KEY] = _characterization_authority_port(
+        factory_run_id=factory_run_id
+    )
     return result
 
 

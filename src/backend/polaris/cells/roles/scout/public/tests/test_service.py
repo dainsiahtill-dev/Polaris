@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 from polaris.cells.roles.scout.internal.ports import FakeDistiller, FakeReadTool, canonical_args_key
-from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
+from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1, ScoutReportV1
 from polaris.cells.roles.scout.public.service import ScoutProbeService, build_default_scout_service
 
 
@@ -132,6 +132,137 @@ def test_scout_probe_rejects_empty_query(tmp_path) -> None:  # type: ignore[no-u
     assert "error" in outcome
 
 
+# ── authority-bound cache isolation ──
+
+
+class _CountingReadTool:
+    """A read tool that records its calls and returns a fixed payload."""
+
+    def __init__(self, file_name: str) -> None:
+        self.file_name = file_name
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def run(self, tool: str, args: dict[str, object]) -> dict[str, object]:
+        self.calls.append((tool, dict(args)))
+        return {
+            "ok": True,
+            "results": [{"file": self.file_name, "line": 1, "snippet": "x"}],
+        }
+
+
+@pytest.mark.asyncio
+async def test_two_workspaces_never_share_a_cached_report() -> None:
+    """Two workspaces with the SAME roots and query must not share a report.
+
+    A shared cache would let workspace B's probe return workspace A's content
+    without ever calling B's read port.
+    """
+    from polaris.cells.roles.scout.internal.cache import TTLCache
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    shared_cache: TTLCache[ScoutReportV1] = TTLCache(ttl_seconds=60.0)
+    tool_a = _CountingReadTool("alpha/a.py")
+    tool_b = _CountingReadTool("beta/b.py")
+
+    svc_a = ScoutProbeService(
+        read_tool=tool_a,
+        cache=shared_cache,
+        workspace="/workspace-a",
+        authority=ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha"]},
+            read_roots=("alpha",),
+        ),
+    )
+    svc_b = ScoutProbeService(
+        read_tool=tool_b,
+        cache=shared_cache,
+        workspace="/workspace-b",
+        authority=ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha"]},
+            read_roots=("alpha",),
+        ),
+    )
+
+    report_a = await svc_a.probe(ScoutProbeTargetV1(query="payment"))
+    report_b = await svc_b.probe(ScoutProbeTargetV1(query="payment"))
+
+    assert report_a.findings[0].path == "alpha/a.py"
+    assert report_b.findings[0].path == "beta/b.py", "workspace B received workspace A's cached content"
+    assert tool_b.calls, "workspace B's read port was never called"
+
+
+@pytest.mark.asyncio
+async def test_a_shrinking_scope_cannot_reuse_a_wider_report() -> None:
+    """A narrower scope must not reuse a report produced under a wider one."""
+    from polaris.cells.roles.scout.internal.cache import TTLCache
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    shared_cache: TTLCache[ScoutReportV1] = TTLCache(ttl_seconds=60.0)
+    wide_tool = _CountingReadTool("alpha/a.py")
+    narrow_tool = _CountingReadTool("alpha/narrow.py")
+
+    wide = ScoutProbeService(
+        read_tool=wide_tool,
+        cache=shared_cache,
+        workspace="/workspace-a",
+        authority=ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha", "beta"]},
+            read_roots=("alpha", "beta"),
+        ),
+    )
+    narrow = ScoutProbeService(
+        read_tool=narrow_tool,
+        cache=shared_cache,
+        workspace="/workspace-a",
+        authority=ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha"]},
+            read_roots=("alpha",),
+        ),
+    )
+
+    await wide.probe(ScoutProbeTargetV1(query="payment"))
+    report = await narrow.probe(ScoutProbeTargetV1(query="payment"))
+
+    assert report.findings[0].path == "alpha/narrow.py", "the narrower scope reused the wider scope's report"
+    assert narrow_tool.calls, "the narrower scope's read port was never called"
+
+
+@pytest.mark.asyncio
+async def test_a_different_authorizing_identity_cannot_reuse_a_report() -> None:
+    """A different authorizing identity must not reuse another one's report."""
+    from polaris.cells.roles.scout.internal.cache import TTLCache
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    shared_cache: TTLCache[ScoutReportV1] = TTLCache(ttl_seconds=60.0)
+    tool_a = _CountingReadTool("alpha/a.py")
+    tool_b = _CountingReadTool("alpha/b.py")
+
+    svc_a = ScoutProbeService(
+        read_tool=tool_a,
+        cache=shared_cache,
+        workspace="/workspace-a",
+        authority=ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha"], "token_id": "token-a"},
+            read_roots=("alpha",),
+        ),
+    )
+    svc_b = ScoutProbeService(
+        read_tool=tool_b,
+        cache=shared_cache,
+        workspace="/workspace-a",
+        authority=ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha"], "token_id": "token-b"},
+            read_roots=("alpha",),
+        ),
+    )
+
+    await svc_a.probe(ScoutProbeTargetV1(query="payment"))
+    report = await svc_b.probe(ScoutProbeTargetV1(query="payment"))
+
+    assert report.findings[0].path == "alpha/b.py", "a different authorizing identity reused another identity's report"
+    assert tool_b.calls, "the second identity's read port was never called"
+
+
 @pytest.mark.asyncio
 async def test_probe_escalates_when_findings_empty_and_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     """A weak (no-finding) deterministic result escalates when allow_escalation=True."""
@@ -176,3 +307,84 @@ async def test_probe_does_not_escalate_when_findings_exist(monkeypatch: pytest.M
     assert report.escalated is False
     assert report.summary == "DETERMINISTIC"
     assert captured == []
+
+
+@pytest.mark.asyncio
+async def test_a_live_scope_shrink_invalidates_a_cached_report() -> None:
+    """A host that shrinks its scope must not keep serving the old report.
+
+    The authority is re-read LIVE at the moment of use, so a report cached
+    under a wider scope is refused once the host narrowed its scope. A frozen
+    snapshot in the cache key is NOT sufficient on its own.
+    """
+    from polaris.cells.roles.scout.internal.cache import TTLCache
+    from polaris.cells.roles.scout.public.service import ScoutProbeDeniedError, ScoutReadAuthorityV1
+
+    shared_cache: TTLCache[ScoutReportV1] = TTLCache(ttl_seconds=60.0)
+    tool = _CountingReadTool("alpha/a.py")
+
+    live: dict[str, ScoutReadAuthorityV1] = {
+        "current": ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha", "beta"]},
+            read_roots=("alpha", "beta"),
+        ),
+    }
+
+    def _reader() -> ScoutReadAuthorityV1:
+        return live["current"]
+
+    svc = ScoutProbeService(
+        read_tool=tool,
+        cache=shared_cache,
+        workspace="/workspace-a",
+        authority=ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha", "beta"]},
+            read_roots=("alpha", "beta"),
+            authority_reader=_reader,
+        ),
+    )
+
+    await svc.probe(ScoutProbeTargetV1(query="payment"))
+
+    # The host shrinks its scope to nothing.
+    live["current"] = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": []},
+        read_roots=(),
+    )
+
+    with pytest.raises(ScoutProbeDeniedError):
+        await svc.probe(ScoutProbeTargetV1(query="payment"))
+
+
+@pytest.mark.asyncio
+async def test_a_cache_hit_whose_paths_leave_the_current_scope_is_refused() -> None:
+    """A cached report naming a path outside the live roots must not be served.
+
+    This is the defence-in-depth layer: the cache key already binds the
+    committed roots, but a report whose FINDINGS leave the current scope must
+    be refused even on a key hit, so a read port that returned an
+    out-of-scope path cannot be laundered through the cache.
+    """
+    from polaris.cells.roles.scout.internal.cache import TTLCache
+    from polaris.cells.roles.scout.public.service import ScoutProbeDeniedError, ScoutReadAuthorityV1
+
+    shared_cache: TTLCache[ScoutReportV1] = TTLCache(ttl_seconds=60.0)
+    # A read port that returns a path OUTSIDE the committed scope.
+    tool = _CountingReadTool("private/hidden.py")
+
+    svc = ScoutProbeService(
+        read_tool=tool,
+        cache=shared_cache,
+        workspace="/workspace-a",
+        authority=ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha"]},
+            read_roots=("alpha",),
+        ),
+    )
+
+    await svc.probe(ScoutProbeTargetV1(query="payment"))
+
+    # The second probe hits the SAME cache key (same workspace/roots/identity),
+    # so the cached report must be re-validated against the current scope.
+    with pytest.raises(ScoutProbeDeniedError):
+        await svc.probe(ScoutProbeTargetV1(query="payment"))

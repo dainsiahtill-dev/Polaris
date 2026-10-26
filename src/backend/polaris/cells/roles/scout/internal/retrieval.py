@@ -7,6 +7,14 @@ signals. Supported result shapes (after unwrapping a nested ``result`` key):
 - ``repo_rg``:            ``{"results"|"hits": [{"file", "line", "snippet"|"text"}]}``
 - ``repo_symbols_index``: ``{"symbols": [{"file", "line", "name", "kind"}]}``
 - ``repo_tree``:          ``{"entries": [{"path", "type"}]}`` (path-only findings)
+
+Path normalization
+------------------
+Each tool reports paths on its own scale: ``repo_rg`` hits and
+``repo_symbols_index`` symbols are already workspace-relative, while
+``repo_tree`` entries are relative to the directory that was queried. Findings
+are always emitted workspace-relative so a multi-root probe does not report a
+bare file name that could be mistaken for a workspace-root path.
 """
 
 from __future__ import annotations
@@ -26,6 +34,7 @@ def retrieve(
     tools_used: list[str] = []
     errors: list[str] = []
     truncated = False
+    successful_calls = 0
 
     for tool, args in plan:
         if tool not in tools_used:
@@ -39,15 +48,17 @@ def retrieve(
         if not result.get("ok", False):
             errors.append(f"{tool}: {result.get('error') or 'not ok'}")
             continue
+        successful_calls += 1
         if result.get("truncated"):
             truncated = True
-        findings.extend(_parse_findings(result))
+        findings.extend(_parse_findings(result, tool=tool, args=args))
 
     coverage = {
         "tools_used": tools_used,
         "errors": errors,
         "truncated": truncated,
         "raw_findings": len(findings),
+        "successful_calls": successful_calls,
     }
     return findings, coverage
 
@@ -68,11 +79,17 @@ def _unwrap(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
-def _parse_findings(result: dict[str, Any]) -> list[ScoutFinding]:
+def _parse_findings(
+    result: dict[str, Any],
+    *,
+    tool: str,
+    args: dict[str, Any],
+) -> list[ScoutFinding]:
     """Translate one normalized tool result into findings across known shapes."""
     out: list[ScoutFinding] = []
 
-    # Text-search style: repo_rg ("results") or legacy ("hits").
+    # Text-search style: repo_rg ("results") or legacy ("hits"). The reported
+    # file path is already workspace-relative.
     for hit in _as_list(result.get("results")) + _as_list(result.get("hits")):
         if not isinstance(hit, dict):
             continue
@@ -82,7 +99,7 @@ def _parse_findings(result: dict[str, Any]) -> list[ScoutFinding]:
         snippet = str(hit.get("snippet") or hit.get("text") or "").strip()
         out.append(ScoutFinding(path=path, line=_as_int(hit.get("line")), snippet=snippet))
 
-    # Symbol-index style: repo_symbols_index ("symbols").
+    # Symbol-index style: repo_symbols_index ("symbols"). Workspace-relative.
     for sym in _as_list(result.get("symbols")):
         if not isinstance(sym, dict):
             continue
@@ -101,7 +118,10 @@ def _parse_findings(result: dict[str, Any]) -> list[ScoutFinding]:
             )
         )
 
-    # Tree style: repo_tree ("entries") — path-only structural findings.
+    # Tree style: repo_tree ("entries") — path-only structural findings. Entry
+    # paths are relative to the queried directory, so they are rebased onto the
+    # queried root to keep findings workspace-relative.
+    root = _tree_root(args)
     for entry in _as_list(result.get("entries")):
         if not isinstance(entry, dict):
             continue
@@ -110,9 +130,23 @@ def _parse_findings(result: dict[str, Any]) -> list[ScoutFinding]:
         path = str(entry.get("path") or entry.get("name") or "")
         if not path:
             continue
-        out.append(ScoutFinding(path=path, line=None, snippet=""))
+        out.append(ScoutFinding(path=_rebase(path, root), line=None, snippet=""))
 
     return out
+
+
+def _tree_root(args: dict[str, Any]) -> str:
+    """The directory a ``repo_tree`` step queried."""
+    raw = args.get("path") or args.get("root") or args.get("dir") or "."
+    return str(raw or ".").replace("\\", "/").strip("/") or "."
+
+
+def _rebase(path: str, root: str) -> str:
+    """Make a tool-reported path workspace-relative."""
+    normalized = str(path or "").replace("\\", "/").lstrip("./")
+    if root in ("", "."):
+        return normalized
+    return f"{root}/{normalized}" if normalized else root
 
 
 def _as_list(value: object) -> list[Any]:
@@ -121,6 +155,6 @@ def _as_list(value: object) -> list[Any]:
 
 def _as_int(value: object) -> int | None:
     try:
-        return int(value)  # type: ignore[call-overload]
+        return int(value)  # type: ignore[call-overload,no-any-return]
     except (TypeError, ValueError):
         return None

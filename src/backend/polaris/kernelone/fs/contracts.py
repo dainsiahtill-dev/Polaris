@@ -169,12 +169,26 @@ class KernelFileSystemAdapter(Protocol):
     def remove(self, path: str, *, missing_ok: bool = True) -> bool:
         """Remove a file.
 
+        Only an absent file is tolerated. ``missing_ok`` selects how that
+        absence is reported; it must never turn a real operation failure into
+        a success. Any other failure (permission denial, I/O error, or an
+        unknown outcome) must propagate its original error so the caller can
+        observe the true cause and decide whether the effect state is unknown.
+
         Args:
-            path: File to remove.
-            missing_ok: If True (default), no error if file does not exist.
+            path: Target file path.
+            missing_ok: When True an absent file reports True (the file is
+                gone, which is the requested end state); when False an absent
+                file reports False.
 
         Returns:
-            True if the file was removed, False if it did not exist.
+            True when the file was removed or was already absent and
+            ``missing_ok`` is True; False when the file was already absent and
+            ``missing_ok`` is False.
+
+        Raises:
+            OSError: The removal failed for any reason other than the file
+                being absent.
         """
         ...
 
