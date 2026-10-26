@@ -1,0 +1,15 @@
+# Cell 测试与生产依赖／效果分离
+
+状态：用户全仓收敛目标下的实施设计，尚未验证。服从POLARIS_FULL_CONVERGENCE_20261025。
+
+原159处catalog告警中，19条依赖与7次进程调用只发生在测试。生产Cell不能因此普遍获得依赖或subprocess能力；测试也不能全部豁免。跨Cell私有导入规则对两类代码始终有效。
+
+在现有verification对象中加入精确backend-relative文件级test_dependencies和test_effects_allowed声明，每项为path和所需Cell/effects；效果项带非空理由。不新增运行时权限或模型字段。已有verification列表形式保留且不隐含授权。生产depends_on/effects_allowed保持独立。
+
+路径只接受属于当前Cell、真实存在、受控tests目录内的规范普通文件；拒绝绝对路径、..、glob、重复、symlink逃逸和未知目标Cell。生产模块不能通过导入test helper继承测试授权；静态及literal dynamic路径都检查。测试额外公开依赖不进入生产SCC，测试额外effect不进入生产allowed grants。跨owner private边界仍拒绝；同owner私有单测仍可用。
+
+checker继续扫描每个导入和effect occurrence后再合并事件，不能用去重跳过第二个进程调用。manifest与catalog的测试authority投影必须精确一致。错误声明本身是blocker，不以baseline忽略。
+
+先红后绿：生产借用test依赖/effect、t1借用t2、foreign internal despite grant、未列test spawn、错误owner/path/缺文件/未知Cell/重复/漂移、production导入test helper等均拒绝；合法精确public测试和同owner单测通过。此静态声明不冒充OS sandbox或任意argv containment。
+
+共享schema/checker由单一实现者写，其他桶等待接口冻结后串行整合。实际Cell声明只依据逐项证据，不批量扩大生产权限。最终hard-fail零问题并复验原真实进程／恢复测试。

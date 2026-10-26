@@ -33,6 +33,13 @@ from polaris.cells.context.catalog.internal.descriptor_pack_generator import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _bound_descriptor_runtime_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))
+    for name in ("KERNELONE_RUNTIME_ROOT", "KERNELONE_RUNTIME_CACHE_ROOT", "KERNELONE_RAMDISK_ROOT"):
+        monkeypatch.delenv(name, raising=False)
+
+
 class TestDescriptorPack:
     def test_default_values(self) -> None:
         pack = DescriptorPack()

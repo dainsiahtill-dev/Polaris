@@ -15,6 +15,7 @@ import threading
 from unittest import mock as ucmock
 
 from polaris.cells.roles.runtime.internal.agent_runtime_base import (
+    AgentMemory,
     AgentMessage,
     AgentState,
     AgentStatus,
@@ -39,6 +40,9 @@ class _TestableRoleAgent(RoleAgent):
         self._cycle_count = 0
         self._call_log: list[str] = []
         self._mock_run_cycle: ucmock.MagicMock | None = None
+        # This backoff unit fixture intentionally owns no persistence. Avoid
+        # evaluating the real lazy memory property at the synthetic /test path.
+        self._memory = ucmock.MagicMock(spec=AgentMemory)
         # Skip actual initialization to avoid file I/O
         self._state = AgentState()
         self._initialized = True

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:47.755008Z",
-  "source_hash": "a6864bf21688b196",
+  "generated_at": "2026-10-25T21:39:00.900851Z",
+  "source_hash": "152352f7517b5e42",
   "cell_id": "llm.control_plane",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -114,8 +114,8 @@
     },
     {
       "type": "class",
-      "name": "HRAgent",
-      "description": "Model-governance advisor with a legacy HR class name.",
+      "name": "LLMConfigService",
+      "description": "Deterministic configuration operations over the existing KFS Store.",
       "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py",
       "methods": [
         {
@@ -123,47 +123,35 @@
           "doc": ""
         },
         {
-          "name": "_resolve_provider_kind",
+          "name": "resolve_provider_kind",
           "doc": ""
         },
         {
-          "name": "setup_toolbox",
+          "name": "set_llm_config",
           "doc": ""
         },
         {
-          "name": "_tool_set_llm_config",
+          "name": "get_llm_config",
           "doc": ""
         },
         {
-          "name": "_tool_get_llm_config",
+          "name": "list_all_configs",
           "doc": ""
         },
         {
-          "name": "_tool_list_all_configs",
+          "name": "update_llm_config",
           "doc": ""
         },
         {
-          "name": "_tool_update_llm_config",
+          "name": "deactivate_config",
           "doc": ""
         },
         {
-          "name": "_tool_deactivate_config",
+          "name": "activate_config",
           "doc": ""
         },
         {
-          "name": "_tool_activate_config",
-          "doc": ""
-        },
-        {
-          "name": "_tool_delete_config",
-          "doc": ""
-        },
-        {
-          "name": "handle_message",
-          "doc": ""
-        },
-        {
-          "name": "run_cycle",
+          "name": "delete_config",
           "doc": ""
         },
         {
@@ -203,7 +191,7 @@
     {
       "type": "function",
       "name": "_infer_workspace_from_storage_path",
-      "description": "",
+      "description": "Infer the nearest physical storage boundary, never a name substring.",
       "defined_in": "polaris/cells/llm/control_plane/internal/llm_config_agent.py"
     },
     {
@@ -449,6 +437,12 @@
     },
     {
       "type": "function",
+      "name": "_initialize_advanced_dependencies",
+      "description": "Probe optional GPU dependencies only for an explicit model load.",
+      "defined_in": "polaris/cells/llm/control_plane/internal/vision_service.py"
+    },
+    {
+      "type": "function",
       "name": "_trust_remote_code_enabled",
       "description": "",
       "defined_in": "polaris/cells/llm/control_plane/internal/vision_service.py"
@@ -458,6 +452,254 @@
       "name": "get_vision_service",
       "description": "Get the singleton VisionService instance lazily.",
       "defined_in": "polaris/cells/llm/control_plane/internal/vision_service.py"
+    },
+    {
+      "type": "class",
+      "name": "SaveLlmConfigCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "InvokeLlmRoleCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetLlmConfigQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetLlmRuntimeStatusQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CheckLlmModelCapabilityQueryV1",
+      "description": "Query whether the configured role model declares a required capability.",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmConfigChangedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmInvocationCompletedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmConfigResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmInvocationResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmModelCapabilityResultV1",
+      "description": "Structured model capability decision from llm.control_plane.",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LlmControlPlaneError",
+      "description": "Raised when `llm.control_plane` contract processing fails.",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "LLMRequest",
+      "description": "Backward-compatible request model for existing callsites.",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "LLMResponse",
+      "description": "Backward-compatible response model for existing callsites.",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ILLMControlPlane",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py",
+      "methods": [
+        {
+          "name": "generate",
+          "doc": "Compatibility API for direct generation."
+        },
+        {
+          "name": "stream",
+          "doc": "Compatibility API for direct streaming."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "LlmControlPlaneService",
+      "description": "Contract-first service for `llm.control_plane`.",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_get_store",
+          "doc": ""
+        },
+        {
+          "name": "_build_role_message",
+          "doc": ""
+        },
+        {
+          "name": "save_config",
+          "doc": ""
+        },
+        {
+          "name": "get_config",
+          "doc": ""
+        },
+        {
+          "name": "get_runtime_status",
+          "doc": ""
+        },
+        {
+          "name": "check_model_capability",
+          "doc": "Return whether the configured role model explicitly declares a capability."
+        },
+        {
+          "name": "invoke_role",
+          "doc": ""
+        },
+        {
+          "name": "generate",
+          "doc": ""
+        },
+        {
+          "name": "stream",
+          "doc": "Stream tokens from the LLM provider."
+        },
+        {
+          "name": "_on_token",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_looks_like_error_message",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_control_plane_storage_path",
+      "description": "Resolve LLM control plane storage to Global config layer.",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_provider_type",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_provider_kind",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_capability_tokens_from_config",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_model_capability_ref",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "save_llm_config",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_llm_config",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_llm_runtime_status",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "check_llm_model_capability",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "invoke_llm_role",
+      "description": "",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "load_llm_config_port",
+      "description": "Public port for loading LLM config.",
+      "defined_in": "polaris/cells/llm/control_plane/public/service.py"
     },
     {
       "type": "function",

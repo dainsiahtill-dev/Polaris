@@ -24,13 +24,13 @@
 
 ### Batch 1: Canonical FactStream surface
 
-- [ ] Red tests for exact59 real public bindings/DTO availability and negative phantom/missing exports.
-- [ ] Repair root/contracts plus ordered cell/catalog/context/README projections. Root serially updates shared checker only after binding/consumer proof.
-- [ ] Run public payload and historical outcome/cold recovery integration. Independent review; verify25 issues close.
+- [x] Red tests for exact59 real public bindings/DTO availability and negative phantom/missing exports.
+- [x] Repair root/contracts plus ordered cell/catalog/context/README projections. Root serially updates shared checker only after binding/consumer proof.
+- [x] Run public payload and historical outcome/cold recovery integration. Original25 surface issues close, missing-origin independent counterexample repaired; current Root183 public/history+22 origin tests PASS. See Root-fact-stream-public-review/acceptance.json; broader platform still incomplete.
 
 ### Batch 2: Explicit source/test boundaries
 
-- [ ] Design bounded verification test_dependencies/test_effects with actual test paths, separate from production graph/grants; strict negative tests.
+- [x] Design bounded verification test_dependencies/test_effects with actual test paths, separate from production graph/grants; strict negative tests (140 joint tests plus independent cases; remaining callers still open).
 - [ ] Move only wrongly owned unit portions to actual owner, preserve public integration. Migrate cross-owner private fixtures/calls to realpublic surfaces.
 - [ ] Correct 3 non-test boundaries, preserving float/subsecond deadlines and optional legacy readers; retire proven shadow source.
 - [ ] Scope regressions + review; zero internal-crossing and undeclared-effect findings.
@@ -47,3 +47,7 @@
 - [ ] Strictcatalog issue_count0/mismatch0, relevant static checks, K1ALL, frontend/backend/architecture regressions and independent whole-candidate review.
 - [ ] Freeze source/config/model/acceptance; one formal fresh L1-01 zeroexternalrepair and resource/context closure.
 - [ ] Serial originalL1-L12 120 projects; actualRoot product-quality review aftereach, allattempts/failures/costs retained. No success extrapolation.
+
+## Progress checkpoint 2026-10-26
+
+See `docs/history/POLARIS_CONVERGENCE_PROGRESS_20261026.md`. Scope qualification remains separate from global convergence and Native delivery. Active exclusive buckets: KernelOne process timeout/physical cleanup, TaskRuntime binding/reopen and Factory consumer, independent config-owner review. CFO/HR/claim-owner scoped evidence is integrated; generated inputs require a new bounded refresh after current changes. Root owns public/shared metadata and docs. Bench remains held.

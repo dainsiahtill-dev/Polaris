@@ -34,10 +34,7 @@ from polaris.cells.events.fact_stream.public import (
     append_fact_event,
     query_fact_events,
 )
-from polaris.cells.roles.kernel.internal.kernel.task_boundary import (
-    append_deferred_followup_task_boundary_verdict,
-    append_director_task_boundary_verdict,
-)
+from polaris.cells.roles.kernel.tests.run_ledger_owner_scenarios import produce_task_boundary_case
 from polaris.cells.runtime.task_runtime.public import (
     SettleTaskRuntimeExecutionAttemptCommandV1,
     TaskRuntimeExecutionAttemptIdentityV1,
@@ -138,9 +135,7 @@ def _fixture(
     )
     assert settled["success"] is True
     native = next(row for row in _facts(workspace, "task_runtime.execution") if row["event_type"] == "claimed")
-    append_deferred_followup_task_boundary_verdict(
-        workspace=str(workspace), task_id=TASK, run_id=CHILD, reason="needs_followup_workflow"
-    )
+    produce_task_boundary_case(workspace, task_id=TASK, run_id=CHILD, scenario="deferred_followup")
     old = _projection(workspace)["latest_by_task"][TASK]
     bindings = tuple(
         (
@@ -348,17 +343,7 @@ def test_revalidation_reuses_strict_child_owner_constraints(tmp_path: Path, fore
 
 
 def _append_newer_failure(workspace: Path, *, task_id: str = TASK) -> None:
-    append_director_task_boundary_verdict(
-        role="director",
-        workspace=str(workspace),
-        task_id=task_id,
-        run_id=CHILD,
-        context_override={
-            "required_write_targets": ["artifact-0.txt"],
-            "required_verifiers": ["newer-unexecuted-verifier"],
-        },
-        tool_results=[],
-    )
+    produce_task_boundary_case(workspace, task_id=task_id, run_id=CHILD, scenario="newer_missing_verifier")
 
 
 def test_same_task_interleaving_cannot_commit_old_completion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

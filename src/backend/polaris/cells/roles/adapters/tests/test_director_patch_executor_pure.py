@@ -89,7 +89,7 @@ class TestResolveLlmCallTimeoutSeconds:
 
     def test_factory_execution_deadline_clamps_timeout_at_actual_call_start(self, monkeypatch: Any) -> None:
         monkeypatch.setattr(
-            "polaris.cells.roles.adapters.internal.director.execution.time.time",
+            "time.time",
             lambda: 100.0,
         )
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds(
@@ -102,7 +102,7 @@ class TestResolveLlmCallTimeoutSeconds:
 
     def test_nested_factory_execution_deadline_clamps_timeout(self, monkeypatch: Any) -> None:
         monkeypatch.setattr(
-            "polaris.cells.roles.adapters.internal.director.execution.time.time",
+            "time.time",
             lambda: 200.0,
         )
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds(
@@ -115,7 +115,7 @@ class TestResolveLlmCallTimeoutSeconds:
 
     def test_expired_factory_execution_deadline_blocks_provider_call(self, monkeypatch: Any) -> None:
         monkeypatch.setattr(
-            "polaris.cells.roles.adapters.internal.director.execution.time.time",
+            "time.time",
             lambda: 300.0,
         )
         try:
@@ -130,7 +130,7 @@ class TestResolveLlmCallTimeoutSeconds:
     def test_viable_factory_run_deadline_overrides_expired_director_wave(self, monkeypatch: Any) -> None:
         """Live L2-13: quality retry reminted factory_run while Director-wave clock was dead."""
         monkeypatch.setattr(
-            "polaris.cells.roles.adapters.internal.director.execution.time.time",
+            "time.time",
             lambda: 1000.0,
         )
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds(

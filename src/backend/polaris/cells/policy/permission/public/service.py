@@ -18,6 +18,7 @@ from polaris.cells.policy.permission.public.contracts import (
     PermissionDeniedEventV1,
     PermissionPolicyError,
     QueryPermissionMatrixV1,
+    ToolPolicyDecisionPort,
 )
 from polaris.cells.roles.profile.public.service import (
     Action,
@@ -54,13 +55,16 @@ def _resource_type_from_command(command: EvaluatePermissionCommandV1) -> Resourc
     return ResourceType.API
 
 
-def evaluate_permission(command: EvaluatePermissionCommandV1) -> PermissionDecisionResultV1:
-    """Evaluate a permission command through the public policy contract."""
+def evaluate_permission(
+    command: EvaluatePermissionCommandV1, *, tool_policy_port: ToolPolicyDecisionPort | None = None
+) -> PermissionDecisionResultV1:
+    """Evaluate RBAC policy; this result alone does not authorize tool execution."""
     if not isinstance(command, EvaluatePermissionCommandV1):
         raise TypeError("command must be an EvaluatePermissionCommandV1")
 
     async def _evaluate() -> PermissionDecisionResultV1:
-        service = await get_permission_service(command.workspace)
+        # RBAC evaluation remains usable without the optional host tool policy.
+        service = await get_permission_service(command.workspace, tool_policy_port=tool_policy_port)
         result = await service.check_permission(
             subject=Subject(type=SubjectType.ROLE, id=command.role),
             resource=Resource(
@@ -105,6 +109,7 @@ __all__ = [
     "PermissionPolicyError",
     "PermissionService",
     "QueryPermissionMatrixV1",
+    "ToolPolicyDecisionPort",
     "evaluate_permission",
     "get_permission_service",
 ]

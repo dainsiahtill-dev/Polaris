@@ -651,6 +651,9 @@ def _repair_diagnostic_evidence_is_compatible(primary: RepairDiagnostic, additiv
     """Raw prose is evidence, never authority over conflicting canonical facts."""
     if primary.path and additive.path and primary.path != additive.path:
         return False
+    generic_codes = {"artifact_quality_error", "artifact_quality_issue"}
+    if primary.code != additive.code and primary.code not in generic_codes and additive.code not in generic_codes:
+        return False
     for field in ("line", "column", "span_start", "span_end"):
         left, right = getattr(primary, field), getattr(additive, field)
         if left is not None and right is not None and left != right:
@@ -673,10 +676,82 @@ def _repair_diagnostic_evidence_is_compatible(primary: RepairDiagnostic, additiv
             return False
         if not primary.path or not additive.path:
             return False
-    for key in ("module", "symbol", "imported_symbol", "importer_path", "exporter_path", "target_file"):
+    for key in (
+        "module",
+        "symbol",
+        "imported_symbol",
+        "importer_path",
+        "exporter_path",
+        "target_file",
+        "owner_path",
+        "owner_cell",
+        "owner_id",
+    ):
         left, right = primary.metadata.get(key), additive.metadata.get(key)
         if left is not None and right is not None and left != right:
             return False
+    return True
+
+
+def _repair_diagnostic_is_opaque_fallback(diagnostic: RepairDiagnostic) -> bool:
+    return (
+        diagnostic.code == "artifact_quality_error"
+        and diagnostic.path is None
+        and all(getattr(diagnostic, field) is None for field in ("line", "column", "span_start", "span_end"))
+        and not _repair_diagnostic_has_explicit_id(diagnostic)
+        and not diagnostic.metadata
+    )
+
+
+def _repair_typed_issue_refines_fallback(
+    fallback: RepairDiagnostic,
+    diagnostic: RepairDiagnostic,
+    issue: Mapping[str, Any],
+) -> bool:
+    """Bind a specific typed projection to its original opaque raw finding."""
+    metadata = issue.get("metadata", {})
+    if not isinstance(metadata, Mapping):
+        return False
+    # The legacy normalizer accepts coercible data for historical observation.
+    # Such coercion cannot prove the identity needed to replace a raw finding.
+    for container in (issue, metadata):
+        for key in (
+            "code",
+            "diagnostic_code",
+            "source",
+            "message",
+            "raw",
+            "path",
+            "file",
+            "importer_path",
+            "target_file",
+            "specifier",
+            "owner_path",
+            "owner_cell",
+            "owner_id",
+        ):
+            value = container.get(key)
+            if value is not None and not isinstance(value, str):
+                return False
+        for key in ("line", "column", "span_start", "span_end"):
+            value = container.get(key)
+            if value is not None and (isinstance(value, bool) or not str(value).isdecimal()):
+                return False
+    origin = issue.get("raw") or metadata.get("raw")
+    if (
+        not isinstance(origin, str)
+        or not origin.strip()
+        or origin.strip() != _repair_diagnostic_raw_key(fallback)
+        or diagnostic.source != fallback.source
+        or diagnostic.code in {"artifact_quality_error", "artifact_quality_issue"}
+    ):
+        return False
+    if "specifier" in diagnostic.metadata or diagnostic.code in {
+        "undeclared_runtime_import",
+        "unresolved_relative_import",
+        "typescript_ts2307",
+    }:
+        return bool(diagnostic.path and _repair_diagnostic_specifier(diagnostic))
     return True
 
 
@@ -734,8 +809,10 @@ def _repair_diagnostics_from_quality_inputs(
     During WS4 migration, KernelOne typed artifact issues are an evidence
     projection while the Director runtime string normalizer still carries some
     language-specific diagnostic refinement. When both inputs describe the same
-    raw finding, keep the legacy refined diagnostic and use typed issues only as
-    additive evidence. Typed-only callers still work without legacy strings.
+    raw finding, keep a precise legacy diagnostic and add compatible evidence.
+    A validated typed finding replaces only its same-origin opaque fallback;
+    conflicting typed identities remain distinct. Typed-only callers still work
+    without legacy strings.
     """
 
     diagnostics = list(normalize_artifact_quality_errors(list(artifact_quality_errors)))
@@ -746,24 +823,45 @@ def _repair_diagnostics_from_quality_inputs(
             index_by_raw.setdefault(raw_key, []).append(index)
         if (structural_key := _repair_diagnostic_structural_key(item)) is not None:
             index_by_structural.setdefault(structural_key, []).append(index)
-    for diagnostic in _repair_diagnostics_from_artifact_quality_issues(artifact_quality_issues):
+    typed_sources_by_index: dict[int, str] = {}
+    typed_diagnostics = (
+        (issue, diagnostic)
+        for issue in artifact_quality_issues
+        for diagnostic in _repair_diagnostics_from_artifact_quality_issues((issue,))
+    )
+    for issue, diagnostic in typed_diagnostics:
         raw_key = _repair_diagnostic_raw_key(diagnostic)
         structural_key = _repair_diagnostic_structural_key(diagnostic)
         candidates = dict.fromkeys([*index_by_raw.get(raw_key, ()), *index_by_structural.get(structural_key or "", ())])
-        matched_index = next(
-            (
-                index
-                for index in candidates
-                if _repair_diagnostic_evidence_is_compatible(diagnostics[index], diagnostic)
-            ),
-            None,
-        )
+        matched_index = None
+        refines_fallback = False
+        for index in candidates:
+            if index in typed_sources_by_index and typed_sources_by_index[index] != diagnostic.source:
+                continue
+            primary = diagnostics[index]
+            refines_fallback = _repair_diagnostic_is_opaque_fallback(primary) and (
+                _repair_typed_issue_refines_fallback(primary, diagnostic, issue)
+            )
+            if (
+                _repair_diagnostic_is_opaque_fallback(primary)
+                and diagnostic.code not in {"artifact_quality_error", "artifact_quality_issue"}
+                and not refines_fallback
+            ):
+                continue
+            if refines_fallback or _repair_diagnostic_evidence_is_compatible(primary, diagnostic):
+                matched_index = index
+                break
         if matched_index is not None:
             index = matched_index
-            diagnostics[index] = _merge_repair_diagnostic_evidence(diagnostics[index], diagnostic)
+            diagnostics[index] = (
+                _merge_repair_diagnostic_evidence(diagnostic, diagnostics[index])
+                if refines_fallback
+                else _merge_repair_diagnostic_evidence(diagnostics[index], diagnostic)
+            )
         else:
             index = len(diagnostics)
             diagnostics.append(diagnostic)
+        typed_sources_by_index[index] = diagnostic.source
         # Record every alias after refinement; one raw string may refer to
         # several distinct canonical findings and must retain all candidates.
         for key in {raw_key, _repair_diagnostic_raw_key(diagnostics[index])} - {""}:

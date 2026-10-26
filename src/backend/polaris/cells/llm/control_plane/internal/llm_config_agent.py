@@ -11,11 +11,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.roles.runtime.public import (
-    AgentMessage,
-    MessageType,
-    RoleAgent,
-)
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 
 
@@ -109,16 +104,17 @@ def _validate_provider_cfg(cfg: dict[str, Any]) -> None:
 
 
 def _infer_workspace_from_storage_path(storage_path: str) -> str:
+    """Infer the nearest physical storage boundary, never a name substring."""
     target = Path(str(storage_path or "")).expanduser().resolve()
-    path_str = str(target).lower()
-    for marker in (".polaris", ".polaris-cache", "runtime"):
-        idx = path_str.find(marker)
-        if idx > 0:
-            parent = str(target)[:idx]
-            if parent:
-                resolved = Path(parent).resolve()
-                if str(resolved) != ".":
-                    return str(resolved)
+    metadata_names = (".polaris", ".polaris-cache")
+    for candidate in (target, *target.parents):
+        if any(candidate.match(marker) for marker in metadata_names):
+            return str(candidate.parent)
+        if candidate.match("runtime"):
+            parent = candidate.parent
+            if any(parent.match(marker) for marker in metadata_names):
+                return str(parent.parent)
+            return str(parent)
     return str(Path.cwd().resolve())
 
 
@@ -311,22 +307,16 @@ class LLMConfigStore:
             self._cache_dirty = False
 
 
-class HRAgent(RoleAgent):
-    """Model-governance advisor with a legacy HR class name.
+class LLMConfigService:
+    """Deterministic configuration operations over the existing KFS Store."""
 
-    The class manages role/provider configuration state.  It is not a default
-    LLM-bound delivery role and must not be promoted into the PM → Chief
-    Engineer → Director → QA execution chain.
-    """
-
-    def __init__(self, workspace: str) -> None:
-        super().__init__(workspace=workspace, agent_name="HR")
-        config_dir = str(Path(_get_polaris_home()) / "config" / "llm")
-        self._config_store = LLMConfigStore(config_dir)
+    def __init__(self, config_dir: str | Path | None = None) -> None:
+        config_path = Path(config_dir) if config_dir is not None else Path(_get_polaris_home()) / "config" / "llm"
+        self._config_store = LLMConfigStore(str(config_path))
         self._config_store.preload()
 
-    def _resolve_provider_kind(
-        self,
+    @staticmethod
+    def resolve_provider_kind(
         provider_id: str,
         provider_type: str,
         provider_cfg: dict[str, Any],
@@ -341,17 +331,7 @@ class HRAgent(RoleAgent):
             return "codex"
         return "generic"
 
-    def setup_toolbox(self) -> None:
-        tb = self.toolbox
-        tb.register("set_llm_config", self._tool_set_llm_config)
-        tb.register("get_llm_config", self._tool_get_llm_config)
-        tb.register("list_all_configs", self._tool_list_all_configs)
-        tb.register("update_llm_config", self._tool_update_llm_config)
-        tb.register("deactivate_config", self._tool_deactivate_config)
-        tb.register("activate_config", self._tool_activate_config)
-        tb.register("delete_config", self._tool_delete_config)
-
-    def _tool_set_llm_config(
+    def set_llm_config(
         self,
         role: str,
         provider_id: str,
@@ -371,7 +351,7 @@ class HRAgent(RoleAgent):
             role=str(role or "").strip(),
             provider_id=str(provider_id or "").strip(),
             provider_type=str(provider_type or "").strip().lower(),
-            provider_kind=self._resolve_provider_kind(provider_id, provider_type, cfg),
+            provider_kind=self.resolve_provider_kind(provider_id, provider_type, cfg),
             model=str(model or "").strip(),
             profile=str(profile or "").strip(),
             provider_cfg=cfg,
@@ -382,17 +362,17 @@ class HRAgent(RoleAgent):
         self._config_store.save(item)
         return {"ok": True, "config": item.to_dict(mask_secrets=True)}
 
-    def _tool_get_llm_config(self, role: str) -> dict[str, Any]:
+    def get_llm_config(self, role: str) -> dict[str, Any]:
         item = self._config_store.get(role)
         if item is None:
             return {"ok": True, "has_config": False, "role": role}
         return {"ok": True, "has_config": True, "config": item.to_dict(mask_secrets=True)}
 
-    def _tool_list_all_configs(self) -> dict[str, Any]:
+    def list_all_configs(self) -> dict[str, Any]:
         rows = self._config_store.get_all()
         return {"ok": True, "count": len(rows), "configs": [item.to_dict(mask_secrets=True) for item in rows]}
 
-    def _tool_update_llm_config(
+    def update_llm_config(
         self,
         role: str,
         provider_id: str | None = None,
@@ -420,14 +400,14 @@ class HRAgent(RoleAgent):
         new_item = replace(item, **kwargs)
         new_item = replace(
             new_item,
-            provider_kind=self._resolve_provider_kind(
+            provider_kind=self.resolve_provider_kind(
                 new_item.provider_id, new_item.provider_type, new_item.provider_cfg
             ),
         )
         self._config_store.save(new_item)
         return {"ok": True, "config": new_item.to_dict(mask_secrets=True)}
 
-    def _tool_deactivate_config(self, role: str) -> dict[str, Any]:
+    def deactivate_config(self, role: str) -> dict[str, Any]:
         item = self._config_store.get(role)
         if item is None:
             return {"ok": False, "error": "config_not_found", "role": role}
@@ -435,7 +415,7 @@ class HRAgent(RoleAgent):
         self._config_store.save(new_item)
         return {"ok": True, "config": new_item.to_dict(mask_secrets=True)}
 
-    def _tool_activate_config(self, role: str) -> dict[str, Any]:
+    def activate_config(self, role: str) -> dict[str, Any]:
         item = self._config_store.get(role)
         if item is None:
             return {"ok": False, "error": "config_not_found", "role": role}
@@ -443,49 +423,8 @@ class HRAgent(RoleAgent):
         self._config_store.save(new_item)
         return {"ok": True, "config": new_item.to_dict(mask_secrets=True)}
 
-    def _tool_delete_config(self, role: str) -> dict[str, Any]:
+    def delete_config(self, role: str) -> dict[str, Any]:
         return {"ok": True, "deleted": self._config_store.delete(role), "role": role}
-
-    def handle_message(self, message: AgentMessage) -> AgentMessage | None:
-        payload = dict(message.payload or {})
-        if message.type != MessageType.TASK:
-            return None
-        action = str(payload.get("action") or "").strip().lower()
-        try:
-            if action == "set_config":
-                result = self._tool_set_llm_config(
-                    role=str(payload.get("role") or "").strip(),
-                    provider_id=str(payload.get("provider_id") or "").strip(),
-                    provider_type=str(payload.get("provider_type") or "").strip(),
-                    model=str(payload.get("model") or "").strip(),
-                    profile=str(payload.get("profile") or "").strip(),
-                    provider_cfg=payload.get("provider_cfg") if isinstance(payload.get("provider_cfg"), dict) else {},
-                )
-            elif action == "get_config":
-                result = self._tool_get_llm_config(str(payload.get("role") or "").strip())
-            elif action == "list_configs":
-                result = self._tool_list_all_configs()
-            else:
-                result = {"ok": False, "error": "unsupported_action", "action": action}
-        except Exception as exc:  # noqa: BLE001
-            result = {"ok": False, "error": "internal_error", "detail": str(exc)}
-
-        return AgentMessage.create(
-            msg_type=MessageType.RESULT,
-            sender=self.agent_name,
-            receiver=message.sender,
-            payload={"role": "hr", "action": action, "result": result},
-            correlation_id=message.id,
-        )
-
-    def run_cycle(self) -> bool:
-        message = self.message_queue.receive(block=False)
-        if message is None:
-            return False
-        response = self.handle_message(message)
-        if response is not None:
-            self.message_queue.send(response)
-        return True
 
     def get_config(self, role: str) -> LLMConfig | None:
         return self._config_store.get(role)

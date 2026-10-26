@@ -8,15 +8,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from polaris.cells.director.runtime.public import (
-    DirectedEffectImmutableMapV1,
-    DirectedEffectImmutableSequenceV1,
-    hash_directed_effect_arguments,
-)
-from polaris.cells.director.runtime.public.directed_effect_policy_contracts import (
-    DirectorEffectPolicyOperationSubjectV1,
-    hash_director_effect_policy_operation_subject,
-)
 from polaris.cells.events.fact_stream.public import (
     FactPayloadReferenceV1,
     FactStreamError,
@@ -50,7 +41,15 @@ from polaris.cells.runtime.task_runtime.public.execution_effect_closure import (
     QueryExecutionEffectClosuresV1,
     QueryExecutionEffectClosureV1,
 )
+from polaris.cells.runtime.task_runtime.public.operation_identity import (
+    DirectedEffectOperationSubjectV1,
+    hash_directed_effect_operation_subject,
+)
 from polaris.kernelone.editing.contracts import EditPrewriteRejectionV1, hash_edit_prewrite_arguments
+from polaris.kernelone.effect.immutable_payload import (
+    freeze_directed_effect_arguments as _negative_arguments_items,
+    hash_directed_effect_arguments,
+)
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments_from_snapshot
 from polaris.kernelone.storage import resolve_workspace_runtime_identity
@@ -869,20 +868,9 @@ def _registry_absent(
     )
 
 
-def _negative_arguments_items(arguments: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
-    def freeze(value: Any) -> Any:
-        if isinstance(value, dict):
-            return DirectedEffectImmutableMapV1(tuple((key, freeze(item)) for key, item in value.items()))
-        if isinstance(value, list):
-            return DirectedEffectImmutableSequenceV1(tuple(freeze(item) for item in value))
-        return value
-
-    return tuple((key, freeze(value)) for key, value in arguments.items())
-
-
 def _negative_operation_binding_matches(arguments: dict[str, Any], attempt: Any, binding: Any, member: Any) -> bool:
     try:
-        subject = DirectorEffectPolicyOperationSubjectV1(
+        subject = DirectedEffectOperationSubjectV1(
             workspace=attempt.workspace,
             turn_id=binding.correlation.turn_id,
             batch_id=binding.correlation.batch_id,
@@ -894,7 +882,7 @@ def _negative_operation_binding_matches(arguments: dict[str, Any], attempt: Any,
             execution_mode=member.execution_mode,
             prospective_operation_hash=member.intended_effect_fingerprint,
         )
-        operation_hash = hash_director_effect_policy_operation_subject(subject)
+        operation_hash = hash_directed_effect_operation_subject(subject)
         return (
             operation_hash
             == member.intended_effect_fingerprint

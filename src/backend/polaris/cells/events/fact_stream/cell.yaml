@@ -21,11 +21,13 @@ public_surface:
   exports:
   - AppendFactEventCommandV1
   - AppendIfGuardedSnapshotCommandV1
+  - AppendPayloadFactEventCommandV1
   - AppendSegmentedFactEventCommandV1
   - BootstrapFactStreamWorkspaceCommandV1
   - EnrollFactStreamStreamsCommandV1
   - EnsureSegmentedFactLedgerCommandV1
   - FactEventAppendedV1
+  - FactPayloadReferenceV1
   - FactStreamError
   - FactStreamHeadV1
   - FactStreamLockIdentityV1
@@ -41,6 +43,8 @@ public_surface:
   - ProvisionFactStreamLockAuthorityCommandV1
   - QueryFactEventsV1
   - QueryFactStreamHeadV1
+  - QueryPayloadFactByIdempotencyKeyV1
+  - QueryPayloadFactEventsV1
   - QuerySegmentedFactEventsV1
   - QuerySegmentedFactLedgerHeadV1
   - ReadGuardedFactSnapshotCommandV1
@@ -48,8 +52,10 @@ public_surface:
   - SegmentedFactLedgerHeadV1
   - SegmentedFactLedgerReadyV1
   - SegmentedFactQueryResultV1
+  - StoreFactPayloadCommandV1
   - append_fact_event
   - append_if_guarded_snapshot
+  - append_payload_fact_event
   - append_segmented_fact_event
   - bootstrap_fact_stream_workspace
   - configure_debug_tracing
@@ -63,19 +69,14 @@ public_surface:
   - provision_fact_stream_lock_authority
   - query_fact_events
   - query_fact_stream_head
+  - query_payload_fact_by_idempotency_key
+  - query_payload_fact_events
+  - query_payload_fact_ledger_presence
   - query_segmented_fact_events
   - query_segmented_fact_ledger_head
   - read_guarded_fact_snapshot
   - sanitize_headers
   - set_debug_tracing_enabled
-  - AppendPayloadFactEventCommandV1
-  - FactPayloadReferenceV1
-  - QueryPayloadFactEventsV1
-  - StoreFactPayloadCommandV1
-  - append_payload_fact_event
-  - fact_payload_streams
-  - query_payload_fact_events
-  - query_payload_fact_ledger_presence
   - store_fact_payload
 public_contracts:
   modules:
@@ -127,6 +128,7 @@ effects_allowed:
 - fs.write:runtime/events/*
 verification:
   tests:
+  - polaris/cells/events/fact_stream/public/tests/test_public_surface.py
   - polaris/cells/events/fact_stream/public/tests/test_guarded_fact_append.py
   - polaris/cells/events/fact_stream/public/tests/test_public_contracts.py
   - polaris/cells/events/fact_stream/public/tests/test_public_service.py

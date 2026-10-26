@@ -16,13 +16,14 @@ Phase 8 更新（P0-09 权限决策审计）：
 状态管理策略（重构后）：
 - PermissionService 实例内部持有策略等状态。
 - create_permission_service() 用于显式创建独立实例，适合 DI 和测试隔离。
-- get_permission_service() 提供按 workspace 复用的进程内共享实例，保持既有调用契约稳定。
+- get_permission_service() 按 workspace 与 host 工具策略端口身份复用实例，未绑定端口的实例独立。
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import Lock
@@ -35,6 +36,7 @@ from polaris.cells.policy.permission.internal.condition_evaluator import (
     PermissionConditionEvaluator,
 )
 from polaris.cells.policy.permission.internal.role_graph import PermissionRoleGraph
+from polaris.cells.policy.permission.public.contracts import ToolPolicyDecisionPort
 from polaris.cells.roles.profile.public.service import (
     Action,
     PermissionCheckResult,
@@ -48,7 +50,7 @@ from polaris.cells.roles.profile.public.service import (
 
 logger = logging.getLogger(__name__)
 
-_PERMISSION_SERVICE_CACHE: dict[str, PermissionService] = {}
+_PERMISSION_SERVICE_CACHE: dict[tuple[str, int | None], PermissionService] = {}
 _PERMISSION_SERVICE_CACHE_LOCK = Lock()
 
 
@@ -125,16 +127,21 @@ class PermissionService:
         self,
         workspace: str = "",
         audit_sink: PermissionAuditPort | None = None,
+        *,
+        tool_policy_port: ToolPolicyDecisionPort | None = None,
     ) -> None:
         """初始化权限服务
 
         Args:
             workspace: 工作区路径
+            tool_policy_port: Explicit workspace-bound host tool policy; absent keeps
+                RBAC available while fine tool decisions deny as unavailable.
             audit_sink: 审计写入接口（可选）。若为 None，决策不写入审计；
                         若注入实例，每次 ALLOW/DENY 决策均异步写入，写入
                         失败仅记录 logger.error，不影响决策结果。
         """
         self.workspace = workspace
+        self._tool_policy_port = tool_policy_port
         self._policies: dict[str, Policy] = {}
         self._role_permissions: dict[str, set[str]] = {}  # role_id -> permission_ids
         self._subject_role_bindings: dict[tuple[SubjectType, str], set[str]] = {}
@@ -154,7 +161,7 @@ class PermissionService:
 
         # 加载内置 RBAC 策略
         self._load_builtin_policies()
-        # 从 RoleToolGateway 转换权限
+        # A host tool projection is optional for independent RBAC evaluation.
         await self._sync_from_tool_gateway()
 
         self._initialized = True
@@ -323,45 +330,34 @@ class PermissionService:
         logger.debug(f"[PermissionService] Loaded {len(builtin_policies)} builtin policies")
 
     async def _sync_from_tool_gateway(self) -> None:
-        """从现有 RoleToolGateway 同步权限配置
-
-        将现有的工具级别权限配置转换为 RBAC 权限。
-        """
+        """Refresh the host's tool projection without importing an execution owner."""
+        if self._tool_policy_port is None:
+            return
         try:
-            from polaris.cells.roles.kernel.public.service import RoleToolGateway
-            from polaris.cells.roles.profile.public.service import load_core_roles, registry
+            port = self._bound_tool_policy()
+            permissions = port.role_permissions()
+            if self._bound_tool_policy() is not port:
+                raise PermissionServiceError("tool_policy_workspace_binding_changed")
+            if not isinstance(permissions, Mapping) or any(
+                not isinstance(role, str)
+                or not role.strip()
+                or not isinstance(values, frozenset)
+                or any(not isinstance(value, str) or not value.strip() for value in values)
+                for role, values in permissions.items()
+            ):
+                raise PermissionServiceError("tool_policy_invalid_permissions")
+            self._role_permissions = {role: set(values) for role, values in permissions.items()}
+        except Exception as exc:
+            self._role_permissions.clear()
+            logger.error("[PermissionService] Tool policy projection unavailable: %s", exc, exc_info=True)
 
-            # 加载核心角色配置
-            load_core_roles()
-
-            # 获取所有已注册的角色
-            profiles = registry.get_all_profiles()
-
-            for role_id, profile in profiles.items():
-                # 创建 RoleToolGateway 实例以获取工具策略
-                gateway = RoleToolGateway(profile, self.workspace)
-
-                # 提取工具权限
-                tool_permissions: set[str] = set()
-
-                # 白名单工具 -> execute 权限
-                for tool in gateway.get_available_tools():
-                    tool_permissions.add(f"tool:execute:{tool}")
-
-                # 根据策略标志添加额外权限
-                if profile.tool_policy.allow_code_write:
-                    tool_permissions.add("file:write:**/*")
-                if profile.tool_policy.allow_command_execution:
-                    tool_permissions.add("api:execute:execute_command")
-                if profile.tool_policy.allow_file_delete:
-                    tool_permissions.add("file:delete:**/*")
-
-                self._role_permissions[role_id] = tool_permissions
-
-            logger.debug(f"[PermissionService] Synced permissions for {len(self._role_permissions)} roles")
-
-        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
-            logger.warning("[PermissionService] Failed to sync from tool gateway: %s", exc)
+    def _bound_tool_policy(self) -> ToolPolicyDecisionPort:
+        port = self._tool_policy_port
+        if port is None:
+            raise PermissionServiceError("tool_policy_unavailable")
+        if port.workspace != self.workspace:
+            raise PermissionServiceError("tool_policy_workspace_mismatch")
+        return port
 
     # ------------------------------------------------------------------
     # Phase 8: Audit helper (fire-and-forget, observable)
@@ -704,30 +700,41 @@ class PermissionService:
         if not rbac_result.allowed:
             return rbac_result
 
-        # 如果 RBAC 允许，委托给 RoleToolGateway 进行更细粒度的检查
+        # The host supplies the same fine policy; RBAC alone cannot replace it.
         try:
-            from polaris.cells.roles.kernel.public.service import RoleToolGateway
-            from polaris.cells.roles.profile.public.service import registry
-
-            profile = registry.get_profile(role_id)
-            if profile:
-                gateway = RoleToolGateway(profile, self.workspace)
-                allowed, reason = gateway.check_tool_permission(tool_name, tool_args)
-
-                if not allowed:
-                    return PermissionCheckResult(
-                        allowed=False,
-                        decision="deny",
-                        matched_policies=rbac_result.matched_policies,
-                        reason=f"tool gateway: {reason}",
-                    )
-
-            return rbac_result
-
-        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
-            logger.warning("[PermissionService] Tool gateway check failed: %s", exc)
-            # 如果 RoleToolGateway 检查失败，回退到 RBAC 决策
-            return rbac_result
+            port = self._bound_tool_policy()
+            decision = port.check_tool_permission(role_id, tool_name, tool_args)
+            if self._bound_tool_policy() is not port:
+                raise PermissionServiceError("tool_policy_workspace_binding_changed")
+            if (
+                not isinstance(decision, tuple)
+                or len(decision) != 2
+                or type(decision[0]) is not bool
+                or not isinstance(decision[1], str)
+                or not decision[1].strip()
+            ):
+                raise PermissionServiceError("tool_policy_unavailable: invalid_decision")
+            allowed, reason = decision
+            if allowed:
+                return rbac_result
+            denial_reason = f"tool gateway: {reason}"
+        except Exception as exc:
+            logger.error("[PermissionService] Fine tool policy unavailable: %s", exc, exc_info=True)
+            denial_reason = str(exc) if isinstance(exc, PermissionServiceError) else "tool_policy_unavailable"
+        self._emit_audit_decision(
+            subject=Subject(type=SubjectType.ROLE, id=role_id),
+            resource=Resource(type=ResourceType.TOOL, pattern=tool_name),
+            action=Action.EXECUTE,
+            result="DENY",
+            reason=denial_reason,
+            context=None,
+        )
+        return PermissionCheckResult(
+            allowed=False,
+            decision="deny",
+            matched_policies=rbac_result.matched_policies,
+            reason=denial_reason,
+        )
 
     async def get_effective_permissions(self, subject: Subject) -> list[str]:
         """获取主体的有效权限列表
@@ -743,6 +750,7 @@ class PermissionService:
         if not self._initialized:
             await self.initialize()
 
+        await self._sync_from_tool_gateway()
         permissions: set[str] = set()
         if subject.type == SubjectType.ROLE:
             # Phase 7: 展开角色继承
@@ -768,6 +776,7 @@ class PermissionService:
         if not self._initialized:
             await self.initialize()
 
+        await self._sync_from_tool_gateway()
         from polaris.cells.roles.profile.public.service import load_core_roles, registry
 
         # 确保核心角色已加载
@@ -920,7 +929,9 @@ class PermissionService:
 # =============================================================================
 
 
-def create_permission_service(workspace: str = "") -> PermissionService:
+def create_permission_service(
+    workspace: str = "", *, tool_policy_port: ToolPolicyDecisionPort | None = None
+) -> PermissionService:
     """工厂函数：创建一个新的 PermissionService 实例。
 
     调用方（应用层、DI 容器）负责实例生命周期和缓存策略。
@@ -933,17 +944,20 @@ def create_permission_service(workspace: str = "") -> PermissionService:
     Returns:
         PermissionService: 全新的权限服务实例（未初始化）。
     """
-    return PermissionService(workspace=_normalize_workspace(workspace))
+    return PermissionService(workspace=_normalize_workspace(workspace), tool_policy_port=tool_policy_port)
 
 
 def _normalize_workspace(workspace: str) -> str:
     return str(workspace or "")
 
 
-async def get_permission_service(workspace: str = "") -> PermissionService:
-    """获取按 workspace 复用的共享权限服务实例。
+async def get_permission_service(
+    workspace: str = "", *, tool_policy_port: ToolPolicyDecisionPort | None = None
+) -> PermissionService:
+    """获取按 workspace 与端口对象身份复用的共享权限服务实例。
 
-    对现有调用方保持稳定：同一 workspace 返回同一实例。
+    同一 workspace 和同一工具策略端口返回同一实例；未绑定端口的
+    RBAC 实例不能借用其他端口的权限或跨 workspace 的状态。
     需要测试隔离或显式生命周期控制时，使用 create_permission_service()。
 
     Args:
@@ -953,16 +967,17 @@ async def get_permission_service(workspace: str = "") -> PermissionService:
         PermissionService 实例（已初始化）。
     """
     normalized_workspace = _normalize_workspace(workspace)
+    cache_key = (normalized_workspace, id(tool_policy_port) if tool_policy_port is not None else None)
     with _PERMISSION_SERVICE_CACHE_LOCK:
-        service = _PERMISSION_SERVICE_CACHE.get(normalized_workspace)
+        service = _PERMISSION_SERVICE_CACHE.get(cache_key)
 
     if service is None:
-        candidate = PermissionService(workspace=normalized_workspace)
+        candidate = PermissionService(workspace=normalized_workspace, tool_policy_port=tool_policy_port)
         await candidate.initialize()
         with _PERMISSION_SERVICE_CACHE_LOCK:
-            service = _PERMISSION_SERVICE_CACHE.get(normalized_workspace)
+            service = _PERMISSION_SERVICE_CACHE.get(cache_key)
             if service is None:
-                _PERMISSION_SERVICE_CACHE[normalized_workspace] = candidate
+                _PERMISSION_SERVICE_CACHE[cache_key] = candidate
                 service = candidate
     elif not service._initialized:
         await service.initialize()
@@ -970,8 +985,10 @@ async def get_permission_service(workspace: str = "") -> PermissionService:
     return service
 
 
-def get_permission_service_sync(workspace: str = "") -> PermissionService:
-    """同步获取按 workspace 复用的共享权限服务实例。
+def get_permission_service_sync(
+    workspace: str = "", *, tool_policy_port: ToolPolicyDecisionPort | None = None
+) -> PermissionService:
+    """同步获取按 workspace 与工具策略端口身份复用的共享实例。
 
     返回值未自动 initialize()，调用方需在异步边界完成初始化。
 
@@ -982,11 +999,12 @@ def get_permission_service_sync(workspace: str = "") -> PermissionService:
         PermissionService 实例（可能未初始化）。
     """
     normalized_workspace = _normalize_workspace(workspace)
+    cache_key = (normalized_workspace, id(tool_policy_port) if tool_policy_port is not None else None)
     with _PERMISSION_SERVICE_CACHE_LOCK:
-        service = _PERMISSION_SERVICE_CACHE.get(normalized_workspace)
+        service = _PERMISSION_SERVICE_CACHE.get(cache_key)
         if service is None:
-            service = PermissionService(workspace=normalized_workspace)
-            _PERMISSION_SERVICE_CACHE[normalized_workspace] = service
+            service = PermissionService(workspace=normalized_workspace, tool_policy_port=tool_policy_port)
+            _PERMISSION_SERVICE_CACHE[cache_key] = service
     return service
 
 

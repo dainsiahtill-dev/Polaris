@@ -285,7 +285,7 @@ def test_missing_model_metadata_stays_unavailable_and_smaller_caps_are_retained(
 
 
 def test_configuration_agent_accepts_platform_ceiling_and_rejects_outside_range():
-    from polaris.cells.llm.control_plane.internal.llm_config_agent import _validate_provider_cfg
+    from polaris.cells.llm.control_plane.public.service import validate_llm_provider_cfg as _validate_provider_cfg
     from polaris.kernelone.llm.config_store import ProviderConfig
 
     _validate_provider_cfg({"max_tokens": 1_000_000})

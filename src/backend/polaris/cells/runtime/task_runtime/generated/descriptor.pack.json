@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-10-14T13:05:53.819947Z",
-  "source_hash": "76a80682392ea5df",
+  "generated_at": "2026-10-25T19:15:21.364078Z",
+  "source_hash": "78966064277dd430",
   "cell_id": "runtime.task_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -520,6 +520,50 @@
       "description": "",
       "defined_in": "polaris/cells/runtime/task_runtime/public/execution_effect_closure.py",
       "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TaskRuntimeService",
+      "description": "Runtime task lifecycle service for the ``runtime.task_runtime`` cell.",
+      "defined_in": "polaris/cells/runtime/task_runtime/internal/service/_service.py",
+      "methods": [
+        {
+          "name": "create_task_row",
+          "doc": "Create a task and return the runtime row projection with event evidence."
+        },
+        {
+          "name": "update_task_row",
+          "doc": "Update a task and return the runtime row projection with event evidence."
+        },
+        {
+          "name": "reopen_task_row",
+          "doc": "Reopen a task and return the runtime row projection with event evidence."
+        },
+        {
+          "name": "get_task",
+          "doc": "Return the task-runtime observable read model for a single task row."
+        },
+        {
+          "name": "list_ready_task_rows",
+          "doc": "Return ready rows after the compatibility dependency refresh."
+        },
+        {
+          "name": "list_observable_task_rows",
+          "doc": "Return task rows for read-only runtime projections."
+        },
+        {
+          "name": "query_same_task_local_rework_authorization",
+          "doc": "Recover one exact committed rework authorization from append-only facts."
+        },
+        {
+          "name": "get_task_row_stats",
+          "doc": "Compatibility entrypoint for observable task-row status counts."
+        },
+        {
+          "name": "claim_next_execution",
+          "doc": "Atomically select and claim the next executable task."
+        }
+      ]
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

@@ -18,6 +18,7 @@ owned_paths:
 - polaris/cells/policy/permission/public/**
 - polaris/domain/entities/capability.py
 - polaris/domain/entities/policy.py
+- polaris/tests/test_permission_service.py
 public_contracts:
   modules:
   - polaris.cells.policy.permission.public.contracts
@@ -35,6 +36,7 @@ public_contracts:
 depends_on:
 - policy.workspace_guard
 - audit.evidence
+- roles.profile
 subgraphs:
 - execution_governance_pipeline
 state_owners:
@@ -55,4 +57,18 @@ verification:
   gaps:
   - Initial business-cell declaration; implementation convergence is in progress.
   smoke_commands: []
+  test_dependencies:
+  - path: polaris/cells/policy/permission/public/tests/test_tool_policy_port.py
+    depends_on:
+    - roles.kernel
+    - roles.profile
+  - path: polaris/tests/test_permission_service.py
+    depends_on:
+    - roles.kernel
+    - roles.profile
+  test_effects_allowed:
+  - path: polaris/cells/policy/permission/public/tests/test_tool_policy_port.py
+    effects_allowed:
+    - process.spawn:python/permission_owner_cold_import
+    reason: Cold RBAC owner import with RoleKernel imports blocked; no provider, tool or target execution.
 generated_artifacts: []

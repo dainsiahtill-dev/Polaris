@@ -1,0 +1,15 @@
+# 权限 owner 与工具决策适配器的依赖分离
+
+状态：全仓收敛设计，待实现/验证。证据与当前调用者见big-scc-first-cuts/report.json CUT-B。
+
+PermissionService当前在initialize和check_tool_permission中直接构造RoleToolGateway，造成policy.permission->roles.kernel逆向依赖；后者异常时返回RBAC允许，存在已识别的失败放行。HTTP权限router与public evaluate_permission是真实当前消费者，不能把它们判为死代码。
+
+保留PermissionService的RBAC、角色继承/条件、缓存、审计和workspace owner；通过其自身公开的窄ToolPolicyDecisionPort消费可用工具/策略快照与精确工具决策。先复用同语义既有公开技术接口；确实缺口才增加该owner内Protocol。真实RoleKernel适配器使用相同RoleProfile、ToolSpec snapshot、alias/arg_alias归一化和RoleToolGateway决策，由高层bootstrap/delivery composition注入。低层服务不反向import/构造RoleKernel，无lazy import fallback。
+
+普通RBAC接口在无工具适配器时仍可独立使用；需要精细工具权限的接口在adapter缺失、未知role或决策异常时明确deny/unavailable，绝不把失败误作RBAC允许。这是明确安全修复，不扩大生产权限。audit sink失败仍可观察且不改变原决策；持久policy数据和新工程host PermissionScope不改。
+
+所有实际factory/getter/router必须完成真实适配器注入；不能只改constructor让产品失去工具能力。按workspace及当前host profile/snapshot绑定，缓存不能串用旧实例或跨workspace授权。
+
+先保存原真实gateway核心角色及自定义角色决策金标（含空whitelist、别名、未知工具、危险命令、cwd/path/symlink/capability scope），并先红后绿复现异常放行。修后正常授权与拒绝语义一致，新增故障路径明确拒绝。冷进程核心服务可在RoleKernel import禁用时初始化RBAC，真实host组合仍完成原工具查询/决策。现有权限/HTTP/RoleGateway回归及独立安全审查通过后停止该主题。
+
+不新增账本、控制器、Cell、模型合同或目标产物修改。Root串行集成public facade、bootstrap、router、graph/Cell声明；实现者按文件互斥。大SCC其余边仍另行关闭，不能以本局部解环宣布全仓完成。

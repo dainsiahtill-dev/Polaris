@@ -17,8 +17,8 @@ from polaris.cells.llm.control_plane.public.contracts import (
     SaveLlmConfigCommandV1,
 )
 from polaris.cells.llm.control_plane.public.service import (
-    HRAgent,
     LLMConfig,
+    LLMConfigService,
     LLMConfigStore,
     LlmControlPlaneService,
     LLMMessage,
@@ -33,16 +33,17 @@ from polaris.cells.llm.control_plane.public.service import (
     load_llm_config_port,
     ollama_stop,
     save_llm_config,
+    validate_llm_provider_cfg,
 )
 
 __all__ = [
     "CheckLlmModelCapabilityQueryV1",
     "GetLlmConfigQueryV1",
     "GetLlmRuntimeStatusQueryV1",
-    "HRAgent",
     "ILLMControlPlane",
     "InvokeLlmRoleCommandV1",
     "LLMConfig",
+    "LLMConfigService",
     "LLMConfigStore",
     "LLMMessage",
     "LLMRequest",
@@ -66,4 +67,5 @@ __all__ = [
     "load_llm_config_port",
     "ollama_stop",
     "save_llm_config",
+    "validate_llm_provider_cfg",
 ]

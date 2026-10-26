@@ -17,20 +17,11 @@ from polaris.cells.control_plane.run_ledger.public import (
 )
 from polaris.cells.control_plane.run_ledger.public.committed_turn_receipts import query_committed_turn_receipts
 from polaris.cells.control_plane.run_ledger.public.ledger import stable_hash
-from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime
-from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
-from polaris.cells.roles.kernel.internal.transaction.outcome_commit import commit_turn_result
-from polaris.cells.roles.kernel.public.turn_contracts import (
-    BatchId,
-    FinalizeMode,
-    ToolBatch,
-    ToolCallId,
-    ToolInvocation,
-    TurnDecision,
-    TurnDecisionKind,
-    TurnId,
+from polaris.cells.roles.kernel.tests.run_ledger_owner_scenarios import (
+    produce_failed_cli_owner_case,
+    produce_readonly_owner_case,
+    produce_readonly_source_owner_case,
 )
-from polaris.cells.roles.kernel.tests.test_directed_effect_lifecycle import _setup_attempt
 from polaris.cells.runtime.task_runtime.public import (
     BindRuntimeTaskToFactoryRunCommandV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
@@ -104,64 +95,10 @@ def _append_gate(root: Path, attempt: Any, batch: dict[str, Any], *, include_bat
 
 
 async def _readonly_failed_product(root: Path, *, include_batch: bool = True, task_outcome: str = "failed"):
-    attempt = _setup_attempt(str(root))
-    assert bind_runtime_task_to_factory_run(
-        BindRuntimeTaskToFactoryRunCommandV1(workspace=str(root), task_id=str(attempt.task_id), factory_run_id=_FACTORY)
-    ).ok
-    fs = KernelFileSystem(str(root), get_default_adapter())
-    fs.workspace_write_text("source.txt", "actual readonly source", encoding="utf-8")
-
-    async def read(name: str, arguments: dict[str, Any]):
-        assert name == "read_file"
-        return {"content": fs.workspace_read_text(arguments["file_path"], encoding="utf-8")}
-
-    invocation = ToolInvocation(
-        call_id=ToolCallId("read-call"),
-        tool_name="read_file",
-        raw_tool_name="read_file",
-        arguments={"file_path": "source.txt"},
-        native_arguments={"file_path": "source.txt"},
-    )
-    turn = TurnId("read-turn")
-    batch_definition = ToolBatch(batch_id=BatchId("read-batch"), invocations=[invocation], readonly_serial=[invocation])
-    receipts = await ToolBatchRuntime(executor=read).execute_batch(batch_definition, turn)
-    batch = receipts[0].to_dict()
+    case = await produce_readonly_source_owner_case(root, factory_run_id=_FACTORY)
+    attempt, batch = case["attempt"], case["batch"]
     assert batch["results"][0]["status"] == "success"
     assert batch["results"][0]["result"]["content"] == "actual readonly source"
-    ledger = TurnLedger(turn_id=str(turn))
-    batch_definition = batch_definition.model_copy(update={"batch_id": BatchId(batch["batch_id"])})
-    ledger.record_invocation_batch(batch["batch_id"], [invocation])
-    ledger.record_decision(
-        TurnDecision(
-            turn_id=turn,
-            kind=TurnDecisionKind.TOOL_BATCH,
-            visible_message="read source",
-            tool_batch=batch_definition,
-            finalize_mode=FinalizeMode.NONE,
-            domain="code",
-            metadata={
-                "native_tool_call_envelopes": [
-                    {
-                        "schema_version": "native_tool_call_envelope.v1",
-                        "index": 0,
-                        "call_id": "read-call",
-                        "tool_name": "read_file",
-                        "arguments_hash": stable_hash({"file_path": "source.txt"}),
-                    }
-                ]
-            },
-        )
-    )
-    commit_turn_result(
-        workspace=str(root),
-        run_id=attempt.run_id,
-        task_id=attempt.external_task_id,
-        transition_id="readonly-failed-product",
-        ledger=ledger,
-        result={"batch_receipt": batch},
-        completion_status="success",
-        session_id=attempt.session_id,
-    )
     assert settle_task_runtime_execution_attempt_typed(
         SettleTaskRuntimeExecutionAttemptCommandV1(
             workspace=str(root), identity=attempt, outcome=task_outcome, summary="independent product review failed"
@@ -195,11 +132,9 @@ async def test_real_successful_readonly_resources_release_while_product_gate_fai
 async def test_real_failed_cli_resources_close_without_product_acceptance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from polaris.cells.runtime.task_runtime.public.tests.test_payload_fact_execution_effect_closure import (
-        _real_v3_failed_cli,
-    )
-
-    attempt, batch = await _real_v3_failed_cli(tmp_path, monkeypatch)
+    case = await produce_failed_cli_owner_case(tmp_path)
+    attempt, batch = case["attempt"], case["batch"]
+    assert batch["raw_results"][0]["result"]["exit_code"] == 2
     assert bind_runtime_task_to_factory_run(
         BindRuntimeTaskToFactoryRunCommandV1(
             workspace=str(tmp_path), task_id=str(attempt.task_id), factory_run_id=_FACTORY
@@ -328,11 +263,7 @@ def test_shared_snapshot_rejects_legacy_head_change(tmp_path: Path, monkeypatch:
 
 async def _actual_layout_resource_control(root: Path, *, product_ok: bool):
     """Real private read/owner evidence; the product gate is an explicit test control."""
-    from polaris.cells.control_plane.run_ledger.tests.test_committed_readonly_batch_layouts import (
-        _actual_read_batch_owner,
-    )
-
-    data = await _actual_read_batch_owner(root, reordered=True, mixed_serializers=True)
+    data = await produce_readonly_owner_case(root, reordered=True, mixed_serializers=True)
     attempt = data["attempt"]
     factory = "factory-layout-resource-control"
     assert bind_runtime_task_to_factory_run(

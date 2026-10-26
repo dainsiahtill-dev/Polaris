@@ -1,0 +1,658 @@
+{
+  "version": 1,
+  "source_sha256": "72e1cb5a1aaea9d6865258ca1c220e856e88c1efa23bd42495b4f4e2ad5365ae",
+  "ordinary_service_source_sha256": "e74719161aa03414edf47c7307969b882b54361fa3f939bea120c27ae383da39",
+  "method": "Unchanged old operations; HRAgent.__new__ with explicitly private real Store, no RoleAgent/default-global construction. Frozen datetime/uuid and explicit KFS workspace factory fixture. All secret strings are synthetic.",
+  "hr_operations": [
+    {
+      "operation": "get_llm_config",
+      "arguments": {
+        "role": "missing"
+      },
+      "result": {
+        "ok": true,
+        "has_config": false,
+        "role": "missing"
+      },
+      "persisted_utf8": null
+    },
+    {
+      "operation": "list_all_configs",
+      "arguments": {},
+      "result": {
+        "ok": true,
+        "count": 0,
+        "configs": []
+      },
+      "persisted_utf8": null
+    },
+    {
+      "operation": "set_llm_config",
+      "arguments": {
+        "role": "pm",
+        "provider_id": "p",
+        "provider_type": "generic",
+        "model": "m",
+        "profile": "p",
+        "provider_cfg": {
+          "temperature": 3.0
+        }
+      },
+      "result": {
+        "ok": false,
+        "error": "invalid_provider_cfg",
+        "detail": "temperature must be between 0.0 and 2.0, got 3.0"
+      },
+      "persisted_utf8": null
+    },
+    {
+      "operation": "set_llm_config",
+      "arguments": {
+        "role": " pm ",
+        "provider_id": " local ",
+        "provider_type": " OLLAMA ",
+        "model": " 模型甲 ",
+        "profile": " 默认 ",
+        "provider_cfg": {
+          "api_key": "synthetic-key",
+          "API_TOKEN": "synthetic-token",
+          "access_token": "synthetic-access",
+          "secret": "synthetic-secret",
+          "password": "synthetic-password",
+          "auth_token": "synthetic-auth",
+          "temperature": 0.7,
+          "nested": {
+            "api_key": "synthetic-nested"
+          },
+          "label": "中文"
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "config_id": "config_ pm _123456781234",
+          "role": "pm",
+          "provider_id": "local",
+          "provider_type": "ollama",
+          "provider_kind": "ollama",
+          "model": "模型甲",
+          "profile": "默认",
+          "provider_cfg": {
+            "api_key": "***",
+            "API_TOKEN": "***",
+            "access_token": "***",
+            "secret": "***",
+            "password": "***",
+            "auth_token": "***",
+            "temperature": 0.7,
+            "nested": {
+              "api_key": "synthetic-nested"
+            },
+            "label": "中文"
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": true
+        }
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"local\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"api_key\": \"synthetic-key\",\n      \"API_TOKEN\": \"synthetic-token\",\n      \"access_token\": \"synthetic-access\",\n      \"secret\": \"synthetic-secret\",\n      \"password\": \"synthetic-password\",\n      \"auth_token\": \"synthetic-auth\",\n      \"temperature\": 0.7,\n      \"nested\": {\n        \"api_key\": \"synthetic-nested\"\n      },\n      \"label\": \"中文\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "get_llm_config",
+      "arguments": {
+        "role": "pm"
+      },
+      "result": {
+        "ok": true,
+        "has_config": true,
+        "config": {
+          "config_id": "config_ pm _123456781234",
+          "role": "pm",
+          "provider_id": "local",
+          "provider_type": "ollama",
+          "provider_kind": "ollama",
+          "model": "模型甲",
+          "profile": "默认",
+          "provider_cfg": {
+            "api_key": "***",
+            "API_TOKEN": "***",
+            "access_token": "***",
+            "secret": "***",
+            "password": "***",
+            "auth_token": "***",
+            "temperature": 0.7,
+            "nested": {
+              "api_key": "synthetic-nested"
+            },
+            "label": "中文"
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": true
+        }
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"local\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"api_key\": \"synthetic-key\",\n      \"API_TOKEN\": \"synthetic-token\",\n      \"access_token\": \"synthetic-access\",\n      \"secret\": \"synthetic-secret\",\n      \"password\": \"synthetic-password\",\n      \"auth_token\": \"synthetic-auth\",\n      \"temperature\": 0.7,\n      \"nested\": {\n        \"api_key\": \"synthetic-nested\"\n      },\n      \"label\": \"中文\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "set_llm_config",
+      "arguments": {
+        "role": "qa",
+        "provider_id": "my-cli",
+        "provider_type": "cli",
+        "model": "模型乙",
+        "profile": "qa",
+        "provider_cfg": {
+          "command": "codex synthetic",
+          "max_tokens": 1000000
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "config_id": "config_qa_123456781234",
+          "role": "qa",
+          "provider_id": "my-cli",
+          "provider_type": "cli",
+          "provider_kind": "codex",
+          "model": "模型乙",
+          "profile": "qa",
+          "provider_cfg": {
+            "command": "codex synthetic",
+            "max_tokens": 1000000
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": true
+        }
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"local\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"api_key\": \"synthetic-key\",\n      \"API_TOKEN\": \"synthetic-token\",\n      \"access_token\": \"synthetic-access\",\n      \"secret\": \"synthetic-secret\",\n      \"password\": \"synthetic-password\",\n      \"auth_token\": \"synthetic-auth\",\n      \"temperature\": 0.7,\n      \"nested\": {\n        \"api_key\": \"synthetic-nested\"\n      },\n      \"label\": \"中文\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"my-cli\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型乙\",\n    \"profile\": \"qa\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": 1000000\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "set_llm_config",
+      "arguments": {
+        "role": "ce",
+        "provider_id": "sdk",
+        "provider_type": "codex_sdk",
+        "model": "模型丙",
+        "profile": "ce",
+        "provider_cfg": {
+          "max_tokens": true
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "config_id": "config_ce_123456781234",
+          "role": "ce",
+          "provider_id": "sdk",
+          "provider_type": "codex_sdk",
+          "provider_kind": "codex",
+          "model": "模型丙",
+          "profile": "ce",
+          "provider_cfg": {
+            "max_tokens": true
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": true
+        }
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"local\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"api_key\": \"synthetic-key\",\n      \"API_TOKEN\": \"synthetic-token\",\n      \"access_token\": \"synthetic-access\",\n      \"secret\": \"synthetic-secret\",\n      \"password\": \"synthetic-password\",\n      \"auth_token\": \"synthetic-auth\",\n      \"temperature\": 0.7,\n      \"nested\": {\n        \"api_key\": \"synthetic-nested\"\n      },\n      \"label\": \"中文\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"my-cli\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型乙\",\n    \"profile\": \"qa\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": 1000000\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "update_llm_config",
+      "arguments": {
+        "role": "qa",
+        "provider_id": " generic ",
+        "model": " 新模型 ",
+        "profile": " 新配置 ",
+        "provider_cfg": {
+          "command": "ordinary",
+          "temperature": 0.2
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "config_id": "config_qa_123456781234",
+          "role": "qa",
+          "provider_id": "generic",
+          "provider_type": "cli",
+          "provider_kind": "generic",
+          "model": "新模型",
+          "profile": "新配置",
+          "provider_cfg": {
+            "command": "ordinary",
+            "temperature": 0.2
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": true
+        }
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"local\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"api_key\": \"synthetic-key\",\n      \"API_TOKEN\": \"synthetic-token\",\n      \"access_token\": \"synthetic-access\",\n      \"secret\": \"synthetic-secret\",\n      \"password\": \"synthetic-password\",\n      \"auth_token\": \"synthetic-auth\",\n      \"temperature\": 0.7,\n      \"nested\": {\n        \"api_key\": \"synthetic-nested\"\n      },\n      \"label\": \"中文\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "update_llm_config",
+      "arguments": {
+        "role": "pm",
+        "provider_id": "codex_cli",
+        "provider_cfg": {
+          "command": "codex synthetic",
+          "max_tokens": "4096",
+          "api_key": "synthetic-replacement"
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "config_id": "config_ pm _123456781234",
+          "role": "pm",
+          "provider_id": "codex_cli",
+          "provider_type": "ollama",
+          "provider_kind": "ollama",
+          "model": "模型甲",
+          "profile": "默认",
+          "provider_cfg": {
+            "command": "codex synthetic",
+            "max_tokens": "4096",
+            "api_key": "***"
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": true
+        }
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "update_llm_config",
+      "arguments": {
+        "role": "missing",
+        "model": "x"
+      },
+      "result": {
+        "ok": false,
+        "error": "config_not_found",
+        "role": "missing"
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "update_llm_config",
+      "arguments": {
+        "role": "pm",
+        "provider_cfg": {
+          "max_tokens": 1000001
+        }
+      },
+      "result": {
+        "ok": false,
+        "error": "invalid_provider_cfg",
+        "detail": "max_tokens must be between 1 and 1000000, got 1000001"
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "deactivate_config",
+      "arguments": {
+        "role": "missing"
+      },
+      "result": {
+        "ok": false,
+        "error": "config_not_found",
+        "role": "missing"
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "activate_config",
+      "arguments": {
+        "role": "missing"
+      },
+      "result": {
+        "ok": false,
+        "error": "config_not_found",
+        "role": "missing"
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "deactivate_config",
+      "arguments": {
+        "role": "pm"
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "config_id": "config_ pm _123456781234",
+          "role": "pm",
+          "provider_id": "codex_cli",
+          "provider_type": "ollama",
+          "provider_kind": "ollama",
+          "model": "模型甲",
+          "profile": "默认",
+          "provider_cfg": {
+            "command": "codex synthetic",
+            "max_tokens": "4096",
+            "api_key": "***"
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": false
+        }
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": false\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "get_llm_config",
+      "arguments": {
+        "role": "pm"
+      },
+      "result": {
+        "ok": true,
+        "has_config": true,
+        "config": {
+          "config_id": "config_ pm _123456781234",
+          "role": "pm",
+          "provider_id": "codex_cli",
+          "provider_type": "ollama",
+          "provider_kind": "ollama",
+          "model": "模型甲",
+          "profile": "默认",
+          "provider_cfg": {
+            "command": "codex synthetic",
+            "max_tokens": "4096",
+            "api_key": "***"
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": false
+        }
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": false\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "get_config",
+      "arguments": {
+        "role": "pm"
+      },
+      "result": {
+        "config_id": "config_ pm _123456781234",
+        "role": "pm",
+        "provider_id": "codex_cli",
+        "provider_type": "ollama",
+        "provider_kind": "ollama",
+        "model": "模型甲",
+        "profile": "默认",
+        "provider_cfg": {
+          "command": "codex synthetic",
+          "max_tokens": "4096",
+          "api_key": "synthetic-replacement"
+        },
+        "created_at": "2026-01-02T03:04:05.678901",
+        "updated_at": "2026-01-02T03:04:05.678901",
+        "is_active": false
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": false\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "activate_config",
+      "arguments": {
+        "role": "pm"
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "config_id": "config_ pm _123456781234",
+          "role": "pm",
+          "provider_id": "codex_cli",
+          "provider_type": "ollama",
+          "provider_kind": "ollama",
+          "model": "模型甲",
+          "profile": "默认",
+          "provider_cfg": {
+            "command": "codex synthetic",
+            "max_tokens": "4096",
+            "api_key": "***"
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": true
+        }
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "list_all_configs",
+      "arguments": {},
+      "result": {
+        "ok": true,
+        "count": 3,
+        "configs": [
+          {
+            "config_id": "config_ce_123456781234",
+            "role": "ce",
+            "provider_id": "sdk",
+            "provider_type": "codex_sdk",
+            "provider_kind": "codex",
+            "model": "模型丙",
+            "profile": "ce",
+            "provider_cfg": {
+              "max_tokens": true
+            },
+            "created_at": "2026-01-02T03:04:05.678901",
+            "updated_at": "2026-01-02T03:04:05.678901",
+            "is_active": true
+          },
+          {
+            "config_id": "config_ pm _123456781234",
+            "role": "pm",
+            "provider_id": "codex_cli",
+            "provider_type": "ollama",
+            "provider_kind": "ollama",
+            "model": "模型甲",
+            "profile": "默认",
+            "provider_cfg": {
+              "command": "codex synthetic",
+              "max_tokens": "4096",
+              "api_key": "***"
+            },
+            "created_at": "2026-01-02T03:04:05.678901",
+            "updated_at": "2026-01-02T03:04:05.678901",
+            "is_active": true
+          },
+          {
+            "config_id": "config_qa_123456781234",
+            "role": "qa",
+            "provider_id": "generic",
+            "provider_type": "cli",
+            "provider_kind": "generic",
+            "model": "新模型",
+            "profile": "新配置",
+            "provider_cfg": {
+              "command": "ordinary",
+              "temperature": 0.2
+            },
+            "created_at": "2026-01-02T03:04:05.678901",
+            "updated_at": "2026-01-02T03:04:05.678901",
+            "is_active": true
+          }
+        ]
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "get_all_configs",
+      "arguments": {},
+      "result": [
+        {
+          "config_id": "config_ce_123456781234",
+          "role": "ce",
+          "provider_id": "sdk",
+          "provider_type": "codex_sdk",
+          "provider_kind": "codex",
+          "model": "模型丙",
+          "profile": "ce",
+          "provider_cfg": {
+            "max_tokens": true
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": true
+        },
+        {
+          "config_id": "config_ pm _123456781234",
+          "role": "pm",
+          "provider_id": "codex_cli",
+          "provider_type": "ollama",
+          "provider_kind": "ollama",
+          "model": "模型甲",
+          "profile": "默认",
+          "provider_cfg": {
+            "command": "codex synthetic",
+            "max_tokens": "4096",
+            "api_key": "synthetic-replacement"
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": true
+        },
+        {
+          "config_id": "config_qa_123456781234",
+          "role": "qa",
+          "provider_id": "generic",
+          "provider_type": "cli",
+          "provider_kind": "generic",
+          "model": "新模型",
+          "profile": "新配置",
+          "provider_cfg": {
+            "command": "ordinary",
+            "temperature": 0.2
+          },
+          "created_at": "2026-01-02T03:04:05.678901",
+          "updated_at": "2026-01-02T03:04:05.678901",
+          "is_active": true
+        }
+      ],
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"qa\": {\n    \"config_id\": \"config_qa_123456781234\",\n    \"role\": \"qa\",\n    \"provider_id\": \"generic\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"generic\",\n    \"model\": \"新模型\",\n    \"profile\": \"新配置\",\n    \"provider_cfg\": {\n      \"command\": \"ordinary\",\n      \"temperature\": 0.2\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "delete_config",
+      "arguments": {
+        "role": "qa"
+      },
+      "result": {
+        "ok": true,
+        "deleted": true,
+        "role": "qa"
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "delete_config",
+      "arguments": {
+        "role": "missing"
+      },
+      "result": {
+        "ok": true,
+        "deleted": false,
+        "role": "missing"
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "delete_config",
+      "arguments": {
+        "role": ""
+      },
+      "result": {
+        "ok": true,
+        "deleted": false,
+        "role": ""
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "list_all_configs",
+      "arguments": {},
+      "result": {
+        "ok": true,
+        "count": 2,
+        "configs": [
+          {
+            "config_id": "config_ce_123456781234",
+            "role": "ce",
+            "provider_id": "sdk",
+            "provider_type": "codex_sdk",
+            "provider_kind": "codex",
+            "model": "模型丙",
+            "profile": "ce",
+            "provider_cfg": {
+              "max_tokens": true
+            },
+            "created_at": "2026-01-02T03:04:05.678901",
+            "updated_at": "2026-01-02T03:04:05.678901",
+            "is_active": true
+          },
+          {
+            "config_id": "config_ pm _123456781234",
+            "role": "pm",
+            "provider_id": "codex_cli",
+            "provider_type": "ollama",
+            "provider_kind": "ollama",
+            "model": "模型甲",
+            "profile": "默认",
+            "provider_cfg": {
+              "command": "codex synthetic",
+              "max_tokens": "4096",
+              "api_key": "***"
+            },
+            "created_at": "2026-01-02T03:04:05.678901",
+            "updated_at": "2026-01-02T03:04:05.678901",
+            "is_active": true
+          }
+        ]
+      },
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    },
+    {
+      "operation": "get_config",
+      "arguments": {
+        "role": "missing"
+      },
+      "result": null,
+      "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"config_ pm _123456781234\",\n    \"role\": \"pm\",\n    \"provider_id\": \"codex_cli\",\n    \"provider_type\": \"ollama\",\n    \"provider_kind\": \"ollama\",\n    \"model\": \"模型甲\",\n    \"profile\": \"默认\",\n    \"provider_cfg\": {\n      \"command\": \"codex synthetic\",\n      \"max_tokens\": \"4096\",\n      \"api_key\": \"synthetic-replacement\"\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  },\n  \"ce\": {\n    \"config_id\": \"config_ce_123456781234\",\n    \"role\": \"ce\",\n    \"provider_id\": \"sdk\",\n    \"provider_type\": \"codex_sdk\",\n    \"provider_kind\": \"codex\",\n    \"model\": \"模型丙\",\n    \"profile\": \"ce\",\n    \"provider_cfg\": {\n      \"max_tokens\": true\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901\",\n    \"is_active\": true\n  }\n}\n"
+    }
+  ],
+  "ordinary_service": {
+    "saved": {
+      "provider_id": "synthetic-provider",
+      "model": "synthetic-model",
+      "ready": true,
+      "metadata": {
+        "provider_type": "cli",
+        "provider_kind": "explicit-kind",
+        "profile": "pm"
+      }
+    },
+    "loaded": {
+      "provider_id": "synthetic-provider",
+      "model": "synthetic-model",
+      "ready": true,
+      "metadata": {
+        "provider_type": "cli",
+        "provider_kind": "explicit-kind",
+        "profile": "pm",
+        "provider_cfg": {
+          "type": "cli",
+          "command": "codex synthetic",
+          "provider_kind": " explicit-kind ",
+          "api_key": "synthetic-key",
+          "temperature": 9.0
+        }
+      }
+    },
+    "persisted_utf8": "{\n  \"pm\": {\n    \"config_id\": \"cfg_pm_1767323045\",\n    \"role\": \"pm\",\n    \"provider_id\": \"synthetic-provider\",\n    \"provider_type\": \"cli\",\n    \"provider_kind\": \"explicit-kind\",\n    \"model\": \"synthetic-model\",\n    \"profile\": \"pm\",\n    \"provider_cfg\": {\n      \"type\": \"cli\",\n      \"command\": \"codex synthetic\",\n      \"provider_kind\": \" explicit-kind \",\n      \"api_key\": \"synthetic-key\",\n      \"temperature\": 9.0\n    },\n    \"created_at\": \"2026-01-02T03:04:05.678901+00:00\",\n    \"updated_at\": \"2026-01-02T03:04:05.678901+00:00\",\n    \"is_active\": true\n  }\n}\n"
+  }
+}

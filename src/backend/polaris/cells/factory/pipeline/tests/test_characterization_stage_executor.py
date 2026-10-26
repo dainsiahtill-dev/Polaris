@@ -36,7 +36,6 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
 )
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.events.fact_stream.public import (
@@ -61,7 +60,9 @@ from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
 from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
     FactoryRoleEvidenceAuthorityPort,
 )
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
+from polaris.cells.factory.pipeline.internal.factory_run_completion import (
+    RunCompletionWaiter,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -69,11 +70,23 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
+from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import (
+    _fencing_token,
+)
 from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
     evaluate_canonical_factory_authority,
 )
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
+from polaris.cells.factory.pipeline.internal.run_ledger import (
+    load_run_ledger_projection,
+)
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
+    _authoritative_task_projection,
+    _bootstrap_fact_stream_workspace,
+    _executor,
+    _factory_stage_context,
+    _factory_workspace_run_lease,
+    _with_task_runtime_authority,
+)
 from polaris.cells.roles.adapters.public import (
     build_director_materialization_quality_repair_message,
     extract_workspace_quality_summary,
@@ -93,16 +106,6 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
 
 
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
-    _authoritative_task_projection,
-    _bootstrap_fact_stream_workspace,
-    _executor,
-    _factory_stage_context,
-    _factory_workspace_run_lease,
-    _with_task_runtime_authority,
-)
-
-
 def test_canonical_qa_commit_identity_uses_final_owned_task_child_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -120,15 +123,30 @@ def test_canonical_qa_commit_identity_uses_final_owned_task_child_run(
         lambda _run, _context: {
             "task_boundary": {
                 "latest_by_task": {
-                    "TASK-1": {"run_id": "director-1", "ok": True, "status": "completed_verified"},
-                    "TASK-2": {"run_id": "director-2", "ok": True, "status": "completed_verified"},
-                    "TASK-3": {"run_id": "director-3", "ok": True, "status": "completed_verified"},
+                    "TASK-1": {
+                        "run_id": "director-1",
+                        "ok": True,
+                        "status": "completed_verified",
+                    },
+                    "TASK-2": {
+                        "run_id": "director-2",
+                        "ok": True,
+                        "status": "completed_verified",
+                    },
+                    "TASK-3": {
+                        "run_id": "director-3",
+                        "ok": True,
+                        "status": "completed_verified",
+                    },
                 }
             }
         },
     )
 
-    assert executor._canonical_qa_commit_identity(run=run, context={}) == ("TASK-3", "director-3")
+    assert executor._canonical_qa_commit_identity(run=run, context={}) == (
+        "TASK-3",
+        "director-3",
+    )
 
 
 def test_executor_constructor_does_not_bootstrap_fact_stream(
@@ -351,13 +369,41 @@ def test_materialize_pm_task_never_trusts_task_supplied_workspace_lease(
 
 
 @pytest.mark.parametrize(
-    ("sequence_ready", "boundary_status", "qa_ok", "policy_ok", "expected", "reason_code"),
+    (
+        "sequence_ready",
+        "boundary_status",
+        "qa_ok",
+        "policy_ok",
+        "expected",
+        "reason_code",
+    ),
     [
-        (False, "completed_verified", True, True, False, "canonical_sequence_barrier_unsatisfied"),
-        (True, "incomplete_materialization", True, True, False, "task_boundary_not_completed_verified"),
+        (
+            False,
+            "completed_verified",
+            True,
+            True,
+            False,
+            "canonical_sequence_barrier_unsatisfied",
+        ),
+        (
+            True,
+            "incomplete_materialization",
+            True,
+            True,
+            False,
+            "task_boundary_not_completed_verified",
+        ),
         (True, "completed_verified", False, True, False, "qa_verdict_failed"),
         (True, "completed_verified", True, False, False, "evidence_policy_failed"),
-        (True, "completed_verified", True, True, True, "canonical_projection_authorized"),
+        (
+            True,
+            "completed_verified",
+            True,
+            True,
+            True,
+            "canonical_projection_authorized",
+        ),
     ],
 )
 def test_canonical_factory_authority_conflict_matrix(
@@ -426,7 +472,10 @@ def test_run_completion_blocks_degraded_task_runtime_projection(tmp_path: Path) 
                 "fact_event_seq": 9,
             },
         ),
-        readiness={"ready": False, "blocking_reasons": ["task_row_file_fallback_required"]},
+        readiness={
+            "ready": False,
+            "blocking_reasons": ["task_row_file_fallback_required"],
+        },
     )
     waiter._observable_task_rows_projection = lambda: degraded  # type: ignore[method-assign]
 
@@ -791,7 +840,11 @@ def test_read_claimable_director_task_ids_uses_observable_rows(
             Path(runtime.workspace),
             (
                 {"id": 1, "status": "pending", "metadata": {"pm_task_id": "TASK-1"}},
-                {"id": 2, "status": "ready", "metadata": {"external_task_id": "TASK-2"}},
+                {
+                    "id": 2,
+                    "status": "ready",
+                    "metadata": {"external_task_id": "TASK-2"},
+                },
                 {"id": 3, "status": "pending", "blocked_by": [1]},
                 {"id": 4, "status": "completed", "metadata": {"pm_task_id": "TASK-4"}},
             ),
@@ -815,7 +868,11 @@ def test_read_claimable_director_task_ids_confines_parallel_claims_to_admitted_w
         lambda runtime: _authoritative_task_projection(
             Path(runtime.workspace),
             rows=[
-                {"id": 1, "status": "pending", "metadata": {"external_task_id": "TASK-1"}},
+                {
+                    "id": 1,
+                    "status": "pending",
+                    "metadata": {"external_task_id": "TASK-1"},
+                },
                 {
                     "id": 2,
                     "status": "pending",
@@ -994,10 +1051,26 @@ def test_read_claimable_director_task_ids_skips_execution_owned_states(
         lambda runtime: _authoritative_task_projection(
             Path(runtime.workspace),
             (
-                {"id": 1, "status": "pending", "metadata": {"external_task_id": "TASK-PENDING"}},
-                {"id": 2, "status": "in_progress", "metadata": {"external_task_id": "TASK-IN-PROGRESS"}},
-                {"id": 3, "status": "running", "metadata": {"external_task_id": "TASK-RUNNING"}},
-                {"id": 4, "status": "claimed", "metadata": {"external_task_id": "TASK-CLAIMED"}},
+                {
+                    "id": 1,
+                    "status": "pending",
+                    "metadata": {"external_task_id": "TASK-PENDING"},
+                },
+                {
+                    "id": 2,
+                    "status": "in_progress",
+                    "metadata": {"external_task_id": "TASK-IN-PROGRESS"},
+                },
+                {
+                    "id": 3,
+                    "status": "running",
+                    "metadata": {"external_task_id": "TASK-RUNNING"},
+                },
+                {
+                    "id": 4,
+                    "status": "claimed",
+                    "metadata": {"external_task_id": "TASK-CLAIMED"},
+                },
             ),
         ),
     )
@@ -1106,7 +1179,9 @@ def test_read_taskboard_stats_ast_does_not_list_rows() -> None:
     )
 
 
-def test_materialization_quality_target_filter_prefers_ts_source_over_compiled_outputs(tmp_path: Path) -> None:
+def test_materialization_quality_target_filter_prefers_ts_source_over_compiled_outputs(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "tests").mkdir(parents=True)
     (tmp_path / "dist").mkdir(parents=True)
     (tmp_path / "tests" / "behavior.test.ts").write_text("export const source = 1;\n", encoding="utf-8")
@@ -1125,14 +1200,20 @@ def test_materialization_quality_target_filter_prefers_ts_source_over_compiled_o
 
     targets = resolve_director_semantic_quality_repair_target_files(
         artifact_quality_errors=errors,
-        changed_files=["tests/behavior.test.ts", "tests/behavior.test.js", "dist/main.js"],
+        changed_files=[
+            "tests/behavior.test.ts",
+            "tests/behavior.test.js",
+            "dist/main.js",
+        ],
         workspace_full=str(tmp_path),
     )
 
     assert targets == ["tests/behavior.test.ts"]
 
 
-def test_workspace_quality_diagnostic_targets_include_language_neutral_manifests(tmp_path: Path) -> None:
+def test_workspace_quality_diagnostic_targets_include_language_neutral_manifests(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "go.mod").write_text("module example.com/demo\n", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
     (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\n", encoding="utf-8")
@@ -1404,7 +1485,9 @@ def test_quality_gate_failure_stage_does_not_add_qa_llm_warning_for_deterministi
     assert "qa_llm_judgement_unavailable" not in report["warnings"]
 
 
-def test_workspace_validation_artifact_writes_run_ledger_command_evidence(tmp_path: Path) -> None:
+def test_workspace_validation_artifact_writes_run_ledger_command_evidence(
+    tmp_path: Path,
+) -> None:
     executor = _executor(tmp_path)
     run = FactoryRun(
         id="run-workspace-validation",
@@ -1457,11 +1540,17 @@ def test_workspace_validation_artifact_writes_run_ledger_command_evidence(tmp_pa
                 "attempted": True,
                 "success": False,
                 "residual_error_count": 1,
-                "plan_probe_preaudit": {"status": "covered", "items": ["x" * 1_200_000]},
+                "plan_probe_preaudit": {
+                    "status": "covered",
+                    "items": ["x" * 1_200_000],
+                },
                 "rounds": [
                     {
                         "round": 1,
-                        "repair_summary": {"stage": "runtime_plan", "nested": "y" * 1_200_000},
+                        "repair_summary": {
+                            "stage": "runtime_plan",
+                            "nested": "y" * 1_200_000,
+                        },
                     }
                 ],
             },
@@ -1532,7 +1621,11 @@ def test_workspace_validation_ledger_preserves_canonical_project_identity_on_qa_
             "factory_run_id": run.id,
             "passed": True,
             "effective_commands": [
-                {"command": ["cargo", "test", "--quiet"], "passed": True, "exit_code": 0},
+                {
+                    "command": ["cargo", "test", "--quiet"],
+                    "passed": True,
+                    "exit_code": 0,
+                },
             ],
         },
     )
@@ -1542,7 +1635,9 @@ def test_workspace_validation_ledger_preserves_canonical_project_identity_on_qa_
     assert executor._workspace_validation_project_id(run, {"project_id": "explicit-project"}) == "explicit-project"
 
 
-def test_workspace_validation_ledger_uses_terminal_verifier_epoch(tmp_path: Path) -> None:
+def test_workspace_validation_ledger_uses_terminal_verifier_epoch(
+    tmp_path: Path,
+) -> None:
     executor = _executor(tmp_path)
     run = FactoryRun(
         id="run-workspace-repaired",
@@ -1559,13 +1654,29 @@ def test_workspace_validation_ledger_uses_terminal_verifier_epoch(tmp_path: Path
             "factory_run_id": run.id,
             "passed": True,
             "commands": [
-                {"command": ["python", "-m", "unittest"], "passed": False, "exit_code": 1},
-                {"command": ["python", "-m", "unittest"], "passed": True, "exit_code": 0},
+                {
+                    "command": ["python", "-m", "unittest"],
+                    "passed": False,
+                    "exit_code": 1,
+                },
+                {
+                    "command": ["python", "-m", "unittest"],
+                    "passed": True,
+                    "exit_code": 0,
+                },
             ],
             "effective_commands": [
-                {"command": ["python", "-m", "unittest"], "passed": True, "exit_code": 0},
+                {
+                    "command": ["python", "-m", "unittest"],
+                    "passed": True,
+                    "exit_code": 0,
+                },
             ],
-            "repair": {"attempted": True, "success": True, "convergence_stop_reason": "verifier_passed"},
+            "repair": {
+                "attempted": True,
+                "success": True,
+                "convergence_stop_reason": "verifier_passed",
+            },
         },
     )
 
@@ -1581,7 +1692,9 @@ def test_workspace_validation_ledger_uses_terminal_verifier_epoch(tmp_path: Path
     assert artifact["commands"][0]["passed"] is False
 
 
-def test_workspace_validation_failure_detail_uses_terminal_verifier_epoch(tmp_path: Path) -> None:
+def test_workspace_validation_failure_detail_uses_terminal_verifier_epoch(
+    tmp_path: Path,
+) -> None:
     executor = _executor(tmp_path)
     artifact_path = executor._artifact_path("runtime/qa/workspace-validation.json")
     artifact_path.parent.mkdir(parents=True, exist_ok=True)

@@ -15,10 +15,19 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
-from polaris.cells.factory.pipeline.internal.factory_run_service import FactoryRunService, StageResult
-from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
-from polaris.cells.factory.pipeline.tests.test_factory_role_evidence_provenance import _pm_document
-from polaris.cells.orchestration.pm_planning.public.task_intent import normalize_pm_task_intent
+from polaris.cells.factory.pipeline.internal.factory_run_service import (
+    FactoryRunService,
+    StageResult,
+)
+from polaris.cells.factory.pipeline.internal.factory_stage_executor import (
+    OrchestrationStageExecutor,
+)
+from polaris.cells.factory.pipeline.tests.test_factory_role_evidence_provenance import (
+    _pm_document,
+)
+from polaris.cells.orchestration.pm_planning.public.task_intent import (
+    normalize_pm_task_intent,
+)
 
 PROJECT = "opaque-project.q7"
 TASK = "opaque-unit.4f"
@@ -60,7 +69,9 @@ async def _admitted(
             executor._write_json_artifact("tasks/plan.json", _pm_document(tasks))
             return StageResult(stage=stage, status="success", output="private PM fixture", artifacts=[])
 
-    from polaris.cells.factory.pipeline.internal.factory_stage_artifact_bindings import build_pm_stage_artifact_bindings
+    from polaris.cells.factory.pipeline.internal.factory_stage_artifact_bindings import (
+        build_pm_stage_artifact_bindings,
+    )
     from polaris.kernelone.storage import resolve_storage_roots
 
     service: FactoryRunService = FactoryRunService(
@@ -113,8 +124,10 @@ async def test_http_persisted_project_reaches_real_ce_authority_without_catalog(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run, executor, tasks = await _admitted(tmp_path, monkeypatch, metadata={"project_id": PROJECT})
-    authority = await executor._load_chief_engineer_portfolio_authority(
-        run=run, pm_tasks=tasks, portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks)
+    authority, carrier = await executor._capture_chief_engineer_portfolio_authority(
+        run=run,
+        pm_tasks=tasks,
+        portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks),
     )
     assert authority.project_id == PROJECT
     assert authority.pm_task_ids == (TASK,)
@@ -123,8 +136,12 @@ async def test_http_persisted_project_reaches_real_ce_authority_without_catalog(
         generate_task_blueprint,
         project_chief_engineer_task_blueprint,
     )
-    from polaris.cells.chief_engineer.blueprint.public.service import BlueprintPersistence
-    from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import _payload
+    from polaris.cells.chief_engineer.blueprint.public.service import (
+        BlueprintPersistence,
+    )
+    from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import (
+        _payload,
+    )
 
     candidate = _payload()
     candidate["construction_plan"]["task_plans"][TASK] = candidate["construction_plan"]["task_plans"].pop("TASK-A")
@@ -134,7 +151,7 @@ async def test_http_persisted_project_reaches_real_ce_authority_without_catalog(
     portfolio = executor._build_chief_engineer_portfolio_from_candidate(
         run_id=run.id,
         tasks=executor._chief_engineer_portfolio_tasks(tasks),
-        authority=authority,
+        authority_carrier=carrier,
         structured_output=candidate,
     )
     contract = portfolio.project_completion_contract
@@ -156,7 +173,11 @@ async def test_http_persisted_project_reaches_real_ce_authority_without_catalog(
     )
     blueprint = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
     assert blueprint["job_token"]["project_id"] == PROJECT
-    assert set(blueprint["job_token"]["allowed_write_paths"]) == {"src/main.py", "tests/test_main.py", "pyproject.toml"}
+    assert set(blueprint["job_token"]["allowed_write_paths"]) == {
+        "src/main.py",
+        "tests/test_main.py",
+        "pyproject.toml",
+    }
     assert len(blueprint["job_token"]["allowed_write_paths"]) == 3
     assert authority.project_id == PROJECT
     assert not (tmp_path / ".polaris" / "catalog_contract.json").exists()
@@ -170,7 +191,9 @@ async def test_explicit_invalid_project_does_not_fall_back_to_display_name(
     run, executor, tasks = await _admitted(tmp_path, monkeypatch, metadata={"project_id": invalid})
     with pytest.raises(RuntimeError, match=r"project_id_(invalid|missing)"):
         await executor._load_chief_engineer_portfolio_authority(
-            run=run, pm_tasks=tasks, portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks)
+            run=run,
+            pm_tasks=tasks,
+            portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks),
         )
 
 
@@ -182,7 +205,9 @@ async def test_conflicting_current_run_project_cannot_replace_admitted_identity(
     run.metadata["project_id"] = "foreign-current"
     with pytest.raises(RuntimeError, match=r"project_id_.*(conflict|mismatch)"):
         await executor._load_chief_engineer_portfolio_authority(
-            run=run, pm_tasks=tasks, portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks)
+            run=run,
+            pm_tasks=tasks,
+            portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks),
         )
 
 
@@ -192,7 +217,9 @@ async def test_admitted_project_is_bound_to_same_workspace(tmp_path: Path, monke
     run.metadata["factory_start_request"]["workspace"] = str(tmp_path / "foreign")
     with pytest.raises(RuntimeError, match=r"project.*workspace.*mismatch"):
         await executor._load_chief_engineer_portfolio_authority(
-            run=run, pm_tasks=tasks, portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks)
+            run=run,
+            pm_tasks=tasks,
+            portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks),
         )
 
 
@@ -219,7 +246,9 @@ async def test_foreign_identity_bound_catalog_is_rejected_without_rebinding_form
     monkeypatch.setattr(executor, "_chief_engineer_project_kind_authority", observe_real_kind_authority)
     with pytest.raises(_ChiefEngineerPortfolioAuthorityError, match="catalog snapshot project_id") as failure:
         await executor._load_chief_engineer_portfolio_authority(
-            run=run, pm_tasks=tasks, portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks)
+            run=run,
+            pm_tasks=tasks,
+            portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks),
         )
     assert failure.value.code == "chief_engineer.project_completion_project_kind_authority_invalid"
     assert observed == [PROJECT]
@@ -233,7 +262,9 @@ async def test_current_direct_owner_project_is_used_when_admitted_key_is_absent(
     run, executor, tasks = await _admitted(tmp_path, monkeypatch, metadata={})
     run.metadata["project_id"] = PROJECT
     authority = await executor._load_chief_engineer_portfolio_authority(
-        run=run, pm_tasks=tasks, portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks)
+        run=run,
+        pm_tasks=tasks,
+        portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks),
     )
     assert authority.project_id == PROJECT
 
@@ -244,7 +275,9 @@ async def test_no_explicit_project_preserves_legacy_display_fallback(
 ) -> None:
     run, executor, tasks = await _admitted(tmp_path, monkeypatch, metadata={})
     authority = await executor._load_chief_engineer_portfolio_authority(
-        run=run, pm_tasks=tasks, portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks)
+        run=run,
+        pm_tasks=tasks,
+        portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks),
     )
     assert authority.project_id == "Factory Run - pm"
 
@@ -266,5 +299,7 @@ async def test_existing_pm_proof_cannot_be_borrowed_for_another_owner(
         error = "pm_document_mismatch"
     with pytest.raises(RuntimeError, match=error):
         await executor._load_chief_engineer_portfolio_authority(
-            run=run, pm_tasks=tasks, portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks)
+            run=run,
+            pm_tasks=tasks,
+            portfolio_tasks=executor._chief_engineer_portfolio_tasks(tasks),
         )

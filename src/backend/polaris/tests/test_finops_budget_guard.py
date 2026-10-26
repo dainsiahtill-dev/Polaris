@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 from polaris.kernelone.fs import KernelFileSystem
-from polaris.kernelone.fs.registry import set_default_adapter
 
 # ---------------------------------------------------------------------------
 # Helpers: minimal filesystem adapter (no external deps, no global state)
@@ -80,14 +79,13 @@ def _make_fs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[KernelFil
     """Create an isolated KernelFileSystem pointing at a fresh tmp directory."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    runtime_root = tmp_path / "runtime"
+    runtime_root = workspace / ".polaris" / "runtime"
     runtime_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
     monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
     monkeypatch.delenv("KERNELONE_RAMDISK_ROOT", raising=False)
     monkeypatch.delenv("KERNELONE_RUNTIME_CACHE_ROOT", raising=False)
     adapter = _LocalFSAdapter()
-    set_default_adapter(adapter)
     fs = KernelFileSystem(str(workspace), adapter)
     return fs, workspace
 
@@ -375,8 +373,7 @@ class TestTokenServiceKFSPersistence:
         svc.record_usage(200)
 
         assert direct_writes == [], (
-            "TokenService wrote directly to an absolute path instead of the KFS logical path: "
-            f"{direct_writes}"
+            f"TokenService wrote directly to an absolute path instead of the KFS logical path: {direct_writes}"
         )
 
     def test_token_service_persists_and_recovers_via_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -420,7 +417,7 @@ class TestTokenServiceKFSPersistence:
 class TestCFOAgentIntegration:
     def test_cfo_allocate_and_check_persisted(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """CFOAgent allocate_budget + check_budget results match KFS state."""
-        from polaris.cells.finops.budget_guard.internal.budget_agent import CFOAgent
+        from polaris.cells.roles.runtime.public.cfo_advisor import CFOAgent
 
         fs, workspace = _make_fs(monkeypatch, tmp_path)
 
@@ -444,7 +441,7 @@ class TestCFOAgentIntegration:
 
     def test_cfo_record_usage_updates_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """CFOAgent record_usage updates both in-memory and KFS state."""
-        from polaris.cells.finops.budget_guard.internal.budget_agent import CFOAgent
+        from polaris.cells.roles.runtime.public.cfo_advisor import CFOAgent
 
         fs, workspace = _make_fs(monkeypatch, tmp_path)
 
@@ -463,7 +460,7 @@ class TestCFOAgentIntegration:
 
     def test_cfo_restart_recovers_from_kfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A new CFOAgent over the same workspace recovers all state from KFS."""
-        from polaris.cells.finops.budget_guard.internal.budget_agent import CFOAgent
+        from polaris.cells.roles.runtime.public.cfo_advisor import CFOAgent
 
         fs, workspace = _make_fs(monkeypatch, tmp_path)
 

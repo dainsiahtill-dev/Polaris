@@ -186,7 +186,7 @@ class TestRuntimeConfig:
         config = RuntimeConfig()
         assert config.root is None
         assert config.cache_root is None
-        assert config.use_ramdisk is True
+        assert config.use_ramdisk is False
         assert config.ramdisk_root is None
 
     def test_path_validation(self, tmp_path: Path) -> None:

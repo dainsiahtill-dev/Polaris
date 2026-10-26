@@ -8,7 +8,8 @@ External services are mocked to avoid policy and role registry dependencies.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import os
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,22 +24,31 @@ from polaris.cells.runtime.state_owner.public.service import AppState
 
 
 @pytest.fixture
-def mock_settings() -> Settings:
-    """Create a minimal Settings instance for testing."""
-    from polaris.bootstrap.config import ServerConfig, Settings
+def mock_settings(tmp_path: Path) -> Iterator[Settings]:
+    """Use real cold-start settings and restore this fixture's configuration namespace."""
+    from polaris.bootstrap.config import LoggingConfig, RuntimeConfig, ServerConfig, Settings
     from polaris.config.nats_config import NATSConfig
 
-    settings = MagicMock(spec=Settings)
-    settings.workspace = Path(".")
-    settings.workspace_path = "."
-    settings.ramdisk_root = ""
-    settings.nats = NATSConfig(enabled=False, required=False, url="")
-    settings.server = ServerConfig(cors_origins=["*"])
-    settings.qa_enabled = True
-    settings.debug_tracing = False
-    settings.logging = MagicMock()
-    settings.logging.enable_debug_tracing = False
-    return settings
+    namespace = ("KERNELONE_", "POLARIS_")
+    original = {key: value for key, value in os.environ.items() if key.startswith(namespace)}
+    settings = Settings(
+        workspace=tmp_path,
+        ramdisk_root="",
+        runtime=RuntimeConfig(use_ramdisk=False),
+        nats=NATSConfig(enabled=False, required=False, url=""),
+        server=ServerConfig(cors_origins=["*"]),
+        qa_enabled=True,
+        logging=LoggingConfig(enable_debug_tracing=False),
+    )
+    try:
+        yield settings
+    finally:
+        current = {key for key in os.environ if key.startswith(namespace)}
+        for key in current | original.keys():
+            if key in original:
+                os.environ[key] = original[key]
+            else:
+                os.environ.pop(key, None)
 
 
 @pytest.fixture
@@ -219,6 +229,7 @@ async def client_with_real_permission_dependency(
 @pytest.mark.asyncio
 async def test_v2_permissions_check_uses_real_dependency(
     client_with_real_permission_dependency: tuple[AsyncClient, AsyncMock],
+    mock_settings: Settings,
 ) -> None:
     """Production dependency should resolve the policy.permission public service."""
     client, mock_get_permission_service = client_with_real_permission_dependency
@@ -234,7 +245,12 @@ async def test_v2_permissions_check_uses_real_dependency(
 
     assert response.status_code == 200
     assert response.json()["allowed"] is True
-    mock_get_permission_service.assert_awaited_once_with(".")
+    from polaris.cells.roles.kernel.public.permission_policy_adapter import get_permission_tool_policy_adapter
+
+    workspace = str(mock_settings.workspace)
+    adapter = get_permission_tool_policy_adapter(workspace)
+    assert adapter.workspace == workspace
+    mock_get_permission_service.assert_awaited_once_with(workspace, tool_policy_port=adapter)
 
 
 @pytest.mark.asyncio
@@ -464,3 +480,26 @@ async def test_nested_v2_permission_routes_are_not_registered(client: AsyncClien
     ]
 
     assert [response.status_code for response in responses] == [404, 404, 404, 404, 404]
+
+
+def test_permission_settings_fixture_restores_runtime_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real settings synchronization must not leak configuration to the next consumer."""
+    from polaris.cells.storage.layout.public.service import sync_process_settings_environment
+
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(tmp_path / "previous-cache"))
+    namespace = ("KERNELONE_", "POLARIS_")
+    before = {key: value for key, value in os.environ.items() if key.startswith(namespace)}
+    fixture = mock_settings.__wrapped__(tmp_path)
+    try:
+        settings = next(fixture)
+        assert type(settings) is Settings
+        sync_process_settings_environment(settings)
+        assert os.environ["KERNELONE_WORKSPACE"] == str(tmp_path.resolve())
+        assert "KERNELONE_RUNTIME_CACHE_ROOT" not in os.environ
+    finally:
+        fixture.close()
+    after = {key: value for key, value in os.environ.items() if key.startswith(namespace)}
+    assert set(after) == set(before)
+    assert all(after[key] == before[key] for key in before)

@@ -18,16 +18,23 @@ current_modules:
 - polaris.cells.roles.runtime.internal.engineering_loop
 - polaris.cells.roles.runtime.internal.engineering_session
 - polaris.cells.roles.runtime.public.service
+- polaris.cells.roles.runtime.internal.cfo_advisor
+- polaris.cells.roles.runtime.public.cfo_advisor
+- polaris.cells.roles.runtime.internal.hr_advisor
+- polaris.cells.roles.runtime.public.hr_advisor
 owned_paths:
 - polaris/cells/roles/runtime/public/**
 - polaris/cells/roles/runtime/internal/**
 - polaris/delivery/http/routers/role_chat.py
 - polaris/delivery/http/routers/role_session.py
+- polaris/cells/roles/runtime/tests/**
 public_contracts:
   modules:
   - polaris.cells.roles.runtime.public.contracts
   - polaris.cells.roles.runtime.public.contracts.engineering_run
   - polaris.cells.roles.runtime.public.engineering_resource_state
+  - polaris.cells.roles.runtime.public.cfo_advisor
+  - polaris.cells.roles.runtime.public.hr_advisor
   commands:
   - RoleRunCommand
   - InstantiateRoleRuntimeObjectCommandV1
@@ -153,10 +160,14 @@ verification:
   - polaris/cells/roles/runtime/tests/test_engineering_events.py
   - polaris/tests/architecture/test_engineering_no_legacy_admission.py
   gaps:
-  - Graph/source synchronization and focused tests do not prove all workloads. Fresh direct/collaborative/recovery
-    acceptance and required release/catalog gates must be reported from actual runs.
+  - Graph/source synchronization and focused tests do not prove all workloads. Fresh direct/collaborative/recovery acceptance
+    and required release/catalog gates must be reported from actual runs.
   - Legacy readers and optional utilities remain in source; their retained imports do not authorize new legacy execution.
     Physical provider HTTP totals/cost require independent transport evidence.
+  test_dependencies:
+  - path: polaris/cells/roles/runtime/tests/test_hr_advisor.py
+    depends_on:
+    - llm.control_plane
 descriptor_surface:
   include_public_contracts: false
   classes:

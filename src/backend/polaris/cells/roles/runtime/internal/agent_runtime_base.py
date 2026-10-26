@@ -937,7 +937,7 @@ class RoleAgent(ABC):
         profile = getattr(self, "profile", None)
         tool_policy = getattr(profile, "tool_policy", None) if profile is not None else None
         whitelist = getattr(tool_policy, "whitelist", None) if tool_policy is not None else None
-        if not whitelist:
+        if whitelist is None:
             return None
         try:
             from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name

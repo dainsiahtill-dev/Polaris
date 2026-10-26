@@ -1,0 +1,11 @@
+# Descriptor 的 canonical source 与定域生成
+
+状态：同名并行实现退役的真实消费者迁移，待实现。Factory descriptor仍指向被package遮蔽的旧.py，不能在退役时留下当前语义索引指向不存在或不执行的SourceLocator。
+
+复用现有descriptor_pack_generator.generate_pack单Cell接口，不调用默认all遍历、不关闭schema validation、不启用evolve/model。默认owned-path扫描应按Python真实package优先选择canonical源码，避免把同名被遮蔽.py计为并行能力；显式SourceLocator/fileloader如有真实消费者必须先迁移，不能任意过滤文件凑少。
+
+生成器自己的源码根(repo_root用于polaris/相对模块)与运行时所属project workspace须明确分离：index receipt和临时/审计走统一storage.layout/KFS，落在主项目.polaris。禁止direct open写receipt或隐式src/backend/.polaris第二根。现有public生成调用兼容，必要新增可选owner参数按现有公开能力复用；报错不伪造生成成功。
+
+先红后绿：临时同名.py/package定义不同能力，生成pack只能采用真实canonical package/实际mixins；当前所有真实公开能力、原binding和source hash对应。只生成Factory cell并对照全部其他generated文件hash不变；schema有效，所有当前defined_in存在且为实际执行source。Runtime receipts用项目KFSRoot，explicitoptin/不存在Workspace策略按既有storageowner，不改生产权限。
+
+作用域只限现有generator及scopedtests、Factory descriptor.pack.json；其他Cell生成资产后续逐项刷新，不广泛overwrite。退役旧实现和descriptor更新属于同一收敛边界，历史报告/audit SourceLocator保持原时点。

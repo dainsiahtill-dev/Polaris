@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from polaris.cells.events import fact_stream
 from polaris.cells.events.fact_stream import public
 from polaris.cells.events.fact_stream.public import contracts

@@ -5,11 +5,20 @@
   "purpose": "Enforce token and execution budget controls with explicit reserve and consume accounting and threshold signals.",
   "summary": "Business capability boundary for finops.budget_guard.",
   "owned_paths": [
+    "polaris/cells/finops/budget_guard/public/**",
     "polaris/kernelone/runtime/usage_metrics.py",
     "polaris/domain/services/token_service.py",
-    "polaris/infrastructure/accel/query/adaptive_budget.py"
+    "polaris/infrastructure/accel/query/adaptive_budget.py",
+    "polaris/cells/finops/budget_guard/__init__.py",
+    "polaris/cells/finops/budget_guard/internal/**",
+    "polaris/cells/finops/budget_guard/tests/**",
+    "polaris/tests/test_finops_budget_guard.py"
   ],
   "public_contracts": {
+    "modules": [
+      "polaris.cells.finops.budget_guard.public.contracts",
+      "polaris.cells.finops.budget_guard.public.service"
+    ],
     "commands": [
       "ReserveBudgetCommandV1",
       "RecordUsageCommandV1"
@@ -24,7 +33,7 @@
       "BudgetDecisionResultV1"
     ],
     "errors": [
-      "FinOpsBudgetErrorV1"
+      "FinOpsBudgetError"
     ]
   },
   "neighbors": [
@@ -47,7 +56,10 @@
   "hotspots": [
     "polaris/kernelone/runtime/usage_metrics.py",
     "polaris/domain/services/token_service.py",
-    "polaris/infrastructure/accel/query/adaptive_budget.py"
+    "polaris/infrastructure/accel/query/adaptive_budget.py",
+    "polaris/cells/finops/budget_guard/internal/budget_service.py",
+    "polaris/cells/finops/budget_guard/internal/budget_store.py",
+    "polaris/cells/finops/budget_guard/public/service.py"
   ],
   "test_targets": [
     "tests/test_llm_token_budget.py",

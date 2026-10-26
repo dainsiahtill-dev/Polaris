@@ -1059,6 +1059,8 @@ class TaskBoard:
         self,
         task_id: int | str,
         factory_run_id: str,
+        *,
+        _mutation_guard: _TaskBoardMutationGuard | None = None,
     ) -> TaskFactoryRunBindingMutation | None:
         """Atomically bind one task row to a Factory portfolio run.
 
@@ -1079,6 +1081,8 @@ class TaskBoard:
         last_row_conflict: TaskBoardRowWriteConflictError | None = None
         for _attempt in range(_FACTORY_RUN_BINDING_CAS_MAX_ATTEMPTS):
             with self.transaction():
+                if _mutation_guard is not None:
+                    _mutation_guard.validate(os.path.abspath(self.tasks_dir))
                 snapshot = self._load_task_snapshot_from_disk(normalized_task_id)
                 if snapshot is None:
                     return None
@@ -1100,7 +1104,7 @@ class TaskBoard:
 
                 task.metadata["factory_run_id"] = requested_factory_run_id
                 try:
-                    self._save_task(task, expected_before_hash=snapshot_hash)
+                    self._save_task(task, expected_before_hash=snapshot_hash, _mutation_guard=_mutation_guard)
                 except TaskBoardRowWriteConflictError as exc:
                     last_row_conflict = exc
                     continue
@@ -1110,6 +1114,8 @@ class TaskBoard:
                     previous_factory_run_id=existing_factory_run_id,
                 )
 
+        if _mutation_guard is not None:
+            _mutation_guard.validate(os.path.abspath(self.tasks_dir))
         final_snapshot = self._load_task_snapshot_from_disk(normalized_task_id)
         if final_snapshot is None:
             return None

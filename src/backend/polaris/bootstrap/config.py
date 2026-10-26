@@ -258,12 +258,19 @@ class RuntimeConfig(BaseModel):
 
     root: Path | None = Field(default=None, description="Explicit runtime root")
     cache_root: Path | None = Field(default=None, description="Cache directory")
-    use_ramdisk: bool = Field(default=True, description="Use ramdisk if available")
+    use_ramdisk: bool = Field(default=False, description="Use ramdisk only when explicitly enabled")
     ramdisk_root: Path | None = Field(default=None, description="Configured ramdisk path")
     context_store_retention: ContextStoreRetentionConfig = Field(
         default_factory=ContextStoreRetentionConfig,
         description="TTL + capacity cleanup for runtime/contexts/",
     )
+
+    @field_validator("root", "cache_root", "ramdisk_root", mode="before")
+    @classmethod
+    def normalize_empty_path(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("root", "cache_root", "ramdisk_root")
     @classmethod
@@ -1180,7 +1187,9 @@ class Settings(BaseModel):
                 return ramdisk
         if self.runtime.cache_root:
             return self.runtime.cache_root
-        return default_system_cache_base()
+        from polaris.cells.storage.layout.public.service import canonical_project_runtime_root
+
+        return Path(canonical_project_runtime_root(str(self.workspace)))
 
     @property
     def pm_script_path(self) -> Path:

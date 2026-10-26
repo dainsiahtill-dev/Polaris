@@ -82,18 +82,21 @@ verification:
   - polaris/cells/roles/adapters/tests/test_director_deo_production_wiring.py
   - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
   gaps:
-  - Director adapter import remains best-effort because its upstream application package
-    still fails on import.
-  - Director optional execution backends still route through roles.adapters while
-    business-cell convergence into director.execution remains in progress.
-  - Runtime dialogue uses roles.runtime as the primary path; construction failures
-    are surfaced explicitly instead of falling back to standalone role execution.
-  - Structured output schema exports are stable, but implementation convergence is
-    ongoing.
-  - DEO-4 is closed. Physical execution requires the canonical mutation port,
-    an exact process-local executor instance registered by its private factory,
-    and durable post-consume recovery; the repository alias/taint/importlib/
-    re-export fence proves zero legacy production seams.
+  - Director adapter import remains best-effort because its upstream application package still fails on import.
+  - Director optional execution backends still route through roles.adapters while business-cell convergence into director.execution
+    remains in progress.
+  - Runtime dialogue uses roles.runtime as the primary path; construction failures are surfaced explicitly instead of falling
+    back to standalone role execution.
+  - Structured output schema exports are stable, but implementation convergence is ongoing.
+  - DEO-4 is closed. Physical execution requires the canonical mutation port, an exact process-local executor instance registered
+    by its private factory, and durable post-consume recovery; the repository alias/taint/importlib/ re-export fence proves
+    zero legacy production seams.
   - Pre-bench is the only active gate. Provider and Bench remain not_schedulable.
   smoke_commands: []
+  test_effects_allowed:
+  - path: polaris/cells/roles/adapters/tests/test_public_deadline_handoff.py
+    effects_allowed:
+    - process.spawn:python/public_deadline_cold_import
+    reason: Fresh interpreter verifies the existing public float deadline handoff without private consumer imports, provider
+      calls or target effects.
 generated_artifacts: []

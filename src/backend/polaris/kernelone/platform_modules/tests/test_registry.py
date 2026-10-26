@@ -16,6 +16,21 @@ from polaris.kernelone.platform_modules.registry import (
 
 
 class TestPlatformModuleRegistry(unittest.TestCase):
+    def test_factory_records_own_all_current_execution_bodies(self) -> None:
+        repo = Path(__file__).resolve().parents[6]
+        internal = repo / "src/backend/polaris/cells/factory/pipeline/internal"
+        for module_id, package in (
+            ("M06_director_multi_task", "factory_stage_executor"),
+            ("M07_factory_stage_chain", "factory_stage_executor"),
+            ("M09_four_pillars_gates", "bench_gates"),
+        ):
+            sources = {path.relative_to(repo).as_posix() for path in (internal / package).glob("*.py")}
+            self.assertTrue(sources)
+            self.assertLessEqual(sources, set(get_module(module_id).owner_paths))
+            self.assertNotIn(
+                (internal / f"{package}.py").relative_to(repo).as_posix(), get_module(module_id).owner_paths
+            )
+
     def test_registered_pytest_files_exist_after_refactors(self) -> None:
         repo = Path(__file__).resolve().parents[6]
         missing: list[str] = []

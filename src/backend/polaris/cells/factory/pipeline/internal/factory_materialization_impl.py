@@ -411,13 +411,14 @@ def _revalidated_deferred_boundary_command(
 ) -> ReprojectTaskBoundaryVerdictCommandV1:
     """Rebuild normal requirements from immutable CE ownership and current owner receipts."""
     from polaris.cells.control_plane.run_ledger.public import evaluate_task_boundary_verdict
-    from polaris.cells.events.fact_stream.public import (
-        FactStreamQueryResultV1,
-        QueryFactEventsV1,
-        query_fact_events,
-    )
     from polaris.cells.runtime.execution_broker.public import project_verification as broker
-    from polaris.cells.runtime.task_runtime.public import TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1
+    from polaris.cells.runtime.task_runtime.public import TaskRuntimeService
+    from polaris.cells.runtime.task_runtime.public.execution_claim_evidence import (
+        ExecutionClaimEvidenceError,
+        ExecutionClaimEvidenceV1,
+        QueryExecutionClaimEvidenceV1,
+        query_execution_claim_evidence,
+    )
 
     from .factory_node_dependencies import authenticated_preparation_contract
     from .native_validation_inputs import _validate_projection
@@ -427,80 +428,53 @@ def _revalidated_deferred_boundary_command(
     if type(contract) is not ProjectCompletionContractV1 or contract.run_id != run.id:
         raise ValueError("task_boundary_revalidation_ce_identity_invalid")
 
-    def capture_claims() -> list[dict[str, Any]]:
-        records: list[dict[str, Any]] = []
-        offset = 0
-        total = None
-        while True:
-            page = query_fact_events(
-                QueryFactEventsV1(
-                    workspace=workspace,
-                    stream="task_runtime.execution",
-                    limit=1000,
-                    offset=offset,
-                    strict_integrity=True,
-                )
-            )
-            if (
-                type(page) is not FactStreamQueryResultV1
-                or (page.workspace, page.stream) != (workspace, "task_runtime.execution")
-                or (total is not None and page.total != total)
-            ):
-                raise ValueError("task_boundary_revalidation_claim_capture_drift")
-            total = page.total
-            records.extend(page.events)
-            if not page.next_offset:
-                if len(records) != total:
-                    raise ValueError("task_boundary_revalidation_claim_capture_incomplete")
-                return records
-            if page.next_offset <= offset:
-                raise ValueError("task_boundary_revalidation_claim_pagination_invalid")
-            offset = page.next_offset
+    owner_row = TaskRuntimeService(workspace, read_only=True).resolve_factory_task_row(
+        external_task_id=task_id, factory_run_id=run.id
+    )
+    owner_metadata = owner_row.get("metadata") if isinstance(owner_row, Mapping) else None
+    runtime = owner_metadata.get("runtime_execution") if isinstance(owner_metadata, Mapping) else None
+    if not isinstance(runtime, Mapping):
+        raise ValueError("task_boundary_revalidation_claim_missing")
+    try:
+        identity = TaskRuntimeExecutionAttemptIdentityV1(
+            workspace=workspace,
+            task_id=runtime["task_id"],
+            external_task_id=runtime["external_task_id"],
+            session_id=runtime["session_id"],
+            attempt=runtime["attempt"],
+            role_id=runtime["role_id"],
+            worker_id=runtime["worker_id"],
+            run_id=runtime["run_id"],
+            lease_expires_at=runtime["lease_expires_at"],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("task_boundary_revalidation_claim_identity_invalid") from exc
+    if (identity.external_task_id, identity.run_id, identity.role_id) != (task_id, child_run, "director"):
+        raise ValueError("task_boundary_revalidation_claim_identity_invalid")
+    claim_query = QueryExecutionClaimEvidenceV1(workspace, identity, purpose="receipt_revalidation")
 
-    claims = capture_claims()
-    matches = []
-    for record in claims:
-        payload = record.get("payload")
-        if record.get("event_type") != "claimed" or not isinstance(payload, Mapping):
-            continue
-        snapshot = payload.get("task_row_snapshot")
-        metadata = snapshot.get("metadata") if isinstance(snapshot, Mapping) else None
-        runtime = metadata.get("runtime_execution") if isinstance(metadata, Mapping) else None
-        if not isinstance(snapshot, Mapping) or not isinstance(metadata, Mapping) or not isinstance(runtime, Mapping):
-            continue
-        if runtime.get("external_task_id") != task_id or runtime.get("run_id") != child_run:
-            continue
+    def capture_claim_evidence() -> ExecutionClaimEvidenceV1:
         try:
-            identity = TaskRuntimeExecutionAttemptIdentityV1(
-                workspace=payload["workspace"],
-                task_id=runtime["task_id"],
-                external_task_id=runtime["external_task_id"],
-                session_id=runtime["session_id"],
-                attempt=runtime["attempt"],
-                role_id=runtime["role_id"],
-                worker_id=runtime["worker_id"],
-                run_id=runtime["run_id"],
-                lease_expires_at=runtime["lease_expires_at"],
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError("task_boundary_revalidation_claim_identity_invalid") from exc
-        if (
-            payload.get("schema_version") != TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1
-            or identity.workspace != workspace
-            or identity.role_id != "director"
-            or payload.get("workspace") != workspace
-            or payload.get("run_id") != child_run
-            or payload.get("factory_run_id") != run.id
-            or (payload.get("project_id") or payload.get("factory_bench_project_id"))
-            not in {None, "", contract.project_id}
-            or payload.get("task_id") != str(identity.task_id)
-            or payload.get("session_id") != identity.session_id
-            or payload.get("attempt") != identity.attempt
-            or snapshot.get("id") != identity.task_id
-            or snapshot.get("workflow_run_id") != child_run
-        ):
+            return query_execution_claim_evidence(claim_query)
+        except ExecutionClaimEvidenceError as exc:
+            raise ValueError(f"task_boundary_revalidation_claim_unavailable:{exc.code}") from exc
+
+    claim_evidence = capture_claim_evidence()
+    if claim_evidence.factory_run_id != run.id or claim_evidence.project_id not in {"", contract.project_id}:
+        raise ValueError("task_boundary_revalidation_claim_scope_invalid")
+    claimed_metadata = claim_evidence.claim_metadata
+    source_token = claimed_metadata.get("control_plane_job_token", claimed_metadata.get("job_token", {}))
+    current_metadata = claim_evidence.current_metadata
+    if (
+        not isinstance(source_token, Mapping)
+        or current_metadata.get("control_plane_job_token", current_metadata.get("job_token", {})) != source_token
+    ):
+        raise ValueError("task_boundary_revalidation_claim_token_changed")
+    for metadata in (claim_evidence.claim_metadata, claim_evidence.current_metadata):
+        runtime_scope = metadata.get("runtime_execution")
+        if not isinstance(runtime_scope, Mapping):
             raise ValueError("task_boundary_revalidation_claim_identity_invalid")
-        for scope in (snapshot, metadata, runtime):
+        for scope in (metadata, runtime_scope):
             if (
                 (scope.get("factory_run_id") and scope["factory_run_id"] != run.id)
                 or (scope.get("workspace") and Path(str(scope["workspace"])).resolve() != Path(workspace))
@@ -514,16 +488,12 @@ def _revalidated_deferred_boundary_command(
         if not isinstance(projection, Mapping):
             raise ValueError("task_boundary_revalidation_claim_projection_missing")
         _validate_projection(contract, projection, task_id)
-        matches.append(record)
-    if not matches:
-        raise ValueError("task_boundary_revalidation_claim_missing")
-    claim = matches[-1]
     reader = WorkspaceReadSnapshot(Path(workspace))
-    artifacts = []
+    artifacts: list[tuple[broker.QueryProjectArtifactReceiptV1, broker.ProjectArtifactReceiptV1]] = []
     for artifact in contract.obligations.artifacts:
         if artifact.owner_task_id != task_id or artifact.applicability != "required":
             continue
-        query = broker.QueryProjectArtifactReceiptV1(
+        artifact_query = broker.QueryProjectArtifactReceiptV1(
             workspace=workspace,
             project_id=contract.project_id,
             run_id=run.id,
@@ -532,18 +502,21 @@ def _revalidated_deferred_boundary_command(
             owner_task_id=task_id,
             path=artifact.path,
         )
-        receipt = broker.query_project_artifact_receipt(query)
+        artifact_receipt = broker.query_project_artifact_receipt(artifact_query)
         source = reader.read(Path(workspace) / artifact.path)
         if (
-            type(receipt) is not broker.ProjectArtifactReceiptV1
+            type(artifact_receipt) is not broker.ProjectArtifactReceiptV1
             or source.status != "readable"
-            or receipt.artifact_hash != source.content_sha256
-            or any(getattr(receipt, name) != getattr(query, name) for name in query.__dataclass_fields__)
-            or not receipt.receipt_ref
-            or not receipt.receipt_hash
+            or artifact_receipt.artifact_hash != source.content_sha256
+            or any(
+                getattr(artifact_receipt, name) != getattr(artifact_query, name)
+                for name in artifact_query.__dataclass_fields__
+            )
+            or (not artifact_receipt.receipt_ref)
+            or (not artifact_receipt.receipt_hash)
         ):
             raise ValueError("task_boundary_revalidation_artifact_receipt_not_current")
-        artifacts.append((query, receipt))
+        artifacts.append((artifact_query, artifact_receipt))
     verification = [
         item
         for item in contract.obligations.verification
@@ -552,8 +525,14 @@ def _revalidated_deferred_boundary_command(
     if not artifacts or not verification:
         raise ValueError("task_boundary_revalidation_requirements_empty")
     authorities = {item.authority_hash: item for item in contract.verification_command_authority}
-    receipts = []
+    receipts: list[tuple[broker.QueryProjectVerificationReceiptV1, broker.ProjectVerificationReceiptV1]] = []
+    required_commands: list[str] = []
     for obligation in verification:
+        authority_hash = obligation.command_authority_hash
+        command_text = obligation.command
+        if authority_hash is None or command_text is None:
+            raise ValueError("task_boundary_revalidation_verifier_authority_invalid")
+        required_commands.append(command_text)
         command = broker.authorize_project_verification_command(
             broker.ResolveProjectVerificationAuthorityQueryV1(
                 workspace=workspace,
@@ -563,7 +542,7 @@ def _revalidated_deferred_boundary_command(
                 obligation_id=obligation.obligation_id,
             )
         )
-        authority = authorities.get(obligation.command_authority_hash)
+        authority = authorities.get(authority_hash)
         if (
             type(command) is not broker.RunProjectVerificationCommandV1
             or authority is None
@@ -571,37 +550,41 @@ def _revalidated_deferred_boundary_command(
             != (task_id, obligation.modality, authority.argv, authority.cwd, authority.authority_hash)
         ):
             raise ValueError("task_boundary_revalidation_verifier_authority_invalid")
-        query = broker.QueryProjectVerificationReceiptV1(
+        verification_query = broker.QueryProjectVerificationReceiptV1(
             **{name: getattr(command, name) for name in broker.QueryProjectVerificationReceiptV1.__dataclass_fields__}
         )
-        receipt = broker.query_project_verification_receipt(query)
+        verification_receipt = broker.query_project_verification_receipt(verification_query)
         if (
-            type(receipt) is not ProjectVerificationReceiptV1
-            or not receipt.succeeded
-            or receipt.exit_code != 0
-            or not receipt.receipt_ref
-            or not receipt.receipt_hash
+            type(verification_receipt) is not ProjectVerificationReceiptV1
+            or not verification_receipt.succeeded
+            or verification_receipt.exit_code != 0
+            or (not verification_receipt.receipt_ref)
+            or (not verification_receipt.receipt_hash)
             or any(
-                getattr(receipt, name) != getattr(query, name)
-                for name in query.__dataclass_fields__
+                getattr(verification_receipt, name) != getattr(verification_query, name)
+                for name in verification_query.__dataclass_fields__
                 if name != "input_artifacts"
             )
-            or tuple((item.obligation_id, item.path) for item in receipt.input_artifacts)
-            != tuple((item.obligation_id, item.path) for item in query.input_artifacts)
+            or (
+                tuple(
+                    (obligation.obligation_id, obligation.path) for obligation in verification_receipt.input_artifacts
+                )
+                != tuple(
+                    (obligation.obligation_id, obligation.path) for obligation in verification_query.input_artifacts
+                )
+            )
         ):
             raise ValueError("task_boundary_revalidation_verifier_receipt_not_current")
-        receipts.append((query, receipt))
+        receipts.append((verification_query, verification_receipt))
     # Re-read existing owners at the CAS frontier; a cached result or changed
     # input cannot be upgraded by replaying the old deferred placeholder.
     if (
-        claims != capture_claims()
+        claim_evidence != capture_claim_evidence()
         or reader.drift_reasons()
         or any(broker.query_project_artifact_receipt(query) != receipt for query, receipt in artifacts)
         or any(broker.query_project_verification_receipt(query) != receipt for query, receipt in receipts)
     ):
         raise ValueError("task_boundary_revalidation_current_basis_drift")
-    claimed_metadata = claim["payload"]["task_row_snapshot"]["metadata"]
-    source_token = claimed_metadata.get("control_plane_job_token", claimed_metadata.get("job_token", {}))
     source_policy = source_token.get("gate_policy", {})
     declared_modalities = source_policy.get(
         "required_evidence_modalities", source_policy.get("required_modalities", [])
@@ -612,14 +595,14 @@ def _revalidated_deferred_boundary_command(
         run_id=child_run,
         target_files=[receipt.path for _, receipt in artifacts],
         completed_artifacts=[receipt.path for _, receipt in artifacts],
-        required_verifiers=[item.command for item in verification],
-        completed_verifiers=[item.command for item in verification],
+        required_verifiers=required_commands,
+        completed_verifiers=required_commands,
         required_evidence_modalities=[name for name in declared_modalities if name in {"code", "command"}],
         present_evidence_modalities=[
             name for name, present in (("code", bool(artifacts)), ("command", bool(receipts))) if present
         ],
         evidence_refs=[
-            str(claim["event_id"]),
+            claim_evidence.claim_event_id,
             *[receipt.receipt_ref for _, receipt in artifacts],
             *[receipt.receipt_ref for _, receipt in receipts],
         ],
@@ -633,7 +616,7 @@ def _revalidated_deferred_boundary_command(
         expected_content_id=predecessor,
         reason="director_post_settle_workspace_revalidation",
         revalidated_verdict=normal,
-        source_claim_fact_event_id=str(claim["event_id"]),
+        source_claim_fact_event_id=claim_evidence.claim_event_id,
         current_receipt_bindings=tuple(
             (receipt.obligation_id, receipt.receipt_ref, receipt.receipt_hash, receipt.input_artifact_hash)
             for _, receipt in receipts

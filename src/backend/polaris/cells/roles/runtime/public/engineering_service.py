@@ -40,6 +40,7 @@ from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.engine.invocation_budget import invoke_with_budget
 from polaris.kernelone.llm.engine.resilience import RetryConfig, TimeoutConfig
 from polaris.kernelone.process.process_tree import ProcessTreeDrainError
+from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 _TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
 logger = logging.getLogger(__name__)
@@ -96,7 +97,12 @@ class EngineeringRunService:
         require_qa: bool = False,
         event_publisher: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
     ) -> None:
-        self.workspace = Path(workspace).resolve()
+        self.workspace = Path(workspace).resolve(strict=True)
+        if not self.workspace.is_dir():
+            raise ValueError("workspace must be a directory")
+        # Reject incompatible namespace claims before the session store can
+        # create a database or lock in this workspace.
+        resolve_workspace_runtime_identity(str(self.workspace))
         self._event_publisher = event_publisher
         self._publication_loop: asyncio.AbstractEventLoop | None = None
         self._publication_tail: asyncio.Task[None] | None = None

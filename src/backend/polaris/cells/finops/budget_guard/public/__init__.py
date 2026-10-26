@@ -10,12 +10,12 @@ from .contracts import (
     RecordUsageCommandV1,
     ReserveBudgetCommandV1,
 )
-from .service import CFOAgent
+from .service import BudgetService
 
 __all__ = [
     "BudgetDecisionResultV1",
+    "BudgetService",
     "BudgetThresholdExceededEventV1",
-    "CFOAgent",
     "FinOpsBudgetError",
     "GetBudgetStatusQueryV1",
     "RecordUsageCommandV1",

@@ -91,6 +91,58 @@ async def test_history_keeps_two_real_mutation_closures_after_latest_no_effect_p
 
 
 @pytest.mark.asyncio
+async def test_failed_history_and_unknown_identity_reopen_without_director_or_record_rewrite(tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import sys
+    from dataclasses import asdict
+
+    attempts, _rows = await _history(tmp_path)
+    identities = (*attempts, replace(attempts[0], worker_id="foreign"))
+    expected = [
+        asdict(query_execution_effect_closure(QueryExecutionEffectClosureV1(str(tmp_path), identity)))
+        for identity in identities
+    ]
+    assert [item["status"] for item in expected[:3]] == ["closed", "closed", "closed"]
+    assert expected[-1]["status"] != "closed"
+    before = {str(path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    program = """
+import importlib.abc
+import json
+import sys
+from dataclasses import asdict
+
+class BlockDirector(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'polaris.cells.director' or fullname.startswith('polaris.cells.director.'):
+            raise ImportError('Director executor is unavailable to historical observation')
+        return None
+
+sys.meta_path.insert(0, BlockDirector())
+from polaris.cells.runtime.task_runtime.public import TaskRuntimeExecutionAttemptIdentityV1
+from polaris.cells.runtime.task_runtime.public.execution_effect_closure import (
+    QueryExecutionEffectClosureV1, query_execution_effect_closure,
+)
+identities = [TaskRuntimeExecutionAttemptIdentityV1.from_record(item) for item in json.loads(sys.argv[1])]
+observed = [asdict(query_execution_effect_closure(QueryExecutionEffectClosureV1(item.workspace, item)))
+            for item in identities]
+assert not any(name.startswith('polaris.cells.director.') for name in sys.modules)
+print(json.dumps(observed, ensure_ascii=False))
+"""
+    process = subprocess.run(
+        ["rtk", "proxy", sys.executable, "-c", program, json.dumps([item.to_record() for item in identities])],
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": os.pathsep.join(sys.path)},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert process.returncode == 0, process.stderr
+    assert json.loads(process.stdout.splitlines()[-1]) == json.loads(json.dumps(expected))
+    assert before == {str(path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+
+@pytest.mark.asyncio
 async def test_run_ledger_observes_each_unique_attempt_instead_of_only_latest_task(tmp_path: Path) -> None:
     attempts, _rows = await _history(tmp_path)
     from polaris.cells.control_plane.run_ledger.public.service import _terminal_execution_effect_observations

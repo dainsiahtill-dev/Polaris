@@ -1,0 +1,250 @@
+{
+  "source": "unchanged pre-edit CFOAgent",
+  "clock": "2026-01-02T03:04:05Z + one microsecond per datetime.now call",
+  "operations": [
+    {
+      "name": "set_global",
+      "result": {
+        "ok": true,
+        "budget": {
+          "budget_id": "global_global_20260102030405000000",
+          "task_id": "global",
+          "budget_type": "global",
+          "limit": 2000,
+          "used": 0,
+          "unit": "tokens",
+          "status": "active",
+          "created_at": "2026-01-02T03:04:05.000001Z",
+          "updated_at": "2026-01-02T03:04:05.000003Z"
+        }
+      }
+    },
+    {
+      "name": "allocate",
+      "result": {
+        "ok": true,
+        "budget": {
+          "budget_id": "budget_task-a_20260102030405000004",
+          "task_id": "task-a",
+          "budget_type": "context_tokens",
+          "limit": 1000,
+          "used": 0,
+          "unit": "tokens",
+          "status": "active",
+          "created_at": "2026-01-02T03:04:05.000005Z",
+          "updated_at": "2026-01-02T03:04:05.000007Z"
+        }
+      }
+    },
+    {
+      "name": "check_initial",
+      "result": {
+        "ok": true,
+        "within_budget": true,
+        "remaining": 1000
+      }
+    },
+    {
+      "name": "record",
+      "result": {
+        "ok": true,
+        "usage": {
+          "record_id": "usage_task-a_20260102030405000008",
+          "task_id": "task-a",
+          "agent_id": "director",
+          "resource_type": "context_tokens",
+          "amount": 400,
+          "timestamp": "2026-01-02T03:04:05.000009Z"
+        }
+      }
+    },
+    {
+      "name": "check_exceeded",
+      "result": {
+        "ok": true,
+        "within_budget": false,
+        "reason": "exceeds_limit",
+        "budget": {
+          "budget_id": "budget_task-a_20260102030405000004",
+          "task_id": "task-a",
+          "budget_type": "context_tokens",
+          "limit": 1000,
+          "used": 400,
+          "unit": "tokens",
+          "status": "active",
+          "created_at": "2026-01-02T03:04:05.000005Z",
+          "updated_at": "2026-01-02T03:04:05.000010Z"
+        },
+        "remaining": 600,
+        "requested": 700
+      }
+    },
+    {
+      "name": "status",
+      "result": {
+        "ok": true,
+        "task_id": "task-a",
+        "budgets": [
+          {
+            "budget_id": "budget_task-a_20260102030405000004",
+            "task_id": "task-a",
+            "budget_type": "context_tokens",
+            "limit": 1000,
+            "used": 400,
+            "unit": "tokens",
+            "status": "active",
+            "created_at": "2026-01-02T03:04:05.000005Z",
+            "updated_at": "2026-01-02T03:04:05.000010Z"
+          }
+        ],
+        "has_budget": true
+      }
+    },
+    {
+      "name": "stats_task",
+      "result": {
+        "ok": true,
+        "task_id": "task-a",
+        "agent_id": null,
+        "totals": {
+          "context_tokens": 400
+        },
+        "record_count": 1
+      }
+    },
+    {
+      "name": "stats_agent",
+      "result": {
+        "ok": true,
+        "task_id": null,
+        "agent_id": "director",
+        "totals": {
+          "context_tokens": 400
+        },
+        "record_count": 1
+      }
+    },
+    {
+      "name": "set_limit",
+      "result": {
+        "ok": true,
+        "budget": {
+          "budget_id": "budget_task-a_20260102030405000004",
+          "task_id": "task-a",
+          "budget_type": "context_tokens",
+          "limit": 500,
+          "used": 400,
+          "unit": "tokens",
+          "status": "active",
+          "created_at": "2026-01-02T03:04:05.000005Z",
+          "updated_at": "2026-01-02T03:04:05.000011Z"
+        }
+      }
+    },
+    {
+      "name": "check_exact_remaining",
+      "result": {
+        "ok": true,
+        "within_budget": true,
+        "remaining": 100
+      }
+    },
+    {
+      "name": "check_after_limit",
+      "result": {
+        "ok": true,
+        "within_budget": false,
+        "reason": "exceeds_limit",
+        "budget": {
+          "budget_id": "budget_task-a_20260102030405000004",
+          "task_id": "task-a",
+          "budget_type": "context_tokens",
+          "limit": 500,
+          "used": 400,
+          "unit": "tokens",
+          "status": "active",
+          "created_at": "2026-01-02T03:04:05.000005Z",
+          "updated_at": "2026-01-02T03:04:05.000011Z"
+        },
+        "remaining": 100,
+        "requested": 101
+      }
+    },
+    {
+      "name": "negative_usage",
+      "result": {
+        "ok": true,
+        "usage": {
+          "record_id": "usage_task-a_20260102030405000012",
+          "task_id": "task-a",
+          "agent_id": "director",
+          "resource_type": "context_tokens",
+          "amount": 0,
+          "timestamp": "2026-01-02T03:04:05.000013Z"
+        }
+      }
+    },
+    {
+      "name": "allocate_empty_task",
+      "result": {
+        "ok": false,
+        "error": "task_id_required"
+      }
+    },
+    {
+      "name": "set_unknown",
+      "result": {
+        "ok": false,
+        "error": "budget_not_found",
+        "budget_id": "absent"
+      }
+    },
+    {
+      "name": "unallocated",
+      "result": {
+        "ok": true,
+        "within_budget": true,
+        "reason": "no_budget_allocated"
+      }
+    },
+    {
+      "name": "negative_limit",
+      "result": {
+        "ok": true,
+        "budget": {
+          "budget_id": "budget_task-b_20260102030405000015",
+          "task_id": "task-b",
+          "budget_type": "general",
+          "limit": 0,
+          "used": 0,
+          "unit": "Credits",
+          "status": "active",
+          "created_at": "2026-01-02T03:04:05.000016Z",
+          "updated_at": "2026-01-02T03:04:05.000018Z"
+        }
+      }
+    },
+    {
+      "name": "negative_estimate",
+      "result": {
+        "ok": true,
+        "within_budget": true,
+        "remaining": 0
+      }
+    },
+    {
+      "name": "stats_empty",
+      "result": {
+        "ok": true,
+        "task_id": null,
+        "agent_id": null,
+        "totals": {
+          "context_tokens": 400
+        },
+        "record_count": 0
+      }
+    }
+  ],
+  "serialized_state": "{\n  \"schema_version\": 1,\n  \"budgets\": {\n    \"global_global_20260102030405000000\": {\n      \"budget_id\": \"global_global_20260102030405000000\",\n      \"task_id\": \"global\",\n      \"budget_type\": \"global\",\n      \"limit\": 2000,\n      \"used\": 0,\n      \"unit\": \"tokens\",\n      \"status\": \"active\",\n      \"created_at\": \"2026-01-02T03:04:05.000001Z\",\n      \"updated_at\": \"2026-01-02T03:04:05.000003Z\"\n    },\n    \"budget_task-a_20260102030405000004\": {\n      \"budget_id\": \"budget_task-a_20260102030405000004\",\n      \"task_id\": \"task-a\",\n      \"budget_type\": \"context_tokens\",\n      \"limit\": 500,\n      \"used\": 400,\n      \"unit\": \"tokens\",\n      \"status\": \"active\",\n      \"created_at\": \"2026-01-02T03:04:05.000005Z\",\n      \"updated_at\": \"2026-01-02T03:04:05.000014Z\"\n    },\n    \"budget_task-b_20260102030405000015\": {\n      \"budget_id\": \"budget_task-b_20260102030405000015\",\n      \"task_id\": \"task-b\",\n      \"budget_type\": \"general\",\n      \"limit\": 0,\n      \"used\": 0,\n      \"unit\": \"Credits\",\n      \"status\": \"active\",\n      \"created_at\": \"2026-01-02T03:04:05.000016Z\",\n      \"updated_at\": \"2026-01-02T03:04:05.000018Z\"\n    }\n  },\n  \"usage\": [\n    {\n      \"record_id\": \"usage_task-a_20260102030405000008\",\n      \"task_id\": \"task-a\",\n      \"agent_id\": \"director\",\n      \"resource_type\": \"context_tokens\",\n      \"amount\": 400,\n      \"timestamp\": \"2026-01-02T03:04:05.000009Z\"\n    },\n    {\n      \"record_id\": \"usage_task-a_20260102030405000012\",\n      \"task_id\": \"task-a\",\n      \"agent_id\": \"director\",\n      \"resource_type\": \"context_tokens\",\n      \"amount\": 0,\n      \"timestamp\": \"2026-01-02T03:04:05.000013Z\"\n    }\n  ]\n}",
+  "serialized_sha256": "79be6ae7f0e1ac361fdf033af5f68f5a82ebf5e39185d4ec032ef55cbe808ffd"
+}

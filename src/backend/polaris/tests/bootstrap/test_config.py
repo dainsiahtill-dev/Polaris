@@ -316,7 +316,7 @@ class TestSettingsPayload:
 class TestSettingsRuntimeBase:
     def test_runtime_base_with_ramdisk(self):
         with tempfile.TemporaryDirectory() as td:
-            s = Settings(workspace="/tmp/test_ws", ramdisk_root=td)
+            s = Settings(workspace="/tmp/test_ws", runtime=RuntimeConfig(use_ramdisk=True, ramdisk_root=Path(td)))
             base = s.runtime_base
             assert base == Path(td).resolve()
 

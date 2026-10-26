@@ -1,0 +1,11 @@
+# 设置同步与项目 Runtime 单根
+
+状态：实际应用启动反例已出现，待最小修复。Permission HTTP回归14例因create_app同步环境自动注入默认外部KERNELONE_RUNTIME_CACHE_ROOT，随后现有canonical Runtime guard正确拒绝，非权限端口回归。
+
+首偏差在storage.layout Cell settings_utils._runtime_cache_env_value：显式cache_root缺省时仍调用default_system_cache_base。修复其设置到环境的生产者语义；KernelOne canonical path/guard与消费者保持，不清理环境绕过保护，不新建双根。
+
+无外部cache/ramdisk显式opt-in时，当前workspace唯一runtime为workspace/.polaris/runtime，不因Settings默认值/同步/持久化/冷加载自动注入外部cache。显式合法cache_root、root及ramdisk opt-in保留既有隔离语义；空配置不得从先前workspace继承外部redirect。所有设置consumer对同一快照一致，旧外部namespace只读发现，不自动复制/双写/活跃切根。
+
+先红后绿：真实RuntimeConfig(root=None,cache_root=None,use_ramdisk=False)同步后不注入外部cache，create_app和EngineeringRunService正常绑定tmp项目canonical root；切workspace、清空override、显式外部cache、显式root、ramdisk标志、持久化冷加载和settings HTTP路径均验证。不得扩大redirect允许范围，不能影响当前主实例配置/环境。所有fixture独立进程或monkeypatch环境，临时数据/KFS/.polaris。
+
+Scope优先storage/layout/internal/settings_utils.py及其真实producer/consumer测试；bootstrap默认值或load_from_env如需迁移先报告证据。Permission源模块/主应用Runtime guard不为凑通过改动。所有根/source identity/未知效果保持明确。

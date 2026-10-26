@@ -11,19 +11,11 @@ import pytest
 from polaris.cells.director.tasking.public import (
     CodeGenerationEngine,
     CodeGenerationPolicyViolationError,
-    _raise_policy_violation,
     generate_bootstrap_with_llm,
     generate_fallback_code_content,
     generate_phase_aware_fallback_content,
 )
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
-
-
-class TestCodeGenerationPolicyViolationError:
-    def test_raise_policy_violation(self):
-        with pytest.raises(CodeGenerationPolicyViolationError) as exc_info:
-            _raise_policy_violation("test_action")
-        assert "test_action" in str(exc_info.value)
 
 
 class TestCodeGenerationEngineInit:

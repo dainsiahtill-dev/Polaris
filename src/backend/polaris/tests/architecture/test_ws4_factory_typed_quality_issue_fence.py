@@ -11,16 +11,23 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[3]
 _FACTORY_STAGE_EXECUTOR = (
-    _BACKEND_ROOT / "polaris" / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
+    _BACKEND_ROOT / "polaris" / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor"
 )
 
 
 def _parse_factory_stage_executor() -> ast.Module:
-    source = _FACTORY_STAGE_EXECUTOR.read_text(encoding="utf-8")
-    return ast.parse(source, filename=str(_FACTORY_STAGE_EXECUTOR))
+    paths = sorted(_FACTORY_STAGE_EXECUTOR.glob("*.py"))
+    assert paths, f"Missing canonical Factory executor sources: {_FACTORY_STAGE_EXECUTOR}"
+    body = []
+    for path in paths:
+        body.extend(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)).body)
+    return ast.Module(body=body, type_ignores=[])
 
 
 def _find_method(tree: ast.Module, method_name: str) -> ast.FunctionDef:
@@ -71,7 +78,24 @@ def test_factory_coverage_and_plan_probe_consume_issue_payload_helper() -> None:
 
 
 def test_factory_executor_does_not_import_private_artifact_quality_rebuilders() -> None:
-    source = _FACTORY_STAGE_EXECUTOR.read_text(encoding="utf-8")
+    source = "\n".join(path.read_text(encoding="utf-8") for path in sorted(_FACTORY_STAGE_EXECUTOR.glob("*.py")))
 
     assert "_artifact_quality_issue_from_error" not in source
     assert "_artifact_quality_issues_from_errors" not in source
+
+
+def test_quality_issue_fence_detects_active_mixin_mutation(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = _BACKEND_ROOT / "polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py"
+    read_text = Path.read_text
+
+    def mutated(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        return (
+            source.replace("artifact_quality_issues_for_errors", "untyped_display_rebuilder")
+            if path == target
+            else source
+        )
+
+    monkeypatch.setattr(Path, "read_text", mutated)
+    with pytest.raises(AssertionError, match="artifact_quality_issues_for_errors"):
+        test_factory_issue_payload_helper_owns_typed_quality_issue_bridge()

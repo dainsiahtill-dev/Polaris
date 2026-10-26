@@ -13,8 +13,10 @@ import argparse
 import ast
 import hashlib
 import json
+import re
 from dataclasses import dataclass
-from pathlib import Path
+from importlib.util import resolve_name
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable
 
 import yaml
@@ -87,6 +89,11 @@ class GovernanceReport:
 _RULE_MANIFEST_CATALOG_CONSISTENCY = "manifest_catalog_consistency"
 _RULE_FACT_STREAM_SURFACE_DRIFT = "fact_stream_surface_drift"
 _RULE_DECLARED_CELL_DEPENDENCIES_MATCH_IMPORTS = "declared_cell_dependencies_match_imports"
+_RULE_TEST_AUTHORITY_INVALID = "test_authority_invalid"
+_RULE_PRODUCTION_IMPORTS_TEST_MODULE = "production_imports_test_module"
+
+TestDependencies = tuple[tuple[str, tuple[str, ...]], ...]
+TestEffects = tuple[tuple[str, tuple[str, ...], str], ...]
 
 _FACT_STREAM_CELL_ID = "events.fact_stream"
 _FACT_STREAM_ROOT_REL = "polaris/cells/events/fact_stream/__init__.py"
@@ -112,7 +119,75 @@ _FACT_STREAM_REQUIRED_EFFECTS = frozenset(
     }
 )
 _FACT_STREAM_CONTRACT_KINDS = ("commands", "queries", "events", "results", "errors")
-_FACT_STREAM_PUBLIC_EXPORT_COUNT = 49
+_FACT_STREAM_APPROVED_PUBLIC_BINDINGS = {
+    "contracts": (
+        "AppendFactEventCommandV1",
+        "AppendIfGuardedSnapshotCommandV1",
+        "AppendPayloadFactEventCommandV1",
+        "AppendSegmentedFactEventCommandV1",
+        "BootstrapFactStreamWorkspaceCommandV1",
+        "EnrollFactStreamStreamsCommandV1",
+        "EnsureSegmentedFactLedgerCommandV1",
+        "FactEventAppendedV1",
+        "FactPayloadReferenceV1",
+        "FactStreamError",
+        "FactStreamHeadV1",
+        "FactStreamLockIdentityV1",
+        "FactStreamLockKeyEvidenceV1",
+        "FactStreamMaintenanceProofV1",
+        "FactStreamMaintenanceReceiptV1",
+        "FactStreamProvenanceV1",
+        "FactStreamQueryResultV1",
+        "GuardedFactAppendedV1",
+        "GuardedFactEventV1",
+        "GuardedFactSnapshotProofV1",
+        "GuardedFactSnapshotV1",
+        "ProvisionFactStreamLockAuthorityCommandV1",
+        "QueryFactEventsV1",
+        "QueryFactStreamHeadV1",
+        "QueryPayloadFactByIdempotencyKeyV1",
+        "QueryPayloadFactEventsV1",
+        "QuerySegmentedFactEventsV1",
+        "QuerySegmentedFactLedgerHeadV1",
+        "ReadGuardedFactSnapshotCommandV1",
+        "SegmentedFactEventAppendedV1",
+        "SegmentedFactLedgerHeadV1",
+        "SegmentedFactLedgerReadyV1",
+        "SegmentedFactQueryResultV1",
+        "StoreFactPayloadCommandV1",
+    ),
+    "service": (
+        "append_fact_event",
+        "append_if_guarded_snapshot",
+        "append_payload_fact_event",
+        "append_segmented_fact_event",
+        "configure_debug_tracing",
+        "emit_debug_event",
+        "enroll_fact_stream_streams",
+        "ensure_segmented_fact_ledger",
+        "install_global_debug_hooks",
+        "is_debug_tracing_enabled",
+        "log_stream_token",
+        "provision_fact_stream_lock_authority",
+        "query_fact_events",
+        "query_fact_stream_head",
+        "query_payload_fact_by_idempotency_key",
+        "query_payload_fact_events",
+        "query_payload_fact_ledger_presence",
+        "query_segmented_fact_events",
+        "query_segmented_fact_ledger_head",
+        "read_guarded_fact_snapshot",
+        "sanitize_headers",
+        "set_debug_tracing_enabled",
+        "store_fact_payload",
+    ),
+    "catalog": ("fact_stream_bootstrap_streams",),
+    "workspace_bootstrap": ("bootstrap_fact_stream_workspace",),
+}
+_FACT_STREAM_PUBLIC_BINDINGS = {
+    name: (module, name) for module, names in _FACT_STREAM_APPROVED_PUBLIC_BINDINGS.items() for name in names
+}
+_FACT_STREAM_PUBLIC_EXPORT_COUNT = len(_FACT_STREAM_PUBLIC_BINDINGS)
 
 # Cross-cell acyclicity (GATE-01): a NEW policy enhancement.
 # ACGA 2.0 has NO on-disk peer-cell acyclicity rule, so this gate does not enforce a
@@ -132,6 +207,9 @@ class CatalogCell:
     depends_on: tuple[str, ...]
     state_owners: tuple[str, ...]
     effects_allowed: tuple[str, ...]
+    test_dependencies: TestDependencies = ()
+    test_effects_allowed: TestEffects = ()
+    test_authority_errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -152,6 +230,9 @@ class ManifestRecord:
     state_owners: tuple[str, ...]
     effects_allowed: tuple[str, ...]
     has_current_modules: bool
+    test_dependencies: TestDependencies = ()
+    test_effects_allowed: TestEffects = ()
+    test_authority_errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -443,6 +524,163 @@ def _check_fact_stream_public_surface_projection(
         )
 
 
+def _resolve_static_python_module(repo_root: Path, module: str) -> Path | None:
+    """Resolve repository Python source without executing it, using package-first precedence."""
+    parts = module.split(".")
+    if not parts or not all(part.isidentifier() for part in parts):
+        return None
+    directory = repo_root
+    for index, part in enumerate(parts):
+        stem = directory / part
+        package_path = stem / "__init__.py"
+        module_path = stem.with_suffix(".py")
+        if package_path.is_file():
+            resolved = package_path
+        elif module_path.is_file():
+            # A normal module cannot supply importable namespace descendants.
+            if index != len(parts) - 1:
+                return None
+            resolved = module_path
+        elif stem.is_dir():
+            resolved = stem  # Namespace package, below any concrete module.
+        else:
+            return None
+        directory = stem
+    try:
+        return resolved if resolved.resolve().is_relative_to(repo_root.resolve()) else None
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _resolve_fact_stream_origin(
+    *,
+    repo_root: Path,
+    module: str,
+    name: str,
+    cache: dict[str, ast.Module | None],
+    seen: frozenset[tuple[str, str]] = frozenset(),
+) -> tuple[str, str] | None:
+    """Follow repository-owned literal aliases without importing audited modules."""
+    key = (module, name)
+    if key in seen or len(seen) >= 128 or not all(part.isidentifier() for part in module.split(".")):
+        return None
+    path = _resolve_static_python_module(repo_root, module)
+    if path is None:
+        return None
+    if module not in cache:
+        cache[module] = _parse_python_module(path)
+    tree = cache[module]
+    if tree is None:
+        return None
+    bindings: list[tuple[str, str] | None] = []
+    for node in tree.body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            bindings.append((module, name))
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if (alias.asname or alias.name) != name:
+                    continue
+                package = module.split(".") if path.name == "__init__.py" else module.split(".")[:-1]
+                if node.level:
+                    if node.level > len(package):
+                        bindings.append(None)
+                        continue
+                    parts = package[: len(package) - node.level + 1] + (node.module or "").split(".")
+                    imported_module = ".".join(part for part in parts if part)
+                else:
+                    imported_module = node.module or ""
+                bindings.append((imported_module, alias.name))
+        elif (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == name for target in node.targets)
+        ) or (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name):
+            bindings.append((module, node.value.id) if isinstance(node.value, ast.Name) else None)
+    if len(bindings) != 1 or bindings[0] is None:
+        return None
+    target = bindings[0]
+    if target == key:
+        # Only an actual definition is terminal; self-imports are cycles.
+        if any(
+            isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name
+            for node in tree.body
+        ):
+            return target
+        return None
+    return _resolve_fact_stream_origin(
+        repo_root=repo_root, module=target[0], name=target[1], cache=cache, seen=seen | {key}
+    )
+
+
+def _check_fact_stream_public_bindings(
+    *,
+    public_tree: ast.Module | None,
+    public_exports: tuple[str, ...],
+    repo_root: Path,
+    issues: list[GovernanceIssue],
+) -> None:
+    """Check approved binding identities statically without executing audited code."""
+    if public_exports != tuple(sorted(_FACT_STREAM_PUBLIC_BINDINGS)):
+        _fact_stream_issue(
+            issues,
+            path=_FACT_STREAM_PUBLIC_REL,
+            message="FactStream approved public inventory differs in names, duplicates or order.",
+        )
+    imports: dict[str, list[tuple[str, str]]] = {}
+    for node in public_tree.body if public_tree is not None else ():
+        if isinstance(node, ast.ImportFrom) and node.level == 1:
+            for alias in node.names:
+                imports.setdefault(alias.asname or alias.name, []).append((node.module or "", alias.name))
+    prefix = "polaris.cells.events.fact_stream.public"
+    approved_origins = {
+        name: (f"{prefix}.{module}", imported) for name, (module, imported) in _FACT_STREAM_PUBLIC_BINDINGS.items()
+    }
+    for name in (
+        "AppendIfGuardedSnapshotCommandV1",
+        "GuardedFactAppendedV1",
+        "GuardedFactEventV1",
+        "GuardedFactSnapshotProofV1",
+        "GuardedFactSnapshotV1",
+        "ReadGuardedFactSnapshotCommandV1",
+    ):
+        approved_origins[name] = ("polaris.kernelone.events.sourcing.guarded", name)
+    approved_origins["FactPayloadReferenceV1"] = (
+        "polaris.kernelone.events.sourcing.payload_store",
+        "PayloadReferenceV1",
+    )
+    for name in (
+        "configure_debug_tracing",
+        "emit_debug_event",
+        "install_global_debug_hooks",
+        "is_debug_tracing_enabled",
+        "log_stream_token",
+        "sanitize_headers",
+        "set_debug_tracing_enabled",
+    ):
+        approved_origins[name] = (
+            "polaris.cells.events.fact_stream.internal.debug_trace",
+            "_sanitize_headers" if name == "sanitize_headers" else name,
+        )
+    cache: dict[str, ast.Module | None] = {}
+    for name, expected in _FACT_STREAM_PUBLIC_BINDINGS.items():
+        if imports.get(name) != [expected]:
+            _fact_stream_issue(
+                issues,
+                path=_FACT_STREAM_PUBLIC_REL,
+                message=f"FactStream public binding drift or missing: {name} must import .{expected[0]}.{expected[1]}.",
+            )
+            continue
+        module, imported_name = expected
+        origin = _resolve_fact_stream_origin(
+            repo_root=repo_root, module=f"{prefix}.{module}", name=imported_name, cache=cache
+        )
+        if origin != approved_origins[name]:
+            _fact_stream_issue(
+                issues,
+                path=_FACT_STREAM_PUBLIC_REL,
+                message=f"FactStream public binding unresolved or wrong origin: {name}; expected={approved_origins[name]!r}, found={origin!r}.",
+            )
+
+
 def _check_fact_stream_surface_drift(
     *,
     repo_root: Path,
@@ -534,6 +772,13 @@ def _check_fact_stream_surface_drift(
                     f"{_FACT_STREAM_PUBLIC_EXPORT_COUNT} names, found {len(expected_public_exports)}."
                 ),
             )
+
+    _check_fact_stream_public_bindings(
+        public_tree=public_tree,
+        public_exports=expected_public_exports,
+        repo_root=repo_root,
+        issues=issues,
+    )
 
     contract_surface = _fact_stream_contract_exports(contracts_path)
     if contract_surface is None:
@@ -685,6 +930,67 @@ def _iter_rule_targets(repo_root: Path, pattern: str) -> list[Path]:
     return sorted(matches)
 
 
+def _parse_test_authority(payload: dict[str, Any]) -> tuple[TestDependencies, TestEffects, tuple[str, ...]]:
+    """Normalize exact grants without converting legacy verification lists into authority."""
+    errors: list[str] = []
+    legacy = payload.get("verify_targets")
+    if isinstance(legacy, dict) and {"test_dependencies", "test_effects_allowed"} & set(legacy):
+        errors.append("test authority must be declared in verification, not legacy verify_targets")
+    verification = payload.get("verification")
+    if not isinstance(verification, dict):
+        return (), (), tuple(errors)
+    dependencies: list[tuple[str, tuple[str, ...]]] = []
+    effects: list[tuple[str, tuple[str, ...], str]] = []
+    for field, value_key in (("test_dependencies", "depends_on"), ("test_effects_allowed", "effects_allowed")):
+        entries = verification.get(field, [])
+        if not isinstance(entries, list):
+            errors.append(f"verification.{field} must be an array")
+            continue
+        seen_paths: set[str] = set()
+        for index, entry in enumerate(entries):
+            label = f"verification.{field}[{index}]"
+            required = {"path", value_key} | ({"reason"} if field == "test_effects_allowed" else set())
+            if not isinstance(entry, dict) or set(entry) != required:
+                errors.append(f"{label} must contain exactly {sorted(required)}")
+                continue
+            path, values = entry["path"], entry[value_key]
+            if not isinstance(path, str) or not path:
+                errors.append(f"{label}.path must be a nonempty string")
+                continue
+            if path in seen_paths:
+                errors.append(f"{label}.path duplicates {path}")
+            seen_paths.add(path)
+            if (
+                not isinstance(values, list)
+                or not values
+                or any(not isinstance(value, str) or not value.strip() for value in values)
+            ):
+                errors.append(f"{label}.{value_key} must contain nonempty strings")
+                continue
+            if len(set(values)) != len(values):
+                errors.append(f"{label}.{value_key} must contain unique values")
+                continue
+            normalized = tuple(sorted(values))
+            if field == "test_dependencies":
+                if any(not re.fullmatch(r"[a-z0-9_]+(?:\.[a-z0-9_]+)+", value) for value in normalized):
+                    errors.append(f"{label}.depends_on contains an invalid Cell id")
+                    continue
+                dependencies.append((path, normalized))
+            else:
+                reason = entry["reason"]
+                if not isinstance(reason, str) or not reason.strip():
+                    errors.append(f"{label}.reason must be nonempty")
+                    continue
+                if any(
+                    not re.fullmatch(r"(?:process\.spawn|network\.[a-z_]+|http\.[a-z_]+|fs\.write):[^*?\[\]\s]+", value)
+                    for value in normalized
+                ):
+                    errors.append(f"{label}.effects_allowed must contain explicit effect tokens without globs")
+                    continue
+                effects.append((path, normalized, reason))
+    return tuple(sorted(dependencies)), tuple(sorted(effects)), tuple(errors)
+
+
 def _build_cell_index(catalog_payload: dict[str, Any]) -> list[CatalogCell]:
     cells_payload = catalog_payload.get("cells")
     if not isinstance(cells_payload, list):
@@ -703,6 +1009,7 @@ def _build_cell_index(catalog_payload: dict[str, Any]) -> list[CatalogCell]:
         effects_allowed = tuple(
             str(entry).strip() for entry in (item.get("effects_allowed") or []) if str(entry).strip()
         )
+        test_dependencies, test_effects_allowed, test_authority_errors = _parse_test_authority(item)
         cells.append(
             CatalogCell(
                 cell_id=cell_id,
@@ -710,6 +1017,9 @@ def _build_cell_index(catalog_payload: dict[str, Any]) -> list[CatalogCell]:
                 depends_on=depends_on,
                 state_owners=state_owners,
                 effects_allowed=effects_allowed,
+                test_dependencies=test_dependencies,
+                test_effects_allowed=test_effects_allowed,
+                test_authority_errors=test_authority_errors,
             )
         )
     return cells
@@ -768,6 +1078,7 @@ def _load_manifest(manifest_path: Path) -> ManifestRecord | None:
         str(entry).strip() for entry in (raw_effects if isinstance(raw_effects, list) else []) if str(entry).strip()
     )
     has_current_modules = isinstance(payload.get("current_modules"), list) and bool(payload.get("current_modules"))
+    test_dependencies, test_effects_allowed, test_authority_errors = _parse_test_authority(payload)
     return ManifestRecord(
         cell_id=cell_id,
         owned_paths=owned_paths,
@@ -775,6 +1086,9 @@ def _load_manifest(manifest_path: Path) -> ManifestRecord | None:
         state_owners=state_owners,
         effects_allowed=effects_allowed,
         has_current_modules=has_current_modules,
+        test_dependencies=test_dependencies,
+        test_effects_allowed=test_effects_allowed,
+        test_authority_errors=test_authority_errors,
     )
 
 
@@ -855,6 +1169,21 @@ def _check_manifest_catalog_consistency(
         if catalog_cell is None:
             # Cell is in manifest but not in catalog -- handled by separate test
             continue
+
+        # Test authority is exact in both directions, never a production superset.
+        for field in ("test_dependencies", "test_effects_allowed", "test_authority_errors"):
+            manifest_value = getattr(manifest, field)
+            catalog_value = getattr(catalog_cell, field)
+            if manifest_value != catalog_value:
+                mismatches.append(
+                    ManifestCatalogMismatch(
+                        cell_id=manifest.cell_id,
+                        field=field,
+                        mismatch_type="test_authority_not_equal",
+                        manifest_value=repr(manifest_value),
+                        catalog_value=repr(catalog_value),
+                    )
+                )
 
         # Rule 1: depends_on superset
         catalog_deps = set(catalog_cell.depends_on)
@@ -1148,13 +1477,178 @@ def _module_to_cell_id(module: str, *, known_cells: set[str]) -> str | None:
     return candidate if candidate in known_cells else None
 
 
+def _is_test_source(rel_path: str) -> bool:
+    return "tests" in PurePosixPath(rel_path).parts[:-1]
+
+
+def _test_path_error(*, repo_root: Path, path: str, owner: str, file_owners: dict[str, set[str]]) -> str | None:
+    pure = PurePosixPath(path)
+    if (
+        not path
+        or pure.is_absolute()
+        or PureWindowsPath(path).drive
+        or "\\" in path
+        or pure.as_posix() != path
+        or ".." in pure.parts
+        or any(char in path for char in "*?[]")
+        or not _is_test_source(path)
+    ):
+        return "path must be a canonical backend-relative file inside an owned tests directory"
+    candidate = repo_root / path
+    try:
+        resolved = candidate.resolve(strict=True)
+        physical_path = resolved.relative_to(repo_root.resolve()).as_posix()
+    except (OSError, RuntimeError, ValueError):
+        return "path is missing or escapes the backend root"
+    if not candidate.is_file() or candidate.is_symlink():
+        return "path must be a regular file, not a directory or symlink"
+    if (
+        _owner_for_path(file_owners, path) != owner
+        or _owner_for_path(file_owners, physical_path) != owner
+        or not _is_test_source(physical_path)
+    ):
+        return "path must have the declaring Cell as its sole lexical and physical owner"
+    return None
+
+
+def _validate_test_authority(
+    *,
+    repo_root: Path,
+    cells: Iterable[CatalogCell | ManifestRecord],
+    file_owners: dict[str, set[str]],
+    issues: list[GovernanceIssue],
+    known_cells: set[str] | None = None,
+) -> tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
+    records = tuple(cells)
+    known = known_cells if known_cells is not None else {cell.cell_id for cell in records}
+    dependencies: dict[str, tuple[str, ...]] = {}
+    effects: dict[str, tuple[str, ...]] = {}
+    for cell in records:
+        manifest_path = f"polaris/cells/{cell.cell_id.replace('.', '/')}/cell.yaml"
+        errors = list(cell.test_authority_errors)
+        for field, entries in (
+            ("test_dependencies", cell.test_dependencies),
+            ("test_effects_allowed", cell.test_effects_allowed),
+        ):
+            seen_paths: set[str] = set()
+            for entry in entries:
+                path, values = entry[:2]
+                error = _test_path_error(repo_root=repo_root, path=path, owner=cell.cell_id, file_owners=file_owners)
+                if path in seen_paths:
+                    error = "duplicate path"
+                seen_paths.add(path)
+                if field == "test_dependencies" and set(values) - known:
+                    error = f"unknown Cell dependencies: {sorted(set(values) - known)}"
+                if error:
+                    errors.append(f"verification.{field} {path}: {error}")
+            # A malformed declaration never grants partial authority for this Cell.
+        if errors:
+            for error in errors:
+                issues.append(
+                    GovernanceIssue(
+                        rule_id=_RULE_TEST_AUTHORITY_INVALID,
+                        severity=_SEVERITY_BLOCKER,
+                        message=f"{cell.cell_id}: {error}",
+                        path=manifest_path,
+                    )
+                )
+            continue
+        dependencies.update(cell.test_dependencies)
+        effects.update((path, values) for path, values, _reason in cell.test_effects_allowed)
+    return dependencies, effects
+
+
+def _source_package(rel_path: str) -> str:
+    return ".".join(PurePosixPath(rel_path).with_suffix("").parts[:-1])
+
+
+def _import_targets_test_source(repo_root: Path, module: str) -> bool:
+    """Resolve the longest source prefix; a production `tests.py` is not a test directory."""
+    parts = module.split(".")
+    if not all(part.isidentifier() for part in parts):
+        return False
+    for length in range(len(parts), 0, -1):
+        candidate = _resolve_static_python_module(repo_root, ".".join(parts[:length]))
+        if candidate is not None:
+            try:
+                rel_path = candidate.resolve().relative_to(repo_root.resolve()).as_posix()
+            except (OSError, RuntimeError, ValueError):
+                return False
+            return _is_test_source(f"{rel_path}/__init__.py" if candidate.is_dir() else rel_path)
+    return False
+
+
+def _resolve_source_import(module: str, package: str) -> str:
+    if not module.startswith("."):
+        return module
+    try:
+        return resolve_name(module, package)
+    except (ImportError, ValueError):
+        return ""
+
+
+def _python_imports(tree: ast.AST, rel_path: str) -> list[tuple[str, int, bool]]:
+    """Keep each occurrence, including relative and literal dynamic imports."""
+    package = _source_package(rel_path)
+    importlib_names = {"importlib"}
+    loader_names = {"__import__"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            importlib_names.update(alias.asname or alias.name for alias in node.names if alias.name == "importlib")
+        elif isinstance(node, ast.ImportFrom) and node.module == "importlib" and not node.level:
+            loader_names.update(alias.asname or alias.name for alias in node.names if alias.name == "import_module")
+    imports: list[tuple[str, int, bool]] = []
+    for node in ast.walk(tree):
+        line = int(getattr(node, "lineno", 0) or 0)
+        if isinstance(node, ast.Import):
+            imports.extend((alias.name, line, False) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = _resolve_source_import("." * node.level + (node.module or ""), package)
+            if module:
+                # Include imported submodules so `from owner import tests` cannot hide a test edge.
+                imports.extend((f"{module}.{alias.name}", line, alias.name.startswith("_")) for alias in node.names)
+        elif isinstance(node, ast.Call):
+            loader = (isinstance(node.func, ast.Name) and node.func.id in loader_names) or (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in importlib_names
+                and node.func.attr == "import_module"
+            )
+            if not loader:
+                continue
+            name = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == "name"), None)
+            if not isinstance(name, ast.Constant) or not isinstance(name.value, str):
+                continue
+            dynamic_package = package
+            package_arg = (
+                node.args[1]
+                if len(node.args) > 1
+                else next((kw.value for kw in node.keywords if kw.arg == "package"), None)
+            )
+            if isinstance(package_arg, ast.Constant) and isinstance(package_arg.value, str):
+                dynamic_package = package_arg.value
+            module = _resolve_source_import(name.value, dynamic_package)
+            if module:
+                imports.append((module, line, False))
+    return imports
+
+
+def _python_source_artifacts(repo_root: Path) -> list[Path]:
+    """Include Python implementation fragments loaded through explicit exec loaders."""
+    return sorted(
+        source
+        for source in (repo_root / "polaris").rglob("*")
+        if source.suffix in {".py", ".source"} and source.is_file()
+    )
+
+
 def _check_cross_cell_internal_imports(
     *,
     repo_root: Path,
     file_owners: dict[str, set[str]],
     issues: list[GovernanceIssue],
 ) -> None:
-    for source_file in sorted((repo_root / "polaris").rglob("*.py")):
+    for source_file in _python_source_artifacts(repo_root):
         if "__pycache__" in source_file.parts:
             continue
         rel_path = source_file.relative_to(repo_root).as_posix()
@@ -1175,11 +1669,8 @@ def _check_cross_cell_internal_imports(
             )
             continue
 
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom):
-                continue
-            module = str(node.module or "").strip()
-            if not module.startswith("polaris.cells.") or ".internal." not in module:
+        for module, line, private_symbol in _python_imports(tree, rel_path):
+            if not module.startswith("polaris.cells."):
                 continue
             module_parts = module.split(".")
             if len(module_parts) < 4:
@@ -1187,13 +1678,15 @@ def _check_cross_cell_internal_imports(
             target_cell_id = f"{module_parts[2]}.{module_parts[3]}"
             if target_cell_id == source_owner:
                 continue
+            if not private_symbol and not any(part == "internal" or part.startswith("_") for part in module_parts[4:]):
+                continue
             issues.append(
                 GovernanceIssue(
                     rule_id="no_cross_cell_internal_import",
                     severity=_SEVERITY_BLOCKER,
                     message=f"{source_owner} imports {target_cell_id} internal module",
                     path=rel_path,
-                    line=int(getattr(node, "lineno", 0) or 0),
+                    line=line,
                 )
             )
 
@@ -1403,17 +1896,25 @@ def _check_declared_cell_dependencies(
     repo_root: Path,
     cells: Iterable[CatalogCell],
     issues: list[GovernanceIssue],
+    test_dependencies: dict[str, tuple[str, ...]] | None = None,
+    file_owners: dict[str, set[str]] | None = None,
 ) -> None:
     catalog_cells = tuple(cells)
     known_cells = {cell.cell_id for cell in catalog_cells}
     declared_depends_on = {cell.cell_id: set(cell.depends_on) for cell in catalog_cells}
-    discovered_edges: dict[tuple[str, str], str] = {}
+    if file_owners is None:
+        file_owners = _expand_owned_files(repo_root, catalog_cells)
+    if test_dependencies is None:
+        test_dependencies, _ = _validate_test_authority(
+            repo_root=repo_root, cells=catalog_cells, file_owners=file_owners, issues=issues
+        )
+    test_import_targets: dict[str, bool] = {}
 
-    for source_file in sorted((repo_root / "polaris" / "cells").rglob("*.py")):
+    for source_file in _python_source_artifacts(repo_root):
         if "__pycache__" in source_file.parts:
             continue
         rel_path = source_file.relative_to(repo_root).as_posix()
-        source_cell_id = _path_to_cell_id(rel_path=rel_path, known_cells=known_cells)
+        source_cell_id = _owner_for_path(file_owners, rel_path)
         if not source_cell_id:
             continue
 
@@ -1433,31 +1934,36 @@ def _check_declared_cell_dependencies(
             )
             continue
 
-        imported_modules: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                imported_modules.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                imported_modules.add(node.module)
-
-        for module_name in sorted(imported_modules):
+        allowed_dependencies = declared_depends_on.get(source_cell_id, set())
+        if _is_test_source(rel_path):
+            allowed_dependencies = allowed_dependencies | set(test_dependencies.get(rel_path, ()))
+        for module_name, line, _private in _python_imports(tree, rel_path):
+            if not _is_test_source(rel_path) and module_name not in test_import_targets:
+                test_import_targets[module_name] = _import_targets_test_source(repo_root, module_name)
+            if not _is_test_source(rel_path) and test_import_targets[module_name]:
+                issues.append(
+                    GovernanceIssue(
+                        rule_id=_RULE_PRODUCTION_IMPORTS_TEST_MODULE,
+                        severity=_SEVERITY_BLOCKER,
+                        message=f"{source_cell_id} production source imports test module {module_name}",
+                        path=rel_path,
+                        line=line,
+                    )
+                )
             target_cell_id = _module_to_cell_id(module_name, known_cells=known_cells)
             if not target_cell_id or target_cell_id == source_cell_id:
                 continue
-            edge = (source_cell_id, target_cell_id)
-            discovered_edges.setdefault(edge, rel_path)
-
-    for (source_cell_id, target_cell_id), rel_path in sorted(discovered_edges.items()):
-        if target_cell_id in declared_depends_on.get(source_cell_id, set()):
-            continue
-        issues.append(
-            GovernanceIssue(
-                rule_id=_RULE_DECLARED_CELL_DEPENDENCIES_MATCH_IMPORTS,
-                severity=_SEVERITY_HIGH,
-                message=(f"{source_cell_id} imports {target_cell_id} but does not declare it in depends_on"),
-                path=rel_path,
+            if target_cell_id in allowed_dependencies:
+                continue
+            issues.append(
+                GovernanceIssue(
+                    rule_id=_RULE_DECLARED_CELL_DEPENDENCIES_MATCH_IMPORTS,
+                    severity=_SEVERITY_HIGH,
+                    message=(f"{source_cell_id} imports {target_cell_id} but does not declare it in depends_on"),
+                    path=rel_path,
+                    line=line,
+                )
             )
-        )
 
 
 def _check_critical_subgraphs(
@@ -1525,14 +2031,222 @@ def _effect_token_exists(effects: tuple[str, ...], prefix: str) -> bool:
     return any(str(item).startswith(prefix) for item in effects)
 
 
+_AliasBindings = dict[str, frozenset[str]]
+_ScopeImports = tuple[tuple[str, str, tuple[int, int]], ...]
+
+
+def _merge_alias_bindings(*bindings: _AliasBindings) -> _AliasBindings:
+    names = set().union(*(set(binding) for binding in bindings))
+    return {name: frozenset().union(*(binding.get(name, frozenset({name})) for binding in bindings)) for name in names}
+
+
+def _scope_import_bindings(nodes: Iterable[ast.AST]) -> tuple[_AliasBindings, set[str], _ScopeImports]:
+    """Collect this scope's imports and positions, excluding nested scopes."""
+    imports: _AliasBindings = {}
+    external_names: set[str] = set()
+    positioned: list[tuple[str, str, tuple[int, int]]] = []
+    pending = list(nodes)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(node, ast.Import):
+            pairs = (
+                (alias.asname or alias.name.split(".")[0], alias.name if alias.asname else alias.name.split(".")[0])
+                for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            pairs = ((alias.asname or alias.name, f"{node.module}.{alias.name}") for alias in node.names)
+        else:
+            if isinstance(node, (ast.Global, ast.Nonlocal)):
+                external_names.update(node.names)
+            pending.extend(ast.iter_child_nodes(node))
+            continue
+        for name, target in pairs:
+            imports[name] = imports.get(name, frozenset()) | {target}
+            positioned.append((name, target, (node.lineno, node.col_offset)))
+    return imports, external_names, tuple(positioned)
+
+
+def _effect_call_names(expression: ast.expr, aliases: _AliasBindings) -> frozenset[str]:
+    if isinstance(expression, ast.Name):
+        return aliases.get(expression.id, frozenset({expression.id}))
+    if isinstance(expression, ast.Attribute):
+        return frozenset(f"{value}.{expression.attr}" for value in _effect_call_names(expression.value, aliases))
+    return frozenset()
+
+
+class _ScopedEffectCalls(ast.NodeVisitor):
+    """Resolve import aliases by lexical scope and source order without executing audited code."""
+
+    def __init__(self) -> None:
+        self.aliases: _AliasBindings = {}
+        self.class_closure: _AliasBindings | None = None
+        self.scope_imports: _ScopeImports = ()
+        self.calls: list[tuple[ast.Call, frozenset[str]]] = []
+
+    def _scope(
+        self,
+        nodes: list[ast.stmt] | list[ast.expr],
+        inherited: _AliasBindings,
+        *,
+        parameters: ast.arguments | None = None,
+        class_closure: _AliasBindings | None = None,
+    ) -> None:
+        previous = self.aliases, self.class_closure, self.scope_imports
+        imports, external_names, self.scope_imports = _scope_import_bindings(nodes)
+        self.aliases = dict(inherited)
+        if parameters is not None:
+            # Python function locals do not borrow an outer alias before a local import.
+            for name in set(imports) - external_names:
+                self.aliases[name] = frozenset()
+            for argument in (*parameters.posonlyargs, *parameters.args, *parameters.kwonlyargs):
+                self.aliases[argument.arg] = frozenset()
+            for optional_argument in (parameters.vararg, parameters.kwarg):
+                if optional_argument is not None:
+                    self.aliases[optional_argument.arg] = frozenset()
+        self.class_closure = class_closure
+        for node in nodes:
+            self.visit(node)
+        self.aliases, self.class_closure, self.scope_imports = previous
+
+    def _deferred_aliases(self, node: ast.AST) -> _AliasBindings:
+        # Methods/lambdas close over the enclosing function/module, not class locals.
+        if self.class_closure is not None:
+            return self.class_closure
+        end = (getattr(node, "end_lineno", 0) or 0, getattr(node, "end_col_offset", 0) or 0)
+        future: _AliasBindings = {}
+        for name, target, position in self.scope_imports:
+            if position > end:
+                future[name] = future.get(name, frozenset()) | {target}
+        return _merge_alias_bindings(self.aliases, future)
+
+    def visit_Module(self, node: ast.Module) -> None:
+        self._scope(node.body, {})
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            name = alias.asname or alias.name.split(".")[0]
+            self.aliases[name] = frozenset({alias.name if alias.asname else name})
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for alias in node.names:
+            self.aliases[alias.asname or alias.name] = frozenset({f"{node.module}.{alias.name}"})
+
+    def visit_Call(self, node: ast.Call) -> None:
+        self.calls.append((node, _effect_call_names(node.func, self.aliases)))
+        self.generic_visit(node)
+
+    def _definition_expressions(self, node: ast.AST) -> None:
+        for field, value in ast.iter_fields(node):
+            if field == "body":
+                continue
+            if isinstance(value, ast.AST):
+                self.visit(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast.AST):
+                        self.visit(item)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self._definition_expressions(node)
+        self._scope(node.body, self._deferred_aliases(node), parameters=node.args)
+        self.aliases[node.name] = frozenset()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.visit_FunctionDef(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self.visit(node.args)
+        self._scope([node.body], self._deferred_aliases(node), parameters=node.args)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._definition_expressions(node)
+        self._scope(node.body, self.aliases, class_closure=self._deferred_aliases(node))
+        self.aliases[node.name] = frozenset()
+
+    def _alternatives(self, branches: list[list[ast.stmt]], *, optional: bool = False) -> None:
+        before = dict(self.aliases)
+        outcomes = [before] if optional else []
+        for branch in branches:
+            self.aliases = dict(before)
+            for node in branch:
+                self.visit(node)
+            outcomes.append(self.aliases)
+        self.aliases = _merge_alias_bindings(*outcomes)
+
+    def visit_If(self, node: ast.If) -> None:
+        self.visit(node.test)
+        self._alternatives([node.body, node.orelse])
+
+    def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
+        self.visit(node.iter)
+        self.visit(node.target)
+        self._alternatives([node.body], optional=True)
+        for statement in node.orelse:
+            self.visit(statement)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        self.visit_For(node)
+
+    def visit_While(self, node: ast.While) -> None:
+        self.visit(node.test)
+        self._alternatives([node.body], optional=True)
+        for statement in node.orelse:
+            self.visit(statement)
+
+    def _try_branches(self, node: ast.Try | ast.TryStar) -> None:
+        before = dict(self.aliases)
+        for statement in node.body:
+            self.visit(statement)
+        body_aliases = dict(self.aliases)
+        for statement in node.orelse:
+            self.visit(statement)
+        outcomes = [before, self.aliases]
+        for handler in node.handlers:
+            self.aliases = _merge_alias_bindings(before, body_aliases)
+            if handler.type is not None:
+                self.visit(handler.type)
+            for statement in handler.body:
+                self.visit(statement)
+            outcomes.append(self.aliases)
+        self.aliases = _merge_alias_bindings(*outcomes)
+        for statement in node.finalbody:
+            self.visit(statement)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        self._try_branches(node)
+
+    def visit_TryStar(self, node: ast.TryStar) -> None:
+        self._try_branches(node)
+
+    def visit_Match(self, node: ast.Match) -> None:
+        self.visit(node.subject)
+        for case in node.cases:
+            if case.guard is not None:
+                self.visit(case.guard)
+        exhaustive = any(
+            isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None and case.guard is None
+            for case in node.cases
+        )
+        self._alternatives([case.body for case in node.cases], optional=not exhaustive)
+
+
+def _scoped_effect_calls(tree: ast.AST) -> list[tuple[ast.Call, frozenset[str]]]:
+    scanner = _ScopedEffectCalls()
+    scanner.visit(tree)
+    return scanner.calls
+
+
 def _check_undeclared_effects(
     *,
     repo_root: Path,
     file_owners: dict[str, set[str]],
     owner_effects: dict[str, tuple[str, ...]],
     issues: list[GovernanceIssue],
+    test_effects: dict[str, tuple[str, ...]] | None = None,
 ) -> None:
-    for source_file in sorted((repo_root / "polaris").rglob("*.py")):
+    for source_file in _python_source_artifacts(repo_root):
         if "__pycache__" in source_file.parts:
             continue
         rel_path = source_file.relative_to(repo_root).as_posix()
@@ -1540,18 +2254,22 @@ def _check_undeclared_effects(
         if not source_owner:
             continue
         effects = owner_effects.get(source_owner, ())
+        if _is_test_source(rel_path):
+            effects = (test_effects or {}).get(rel_path, ())
         try:
             tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
         except (OSError, SyntaxError, ValueError):
             continue
 
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-
-            if isinstance(node.func, ast.Attribute):
-                target = f"{getattr(node.func.value, 'id', '')}.{node.func.attr}"
-                if target in {"subprocess.run", "subprocess.Popen", "subprocess.call"}:
+        for node, targets in _scoped_effect_calls(tree):
+            if targets:
+                if targets & {
+                    "subprocess.run",
+                    "subprocess.Popen",
+                    "subprocess.call",
+                    "subprocess.check_call",
+                    "subprocess.check_output",
+                }:
                     if not _effect_token_exists(effects, "process.spawn:"):
                         issues.append(
                             GovernanceIssue(
@@ -1563,7 +2281,7 @@ def _check_undeclared_effects(
                             )
                         )
                     continue
-                if target in {
+                if targets & {
                     "requests.get",
                     "requests.post",
                     "requests.put",
@@ -1583,7 +2301,7 @@ def _check_undeclared_effects(
                         )
                     continue
 
-            if isinstance(node.func, ast.Name) and node.func.id == "open":
+            if targets & {"open", "builtins.open"}:
                 mode = "r"
                 if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
                     mode = str(node.args[1].value or "r")
@@ -1756,8 +2474,29 @@ def run_governance_gate(
 
     _check_owned_path_overlaps(file_owners=file_owners, issues=issues)
     _check_single_state_owner(cells=cells, issues=issues)
+    test_dependencies, test_effects = _validate_test_authority(
+        repo_root=repo_root, cells=cells, file_owners=file_owners, issues=issues
+    )
+    manifests = [
+        manifest
+        for path in sorted((repo_root / "polaris" / "cells").glob("**/cell.yaml"))
+        if (manifest := _load_manifest(path)) is not None
+    ]
+    _validate_test_authority(
+        repo_root=repo_root,
+        cells=manifests,
+        file_owners=file_owners,
+        issues=issues,
+        known_cells={cell.cell_id for cell in cells},
+    )
     _check_cross_cell_internal_imports(repo_root=repo_root, file_owners=file_owners, issues=issues)
-    _check_declared_cell_dependencies(repo_root=repo_root, cells=cells, issues=issues)
+    _check_declared_cell_dependencies(
+        repo_root=repo_root,
+        cells=cells,
+        issues=issues,
+        test_dependencies=test_dependencies,
+        file_owners=file_owners,
+    )
     _check_no_new_cross_cell_cycle(repo_root=repo_root, cells=cells, issues=issues)
     _check_critical_subgraphs(repo_root=repo_root, issues=issues)
     if isinstance(catalog_payload, dict):
@@ -1771,6 +2510,7 @@ def run_governance_gate(
         file_owners=file_owners,
         owner_effects=owner_effects,
         issues=issues,
+        test_effects=test_effects,
     )
 
     # Manifest-catalog reconciliation (G-2: dual-source drift)
@@ -1780,6 +2520,16 @@ def run_governance_gate(
         repo_root=repo_root,
         catalog_cells=catalog_cells_tuple,
     )
+    for mismatch in mismatches:
+        if mismatch.mismatch_type == "test_authority_not_equal":
+            issues.append(
+                GovernanceIssue(
+                    rule_id=_RULE_TEST_AUTHORITY_INVALID,
+                    severity=_SEVERITY_BLOCKER,
+                    message=f"{mismatch.cell_id}: manifest/catalog {mismatch.field} differ",
+                    path=f"polaris/cells/{mismatch.cell_id.replace('.', '/')}/cell.yaml",
+                )
+            )
     # Build mc_issues from mismatches for mismatch_info reporting.
     # These are NOT added to the shared issues list.
     mc_issues: tuple[GovernanceIssue, ...] = tuple(
@@ -1805,7 +2555,8 @@ def run_governance_gate(
     mc_new_count = new_mismatch_count
     if mode == _MODE_FAIL_ON_NEW:
         total_new = new_issue_count + mc_new_count
-        exit_code = 1 if total_new > 0 else 0
+        authority_invalid = any(issue.rule_id == _RULE_TEST_AUTHORITY_INVALID for issue in issues)
+        exit_code = 1 if total_new > 0 or authority_invalid else 0
     else:
         exit_code = _resolve_exit_code(
             mode=mode,

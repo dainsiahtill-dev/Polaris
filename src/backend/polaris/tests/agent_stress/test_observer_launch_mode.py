@@ -1,8 +1,22 @@
 from __future__ import annotations
 
 import importlib
+import runpy
 
 observer_main = importlib.import_module("polaris.tests.agent_stress.observer.main")
+
+
+def test_package_main_delegates_to_the_canonical_entry_without_starting_services(monkeypatch) -> None:
+    calls = []
+
+    def entry() -> int:
+        calls.append("canonical")
+        return 0
+
+    monkeypatch.setattr(observer_main, "main", entry)
+    result = runpy.run_module("polaris.tests.agent_stress.observer", run_name="__main__")
+    assert result["main"] is entry
+    assert calls == ["canonical"]
 
 
 def test_should_spawn_new_console_for_terminal_hosted_local_sessions(

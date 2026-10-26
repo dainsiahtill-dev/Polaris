@@ -17,10 +17,13 @@ purpose: 'Provide the single task lifecycle runtime for PM/Director/QA collabora
 current_modules:
 - polaris.cells.runtime.task_runtime.public.service
 - polaris.cells.runtime.task_runtime.public.execution_effect_closure
+- polaris.cells.runtime.task_runtime.public.operation_identity
 - polaris.cells.runtime.task_runtime.internal.service
 - polaris.cells.runtime.task_runtime.internal.execution_session
 - polaris.cells.runtime.task_runtime.internal.directed_effect_operation
 - polaris.cells.runtime.task_runtime.internal.task_board
+- polaris.cells.runtime.task_runtime.internal.execution_claim_evidence
+- polaris.cells.runtime.task_runtime.public.execution_claim_evidence
 tags: []
 owned_paths:
 - polaris/cells/runtime/task_runtime/**
@@ -28,6 +31,8 @@ public_contracts:
   modules:
   - polaris.cells.runtime.task_runtime.public.contracts
   - polaris.cells.runtime.task_runtime.public.execution_effect_closure
+  - polaris.cells.runtime.task_runtime.public.operation_identity
+  - polaris.cells.runtime.task_runtime.public.execution_claim_evidence
   commands:
   - CreateRuntimeTaskCommandV1
   - UpdateRuntimeTaskCommandV1
@@ -63,6 +68,7 @@ public_contracts:
   - GetDirectedEffectParentReadinessQueryV1
   - QueryExecutionEffectClosureV1
   - QueryExecutionEffectClosuresV1
+  - QueryExecutionClaimEvidenceV1
   events:
   - RuntimeTaskLifecycleEventV1
   - TaskRuntimeExecutionFactV1
@@ -92,8 +98,10 @@ public_contracts:
   - ExecutionEffectClosureObservationV1
   - ExecutionEffectCommitObservationV1
   - ExecutionEffectTerminalFailureObservationV1
+  - ExecutionClaimEvidenceV1
   errors:
   - RuntimeTaskRuntimeError
+  - ExecutionClaimEvidenceError
 descriptor_surface:
   include_public_contracts: true
   classes:
@@ -136,20 +144,28 @@ verification:
   - polaris/cells/runtime/task_runtime/public/tests/test_execution_effect_closure.py
   - polaris/cells/runtime/task_runtime/public/tests/test_batch_execution_effect_closure.py
   gaps:
-  - DEO-2A, DEO-2B, DEO-2C, and DEO-2D are closed and complete. Repository
-    inventory proves one physical mutation consumer and zero unbound mutation
-    surfaces; TaskRuntime remains the sole durable directed-effect authority.
-  - DEO-3 durable receipt settlement and DEO-4 legacy removal are closed and complete under
-    docs/superpowers/plans/2026-07-20-deo-3-durable-receipt-settlement.md.
-    The DEO-4 architecture fence preserves TaskRuntime as the sole durable
-    authority and the canonical mutation port as the sole physical consumer.
-    R36 cross-event-loop asyncio.Lock ownership and R37 degraded-projection
-    fail-fast are closed. The requalified TaskRuntime + Factory fact chain is
-    2126 passed with 12 warnings and architecture is 1411 passed with 8 skipped;
-    the R38 isolated L1-04 run exposed and closed an undersized bench timeout
-    contract (540s total -> 188s CE physical cap). The full acceptance contract
-    is restored to 5400s plus a 6000s outer guard. The one fresh isolated L1-04
-    R39 authorization is consumed; Bench remains frozen pending its full audit.
+  - DEO-2A, DEO-2B, DEO-2C, and DEO-2D are closed and complete. Repository inventory proves one physical mutation consumer
+    and zero unbound mutation surfaces; TaskRuntime remains the sole durable directed-effect authority.
+  - DEO-3 durable receipt settlement and DEO-4 legacy removal are closed and complete under docs/superpowers/plans/2026-07-20-deo-3-durable-receipt-settlement.md.
+    The DEO-4 architecture fence preserves TaskRuntime as the sole durable authority and the canonical mutation port as the
+    sole physical consumer. R36 cross-event-loop asyncio.Lock ownership and R37 degraded-projection fail-fast are closed.
+    The requalified TaskRuntime + Factory fact chain is 2126 passed with 12 warnings and architecture is 1411 passed with
+    8 skipped; the R38 isolated L1-04 run exposed and closed an undersized bench timeout contract (540s total -> 188s CE physical
+    cap). The full acceptance contract is restored to 5400s plus a 6000s outer guard. The one fresh isolated L1-04 R39 authorization
+    is consumed; Bench remains frozen pending its full audit.
   smoke_commands: []
+  test_effects_allowed:
+  - path: polaris/cells/runtime/task_runtime/public/tests/test_historical_execution_effect_closure.py
+    effects_allowed:
+    - process.spawn:python/historical_closure_cold_read
+    reason: A new interpreter verifies historical failed and suspended closure facts without Director imports or effect replay.
+  - path: polaris/cells/runtime/task_runtime/tests/test_execution_session_publication_contract.py
+    effects_allowed:
+    - process.spawn:python/session_publication_cold_recovery
+    reason: Fresh process reopens owner publication facts and verifies canonical identity plus heartbeat boundaries.
+  - path: polaris/cells/runtime/task_runtime/tests/test_factory_logical_task_recovery.py
+    effects_allowed:
+    - process.spawn:python/logical_task_recovery
+    reason: Independent processes test one durable recovery owner and prevent duplicate reopen or foreign ticket authority.
 generated_artifacts:
   - generated/context.pack.json

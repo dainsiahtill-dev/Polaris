@@ -936,7 +936,7 @@ class _Mixin00:
         run_metadata: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not tasks:
-            return {"ensured_count": 0, "created_count": 0, "task_ids": []}
+            return {"ensured_count": 0, "created_count": 0, "task_ids": [], "bound_task_rows": []}
 
         service = pkg().TaskRuntimeService(str(self.workspace))
         same_run_recovery = (
@@ -949,6 +949,7 @@ class _Mixin00:
         created_count = 0
         bound_count = 0
         binding_failures: list[dict[str, str]] = []
+        bound_task_rows: list[dict[str, Any]] = []
         recovery_review_rows: list[Mapping[str, Any]] | None = None
         for index, task in enumerate(tasks, start=1):
             task_id = self._task_id(task, index)
@@ -1059,6 +1060,9 @@ class _Mixin00:
             )
             if binding_result.ok:
                 bound_count += 1
+                bound_record = binding_result.to_record()
+                current_owner_row = bound_record["task_row"]
+                binding_complete = True
                 if existing is not None and lease_task_metadata:
                     existing_metadata_raw = existing.get("metadata")
                     existing_metadata = existing_metadata_raw if isinstance(existing_metadata_raw, Mapping) else {}
@@ -1069,6 +1073,7 @@ class _Mixin00:
                             metadata=lease_task_metadata,
                         )
                         if refreshed_row is None:
+                            binding_complete = False
                             binding_failures.append(
                                 {
                                     "task_id": task_id,
@@ -1077,6 +1082,40 @@ class _Mixin00:
                                     "existing_factory_run_id": str(run_id or "").strip(),
                                 }
                             )
+                        else:
+                            # Obtain a real binding observation of the updated
+                            # owner row instead of rebuilding a typed receipt.
+                            refreshed_binding = bind_runtime_task_to_factory_run(
+                                BindRuntimeTaskToFactoryRunCommandV1(
+                                    str(self.workspace), binding_result.task_id, str(run_id or "").strip()
+                                )
+                            )
+                            if refreshed_binding.ok:
+                                binding_result = refreshed_binding
+                                bound_record = binding_result.to_record()
+                                current_owner_row = bound_record["task_row"]
+                            else:
+                                binding_complete = False
+                                binding_failures.append(
+                                    {
+                                        "task_id": task_id,
+                                        "code": refreshed_binding.code,
+                                        "reason": refreshed_binding.reason,
+                                        "existing_factory_run_id": refreshed_binding.existing_factory_run_id,
+                                    }
+                                )
+                if binding_complete:
+                    bound_task_rows.append(
+                        {
+                            "external_task_id": task_id,
+                            "task_id": binding_result.task_id,
+                            "workspace": binding_result.workspace,
+                            "factory_run_id": binding_result.factory_run_id,
+                            "event_recorded": binding_result.event_recorded,
+                            "row": deepcopy(current_owner_row),
+                            "binding": bound_record,
+                        }
+                    )
             else:
                 binding_failures.append(
                     {
@@ -1096,6 +1135,7 @@ class _Mixin00:
             "bound_count": bound_count,
             "binding_failures": binding_failures,
             "task_ids": task_ids,
+            "bound_task_rows": bound_task_rows,
         }
 
     @staticmethod

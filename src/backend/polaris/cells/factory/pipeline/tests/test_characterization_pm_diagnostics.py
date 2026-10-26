@@ -36,7 +36,6 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
 )
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.events.fact_stream.public import (
@@ -60,7 +59,9 @@ from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
 from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
     FactoryRoleEvidenceAuthorityPort,
 )
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
+from polaris.cells.factory.pipeline.internal.factory_run_completion import (
+    RunCompletionWaiter,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -68,11 +69,15 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
+from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import (
+    _fencing_token,
+)
 from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
     evaluate_canonical_factory_authority,
 )
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
+from polaris.cells.factory.pipeline.internal.run_ledger import (
+    load_run_ledger_projection,
+)
 from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
     _executor,
     _verified_delivery_recovery_authority,
@@ -101,7 +106,12 @@ from polaris.kernelone.storage import resolve_logical_path
     [
         ({}, 1530, 750, 60000),
         ({"max_output_tokens": 64000}, 1630, 800, 64000),
-        ({"task_execution_contract": {"context_budget": {"max_tokens": 48000}}}, 1230, 600, 48000),
+        (
+            {"task_execution_contract": {"context_budget": {"max_tokens": 48000}}},
+            1230,
+            600,
+            48000,
+        ),
         ({"metadata": {"max_output_tokens": 48000}}, 1230, 600, 48000),
         ({"timeout": 1800}, 1800, 750, 60000),
         ({"timeout": 600}, None, None, 60000),
@@ -113,7 +123,9 @@ from polaris.kernelone.storage import resolve_logical_path
 async def test_pm_factory_admitted_wait_and_role_entry_are_aligned(
     tmp_path, monkeypatch, extra, want_stage, want_call, want_output
 ):
-    from polaris.cells.orchestration.pm_dispatch.internal import orchestration_command_service as command_module
+    from polaris.cells.orchestration.pm_dispatch.internal import (
+        orchestration_command_service as command_module,
+    )
     from polaris.cells.orchestration.workflow_runtime.public.service import (
         OrchestrationSnapshot,
         RunStatus,
@@ -145,7 +157,9 @@ async def test_pm_factory_admitted_wait_and_role_entry_are_aligned(
     monkeypatch.setattr(command_module, "register_all_adapters", lambda _: None)
     service = command_module.OrchestrationCommandService(settings={})
     monkeypatch.setattr(
-        stage_executor_module, "TaskRuntimeService", lambda *_: SimpleNamespace(reset_records=lambda **_: {"ok": True})
+        stage_executor_module,
+        "TaskRuntimeService",
+        lambda *_: SimpleNamespace(reset_records=lambda **_: {"ok": True}),
     )
     monkeypatch.setattr(executor, "_build_orchestration_service", lambda _: service)
     monkeypatch.setattr(executor, "_factory_role_evidence_cutoff_port", lambda _: None)
@@ -198,7 +212,11 @@ async def test_pm_factory_admitted_wait_and_role_entry_are_aligned(
         assert admission["reservation_breakdown"]["qa_finalization"] == 120
         proof = {
             "metadata": request.metadata,
-            "role_entry": {"role_id": entry.role_id, "input": entry.input, "metadata": entry.metadata},
+            "role_entry": {
+                "role_id": entry.role_id,
+                "input": entry.input,
+                "metadata": entry.metadata,
+            },
             "waits": waits,
         }
     (tmp_path / "pm-wait-role-entry-proof.json").write_text(json.dumps(proof, default=str, indent=2), encoding="utf-8")
@@ -322,7 +340,9 @@ def test_workspace_quality_repair_issue_payloads_preserves_scanner_typed_metadat
         },
     }
 
-    def fake_scan_workspace_artifact_quality_evidence(workspace: str) -> SimpleNamespace:
+    def fake_scan_workspace_artifact_quality_evidence(
+        workspace: str,
+    ) -> SimpleNamespace:
         assert workspace == str(tmp_path)
         return SimpleNamespace(errors=(raw,), issues=(typed_issue,))
 
@@ -347,7 +367,9 @@ def test_workspace_quality_repair_issue_payloads_falls_back_to_string_projection
 ) -> None:
     raw = "Artifact quality scan failed: workspace path does not exist"
 
-    def broken_scan_workspace_artifact_quality_evidence(workspace: str) -> SimpleNamespace:
+    def broken_scan_workspace_artifact_quality_evidence(
+        workspace: str,
+    ) -> SimpleNamespace:
         assert workspace == str(tmp_path)
         raise OSError("scanner unavailable")
 
@@ -363,7 +385,9 @@ def test_workspace_quality_repair_issue_payloads_falls_back_to_string_projection
     assert payloads[0]["metadata"]["raw"] == raw
 
 
-def test_chief_engineer_portfolio_context_includes_local_rework_failure_feedback(tmp_path: Path) -> None:
+def test_chief_engineer_portfolio_context_includes_local_rework_failure_feedback(
+    tmp_path: Path,
+) -> None:
     executor = _executor(tmp_path)
     failure_feedback = {
         "schema_version": "factory.chief_engineer_local_rework.v1",
@@ -566,7 +590,13 @@ def test_reconcile_verified_runtime_delivery_restores_frozen_owner_after_termina
     monkeypatch.setattr(
         executor,
         "_load_pm_plan_tasks",
-        lambda path: [{"id": "TASK-3", "goal": "Add tests", "target_files": ["tests/test_product.py"]}],
+        lambda path: [
+            {
+                "id": "TASK-3",
+                "goal": "Add tests",
+                "target_files": ["tests/test_product.py"],
+            }
+        ],
     )
 
     materialized: list[tuple[list[dict[str, Any]], str, str]] = []
@@ -596,7 +626,17 @@ def test_reconcile_verified_runtime_delivery_restores_frozen_owner_after_termina
 
     assert result == {"success": True, "reconciled_task_ids": ["TASK-3"]}
     assert materialized == [
-        ([{"id": "TASK-3", "goal": "Add tests", "target_files": ["tests/test_product.py"]}], run.id, "quality_gate")
+        (
+            [
+                {
+                    "id": "TASK-3",
+                    "goal": "Add tests",
+                    "target_files": ["tests/test_product.py"],
+                }
+            ],
+            run.id,
+            "quality_gate",
+        )
     ]
     assert runtime.reopened == [18]
     assert runtime.settled[0].identity == identity

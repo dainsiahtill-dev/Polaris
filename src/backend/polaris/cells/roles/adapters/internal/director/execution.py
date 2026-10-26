@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import time
 from pathlib import Path
 from typing import Any
 
@@ -122,30 +121,14 @@ class DirectorPatchExecutor:
     ) -> float:
         """Apply the live Factory execution deadline as a non-expanding ceiling."""
 
-        resolved_timeout = max(0.1, float(timeout_seconds))
-        if not isinstance(context, dict):
-            return resolved_timeout
-        from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
-            _factory_execution_deadline_epochs,
-            _select_viable_factory_deadline_epoch,
+        from polaris.cells.roles.kernel.public.llm_caller_contracts import (
+            clamp_role_execution_timeout_seconds_to_deadline,
         )
 
-        candidates = _factory_execution_deadline_epochs(context)
-        if not candidates:
-            return resolved_timeout
-        now = time.time()
-        selected = _select_viable_factory_deadline_epoch(
-            context,
-            now=now,
-            minimum_remaining_seconds=0.0,
+        return clamp_role_execution_timeout_seconds_to_deadline(
+            timeout_seconds=timeout_seconds,
+            context=context if isinstance(context, dict) else None,
         )
-        if selected is None:
-            raise RuntimeError("factory_director_execution_deadline_exhausted")
-        _source, deadline_epoch = selected
-        remaining_seconds = deadline_epoch - now
-        if remaining_seconds <= 0:
-            raise RuntimeError("factory_director_execution_deadline_exhausted")
-        return min(resolved_timeout, remaining_seconds)
 
     @staticmethod
     def resolve_llm_call_timeout_seconds(context: dict[str, Any] | None) -> float:

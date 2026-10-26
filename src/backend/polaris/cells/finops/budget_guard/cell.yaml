@@ -11,12 +11,18 @@ purpose: 'Enforce token and execution budget controls with explicit reserve and 
 current_modules:
 - polaris.cells.finops.budget_guard.public.contracts
 - polaris.cells.finops.budget_guard.public.service
+- polaris.cells.finops.budget_guard.internal.budget_service
+- polaris.cells.finops.budget_guard.internal.budget_store
 tags: []
 owned_paths:
 - polaris/cells/finops/budget_guard/public/**
 - polaris/kernelone/runtime/usage_metrics.py
 - polaris/domain/services/token_service.py
 - polaris/infrastructure/accel/query/adaptive_budget.py
+- polaris/cells/finops/budget_guard/__init__.py
+- polaris/cells/finops/budget_guard/internal/**
+- polaris/cells/finops/budget_guard/tests/**
+- polaris/tests/test_finops_budget_guard.py
 public_contracts:
   modules:
   - polaris.cells.finops.budget_guard.public.contracts
@@ -31,7 +37,7 @@ public_contracts:
   results:
   - BudgetDecisionResultV1
   errors:
-  - FinOpsBudgetErrorV1
+  - FinOpsBudgetError
 depends_on:
 - policy.permission
 - audit.evidence
@@ -50,4 +56,19 @@ verification:
   gaps:
   - Initial business-cell declaration; implementation convergence is in progress.
   smoke_commands: []
+  test_dependencies:
+  - path: polaris/tests/test_finops_budget_guard.py
+    depends_on:
+    - roles.runtime
+  test_effects_allowed:
+  - path: polaris/cells/finops/budget_guard/tests/test_budget_public_independence.py
+    effects_allowed:
+    - process.spawn:python/budget_public_cold_import
+    reason: Fresh private interpreter blocks roles.runtime while the existing public budget command writes and cold-reopens
+      real KFS state; no provider or target process.
+  - path: polaris/tests/test_finops_budget_guard.py
+    effects_allowed:
+    - fs.write:workspace/.polaris/runtime/state/budget
+    reason: Test-local UTF8 filesystem adapter forwards actual BudgetKFSStore persistence in the owning temporary workspace;
+      no target or service writes.
 generated_artifacts: []

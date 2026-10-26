@@ -632,12 +632,12 @@ class QualityChecker:
     @staticmethod
     def _extract_patch_operations_from_unified_parser(content: str) -> list[dict[str, str]]:
         try:
-            from polaris.cells.director.execution.public.service import parse_all_operations
+            from polaris.kernelone.llm.toolkit import parse_protocol_output
         except (RuntimeError, ValueError):
             return []
 
         patches: list[dict[str, str]] = []
-        operations = parse_all_operations(str(content or ""))
+        operations = parse_protocol_output(str(content or ""))
         for operation in operations:
             path = str(getattr(operation, "path", "") or "").strip()
             if not path:

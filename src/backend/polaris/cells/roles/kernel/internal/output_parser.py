@@ -447,7 +447,7 @@ class OutputParser:
     def extract_search_replace(self, content: str) -> list[dict[str, str]] | None:
         """提取SEARCH/REPLACE块
 
-        委托 KernelOne/Director 协议解析器，避免与执行层规则漂移。
+        委托 KernelOne 通用协议解析器，避免与执行层规则漂移。
         无文件路径的 SEARCH/REPLACE 文本不会被提取为结构化补丁。
 
         Args:
@@ -457,10 +457,14 @@ class OutputParser:
             补丁列表，每个补丁包含search和replace（若可提取则包含file）
         """
         try:
-            from polaris.cells.director.execution.public.service import parse_search_replace_blocks
             from polaris.kernelone.editing.editblock_engine import _is_safe_relative_path
+            from polaris.kernelone.llm.toolkit import EditType, parse_protocol_output
 
-            operations = parse_search_replace_blocks(str(content or ""))
+            operations = [
+                operation
+                for operation in parse_protocol_output(str(content or ""))
+                if operation.edit_type == EditType.SEARCH_REPLACE
+            ]
             patches: list[dict[str, str]] = []
             for operation in operations:
                 search = str(getattr(operation, "search", "") or "")

@@ -400,19 +400,19 @@ class ExecutionRuntime:
 
     async def cancel(self, execution_id: str) -> bool:
         state = self._require_state(execution_id)
-        if state.status.terminal:
+        if state.status.terminal and not self._has_unproven_process(state):
             return False
-
         if state.lane == ExecutionLane.SUBPROCESS and state.process_handle is not None:
             return await self.terminate(execution_id)
-
+        if self._has_unproven_process(state):
+            self._record_process_cleanup(state, False, "process handle missing")
+            return False
         task = state.task
         if task is None:
             state.status = ExecutionStatus.CANCELLED
             state.finished_at = _utc_now()
             state.completed.set()
             return True
-
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -423,28 +423,43 @@ class ExecutionRuntime:
             state.completed.set()
         return True
 
-    async def terminate(
-        self,
-        execution_id: str,
-        *,
-        timeout: float = 5.0,
-    ) -> bool:
+    async def terminate(self, execution_id: str, *, timeout: float = 5.0) -> bool:
         state = self._require_state(execution_id)
-        if state.status.terminal:
+        if state.status.terminal and not self._has_unproven_process(state):
             return False
-
         if state.lane != ExecutionLane.SUBPROCESS:
             return await self.cancel(execution_id)
-
         handle = state.process_handle
         if handle is None:
+            if self._has_unproven_process(state):
+                self._record_process_cleanup(state, False, "process handle missing")
+                return False
             return await self.cancel(execution_id)
-
-        terminated = await handle.terminate(timeout=timeout)
+        alive = await self._observe_process_alive(handle)
+        if alive is False:
+            self._record_process_cleanup(state, True)
+            with contextlib.suppress(RuntimeError):
+                state.result = await handle.result()
+            return True
+        if alive is not True:
+            self._record_process_cleanup(state, False, "physical liveness unavailable before termination")
+            return False
+        try:
+            terminated = await handle.terminate(timeout=timeout)
+        except Exception as exc:
+            logger.exception("Owned process termination failed: execution_id=%s", state.execution_id)
+            self._record_process_cleanup(state, False, f"terminate failed: {type(exc).__name__}: {exc}")
+            return False
+        if await self._observe_process_alive(handle) is not False:
+            self._record_process_cleanup(state, False, "terminate returned without a confirmed physical exit")
+            return False
+        self._record_process_cleanup(state, True)
         task = state.task
-        if task is not None:
+        if task is not None and not task.done():
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        with contextlib.suppress(RuntimeError):
+            state.result = await handle.result()
         return terminated
 
     async def stream(self, execution_id: str) -> AsyncIterator[StreamChunk]:
@@ -464,21 +479,27 @@ class ExecutionRuntime:
             yield chunk
 
     async def close(self, *, cancel_running: bool = True) -> None:
-        """Close the runtime and optionally cancel running executions.
-
-        Args:
-            cancel_running: If True, cancel all running executions before closing.
-        """
+        """Close logical submissions, retaining any unproven process owner."""
         if self._closed:
             return
         self._closed = True
-
         if cancel_running:
-            active_ids = [state.execution_id for state in self._states.values() if not state.status.terminal]
+            active_ids = [
+                state.execution_id
+                for state in self._states.values()
+                if not state.status.terminal or self._has_unproven_process(state)
+            ]
             for execution_id in active_ids:
-                with contextlib.suppress(Exception):
+                try:
                     await self.cancel(execution_id)
-
+                except Exception as exc:
+                    logger.exception("Runtime close cleanup failed: execution_id=%s", execution_id)
+                    state = self._require_state(execution_id)
+                    if state.lane == ExecutionLane.SUBPROCESS:
+                        self._record_process_cleanup(state, False, f"close cleanup failed: {exc}")
+            for state in self._states.values():
+                if self._has_unproven_process(state):
+                    logger.warning("Runtime closed with physical cleanup UNKNOWN: execution_id=%s", state.execution_id)
         self._blocking_executor.shutdown(wait=False, cancel_futures=True)
 
     def health_check(self) -> dict[str, Any]:
@@ -588,45 +609,36 @@ class ExecutionRuntime:
             self._cleanup_triggered = False
 
     async def _compact_states(self) -> None:
-        """Compact the states dictionary by removing old terminal states.
-
-        Cleanup policy:
-        1. All non-terminal states (running executions) are preserved
-        2. Terminal states are sorted by completion time, keeping the newest
-
-        Raises:
-            RuntimeError: If the event loop is closed.
-        """
+        """Compact logical history while retaining every unproven process owner."""
         if not self._states:
             self._cleanup_triggered = False
             return
-
-        terminal_states = {eid: state for eid, state in self._states.items() if state.status.terminal}
-        non_terminal_states = {eid: state for eid, state in self._states.items() if not state.status.terminal}
-
+        terminal_states = {
+            eid: state
+            for eid, state in self._states.items()
+            if state.status.terminal and not self._has_unproven_process(state)
+        }
+        retained_states = {
+            eid: state
+            for eid, state in self._states.items()
+            if not state.status.terminal or self._has_unproven_process(state)
+        }
         if not terminal_states:
             self._cleanup_triggered = False
             return
-
-        # Sort terminal states by completion time (newest first)
         sorted_terminal = sorted(
             terminal_states.items(),
             key=lambda item: item[1].finished_at or item[1].started_at or item[1].submitted_at,
             reverse=True,
         )
-
-        # Keep only the most recent terminal states
         kept_terminal = dict(sorted_terminal[:EXECUTION_MAX_TERMINAL_STATES])
-
-        # Rebuild states dict preserving all non-terminal states
-        self._states = {**kept_terminal, **non_terminal_states}
+        self._states = {**kept_terminal, **retained_states}
         self._cleanup_triggered = False
-
         logger.debug(
-            "States compacted: total=%d kept_terminal=%d non_terminal=%d max_allowed=%d",
+            "States compacted: total=%d kept_terminal=%d retained=%d max_allowed=%d",
             len(self._states),
             len(kept_terminal),
-            len(non_terminal_states),
+            len(retained_states),
             self._max_retained_states,
         )
 
@@ -755,167 +767,185 @@ class ExecutionRuntime:
                 state.completed.set()
 
     async def _await_process_completion(self, state: _ExecutionState) -> None:
-        """Wait for process completion and handle all lifecycle scenarios.
-
-        This method handles:
-        - Normal process exit (SUCCESS/FAILED)
-        - Timeout with guaranteed process termination
-        - Cancellation with graceful termination attempt
-        - Unexpected exceptions with cleanup
-
-        Args:
-            state: Execution state tracking the process lifecycle.
-        """
+        """Finish logical processing while retaining unproven physical cleanup."""
         import subprocess
 
         tracer = get_tracer()
         metrics = get_metrics()
-        span_name = f"subprocess.{state.name or state.execution_id}"
         start_time = time.monotonic()
-
-        with tracer.span(span_name) as span:
+        with tracer.span(f"subprocess.{state.name or state.execution_id}") as span:
             span.set_tag("execution_id", state.execution_id)
             span.set_tag("lane", state.lane.value)
             if state.pid:
                 span.set_tag("pid", state.pid)
             if state.timeout_seconds:
                 span.set_tag("timeout_seconds", state.timeout_seconds)
-
             handle = state.process_handle
-            if handle is None:
-                state.status = ExecutionStatus.FAILED
-                state.error = "process handle missing"
-                span.set_tag("status", "failed")
-                span.set_tag("error", "process handle missing")
-                state.finished_at = _utc_now()
-                state.completed.set()
-                self._process_semaphore.release()
-                return
-
+            state.metadata["process_cleanup_status"] = "unknown"
+            state.metadata["process_slot_retained"] = False
             try:
-                process_status = await handle.wait(timeout=state.timeout_seconds)
-                if process_status.value == ExecutionStatus.SUCCESS.value:
-                    state.status = ExecutionStatus.SUCCESS
-                    span.set_tag("status", "success")
-                elif process_status.value == ExecutionStatus.FAILED.value:
+                if handle is None:
                     state.status = ExecutionStatus.FAILED
-                    span.set_tag("status", "failed")
-                elif process_status.value == ExecutionStatus.CANCELLED.value:
-                    state.status = ExecutionStatus.CANCELLED
-                    span.set_tag("status", "cancelled")
-                else:
+                    state.error = "process handle missing"
+                    self._record_process_cleanup(state, False, "process handle missing")
+                    return
+                try:
+                    process_status = await handle.wait(timeout=state.timeout_seconds)
+                    if process_status.value == ExecutionStatus.SUCCESS.value:
+                        state.status = ExecutionStatus.SUCCESS
+                    elif process_status.value == ExecutionStatus.FAILED.value:
+                        state.status = ExecutionStatus.FAILED
+                    elif process_status.value == ExecutionStatus.CANCELLED.value:
+                        state.status = ExecutionStatus.CANCELLED
+                    else:
+                        state.status = ExecutionStatus.TIMED_OUT
+                        state.error = f"subprocess timed out after {state.timeout_seconds} seconds"
+                        await self._handle_process_timeout(state, handle, span)
+                    if state.metadata.get("process_cleanup_status") != "confirmed":
+                        if state.status == ExecutionStatus.TIMED_OUT:
+                            pass  # The cleanup attempt already recorded UNKNOWN.
+                        elif await self._observe_process_alive(handle) is False:
+                            self._record_process_cleanup(state, True)
+                        else:
+                            state.status = ExecutionStatus.FAILED
+                            self._record_process_cleanup(state, False, "wait returned without a physical exit")
+                except (subprocess.TimeoutExpired, TimeoutError):
                     state.status = ExecutionStatus.TIMED_OUT
                     state.error = f"subprocess timed out after {state.timeout_seconds} seconds"
-                    span.set_tag("status", "timed_out")
-                    span.set_tag("error", state.error)
                     await self._handle_process_timeout(state, handle, span)
-
-                with contextlib.suppress(RuntimeError):
-                    state.result = await handle.result()
-
+                except asyncio.CancelledError:
+                    if not state.status.terminal:
+                        state.status = ExecutionStatus.CANCELLED
+                        state.error = "execution cancelled"
+                    await self._handle_process_timeout(state, handle, span)
+                    raise
+                except Exception as exc:
+                    logger.exception("Owned process wait failed: execution_id=%s", state.execution_id)
+                    self._mark_failed(state, exc)
+                    await self._handle_process_timeout(state, handle, span)
+                if state.metadata.get("process_cleanup_status") == "confirmed":
+                    with contextlib.suppress(RuntimeError):
+                        state.result = await handle.result()
+                else:
+                    state.result = None
                 if state.status == ExecutionStatus.FAILED and not state.error:
                     state.error = _summarize_process_failure(state.result)
-                    if state.error:
-                        span.set_tag("error", state.error)
-
-            except subprocess.TimeoutExpired:
-                state.status = ExecutionStatus.TIMED_OUT
-                state.error = f"subprocess timed out after {state.timeout_seconds} seconds"
-                span.set_tag("status", "timed_out")
-                span.set_tag("error", state.error)
-                await self._handle_process_timeout(state, handle, span)
-
-            except asyncio.CancelledError:
-                if not state.status.terminal:
-                    state.status = ExecutionStatus.CANCELLED
-                    state.error = "execution cancelled"
-                    span.set_tag("status", "cancelled")
-                    with contextlib.suppress(Exception):
-                        await handle.terminate(timeout=1.0)
-                raise
-
-            except (RuntimeError, ValueError) as exc:
-                self._mark_failed(state, exc)
-                span.set_tag("status", "failed")
-                span.set_tag("error", str(exc))
-                with contextlib.suppress(Exception):
-                    await handle.kill()
-
+                span.set_tag("status", state.status.value)
+                if state.error:
+                    span.set_tag("error", state.error)
             finally:
-                duration = time.monotonic() - start_time
-                span.set_tag("duration_seconds", duration)
-
-                metrics.record_end(
-                    state.lane.value,
-                    state.status.value,
-                    duration,
-                )
+                if state.metadata.get("process_cleanup_status") != "confirmed":
+                    self._record_process_cleanup(state, False, "physical cleanup was not confirmed")
+                    state.metadata["process_slot_retained"] = True
+                else:
+                    self._process_semaphore.release()
+                metrics.record_end(state.lane.value, state.status.value, time.monotonic() - start_time)
                 metrics.update_states(
-                    len(self._states),
-                    sum(1 for s in self._states.values() if not s.status.terminal),
+                    len(self._states), sum(1 for item in self._states.values() if not item.status.terminal)
                 )
-
-                if state.pid is None:
+                if state.pid is None and handle is not None:
                     state.pid = handle.pid
                 state.finished_at = _utc_now()
                 state.completed.set()
+
+    @staticmethod
+    def _has_unproven_process(state: _ExecutionState) -> bool:
+        return state.lane == ExecutionLane.SUBPROCESS and state.metadata.get("process_cleanup_status") == "unknown"
+
+    @staticmethod
+    async def _observe_process_alive(handle: PopenAsyncHandle) -> bool | None:
+        try:
+            observed: object = await handle.is_alive()
+        except Exception:
+            logger.exception("Owned process liveness observation failed")
+            return None
+        return observed if isinstance(observed, bool) else None
+
+    def _record_process_cleanup(self, state: _ExecutionState, confirmed: bool, detail: str = "") -> None:
+        previous = state.metadata.get("process_cleanup_status")
+        state.metadata["process_cleanup_status"] = "confirmed" if confirmed else "unknown"
+        if confirmed:
+            if state.metadata.get("process_slot_retained") is True:
+                state.metadata["process_slot_retained"] = False
                 self._process_semaphore.release()
+            if (
+                previous == "unknown"
+                and "process_cleanup_unproven" in state.error
+                and "subsequently confirmed" not in state.error
+            ):
+                state.error += "; physical cleanup subsequently confirmed"
+            return
+        state.result = None
+        if detail:
+            state.metadata["process_cleanup_error"] = detail
+        if "process_cleanup_unproven" not in state.error:
+            state.error = (
+                (state.error + "; " if state.error else "")
+                + "process_cleanup_unproven"
+                + (": " + detail if detail else "")
+            )
 
     async def _handle_process_timeout(
         self,
         state: _ExecutionState,
         handle: PopenAsyncHandle,
         span: Any | None = None,
-    ) -> None:
-        """Handle process timeout with guaranteed termination.
-
-        This method ensures the timed-out process is always terminated:
-        1. First attempts graceful termination (SIGTERM)
-        2. If graceful termination fails, force-kills the process
-
-        Args:
-            state: Execution state to update.
-            handle: Process handle to terminate.
-            span: Optional span to record termination details.
-        """
+    ) -> bool:
+        """Attempt bounded owned cleanup; unknown is never physical confirmation."""
         logger.warning(
             "Process timed out: execution_id=%s name=%s timeout=%s",
             state.execution_id,
             state.name,
             state.timeout_seconds,
         )
-
+        state.metadata["process_cleanup_status"] = "unknown"
+        confirmed = False
+        errors: list[str] = []
         if span is not None:
             span.add_event("timeout_handling_started")
-
         try:
-            terminated = await handle.terminate(timeout=1.0)
-        except (RuntimeError, ValueError) as exc:
-            logger.warning(
-                "terminate() raised exception, forcing kill: execution_id=%s error=%s",
-                state.execution_id,
-                exc,
-            )
-            terminated = False
-
-        if not terminated:
-            logger.warning(
-                "Graceful termination failed, forcing kill: execution_id=%s",
-                state.execution_id,
-            )
+            alive = await self._observe_process_alive(handle)
+            if alive is False:
+                confirmed = True
+                return True
+            if alive is not True:
+                errors.append("physical liveness could not be observed")
+                return False
+            terminated: bool | None = None
+            try:
+                terminated = await handle.terminate(timeout=1.0)
+            except Exception as exc:
+                errors.append(f"terminate failed: {type(exc).__name__}: {exc}")
+                logger.exception("terminate() failed: execution_id=%s error=%s", state.execution_id, exc)
+            alive = await self._observe_process_alive(handle)
+            if alive is False:
+                confirmed = True
+                if terminated is False:
+                    get_metrics().record_process_kill()
+                    if span is not None:
+                        span.add_event("process_force_killed")
+                elif span is not None:
+                    span.add_event("process_gracefully_terminated")
+                return True
+            if alive is not True:
+                errors.append("physical liveness unavailable after terminate")
+                return False
+            logger.warning("Graceful termination failed, forcing kill: execution_id=%s", state.execution_id)
             try:
                 await handle.kill()
+            except Exception as exc:
+                errors.append(f"kill failed: {type(exc).__name__}: {exc}")
+                logger.exception("kill() failed: execution_id=%s error=%s", state.execution_id, exc)
+            confirmed = await self._observe_process_alive(handle) is False
+            if confirmed:
                 get_metrics().record_process_kill()
                 if span is not None:
                     span.add_event("process_force_killed")
-            except (RuntimeError, ValueError) as exc:
-                logger.warning(
-                    "kill() raised exception: execution_id=%s error=%s",
-                    state.execution_id,
-                    exc,
-                )
-        elif span is not None:
-            span.add_event("process_gracefully_terminated")
+            else:
+                errors.append("physical exit remains unproven after kill")
+            return confirmed
+        finally:
+            self._record_process_cleanup(state, confirmed, "; ".join(errors))
 
     def _mark_failed(self, state: _ExecutionState, exc: Exception) -> None:
         logger.warning(

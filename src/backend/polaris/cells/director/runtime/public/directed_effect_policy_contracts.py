@@ -7,10 +7,14 @@ from typing import Literal, Protocol, cast, runtime_checkable
 
 from polaris.cells.runtime.task_runtime.public import (
     DirectedEffectClaimGrantV1,
-    DirectedEffectInventoryEffectTypeV1,
-    DirectedEffectInventoryExecutionModeV1,
-    DirectedEffectInventoryIntentV1,
+    DirectedEffectInventoryEffectTypeV1 as DirectedEffectInventoryEffectTypeV1,
+    DirectedEffectInventoryExecutionModeV1 as DirectedEffectInventoryExecutionModeV1,
+    DirectedEffectInventoryIntentV1 as DirectedEffectInventoryIntentV1,
     DirectedEffectInventoryMemberV1,
+)
+from polaris.cells.runtime.task_runtime.public.operation_identity import (
+    DirectedEffectOperationSubjectV1 as DirectorEffectPolicyOperationSubjectV1,
+    hash_directed_effect_operation_subject as hash_director_effect_policy_operation_subject,
 )
 
 from .directed_effect_contracts import (
@@ -53,60 +57,6 @@ def _require_error_code(value: DirectedEffectErrorCodeV1 | None) -> DirectedEffe
     return validate_directed_effect_error_code(value)
 
 
-@dataclass(frozen=True, slots=True)
-class DirectorEffectPolicyOperationSubjectV1:
-    """Prospective pre-seal operation identity and normalized descriptor."""
-
-    workspace: str
-    turn_id: str
-    batch_id: str
-    tool_call_id: str
-    inventory_ordinal: int
-    normalized_tool_name: str
-    normalized_arguments: DirectedEffectImmutableItemsV1
-    effect_type: DirectedEffectInventoryEffectTypeV1
-    execution_mode: DirectedEffectInventoryExecutionModeV1
-    prospective_operation_hash: str
-
-    def __post_init__(self) -> None:
-        for field_name in (
-            "workspace",
-            "turn_id",
-            "batch_id",
-            "tool_call_id",
-            "normalized_tool_name",
-            "effect_type",
-            "execution_mode",
-        ):
-            object.__setattr__(self, field_name, _require_token(field_name, getattr(self, field_name)))
-        if (
-            isinstance(self.inventory_ordinal, bool)
-            or not isinstance(self.inventory_ordinal, int)
-            or self.inventory_ordinal < 0
-        ):
-            raise ValueError("inventory_ordinal must be a non-negative integer")
-        object.__setattr__(
-            self,
-            "normalized_arguments",
-            require_directed_effect_immutable_items("normalized_arguments", self.normalized_arguments),
-        )
-        object.__setattr__(
-            self,
-            "prospective_operation_hash",
-            _require_hash("prospective_operation_hash", self.prospective_operation_hash),
-        )
-        DirectedEffectInventoryIntentV1(
-            ordinal=self.inventory_ordinal,
-            tool_call_id=self.tool_call_id,
-            normalized_tool_name=self.normalized_tool_name,
-            effect_type=self.effect_type,
-            execution_mode=self.execution_mode,
-            intended_effect_fingerprint=self.prospective_operation_hash,
-            policy_verdict_hash=self.prospective_operation_hash,
-            expected_receipt_binding_hash=self.prospective_operation_hash,
-        )
-
-
 def _operation_subject_items(
     subject: DirectorEffectPolicyOperationSubjectV1,
 ) -> DirectedEffectImmutableItemsV1:
@@ -124,31 +74,6 @@ def _operation_subject_items(
         ("tool_call_id", subject.tool_call_id),
         ("turn_id", subject.turn_id),
         ("workspace", subject.workspace),
-    )
-
-
-def hash_director_effect_policy_operation_subject(
-    subject: DirectorEffectPolicyOperationSubjectV1,
-) -> str:
-    """Hash one prospective operation without trusting its supplied digest."""
-
-    if type(subject) is not DirectorEffectPolicyOperationSubjectV1:
-        raise TypeError("subject must be exactly DirectorEffectPolicyOperationSubjectV1")
-    return hash_directed_effect_arguments(
-        (
-            ("batch_id", subject.batch_id),
-            ("effect_type", subject.effect_type),
-            ("execution_mode", subject.execution_mode),
-            ("inventory_ordinal", subject.inventory_ordinal),
-            (
-                "normalized_arguments",
-                DirectedEffectImmutableMapV1(items=subject.normalized_arguments),
-            ),
-            ("normalized_tool_name", subject.normalized_tool_name),
-            ("tool_call_id", subject.tool_call_id),
-            ("turn_id", subject.turn_id),
-            ("workspace", subject.workspace),
-        )
     )
 
 

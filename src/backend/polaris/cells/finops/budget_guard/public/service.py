@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..internal.budget_agent import CFOAgent
+from ..internal.budget_service import BudgetService
 from .contracts import (
     BudgetDecisionResultV1,
     BudgetThresholdExceededEventV1,
@@ -17,8 +17,8 @@ def reserve_budget(command: ReserveBudgetCommandV1) -> BudgetDecisionResultV1:
     """Reserve a token budget through the FinOps public command contract."""
     if not isinstance(command, ReserveBudgetCommandV1):
         raise TypeError("command must be a ReserveBudgetCommandV1")
-    agent = CFOAgent(command.workspace)
-    result = agent._tool_allocate_budget(
+    budget_service = BudgetService(command.workspace)
+    result = budget_service.allocate_budget(
         task_id=command.scope_id,
         budget_type=str(command.metadata.get("budget_type") or "context_tokens"),
         limit=command.token_budget,
@@ -37,8 +37,8 @@ def reserve_budget(command: ReserveBudgetCommandV1) -> BudgetDecisionResultV1:
 
 __all__ = [
     "BudgetDecisionResultV1",
+    "BudgetService",
     "BudgetThresholdExceededEventV1",
-    "CFOAgent",
     "FinOpsBudgetError",
     "GetBudgetStatusQueryV1",
     "RecordUsageCommandV1",

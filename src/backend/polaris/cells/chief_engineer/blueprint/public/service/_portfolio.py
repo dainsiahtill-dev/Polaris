@@ -7,13 +7,15 @@ import json
 import re
 import shlex
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, cast, get_args
 
 from polaris.cells.control_plane.run_ledger.public import stable_hash
-from polaris.cells.orchestration.pm_planning.public.artifact_contracts import GeneratedOutputV1
+from polaris.cells.orchestration.pm_planning.public.artifact_contracts import (
+    GeneratedOutputV1,
+)
 from polaris.cells.orchestration.pm_planning.public.task_intent import is_pm_task_intent
 
 from ...internal.blueprint_persistence import BlueprintPersistence
@@ -25,6 +27,7 @@ from ...internal.project_completion_contract import build_project_completion_con
 from ..contracts import (
     ArtifactObligationV1,
     BuildChiefEngineerBlueprintPortfolioCommandV1,
+    CaptureChiefEngineerPortfolioAuthorityQueryV1,
     ChiefEngineerBehaviorExampleV1,
     ChiefEngineerBehaviorInvariantV1,
     ChiefEngineerBlueprintErrorV1,
@@ -44,6 +47,7 @@ from ..contracts import (
 )
 from ..contracts._blueprint_dtos import (
     _ChiefEngineerPortfolioAuthorityCarrierV1,
+    _issue_chief_engineer_portfolio_authority_carrier,
     _portfolio_authority_receipt_hash,
     _verify_chief_engineer_portfolio_authority_carrier,
 )
@@ -409,7 +413,14 @@ def _scope_entry_text(item: Any) -> tuple[str, str]:
     if isinstance(item, str):
         return item, ""
     if isinstance(item, Mapping):
-        for key in ("path", "file", "target_file", "target_path", "scope_path", "value"):
+        for key in (
+            "path",
+            "file",
+            "target_file",
+            "target_path",
+            "scope_path",
+            "value",
+        ):
             candidate = item.get(key)
             if isinstance(candidate, str):
                 return candidate, ""
@@ -842,7 +853,11 @@ def _project_delegated_cpp_header_companions(
             continue
         implementation = implementations[0]
         interface = interfaces[0]
-        layout = (implementation.parent.as_posix(), interface.parent.as_posix(), interface.suffix.casefold())
+        layout = (
+            implementation.parent.as_posix(),
+            interface.parent.as_posix(),
+            interface.suffix.casefold(),
+        )
         owner_layouts = layout_counts.setdefault(owner, {})
         owner_layouts[layout] = owner_layouts.get(layout, 0) + 1
 
@@ -1009,7 +1024,12 @@ def _read_portfolio_catalog_snapshot(workspace: str) -> dict[str, Any]:
         before = catalog_path.stat()
         raw = catalog_path.read_text(encoding="utf-8")
         after = catalog_path.stat()
-        before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        )
         after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
         if before_identity != after_identity:
             raise ValueError("workspace catalog changed while being read")
@@ -1082,6 +1102,37 @@ def _revalidate_portfolio_authority_carrier(
             code="invalid_project_completion_authority_carrier",
         )
     return carrier
+
+
+async def capture_chief_engineer_portfolio_authority(
+    query: CaptureChiefEngineerPortfolioAuthorityQueryV1,
+    *,
+    source_port: Callable[[CaptureChiefEngineerPortfolioAuthorityQueryV1], Awaitable[Mapping[str, Any]]],
+) -> object:
+    """Capture a trusted host source before CE seals its transient authority.
+
+    The Factory host supplies a port bound to its original durable PM reader.
+    Decoded model data never selects this port. A callable is not proof against
+    arbitrary Python host code; this operation preserves that host trust model
+    and grants no tool execution or additional filesystem permission.
+    """
+    if type(query) is not CaptureChiefEngineerPortfolioAuthorityQueryV1:
+        raise TypeError("query must be exact CaptureChiefEngineerPortfolioAuthorityQueryV1")
+    if isinstance(source_port, Mapping) or not callable(source_port):
+        raise TypeError("source_port must be a trusted async host source")
+    snapshot = await source_port(query)
+    if not isinstance(snapshot, Mapping):
+        raise TypeError("source_port result must be a host source mapping")
+    values = dict(snapshot)
+    for name, expected in (
+        ("workspace", query.workspace),
+        ("run_id", query.run_id),
+        ("tasks", query.tasks),
+    ):
+        actual = values.get(name)
+        if type(actual) is not type(expected) or actual != expected:
+            raise ValueError("source_port identity does not match capture query")
+    return _issue_chief_engineer_portfolio_authority_carrier(**values)
 
 
 @dataclass(frozen=True)
@@ -1428,7 +1479,11 @@ def _project_portfolio_artifact_rows(
             row.get("owner_task_id") in modern_tasks or (modern_tasks and row.get("owner_task_id") not in known_tasks)
         ):
             unauthorized_required_artifacts.append(
-                {"obligation_id": row["obligation_id"], "path": path, "owner_task_id": row.get("owner_task_id")}
+                {
+                    "obligation_id": row["obligation_id"],
+                    "path": path,
+                    "owner_task_id": row.get("owner_task_id"),
+                }
             )
     required_artifact_paths = {
         str(row["path"]) for row in kept_artifact_rows if row["applicability"] != "not_applicable"
@@ -1791,7 +1846,10 @@ def _normalized_entrypoint_obligation(row: Mapping[str, Any]) -> EntrypointOblig
         raise _portfolio_contract_error(
             f"invalid project completion contract: {exc}",
             code="invalid_project_completion_contract",
-            details={"repair_operation": "entrypoint_upsert", "normalization_subject": "entrypoint"},
+            details={
+                "repair_operation": "entrypoint_upsert",
+                "normalization_subject": "entrypoint",
+            },
         ) from exc
 
 
@@ -1845,7 +1903,11 @@ def _missing_semantic_task_recipe_diagnostics(
             "allowed_recipe_collections": ["verification"],
             "existing_obligation_ids": existing_ids,
             "required_artifacts": [
-                {"obligation_id": row["obligation_id"], "path": row["path"], "owner_task_id": row["owner_task_id"]}
+                {
+                    "obligation_id": row["obligation_id"],
+                    "path": row["path"],
+                    "owner_task_id": row["owner_task_id"],
+                }
                 for row in projection.artifact_rows
                 if row["applicability"] != "not_applicable"
                 and (
@@ -1975,7 +2037,13 @@ def _normalize_portfolio_completion_contract_impl(
     artifact_rows = _strict_completion_rows(
         obligations_payload["artifacts"],
         field_name="project_completion_contract.obligations.artifacts",
-        expected_fields={"obligation_id", "path", "semantic_role", "applicability", "owner_task_id"},
+        expected_fields={
+            "obligation_id",
+            "path",
+            "semantic_role",
+            "applicability",
+            "owner_task_id",
+        },
     )
     entrypoint_rows = _strict_completion_rows(
         obligations_payload["entrypoints"],
@@ -2320,7 +2388,10 @@ def _normalize_portfolio_completion_contract_impl(
             modality_candidates = authorities_for(modality=str(row["modality"]))
             command_keys = {(item.argv, item.cwd) for item in modality_candidates}
             if len(command_keys) == 1 and modality_candidates:
-                preferred = sorted(modality_candidates, key=lambda item: (item.task_id, item.authority_hash))[0]
+                preferred = sorted(
+                    modality_candidates,
+                    key=lambda item: (item.task_id, item.authority_hash),
+                )[0]
                 return dependency_complete_verifier_authority(row, preferred=preferred)
             raise ValueError(
                 "active verification cannot be bound to one committed PM command authority; "
@@ -2662,7 +2733,10 @@ def _normalize_portfolio_completion_contract_impl(
             used_seed_ids: set[str] = set()
             for command_index, authority in enumerate(test_authorities, start=1):
                 exact_seeds = [row for row in owner_seeds if row["command_authority_hash"] == authority.authority_hash]
-                seed = next((row for row in exact_seeds if str(row["obligation_id"]) not in used_seed_ids), None)
+                seed = next(
+                    (row for row in exact_seeds if str(row["obligation_id"]) not in used_seed_ids),
+                    None,
+                )
                 if seed is None:
                     # Reuse commandless advisory IDs only when they cannot be
                     # mistaken for a different committed command binding.
@@ -2728,10 +2802,19 @@ def _normalize_portfolio_completion_contract_impl(
                 continue
             owner_task_id = str(row["owner_task_id"])
             for authority in authorities_for(
-                modality="environment_prep", owner_task_id=owner_task_id, required_only=True
+                modality="environment_prep",
+                owner_task_id=owner_task_id,
+                required_only=True,
             ):
                 semantic_priority = 0 if row["semantic_role"] in {"manifest", "config"} else 1
-                environment_candidates.append((semantic_priority, str(row["obligation_id"]), authority, owner_task_id))
+                environment_candidates.append(
+                    (
+                        semantic_priority,
+                        str(row["obligation_id"]),
+                        authority,
+                        owner_task_id,
+                    )
+                )
 
         if project_kind_authority.project_kind == "application":
             if not environment_candidates:
@@ -3093,7 +3176,10 @@ def _parse_portfolio_llm_blueprint(
         raise _portfolio_contract_error(
             "construction_plan.task_plans references unknown PM tasks",
             code="unknown_blueprint_portfolio_task_plan",
-            details={"unknown_task_ids": unknown_task_ids, "task_ids": sorted(task_ids)},
+            details={
+                "unknown_task_ids": unknown_task_ids,
+                "task_ids": sorted(task_ids),
+            },
         )
 
     task_plans: dict[str, dict[str, Any]] = {}
@@ -4065,13 +4151,19 @@ def project_chief_engineer_task_blueprint(
         raise _portfolio_contract_error(
             f"task {normalized_task_id!r} is not present in blueprint portfolio",
             code="blueprint_portfolio_task_not_found",
-            details={"portfolio_id": portfolio.portfolio_id, "task_ids": list(portfolio.task_ids)},
+            details={
+                "portfolio_id": portfolio.portfolio_id,
+                "task_ids": list(portfolio.task_ids),
+            },
         )
     if not portfolio.llm_blueprint_consumed and not allow_offline_diagnostic:
         raise _portfolio_contract_error(
             "offline diagnostic portfolio cannot be projected into the mainline CE handoff",
             code="blueprint_portfolio_offline_diagnostic_only",
-            details={"portfolio_id": portfolio.portfolio_id, "task_id": normalized_task_id},
+            details={
+                "portfolio_id": portfolio.portfolio_id,
+                "task_id": normalized_task_id,
+            },
         )
     return {
         "construction_plan": _mapping(_compact_llm_blueprint_value(overlay.get("construction_plan"))),
@@ -4217,7 +4309,10 @@ def _project_blueprint_portfolio_context(
             )
 
     behavior_contract = (
-        _portfolio_mapping(context.get("shared_behavior_contract"), field_name="shared_behavior_contract")
+        _portfolio_mapping(
+            context.get("shared_behavior_contract"),
+            field_name="shared_behavior_contract",
+        )
         if present_behavior_fields
         else {}
     )
@@ -4355,12 +4450,19 @@ def _project_blueprint_portfolio_context(
             code="blueprint_portfolio_immutability_conflict",
             details={"task_id": task_id, "portfolio_id": portfolio_id},
         )
-    for field in (*canonical_fields[2:], *(behavior_fields if present_behavior_fields else ())):
+    for field in (
+        *canonical_fields[2:],
+        *(behavior_fields if present_behavior_fields else ()),
+    ):
         if context[field] != persisted.get(field):
             raise _portfolio_contract_error(
                 "task context differs from immutable blueprint portfolio authority",
                 code="blueprint_portfolio_immutability_conflict",
-                details={"task_id": task_id, "portfolio_id": portfolio_id, "field": field},
+                details={
+                    "task_id": task_id,
+                    "portfolio_id": portfolio_id,
+                    "field": field,
+                },
             )
         projection[field] = persisted[field]
     return projection

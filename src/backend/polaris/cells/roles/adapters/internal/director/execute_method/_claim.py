@@ -28,7 +28,6 @@ from polaris.cells.control_plane.run_ledger.public import (
     evaluate_task_boundary_verdict,
     stable_hash,
 )
-from polaris.cells.events.fact_stream.public import FactStreamQueryResultV1, QueryFactEventsV1, query_fact_events
 from polaris.cells.runtime.execution_broker.public import (
     RecordProjectArtifactCommandV1,
     project_verification as broker,
@@ -38,6 +37,10 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeExecutionAttemptAuthorityV1,
     TaskRuntimeExecutionAttemptIdentityV1,
     TaskRuntimeExecutionAttemptSettlementOutcomeV1,
+)
+from polaris.cells.runtime.task_runtime.public.execution_claim_evidence import (
+    QueryExecutionClaimEvidenceV1,
+    query_execution_claim_evidence,
 )
 from polaris.kernelone.quality import (
     scan_workspace_artifact_quality as scan_workspace_artifact_quality,
@@ -198,72 +201,17 @@ def _append_receipt_bound_preflight_task_boundary(
         raise ValueError("receipt-bound preflight projection owner does not match claimed task")
     token = _job_token_from_director_context(context)
 
-    def capture_claims() -> tuple[dict[str, Any], ...]:
-        records: list[dict[str, Any]] = []
-        offset = 0
-        total = None
-        while True:
-            page = query_fact_events(
-                QueryFactEventsV1(
-                    workspace=workspace,
-                    stream="task_runtime.execution",
-                    strict_integrity=True,
-                    limit=1000,
-                    offset=offset,
-                )
-            )
-            if (
-                type(page) is not FactStreamQueryResultV1
-                or (page.workspace, page.stream) != (workspace, "task_runtime.execution")
-                or (total is not None and page.total != total)
-            ):
-                raise ValueError("receipt-bound preflight claim cut changed")
-            total = page.total
-            records.extend(page.events)
-            if not page.next_offset:
-                if len(records) != total:
-                    raise ValueError("receipt-bound preflight claim cut is incomplete")
-                return tuple(records)
-            if page.next_offset <= offset:
-                raise ValueError("receipt-bound preflight claim pagination is invalid")
-            offset = page.next_offset
-
-    claims = capture_claims()
-    claim = None
-    latest = None
-    for record in claims:
-        payload = record.get("payload", {})
-        row = payload.get("task_row_snapshot", {})
-        if str(row.get("id")) != target_task_id:
-            continue
-        latest = row
-        metadata = row.get("metadata", {})
-        runtime = metadata.get("runtime_execution", {})
-        if record.get("event_type") != "claimed" or runtime.get("session_id") != identity.session_id:
-            continue
+    claim_query = QueryExecutionClaimEvidenceV1(workspace, identity, purpose="active_completion")
+    claim_evidence = query_execution_claim_evidence(claim_query)
+    for metadata in (claim_evidence.claim_metadata, claim_evidence.current_metadata):
         if (
-            record.get("source") != "runtime.task_runtime"
-            or payload.get("workspace") != workspace
-            or payload.get("run_id") != run_id
-            or payload.get("session_id") != identity.session_id
-            or payload.get("attempt") != identity.attempt
-            or row.get("workflow_run_id") != run_id
-            or any(
-                runtime.get(key) != getattr(identity, key)
-                for key in ("task_id", "external_task_id", "session_id", "attempt", "run_id", "role_id", "worker_id")
-            )
-            or metadata.get("task_completion_projection") != projection
+            metadata.get("task_completion_projection") != projection
             or _job_token_from_director_context({"metadata": metadata}) != token
-            or payload.get("factory_run_id") != projection.get("run_id")
-            or (payload.get("project_id") or payload.get("factory_bench_project_id")) != projection.get("project_id")
         ):
             raise ValueError("receipt-bound preflight immutable claim does not match")
-        claim = record
     if (
-        claim is None
-        or latest is None
-        or latest.get("status") != "in_progress"
-        or latest.get("metadata", {}).get("runtime_execution", {}).get("session_id") != identity.session_id
+        claim_evidence.factory_run_id != projection.get("run_id")
+        or claim_evidence.project_id != projection.get("project_id")
         or not token
         or not isinstance(token.get("capability_audit"), Mapping)
         or token["capability_audit"].get("ok") is not True
@@ -288,6 +236,31 @@ def _append_receipt_bound_preflight_task_boundary(
     verification = [item for item in contract.obligations.verification if item.owner_task_id == external_task_id]
     command_authorities = [item for item in contract.verification_command_authority if item.task_id == external_task_id]
     by_hash = {item.authority_hash: item for item in command_authorities}
+    execution_authority: list[dict[str, Any]] = []
+    verification_commands: dict[str, str] = {}
+    for obligation in verification:
+        if obligation.applicability == "not_applicable":
+            continue
+        authority_hash = obligation.command_authority_hash
+        command_text = obligation.command
+        if authority_hash is None or command_text is None:
+            raise ValueError("receipt-bound preflight verifier authority is missing")
+        bound_authority = by_hash.get(authority_hash)
+        if bound_authority is None:
+            raise ValueError("receipt-bound preflight verifier authority is unknown")
+        verification_commands[obligation.obligation_id] = command_text
+        execution_authority.append(
+            {
+                "obligation_id": obligation.obligation_id,
+                "owner_task_id": obligation.owner_task_id,
+                "modality": obligation.modality,
+                "command": command_text,
+                "argv": list(bound_authority.argv),
+                "cwd": bound_authority.cwd,
+                "command_authority_hash": authority_hash,
+                "covers_obligation_ids": list(obligation.covers_obligation_ids),
+            }
+        )
     expected_scope = {
         "schema_version": "polaris.task_completion_projection.v1",
         "project_contract_id": contract.contract_id,
@@ -312,20 +285,7 @@ def _append_receipt_bound_preflight_task_boundary(
             item.to_dict() for item in contract.obligations.entrypoints if item.owner_task_id == external_task_id
         ],
         "verification_command_authority": [item.to_dict() for item in command_authorities],
-        "verification_execution_authority": [
-            {
-                "obligation_id": item.obligation_id,
-                "owner_task_id": item.owner_task_id,
-                "modality": item.modality,
-                "command": item.command,
-                "argv": list(by_hash[item.command_authority_hash].argv),
-                "cwd": by_hash[item.command_authority_hash].cwd,
-                "command_authority_hash": item.command_authority_hash,
-                "covers_obligation_ids": list(item.covers_obligation_ids),
-            }
-            for item in verification
-            if item.applicability != "not_applicable"
-        ],
+        "verification_execution_authority": execution_authority,
     }
     if any(projection.get(key) != value for key, value in expected_scope.items()) or not str(
         projection.get("project_contract_ref") or ""
@@ -349,70 +309,75 @@ def _append_receipt_bound_preflight_task_boundary(
     ):
         raise ValueError("receipt-bound preflight evidence does not cover exact owned artifacts")
     reader = WorkspaceReadSnapshot(Path(workspace))
-    artifacts = []
-    for item in owned:
-        if item.applicability != "required":
+    artifacts: list[tuple[broker.QueryProjectArtifactReceiptV1, broker.ProjectArtifactReceiptV1]] = []
+    for artifact in owned:
+        if artifact.applicability != "required":
             continue
-        query = broker.QueryProjectArtifactReceiptV1(
+        artifact_query = broker.QueryProjectArtifactReceiptV1(
             workspace=workspace,
             project_id=contract.project_id,
             run_id=contract.run_id,
             completion_contract_hash=contract.contract_hash,
-            obligation_id=item.obligation_id,
+            obligation_id=artifact.obligation_id,
             owner_task_id=external_task_id,
-            path=item.path,
+            path=artifact.path,
         )
-        receipt = broker.query_project_artifact_receipt(query)
-        source = reader.read(Path(workspace) / item.path)
+        artifact_receipt = broker.query_project_artifact_receipt(artifact_query)
+        source = reader.read(Path(workspace) / artifact.path)
         if (
-            type(receipt) is not broker.ProjectArtifactReceiptV1
+            type(artifact_receipt) is not broker.ProjectArtifactReceiptV1
             or source.status != "readable"
-            or receipt.artifact_hash != source.content_sha256
-            or receipt.receipt_ref not in receipt_refs
-            or any(getattr(receipt, key) != getattr(query, key) for key in query.__dataclass_fields__)
+            or artifact_receipt.artifact_hash != source.content_sha256
+            or (artifact_receipt.receipt_ref not in receipt_refs)
+            or any(
+                getattr(artifact_receipt, key) != getattr(artifact_query, key)
+                for key in artifact_query.__dataclass_fields__
+            )
         ):
             raise ValueError("receipt-bound preflight artifact receipt is not current")
-        artifacts.append((query, receipt))
+        artifacts.append((artifact_query, artifact_receipt))
     required = [item for item in verification if item.applicability == "required"]
-    receipts = []
-    for item in required:
+    receipts: list[tuple[broker.QueryProjectVerificationReceiptV1, broker.ProjectVerificationReceiptV1]] = []
+    for obligation in required:
+        authority_hash = obligation.command_authority_hash
+        if authority_hash is None:
+            raise ValueError("receipt-bound preflight verifier authority is missing")
         command = broker.authorize_project_verification_command(
             broker.ResolveProjectVerificationAuthorityQueryV1(
                 workspace=workspace,
                 project_id=contract.project_id,
                 run_id=contract.run_id,
                 completion_contract_hash=contract.contract_hash,
-                obligation_id=item.obligation_id,
+                obligation_id=obligation.obligation_id,
             )
         )
-        query = broker.QueryProjectVerificationReceiptV1(
+        verification_query = broker.QueryProjectVerificationReceiptV1(
             **{key: getattr(command, key) for key in broker.QueryProjectVerificationReceiptV1.__dataclass_fields__}
         )
-        receipt = broker.query_project_verification_receipt(query)
+        verification_receipt = broker.query_project_verification_receipt(verification_query)
         if (
-            type(receipt) is not broker.ProjectVerificationReceiptV1
-            or not receipt.receipt_ref
-            or not receipt.receipt_hash
+            type(verification_receipt) is not broker.ProjectVerificationReceiptV1
+            or not verification_receipt.receipt_ref
+            or (not verification_receipt.receipt_hash)
             or any(
-                getattr(receipt, key) != getattr(query, key)
-                for key in query.__dataclass_fields__
+                getattr(verification_receipt, key) != getattr(verification_query, key)
+                for key in verification_query.__dataclass_fields__
                 if key != "input_artifacts"
             )
-            or tuple((value.obligation_id, value.path) for value in receipt.input_artifacts)
-            != tuple((value.obligation_id, value.path) for value in query.input_artifacts)
-            or command.command_authority_hash != item.command_authority_hash
-            or (command.owner_task_id, command.modality, command.argv, command.cwd)
-            != (
-                external_task_id,
-                item.modality,
-                by_hash[item.command_authority_hash].argv,
-                by_hash[item.command_authority_hash].cwd,
+            or (
+                tuple((value.obligation_id, value.path) for value in verification_receipt.input_artifacts)
+                != tuple((value.obligation_id, value.path) for value in verification_query.input_artifacts)
+            )
+            or (command.command_authority_hash != obligation.command_authority_hash)
+            or (
+                (command.owner_task_id, command.modality, command.argv, command.cwd)
+                != (external_task_id, obligation.modality, by_hash[authority_hash].argv, by_hash[authority_hash].cwd)
             )
         ):
             raise ValueError("receipt-bound preflight required verifier receipt is missing or stale")
-        receipts.append((query, receipt))
+        receipts.append((verification_query, verification_receipt))
     if (
-        claims != capture_claims()
+        claim_evidence != query_execution_claim_evidence(claim_query)
         or reader.drift_reasons()
         or any(broker.query_project_artifact_receipt(query) != receipt for query, receipt in artifacts)
         or any(broker.query_project_verification_receipt(query) != receipt for query, receipt in receipts)
@@ -422,7 +387,7 @@ def _append_receipt_bound_preflight_task_boundary(
     policy = token.get("gate_policy", {})
     declared = policy.get("required_evidence_modalities", policy.get("required_modalities", []))
     required_modalities = [name for name in declared if name in {"code", "command"}]
-    evidence_refs = [str(claim["event_id"]), *receipt_refs, *[receipt.receipt_ref for _, receipt in receipts]]
+    evidence_refs = [claim_evidence.claim_event_id, *receipt_refs, *[receipt.receipt_ref for _, receipt in receipts]]
     failed_ids = {receipt.obligation_id for _, receipt in receipts if not receipt.succeeded or receipt.exit_code != 0}
     verdict = evaluate_task_boundary_verdict(
         workspace=workspace,
@@ -430,9 +395,13 @@ def _append_receipt_bound_preflight_task_boundary(
         run_id=run_id,
         target_files=target_files,
         completed_artifacts=target_files,
-        required_verifiers=[item.command for item in required],
-        completed_verifiers=[item.command for item in required if item.obligation_id not in failed_ids],
-        failed_required_verifiers=[item.command for item in required if item.obligation_id in failed_ids],
+        required_verifiers=[verification_commands[item.obligation_id] for item in required],
+        completed_verifiers=[
+            verification_commands[item.obligation_id] for item in required if item.obligation_id not in failed_ids
+        ],
+        failed_required_verifiers=[
+            verification_commands[item.obligation_id] for item in required if item.obligation_id in failed_ids
+        ],
         required_evidence_modalities=required_modalities,
         present_evidence_modalities=present,
         failed_required_evidence_modalities=["command"] if failed_ids else [],
@@ -443,7 +412,7 @@ def _append_receipt_bound_preflight_task_boundary(
         raise ValueError("receipt-bound preflight lacks project identity")
     payload = verdict.to_dict()
     basis = {
-        "source_claim_fact_event_id": claim["event_id"],
+        "source_claim_fact_event_id": claim_evidence.claim_event_id,
         "source_job_token_hash": stable_hash(token),
         "task_projection_hash": projection["projection_hash"],
         "completion_contract_hash": contract.contract_hash,

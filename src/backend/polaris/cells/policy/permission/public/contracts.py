@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -16,6 +16,19 @@ def _require_non_empty(name: str, value: str) -> str:
 
 def _to_dict_copy(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(payload or {})
+
+
+class ToolPolicyDecisionPort(Protocol):
+    """Host-bound, read-only tool-policy decisions; never tool execution."""
+
+    @property
+    def workspace(self) -> str: ...
+
+    def role_permissions(self) -> Mapping[str, frozenset[str]]: ...
+
+    def check_tool_permission(
+        self, role_id: str, tool_name: str, tool_args: dict[str, Any] | None = None
+    ) -> tuple[bool, str]: ...
 
 
 @dataclass(frozen=True)
@@ -101,4 +114,5 @@ __all__ = [
     "PermissionDeniedEventV1",
     "PermissionPolicyError",
     "QueryPermissionMatrixV1",
+    "ToolPolicyDecisionPort",
 ]

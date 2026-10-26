@@ -16,8 +16,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from polaris.cells.control_plane.run_ledger.public import TaskBoundaryFailureClassV1
-
 from ..contracts import RepairDiagnostic
 from ..cpp_syntax import (
     CPP_INCLUDE_PATH_SOURCE_TOOL,

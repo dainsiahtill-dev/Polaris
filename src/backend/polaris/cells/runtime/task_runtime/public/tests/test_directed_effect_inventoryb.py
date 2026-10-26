@@ -1479,13 +1479,12 @@ def test_task5_claim_retry_reuses_one_ownership_key_and_returns_grant(
 
 def test_task5_grant_builder_is_fenced_to_confirmed_fresh_claim_path() -> None:
     repository_type = deo_internal.DirectedEffectOperationRepository
-    class_tree = ast.parse(textwrap.dedent(inspect.getsource(repository_type)))
-    class_node = cast(ast.ClassDef, class_tree.body[0])
     claim_grant_callers: list[str] = []
-    for node in class_node.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for child in ast.walk(node):
+    # Resolved methods retain their executable source locations even when the
+    # repository's compatibility facade rebinds the class module/name.
+    for method_name, method in inspect.getmembers(repository_type, inspect.isfunction):
+        method_tree = ast.parse(textwrap.dedent(inspect.getsource(method)))
+        for child in ast.walk(method_tree):
             if not isinstance(child, ast.Call) or not isinstance(child.func, ast.Attribute):
                 continue
             if (
@@ -1493,7 +1492,7 @@ def test_task5_grant_builder_is_fenced_to_confirmed_fresh_claim_path() -> None:
                 and isinstance(child.func.value, ast.Name)
                 and child.func.value.id == "self"
             ):
-                claim_grant_callers.append(node.name)
+                claim_grant_callers.append(method_name)
 
     assert claim_grant_callers == ["_confirmed_mutation_result"]
     assert "_replay_result" not in claim_grant_callers

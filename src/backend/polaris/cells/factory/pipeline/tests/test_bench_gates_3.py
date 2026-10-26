@@ -1,36 +1,20 @@
 from __future__ import annotations
 
-import json
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
-from polaris.cells.control_plane.verifier_policy.public import (
-    UpdateVerifierPolicyCommandV1,
-    update_verifier_policy,
-)
 from polaris.cells.factory.pipeline.internal import bench_gates
 from polaris.cells.factory.pipeline.internal.bench_gates import (
     _collect_go_local_imports,
-    _command_serves_build_output,
     _discover_go_package_dirs,
     _go_command,
     _go_version_of,
     _infer_go_module_name,
     _normalize_go_imports,
-    _primary_source_language,
     _read_go_mod_module,
     _repair_go_import_subpath,
-    _resolve_polaris_roots_runtime_dir,
-    _script_depends_on_build_output,
-    aggregate_goal_audit,
-    apply_factory_bench_failure_taxonomy,
-    build_llm_route_audit,
-    build_real_run_gate,
-    classify_factory_bench_failure,
-    collect_llm_events,
 )
 
 
@@ -126,8 +110,6 @@ def _canonical_task_runtime_projection(
     }
 
 
-
-
 class TestGoImportNormalization:
     """Verify bench gates do not mutate inconsistent module prefixes."""
 
@@ -196,7 +178,9 @@ class TestGoImportNormalization:
         assert '"my-proj/src/models"' in engine_text
 
     def test_bench_gates_source_has_no_workspace_mutation_calls(self) -> None:
-        source = Path(bench_gates.__file__).read_text(encoding="utf-8")
+        paths = sorted(Path(bench_gates.__file__).parent.glob("*.py"))
+        assert paths, "The canonical Bench gate package must have implementation source."
+        source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
 
         assert ".write_text(" not in source
         assert ".unlink(" not in source
@@ -205,6 +189,23 @@ class TestGoImportNormalization:
 # ---------------------------------------------------------------------------
 # Tests for _go_version_of
 # ---------------------------------------------------------------------------
+
+
+def test_measurement_fence_detects_active_core_mutation(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = Path(bench_gates.__file__).parent / "_core.py"
+    read_text = Path.read_text
+
+    def mutated(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        return (
+            source + "\ndef forbidden_bench_mutation(path):\n    path.write_text('forged', encoding='utf-8')\n"
+            if path == target
+            else source
+        )
+
+    monkeypatch.setattr(Path, "read_text", mutated)
+    with pytest.raises(AssertionError):
+        TestGoImportNormalization().test_bench_gates_source_has_no_workspace_mutation_calls()
 
 
 class TestGoVersionOf:

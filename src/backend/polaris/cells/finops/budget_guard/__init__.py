@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from .public import (
     BudgetDecisionResultV1,
+    BudgetService,
     BudgetThresholdExceededEventV1,
-    CFOAgent,
     FinOpsBudgetError,
     GetBudgetStatusQueryV1,
     RecordUsageCommandV1,
@@ -14,8 +14,8 @@ from .public import (
 
 __all__ = [
     "BudgetDecisionResultV1",
+    "BudgetService",
     "BudgetThresholdExceededEventV1",
-    "CFOAgent",
     "FinOpsBudgetError",
     "GetBudgetStatusQueryV1",
     "RecordUsageCommandV1",

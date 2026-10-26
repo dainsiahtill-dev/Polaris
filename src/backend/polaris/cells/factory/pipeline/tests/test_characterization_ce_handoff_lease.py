@@ -70,7 +70,11 @@ class TestChiefEngineerHandoffGuards:
                 commands.append(command)
                 return _invalid_chief_engineer_stream_result()
 
-        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _AlwaysInvalidRoleRuntimeService)
+        monkeypatch.setattr(
+            stage_executor_module,
+            "RoleRuntimeService",
+            _AlwaysInvalidRoleRuntimeService,
+        )
         run = FactoryRun(
             id="factory-run-schema-repair-bounded",
             config=FactoryConfig(name="bench-run"),
@@ -155,7 +159,11 @@ class TestChiefEngineerHandoffGuards:
                 commands.append(command)
                 return _invalid_chief_engineer_stream_result()
 
-        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _AlwaysInvalidRoleRuntimeService)
+        monkeypatch.setattr(
+            stage_executor_module,
+            "RoleRuntimeService",
+            _AlwaysInvalidRoleRuntimeService,
+        )
         run = FactoryRun(
             id="factory-run-schema-fallback-cross-task",
             config=FactoryConfig(name="bench-run"),
@@ -168,9 +176,9 @@ class TestChiefEngineerHandoffGuards:
         assert result.status == "failed"
         assert len(commands) == 2
         review = json.loads(
-            Path(
-                resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")
-            ).read_text(encoding="utf-8")
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
         )
         assert review["generated_blueprints"] == 0
         signal_codes = [signal["code"] for signal in review["signals"]]
@@ -182,7 +190,10 @@ class TestChiefEngineerHandoffGuards:
             if signal["code"] == "chief_engineer.advisory_projection_fallback_infeasible"
         )
         assert behavior_signal["fallback_error_code"] == "blueprint_portfolio_behavior_contract_infeasible"
-        assert behavior_signal["fallback_contract_error_details"]["task_ids"] == ["TASK-SOURCE", "TASK-TEST"]
+        assert behavior_signal["fallback_contract_error_details"]["task_ids"] == [
+            "TASK-SOURCE",
+            "TASK-TEST",
+        ]
 
     def test_chief_engineer_owner_finalized_fallback_satisfies_pm_delivery_depth(
         self,
@@ -220,7 +231,11 @@ class TestChiefEngineerHandoffGuards:
                     )
                 return result
 
-        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _AlwaysInvalidRoleRuntimeService)
+        monkeypatch.setattr(
+            stage_executor_module,
+            "RoleRuntimeService",
+            _AlwaysInvalidRoleRuntimeService,
+        )
         run = FactoryRun(
             id="factory-run-schema-fallback-depth",
             config=FactoryConfig(name="bench-run"),
@@ -298,7 +313,11 @@ class TestChiefEngineerHandoffGuards:
             async def execute_role_task(self, _command: Any) -> Any:
                 return _invalid_chief_engineer_stream_result()
 
-        monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _AlwaysInvalidRoleRuntimeService)
+        monkeypatch.setattr(
+            stage_executor_module,
+            "RoleRuntimeService",
+            _AlwaysInvalidRoleRuntimeService,
+        )
         run = FactoryRun(
             id="factory-run-schema-fallback-true-depth-deficit",
             config=FactoryConfig(name="bench-run"),
@@ -310,9 +329,9 @@ class TestChiefEngineerHandoffGuards:
 
         assert result.status == "failed"
         review = json.loads(
-            Path(
-                resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")
-            ).read_text(encoding="utf-8")
+            Path(resolve_logical_path(tmp_path, f"runtime/state/blueprints/{run.id}.review.json")).read_text(
+                encoding="utf-8"
+            )
         )
         signal = next(
             signal
@@ -505,7 +524,11 @@ class TestChiefEngineerHandoffGuards:
             async def execute_role_task(self, _command: Any) -> Any:
                 return _single_task_chief_engineer_result()
 
-        monkeypatch.setattr(stage_executor_module, "heartbeat_task_runtime_execution_attempt", _record_heartbeat)
+        monkeypatch.setattr(
+            stage_executor_module,
+            "heartbeat_task_runtime_execution_attempt",
+            _record_heartbeat,
+        )
         monkeypatch.setattr(executor, "_ce_extract_llm_evidence", _blocking_extract)
         monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _SuccessfulRoleRuntimeService)
         run = FactoryRun(
@@ -654,7 +677,11 @@ class TestChiefEngineerHandoffGuards:
             entered.set()
             raise SystemExit("synthetic keeper boundary")
 
-        monkeypatch.setattr(stage_executor_module, "heartbeat_task_runtime_execution_attempt", _raise_system_exit)
+        monkeypatch.setattr(
+            stage_executor_module,
+            "heartbeat_task_runtime_execution_attempt",
+            _raise_system_exit,
+        )
         keeper.start()
         assert entered.wait(timeout=2)
         stopped = keeper.stop()
@@ -708,7 +735,11 @@ class TestChiefEngineerHandoffGuards:
                 renewed_identity=command.identity,
             )
 
-        monkeypatch.setattr(stage_executor_module, "heartbeat_task_runtime_execution_attempt", _block_heartbeat)
+        monkeypatch.setattr(
+            stage_executor_module,
+            "heartbeat_task_runtime_execution_attempt",
+            _block_heartbeat,
+        )
         scope.start_keeper(keeper)
         assert entered.wait(timeout=2)
         started_at = time.monotonic()
@@ -753,7 +784,11 @@ class TestChiefEngineerHandoffGuards:
                 assert await asyncio.to_thread(heartbeat_failed.wait, 2.0)
                 raise cancellation
 
-        monkeypatch.setattr(stage_executor_module, "heartbeat_task_runtime_execution_attempt", _raise_heartbeat)
+        monkeypatch.setattr(
+            stage_executor_module,
+            "heartbeat_task_runtime_execution_attempt",
+            _raise_heartbeat,
+        )
         monkeypatch.setattr(stage_executor_module, "RoleRuntimeService", _CancelledRoleRuntimeService)
         run = FactoryRun(
             id="factory-run-ce-heartbeat-failed-cancelled",
@@ -814,8 +849,14 @@ class TestChiefEngineerHandoffGuards:
                         "title": "Build forecast engine",
                         "goal": "Use the weather model from a forecast engine.",
                         "depends_on": ["TASK-1"],
-                        "target_files": ["src/engine/forecast.py", "tests/test_forecast.py"],
-                        "scope_paths": ["src/engine/forecast.py", "tests/test_forecast.py"],
+                        "target_files": [
+                            "src/engine/forecast.py",
+                            "tests/test_forecast.py",
+                        ],
+                        "scope_paths": [
+                            "src/engine/forecast.py",
+                            "tests/test_forecast.py",
+                        ],
                         "acceptance_criteria": ["forecast consumes the shared weather model"],
                         "execution_checklist": ["Implement forecast rules"],
                         "delivery_plan_document": delivery_plan_document,
@@ -891,7 +932,10 @@ class TestChiefEngineerHandoffGuards:
                             },
                         },
                     },
-                    "scope_for_apply": ["src/models/weather.py", "src/engine/forecast.py"],
+                    "scope_for_apply": [
+                        "src/models/weather.py",
+                        "src/engine/forecast.py",
+                    ],
                     "risk_flags": [],
                     "project_completion_contract": _library_completion_requirements(
                         "src/models/weather.py",
@@ -933,11 +977,7 @@ class TestChiefEngineerHandoffGuards:
         assert calls[0].context["llm_max_tokens"] == 16_384
         assert calls[0].context["task_count"] == 2
         assert len(calls[0].context["pm_task_contract"]["tasks"]) == 2
-        review_path = Path(
-            resolve_logical_path(
-                tmp_path, "runtime/state/blueprints/factory-run-portfolio.review.json"
-            )
-        )
+        review_path = Path(resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run-portfolio.review.json"))
         review = json.loads(review_path.read_text(encoding="utf-8"))
         assert review["llm_call_count"] == 1
         assert review["generated_blueprints"] == 2
@@ -1027,7 +1067,8 @@ class TestChiefEngineerHandoffGuards:
         assert result.status == "failed"
         review_path = Path(
             resolve_logical_path(
-                tmp_path, "runtime/state/blueprints/factory-run-timeout-projection.review.json"
+                tmp_path,
+                "runtime/state/blueprints/factory-run-timeout-projection.review.json",
             )
         )
         review = json.loads(review_path.read_text(encoding="utf-8"))
@@ -1180,10 +1221,24 @@ class TestChiefEngineerHandoffGuards:
                         "id": "TASK-1",
                         "title": "Build meteor wish queue",
                         "goal": "Build a meteor wish queue with prioritization behavior.",
-                        "target_files": ["package.json", "src/index.js", "src/engine/rules.js"],
-                        "scope_paths": ["package.json", "src/index.js", "src/engine/rules.js"],
-                        "acceptance_criteria": ["npm test passes", "npm start prints queue status"],
-                        "execution_checklist": ["Implement queue model", "Implement prioritization rules"],
+                        "target_files": [
+                            "package.json",
+                            "src/index.js",
+                            "src/engine/rules.js",
+                        ],
+                        "scope_paths": [
+                            "package.json",
+                            "src/index.js",
+                            "src/engine/rules.js",
+                        ],
+                        "acceptance_criteria": [
+                            "npm test passes",
+                            "npm start prints queue status",
+                        ],
+                        "execution_checklist": [
+                            "Implement queue model",
+                            "Implement prioritization rules",
+                        ],
                         "delivery_plan_document": delivery_plan_document,
                         "delivery_depth_contract": delivery_depth_contract,
                     },
@@ -1230,9 +1285,7 @@ class TestChiefEngineerHandoffGuards:
 
         assert result.status == "failed"
         review_path = Path(
-            resolve_logical_path(
-                tmp_path, "runtime/state/blueprints/factory-run-projection.review.json"
-            )
+            resolve_logical_path(tmp_path, "runtime/state/blueprints/factory-run-projection.review.json")
         )
         review = json.loads(review_path.read_text(encoding="utf-8"))
         assert [signal["code"] for signal in review["signals"]] == [
@@ -1242,9 +1295,9 @@ class TestChiefEngineerHandoffGuards:
         assert review["portfolio"] == {}
         assert review["llm_call_count"] == 0
 
-    def test_director_handoff_guard_allows_ready_blueprint(self, tmp_path: Path) -> None:
+    async def test_director_handoff_guard_allows_ready_blueprint(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
-        result = _generate_domain_blueprint(
+        result = await _generate_domain_blueprint(
             tmp_path,
             task_id="TASK-1",
             objective="Build pirate treasure budget planner",
@@ -1284,9 +1337,11 @@ class TestChiefEngineerHandoffGuards:
         assert [signal["code"] for signal in signals] == ["director.chief_engineer_handoff_missing"]
         assert signals[0]["severity"] == "error"
 
-    def test_director_handoff_guard_does_not_use_stale_persisted_blueprint_without_review(self, tmp_path: Path) -> None:
+    async def test_director_handoff_guard_does_not_use_stale_persisted_blueprint_without_review(
+        self, tmp_path: Path
+    ) -> None:
         executor = _executor(tmp_path)
-        result = _generate_domain_blueprint(
+        result = await _generate_domain_blueprint(
             tmp_path,
             task_id="TASK-1",
             objective="Build pirate treasure budget planner",
@@ -1310,9 +1365,9 @@ class TestChiefEngineerHandoffGuards:
         assert [signal["code"] for signal in signals] == ["director.chief_engineer_handoff_missing"]
         assert signals[0]["severity"] == "error"
 
-    def test_director_handoff_guard_blocks_unready_blueprint(self, tmp_path: Path) -> None:
+    async def test_director_handoff_guard_blocks_unready_blueprint(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
-        result = _generate_domain_blueprint(
+        result = await _generate_domain_blueprint(
             tmp_path,
             task_id="TASK-1",
             objective="Build flavor recipe planner",

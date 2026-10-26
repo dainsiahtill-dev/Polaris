@@ -23,6 +23,7 @@ from polaris.cells.factory.pipeline.internal.run_ledger import build_job_token_f
 from polaris.cells.factory.pipeline.tests import test_materialization_contract_verifiers as fixture_owner
 from polaris.cells.factory.pipeline.tests.test_materialization_contract_verifiers import _fixture as _owner_fixture
 from polaris.cells.factory.pipeline.tests.test_native_validation_inputs import _projection
+from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
 from polaris.cells.roles.adapters.internal.director.execute_method import _phases_materialization as phases
 from polaris.cells.roles.adapters.internal.director.execute_method._helpers import MaterializationState
 from polaris.cells.roles.adapters.public.service import create_role_adapter
@@ -134,6 +135,7 @@ def _setup(
             )
         )
     adapter = create_role_adapter("director", str(workspace))
+    assert isinstance(adapter, DirectorAdapter)
     task = adapter._get_task(str(row["id"]))
     assert task is not None
     return {
@@ -267,6 +269,56 @@ def test_optional_verifier_has_no_receipt_and_does_not_block_required_completion
         if row["event_type"] == "task_boundary_verdict"
     )
     assert len(event["task_boundary_completion_basis"]["current_receipt_bindings"]) == 4
+
+
+@pytest.mark.parametrize("related", [True, False])
+def test_preflight_rechecks_owner_version_without_invalidating_unrelated_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, related: bool
+) -> None:
+    case = _setup(tmp_path, monkeypatch)
+    observed = asyncio.run(
+        materialization._collect_director_stage_materialization_diagnostics(case["executor"], run=case["run"])
+    )
+    assert not observed.blockers
+    original = broker.query_project_verification_receipt
+    changed = False
+
+    def update_during_receipt_read(query: Any) -> Any:
+        nonlocal changed
+        receipt = original(query)
+        if not changed:
+            changed = True
+            service = TaskRuntimeService(str(case["workspace"]))
+            if related:
+                service.update_task_row(case["identity"].task_id, metadata={"private_concurrent_update": True})
+            else:
+                service.create_task_row(subject="Unrelated task during receipt verification")
+        return receipt
+
+    monkeypatch.setattr(broker, "query_project_verification_receipt", update_during_receipt_read)
+    result = _preflight(case)
+    assert changed
+    if related:
+        assert result is None and not case["authority"].snapshot().closed
+    else:
+        assert result is not None and result["success"] is True
+        assert case["authority"].snapshot().closed
+
+
+def test_changed_current_claim_token_cannot_borrow_immutable_original_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = _setup(tmp_path, monkeypatch)
+    observed = asyncio.run(
+        materialization._collect_director_stage_materialization_diagnostics(case["executor"], run=case["run"])
+    )
+    assert not observed.blockers
+    TaskRuntimeService(str(case["workspace"])).update_task_row(
+        case["identity"].task_id,
+        metadata={"job_token": {**case["context"]["job_token"], "token_id": "changed-persisted-token"}},
+    )
+    assert _preflight(case) is None
+    assert not case["authority"].snapshot().closed
 
 
 @pytest.mark.parametrize("failure", ["failed", "stale", "foreign_context", "stale_claim", "append"])

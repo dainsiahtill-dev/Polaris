@@ -165,3 +165,9 @@ consume-only Director adapter boundary. Frozen evidence is `264 passed` in the
 directed-effect matrix plus `841 passed in 148.31s` for TaskRuntime; static,
 catalog, import, and diff gates are green. It does not claim production wiring,
 receipt authority, terminal admission, or Provider-context qualification.
+
+## Prospective operation identity ownership
+
+`public.operation_identity` owns `DirectedEffectOperationSubjectV1` and its hash because TaskRuntime validates and persists the admitted inventory identity. Pure immutable map/sequence and exact tagged UTF-8 hashing live in existing KernelOne effect; Director retains same-object public aliases. TaskRuntime closure no longer imports Director execution contracts. Existing hashes, record bytes, FAILED/UNKNOWN and cold identity checks remain unchanged.
+
+This technical ownership split does not make old TaskRuntime/DEO contracts new EngineeringRunService admission. New engineering identity/events remain in its existing engineering SQLite; retained platform utilities and historical decoders stay explicit. Current source/public/cold regressions are component evidence, not fresh Native acceptance. Whole-repository cyclic dependencies remain open in the full convergence plan.

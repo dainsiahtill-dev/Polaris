@@ -21,9 +21,6 @@ from types import MethodType, SimpleNamespace
 from typing import Any
 
 import pytest
-
-
-
 from polaris.cells.chief_engineer.blueprint.public import (
     BlueprintPersistence,
     BuildChiefEngineerBlueprintPortfolioCommandV1,
@@ -39,7 +36,6 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
 )
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.events.fact_stream.public import (
@@ -63,7 +59,9 @@ from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
 from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
     FactoryRoleEvidenceAuthorityPort,
 )
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
+from polaris.cells.factory.pipeline.internal.factory_run_completion import (
+    RunCompletionWaiter,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -71,11 +69,21 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
+from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import (
+    _fencing_token,
+)
 from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
     evaluate_canonical_factory_authority,
 )
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
+from polaris.cells.factory.pipeline.internal.run_ledger import (
+    load_run_ledger_projection,
+)
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
+    _executor,
+    _invalid_chief_engineer_stream_result,
+    _single_task_chief_engineer_result,
+    _thinking_only_chief_engineer_result,
+)
 from polaris.cells.roles.adapters.public import (
     build_director_materialization_quality_repair_message,
     extract_workspace_quality_summary,
@@ -93,14 +101,6 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
 )
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
-
-
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
-    _executor,
-    _invalid_chief_engineer_stream_result,
-    _single_task_chief_engineer_result,
-    _thinking_only_chief_engineer_result,
-)
 
 
 class TestPackageJsonParsing:
@@ -136,9 +136,13 @@ class TestPackageJsonParsing:
     def test_workspace_quality_commands_from_scripts(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         (tmp_path / "package.json").write_text(
-            json.dumps({"scripts": {"test": "vitest", "build": "vite build"}}), encoding="utf-8"
+            json.dumps({"scripts": {"test": "vitest", "build": "vite build"}}),
+            encoding="utf-8",
         )
-        assert executor._workspace_quality_commands({}) == [["npm", "run", "build"], ["npm", "test"]]
+        assert executor._workspace_quality_commands({}) == [
+            ["npm", "run", "build"],
+            ["npm", "test"],
+        ]
 
     def test_workspace_quality_commands_include_entrypoint_smoke(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -147,7 +151,10 @@ class TestPackageJsonParsing:
             encoding="utf-8",
         )
 
-        assert executor._workspace_quality_commands({}) == [["npm", "test"], ["npm", "run", "start"]]
+        assert executor._workspace_quality_commands({}) == [
+            ["npm", "test"],
+            ["npm", "run", "start"],
+        ]
 
     def test_workspace_quality_commands_python_project_include_real_gates(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -161,7 +168,17 @@ class TestPackageJsonParsing:
 
         assert commands == [
             [sys.executable, "-m", "compileall", "-q", "src", "tests", "main.py"],
-            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+            [
+                sys.executable,
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                "tests",
+                "-p",
+                "test_*.py",
+                "-v",
+            ],
             [sys.executable, "main.py"],
         ]
 
@@ -184,7 +201,17 @@ class TestPackageJsonParsing:
         # direct ``python src/main.py`` script smoke remains.
         assert commands == [
             [sys.executable, "-m", "compileall", "-q", "src", "tests"],
-            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+            [
+                sys.executable,
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                "tests",
+                "-p",
+                "test_*.py",
+                "-v",
+            ],
             [sys.executable, "src/main.py"],
         ]
 
@@ -196,7 +223,14 @@ class TestPackageJsonParsing:
 
         commands = executor._workspace_quality_commands({})
 
-        assert commands[0] == [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]
+        assert commands[0] == [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "-r",
+            "requirements.txt",
+        ]
 
     def test_workspace_quality_commands_cpp_project_uses_cpp_check_not_python_harness(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -331,7 +365,9 @@ class TestPackageJsonParsing:
         assert result["sandboxed"] is False
         assert str(result["error"]).startswith("native_validation_sandbox_unavailable:")
 
-    def test_declared_delivery_targets_extract_explicit_file_tokens_from_task_text(self) -> None:
+    def test_declared_delivery_targets_extract_explicit_file_tokens_from_task_text(
+        self,
+    ) -> None:
         targets = OrchestrationStageExecutor._collect_declared_delivery_targets(
             [
                 {
@@ -617,7 +653,11 @@ class TestArtifactStore:
             assert depth_contract["minimums"]["min_prod_files"] == 6
             assert depth_contract["minimums"]["min_prod_lines"] == 500
             declared_targets = task["metadata"]["project_declared_target_files"]
-            assert declared_targets == ["package.json", "src/index.js", "src/engine/rules.js"]
+            assert declared_targets == [
+                "package.json",
+                "src/index.js",
+                "src/engine/rules.js",
+            ]
             assert "docs/design.md" not in declared_targets
             assert task["metadata"]["manifest_entrypoint_contract"]["allowed_local_entrypoints"] == declared_targets
 
@@ -646,7 +686,11 @@ class TestArtifactStore:
 
         rewrote = executor._ensure_chief_engineer_blueprint_artifact_present(
             result=result,
-            task={"id": "TASK-1", "title": "Rust module", "goal": "Implement Rust module"},
+            task={
+                "id": "TASK-1",
+                "title": "Rust module",
+                "goal": "Implement Rust module",
+            },
             task_context={"task_index": 1},
             constraints={"acceptance": ["cargo test passes"]},
             run_id="factory-run",
@@ -697,7 +741,9 @@ class TestArtifactStore:
         assert evidence["final_request_context_audit"]["final_request_token_estimate"] == 42000
         assert OrchestrationStageExecutor._ce_missing_final_request_evidence(evidence) == []
 
-    def test_chief_engineer_llm_evidence_marks_missing_final_request_audit(self) -> None:
+    def test_chief_engineer_llm_evidence_marks_missing_final_request_audit(
+        self,
+    ) -> None:
         ce_result = SimpleNamespace(metadata={"provider": "openai", "model": "gpt-5"}, usage={})
 
         evidence = OrchestrationStageExecutor._ce_extract_llm_evidence(
@@ -711,7 +757,9 @@ class TestArtifactStore:
             "context_snapshot_ref",
         ]
 
-    def test_chief_engineer_portfolio_rejects_present_invalid_advisory_scope(self) -> None:
+    def test_chief_engineer_portfolio_rejects_present_invalid_advisory_scope(
+        self,
+    ) -> None:
         payload = dict(_single_task_chief_engineer_result().metadata["structured_output"])
         payload["scope_for_apply"] = "src/cancel.py"
 
@@ -765,7 +813,9 @@ class TestArtifactStore:
     ) -> None:
         assert OrchestrationStageExecutor._ce_portfolio_result_allows_schema_repair(ce_result) is expected
 
-    def test_chief_engineer_structured_result_schema_mismatch_is_output_validation_failure(self) -> None:
+    def test_chief_engineer_structured_result_schema_mismatch_is_output_validation_failure(
+        self,
+    ) -> None:
         ce_result = SimpleNamespace(
             error_code="call_error",
             error_message=("structured_output_payload_schema_mismatch:$:'scope_for_apply' is a required property"),
@@ -893,8 +943,12 @@ class TestMirrorHelpers:
         assert "workspace/blueprints/bp1.json" in artifacts
 
 
-def test_pol77_generated_inventory_survives_real_factory_ce_projection_without_write_grant(tmp_path: Path) -> None:
-    from polaris.cells.orchestration.pm_planning.tests.test_artifact_contracts import _plan
+def test_pol77_generated_inventory_survives_real_factory_ce_projection_without_write_grant(
+    tmp_path: Path,
+) -> None:
+    from polaris.cells.orchestration.pm_planning.tests.test_artifact_contracts import (
+        _plan,
+    )
 
     tasks = _plan()
     catalog = tmp_path / ".polaris/catalog_contract.json"
@@ -924,10 +978,15 @@ def test_pol77_derived_inventory_cannot_inherit_model_write_or_source_claims() -
         inject_project_declared_target_contract,
     )
 
-    context: dict[str, Any] = {"target_files": ["src/main.ts"], "scope_paths": ["src/main.ts"],
-               "project_declared_target_files": ["dist/main.js"],
-               "metadata": {"project_declared_source_targets": ["dist/main.js"],
-                            "project_declared_target_files": ["dist/main.js"]}}
+    context: dict[str, Any] = {
+        "target_files": ["src/main.ts"],
+        "scope_paths": ["src/main.ts"],
+        "project_declared_target_files": ["dist/main.js"],
+        "metadata": {
+            "project_declared_source_targets": ["dist/main.js"],
+            "project_declared_target_files": ["dist/main.js"],
+        },
+    }
     inject_project_declared_target_contract(context, project_declared_target_files=["src/main.ts"])
     assert context["project_declared_target_files"] == ["src/main.ts"]
     assert context["metadata"]["project_declared_target_files"] == ["src/main.ts"]

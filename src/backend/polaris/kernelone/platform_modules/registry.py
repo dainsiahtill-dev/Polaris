@@ -272,7 +272,15 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "materialization quality settle still runs so smoke/tsc repairs land (R165/R174)."
         ),
         owner_paths=(
-            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/__init__.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_executor.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_helpers.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_00.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_01.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_03.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_04.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_pkg_proxy.py",
             "src/backend/polaris/cells/factory/pipeline/internal/factory_settlement_runtime.py",
             "src/backend/polaris/cells/runtime/task_runtime/internal/service.py",
             "src/backend/polaris/cells/control_plane/run_ledger/public/task_boundary.py",
@@ -323,7 +331,15 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
         status=PlatformModuleStatus.HARDENING,
         summary="Canonical product chain is PM → Chief Engineer → Director → QA; no PM→Director shortcut.",
         owner_paths=(
-            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/__init__.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_executor.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_helpers.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_00.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_01.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_02.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_03.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_04.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor/_pkg_proxy.py",
             "src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py",
             "src/backend/polaris/kernelone/platform_modules/residual_attribution.py",
         ),
@@ -479,7 +495,10 @@ PLATFORM_MODULES: Mapping[str, PlatformModuleRecord] = {
             "Never repair target projects from gates."
         ),
         owner_paths=(
-            "src/backend/polaris/cells/factory/pipeline/internal/bench_gates.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/bench_gates/__init__.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/bench_gates/_core.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/bench_gates/_gates.py",
+            "src/backend/polaris/cells/factory/pipeline/internal/bench_gates/_audit.py",
             "src/backend/scripts/factory_bench/run_factory_bench.py",
         ),
         pytest_targets=(

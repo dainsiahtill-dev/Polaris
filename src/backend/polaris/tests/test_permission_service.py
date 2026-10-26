@@ -3,6 +3,7 @@
 单元测试：权限决策服务、RBAC 策略评估、角色权限检查。
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from polaris.cells.policy.permission.internal.permission_service import (
     get_permission_service,
     reset_permission_service,
 )
-from polaris.cells.roles.profile.internal.schema import (
+from polaris.cells.roles.profile.public.service import (
     Action,
     PolicyEffect,
     Resource,
@@ -27,10 +28,32 @@ from polaris.cells.roles.profile.internal.schema import (
 
 
 @pytest.fixture
-def permission_service():
+def permission_service(tmp_path, monkeypatch):
     """创建权限服务实例"""
+    from polaris.cells.roles.kernel.public.permission_policy_adapter import RoleKernelToolPolicyAdapter
+    from polaris.cells.roles.profile.public.service import RoleProfileRegistry
+
+    # Permission-only bindings: tool policies are real YAML; no model/provider is invoked.
+    config = tmp_path / "permission-only-bindings.json"
+    config.write_text(
+        json.dumps(
+            {
+                "roles": {
+                    role: {"provider_id": "permission-test-only", "model": "not-invoked"}
+                    for role in ("pm", "architect", "chief_engineer", "director", "qa", "scout")
+                },
+                "providers": {"permission-test-only": {"type": "generic", "max_concurrency": 1}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KERNELONE_LLM_CONFIG", str(config))
+    profiles = RoleProfileRegistry()
+    profiles.load_from_yaml(Path(__file__).resolve().parents[1] / "cells/roles/profile/config/roles/core_roles.yaml")
     reset_permission_service()
-    service = PermissionService(workspace="")
+    service = PermissionService(
+        workspace=str(tmp_path), tool_policy_port=RoleKernelToolPolicyAdapter(str(tmp_path), profile_registry=profiles)
+    )
     return service
 
 

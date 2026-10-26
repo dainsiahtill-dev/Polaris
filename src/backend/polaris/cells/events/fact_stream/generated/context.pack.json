@@ -33,6 +33,7 @@
       "ProvisionFactStreamLockAuthorityCommandV1",
       "QueryFactEventsV1",
       "QueryFactStreamHeadV1",
+      "QueryPayloadFactByIdempotencyKeyV1",
       "QueryPayloadFactEventsV1",
       "QuerySegmentedFactEventsV1",
       "QuerySegmentedFactLedgerHeadV1",
@@ -58,6 +59,7 @@
       "provision_fact_stream_lock_authority",
       "query_fact_events",
       "query_fact_stream_head",
+      "query_payload_fact_by_idempotency_key",
       "query_payload_fact_events",
       "query_payload_fact_ledger_presence",
       "query_segmented_fact_events",
@@ -65,9 +67,7 @@
       "read_guarded_fact_snapshot",
       "sanitize_headers",
       "set_debug_tracing_enabled",
-      "store_fact_payload",
-      "QueryPayloadFactByIdempotencyKeyV1",
-      "query_payload_fact_by_idempotency_key"
+      "store_fact_payload"
     ]
   },
   "public_contracts": {
@@ -139,7 +139,8 @@
     "polaris/cells/events/fact_stream/public/tests/test_public_service.py",
     "polaris/cells/events/fact_stream/public/tests/test_segmented_contracts.py",
     "polaris/cells/events/fact_stream/public/tests/test_workspace_bootstrap.py",
-    "polaris/cells/events/fact_stream/public/tests/test_payload_fact_exact_lookup.py"
+    "polaris/cells/events/fact_stream/public/tests/test_payload_fact_exact_lookup.py",
+    "polaris/cells/events/fact_stream/public/tests/test_public_surface.py"
   ],
   "change_guidance": {
     "read_order": [

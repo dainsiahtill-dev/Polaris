@@ -36,7 +36,6 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
 )
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.events.fact_stream.public import (
@@ -60,7 +59,9 @@ from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
 from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
     FactoryRoleEvidenceAuthorityPort,
 )
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
+from polaris.cells.factory.pipeline.internal.factory_run_completion import (
+    RunCompletionWaiter,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -68,11 +69,22 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
+from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import (
+    _fencing_token,
+)
 from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
     evaluate_canonical_factory_authority,
 )
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
+from polaris.cells.factory.pipeline.internal.run_ledger import (
+    load_run_ledger_projection,
+)
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
+    _characterization_authority_port,
+    _executor,
+    _factory_stage_context,
+    _with_task_runtime_authority,
+    _write_handoff_ready_review_for_tasks,
+)
 from polaris.cells.roles.adapters.public import (
     build_director_materialization_quality_repair_message,
     extract_workspace_quality_summary,
@@ -90,15 +102,6 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
 )
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
-
-
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
-    _characterization_authority_port,
-    _executor,
-    _factory_stage_context,
-    _with_task_runtime_authority,
-    _write_handoff_ready_review_for_tasks,
-)
 
 
 @pytest.mark.parametrize("present", [False, True])
@@ -161,7 +164,15 @@ async def test_live_terminal_success_requires_declared_outputs_after_settlement(
             return {"file_count": 1}
 
         def _read_taskboard_stats(self):
-            return {"total": 1, "pending": 0, "ready": 0, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 0}
+            return {
+                "total": 1,
+                "pending": 0,
+                "ready": 0,
+                "in_progress": 0,
+                "completed": 1,
+                "failed": 0,
+                "blocked": 0,
+            }
 
         def _query_observable_task_rows(self, **kwargs):
             return [], None
@@ -180,7 +191,13 @@ async def test_live_terminal_success_requires_declared_outputs_after_settlement(
                 {
                     "source": "run_ledger",
                     "task_boundary": {
-                        "latest_by_task": {"TASK-1": {"task_id": "TASK-1", "status": "completed_verified", "ok": True}}
+                        "latest_by_task": {
+                            "TASK-1": {
+                                "task_id": "TASK-1",
+                                "status": "completed_verified",
+                                "ok": True,
+                            }
+                        }
                     },
                 },
                 task_ids=("TASK-1",),
@@ -225,7 +242,8 @@ async def test_live_terminal_success_requires_declared_outputs_after_settlement(
         created_at="2026-10-09T00:00:00Z",
     )
     result = await executor._execute_director_dispatch(
-        run, _factory_stage_context({"director_max_rounds": 1, "execution_mode": "serial", "max_workers": 1})
+        run,
+        _factory_stage_context({"director_max_rounds": 1, "execution_mode": "serial", "max_workers": 1}),
     )
     assert result.status == ("success" if present else "failed")
     payload = executor.outputs["dispatch/log.json"]
@@ -250,8 +268,18 @@ class _PartialFailureProgressExecutor(OrchestrationStageExecutor):
                 metadata={
                     "binding_fanout": True,
                     "per_binding": [
-                        {"provider_id": "p1", "model": "m1", "run_id": "r1", "status": "completed"},
-                        {"provider_id": "p2", "model": "m2", "run_id": "r2", "status": "timeout"},
+                        {
+                            "provider_id": "p1",
+                            "model": "m1",
+                            "run_id": "r1",
+                            "status": "completed",
+                        },
+                        {
+                            "provider_id": "p2",
+                            "model": "m2",
+                            "run_id": "r2",
+                            "status": "timeout",
+                        },
                     ],
                 },
             ),
@@ -262,19 +290,77 @@ class _PartialFailureProgressExecutor(OrchestrationStageExecutor):
                 metadata={
                     "binding_fanout": True,
                     "per_binding": [
-                        {"provider_id": "p1", "model": "m1", "run_id": "r3", "status": "completed"},
-                        {"provider_id": "p2", "model": "m2", "run_id": "r4", "status": "completed"},
+                        {
+                            "provider_id": "p1",
+                            "model": "m1",
+                            "run_id": "r3",
+                            "status": "completed",
+                        },
+                        {
+                            "provider_id": "p2",
+                            "model": "m2",
+                            "run_id": "r4",
+                            "status": "completed",
+                        },
                     ],
                 },
             ),
         ]
         self.stats = [
-            {"total": 2, "pending": 2, "ready": 2, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
-            {"total": 2, "pending": 2, "ready": 2, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
-            {"total": 2, "pending": 1, "ready": 1, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 0},
-            {"total": 2, "pending": 1, "ready": 1, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 0},
-            {"total": 2, "pending": 0, "ready": 0, "in_progress": 0, "completed": 2, "failed": 0, "blocked": 0},
-            {"total": 2, "pending": 0, "ready": 0, "in_progress": 0, "completed": 2, "failed": 0, "blocked": 0},
+            {
+                "total": 2,
+                "pending": 2,
+                "ready": 2,
+                "in_progress": 0,
+                "completed": 0,
+                "failed": 0,
+                "blocked": 0,
+            },
+            {
+                "total": 2,
+                "pending": 2,
+                "ready": 2,
+                "in_progress": 0,
+                "completed": 0,
+                "failed": 0,
+                "blocked": 0,
+            },
+            {
+                "total": 2,
+                "pending": 1,
+                "ready": 1,
+                "in_progress": 0,
+                "completed": 1,
+                "failed": 0,
+                "blocked": 0,
+            },
+            {
+                "total": 2,
+                "pending": 1,
+                "ready": 1,
+                "in_progress": 0,
+                "completed": 1,
+                "failed": 0,
+                "blocked": 0,
+            },
+            {
+                "total": 2,
+                "pending": 0,
+                "ready": 0,
+                "in_progress": 0,
+                "completed": 2,
+                "failed": 0,
+                "blocked": 0,
+            },
+            {
+                "total": 2,
+                "pending": 0,
+                "ready": 0,
+                "in_progress": 0,
+                "completed": 2,
+                "failed": 0,
+                "blocked": 0,
+            },
         ]
 
     def _build_orchestration_service(self, context: dict) -> object:
@@ -1154,7 +1240,14 @@ class TestDirectorDispatchLoop:
             ) -> tuple[tuple[str, str, str, str], ...]:
                 del run_id
                 self.marker_index += 1
-                return (("TASK-1", str(self.marker_index), f"heartbeat-{self.marker_index}", "in_progress"),)
+                return (
+                    (
+                        "TASK-1",
+                        str(self.marker_index),
+                        f"heartbeat-{self.marker_index}",
+                        "in_progress",
+                    ),
+                )
 
             async def cancel_active_run(self, run_id: str, *, reason: str) -> None:
                 self.cancelled.append((run_id, reason))
@@ -1357,7 +1450,13 @@ class TestDirectorDispatchLoop:
                 abort_checker: Any = None,
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                del (
+                    service,
+                    timeout_seconds,
+                    cancel_event,
+                    abort_checker,
+                    cancel_on_timeout,
+                )
                 self.started_waits.append(initial_result.run_id)
                 if len(self.started_waits) >= 2:
                     self.all_waits_started.set()
@@ -1500,7 +1599,14 @@ class TestDirectorDispatchLoop:
                 abort_checker: Any = None,
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, initial_result, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                del (
+                    service,
+                    initial_result,
+                    timeout_seconds,
+                    cancel_event,
+                    abort_checker,
+                    cancel_on_timeout,
+                )
                 return CommandResult(
                     run_id="run-done",
                     status="completed",
@@ -1590,9 +1696,20 @@ class TestDirectorDispatchLoop:
                 abort_checker: Any = None,
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, initial_result, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                del (
+                    service,
+                    initial_result,
+                    timeout_seconds,
+                    cancel_event,
+                    abort_checker,
+                    cancel_on_timeout,
+                )
                 await asyncio.sleep(0.05)
-                return CommandResult(run_id="run-stuck", status="completed", message="actual run completed")
+                return CommandResult(
+                    run_id="run-stuck",
+                    status="completed",
+                    message="actual run completed",
+                )
 
         service = _FanoutService()
         executor = _TerminalProbeExecutor(tmp_path)
@@ -1672,9 +1789,20 @@ class TestDirectorDispatchLoop:
                 abort_checker: Any = None,
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, initial_result, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                del (
+                    service,
+                    initial_result,
+                    timeout_seconds,
+                    cancel_event,
+                    abort_checker,
+                    cancel_on_timeout,
+                )
                 await asyncio.sleep(0.05)
-                return CommandResult(run_id="run-stuck", status="completed", message="actual run completed")
+                return CommandResult(
+                    run_id="run-stuck",
+                    status="completed",
+                    message="actual run completed",
+                )
 
         service = _FanoutService()
         executor = _TaskboardProbeExecutor(tmp_path)
@@ -1715,7 +1843,11 @@ class TestDirectorDispatchLoop:
             async def execute_director_run(self, **kwargs: object) -> CommandResult:
                 del kwargs
                 self.counter += 1
-                return CommandResult(run_id=f"run-timeout-{self.counter}", status="running", message="submitted")
+                return CommandResult(
+                    run_id=f"run-timeout-{self.counter}",
+                    status="running",
+                    message="submitted",
+                )
 
         class _TimeoutExecutor(OrchestrationStageExecutor):
             async def _wait_run_completion(
@@ -1728,7 +1860,13 @@ class TestDirectorDispatchLoop:
                 abort_checker: Any = None,
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                del (
+                    service,
+                    timeout_seconds,
+                    cancel_event,
+                    abort_checker,
+                    cancel_on_timeout,
+                )
                 return CommandResult(run_id=initial_result.run_id, status="timeout", message="timed out")
 
         service = _FanoutService()
@@ -1919,12 +2057,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
+                {
+                    "director_max_rounds": 1,
+                    "timeout": 120,
+                    "execution_mode": "parallel",
+                    "max_workers": 2,
+                }
             ),
         )
 
@@ -1945,12 +2088,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 3, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
+                {
+                    "director_max_rounds": 3,
+                    "timeout": 120,
+                    "execution_mode": "parallel",
+                    "max_workers": 2,
+                }
             ),
         )
 
@@ -2032,8 +2180,18 @@ class TestDirectorDispatchLoop:
                         "binding_fanout": True,
                         "active_binding_count": 2,
                         "per_binding": [
-                            {"provider_id": "p1", "model": "m1", "run_id": "r1", "status": "failed"},
-                            {"provider_id": "p2", "model": "m2", "run_id": "r2", "status": "failed"},
+                            {
+                                "provider_id": "p1",
+                                "model": "m1",
+                                "run_id": "r1",
+                                "status": "failed",
+                            },
+                            {
+                                "provider_id": "p2",
+                                "model": "m2",
+                                "run_id": "r2",
+                                "status": "failed",
+                            },
                         ],
                     },
                 )
@@ -2054,12 +2212,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
+                {
+                    "director_max_rounds": 1,
+                    "timeout": 120,
+                    "execution_mode": "parallel",
+                    "max_workers": 2,
+                }
             ),
         )
 
@@ -2186,12 +2349,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-22T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 1}
+                {
+                    "director_max_rounds": 1,
+                    "timeout": 120,
+                    "execution_mode": "parallel",
+                    "max_workers": 1,
+                }
             ),
         )
 

@@ -1,10 +1,158 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:47.586369Z",
-  "source_hash": "7da746ed34f69dfd",
+  "generated_at": "2026-10-25T21:39:00.825079Z",
+  "source_hash": "ad4af3069ea38685",
   "cell_id": "finops.budget_guard",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "class",
+      "name": "BudgetService",
+      "description": "Apply budget operations through the existing global BudgetKFSStore.",
+      "defined_in": "polaris/cells/finops/budget_guard/internal/budget_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_next_budget_id",
+          "doc": ""
+        },
+        {
+          "name": "set_global_budget",
+          "doc": ""
+        },
+        {
+          "name": "allocate_budget",
+          "doc": ""
+        },
+        {
+          "name": "check_budget",
+          "doc": ""
+        },
+        {
+          "name": "record_usage",
+          "doc": ""
+        },
+        {
+          "name": "get_budget_status",
+          "doc": ""
+        },
+        {
+          "name": "get_usage_stats",
+          "doc": ""
+        },
+        {
+          "name": "set_budget_limit",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "BudgetRecord",
+      "description": "",
+      "defined_in": "polaris/cells/finops/budget_guard/internal/budget_store.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "UsageRecord",
+      "description": "",
+      "defined_in": "polaris/cells/finops/budget_guard/internal/budget_store.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "BudgetKFSStore",
+      "description": "Thread-safe, KFS-backed write-through budget store.",
+      "defined_in": "polaris/cells/finops/budget_guard/internal/budget_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get_budget",
+          "doc": ""
+        },
+        {
+          "name": "budgets_by_task",
+          "doc": ""
+        },
+        {
+          "name": "usage_by_task",
+          "doc": ""
+        },
+        {
+          "name": "usage_by_agent",
+          "doc": ""
+        },
+        {
+          "name": "usage_totals",
+          "doc": ""
+        },
+        {
+          "name": "save_budget",
+          "doc": "Persist a budget record.  KFS is updated before the cache."
+        },
+        {
+          "name": "append_usage",
+          "doc": "Append a usage record.  KFS is updated before the cache."
+        },
+        {
+          "name": "_flush_to_kfs",
+          "doc": "Atomically overwrite the KFS state file."
+        },
+        {
+          "name": "_load_from_kfs",
+          "doc": "Recover in-memory cache from the KFS state file."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_int_field",
+      "description": "Return a required integer field from a persisted budget state record.",
+      "defined_in": "polaris/cells/finops/budget_guard/internal/budget_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_path",
+      "description": "Return the KFS logical path for a scope's budget state file.",
+      "defined_in": "polaris/cells/finops/budget_guard/internal/budget_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_serialize_state",
+      "description": "",
+      "defined_in": "polaris/cells/finops/budget_guard/internal/budget_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_deserialize_state",
+      "description": "",
+      "defined_in": "polaris/cells/finops/budget_guard/internal/budget_store.py"
+    },
     {
       "type": "class",
       "name": "ReserveBudgetCommandV1",

@@ -38,6 +38,7 @@ current_modules:
 - polaris.cells.roles.kernel.internal.constitution_rules
 - polaris.cells.roles.kernel.internal.constitution_adaptor
 - polaris.cells.roles.kernel.public.outcome_recovery
+- polaris.cells.roles.kernel.public.permission_policy_adapter
 tags: []
 owned_paths:
 - polaris/cells/roles/kernel/**
@@ -52,6 +53,7 @@ public_contracts:
   - polaris.cells.roles.kernel.public.directed_effect_service
   - polaris.cells.roles.kernel.public.deferred_repair_service
   - polaris.cells.roles.kernel.public.outcome_recovery
+  - polaris.cells.roles.kernel.public.permission_policy_adapter
   commands:
   - BuildRolePromptCommandV1
   - ParseRoleOutputCommandV1
@@ -91,7 +93,6 @@ depends_on:
 - audit.evidence
 - control_plane.run_ledger
 - director.runtime
-- director.execution
 - roles.profile
 - roles.session
 - runtime.execution_broker
@@ -142,27 +143,59 @@ verification:
   - polaris/kernelone/llm/engine/stream/tests/test_executor.py
   - polaris/cells/roles/kernel/tests/test_pending_turn_outcome_recovery.py
   gaps:
-  - Some callers still import role kernel components through transitional compatibility paths instead
-    of canonical public contracts.
-  - 'Turn semantic-stage separation is explicit at runtime through AssistantTurnArtifacts, but parser
-    input and transcript output are not yet compile-time-distinct types.
+  - Some callers still import role kernel components through transitional compatibility paths instead of canonical public
+    contracts.
+  - 'Turn semantic-stage separation is explicit at runtime through AssistantTurnArtifacts, but parser input and transcript
+    output are not yet compile-time-distinct types.
 
     '
-  - 'KernelOne llm stream contracts still pass through a re-export chain (shared_contracts -> engine.contracts
-    -> executor) and rely on parity tests until more consumers adopt canonical source imports.
+  - 'KernelOne llm stream contracts still pass through a re-export chain (shared_contracts -> engine.contracts -> executor)
+    and rely on parity tests until more consumers adopt canonical source imports.
 
     '
-  - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry full-request qualification
-    remain guarded; B3.3 propagation metadata does not authorize provider dispatch.
-  - DEO-2D closes unbound mutation dispatch and bounded deferred-request traversal; DEO-3 still owns durable
-    receipt commit, recovery, and parent close.
-  - "Phase 4 execution unification (Task #47): RoleExecutionKernel confirmed as the single execution engine\
-    \ supporting CHAT and WORKFLOW modes: - kernel.run(role, request) — blocking execution with RoleTurnResult\
-    \ - kernel.run_stream(role, request) — async generator yielding event dicts Both accept RoleTurnRequest\
-    \ with mode=RoleExecutionMode.CHAT or WORKFLOW. Unified path (mandatory):\n    RoleRuntimeService\
-    \ → RoleExecutionKernel (CHAT | WORKFLOW mode)\nRoles.kernel is the execution engine; roles.runtime\
-    \ is the facade + lifecycle. Frozen standalone surfaces (StandaloneRoleAgent, AgentService, RoleAgentTUI)\
+  - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry full-request qualification remain guarded;
+    B3.3 propagation metadata does not authorize provider dispatch.
+  - DEO-2D closes unbound mutation dispatch and bounded deferred-request traversal; DEO-3 still owns durable receipt commit,
+    recovery, and parent close.
+  - "Phase 4 execution unification (Task #47): RoleExecutionKernel confirmed as the single execution engine supporting CHAT\
+    \ and WORKFLOW modes: - kernel.run(role, request) — blocking execution with RoleTurnResult - kernel.run_stream(role, request)\
+    \ — async generator yielding event dicts Both accept RoleTurnRequest with mode=RoleExecutionMode.CHAT or WORKFLOW. Unified\
+    \ path (mandatory):\n    RoleRuntimeService → RoleExecutionKernel (CHAT | WORKFLOW mode)\nRoles.kernel is the execution\
+    \ engine; roles.runtime is the facade + lifecycle. Frozen standalone surfaces (StandaloneRoleAgent, AgentService, RoleAgentTUI)\
     \ are non-production compatibility windows — all production routes must go through RoleExecutionKernel.\n"
   smoke_commands: []
+  test_effects_allowed:
+  - path: polaris/cells/roles/kernel/tests/test_protocol_parser_dependency_cut.py
+    effects_allowed:
+    - process.spawn:python/protocol_parser_cold_import
+    reason: Cold public parser import and frozen legacy corpus with Director imports denied; no provider or tool execution.
+  - path: polaris/cells/roles/kernel/tests/run_ledger_owner_scenarios.py
+    effects_allowed:
+    - process.spawn:python/run_ledger_synthetic_failed_cli
+    - fs.write:workspace/verify.py
+    - fs.write:workspace/AGENTS.md
+    - fs.write:workspace/source.txt
+    reason: One fixed private python verify.py exits2 through actual policy/mutation/process owners; three explicit synthetic
+      inputs. Actual FactStream/TaskRuntime/RunLedger writes remain owned by their real public command owners.
+  - path: polaris/cells/roles/kernel/tests/test_run_ledger_owner_scenarios.py
+    effects_allowed:
+    - fs.write:workspace/synthetic-process-observation.json
+    reason: Synthetic process runner PID, exit2 and empty descendants; not platform/native evidence.
+  test_dependencies:
+  - path: polaris/cells/roles/kernel/tests/test_permission_policy_adapter.py
+    depends_on:
+    - policy.permission
+    - roles.profile
+  - path: polaris/cells/roles/kernel/tests/run_ledger_owner_scenarios.py
+    depends_on:
+    - control_plane.run_ledger
+    - events.fact_stream
+    - roles.adapters
+    - roles.profile
+    - runtime.task_runtime
+  - path: polaris/cells/roles/kernel/tests/test_run_ledger_owner_scenarios.py
+    depends_on:
+    - events.fact_stream
+    - runtime.task_runtime
 generated_artifacts:
 - generated/context.pack.json

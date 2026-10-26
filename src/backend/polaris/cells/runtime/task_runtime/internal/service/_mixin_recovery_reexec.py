@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
@@ -13,6 +14,7 @@ from polaris.cells.runtime.task_runtime.internal.task_board import (
     TaskBoardFileLockTimeoutError,
     TaskFactoryRunBindingConflictError,
     TaskStatus,
+    _TaskBoardMutationGuard,
 )
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -1919,7 +1921,33 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
                 task_row=observable_row,
             )
 
-        fact_factory_run_id = self._execution_fact_factory_run_id(observable_row)
+        with self._board.transaction(), self._board._mutation_guard() as guard:
+            snapshot = self._board._load_task_snapshot_from_disk(normalized_task_id)
+            if snapshot is None:
+                return _build_factory_run_binding_result(
+                    ok=False,
+                    code="task_not_found",
+                    reason="TaskRuntime row disappeared before Factory binding",
+                    workspace=self.workspace,
+                    task_id=str(normalized_task_id),
+                    factory_run_id=command.factory_run_id,
+                )
+            result = self._bind_task_to_factory_run_locked(command, normalized_task_id, snapshot[0].to_dict(), guard)
+        # Session augmentation may acquire its own locks. Keep it outside the
+        # namespace guard, preserving session-before-namespace lock ordering.
+        if result.task_row:
+            return replace(result, task_row=self._augment_task_row(dict(result.task_row)))
+        return result
+
+    def _bind_task_to_factory_run_locked(
+        self,
+        command: BindRuntimeTaskToFactoryRunCommandV1,
+        normalized_task_id: int,
+        observable_row: dict[str, Any],
+        guard: _TaskBoardMutationGuard,
+    ) -> RuntimeTaskFactoryRunBindingResultV1:
+        """Bind and record while one existing namespace ticket is held."""
+        fact_factory_run_id = self._committed_factory_run_binding(observable_row)
         if fact_factory_run_id and fact_factory_run_id != command.factory_run_id:
             return _build_factory_run_binding_result(
                 ok=False,
@@ -1935,6 +1963,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             mutation = self._board.bind_factory_run_id(
                 normalized_task_id,
                 command.factory_run_id,
+                _mutation_guard=guard,
             )
         except TaskFactoryRunBindingConflictError as exc:
             return _build_factory_run_binding_result(
@@ -1957,7 +1986,7 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
                 factory_run_id=command.factory_run_id,
             )
 
-        row = self._augment_task_row(mutation.task.to_dict())
+        row = mutation.task.to_dict()
         if not mutation.row_updated and fact_factory_run_id == command.factory_run_id:
             return _build_factory_run_binding_result(
                 ok=True,
@@ -2015,6 +2044,63 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             task_row=row,
             execution_event=execution_event,
         )
+
+    def _committed_factory_run_binding(self, task_row: Mapping[str, Any]) -> str:
+        """Read exact physical-generation binding evidence without swallowing IO.
+
+        Physical metadata is never proof that a binding fact committed.
+        The strict owner reader plus existing merger validates the history;
+        witness identities below come from actual persisted fact headers.
+        """
+        from polaris.cells.runtime.task_runtime.public.contracts import TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1
+
+        from ..execution_effect_closure import _read_owner_events
+
+        events = _read_owner_events(self.workspace)
+        latest: dict[str, dict[str, Any]] = {}
+        self._merge_execution_fact_events(latest, list(events))
+        task_id = str(task_row["id"])
+        current = latest.get(task_id)
+        generation = task_row.get("created_at")
+        matching_generation = False
+        target_seen = False
+        committed: set[str] = set()
+        for event in events:
+            payload = event.get("payload")
+            if not isinstance(payload, Mapping):
+                continue
+            snapshot = payload.get("task_row_snapshot")
+            snapshot = snapshot if isinstance(snapshot, Mapping) else {}
+            if task_id not in {str(payload.get("task_id")), str(event.get("aggregate_id")), str(snapshot.get("id"))}:
+                continue
+            target_seen = True
+            if (
+                event.get("source") != "runtime.task_runtime"
+                or payload.get("schema_version") != TASK_RUNTIME_EXECUTION_FACT_SCHEMA_V1
+                or payload.get("workspace") != self.workspace
+                or str(payload.get("task_id")) != task_id
+                or str(event.get("aggregate_id")) != task_id
+                or str(snapshot.get("id")) != task_id
+            ):
+                raise RuntimeError("factory_run_binding_fact_identity_invalid")
+            if "created_at" in snapshot:
+                matching_generation = snapshot["created_at"] == generation
+            if not matching_generation:
+                continue
+            identity = payload.get("factory_run_id")
+            if identity is not None and not isinstance(identity, str):
+                raise RuntimeError("factory_run_binding_fact_identity_invalid")
+            if identity:
+                committed.add(identity)
+        if current is None:
+            if target_seen:
+                raise RuntimeError("factory_run_binding_fact_identity_invalid")
+            return ""
+        if current.get("created_at") != generation:
+            raise RuntimeError("factory_run_binding_generation_unproven")
+        if len(committed) > 1:
+            raise RuntimeError("factory_run_binding_fact_conflict")
+        return next(iter(committed), "")
 
     def get(self, task_id: Any) -> Task | None:
         _raise_retired_entity_api("get", "get_task")

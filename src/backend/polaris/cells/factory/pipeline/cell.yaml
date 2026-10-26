@@ -12,6 +12,16 @@ purpose: 'Composite factory execution workflow boundary from delivery ingress to
 current_modules:
 - polaris.cells.factory.pipeline.public.contracts
 - polaris.cells.factory.pipeline.public.service
+- polaris.delivery.http.routers._factory_handlers.mapping
+- polaris.delivery.http.routers._factory_handlers.runtime
+- polaris.delivery.http.routers._factory_handlers.stage_ops
+- polaris.delivery.http.routers._factory_handlers.stage_ops._common
+- polaris.delivery.http.routers._factory_handlers.stage_ops.artifacts
+- polaris.delivery.http.routers._factory_handlers.stage_ops.director_resume
+- polaris.delivery.http.routers._factory_handlers.stage_ops.failure_classification
+- polaris.delivery.http.routers._factory_handlers.stage_ops.quality_gate_rework
+- polaris.delivery.http.routers._factory_handlers.stage_ops.run_summary
+- polaris.delivery.http.routers._factory_handlers.stage_ops.stage_context
 tags:
 - composite
 owned_paths:
@@ -20,6 +30,16 @@ owned_paths:
 - polaris/cells/factory/pipeline/public/**
 - polaris/cells/factory/pipeline/internal/**
 - polaris/cells/factory/pipeline/tests/**
+- polaris/delivery/http/routers/_factory_handlers/mapping.py
+- polaris/delivery/http/routers/_factory_handlers/runtime.py
+- polaris/delivery/http/routers/_factory_handlers/stage_ops/__init__.py
+- polaris/delivery/http/routers/_factory_handlers/stage_ops/_common.py
+- polaris/delivery/http/routers/_factory_handlers/stage_ops/artifacts.py
+- polaris/delivery/http/routers/_factory_handlers/stage_ops/director_resume.py
+- polaris/delivery/http/routers/_factory_handlers/stage_ops/failure_classification.py
+- polaris/delivery/http/routers/_factory_handlers/stage_ops/quality_gate_rework.py
+- polaris/delivery/http/routers/_factory_handlers/stage_ops/run_summary.py
+- polaris/delivery/http/routers/_factory_handlers/stage_ops/stage_context.py
 public_contracts:
   modules:
   - polaris.cells.factory.pipeline.public.contracts

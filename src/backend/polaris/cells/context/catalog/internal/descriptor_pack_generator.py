@@ -22,8 +22,14 @@ from pathlib import Path
 from typing import Any
 
 from jsonschema import ValidationError, validate
+from polaris.cells.context.catalog.internal.canonical_python_sources import (
+    CanonicalPythonSources,
+    ResolvedClassSurface,
+)
 from polaris.infrastructure.storage import LocalFileSystemAdapter
+from polaris.kernelone._runtime_config import get_workspace
 from polaris.kernelone.fs import KernelFileSystem
+from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.utils.time_utils import utc_now_str
 from pydantic import TypeAdapter
 
@@ -246,7 +252,7 @@ class FunctionalAnalyzer(ast.NodeVisitor):
         self._visit_callable(node)
 
 
-def _should_analyze_source_file(path: Path) -> bool:
+def _should_analyze_source_file(path: Path, repo_root: Path | None = None) -> bool:
     """Return whether a Python file belongs in a descriptor capability pack.
 
     Descriptor packs are prompt/context assets for Cell runtime capability
@@ -275,6 +281,17 @@ def _should_analyze_source_file(path: Path) -> bool:
         return False
 
     filename = path.name
+    if filename != "__init__.py" and (path.with_suffix("") / "__init__.py").is_file():
+        return False
+    if repo_root is not None:
+        root = repo_root.absolute()
+        for parent in path.absolute().parents:
+            if parent == root:
+                break
+            # A concrete module wins over a same-name namespace directory;
+            # its descendants cannot be reached through ordinary imports.
+            if parent.with_suffix(".py").is_file() and not (parent / "__init__.py").is_file():
+                return False
     return not (filename.startswith("test_") or filename.endswith("_test.py"))
 
 
@@ -304,7 +321,7 @@ def _declared_descriptor_surface(
     cell_data: dict[str, Any],
     cell_dir: Path,
     repo_root: Path,
-) -> tuple[set[Path], set[str], dict[str, frozenset[str]]] | None:
+) -> tuple[set[Path], set[str], dict[str, ResolvedClassSurface]] | None:
     """Resolve an optional fail-closed Agent-facing descriptor surface.
 
     ``owned_paths`` describes ownership, not public capability.  Treating the
@@ -315,9 +332,11 @@ def _declared_descriptor_surface(
     their audited operation methods.
     """
 
-    raw_surface = cell_data.get("descriptor_surface")
-    if not isinstance(raw_surface, dict):
+    if "descriptor_surface" not in cell_data:
         return None
+    raw_surface = cell_data["descriptor_surface"]
+    if not isinstance(raw_surface, dict):
+        raise ValueError("explicit descriptor surface must be a mapping")
 
     allowed_symbols: set[str] = set()
     public_contracts = cell_data.get("public_contracts")
@@ -327,26 +346,40 @@ def _declared_descriptor_surface(
                 continue
             allowed_symbols.update(str(value).strip() for value in values if str(value).strip())
 
-    py_files = {path for path in (cell_dir / "public").rglob("*.py") if _should_analyze_source_file(path)}
-    class_methods: dict[str, frozenset[str]] = {}
+    py_files = {path for path in (cell_dir / "public").rglob("*.py") if _should_analyze_source_file(path, repo_root)}
+    resolved_classes: dict[str, ResolvedClassSurface] = {}
+    resolver = CanonicalPythonSources(repo_root)
     raw_classes = raw_surface.get("classes")
+    if raw_classes is not None and not isinstance(raw_classes, dict):
+        raise ValueError("explicit descriptor classes must be a mapping")
     if isinstance(raw_classes, dict):
         for raw_name, raw_policy in raw_classes.items():
             class_name = str(raw_name).strip()
             if not class_name or not isinstance(raw_policy, dict):
-                continue
+                raise ValueError("required descriptor class policy is invalid")
             module = str(raw_policy.get("module") or "").strip()
             methods = raw_policy.get("methods")
-            if not module or not isinstance(methods, list):
-                continue
-            module_path = repo_root / (module.replace(".", "/") + ".py")
-            if not module_path.exists() or not module_path.is_file():
-                continue
+            if (
+                not module
+                or not isinstance(methods, list)
+                or any(not isinstance(method, str) or not method.strip() for method in methods)
+            ):
+                raise ValueError(f"required descriptor methods are invalid: {class_name}")
+            required = tuple(dict.fromkeys(method.strip() for method in methods))
+            if any(
+                not FunctionalAnalyzer._should_publish_function(method)
+                or (method.startswith("__") and method.endswith("__") and method != "__init__")
+                for method in required
+            ):
+                raise ValueError(f"required method excluded by descriptor publication policy: {class_name}")
+            resolved = resolver.resolve_class(module, class_name, required)
+            if any(not _should_analyze_source_file(path, repo_root) for path in resolved.source_files):
+                raise ValueError(f"required descriptor class resolves outside production source: {class_name}")
             allowed_symbols.add(class_name)
-            class_methods[class_name] = frozenset(str(method).strip() for method in methods if str(method).strip())
-            py_files.add(module_path)
+            resolved_classes[class_name] = resolved
+            py_files.update(resolved.source_files)
 
-    return py_files, allowed_symbols, class_methods
+    return py_files, allowed_symbols, resolved_classes
 
 
 def analyze_file(path: Path) -> dict[str, Any]:
@@ -363,21 +396,11 @@ def analyze_file(path: Path) -> dict[str, Any]:
         return {"error": str(e)}
 
 
-def _write_receipt(receipt: IndexWriteReceipt, repo_root: Path) -> None:
-    """Write index write receipt to workspace."""
-    from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
-
-    receipt_path = repo_root / get_workspace_metadata_dir_name() / "runtime" / "index_receipts"
-    receipt_path.mkdir(parents=True, exist_ok=True)
-
-    receipt_file = receipt_path / f"{receipt.cell_id}_receipt.json"
+def _write_receipt(receipt: IndexWriteReceipt, runtime_owner_workspace: Path) -> None:
+    """Write the receipt through the bound runtime owner's logical KFS root."""
     payload = json.dumps(receipt.to_dict(), indent=2, ensure_ascii=False) + "\n"
-    try:
-        with open(receipt_file, "w", encoding="utf-8") as f:
-            f.write(payload)
-        logger.debug("Written index receipt to %s", receipt_file)
-    except OSError as e:
-        logger.warning("Failed to write index receipt to %s: %s", receipt_file, e)
+    fs = _build_kernel_fs(runtime_owner_workspace, runtime_owner_workspace=runtime_owner_workspace)
+    fs.write_text_atomic(f"runtime/index_receipts/{receipt.cell_id}_receipt.json", payload, encoding="utf-8")
 
 
 def _compute_verification_hash(content: str) -> str:
@@ -390,6 +413,8 @@ async def generate_pack(
     repo_root: Path,
     evolve: bool = False,
     skip_schema_validation: bool = False,
+    *,
+    runtime_owner_workspace: Path | None = None,
 ) -> Path | None:
     """Generate descriptor pack for a cell.
 
@@ -398,6 +423,7 @@ async def generate_pack(
         repo_root: Repository root path.
         evolve: Whether to enable role-driven evolution insights.
         skip_schema_validation: Skip schema validation (useful for testing).
+        runtime_owner_workspace: Explicit runtime owner, otherwise the configured KernelOne workspace.
 
     Returns:
         Path to the generated descriptor pack, or None if generation failed.
@@ -418,14 +444,14 @@ async def generate_pack(
     capabilities: list[dict[str, Any]] = []
     py_files: set[Path] = set()
     allowed_symbols: set[str] | None = None
-    class_methods: dict[str, frozenset[str]] = {}
+    resolved_classes: dict[str, ResolvedClassSurface] = {}
     declared_surface = _declared_descriptor_surface(
         cell_data=cell_data,
         cell_dir=cell_dir,
         repo_root=repo_root,
     )
     if declared_surface is not None:
-        py_files, allowed_symbols, class_methods = declared_surface
+        py_files, allowed_symbols, resolved_classes = declared_surface
     else:
         for pattern in owned_paths:
             pattern = str(pattern).strip()
@@ -446,7 +472,7 @@ async def generate_pack(
     source_files_for_hash: list[Path] = []
 
     for py_file in sorted(py_files):
-        if not _should_analyze_source_file(py_file):
+        if not _should_analyze_source_file(py_file, repo_root):
             continue
 
         source_files_for_hash.append(py_file)
@@ -456,15 +482,13 @@ async def generate_pack(
             continue
 
         for cls in analysis["classes"]:
+            if cls["name"] in resolved_classes:
+                continue
             if allowed_symbols is not None and cls["name"] not in allowed_symbols:
                 continue
             methods = cls["methods"]
             if allowed_symbols is not None:
-                explicit_methods = class_methods.get(cls["name"])
-                if explicit_methods is not None:
-                    methods = [method for method in methods if method["name"] in explicit_methods]
-                else:
-                    methods = [method for method in methods if not method["name"].startswith("_")]
+                methods = [method for method in methods if not method["name"].startswith("_")]
             capabilities.append(
                 {
                     "type": "class",
@@ -475,11 +499,27 @@ async def generate_pack(
                 }
             )
         for func in analysis["functions"]:
+            if func["name"] in resolved_classes:
+                continue
             if allowed_symbols is not None and func["name"] not in allowed_symbols:
                 continue
             capabilities.append(
                 {"type": "function", "name": func["name"], "description": func["doc"], "defined_in": rel_path}
             )
+
+    for class_name, resolved in sorted(resolved_classes.items()):
+        capabilities.append(
+            {
+                "type": "class",
+                "name": class_name,
+                "description": (ast.get_docstring(resolved.node) or "").split("\n")[0],
+                "defined_in": resolved.path.relative_to(repo_root).as_posix(),
+                "methods": [
+                    {"name": method.name, "doc": (ast.get_docstring(method.node) or "").split("\n")[0]}
+                    for method in resolved.methods
+                ],
+            }
+        )
 
     # Build DescriptorPack with PR-09 enhancements
     pack = DescriptorPack(
@@ -523,7 +563,14 @@ async def generate_pack(
         except ValidationError as error:
             raise ValueError(f"Invalid descriptor pack: {error.message}") from error
 
-    kfs = _build_kernel_fs(repo_root)
+    raw_owner = str(runtime_owner_workspace) if runtime_owner_workspace is not None else get_workspace()
+    if not raw_owner.strip():
+        raise ValueError("descriptor runtime_owner_workspace must be explicit or bound by KernelOne workspace")
+    runtime_owner = Path(raw_owner).absolute()
+    # Resolve the current host storage policy before any pack/receipt writes;
+    # a rejected owner or external-root policy must not silently fall back.
+    resolve_storage_roots(str(runtime_owner))
+    kfs = _build_kernel_fs(repo_root, runtime_owner_workspace=runtime_owner)
     kfs.workspace_write_text(relative_output_path, payload, encoding="utf-8")
 
     # Compute verification hash after write
@@ -538,7 +585,7 @@ async def generate_pack(
         cell_id=cell_id,
         source_hash=pack.source_hash,
     )
-    _write_receipt(receipt, repo_root)
+    _write_receipt(receipt, runtime_owner)
 
     # Verify Recall@10 if ground truth is available
     # This is a placeholder - in production, this would use actual ground truth data
@@ -638,9 +685,13 @@ async def run_all(
     )
 
 
-def _build_kernel_fs(repo_root: Path) -> KernelFileSystem:
+def _build_kernel_fs(repo_root: Path, *, runtime_owner_workspace: Path | None = None) -> KernelFileSystem:
     """Build a local KernelFileSystem rooted at repository root."""
-    return KernelFileSystem(str(repo_root), LocalFileSystemAdapter())
+    return KernelFileSystem(
+        str(repo_root),
+        LocalFileSystemAdapter(),
+        runtime_owner_workspace=str(runtime_owner_workspace) if runtime_owner_workspace is not None else None,
+    )
 
 
 if __name__ == "__main__":

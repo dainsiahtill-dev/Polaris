@@ -71,7 +71,7 @@ python -m tests.agent_stress.role_tool_habits \
 python -m tests.agent_stress.runner --workspace C:/Temp/agent-stress-workspace --rounds 3
 
 # 独立启动观测器
-python -m tests.agent_stress.observer --workspace C:/Temp/agent-stress-workspace --rounds 3
+python -m polaris.tests.agent_stress.observer --workspace C:/Temp/agent-stress-workspace --rounds 3
 ```
 
 ---
@@ -236,7 +236,7 @@ tests/agent_stress/
 ├── observability.py         # 可观测性收集器（AI Agent 诊断数据）
 ├── engine.py                # 压测执行引擎
 ├── runner.py                # 主运行器（CLI 入口）
-├── observer.py              # 观测器包装层（拉起独立控制台）
+├── observer/                # 规范观测器 package，__main__.py 提供 -m 入口
 ├── observer/                # 人类观测终端（Rich TUI）
 │   ├── main.py              # 观测器主逻辑
 │   ├── cli.py               # 观测器 CLI 参数

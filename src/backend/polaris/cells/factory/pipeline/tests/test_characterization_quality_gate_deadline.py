@@ -32,7 +32,9 @@ from polaris.kernelone.storage import resolve_logical_path
 
 
 class TestQualityGateDeadlineHandling:
-    def test_default_deadline_policy_blocks_ce_when_clipped_budget_below_generation_floor(self) -> None:
+    def test_default_deadline_policy_blocks_ce_when_clipped_budget_below_generation_floor(
+        self,
+    ) -> None:
         # A 508s horizon over a 5-task serial chain leaves only ~105-108s for the CE
         # stage after reserving the full Director critical path (400s) + QA + safety.
         # That is below the modeled physical floor (~205s) to stream the 16384-token
@@ -57,7 +59,9 @@ class TestQualityGateDeadlineHandling:
         assert decision.reserved_downstream_seconds == 400.0
         assert decision.timeout_seconds == 0
 
-    def test_chief_engineer_generation_floor_applies_without_factory_deadline(self) -> None:
+    def test_chief_engineer_generation_floor_applies_without_factory_deadline(
+        self,
+    ) -> None:
         decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
             {},
             requested_timeout_seconds=123,
@@ -69,7 +73,9 @@ class TestQualityGateDeadlineHandling:
         assert decision.timeout_seconds == 0
         assert decision.budget_plan.blockers == ("chief_engineer_deadline_below_generation_floor",)
 
-    def test_chief_engineer_deadline_projection_blocks_when_available_budget_below_generation_floor(self) -> None:
+    def test_chief_engineer_deadline_projection_blocks_when_available_budget_below_generation_floor(
+        self,
+    ) -> None:
         # 180s horizon with a reduced downstream reserve (125s) leaves ~50-55s for CE.
         # That exceeds min_start (40s) but is far below the ~205s physical floor to
         # stream the full portfolio, so admission must fail closed.
@@ -89,7 +95,9 @@ class TestQualityGateDeadlineHandling:
         assert decision.reserved_downstream_seconds == 125.0
         assert decision.timeout_seconds == 0
 
-    def test_chief_engineer_explicit_lower_output_budget_uses_its_generation_floor(self) -> None:
+    def test_chief_engineer_explicit_lower_output_budget_uses_its_generation_floor(
+        self,
+    ) -> None:
         # The bounded output-schema repair requests only 8192 tokens (floor ~102s),
         # far below the full-portfolio floor (~205s). A budget that is below the
         # portfolio floor but above the repair floor must still admit the repair.
@@ -120,7 +128,9 @@ class TestQualityGateDeadlineHandling:
         assert portfolio_decision.disposition is FactoryDeadlineDispositionV1.BLOCK
         assert repair_decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
 
-    def test_chief_engineer_schema_repair_floor_admits_where_portfolio_floor_blocks(self) -> None:
+    def test_chief_engineer_schema_repair_floor_admits_where_portfolio_floor_blocks(
+        self,
+    ) -> None:
         # 230s horizon, reduced downstream reserve (125s) -> ~102-105s available.
         # Below the portfolio floor (~205s) but at/above the repair floor (~102.4s):
         # portfolio must BLOCK, repair must be admitted at the boundary.
@@ -150,7 +160,9 @@ class TestQualityGateDeadlineHandling:
         assert portfolio_decision.reason == "insufficient_factory_deadline_for_chief_engineer_portfolio"
         assert repair_decision.disposition is FactoryDeadlineDispositionV1.EXECUTE
 
-    def test_chief_engineer_deadline_projection_skips_llm_when_downstream_budget_is_at_risk(self) -> None:
+    def test_chief_engineer_deadline_projection_skips_llm_when_downstream_budget_is_at_risk(
+        self,
+    ) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
         decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
             {
@@ -166,7 +178,9 @@ class TestQualityGateDeadlineHandling:
         assert decision.reason == "insufficient_factory_deadline_for_chief_engineer_portfolio"
         assert decision.timeout_seconds == 0
 
-    def test_chief_engineer_deadline_projection_accounts_for_remaining_ce_fanout(self) -> None:
+    def test_chief_engineer_deadline_projection_accounts_for_remaining_ce_fanout(
+        self,
+    ) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 360.0
         tasks = [
             {
@@ -215,7 +229,9 @@ class TestQualityGateDeadlineHandling:
 
         assert 150 <= timeout <= 180
 
-    def test_director_dispatch_timeout_preserves_quality_budget_during_materialization(self) -> None:
+    def test_director_dispatch_timeout_preserves_quality_budget_during_materialization(
+        self,
+    ) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 190.0
         timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
             {
@@ -229,7 +245,9 @@ class TestQualityGateDeadlineHandling:
 
         assert 130 <= timeout <= 136
 
-    def test_director_dispatch_timeout_keeps_quality_reserve_after_materialization(self) -> None:
+    def test_director_dispatch_timeout_keeps_quality_reserve_after_materialization(
+        self,
+    ) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 190.0
         timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
             {
@@ -257,7 +275,9 @@ class TestQualityGateDeadlineHandling:
 
         assert 210 <= timeout <= 240
 
-    def test_director_dispatch_deadline_admission_blocks_short_materialization_budget(self) -> None:
+    def test_director_dispatch_deadline_admission_blocks_short_materialization_budget(
+        self,
+    ) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
         decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
             {
@@ -277,7 +297,9 @@ class TestQualityGateDeadlineHandling:
         assert decision.minimum_start_budget_seconds == 90.0
         assert 50 <= float(decision.available_for_stage_seconds or 0.0) <= 55
 
-    def test_director_dispatch_deadline_admission_allows_sufficient_budget(self) -> None:
+    def test_director_dispatch_deadline_admission_allows_sufficient_budget(
+        self,
+    ) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 300.0
         decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
             {
@@ -296,7 +318,9 @@ class TestQualityGateDeadlineHandling:
         assert decision.minimum_start_budget_seconds == 90.0
         assert 230 <= decision.timeout_seconds <= 235
 
-    def test_director_invalid_dependency_schedule_is_not_reported_as_deadline_exhaustion(self) -> None:
+    def test_director_invalid_dependency_schedule_is_not_reported_as_deadline_exhaustion(
+        self,
+    ) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 300.0
         decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
             {
@@ -321,7 +345,9 @@ class TestQualityGateDeadlineHandling:
         assert status == "failed"
         assert "dependency schedule is invalid" in message
 
-    def test_director_dispatch_deadline_admission_uses_standard_budget_after_first_round(self) -> None:
+    def test_director_dispatch_deadline_admission_uses_standard_budget_after_first_round(
+        self,
+    ) -> None:
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 213.0
         decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
             {
@@ -398,7 +424,11 @@ class TestQualityGateDeadlineHandling:
                     async def execute_director_run(self, **kwargs: object) -> CommandResult:
                         del kwargs
                         executor.execute_calls += 1
-                        return CommandResult(run_id="director-started", status="running", message="submitted")
+                        return CommandResult(
+                            run_id="director-started",
+                            status="running",
+                            message="submitted",
+                        )
 
                 return _Service()
 
@@ -415,7 +445,7 @@ class TestQualityGateDeadlineHandling:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-22T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
         deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
 
         result = await executor._execute_director_dispatch(
@@ -644,7 +674,9 @@ class TestQualityGateDeadlineHandling:
             FactoryRoleEvidenceAuthorityPort,
             FactoryRoleEvidenceStageAuthorityV1,
         )
-        from polaris.cells.factory.pipeline.internal.factory_run_admission import FactoryWorkspaceRunAdmission
+        from polaris.cells.factory.pipeline.internal.factory_run_admission import (
+            FactoryWorkspaceRunAdmission,
+        )
         from polaris.cells.factory.pipeline.tests.test_factory_role_evidence_authority_sa import (
             _MemoryFactStream,
             _Resolver,
@@ -653,7 +685,10 @@ class TestQualityGateDeadlineHandling:
         admission = FactoryWorkspaceRunAdmission(workspace, state_root=tmp_path / "private-admission")
         lease = admission.acquire(run.id)
         lease = admission.claim_stage(
-            run.id, fencing_token=lease.fencing_token, stage="quality_gate", nonce="deadline-fixture"
+            run.id,
+            fencing_token=lease.fencing_token,
+            stage="quality_gate",
+            nonce="deadline-fixture",
         )
         claim = lease.stage_execution_claim
         assert claim is not None
@@ -739,7 +774,11 @@ class TestQualityGateDeadlineHandling:
             return authority
 
         monkeypatch.setattr(executor, "_run_workspace_quality_checks", fake_workspace_checks)
-        monkeypatch.setattr(executor, "_canonical_qa_commit_identity", lambda **_kwargs: ("TASK-1", "director-1"))
+        monkeypatch.setattr(
+            executor,
+            "_canonical_qa_commit_identity",
+            lambda **_kwargs: ("TASK-1", "director-1"),
+        )
         monkeypatch.setattr(executor, "_commit_qa_role_report_authority", fake_commit)
         monkeypatch.setattr(
             executor,
@@ -835,7 +874,11 @@ class TestQualityGateDeadlineHandling:
                 return CommandResult(run_id=run_id, status="completed", message="QA completed")
 
         monkeypatch.setattr(executor, "_run_workspace_quality_checks", fake_workspace_checks)
-        monkeypatch.setattr(executor, "_build_orchestration_service", lambda _context: _CapturingQaService())
+        monkeypatch.setattr(
+            executor,
+            "_build_orchestration_service",
+            lambda _context: _CapturingQaService(),
+        )
 
         result = await executor._execute_quality_gate(
             run,
@@ -903,9 +946,15 @@ class TestQualityGateDeadlineHandling:
         )
 
         monkeypatch.setattr(
-            executor, "_workspace_quality_commands", lambda _context, *, run=None: [["npm", "run", "build"]]
+            executor,
+            "_workspace_quality_commands",
+            lambda _context, *, run=None: [["npm", "run", "build"]],
         )
-        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_prepare_commands",
+            lambda _commands, _context: [],
+        )
         monkeypatch.setattr(
             executor,
             "_run_workspace_quality_command",
@@ -947,7 +996,9 @@ class TestQualityGateDeadlineHandling:
             ),
         )
 
-        async def fail_if_llm_repair_started(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        async def fail_if_llm_repair_started(
+            **_kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             raise AssertionError("workspace quality LLM repair should not start when deadline is insufficient")
 
         monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fail_if_llm_repair_started)
@@ -985,10 +1036,20 @@ class TestQualityGateDeadlineHandling:
         observed_timeouts: list[float] = []
 
         monkeypatch.setattr(
-            executor, "_workspace_quality_commands", lambda _context, *, run=None: [["npm", "run", "build"]]
+            executor,
+            "_workspace_quality_commands",
+            lambda _context, *, run=None: [["npm", "run", "build"]],
         )
-        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda _commands, _context: [])
-        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", lambda _context: None)
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_prepare_commands",
+            lambda _commands, _context: [],
+        )
+        monkeypatch.setattr(
+            executor._workspace_quality,
+            "delivery_depth_contract_result",
+            lambda _context: None,
+        )
         monkeypatch.setattr(
             executor,
             "_canonical_factory_projection",
@@ -1019,7 +1080,11 @@ class TestQualityGateDeadlineHandling:
                 "error": "",
             }
 
-        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(
+            executor,
+            "_run_workspace_quality_command",
+            fake_run_workspace_quality_command,
+        )
 
         from types import SimpleNamespace
 
@@ -1030,7 +1095,11 @@ class TestQualityGateDeadlineHandling:
             native_validation_session,
         )
 
-        monkeypatch.setattr(native_validation_session, "required_clean_verifier_commands", lambda *_args, **_kwargs: [])
+        monkeypatch.setattr(
+            native_validation_session,
+            "required_clean_verifier_commands",
+            lambda *_args, **_kwargs: [],
+        )
 
         async def scoped_deadline_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
             return fake_run_workspace_quality_command(command, timeout_seconds)
@@ -1127,9 +1196,21 @@ class TestQualityGateDeadlineHandling:
                 "source": "run_ledger",
                 "task_boundary": {
                     "latest_by_task": {
-                        "TASK-1": {"task_id": "TASK-1", "status": "completed_verified", "ok": True},
-                        "TASK-2": {"task_id": "TASK-2", "status": "completed_verified", "ok": True},
-                        "TASK-3": {"task_id": "TASK-3", "status": "completed_verified", "ok": True},
+                        "TASK-1": {
+                            "task_id": "TASK-1",
+                            "status": "completed_verified",
+                            "ok": True,
+                        },
+                        "TASK-2": {
+                            "task_id": "TASK-2",
+                            "status": "completed_verified",
+                            "ok": True,
+                        },
+                        "TASK-3": {
+                            "task_id": "TASK-3",
+                            "status": "completed_verified",
+                            "ok": True,
+                        },
                     }
                 },
             },
@@ -1218,7 +1299,11 @@ class TestQualityGateDeadlineHandling:
             created_at="2026-08-16T00:00:00+00:00",
         )
         run.metadata["last_successful_stage"] = "director_dispatch"
-        run.stages_completed = ["pm_planning", "chief_engineer_review", "director_dispatch"]
+        run.stages_completed = [
+            "pm_planning",
+            "chief_engineer_review",
+            "director_dispatch",
+        ]
         projection = _with_task_runtime_authority(
             {
                 "source": "run_ledger",
@@ -1386,10 +1471,14 @@ class TestQualityGateDeadlineHandling:
         def fail_if_depth_runs(_context: dict[str, Any]) -> dict[str, Any] | None:
             raise AssertionError("delivery depth must not run before source tasks unlock")
 
-        def fail_if_runtime_repair_runs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        def fail_if_runtime_repair_runs(
+            **_kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             raise AssertionError("runtime repair must not run before source tasks unlock")
 
-        async def fail_if_llm_repair_runs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        async def fail_if_llm_repair_runs(
+            **_kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             raise AssertionError("LLM repair must not run before source tasks unlock")
 
         monkeypatch.setattr(
@@ -1419,7 +1508,11 @@ class TestQualityGateDeadlineHandling:
                 incomplete_task_ids=("TASK-2",),
             ),
         )
-        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", fail_if_depth_runs)
+        monkeypatch.setattr(
+            executor._workspace_quality,
+            "delivery_depth_contract_result",
+            fail_if_depth_runs,
+        )
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fail_if_command_runs)
         monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fail_if_runtime_repair_runs)
         monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fail_if_llm_repair_runs)
@@ -1453,7 +1546,11 @@ class TestQualityGateDeadlineHandling:
                         "test": "vitest run tests/simulation.test.ts tests/verify.test.ts",
                         "start": "vite --host 127.0.0.1",
                     },
-                    "devDependencies": {"typescript": "^5.4.5", "vitest": "^1.6.0", "vite": "^5.4.0"},
+                    "devDependencies": {
+                        "typescript": "^5.4.5",
+                        "vitest": "^1.6.0",
+                        "vite": "^5.4.0",
+                    },
                 },
                 ensure_ascii=False,
             )
@@ -1479,10 +1576,14 @@ class TestQualityGateDeadlineHandling:
         def fail_if_depth_runs(_context: dict[str, Any]) -> dict[str, Any] | None:
             raise AssertionError("delivery depth must not run before declared test targets unlock")
 
-        def fail_if_runtime_repair_runs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        def fail_if_runtime_repair_runs(
+            **_kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             raise AssertionError("runtime repair must not run before declared test targets unlock")
 
-        async def fail_if_llm_repair_runs(**_kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        async def fail_if_llm_repair_runs(
+            **_kwargs: Any,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             raise AssertionError("LLM repair must not run before declared test targets unlock")
 
         monkeypatch.setattr(
@@ -1519,7 +1620,11 @@ class TestQualityGateDeadlineHandling:
                 incomplete_task_ids=("TASK-2", "TASK-3"),
             ),
         )
-        monkeypatch.setattr(executor._workspace_quality, "delivery_depth_contract_result", fail_if_depth_runs)
+        monkeypatch.setattr(
+            executor._workspace_quality,
+            "delivery_depth_contract_result",
+            fail_if_depth_runs,
+        )
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fail_if_command_runs)
         monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fail_if_runtime_repair_runs)
         monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fail_if_llm_repair_runs)
@@ -1532,7 +1637,10 @@ class TestQualityGateDeadlineHandling:
         assert payload["commands_skipped"] is True
         assert payload["failure_class"] == "DEPENDENCY_NOT_UNLOCKED"
         assert payload["responsible_layer"] == "task_boundary"
-        assert payload["task_boundary_blocker"]["incomplete_task_ids"] == ["TASK-2", "TASK-3"]
+        assert payload["task_boundary_blocker"]["incomplete_task_ids"] == [
+            "TASK-2",
+            "TASK-3",
+        ]
         assert "task_boundary_not_completed_verified" in payload["warnings"]
 
 

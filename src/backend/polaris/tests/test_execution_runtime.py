@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -30,23 +31,13 @@ from polaris.kernelone.runtime.execution_runtime import (
 
 
 @pytest.fixture
-def runtime() -> ExecutionRuntime:
-    """Create a fresh ExecutionRuntime instance."""
-    runtime = ExecutionRuntime(
-        async_concurrency=4,
-        blocking_concurrency=2,
-        process_concurrency=2,
-    )
-    yield runtime
-    # Synchronous cleanup - run in new event loop if needed
+async def runtime() -> AsyncIterator[ExecutionRuntime]:
+    """Create and actually close a runtime in the test's active event loop."""
+    runtime = ExecutionRuntime(async_concurrency=4, blocking_concurrency=2, process_concurrency=2)
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            _ = asyncio.ensure_future(runtime.close())
-        else:
-            loop.run_until_complete(runtime.close())
-    except RuntimeError:
-        pass
+        yield runtime
+    finally:
+        await runtime.close()
 
 
 @pytest.fixture
@@ -55,6 +46,7 @@ def mock_process_handle() -> PopenAsyncHandle:
     handle = MagicMock(spec=PopenAsyncHandle)
     handle.pid = 12345
     handle.status = ProcessStatus.RUNNING
+    handle.is_alive = AsyncMock(return_value=True)
     return handle
 
 
@@ -90,6 +82,8 @@ async def test_handle_process_timeout_calls_terminate_first(
     """Verify graceful termination is attempted first."""
     mock_process_handle.terminate = AsyncMock(return_value=True)
 
+    mock_process_handle.is_alive = AsyncMock(side_effect=[True, False])
+
     state = make_test_state("test-123", "test-process", mock_process_handle)
 
     await runtime._handle_process_timeout(state, mock_process_handle)
@@ -106,6 +100,8 @@ async def test_handle_process_timeout_calls_kill_if_terminate_fails(
     """Verify force kill is called when graceful termination fails."""
     mock_process_handle.terminate = AsyncMock(return_value=False)
     mock_process_handle.kill = AsyncMock()
+
+    mock_process_handle.is_alive = AsyncMock(side_effect=[True, True, False])
 
     state = make_test_state("test-456", "test-process", mock_process_handle)
 
@@ -124,6 +120,8 @@ async def test_handle_process_timeout_logs_warning_on_graceful_failure(
     """Verify warning is logged when graceful termination fails."""
     mock_process_handle.terminate = AsyncMock(return_value=False)
     mock_process_handle.kill = AsyncMock()
+
+    mock_process_handle.is_alive = AsyncMock(side_effect=[True, True, False])
 
     state = make_test_state("test-789", "my-test-process", mock_process_handle, timeout_seconds=10.0)
 
@@ -159,8 +157,11 @@ async def test_await_process_completion_handles_timeout_correctly(
         )
     )
 
+    mock_process_handle.is_alive = AsyncMock(side_effect=[True, False])
+
     state = make_test_state("test-timeout", "timeout-process", mock_process_handle, timeout_seconds=1.0)
 
+    await runtime._process_semaphore.acquire()
     await runtime._await_process_completion(state)
 
     assert state.status == ExecutionStatus.TIMED_OUT
@@ -176,8 +177,11 @@ async def test_await_process_completion_cancels_on_task_cancellation(
     mock_process_handle.wait = AsyncMock(side_effect=asyncio.CancelledError)
     mock_process_handle.terminate = AsyncMock(return_value=True)
 
+    mock_process_handle.is_alive = AsyncMock(side_effect=[True, False])
+
     state = make_test_state("test-cancel", "cancel-process", mock_process_handle, timeout_seconds=30.0)
 
+    await runtime._process_semaphore.acquire()
     with pytest.raises(asyncio.CancelledError):
         await runtime._await_process_completion(state)
 
@@ -206,6 +210,8 @@ async def test_await_process_completion_handles_asyncio_timeout_error(
         )
     )
 
+    mock_process_handle.is_alive = AsyncMock(side_effect=[True, False])
+
     state = make_test_state(
         "test-asyncio-timeout",
         "async-timeout-process",
@@ -213,6 +219,7 @@ async def test_await_process_completion_handles_asyncio_timeout_error(
         timeout_seconds=1.0,
     )
 
+    await runtime._process_semaphore.acquire()
     await runtime._await_process_completion(state)
 
     assert state.status == ExecutionStatus.TIMED_OUT
@@ -239,8 +246,11 @@ async def test_await_process_completion_handles_success(
         )
     )
 
+    mock_process_handle.is_alive = AsyncMock(return_value=False)
+
     state = make_test_state("test-success", "success-process", mock_process_handle, timeout_seconds=30.0)
 
+    await runtime._process_semaphore.acquire()
     await runtime._await_process_completion(state)
 
     assert state.status == ExecutionStatus.SUCCESS
@@ -267,8 +277,11 @@ async def test_await_process_completion_handles_failure(
         )
     )
 
+    mock_process_handle.is_alive = AsyncMock(return_value=False)
+
     state = make_test_state("test-failure", "failure-process", mock_process_handle, timeout_seconds=30.0)
 
+    await runtime._process_semaphore.acquire()
     await runtime._await_process_completion(state)
 
     assert state.status == ExecutionStatus.FAILED
@@ -393,6 +406,7 @@ async def test_await_process_completion_with_missing_handle(
     """Verify proper handling when process handle is None."""
     state = make_test_state("test-no-handle", "no-handle-process", None, timeout_seconds=30.0)
 
+    await runtime._process_semaphore.acquire()
     await runtime._await_process_completion(state)
 
     assert state.status == ExecutionStatus.FAILED
@@ -416,6 +430,9 @@ async def test_handle_process_timeout_handles_terminate_exception(
 
     mock_process_handle.kill.assert_called_once()
 
+    assert state.metadata["process_cleanup_status"] == "unknown"
+    assert "process_cleanup_unproven" in state.error
+
 
 @pytest.mark.asyncio
 async def test_handle_process_timeout_handles_kill_exception(
@@ -434,3 +451,6 @@ async def test_handle_process_timeout_handles_kill_exception(
 
     # Error should be logged
     assert "failed" in caplog.text.lower() or "error" in caplog.text.lower()
+
+    assert state.metadata["process_cleanup_status"] == "unknown"
+    assert "process_cleanup_unproven" in state.error

@@ -8,10 +8,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from polaris.cells.llm.control_plane.internal.llm_config_agent import (
-    HRAgent,
     LLMConfig,
+    LLMConfigService,
     LLMConfigStore,
     _infer_workspace_from_storage_path,
     _mask_sensitive_values,
@@ -267,64 +266,57 @@ class TestLLMConfigStore:
         assert result is None
 
 
-class TestHRAgent:
-    """Tests for HRAgent class - testing method implementations."""
+class TestLLMConfigService:
+    """Tests for LLMConfigService class - testing method implementations."""
 
     def test_resolve_provider_kind_ollama(self) -> None:
         # Create agent and directly set minimal required attributes
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         agent._config_store = MagicMock()
-        result = agent._resolve_provider_kind("local", "ollama", {})
+        result = agent.resolve_provider_kind("local", "ollama", {})
         assert result == "ollama"
 
     def test_resolve_provider_kind_codex_cli(self) -> None:
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         agent._config_store = MagicMock()
-        result = agent._resolve_provider_kind("codex_cli", "codex_cli", {})
+        result = agent.resolve_provider_kind("codex_cli", "codex_cli", {})
         assert result == "codex"
 
     def test_resolve_provider_kind_codex_sdk(self) -> None:
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         agent._config_store = MagicMock()
-        result = agent._resolve_provider_kind("codex_sdk", "codex_sdk", {})
+        result = agent.resolve_provider_kind("codex_sdk", "codex_sdk", {})
         assert result == "codex"
 
     def test_resolve_provider_kind_cli_with_codex_command(self) -> None:
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         agent._config_store = MagicMock()
-        result = agent._resolve_provider_kind("my_codex", "cli", {"command": "codex start"})
+        result = agent.resolve_provider_kind("my_codex", "cli", {"command": "codex start"})
         assert result == "codex"
 
     def test_resolve_provider_kind_generic(self) -> None:
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         agent._config_store = MagicMock()
-        result = agent._resolve_provider_kind("some_provider", "anthropic", {})
+        result = agent.resolve_provider_kind("some_provider", "anthropic", {})
         assert result == "generic"
 
     def test_tool_methods_exist(self) -> None:
         """Test that the tool methods are callable (signature test)."""
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         agent._config_store = MagicMock()
 
         # Test that methods exist and are callable
-        assert callable(agent._tool_get_llm_config)
-        assert callable(agent._tool_set_llm_config)
-        assert callable(agent._tool_list_all_configs)
-        assert callable(agent._tool_update_llm_config)
-        assert callable(agent._tool_deactivate_config)
-        assert callable(agent._tool_activate_config)
-        assert callable(agent._tool_delete_config)
+        assert callable(agent.get_llm_config)
+        assert callable(agent.set_llm_config)
+        assert callable(agent.list_all_configs)
+        assert callable(agent.update_llm_config)
+        assert callable(agent.deactivate_config)
+        assert callable(agent.activate_config)
+        assert callable(agent.delete_config)
 
     def test_get_config_delegates_to_store(self) -> None:
         """Test that get_config properly delegates to the store."""
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         mock_store = MagicMock()
         mock_store.get.return_value = None
         agent._config_store = mock_store
@@ -336,8 +328,7 @@ class TestHRAgent:
 
     def test_get_all_configs_delegates_to_store(self) -> None:
         """Test that get_all_configs properly delegates to the store."""
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         mock_store = MagicMock()
         mock_store.get_all.return_value = []
         agent._config_store = mock_store
@@ -348,12 +339,11 @@ class TestHRAgent:
         assert result == []
 
     def test_tool_set_llm_config_validates_provider_cfg(self) -> None:
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         mock_store = MagicMock()
         agent._config_store = mock_store
 
-        result = agent._tool_set_llm_config(
+        result = agent.set_llm_config(
             role="pm",
             provider_id="openai",
             provider_type="openai",
@@ -366,12 +356,11 @@ class TestHRAgent:
         mock_store.save.assert_not_called()
 
     def test_tool_set_llm_config_accepts_valid_provider_cfg(self) -> None:
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         mock_store = MagicMock()
         agent._config_store = mock_store
 
-        result = agent._tool_set_llm_config(
+        result = agent.set_llm_config(
             role="pm",
             provider_id="openai",
             provider_type="openai",
@@ -387,12 +376,11 @@ class TestHRAgent:
         assert len(saved_config.config_id) > len("config_pm_")
 
     def test_tool_set_llm_config_masks_secrets_in_response(self) -> None:
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         mock_store = MagicMock()
         agent._config_store = mock_store
 
-        result = agent._tool_set_llm_config(
+        result = agent.set_llm_config(
             role="pm",
             provider_id="openai",
             provider_type="openai",
@@ -406,8 +394,7 @@ class TestHRAgent:
         assert config_dict["provider_cfg"]["temperature"] == 0.7
 
     def test_tool_update_llm_config_validates_provider_cfg(self) -> None:
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         mock_store = MagicMock()
         existing = LLMConfig(
             config_id="cfg",
@@ -421,7 +408,7 @@ class TestHRAgent:
         mock_store.get.return_value = existing
         agent._config_store = mock_store
 
-        result = agent._tool_update_llm_config(
+        result = agent.update_llm_config(
             role="pm",
             provider_cfg={"max_tokens": 1_000_001},
         )
@@ -430,8 +417,7 @@ class TestHRAgent:
         mock_store.save.assert_not_called()
 
     def test_tool_update_llm_config_masks_secrets(self) -> None:
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
+        agent = LLMConfigService.__new__(LLMConfigService)
         mock_store = MagicMock()
         existing = LLMConfig(
             config_id="cfg",
@@ -446,58 +432,13 @@ class TestHRAgent:
         mock_store.get.return_value = existing
         agent._config_store = mock_store
 
-        result = agent._tool_update_llm_config(
+        result = agent.update_llm_config(
             role="pm",
             provider_cfg={"api_key": "new-key", "temperature": 0.5},
         )
         assert result["ok"] is True
         assert result["config"]["provider_cfg"]["api_key"] == "***"
         assert result["config"]["provider_cfg"]["temperature"] == 0.5
-
-    def test_handle_message_catches_exceptions(self) -> None:
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
-        agent.agent_name = "HR"
-        mock_store = MagicMock()
-        mock_store.get.side_effect = RuntimeError("store failure")
-        agent._config_store = mock_store
-
-        from polaris.cells.roles.runtime.internal.agent_runtime_base import AgentMessage, MessageType
-
-        msg = AgentMessage.create(
-            msg_type=MessageType.TASK,
-            sender="test",
-            receiver="hr",
-            payload={"action": "get_config", "role": "pm"},
-        )
-        response = agent.handle_message(msg)
-        assert response is not None
-        assert response.type == MessageType.RESULT
-        payload = dict(response.payload or {})
-        assert payload["result"]["ok"] is False
-        assert payload["result"]["error"] == "internal_error"
-        assert "store failure" in payload["result"]["detail"]
-
-    def test_handle_message_unsupported_action(self) -> None:
-        agent = HRAgent.__new__(HRAgent)
-        agent.workspace = "/tmp"
-        agent.agent_name = "HR"
-        agent._config_store = MagicMock()
-
-        from polaris.cells.roles.runtime.internal.agent_runtime_base import AgentMessage, MessageType
-
-        msg = AgentMessage.create(
-            msg_type=MessageType.TASK,
-            sender="test",
-            receiver="hr",
-            payload={"action": "unknown_action"},
-        )
-        response = agent.handle_message(msg)
-        assert response is not None
-        assert response.type == MessageType.RESULT
-        payload = dict(response.payload or {})
-        assert payload["result"]["ok"] is False
-        assert payload["result"]["error"] == "unsupported_action"
 
 
 class TestProviderCfgValidation:
@@ -521,15 +462,15 @@ class TestProviderCfgValidation:
             _validate_provider_cfg({"max_tokens": 1_000_001})
 
     def test_validate_temperature_range(self) -> None:
-        with pytest.raises(ValueError, match="between 0.0 and 2.0"):
+        with pytest.raises(ValueError, match=r"between 0\.0 and 2\.0"):
             _validate_provider_cfg({"temperature": 5.0})
 
     def test_validate_top_p_range(self) -> None:
-        with pytest.raises(ValueError, match="between 0.0 and 1.0"):
+        with pytest.raises(ValueError, match=r"between 0\.0 and 1\.0"):
             _validate_provider_cfg({"top_p": 1.5})
 
     def test_validate_presence_penalty_range(self) -> None:
-        with pytest.raises(ValueError, match="between -2.0 and 2.0"):
+        with pytest.raises(ValueError, match=r"between -2\.0 and 2\.0"):
             _validate_provider_cfg({"presence_penalty": -5.0})
 
     def test_mask_sensitive_values(self) -> None:
@@ -562,6 +503,7 @@ class TestWriteJsonAtomic:
     def test_atomic_write_preserves_content(self, tmp_path: Path) -> None:
         """Verify atomic write preserves exact JSON content."""
         import json
+
         from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 
         adapter = LocalFileSystemAdapter()
@@ -587,6 +529,7 @@ class TestWriteJsonAtomic:
         adapter.write_text(target, '{"version": 2, "extra": "data"}', atomic=True)
 
         import json
+
         result = json.loads(adapter.read_text(target))
         assert result == {"version": 2, "extra": "data"}
 
@@ -603,6 +546,7 @@ class TestWriteJsonAtomic:
     def test_atomic_write_with_special_chars_in_json(self, tmp_path: Path) -> None:
         """Verify atomic write handles special characters correctly."""
         import json
+
         from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 
         adapter = LocalFileSystemAdapter()

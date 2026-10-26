@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 from polaris.cells.chief_engineer.blueprint.public import (
     BuildChiefEngineerBlueprintPortfolioCommandV1,
+    CaptureChiefEngineerPortfolioAuthorityQueryV1,
     ChiefEngineerBlueprintErrorV1,
     ChiefEngineerBlueprintPortfolioV1,
     ChiefEngineerPortfolioTaskV1,
@@ -37,6 +38,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     bind_chief_engineer_semantic_repair_provider_patch,
     build_chief_engineer_blueprint_portfolio,
     build_chief_engineer_semantic_repair_patch_schema,
+    capture_chief_engineer_portfolio_authority,
     chief_engineer_semantic_repair_task_set_hash,
     compose_chief_engineer_semantic_repair,
     generate_task_blueprint,
@@ -50,13 +52,14 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     VerificationModalityV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
 )
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
     FactoryRoleEvidenceAuthorityBindingV1,
 )
-from polaris.cells.roles.kernel.public.llm_caller_contracts import resolve_role_output_budget
+from polaris.cells.roles.kernel.public.llm_caller_contracts import (
+    resolve_role_output_budget,
+)
 from polaris.cells.roles.kernel.public.service import QualityChecker
 from polaris.cells.roles.kernel.public.structured_output_contracts import (
     RoleStructuredOutputContractV1,
@@ -94,7 +97,6 @@ from ..factory_deadline_calculations import (  # noqa: F401 — re-exported for 
     _CHIEF_ENGINEER_EXECUTION_ATTEMPT_SETTLEMENT_GRACE_SECONDS,
     _CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS,
     _DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS,
-    ChiefEngineerExecutionAttemptLeaseBudget as _ChiefEngineerExecutionAttemptLeaseBudget,
 )
 from ..factory_deadline_policy import (
     FactoryDeadlineAdmissionV1,
@@ -151,12 +153,25 @@ _CPP_MISSING_MEMBER_RE = re.compile(
     re.IGNORECASE,
 )
 _CPP_DIAGNOSTIC_KIND_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("cpp_undeclared", ("has not been declared", "was not declared in this scope", "does not name a type")),
-    ("cpp_redefinition", ("multiple definition", "different underlying type", "redefinition of")),
+    (
+        "cpp_undeclared",
+        (
+            "has not been declared",
+            "was not declared in this scope",
+            "does not name a type",
+        ),
+    ),
+    (
+        "cpp_redefinition",
+        ("multiple definition", "different underlying type", "redefinition of"),
+    ),
     ("cpp_missing_member", ("has no member named", "is not a member of")),
     ("cpp_ambiguous", ("call of overloaded", "ambiguous")),
     ("cpp_no_matching", ("no matching function",)),
-    ("cpp_invalid_this", ("invalid use of 'this'", "invalid use of this", "invalid use of ‘this’")),
+    (
+        "cpp_invalid_this",
+        ("invalid use of 'this'", "invalid use of this", "invalid use of ‘this’"),
+    ),
 )
 
 
@@ -195,7 +210,13 @@ class _Mixin02:
                 if (
                     not isinstance(finding, dict)
                     or not {"code", "repair_operation", "detail"}.issubset(finding)
-                    or set(finding) - {"code", "repair_operation", "detail", "verification_recipe_diagnostics"}
+                    or set(finding)
+                    - {
+                        "code",
+                        "repair_operation",
+                        "detail",
+                        "verification_recipe_diagnostics",
+                    }
                     or (
                         "verification_recipe_diagnostics" in finding
                         and (
@@ -205,7 +226,12 @@ class _Mixin02:
                     )
                     or finding["code"] != "invalid_project_completion_contract"
                     or finding["repair_operation"]
-                    not in (None, "entrypoint_upsert", "artifact_upsert", "verification_recipe_upsert")
+                    not in (
+                        None,
+                        "entrypoint_upsert",
+                        "artifact_upsert",
+                        "verification_recipe_upsert",
+                    )
                 ):
                     raise ValueError("chief_engineer_completion_normalization_finding_invalid")
                 diagnostics = finding.get("verification_recipe_diagnostics", [])
@@ -244,7 +270,10 @@ class _Mixin02:
                                         or diagnostic.get("allowed_recipe_modalities")
                                         != list(get_args(VerificationModalityV1))
                                         or diagnostic.get("allowed_recipe_applicabilities") != ["required", "optional"]
-                                        or not isinstance(diagnostic.get("existing_obligation_ids"), list)
+                                        or not isinstance(
+                                            diagnostic.get("existing_obligation_ids"),
+                                            list,
+                                        )
                                         or any(
                                             not isinstance(value, str) or not value
                                             for value in diagnostic["existing_obligation_ids"]
@@ -286,7 +315,12 @@ class _Mixin02:
                     codes.append("chief_engineer.entrypoint_contract.invalid")
                     operations.append("entrypoint_upsert")
                 continue
-            if error.startswith(("invalid project completion contract:", "effective completion obligations invalid:")):
+            if error.startswith(
+                (
+                    "invalid project completion contract:",
+                    "effective completion obligations invalid:",
+                )
+            ):
                 # No action authority is inferred from a diagnostic. A complete
                 # model proposal must still pass the original canonical gates.
                 return None
@@ -371,14 +405,27 @@ class _Mixin02:
                 raise TypeError("decoded semantic proposal is unavailable")
             proposal = deepcopy(dict(raw_patch))
             proposal_raw = json.dumps(
-                proposal, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+                proposal,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
             ).encode("utf-8")
             evidence["proposal_canonical_sha256"] = hashlib.sha256(proposal_raw).hexdigest()
             envelope = {**evidence, "decoded_proposal": proposal}
-            for key in ("capture_status", "snapshot_ref", "snapshot_sha256", "byte_count"):
+            for key in (
+                "capture_status",
+                "snapshot_ref",
+                "snapshot_sha256",
+                "byte_count",
+            ):
                 envelope.pop(key)
             raw = json.dumps(
-                envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+                envelope,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
             ).encode("utf-8")
             runtime_root = Path(resolve_storage_roots(str(self.workspace)).runtime_root)
             store = pkg().FactoryStore(runtime_root / "factory")
@@ -412,7 +459,10 @@ class _Mixin02:
             return result
         raw_patch = dict(result.metadata or {}).get("structured_output")
         proposal_evidence = self._capture_chief_engineer_semantic_patch_proposal(
-            result=result, candidate=candidate, diagnosis=diagnosis, repair_round=repair_round
+            result=result,
+            candidate=candidate,
+            diagnosis=diagnosis,
+            repair_round=repair_round,
         )
         try:
             if not isinstance(raw_patch, Mapping):
@@ -710,7 +760,12 @@ class _Mixin02:
         metadata["chief_engineer_schema_repair_base_candidate"] = deepcopy(dict(base_candidate))
         metadata["chief_engineer_schema_repair_paths"] = [list(path) for path in repair_paths]
         metadata["chief_engineer_schema_repair_base_candidate_hash"] = hashlib.sha256(
-            json.dumps(base_candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            json.dumps(
+                base_candidate,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
         ).hexdigest()
         if not result.ok:
             result.metadata.clear()
@@ -833,7 +888,12 @@ class _Mixin02:
                     json.dumps(patch, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
                 ).hexdigest(),
                 "composed_candidate_hash": hashlib.sha256(
-                    json.dumps(merged, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                    json.dumps(
+                        merged,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
                 ).hexdigest(),
                 "full_schema_validated": True,
                 "semantic_authority_validated": False,
@@ -887,7 +947,7 @@ class _Mixin02:
         *,
         run_id: str,
         tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
-        authority: _ChiefEngineerPortfolioAuthorityV1,
+        authority_carrier: object,
         structured_output: Mapping[str, Any],
         revalidate_existing: bool = False,
     ) -> ChiefEngineerBlueprintPortfolioV1:
@@ -896,24 +956,55 @@ class _Mixin02:
                 workspace=str(self.workspace),
                 run_id=run_id,
                 tasks=tasks,
-                authority_carrier=_issue_chief_engineer_portfolio_authority_carrier(
-                    workspace=str(self.workspace),
-                    run_id=run_id,
-                    project_id=authority.project_id,
-                    pm_stage_event_id=authority.pm_stage_event_id,
-                    pm_contract_hash=authority.pm_contract_hash,
-                    tasks=tasks,
-                    catalog_snapshot=authority.catalog_snapshot,
-                    catalog_snapshot_hash=authority.catalog_snapshot_hash,
-                    verifier_policy_hash=authority.verifier_policy_hash,
-                    verifier_policy_snapshot=authority.verifier_policy,
-                    verifier_policy_snapshot_hash=authority.verifier_policy_snapshot_hash,
-                    verification_command_authority=authority.verification_command_authority,
-                ),
+                authority_carrier=authority_carrier,
                 llm_blueprint=dict(structured_output),
             ),
             revalidate_existing=revalidate_existing,
         )
+
+    async def _capture_chief_engineer_portfolio_authority(
+        self,
+        *,
+        run: FactoryRun,
+        pm_tasks: list[dict[str, Any]],
+        portfolio_tasks: tuple[ChiefEngineerPortfolioTaskV1, ...],
+    ) -> tuple[_ChiefEngineerPortfolioAuthorityV1, object]:
+        """Join the original Factory durable reader to the CE host capture."""
+        portfolio_authority: _ChiefEngineerPortfolioAuthorityV1 | None = None
+        capture_query = CaptureChiefEngineerPortfolioAuthorityQueryV1(
+            workspace=str(self.workspace), run_id=run.id, tasks=portfolio_tasks
+        )
+
+        async def read_factory_authority(
+            query: CaptureChiefEngineerPortfolioAuthorityQueryV1,
+        ) -> Mapping[str, Any]:
+            nonlocal portfolio_authority
+            if query != capture_query:
+                raise ValueError("chief_engineer_authority_source_identity_mismatch")
+            portfolio_authority = await self._load_chief_engineer_portfolio_authority(
+                run=run, pm_tasks=pm_tasks, portfolio_tasks=portfolio_tasks
+            )
+            return {
+                "workspace": str(self.workspace),
+                "run_id": run.id,
+                "project_id": portfolio_authority.project_id,
+                "pm_stage_event_id": portfolio_authority.pm_stage_event_id,
+                "pm_contract_hash": portfolio_authority.pm_contract_hash,
+                "tasks": portfolio_tasks,
+                "catalog_snapshot": portfolio_authority.catalog_snapshot,
+                "catalog_snapshot_hash": portfolio_authority.catalog_snapshot_hash,
+                "verifier_policy_hash": portfolio_authority.verifier_policy_hash,
+                "verifier_policy_snapshot": portfolio_authority.verifier_policy,
+                "verifier_policy_snapshot_hash": portfolio_authority.verifier_policy_snapshot_hash,
+                "verification_command_authority": portfolio_authority.verification_command_authority,
+            }
+
+        portfolio_authority_carrier = await capture_chief_engineer_portfolio_authority(
+            capture_query, source_port=read_factory_authority
+        )
+        if portfolio_authority is None:
+            raise RuntimeError("chief_engineer_authority_source_missing")
+        return portfolio_authority, portfolio_authority_carrier
 
     @staticmethod
     def _chief_engineer_trusted_recipe_guidance(
@@ -983,7 +1074,10 @@ class _Mixin02:
             raise ValueError("chief_engineer_repair_task_count_must_be_positive")
         if repair_round < 1:
             raise ValueError("chief_engineer_repair_round_must_be_positive")
-        return resolve_role_output_budget(context=context, requested=chief_engineer_portfolio_output_tokens(task_count))
+        return resolve_role_output_budget(
+            context=context,
+            requested=chief_engineer_portfolio_output_tokens(task_count),
+        )
 
     @staticmethod
     def _chief_engineer_repair_intent(portfolio_task_ids: tuple[str, ...]) -> str:
@@ -1091,7 +1185,10 @@ class _Mixin02:
                         "tool call.\n"
                         f"Immutable base candidate SHA-256: {base_candidate_hash}\n"
                         "Required missing paths: "
-                        + json.dumps([list(path) for path in schema_repair_paths], ensure_ascii=False)
+                        + json.dumps(
+                            [list(path) for path in schema_repair_paths],
+                            ensure_ascii=False,
+                        )
                     )
                 else:
                     schema_residual_plan = plan_ce_schema_residual_patch(
@@ -1144,7 +1241,12 @@ class _Mixin02:
                 "Actual validation feedback: "
                 + str(prior_result.error_message or prior_result.error_code)
                 + "\nExact retained draft: "
-                + json.dumps(semantic_candidate.candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                + json.dumps(
+                    semantic_candidate.candidate,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
             )
         provider_patch_context: dict[str, Any] | None = None
         if semantic_candidate is not None and semantic_diagnosis is not None:
@@ -1238,7 +1340,12 @@ class _Mixin02:
                 + "\nAllowed operations: "
                 + json.dumps(list(semantic_diagnosis.allowed_operations), ensure_ascii=False)
                 + "\nExact retained candidate and authorized patch context: "
-                + json.dumps(provider_patch_context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                + json.dumps(
+                    provider_patch_context,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
             )
         prior_error = str(prior_result.error_message or prior_result.error_code or "output validation failed").strip()[
             :_CHIEF_ENGINEER_SCHEMA_REPAIR_ERROR_MAX_CHARS
@@ -1311,7 +1418,12 @@ class _Mixin02:
                     )["properties"]
                 )
                 if semantic_diagnosis is not None
-                else ["construction_plan", "project_completion_contract", "risk_flags", "scope_for_apply"]
+                else [
+                    "construction_plan",
+                    "project_completion_contract",
+                    "risk_flags",
+                    "scope_for_apply",
+                ]
             ),
         }
         prior_metadata = dict(prior_result.metadata or {})
@@ -1557,10 +1669,15 @@ class _Mixin02:
                         if draft_revision:
                             result = replace(
                                 result,
-                                metadata={**result.metadata, "chief_engineer_draft_revision_schema_valid": True},
+                                metadata={
+                                    **result.metadata,
+                                    "chief_engineer_draft_revision_schema_valid": True,
+                                },
                             )
                         output_errors = self._chief_engineer_portfolio_output_errors(
-                            structured_output, tasks=portfolio_tasks, authority_carrier=authority_carrier
+                            structured_output,
+                            tasks=portfolio_tasks,
+                            authority_carrier=authority_carrier,
                         )
                         if output_errors:
                             result = self._chief_engineer_post_validation_repair_result(
@@ -1737,24 +1854,11 @@ class _Mixin02:
 
         if portfolio_tasks:
             try:
-                portfolio_authority = await self._load_chief_engineer_portfolio_authority(
-                    run=run,
-                    pm_tasks=pm_tasks,
-                    portfolio_tasks=portfolio_tasks,
-                )
-                portfolio_authority_carrier = _issue_chief_engineer_portfolio_authority_carrier(
-                    workspace=str(self.workspace),
-                    run_id=run.id,
-                    project_id=portfolio_authority.project_id,
-                    pm_stage_event_id=portfolio_authority.pm_stage_event_id,
-                    pm_contract_hash=portfolio_authority.pm_contract_hash,
-                    tasks=portfolio_tasks,
-                    catalog_snapshot=portfolio_authority.catalog_snapshot,
-                    catalog_snapshot_hash=portfolio_authority.catalog_snapshot_hash,
-                    verifier_policy_hash=portfolio_authority.verifier_policy_hash,
-                    verifier_policy_snapshot=portfolio_authority.verifier_policy,
-                    verifier_policy_snapshot_hash=portfolio_authority.verifier_policy_snapshot_hash,
-                    verification_command_authority=portfolio_authority.verification_command_authority,
+                (
+                    portfolio_authority,
+                    portfolio_authority_carrier,
+                ) = await self._capture_chief_engineer_portfolio_authority(
+                    run=run, pm_tasks=pm_tasks, portfolio_tasks=portfolio_tasks
                 )
                 portfolio_context["project_completion_authority"] = {
                     "project_id": portfolio_authority.project_id,
@@ -1827,7 +1931,8 @@ class _Mixin02:
                 elif key in trusted_metadata:
                     budget_context[key] = deepcopy(trusted_metadata[key])
             portfolio_output_tokens = resolve_role_output_budget(
-                context=budget_context, requested=chief_engineer_portfolio_output_tokens(len(portfolio_tasks))
+                context=budget_context,
+                requested=chief_engineer_portfolio_output_tokens(len(portfolio_tasks)),
             )
             portfolio_context["llm_max_tokens"] = portfolio_output_tokens
             requested_timeout_seconds = self._chief_engineer_llm_timeout_seconds(
@@ -2012,7 +2117,7 @@ class _Mixin02:
                                     portfolio = self._build_chief_engineer_portfolio_from_candidate(
                                         run_id=run.id,
                                         tasks=portfolio_tasks,
-                                        authority=portfolio_authority,
+                                        authority_carrier=portfolio_authority_carrier,
                                         structured_output=structured_output,
                                     )
                                 except ChiefEngineerBlueprintErrorV1 as exc:
@@ -2040,7 +2145,8 @@ class _Mixin02:
                             semantic_repair_candidate = next_candidate
                             candidate_ref = persist_chief_engineer_semantic_repair_candidate(next_candidate)
                             semantic_repair_diagnosis = self._chief_engineer_semantic_repair_diagnosis(
-                                candidate=next_candidate, output_errors=output_errors
+                                candidate=next_candidate,
+                                output_errors=output_errors,
                             )
                             if candidate_changed and repair_round == 1:
                                 stage_signals.append(
@@ -2215,7 +2321,9 @@ class _Mixin02:
                         llm_call_count += 1
                         if semantic_repair_candidate is None:
                             self._append_chief_engineer_structural_recovery_signal(
-                                result=ce_result, stage_signals=stage_signals, task_id=portfolio_task_id
+                                result=ce_result,
+                                stage_signals=stage_signals,
+                                task_id=portfolio_task_id,
                             )
                 except asyncio.CancelledError:
                     raise
@@ -2275,10 +2383,15 @@ class _Mixin02:
                         portfolio = self._build_chief_engineer_portfolio_from_candidate(
                             run_id=run.id,
                             tasks=portfolio_tasks,
-                            authority=portfolio_authority,
+                            authority_carrier=portfolio_authority_carrier,
                             structured_output=fallback_candidate,
                         )
-                    except (OSError, RuntimeError, TypeError, ValueError) as fallback_exc:
+                    except (
+                        OSError,
+                        RuntimeError,
+                        TypeError,
+                        ValueError,
+                    ) as fallback_exc:
                         fallback_code = str(getattr(fallback_exc, "code", "") or "").strip()
                         fallback_details = getattr(fallback_exc, "details", None)
                         rejected_signal: dict[str, Any] = {
@@ -2546,7 +2659,7 @@ class _Mixin02:
                 portfolio = self._build_chief_engineer_portfolio_from_candidate(
                     run_id=run.id,
                     tasks=portfolio_tasks,
-                    authority=portfolio_authority,
+                    authority_carrier=portfolio_authority_carrier,
                     structured_output=ce_llm_blueprint,
                 )
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -3290,7 +3403,10 @@ class _Mixin02:
         preparation_contract: ProjectCompletionContractV1 | None = None,
     ) -> dict[str, Any]:
         if preparation_contract is None:
-            return cast(dict[str, Any], self._workspace_quality.run_command(command, timeout_seconds))
+            return cast(
+                dict[str, Any],
+                self._workspace_quality.run_command(command, timeout_seconds),
+            )
         return cast(
             dict[str, Any],
             self._workspace_quality.run_command(command, timeout_seconds, preparation_contract=preparation_contract),
@@ -3306,7 +3422,9 @@ class _Mixin02:
         return workspace_quality_impl._workspace_quality_repair_errors(self, results, run=run)
 
     @staticmethod
-    def _workspace_quality_diagnostic_signature(errors: Iterable[str]) -> tuple[str, ...]:
+    def _workspace_quality_diagnostic_signature(
+        errors: Iterable[str],
+    ) -> tuple[str, ...]:
         """Return a stable verifier-diagnostic signature for convergence checks.
 
         Repair success is owned by the post-repair verifier, not by a write-tool
@@ -3366,7 +3484,11 @@ class _Mixin02:
         before_text = "\n".join(str(item or "") for item in before_signature).casefold()
         after_text = "\n".join(str(item or "") for item in after_signature)
         after_folded = after_text.casefold()
-        crash_markers = ("fatal error: stack overflow", "goroutine stack exceeds", "fatal error:")
+        crash_markers = (
+            "fatal error: stack overflow",
+            "goroutine stack exceeds",
+            "fatal error:",
+        )
         if not any(marker in before_text for marker in crash_markers):
             return False
         if any(marker in after_folded for marker in crash_markers):
@@ -3785,7 +3907,10 @@ class _Mixin02:
         run: FactoryRun | None = None,
     ) -> dict[str, Any]:
         """Prepare current declared dependencies through the managed command owner."""
-        from ..factory_node_dependencies import NODE_PREPARATION_COMMAND, authenticated_preparation_contract
+        from ..factory_node_dependencies import (
+            NODE_PREPARATION_COMMAND,
+            authenticated_preparation_contract,
+        )
 
         try:
             contract = authenticated_preparation_contract(self, run) if run is not None else None
@@ -3876,7 +4001,9 @@ class _Mixin02:
         )
 
     @staticmethod
-    def _materialization_settle_attempt_outcome(stage_status: str) -> TaskRuntimeExecutionAttemptSettlementOutcomeV1:
+    def _materialization_settle_attempt_outcome(
+        stage_status: str,
+    ) -> TaskRuntimeExecutionAttemptSettlementOutcomeV1:
         """Map settle procedure stage_status to a terminal TaskRuntime outcome.
 
         R184/M06: never return suspended for factory-owned settle helper claims.

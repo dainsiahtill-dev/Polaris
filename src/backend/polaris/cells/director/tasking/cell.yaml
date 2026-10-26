@@ -15,6 +15,7 @@ current_modules:
 tags: []
 owned_paths:
 - polaris/cells/director/tasking/**
+- polaris/cells/director/tasking/tests/test_code_generation_policy.py
 public_contracts:
   modules:
   - polaris.cells.director.tasking.public.contracts

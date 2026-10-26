@@ -36,7 +36,6 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
 )
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.events.fact_stream.public import (
@@ -60,7 +59,9 @@ from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
 from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
     FactoryRoleEvidenceAuthorityPort,
 )
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
+from polaris.cells.factory.pipeline.internal.factory_run_completion import (
+    RunCompletionWaiter,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -68,11 +69,21 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
+from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import (
+    _fencing_token,
+)
 from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
     evaluate_canonical_factory_authority,
 )
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
+from polaris.cells.factory.pipeline.internal.run_ledger import (
+    load_run_ledger_projection,
+)
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
+    _authoritative_task_projection,
+    _factory_stage_context,
+    _with_task_runtime_authority,
+    _write_handoff_ready_review_for_tasks,
+)
 from polaris.cells.roles.adapters.public import (
     build_director_materialization_quality_repair_message,
     extract_workspace_quality_summary,
@@ -90,14 +101,6 @@ from polaris.cells.runtime.task_runtime.public.contracts import (
 )
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
-
-
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
-    _authoritative_task_projection,
-    _factory_stage_context,
-    _with_task_runtime_authority,
-    _write_handoff_ready_review_for_tasks,
-)
 
 
 class TestDirectorDispatchLoop:
@@ -167,7 +170,11 @@ class TestDirectorDispatchLoop:
                     async def execute_director_run(self, **kwargs: object) -> CommandResult:
                         del kwargs
                         executor.execute_calls += 1
-                        return CommandResult(run_id="director-quality-single", status="running", message="submitted")
+                        return CommandResult(
+                            run_id="director-quality-single",
+                            status="running",
+                            message="submitted",
+                        )
 
                 return _Service()
 
@@ -181,7 +188,13 @@ class TestDirectorDispatchLoop:
                 abort_checker: Any = None,
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                del (
+                    service,
+                    timeout_seconds,
+                    cancel_event,
+                    abort_checker,
+                    cancel_on_timeout,
+                )
                 return CommandResult(
                     run_id=initial_result.run_id,
                     status="failed",
@@ -233,8 +246,16 @@ class TestDirectorDispatchLoop:
         )
         tasks = [
             {"id": "TASK-1", "target_files": ["package.json", "src/index.ts"]},
-            {"id": "TASK-2", "target_files": ["src/engine.ts"], "depends_on": ["TASK-1"]},
-            {"id": "TASK-3", "target_files": ["tests/verify.test.ts"], "depends_on": ["TASK-2"]},
+            {
+                "id": "TASK-2",
+                "target_files": ["src/engine.ts"],
+                "depends_on": ["TASK-1"],
+            },
+            {
+                "id": "TASK-3",
+                "target_files": ["tests/verify.test.ts"],
+                "depends_on": ["TASK-2"],
+            },
         ]
         executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         executor._write_json_artifact(
@@ -257,12 +278,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-23T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 3, "timeout": 120, "execution_mode": "serial", "max_workers": 1}
+                {
+                    "director_max_rounds": 3,
+                    "timeout": 120,
+                    "execution_mode": "serial",
+                    "max_workers": 1,
+                }
             ),
         )
 
@@ -360,7 +386,11 @@ class TestDirectorDispatchLoop:
                     async def execute_director_run(self, **kwargs: object) -> CommandResult:
                         del kwargs
                         executor.execute_calls += 1
-                        return CommandResult(run_id="director-blocked-quality", status="running", message="submitted")
+                        return CommandResult(
+                            run_id="director-blocked-quality",
+                            status="running",
+                            message="submitted",
+                        )
 
                 return _Service()
 
@@ -374,7 +404,13 @@ class TestDirectorDispatchLoop:
                 abort_checker: Any = None,
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                del (
+                    service,
+                    timeout_seconds,
+                    cancel_event,
+                    abort_checker,
+                    cancel_on_timeout,
+                )
                 return CommandResult(
                     run_id=initial_result.run_id,
                     status="failed",
@@ -407,7 +443,11 @@ class TestDirectorDispatchLoop:
         executor = _BlockedQualityFailureExecutor(tmp_path)
         tasks = [
             {"id": "TASK-1", "target_files": ["package.json", "src/index.ts"]},
-            {"id": "TASK-2", "target_files": ["tests/verify.test.ts"], "depends_on": ["TASK-1"]},
+            {
+                "id": "TASK-2",
+                "target_files": ["tests/verify.test.ts"],
+                "depends_on": ["TASK-1"],
+            },
         ]
         executor._write_json_artifact("tasks/plan.json", {"tasks": tasks})
         run = FactoryRun(
@@ -416,12 +456,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-23T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "serial", "max_workers": 1}
+                {
+                    "director_max_rounds": 1,
+                    "timeout": 120,
+                    "execution_mode": "serial",
+                    "max_workers": 1,
+                }
             ),
         )
 
@@ -502,7 +547,9 @@ class TestDirectorDispatchLoop:
                             executor.captured_tasks.append([str(item) for item in tasks])
                         executor.execute_calls += 1
                         return CommandResult(
-                            run_id=f"director-{executor.execute_calls}", status="running", message="ok"
+                            run_id=f"director-{executor.execute_calls}",
+                            status="running",
+                            message="ok",
                         )
 
                 return _Service()
@@ -517,7 +564,13 @@ class TestDirectorDispatchLoop:
                 abort_checker: Any = None,
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                del (
+                    service,
+                    timeout_seconds,
+                    cancel_event,
+                    abort_checker,
+                    cancel_on_timeout,
+                )
                 return CommandResult(
                     run_id=initial_result.run_id,
                     status="completed",
@@ -541,12 +594,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-23T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 3, "timeout": 120, "execution_mode": "serial", "max_workers": 1}
+                {
+                    "director_max_rounds": 3,
+                    "timeout": 120,
+                    "execution_mode": "serial",
+                    "max_workers": 1,
+                }
             ),
         )
 
@@ -635,7 +693,11 @@ class TestDirectorDispatchLoop:
                 class _Service:
                     async def execute_director_run(self, **_kwargs: object) -> CommandResult:
                         executor.execute_calls += 1
-                        return CommandResult(run_id="director-active-child", status="running", message="submitted")
+                        return CommandResult(
+                            run_id="director-active-child",
+                            status="running",
+                            message="submitted",
+                        )
 
                 return _Service()
 
@@ -649,7 +711,13 @@ class TestDirectorDispatchLoop:
                 abort_checker: Any = None,
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                del (
+                    service,
+                    timeout_seconds,
+                    cancel_event,
+                    abort_checker,
+                    cancel_on_timeout,
+                )
                 return CommandResult(
                     run_id=initial_result.run_id,
                     status="failed",
@@ -695,7 +763,7 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-07-27T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         await executor._execute_director_dispatch(
             run,
@@ -715,7 +783,9 @@ class TestDirectorDispatchLoop:
         assert len(executor.settlement_grace_seconds) == 1
         assert 55 <= executor.settlement_grace_seconds[0] <= 60
 
-    def test_taskboard_active_execution_is_authoritative_when_lifecycle_marker_lags(self) -> None:
+    def test_taskboard_active_execution_is_authoritative_when_lifecycle_marker_lags(
+        self,
+    ) -> None:
         assert OrchestrationStageExecutor._taskboard_has_active_execution(
             {"in_progress": 1, "completed": 2, "blocked": 1}
         )
@@ -884,7 +954,7 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-23T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(
+        await _write_handoff_ready_review_for_tasks(
             executor,
             run_id=run.id,
             tasks=[
@@ -899,7 +969,12 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
+                {
+                    "director_max_rounds": 1,
+                    "timeout": 120,
+                    "execution_mode": "parallel",
+                    "max_workers": 2,
+                }
             ),
         )
 
@@ -1087,7 +1162,7 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-23T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(
+        await _write_handoff_ready_review_for_tasks(
             executor,
             run_id=run.id,
             tasks=[
@@ -1102,7 +1177,12 @@ class TestDirectorDispatchLoop:
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
+                {
+                    "director_max_rounds": 1,
+                    "timeout": 120,
+                    "execution_mode": "parallel",
+                    "max_workers": 2,
+                }
             ),
         )
 
@@ -1132,8 +1212,18 @@ class TestDirectorDispatchLoop:
                         metadata={
                             "binding_fanout": True,
                             "per_binding": [
-                                {"provider_id": "p1", "model": "m1", "run_id": "r1", "status": "completed"},
-                                {"provider_id": "p2", "model": "m2", "run_id": "r2", "status": "completed"},
+                                {
+                                    "provider_id": "p1",
+                                    "model": "m1",
+                                    "run_id": "r1",
+                                    "status": "completed",
+                                },
+                                {
+                                    "provider_id": "p2",
+                                    "model": "m2",
+                                    "run_id": "r2",
+                                    "status": "completed",
+                                },
                             ],
                         },
                     ),
@@ -1144,18 +1234,60 @@ class TestDirectorDispatchLoop:
                         metadata={
                             "binding_fanout": True,
                             "per_binding": [
-                                {"provider_id": "p1", "model": "m1", "run_id": "r3", "status": "completed"},
-                                {"provider_id": "p2", "model": "m2", "run_id": "r4", "status": "completed"},
+                                {
+                                    "provider_id": "p1",
+                                    "model": "m1",
+                                    "run_id": "r3",
+                                    "status": "completed",
+                                },
+                                {
+                                    "provider_id": "p2",
+                                    "model": "m2",
+                                    "run_id": "r4",
+                                    "status": "completed",
+                                },
                             ],
                         },
                     ),
                 ]
                 # 第一轮后 pending 从 2 降到 1，第二轮后保持不变
                 self.stats = [
-                    {"total": 2, "pending": 2, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
-                    {"total": 2, "pending": 2, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
-                    {"total": 2, "pending": 1, "ready": 0, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 0},
-                    {"total": 2, "pending": 1, "ready": 0, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 0},
+                    {
+                        "total": 2,
+                        "pending": 2,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 2,
+                        "pending": 2,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 2,
+                        "pending": 1,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 1,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 2,
+                        "pending": 1,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 1,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
                 ]
 
             def _build_orchestration_service(self, context: dict) -> object:
@@ -1194,12 +1326,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 2, "timeout": 120, "execution_mode": "parallel", "max_workers": 2}
+                {
+                    "director_max_rounds": 2,
+                    "timeout": 120,
+                    "execution_mode": "parallel",
+                    "max_workers": 2,
+                }
             ),
         )
 
@@ -1218,17 +1355,105 @@ class TestDirectorDispatchLoop:
                 super().__init__(workspace)
                 self.rounds = 0
                 self.stats = [
-                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 4},
-                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 4},
-                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 3},
-                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 3},
-                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 2, "failed": 0, "blocked": 2},
-                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 2, "failed": 0, "blocked": 2},
-                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 3, "failed": 0, "blocked": 1},
-                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 3, "failed": 0, "blocked": 1},
-                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 4, "failed": 0, "blocked": 0},
-                    {"total": 5, "pending": 1, "ready": 1, "in_progress": 0, "completed": 4, "failed": 0, "blocked": 0},
-                    {"total": 5, "pending": 0, "ready": 0, "in_progress": 0, "completed": 5, "failed": 0, "blocked": 0},
+                    {
+                        "total": 5,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 4,
+                    },
+                    {
+                        "total": 5,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 4,
+                    },
+                    {
+                        "total": 5,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 1,
+                        "failed": 0,
+                        "blocked": 3,
+                    },
+                    {
+                        "total": 5,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 1,
+                        "failed": 0,
+                        "blocked": 3,
+                    },
+                    {
+                        "total": 5,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 2,
+                        "failed": 0,
+                        "blocked": 2,
+                    },
+                    {
+                        "total": 5,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 2,
+                        "failed": 0,
+                        "blocked": 2,
+                    },
+                    {
+                        "total": 5,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 3,
+                        "failed": 0,
+                        "blocked": 1,
+                    },
+                    {
+                        "total": 5,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 3,
+                        "failed": 0,
+                        "blocked": 1,
+                    },
+                    {
+                        "total": 5,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 4,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 5,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 4,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 5,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 5,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
                 ]
 
             def _build_orchestration_service(self, context: dict) -> object:
@@ -1292,7 +1517,7 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-24T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -1311,18 +1536,42 @@ class TestDirectorDispatchLoop:
         class _MockService:
             async def execute_director_run(self, **kwargs: object) -> CommandResult:
                 del kwargs
-                return CommandResult(run_id="run-1", status="timeout", message="Run timed out after 1 seconds")
+                return CommandResult(
+                    run_id="run-1",
+                    status="timeout",
+                    message="Run timed out after 1 seconds",
+                )
 
             async def query_run_status(self, run_id: str) -> CommandResult:
                 del run_id
-                return CommandResult(run_id="run-1", status="timeout", message="Run timed out after 1 seconds")
+                return CommandResult(
+                    run_id="run-1",
+                    status="timeout",
+                    message="Run timed out after 1 seconds",
+                )
 
         class _TimeoutExecutor(OrchestrationStageExecutor):
             def __init__(self, workspace: Path) -> None:
                 super().__init__(workspace)
                 self.stats = [
-                    {"total": 1, "pending": 1, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
-                    {"total": 1, "pending": 1, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
+                    {
+                        "total": 1,
+                        "pending": 1,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 1,
+                        "pending": 1,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
                 ]
 
             def _build_orchestration_service(self, context: dict) -> object:
@@ -1340,7 +1589,11 @@ class TestDirectorDispatchLoop:
 
             async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
                 del kwargs
-                return CommandResult(run_id="run-1", status="timeout", message="Run timed out after 1 seconds")
+                return CommandResult(
+                    run_id="run-1",
+                    status="timeout",
+                    message="Run timed out after 1 seconds",
+                )
 
             def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
                 del additional_events
@@ -1355,12 +1608,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 1}
+                {
+                    "director_max_rounds": 1,
+                    "timeout": 120,
+                    "execution_mode": "parallel",
+                    "max_workers": 1,
+                }
             ),
         )
 
@@ -1382,9 +1640,33 @@ class TestDirectorDispatchLoop:
             def __init__(self, workspace: Path) -> None:
                 super().__init__(workspace)
                 self.stats = [
-                    {"total": 1, "pending": 1, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
-                    {"total": 1, "pending": 1, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
-                    {"total": 1, "pending": 1, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
+                    {
+                        "total": 1,
+                        "pending": 1,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 1,
+                        "pending": 1,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 1,
+                        "pending": 1,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
                 ]
 
             def _build_orchestration_service(self, context: dict) -> object:
@@ -1410,10 +1692,21 @@ class TestDirectorDispatchLoop:
                 abort_checker: Any = None,
                 cancel_on_timeout: bool = True,
             ) -> CommandResult:
-                del service, initial_result, timeout_seconds, cancel_event, abort_checker, cancel_on_timeout
+                del (
+                    service,
+                    initial_result,
+                    timeout_seconds,
+                    cancel_event,
+                    abort_checker,
+                    cancel_on_timeout,
+                )
                 (self.workspace / "src").mkdir(parents=True, exist_ok=True)
                 (self.workspace / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
-                return CommandResult(run_id="run-1", status="timeout", message="Run timed out after 1 seconds")
+                return CommandResult(
+                    run_id="run-1",
+                    status="timeout",
+                    message="Run timed out after 1 seconds",
+                )
 
             def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
                 del additional_events
@@ -1428,12 +1721,17 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
             _factory_stage_context(
-                {"director_max_rounds": 1, "timeout": 120, "execution_mode": "parallel", "max_workers": 1}
+                {
+                    "director_max_rounds": 1,
+                    "timeout": 120,
+                    "execution_mode": "parallel",
+                    "max_workers": 1,
+                }
             ),
         )
 
@@ -1491,7 +1789,13 @@ class TestDirectorDispatchLoop:
 
             def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
                 del context
-                return [{"binding_id": "director:test", "provider_id": "test", "model": "test"}]
+                return [
+                    {
+                        "binding_id": "director:test",
+                        "provider_id": "test",
+                        "model": "test",
+                    }
+                ]
 
             def _read_claimable_director_task_ids(self, *, limit: int, factory_run_id: str = "") -> list[str]:
                 del limit, factory_run_id
@@ -1586,7 +1890,7 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -1737,7 +2041,7 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-07-10T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,
@@ -1825,7 +2129,10 @@ class TestDirectorDispatchLoop:
                     run_id="director-inflight",
                     status="timeout",
                     message="soft timeout",
-                    metadata={"inflight_run_continues": True, "cancel_signal_sent": False},
+                    metadata={
+                        "inflight_run_continues": True,
+                        "cancel_signal_sent": False,
+                    },
                 )
 
             async def _settle_inflight_director_run_after_timeout(
@@ -1857,7 +2164,7 @@ class TestDirectorDispatchLoop:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-07-10T00:00:00+00:00",
         )
-        _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
+        await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
 
         result = await executor._execute_director_dispatch(
             run,

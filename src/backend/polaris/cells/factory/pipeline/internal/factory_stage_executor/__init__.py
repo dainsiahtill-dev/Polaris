@@ -39,7 +39,9 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from polaris.cells.orchestration.orchestration_engine.public.service import OrchestrationCommandService
+    from polaris.cells.orchestration.orchestration_engine.public.service import (
+        OrchestrationCommandService,
+    )
 
 from polaris.cells.chief_engineer.blueprint.public import (
     BuildChiefEngineerBlueprintPortfolioCommandV1,
@@ -55,9 +57,6 @@ from polaris.cells.chief_engineer.blueprint.public import (
     project_completion_catalog_snapshot_hash,
     project_completion_verifier_policy_snapshot_hash,
     validate_director_handoff_from_payload,
-)
-from polaris.cells.chief_engineer.blueprint.public.contracts import (
-    _issue_chief_engineer_portfolio_authority_carrier,
 )
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.control_plane.verifier_policy.public import (
@@ -93,7 +92,9 @@ from polaris.cells.runtime.task_runtime.public.service import (
 from polaris.kernelone.constants import (
     MAX_LLM_PROVIDER_TIMEOUT_SECONDS,
 )
-from polaris.kernelone.events.final_request_evidence import canonical_role_final_request_json
+from polaris.kernelone.events.final_request_evidence import (
+    canonical_role_final_request_json,
+)
 from polaris.kernelone.fs import (
     GuardedRegularFileSnapshotError,
     KernelFileSystem,
@@ -221,7 +222,6 @@ logger = logging.getLogger(__name__)
 # Bind characterization-surface / TYPE_CHECKING symbols so they remain attributes.
 _ = (
     TYPE_CHECKING,
-    _issue_chief_engineer_portfolio_authority_carrier,
     _PM_ARCHITECT_DOC_MAX_CHARS,
     _PM_DIRECTIVE_MAX_CHARS,
     _PM_ORIGINAL_DIRECTIVE_MAX_CHARS,

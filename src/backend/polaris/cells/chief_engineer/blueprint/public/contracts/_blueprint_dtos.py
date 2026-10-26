@@ -40,7 +40,9 @@ from polaris.cells.chief_engineer.blueprint.public.contracts._helpers import (
     project_completion_catalog_snapshot_hash,
     project_completion_verifier_policy_snapshot_hash,
 )
-from polaris.cells.orchestration.pm_planning.public.artifact_contracts import GeneratedOutputV1
+from polaris.cells.orchestration.pm_planning.public.artifact_contracts import (
+    GeneratedOutputV1,
+)
 
 
 @dataclass(frozen=True)
@@ -97,7 +99,9 @@ class ChiefEngineerPortfolioTaskV1:
             raise ValueError("unsupported planning_contract_version")
         if self.verification_authority not in {"pm", "chief_engineer"}:
             raise ValueError("verification_authority must be pm or chief_engineer")
-        if light_intent and (self.topology_authority != "chief_engineer" or self.verification_authority != "chief_engineer"):
+        if light_intent and (
+            self.topology_authority != "chief_engineer" or self.verification_authority != "chief_engineer"
+        ):
             raise ValueError("task intent requires Chief Engineer topology and verification delegation")
         if not light_intent and self.verification_authority != "pm":
             raise ValueError("verification delegation requires pm.task_intent.v1")
@@ -105,7 +109,11 @@ class ChiefEngineerPortfolioTaskV1:
         if light_intent and not acceptance:
             raise ValueError("task intent requires immutable observable_acceptance")
         object.__setattr__(self, "observable_acceptance", acceptance)
-        object.__setattr__(self, "explicit_constraints", _strict_unique_string_tuple("explicit_constraints", self.explicit_constraints))
+        object.__setattr__(
+            self,
+            "explicit_constraints",
+            _strict_unique_string_tuple("explicit_constraints", self.explicit_constraints),
+        )
         dependencies = _strict_unique_string_tuple("dependencies", self.dependencies)
         if task_id in dependencies:
             raise ValueError("dependencies must not contain the task's own task_id")
@@ -122,7 +130,9 @@ class ChiefEngineerPortfolioTaskV1:
         if set(context_files) & set(self.target_files):
             raise ValueError("context_files must not overlap target_files")
         object.__setattr__(self, "context_files", context_files)
-        if not isinstance(self.generated_outputs, tuple) or any(type(row) is not GeneratedOutputV1 for row in self.generated_outputs):
+        if not isinstance(self.generated_outputs, tuple) or any(
+            type(row) is not GeneratedOutputV1 for row in self.generated_outputs
+        ):
             raise ValueError("generated_outputs must contain typed GeneratedOutputV1 records")
         if {row.path for row in self.generated_outputs} & set(self.target_files):
             raise ValueError("generated_outputs must not overlap target_files")
@@ -150,10 +160,19 @@ class ChiefEngineerPortfolioTaskV1:
         )
         if any(not suffix.startswith(".") or "/" in suffix or "\\" in suffix for suffix in allowed_source_suffixes):
             raise ValueError("allowed_source_suffixes must contain normalized file suffixes")
-        if topology_authority == "chief_engineer" and not light_intent and (not primary_language or not allowed_source_suffixes):
+        if (
+            topology_authority == "chief_engineer"
+            and not light_intent
+            and (not primary_language or not allowed_source_suffixes)
+        ):
             raise ValueError("chief_engineer topology authority requires immutable language suffix authority")
         entrypoint_kind_authority = str(self.entrypoint_kind_authority or "").strip().lower()
-        if entrypoint_kind_authority and entrypoint_kind_authority not in {"cli", "web", "api", "library"}:
+        if entrypoint_kind_authority and entrypoint_kind_authority not in {
+            "cli",
+            "web",
+            "api",
+            "library",
+        }:
             raise ValueError("entrypoint_kind_authority must be cli, web, api, library, or empty")
         object.__setattr__(self, "topology_authority", topology_authority)
         object.__setattr__(self, "required_source_kinds", required_source_kinds)
@@ -187,12 +206,14 @@ class ChiefEngineerPortfolioTaskV1:
         if self.context_files:
             result["context_files"] = list(self.context_files)
         if self.planning_contract_version:
-            result.update({
-                "planning_contract_version": self.planning_contract_version,
-                "verification_authority": self.verification_authority,
-                "observable_acceptance": list(self.observable_acceptance),
-                "explicit_constraints": list(self.explicit_constraints),
-            })
+            result.update(
+                {
+                    "planning_contract_version": self.planning_contract_version,
+                    "verification_authority": self.verification_authority,
+                    "observable_acceptance": list(self.observable_acceptance),
+                    "explicit_constraints": list(self.explicit_constraints),
+                }
+            )
         if self.generated_outputs:
             result["generated_outputs"] = [row.to_dict() for row in self.generated_outputs]
         return result
@@ -204,13 +225,12 @@ _PORTFOLIO_AUTHORITY_SIGNING_KEY = secrets.token_bytes(32)
 
 @dataclass(frozen=True, slots=True, init=False)
 class _ChiefEngineerPortfolioAuthorityCarrierV1:
-    """Opaque, one-run authority issued only by the Factory owner path.
+    """Opaque, one-run authority sealed inside CE after trusted host capture.
 
-    This type is intentionally absent from the public Cell exports.  Its
-    constructor requires a module-private identity seal, so public callers
-    cannot replace committed PM/catalog/verifier evidence with self-consistent
-    hashes.  The CE owner still revalidates mutable catalog state immediately
-    before persistence.
+    This type is absent from public Cell exports. The module seal separates
+    decoded input from the host source; it does not isolate arbitrary Python
+    host code. The production Factory source revalidates committed PM facts,
+    and CE revalidates mutable catalog state immediately before persistence.
     """
 
     workspace: str
@@ -356,12 +376,14 @@ def _portfolio_authority_receipt_hash(
 def _issue_chief_engineer_portfolio_authority_carrier(
     **kwargs: Any,
 ) -> _ChiefEngineerPortfolioAuthorityCarrierV1:
-    """Private Factory-owner bridge; deliberately not exported by the Cell."""
+    """CE-internal mint; trusted host capture owns the production source call."""
 
     return _ChiefEngineerPortfolioAuthorityCarrierV1(_seal=_PORTFOLIO_AUTHORITY_CARRIER_SEAL, **kwargs)
 
 
-def _portfolio_authority_carrier_signature(carrier: _ChiefEngineerPortfolioAuthorityCarrierV1) -> str:
+def _portfolio_authority_carrier_signature(
+    carrier: _ChiefEngineerPortfolioAuthorityCarrierV1,
+) -> str:
     seed = {
         "schema_version": "polaris.ce_portfolio_authority_carrier.v1",
         "workspace": str(Path(carrier.workspace).resolve()),
@@ -436,6 +458,23 @@ class BuildChiefEngineerBlueprintPortfolioCommandV1:
 
 
 @dataclass(frozen=True, slots=True)
+class CaptureChiefEngineerPortfolioAuthorityQueryV1:
+    """Host-only identity for a transient Factory source capture, never seeds."""
+
+    workspace: str
+    run_id: str
+    tasks: tuple[ChiefEngineerPortfolioTaskV1, ...]
+
+    def __post_init__(self) -> None:
+        identity = BuildChiefEngineerBlueprintPortfolioCommandV1(
+            workspace=self.workspace, run_id=self.run_id, tasks=self.tasks
+        )
+        object.__setattr__(self, "workspace", identity.workspace)
+        object.__setattr__(self, "run_id", identity.run_id)
+        object.__setattr__(self, "tasks", identity.tasks)
+
+
+@dataclass(frozen=True, slots=True)
 class QueryProjectCompletionContractV1:
     """Read one persisted CE-owned completion contract by exact authority identity."""
 
@@ -466,11 +505,16 @@ class ChiefEngineerProjectInterfaceContractV1:
     file_task_ownership: Mapping[str, tuple[str, ...]]
     provider_declarations: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     consumer_declarations: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
-    ownership_authority: Literal["pm_authoritative_tasks", "chief_engineer_completion_contract"] = "pm_authoritative_tasks"
+    ownership_authority: Literal["pm_authoritative_tasks", "chief_engineer_completion_contract"] = (
+        "pm_authoritative_tasks"
+    )
     task_read_context: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.ownership_authority not in {"pm_authoritative_tasks", "chief_engineer_completion_contract"}:
+        if self.ownership_authority not in {
+            "pm_authoritative_tasks",
+            "chief_engineer_completion_contract",
+        }:
             raise ValueError("unsupported interface ownership_authority")
         contract_id = _require_safe_filename_token("contract_id", self.contract_id)
         contract_ref = _require_non_empty("contract_ref", self.contract_ref)
@@ -539,7 +583,11 @@ class ChiefEngineerProjectInterfaceContractV1:
 
         object.__setattr__(self, "contract_id", contract_id)
         object.__setattr__(self, "contract_ref", normalized_ref)
-        object.__setattr__(self, "contract_hash", _require_non_empty("contract_hash", self.contract_hash))
+        object.__setattr__(
+            self,
+            "contract_hash",
+            _require_non_empty("contract_hash", self.contract_hash),
+        )
         object.__setattr__(self, "task_file_ownership", task_file_ownership)
         object.__setattr__(self, "file_task_ownership", file_task_ownership)
         object.__setattr__(self, "task_read_context", read_context)
@@ -577,8 +625,11 @@ class ChiefEngineerProjectInterfaceContractV1:
             "provider_declarations": [_json_safe_mapping(declaration) for declaration in self.provider_declarations],
             "consumer_declarations": [_json_safe_mapping(declaration) for declaration in self.consumer_declarations],
             "ownership_authority": self.ownership_authority,
-            **({"task_read_context": {task_id: list(paths) for task_id, paths in self.task_read_context.items()}}
-               if self.task_read_context else {}),
+            **(
+                {"task_read_context": {task_id: list(paths) for task_id, paths in self.task_read_context.items()}}
+                if self.task_read_context
+                else {}
+            ),
             "interface_declaration_authority": "chief_engineer_advisory_only",
             "authoritative": False,
         }
@@ -843,7 +894,11 @@ class ChiefEngineerBlueprintPortfolioV1:
         object.__setattr__(self, "project_completion_contract_hash", completion_hash)
         object.__setattr__(self, "shared_behavior_contract_ref", behavior_ref)
         object.__setattr__(self, "shared_behavior_contract_hash", behavior_hash)
-        object.__setattr__(self, "risk_flags", _strict_unique_string_tuple("risk_flags", self.risk_flags))
+        object.__setattr__(
+            self,
+            "risk_flags",
+            _strict_unique_string_tuple("risk_flags", self.risk_flags),
+        )
 
     def to_reference(self) -> dict[str, Any]:
         """Return the durable identity needed by downstream projections."""
@@ -995,7 +1050,11 @@ class TaskBlueprintGeneratedEventV1:
         object.__setattr__(self, "event_id", _require_non_empty("event_id", self.event_id))
         object.__setattr__(self, "task_id", _require_non_empty("task_id", self.task_id))
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
-        object.__setattr__(self, "blueprint_path", _require_non_empty("blueprint_path", self.blueprint_path))
+        object.__setattr__(
+            self,
+            "blueprint_path",
+            _require_non_empty("blueprint_path", self.blueprint_path),
+        )
         object.__setattr__(self, "generated_at", _require_non_empty("generated_at", self.generated_at))
 
 
@@ -1112,7 +1171,11 @@ class TaskBlueprintResultV1:
         object.__setattr__(self, "risks", tuple(str(v) for v in self.risks))
         object.__setattr__(self, "target_files", tuple(str(v) for v in self.target_files))
         if self.required_write_targets is not None:
-            object.__setattr__(self, "required_write_targets", tuple(str(v) for v in self.required_write_targets))
+            object.__setattr__(
+                self,
+                "required_write_targets",
+                tuple(str(v) for v in self.required_write_targets),
+            )
         object.__setattr__(self, "acceptance_criteria", tuple(str(v) for v in self.acceptance_criteria))
         object.__setattr__(self, "execution_checklist", tuple(str(v) for v in self.execution_checklist))
         object.__setattr__(self, "scope_paths", tuple(str(v) for v in self.scope_paths))
@@ -1131,7 +1194,11 @@ class TaskBlueprintResultV1:
             "existing_target_files",
             tuple(dict(item) for item in self.existing_target_files if isinstance(item, Mapping)),
         )
-        object.__setattr__(self, "module_interface_contract", _to_dict_copy(self.module_interface_contract))
+        object.__setattr__(
+            self,
+            "module_interface_contract",
+            _to_dict_copy(self.module_interface_contract),
+        )
 
 
 @dataclass(frozen=True)
@@ -1171,7 +1238,11 @@ class TaskBlueprintProvenanceSnapshotV1:
             "recomputed_pm_contract_hash",
             "pm_task_canonical_hash",
         ):
-            object.__setattr__(self, field_name, _require_provenance_sha256(field_name, getattr(self, field_name)))
+            object.__setattr__(
+                self,
+                field_name,
+                _require_provenance_sha256(field_name, getattr(self, field_name)),
+            )
         if type(self.matches) is not bool:
             raise TypeError("matches must be a bool")
         if self.blueprint_schema_version != _PROVENANCE_BLUEPRINT_SCHEMA:

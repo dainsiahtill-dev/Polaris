@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 from polaris.cells.director.runtime.internal.repair_kernel.runtime_dispatch import runtime_repair_bindings
 from polaris.cells.director.runtime.public import (
@@ -44,10 +45,10 @@ ROLES_ADAPTERS_DESCRIPTOR_PACK_PATH = (
     BACKEND_ROOT / "polaris" / "cells" / "roles" / "adapters" / "generated" / "descriptor.pack.json"
 )
 QA_ROOT = BACKEND_ROOT / "polaris" / "cells" / "qa"
-EXECUTE_METHOD_PATH = ROLES_DIRECTOR_ROOT / "execute_method.py"
+EXECUTE_METHOD_PATH = ROLES_DIRECTOR_ROOT / "execute_method"
 EXECUTE_METHOD_REPAIR_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "execute_method_repair_bridge.py"
 EXECUTE_METHOD_REPAIR_BRIDGE_MODULE = "polaris.cells.roles.adapters.internal.director.execute_method_repair_bridge"
-POST_EXECUTION_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "post_execution_repair_bridge.py"
+POST_EXECUTION_BRIDGE_PATH = ROLES_DIRECTOR_ROOT / "post_execution_repair_bridge"
 MATERIALIZATION_QUALITY_CALLBACK_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_callback_ports.py"
 MATERIALIZATION_QUALITY_EVIDENCE_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_evidence_ports.py"
 MATERIALIZATION_QUALITY_RUNTIME_PORTS_PATH = ROLES_DIRECTOR_ROOT / "materialization_quality_runtime_ports.py"
@@ -61,12 +62,12 @@ PYTHON_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "python_re
 GO_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "go_repairs.py"
 CPP_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "cpp_repairs.py"
 JAVA_REPAIRS_PATH = ROLES_DIRECTOR_ROOT / "deterministic_repairs" / "java_repairs.py"
-QUALITY_GATE_PATH = ROLES_DIRECTOR_ROOT / "quality_gate.py"
+QUALITY_GATE_PATH = ROLES_DIRECTOR_ROOT / "quality_gate"
 DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH = (
-    BACKEND_ROOT / "polaris" / "cells" / "director" / "runtime" / "public" / "service.py"
+    BACKEND_ROOT / "polaris" / "cells" / "director" / "runtime" / "public" / "service"
 )
 DIRECTOR_RUNTIME_PUBLIC_CONTRACTS_PATH = (
-    BACKEND_ROOT / "polaris" / "cells" / "director" / "runtime" / "public" / "contracts.py"
+    BACKEND_ROOT / "polaris" / "cells" / "director" / "runtime" / "public" / "contracts"
 )
 DIRECTOR_RUNTIME_PUBLIC_INIT_PATH = (
     BACKEND_ROOT / "polaris" / "cells" / "director" / "runtime" / "public" / "__init__.py"
@@ -75,9 +76,10 @@ DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_ROOT = (
     BACKEND_ROOT / "polaris" / "cells" / "director" / "runtime" / "internal" / "repair_kernel"
 )
 FACTORY_STAGE_EXECUTOR_PATH = (
-    BACKEND_ROOT / "polaris" / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
+    BACKEND_ROOT / "polaris" / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor"
 )
 FACTORY_PIPELINE_INTERNAL_ROOT = FACTORY_STAGE_EXECUTOR_PATH.parent
+FACTORY_WORKSPACE_QUALITY_IMPL_PATH = FACTORY_PIPELINE_INTERNAL_ROOT / "factory_workspace_quality_impl.py"
 FACTORY_WORKSPACE_QUALITY_PATH = (
     BACKEND_ROOT / "polaris" / "cells" / "factory" / "pipeline" / "internal" / "factory_workspace_quality.py"
 )
@@ -109,8 +111,11 @@ SCHEDULE_RUNNER_BINDING_BRIDGES = {
     POST_EXECUTION_BRIDGE_PATH,
 }
 DIRECTOR_RUNTIME_INTERNAL_REPAIR_KERNEL_IMPORT_ALLOWLIST = {
-    DIRECTOR_RUNTIME_PUBLIC_CONTRACTS_PATH,
-    DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH,
+    DIRECTOR_RUNTIME_PUBLIC_CONTRACTS_PATH / "_diagnostics_receipts.py",
+    DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH / "__init__.py",
+    DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH / "_core.py",
+    DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH / "_execution.py",
+    DIRECTOR_RUNTIME_PUBLIC_SERVICE_PATH / "_projections.py",
 }
 PUBLIC_MIGRATION_ONLY_REPAIR_SHIMS: dict[str, str] = {}
 PUBLIC_MIGRATION_SHIM_TEST_REFERENCE_ALLOWLIST = {
@@ -230,7 +235,7 @@ FACTORY_PIPELINE_CONTROL_PLANE_WRITE_ALLOWLIST: dict[tuple[str, str, str], str] 
     ("factory_artifact_store.py", "write_text_artifact", "write_text_atomic"): "Factory control-plane artifact",
     ("factory_run_admission.py", "_stable_exclusive_lock", "open(write-mode)"): "Factory lease lock",
     ("factory_run_admission.py", "_write_locked", "write_json_atomic"): "Factory lease record",
-    ("factory_stage_executor.py", "_create_pre_director_snapshot", "write_json_atomic"): (
+    ("factory_stage_executor/_mixin_00.py", "_create_pre_director_snapshot", "write_json_atomic"): (
         "workspace .polaris pre-Director snapshot manifest"
     ),
     ("factory_store.py", "_write_file_sync", "write_text_atomic"): "Factory run checkpoint",
@@ -238,8 +243,16 @@ FACTORY_PIPELINE_CONTROL_PLANE_WRITE_ALLOWLIST: dict[tuple[str, str, str], str] 
 }
 
 
+def _source_files(path: Path) -> tuple[Path, ...]:
+    if path.is_dir():
+        sources = tuple(sorted(path.glob("*.py")))
+        assert sources, f"Missing canonical sources: {path}"
+        return sources
+    return (path,)
+
+
 def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+    return "\n".join(source.read_text(encoding="utf-8") for source in _source_files(path))
 
 
 def _load_catalog_cells() -> dict[str, dict[str, Any]]:
@@ -287,17 +300,20 @@ def _resolve_import_from_module(path: Path, node: ast.ImportFrom) -> str:
 
 
 def _imported_modules(path: Path) -> list[str]:
-    tree = ast.parse(_read_text(path))
     modules: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            modules.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            modules.append(_resolve_import_from_module(path, node))
+    for source in _source_files(path):
+        tree = ast.parse(_read_text(source))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                modules.append(_resolve_import_from_module(source, node))
     return modules
 
 
 def _import_references(path: Path) -> list[str]:
+    if path.is_dir():
+        return [reference for source in _source_files(path) for reference in _import_references(source)]
     tree = ast.parse(_read_text(path))
     references: list[str] = []
     for node in ast.walk(tree):
@@ -320,8 +336,105 @@ def _import_references(path: Path) -> list[str]:
 
 
 def _called_function_names(path: Path) -> set[str]:
-    tree = ast.parse(_read_text(path))
-    return _called_function_names_in_node(tree)
+    names: set[str] = set()
+    cache: dict[Path, ast.Module] = {}
+    for source in _source_files(path):
+        tree = ast.parse(_read_text(source))
+        names.update(_called_function_names_in_node(tree))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and (origin := _controlled_package_attr_origin(source, node, cache)) is not None
+            ):
+                names.add(origin[1])
+    return names
+
+
+def _cached_source_tree(path: Path, cache: dict[Path, ast.Module]) -> ast.Module:
+    if path not in cache:
+        cache[path] = ast.parse(_read_text(path))
+    return cache[path]
+
+
+def _literal_binding_origin(
+    path: Path, name: str, seen: frozenset[tuple[Path, str]], cache: dict[Path, ast.Module]
+) -> tuple[Path, str] | None:
+    key = (path, name)
+    if key in seen or len(seen) >= 32 or not path.is_file():
+        return None
+    bindings: list[tuple[Path, str] | None] = []
+    for node in _cached_source_tree(path, cache).body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name:
+            bindings.append((path, name))
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if (alias.asname or alias.name) != name:
+                    continue
+                module = _resolve_import_from_module(path, node)
+                stem = BACKEND_ROOT.joinpath(*module.split("."))
+                target = stem / "__init__.py" if (stem / "__init__.py").is_file() else stem.with_suffix(".py")
+                origin = _literal_binding_origin(target, alias.name, seen | {key}, cache)
+                if origin is not None:
+                    bindings.append(origin)
+        elif (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == name for target in node.targets)
+        ) or (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == name
+            and node.value is not None
+        ):
+            bindings.append(None)
+    return bindings[0] if len(bindings) == 1 else None
+
+
+def _controlled_package_attr_origin(
+    path: Path, call: ast.Call, cache: dict[Path, ast.Module]
+) -> tuple[Path, str] | None:
+    lookup = call.func
+    if not (
+        isinstance(lookup, ast.Call)
+        and isinstance(lookup.func, ast.Name)
+        and lookup.func.id == "package_attr"
+        and len(lookup.args) == 1
+        and isinstance(lookup.args[0], ast.Constant)
+        and isinstance(lookup.args[0].value, str)
+    ):
+        return None
+    caller = _cached_source_tree(path, cache)
+    if any(
+        (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id == "package_attr")
+        or (isinstance(node, ast.arg) and node.arg == "package_attr")
+        for node in ast.walk(caller)
+    ):
+        return None
+    helper = _literal_binding_origin(path, "package_attr", frozenset(), cache)
+    if helper is None or helper[0] != path.parent / "_package_ns.py":
+        return None
+    definitions = [
+        node
+        for node in _cached_source_tree(helper[0], cache).body
+        if isinstance(node, ast.FunctionDef) and node.name == "package_attr"
+    ]
+    if len(definitions) != 1:
+        return None
+    body = definitions[0].body
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    expected = ast.parse(
+        "pkg = sys.modules.get(__package__)\n"
+        "if pkg is None:\n    raise RuntimeError('quality_gate_package_not_loaded')\n"
+        "return getattr(pkg, name)\n"
+    ).body
+    if [ast.dump(node) for node in body] != [ast.dump(node) for node in expected]:
+        return None
+    return _literal_binding_origin(path.parent / "__init__.py", lookup.args[0].value, frozenset(), cache)
 
 
 def _called_function_names_in_node(root: ast.AST) -> set[str]:
@@ -503,7 +616,7 @@ def _function_source(path: Path, function_name: str) -> str:
     source = _read_text(path)
     tree = ast.parse(source)
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == function_name:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
             return ast.get_source_segment(source, node) or ""
     raise AssertionError(f"function not found: {function_name}")
 
@@ -667,7 +780,7 @@ def _factory_pipeline_write_primitive_owners() -> set[tuple[str, str, str]]:
                 primitive = _factory_pipeline_write_primitive(node)
                 if not primitive:
                     continue
-                owners.add((path.name, function.name, primitive))
+                owners.add((path.relative_to(FACTORY_PIPELINE_INTERNAL_ROOT).as_posix(), function.name, primitive))
     return owners
 
 
@@ -714,14 +827,33 @@ def _workspace_quality_write_reachability(source: str) -> dict[str, list[str]]:
         memo[name] = set(sinks)
         return sinks
 
-    return {
-        name: sorted(sinks)
-        for name in sorted(definitions)
-        if (sinks := reachable_sinks(name, set()))
-    }
+    return {name: sorted(sinks) for name in sorted(definitions) if (sinks := reachable_sinks(name, set()))}
 
 
 def _is_write_mode_open_call(node: ast.Call) -> bool:
+    if (
+        isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+        and node.func.attr == "open"
+    ):
+        flags = (
+            node.args[1] if len(node.args) > 1 else next((kw.value for kw in node.keywords if kw.arg == "flags"), None)
+        )
+
+        def readonly(value: ast.AST | None) -> bool:
+            if isinstance(value, ast.Constant):
+                return type(value.value) is int and value.value == 0
+            if isinstance(value, ast.BinOp) and isinstance(value.op, ast.BitOr):
+                return readonly(value.left) and readonly(value.right)
+            return (
+                isinstance(value, ast.Attribute)
+                and isinstance(value.value, ast.Name)
+                and value.value.id == "os"
+                and value.attr in {"O_RDONLY", "O_CLOEXEC", "O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK", "O_PATH"}
+            )
+
+        return not readonly(flags)
     call_name = _call_name(node)
     if call_name != "open":
         return False
@@ -736,6 +868,28 @@ def _is_write_mode_open_call(node: ast.Call) -> bool:
         if keyword.arg == "mode" and isinstance(keyword_mode, ast.Constant) and isinstance(keyword_mode.value, str):
             mode = keyword_mode.value
     return mode is not None and any(flag in mode for flag in ("w", "a", "x", "+"))
+
+
+@pytest.mark.parametrize(
+    ("source", "writes"),
+    (
+        ("os.open('bwrap', os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)", False),
+        ("os.open('workspace', os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK)", False),
+        ("os.open('file', os.O_WRONLY | os.O_CREAT)", True),
+        ("os.open('file', os.O_RDWR)", True),
+        ("os.open('file', os.O_RDONLY | os.O_TRUNC)", True),
+        ("os.open('file', os.O_RDONLY | os.O_APPEND)", True),
+        ("os.open('file', flags)", True),
+        ("os.open('file', os.O_UNKNOWN)", True),
+        ("open('file', 'wb')", True),
+    ),
+)
+def test_open_effect_fence_distinguishes_read_write_and_unknown_flags(source: str, writes: bool) -> None:
+    statement = ast.parse(source).body[0]
+    assert isinstance(statement, ast.Expr)
+    call = statement.value
+    assert isinstance(call, ast.Call)
+    assert _is_write_mode_open_call(call) is writes
 
 
 def test_roles_adapters_does_not_own_director_repair_kernel_package() -> None:
@@ -977,7 +1131,12 @@ def test_legacy_repair_bridge_allowlist_is_explicit_and_schedule_limited() -> No
 
 def test_execute_method_repair_bridge_is_migration_only_and_not_a_public_fact_source() -> None:
     violations: list[str] = []
-    allowed_production_importers = {EXECUTE_METHOD_PATH}
+    allowed_production_importers = {
+        EXECUTE_METHOD_PATH / "__init__.py",
+        EXECUTE_METHOD_PATH / "_phases_failure.py",
+        EXECUTE_METHOD_PATH / "_phases_materialization.py",
+        EXECUTE_METHOD_PATH / "_phases_quality.py",
+    }
     for path in _repair_boundary_import_source_files():
         if path == EXECUTE_METHOD_REPAIR_BRIDGE_PATH or path in allowed_production_importers:
             continue
@@ -1228,14 +1387,73 @@ def test_roles_adapter_public_boundary_blocks_internal_kernel_and_direct_legacy_
     assert "run_materialization_quality_public_boundary" in execute_calls
 
 
+def _repair_revalidation_source() -> str:
+    definitions: dict[str, list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]] = {}
+    for path in _source_files(EXECUTE_METHOD_PATH):
+        source = _read_text(path)
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                definitions.setdefault(node.name, []).append((source, node))
+    pending = ["_project_repair_revalidation_summary"]
+    visited: set[str] = set()
+    chunks: list[str] = []
+    external_boundary = {"AttachDirectorRepairRevalidationEvidenceV1", "project_director_repair_revalidation_evidence"}
+    pure_builtins = {"dict", "list", "tuple", "set", "frozenset", "str", "int", "float", "bool", "len", "isinstance"}
+    while pending:
+        name = pending.pop()
+        if name in visited:
+            continue
+        visited.add(name)
+        assert name in definitions, f"Unresolved repair revalidation helper: {name}"
+        for source, function in definitions[name]:
+            chunks.append(ast.get_source_segment(source, function) or "")
+            for call in ast.walk(function):
+                if not isinstance(call, ast.Call):
+                    continue
+                assert isinstance(call.func, ast.Name), (
+                    "Computed repair revalidation helper needs explicit source binding"
+                )
+                target = call.func.id
+                if target in external_boundary or target in pure_builtins:
+                    continue
+                assert target in definitions, f"Unresolved repair revalidation helper: {target}"
+                pending.append(target)
+    return "\n".join(chunks)
+
+
 def test_execute_method_projects_revalidation_evidence_through_runtime_public_contract() -> None:
-    execute_calls = _called_function_names(EXECUTE_METHOD_PATH)
-    execute_source = _read_text(EXECUTE_METHOD_PATH)
+    execute_source = _repair_revalidation_source()
+    execute_calls = _called_function_names_in_node(ast.parse(execute_source))
 
     assert "AttachDirectorRepairRevalidationEvidenceV1" in execute_source
     assert "project_director_repair_revalidation_evidence" in execute_calls
     assert "authority_hash" not in execute_source
     assert "projection_hash" not in execute_source
+
+
+@pytest.mark.parametrize("transitive", (False, True))
+def test_revalidation_hash_fence_covers_active_body_and_transitive_helpers(
+    monkeypatch: pytest.MonkeyPatch, transitive: bool
+) -> None:
+    test_execute_method_projects_revalidation_evidence_through_runtime_public_contract()
+    target = EXECUTE_METHOD_PATH / "_phases_materialization.py"
+    read_text = Path.read_text
+
+    def mutated(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        if path != target:
+            return source
+        needle = "    return dict(\n        project_director_repair_revalidation_evidence("
+        assert needle in source
+        injection = "    _forged_repair_binding()\n" if transitive else "    authority_hash = 'forged'\n"
+        source = source.replace(needle, injection + needle, 1)
+        if transitive:
+            source += "\ndef _forged_repair_binding():\n    return {'projection_hash': 'forged'}\n"
+        return source
+
+    monkeypatch.setattr(Path, "read_text", mutated)
+    with pytest.raises(AssertionError):
+        test_execute_method_projects_revalidation_evidence_through_runtime_public_contract()
 
 
 def test_execute_method_delegates_post_execution_language_repairs_to_bridge() -> None:
@@ -1581,21 +1799,87 @@ def test_go_bare_import_string_repair_runs_through_director_runtime_kernel() -> 
     assert "repair_go_bare_import_strings(" not in source
 
 
+def test_factory_materialization_fence_detects_active_mixin_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = BACKEND_ROOT / "polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_03.py"
+    read_text = Path.read_text
+
+    def mutated(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        return (
+            source + "\ndef forbidden_factory_repair():\n    _apply_deterministic_materialization_quality_repairs()\n"
+            if path == target
+            else source
+        )
+
+    monkeypatch.setattr(Path, "read_text", mutated)
+    with pytest.raises(AssertionError):
+        assert "_apply_deterministic_materialization_quality_repairs" not in _called_function_names(
+            FACTORY_STAGE_EXECUTOR_PATH
+        )
+
+
+@pytest.mark.parametrize("mutation", ("export", "namespace"))
+def test_materialization_fence_resolves_actual_package_dispatch(monkeypatch: pytest.MonkeyPatch, mutation: str) -> None:
+    test_materialization_quality_repairs_stay_behind_public_boundary()
+    target = QUALITY_GATE_PATH / ("__init__.py" if mutation == "export" else "_package_ns.py")
+    read_text = Path.read_text
+
+    def mutated(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        if path != target:
+            return source
+        if mutation == "namespace":
+            return source.replace("sys.modules.get(__package__)", "sys.modules.get('unrelated_package')")
+        return source.replace(
+            "from ..materialization_quality_boundary import run_materialization_quality_public_boundary",
+            "from ..materialization_quality_runtime_ports import has_materialization_quality_runtime_repair_coverage as run_materialization_quality_public_boundary",
+        )
+
+    monkeypatch.setattr(Path, "read_text", mutated)
+    with pytest.raises(AssertionError):
+        test_materialization_quality_repairs_stay_behind_public_boundary()
+
+
 def test_materialization_quality_repairs_stay_behind_public_boundary() -> None:
     execute_calls = _called_function_names(EXECUTE_METHOD_PATH)
     quality_calls = _called_function_names(QUALITY_GATE_PATH)
     boundary_calls = _called_function_names(MATERIALIZATION_QUALITY_BOUNDARY_PATH)
     factory_calls = _called_function_names(FACTORY_STAGE_EXECUTOR_PATH)
+    factory_delegate = _function_source(FACTORY_STAGE_EXECUTOR_PATH, "_apply_workspace_quality_deterministic_repairs")
+    delegate_tree = ast.parse(factory_delegate)
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "workspace_quality_impl"
+        and node.func.attr == "_apply_workspace_quality_deterministic_repairs"
+        for node in ast.walk(delegate_tree)
+    )
+    assert "polaris.cells.factory.pipeline.internal.factory_workspace_quality_impl" in _import_references(
+        FACTORY_STAGE_EXECUTOR_PATH / "__init__.py"
+    )
+    factory_calls |= _called_function_names(FACTORY_WORKSPACE_QUALITY_IMPL_PATH)
     execute_source = _read_text(EXECUTE_METHOD_PATH)
     quality_source = _read_text(QUALITY_GATE_PATH)
     boundary_source = _read_text(MATERIALIZATION_QUALITY_BOUNDARY_PATH)
     factory_source = _read_text(FACTORY_STAGE_EXECUTOR_PATH)
+    factory_source += _read_text(FACTORY_WORKSPACE_QUALITY_IMPL_PATH)
 
     assert "_apply_deterministic_materialization_quality_repairs" not in execute_calls
     assert "run_materialization_quality_repairs" not in execute_calls
     assert "run_materialization_quality_repairs" not in quality_calls
     assert "run_materialization_quality_public_boundary" in execute_calls
     assert "run_materialization_quality_public_boundary" in quality_calls
+    binding_cache: dict[Path, ast.Module] = {}
+    boundary_origins = {
+        origin
+        for source in _source_files(QUALITY_GATE_PATH)
+        for node in ast.walk(ast.parse(_read_text(source)))
+        if isinstance(node, ast.Call)
+        and (origin := _controlled_package_attr_origin(source, node, binding_cache)) is not None
+        and origin[1] == "run_materialization_quality_public_boundary"
+    }
+    assert boundary_origins == {(MATERIALIZATION_QUALITY_BOUNDARY_PATH, "run_materialization_quality_public_boundary")}
     assert "run_director_materialization_quality_repair_schedule_result" in boundary_calls
     assert "_apply_deterministic_materialization_quality_repairs" not in execute_source
     assert (

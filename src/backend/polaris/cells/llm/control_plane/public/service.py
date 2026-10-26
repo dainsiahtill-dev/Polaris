@@ -11,7 +11,12 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
-from polaris.cells.llm.control_plane.internal.llm_config_agent import HRAgent, LLMConfig, LLMConfigStore
+from polaris.cells.llm.control_plane.internal.llm_config_agent import (
+    LLMConfig,
+    LLMConfigService,
+    LLMConfigStore,
+    _validate_provider_cfg as validate_llm_provider_cfg,
+)
 from polaris.cells.llm.control_plane.internal.providers.ollama import list_ollama_models, ollama_stop
 from polaris.cells.llm.control_plane.internal.tui_llm_client import (
     LLMMessage,
@@ -455,9 +460,9 @@ def load_llm_config_port(
 
 __all__ = [
     "CheckLlmModelCapabilityQueryV1",
-    "HRAgent",
     "ILLMControlPlane",
     "LLMConfig",
+    "LLMConfigService",
     "LLMConfigStore",
     "LLMMessage",
     "LLMRequest",
@@ -475,4 +480,5 @@ __all__ = [
     "load_llm_config_port",
     "ollama_stop",
     "save_llm_config",
+    "validate_llm_provider_cfg",
 ]

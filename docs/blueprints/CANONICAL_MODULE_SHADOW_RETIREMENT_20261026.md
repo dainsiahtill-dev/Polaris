@@ -1,0 +1,11 @@
+# 同名遮蔽实现与实际检查路径收敛
+
+状态：已完成只读取证，待损失为零的退役。范围：Factory bench_gates.py / factory_stage_executor.py 与同名package，以及agent_stress/observer.py与package。
+
+普通Python解析实际选择package，两个Factory旧.py仍保留完整旧实现；活动package已使用public reachable_provider_pool。旧文件仍被platform_modules registry和架构静态检查当作真源读取，造成重复实现及检查过时源码的技术债务。第三observer旧shim有失效导出，正常-m入口来自package.__main__。268路径引用及87loader位置已取证，不能直接批量删文件。
+
+先把当前登记、静态安全/架构消费者改成实际package/mixin源；检查必须覆盖真实运行函数，不能只读薄__init__而失去原fence。添加临时活动源反例验证不安全变体仍被抓到。历史报告原文与历史SourceLocator保留时点，不改写过去事实。
+
+然后在明确无剩余直接fileloader或合法CLI消费者后删除两个Factory并行旧实现。若确有直接CLI入口需兼容，只允许极薄转发到唯一canonical实现，不留第二套业务逻辑。observer路径按实际当前CLI消费者证明后选择删除失效shim或修成单一透明转发；公开package与-m行为、flags和结果不变。
+
+旧正常导入、public对象身份/行为、consumer/module registry、活动架构fence负例和CLI/cold测试先红后绿。不能靠移动检查/缩短覆盖/删测试凑零。无源码hash/合同字段要求模型维护，不改变Factory生产退役或Bench内部边界。Root拥有sharedcatalog/checker和当前文档索引，工作者按精确文件报告。取证在cross-cell-audit/implementation-proposal.json，目标产物与服务不可碰。

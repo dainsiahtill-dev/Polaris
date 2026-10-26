@@ -9,1221 +9,106 @@ writing task entities directly.
 from __future__ import annotations
 
 import ast
-import json
+import importlib
+import inspect
 from collections import Counter
-from collections.abc import Iterable, Set as AbstractSet
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.runtime.task_runtime.public.contracts import TASK_RUNTIME_EXECUTION_STREAM_V1
-
-BACKEND_ROOT = Path(__file__).resolve().parents[3]
-POLARIS_ROOT = BACKEND_ROOT / "polaris"
-TASK_RUNTIME_OWNER = POLARIS_ROOT / "cells" / "runtime" / "task_runtime"
-TASK_RUNTIME_INTERNAL_BOARD = TASK_RUNTIME_OWNER / "internal" / "task_board.py"
-TASK_RUNTIME_INTERNAL_SERVICE = TASK_RUNTIME_OWNER / "internal" / "service.py"
-TASK_RUNTIME_PUBLIC_BOARD_CONTRACT = TASK_RUNTIME_OWNER / "public" / "task_board_contract.py"
-TASK_RUNTIME_DESCRIPTOR = TASK_RUNTIME_OWNER / "generated" / "descriptor.pack.json"
-TASK_RUNTIME_INTERNAL_EXECUTION_SESSION_DESCRIPTOR_FILE = (
-    "polaris/cells/runtime/task_runtime/internal/execution_session.py"
+import pytest
+from polaris.tests.architecture._task_runtime_taskboard_boundary_fence_helpers import (
+    _EXECUTION_LIKE_TASK_ROW_STATUSES,
+    BACKEND_ROOT,
+    DELIVERY_CLI_DIRECTOR_SERVICE,
+    DELIVERY_PM_TASKBOARD,
+    DIRECTOR_ADAPTER,
+    DIRECTOR_EXECUTE_METHOD,
+    EXECUTION_SESSION_MODULE,
+    FACTORY_STAGE_EXECUTOR,
+    KERNEL_DIRECTED_EFFECT_LIFECYCLE,
+    KERNEL_TRANSACTION_FACTORY,
+    PM_ADAPTER,
+    PM_BOARD_TASKS,
+    PM_PLANNING_AGENT,
+    POLARIS_ROOT,
+    QA_ADAPTER,
+    REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS,
+    REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES,
+    ROLE_ADAPTER_BASE,
+    ROLE_ADAPTER_PATHS,
+    ROLE_WORKER_POOL,
+    RUNTIME_ARTIFACT_STORE_ARTIFACTS,
+    TASK_RUNTIME_EXECUTION_EVENT_CHECK_HELPERS,
+    TASK_RUNTIME_EXECUTION_EVENT_CHECK_REQUIRED,
+    TASK_RUNTIME_INTERNAL_BOARD,
+    TASK_RUNTIME_INTERNAL_SERVICE,
+    TASK_RUNTIME_OWNER,
+    TASK_RUNTIME_PUBLIC_BOARD_CONTRACT,
+    TASK_RUNTIME_PUBLIC_CONTRACTS,
+    TASK_RUNTIME_PUBLIC_SERVICE,
+    TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_CONSUMERS,
+    TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_HELPER,
+    TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_CONSUMERS,
+    TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_HELPER,
+    TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_CONSUMERS,
+    TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_HELPER,
+    TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_CONSUMERS,
+    TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_HELPER,
+    TASK_RUNTIME_SERVICE_RAW_BOARD_READ_METHODS,
+    TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_CONSUMERS,
+    TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_HELPER,
+    TASK_RUNTIME_TYPED_SETTLEMENT_CONTRACT,
+    TASK_RUNTIME_TYPED_SETTLEMENT_SERVICE,
+    TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS,
+    TASKBOARD_TERMINAL_EVENT_STREAM,
+    _assigned_constant_tuple,
+    _assigned_frozenset_literal_strings,
+    _call_name,
+    _canonical_source_text,
+    _check_task_exists_forbidden_raw_reads,
+    _contains_execution_status_guard,
+    _direct_self_board_get_calls,
+    _direct_self_method_calls,
+    _direct_task_row_file_accesses,
+    _direct_task_row_file_globs,
+    _director_update_task_progress_uses_metadata_only_delegate,
+    _function_body_references_any_name,
+    _function_body_references_name,
+    _function_def,
+    _function_definition,
+    _function_uses_typed_public_settlement,
+    _is_allowed_owner_path,
+    _legacy_task_board_alias_references,
+    _legacy_task_runtime_method_calls,
+    _legacy_task_runtime_symbol_aliases,
+    _literal_execution_status_update_board_task_calls,
+    _literal_status_method_calls,
+    _literal_status_update_task_row_calls,
+    _method_body_directly_calls_self_method,
+    _module_defines_symbol,
+    _owner_transition_call_boundary_violations,
+    _raw_task_row_read_calls,
+    _raw_taskboard_create_calls,
+    _raw_taskboard_imports,
+    _retired_terminal_caller_violations,
+    _runtime_execution_metadata_writes,
+    _string_literal,
+    _task_runtime_execution_reader_violations,
+    _task_runtime_execution_writer_violations,
+    _task_runtime_service_method_defs,
+    _task_runtime_service_raw_board_read_calls,
+    _task_runtime_service_raw_board_write_calls,
+    _task_status_is_terminal_values,
+    _taskboard_class,
+    _taskboard_method,
+    _taskboard_row_write_boundary_violations,
+    _taskboard_save_task_local_cas_violations,
+    _taskboard_save_task_row_file_lock_violations,
+    _taskboard_save_task_row_write_receipt_violations,
+    _update_task_row_boundary_violations,
+    _walk_task_runtime_method_body,
+    _write_terminal_event_fact_stream_cas_violations,
 )
-ROLE_WORKER_POOL = POLARIS_ROOT / "cells" / "roles" / "runtime" / "internal" / "worker_pool.py"
-DELIVERY_PM_TASKBOARD = POLARIS_ROOT / "delivery" / "cli" / "pm" / "engine" / "taskboard.py"
-DELIVERY_CLI_DIRECTOR_SERVICE = POLARIS_ROOT / "delivery" / "cli" / "director" / "director_service.py"
-ROLE_ADAPTER_BASE = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "base.py"
-PM_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "pm_adapter.py"
-PM_PLANNING_AGENT = POLARIS_ROOT / "cells" / "orchestration" / "pm_planning" / "internal" / "pm_agent.py"
-DIRECTOR_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "director" / "adapter.py"
-DIRECTOR_EXECUTE_METHOD = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "director" / "execute_method.py"
-KERNEL_TRANSACTION_FACTORY = (
-    POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "kernel" / "transaction_factory.py"
-)
-KERNEL_DIRECTED_EFFECT_LIFECYCLE = (
-    POLARIS_ROOT / "cells" / "roles" / "kernel" / "internal" / "directed_effect_lifecycle.py"
-)
-PM_BOARD_TASKS = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "pm" / "board_tasks.py"
-QA_ADAPTER = POLARIS_ROOT / "cells" / "roles" / "adapters" / "internal" / "qa_adapter.py"
-DIRECTOR_EXECUTION_SERVICE = POLARIS_ROOT / "cells" / "director" / "execution" / "service.py"
-RUNTIME_PROJECTION_SERVICE = (
-    POLARIS_ROOT / "cells" / "runtime" / "projection" / "internal" / "runtime_projection_service.py"
-)
-FACTORY_HTTP_ROUTER = POLARIS_ROOT / "delivery" / "http" / "routers" / "factory.py"
-EXECUTION_SESSION_MODULE = (
-    BACKEND_ROOT / "polaris" / "cells" / "runtime" / "task_runtime" / "internal" / "execution_session.py"
-)
-EXECUTION_FACT_READ_PROJECTOR = "project_task_row_from_execution_fact_payload"
-EXECUTION_FACT_LIST_READER = "list_task_rows_from_execution_facts"
-EXECUTION_FACT_SEQ_KEY = "fact_event_seq"
-EXECUTION_FACT_SEQ_SOURCE_KEY = "seq"
-EXECUTION_FACT_DOT_SEQ_FILE_PATTERNS = (
-    ".seq",
-    ".seq.lock",
-    "task_runtime.execution.jsonl.seq",
-)
-FACTORY_BENCH_RUNNER = BACKEND_ROOT / "scripts" / "factory_bench" / "run_factory_bench.py"
-FACTORY_STAGE_EXECUTOR = POLARIS_ROOT / "cells" / "factory" / "pipeline" / "internal" / "factory_stage_executor.py"
-RUNTIME_ARTIFACT_STORE_ARTIFACTS = POLARIS_ROOT / "cells" / "runtime" / "artifact_store" / "internal" / "artifacts.py"
-RAW_TASKBOARD_MODULES = {
-    "polaris.cells.runtime.task_runtime.internal.task_board",
-    "polaris.cells.runtime.task_runtime.public.task_board_contract",
-}
-RAW_TASKBOARD_NAMES = {"TaskBoard", "TaskBoardToolInterface", "create_taskboard"}
-LEGACY_TASK_RUNTIME_METHODS = {
-    "create",
-    "update",
-    "get",
-    "reopen",
-    "update_task",
-    "list_all",
-    "list_ready",
-    "get_ready_tasks",
-    "get_stats",
-}
-RAW_TASK_ROW_READ_METHODS = {"list_task_rows"}
-TASK_RUNTIME_RECEIVER_NAMES = {"task_runtime", "task_board"}
-RUNTIME_EXECUTION_MUTATING_METHODS = {"pop", "setdefault", "update"}
-TASK_RUNTIME_UPDATE_ROW_METADATA_ONLY_ALLOWLIST = {
-    "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
-    "polaris/cells/roles/adapters/internal/pm/board_tasks.py",
-    "polaris/cells/roles/adapters/internal/qa_adapter.py",
-    "polaris/delivery/cli/pm/engine/taskboard.py",
-    "polaris/delivery/http/routers/factory.py",
-}
-TASK_RUNTIME_OWNER_TRANSITION_CALL_ALLOWLIST = {
-    "cancel_task_row_for_deduplication": {
-        "polaris/cells/roles/adapters/internal/pm/board_tasks.py",
-    },
-    "complete_execution": {
-        "polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
-        "polaris/cells/roles/adapters/internal/director/execute_method.py",
-        "polaris/cells/roles/runtime/public/cli_runner.py",
-        "polaris/cells/roles/runtime/internal/worker_pool.py",
-        "polaris/delivery/cli/pm/engine/taskboard.py",
-    },
-    "fail_execution": {
-        "polaris/cells/roles/adapters/internal/director/execute_method.py",
-        "polaris/cells/roles/runtime/public/cli_runner.py",
-        "polaris/cells/roles/runtime/internal/worker_pool.py",
-        "polaris/delivery/cli/pm/engine/taskboard.py",
-    },
-    "fail_task_row_after_rework_exhausted": {
-        "polaris/cells/roles/adapters/internal/qa_adapter.py",
-    },
-    "fail_task_row_from_role_adapter": {
-        "polaris/cells/roles/adapters/internal/pm_adapter.py",
-    },
-    "reopen_task_row": {
-        "polaris/cells/roles/adapters/internal/qa_adapter.py",
-        "polaris/delivery/http/routers/factory.py",
-    },
-}
-TASK_RUNTIME_RETIRED_TERMINAL_METHODS = frozenset(
-    {
-        "complete_execution",
-        "fail_execution",
-        "suspend_execution",
-    }
-)
-TASK_RUNTIME_TYPED_SETTLEMENT_CONTRACT = "SettleTaskRuntimeExecutionAttemptCommandV1"
-TASK_RUNTIME_TYPED_SETTLEMENT_SERVICE = "settle_task_runtime_execution_attempt"
-TASK_RUNTIME_PUBLIC_CONTRACTS = TASK_RUNTIME_OWNER / "public" / "contracts.py"
-TASK_RUNTIME_PUBLIC_SERVICE = TASK_RUNTIME_OWNER / "public" / "service.py"
-TASK_RUNTIME_EXECUTION_EVENT_CHECK_REQUIRED = {
-    "polaris/cells/orchestration/pm_planning/internal/pm_agent.py": {
-        "_tool_taskboard_create",
-    },
-    "polaris/cells/roles/adapters/internal/base.py": {
-        "_update_board_task",
-    },
-    "polaris/cells/roles/adapters/internal/pm/board_tasks.py": {
-        "_create_board_tasks",
-    },
-    "polaris/cells/roles/adapters/internal/pm_adapter.py": {
-        "_run_pm_stage",
-    },
-    "polaris/cells/roles/adapters/internal/qa_adapter.py": {
-        "_apply_taskboard_qa_verdict",
-    },
-    "polaris/delivery/cli/pm/engine/taskboard.py": {
-        "_build_taskboard_runtime",
-        "_select_taskboard_ready_batch",
-    },
-    "polaris/delivery/http/routers/factory.py": {
-        "_apply_quality_gate_task_boundary_rework_requests",
-    },
-}
-TASK_RUNTIME_EXECUTION_EVENT_CHECK_HELPERS = {
-    (
-        "polaris/cells/roles/adapters/internal/pm/board_tasks.py",
-        "_create_board_tasks",
-    ): {
-        "_with_task_runtime_execution_event_failure",
-    },
-    (
-        "polaris/cells/roles/adapters/internal/qa_adapter.py",
-        "_apply_taskboard_qa_verdict",
-    ): {
-        "_record_qa_task_runtime_execution_event_failure",
-    },
-}
-REVIEWED_TASK_RUNTIME_SERVICE_BOARD_WRITES = {
-    ("_apply_dependency_completion_side_effects", "notify_ready_tasks"): 1,
-    ("_apply_dependency_completion_side_effects", "update"): 1,
-    ("_apply_reopen_downstream_reblocks", "update"): 1,
-    ("_apply_reverse_dependency_links", "update_blocks"): 1,
-    ("_apply_terminal_session_reconcile", "reconcile_terminal_status"): 1,
-    ("_apply_terminal_session_reconcile", "update"): 2,
-    ("_create_with_execution_event", "create"): 1,
-    ("_reopen_with_execution_event", "reopen"): 1,
-    ("_update_with_execution_event", "update"): 1,
-    ("cancel_task_row_for_factory_abort", "update"): 1,
-    ("cancel_task_row_for_deduplication", "update"): 1,
-    ("claim_execution", "update"): 1,
-    ("_project_settled_execution_attempt_locked", "update"): 2,
-    ("fail_task_row_after_rework_exhausted", "update"): 1,
-    ("fail_task_row_from_role_adapter", "update"): 1,
-    ("_heartbeat_execution_attempt_locked", "update"): 1,
-    ("heartbeat_execution", "update"): 1,
-    ("refresh_dependency_unblocks", "update"): 2,
-    ("force_fail_active_session_for_factory_abort", "update"): 1,
-    ("suspend_active_executions_for_run", "update"): 1,
-    ("fence_expired_factory_run_sessions", "update"): 1,
-}
-REVIEWED_TASK_RUNTIME_SERVICE_BOARD_READS = {
-    ("_task_entity_for_dependency_side_effect", "get"): 1,
-    ("_list_file_task_entities", "list_all"): 1,
-    ("_task_entity_for_transition", "get"): 1,
-    ("_task_entity_for_owner_terminal_transition", "get"): 1,
-    ("_task_entity_for_claim_execution", "get"): 1,
-    ("_task_entity_for_terminal_session_reconcile", "get"): 1,
-    ("_project_settled_execution_attempt_locked", "get"): 1,
-}
-TASK_RUNTIME_SERVICE_RAW_BOARD_LIST_HELPER = "_list_file_task_entities"
-TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_HELPER = "_task_entity_for_claim_execution"
-TASK_RUNTIME_SERVICE_CLAIM_EXECUTION_ENTITY_CONSUMERS = frozenset({"claim_execution"})
-TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_HELPER = "_task_entity_for_transition"
-TASK_RUNTIME_SERVICE_EXECUTION_ENTITY_CONSUMERS = frozenset(
-    {
-        "settle_execution_attempt",
-    }
-)
-TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_HELPER = "_task_entity_for_owner_terminal_transition"
-TASK_RUNTIME_SERVICE_OWNER_TERMINAL_ENTITY_CONSUMERS = frozenset(
-    {
-        "cancel_task_row_for_factory_abort",
-        "cancel_task_row_for_deduplication",
-        "fail_task_row_from_role_adapter",
-        "force_fail_active_session_for_factory_abort",
-    }
-)
-TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_HELPER = "_task_entity_for_dependency_side_effect"
-TASK_RUNTIME_SERVICE_DEPENDENCY_FANOUT_ENTITY_CONSUMERS = frozenset(
-    {
-        "_apply_reopen_downstream_reblocks",
-        "_apply_reverse_dependency_links",
-    }
-)
-TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_HELPER = "_task_entity_for_terminal_session_reconcile"
-TASK_RUNTIME_SERVICE_TERMINAL_SESSION_RECONCILE_ENTITY_CONSUMERS = frozenset(
-    {
-        "_apply_terminal_session_reconcile",
-        "_terminal_projection_can_restore_pending_intent_locked",
-    }
-)
-TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
-    {
-        "_list_file_task_rows",
-        "refresh_dependency_unblocks",
-        "_reset_records_authorized",
-        "reset_task_rows_for_reexecution",
-        "suspend_active_executions_for_run",
-    }
-)
-TASK_RUNTIME_SERVICE_EXPECTED_RAW_BOARD_ENTITY_CONSUMERS = frozenset(
-    {
-        "_list_file_task_rows",
-        "refresh_dependency_unblocks",
-        "_reset_records_authorized",
-        "reset_task_rows_for_reexecution",
-        "suspend_active_executions_for_run",
-    }
-)
-TASK_RUNTIME_SERVICE_RAW_BOARD_ENTITY_OWNER_REQUIREMENTS = {
-    "_reset_records_authorized": frozenset(
-        {
-            "self._append_execution_event",
-        }
-    ),
-    "refresh_dependency_unblocks": frozenset(
-        {
-            "self._append_execution_event",
-            "self._board.update",
-            "self._fact_overlaid_dependency_status_rows",
-        }
-    ),
-    "reset_task_rows_for_reexecution": frozenset(
-        {
-            "self._append_execution_event",
-            "self._replace_task_row_for_reexecution",
-        }
-    ),
-    "suspend_active_executions_for_run": frozenset(
-        {
-            "self._append_execution_event",
-            "self._board.update",
-            "self._suspend_active_session_for_run_locked",
-        }
-    ),
-}
-TASK_RUNTIME_SERVICE_RAW_BOARD_WRITE_METHODS = {
-    "create",
-    "notify_ready_tasks",
-    "reconcile_terminal_status",
-    "reopen",
-    "update",
-    "update_blocks",
-    "update_status",
-}
-TASK_RUNTIME_SERVICE_RAW_BOARD_READ_METHODS = {
-    "get",
-    "get_blocked_tasks",
-    "get_dependency_graph",
-    "get_ready_tasks",
-    "get_stats",
-    "get_task",
-    "list_all",
-    "list_my_tasks",
-    "list_ready",
-}
-TASK_RUNTIME_SERVICE_RETIRED_PUBLIC_METHODS = {
-    "get_ready_tasks",
-    "get_stats",
-    "list_all",
-    "list_ready",
-}
-TASK_RUNTIME_SERVICE_RETIRED_ENTITY_METHODS = {
-    "create",
-    "get",
-    "reopen",
-    "update",
-    "update_task",
-}
-TASK_RUNTIME_SERVICE_NON_AGENT_DESCRIPTOR_METHODS = {
-    "add_ready_listener",
-    "board",
-    "wait_ready",
-}
-TASK_RUNTIME_SERVICE_NON_OPERATION_DESCRIPTOR_METHODS = {
-    "__init__",
-    "workspace",
-}
-TASK_RUNTIME_SERVICE_UTILITY_DESCRIPTOR_METHODS = {
-    "normalize_task_id",
-    "task_exists",
-}
-TASK_RUNTIME_SERVICE_DESTRUCTIVE_DESCRIPTOR_METHODS = {
-    "reset_records",
-}
-TASK_RUNTIME_SERVICE_OWNER_READ_DESCRIPTOR_METHODS = {
-    "list_task_rows",
-}
-TASK_RUNTIME_SERVICE_OWNER_MAINTENANCE_DESCRIPTOR_METHODS = {
-    "refresh_dependency_unblocks",
-}
-TASK_RUNTIME_SERVICE_PREVIEW_SELECTION_DESCRIPTOR_METHODS = {
-    "select_next_task",
-}
-TASK_RUNTIME_SERVICE_REQUIRED_ROW_MUTATION_METHODS = {
-    "create_task_row",
-    "reopen_task_row",
-    "update_task_row",
-}
-TASK_RUNTIME_SERVICE_REQUIRED_READ_MODEL_METHODS = {
-    "get_task_row_stats",
-    "list_observable_task_rows",
-    "list_ready_task_rows",
-}
-TASK_RUNTIME_EXECUTION_EVENT_FILE = "task_runtime.execution.jsonl"
-TASK_RUNTIME_EXECUTION_DIRECT_WRITE_METHODS = {
-    "open",
-    "write_bytes",
-    "write_text",
-}
-TASK_RUNTIME_EXECUTION_DIRECT_READ_METHODS = {
-    "open",
-    "read_bytes",
-    "read_text",
-}
-TASKBOARD_TERMINAL_EVENT_STREAM = "taskboard.terminal.events"
-TASKBOARD_TERMINAL_EVENT_DIRECT_WRITE_METHODS = {
-    "open",
-    "write",
-    "write_bytes",
-    "write_text",
-}
-
-
-def _is_allowed_owner_path(path: Path) -> bool:
-    try:
-        path.relative_to(TASK_RUNTIME_OWNER)
-    except ValueError:
-        return False
-    return True
-
-
-def _raw_taskboard_imports(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        module = node.module or ""
-        if module not in RAW_TASKBOARD_MODULES:
-            continue
-        imported_names = {alias.name for alias in node.names}
-        blocked_names = sorted(imported_names & RAW_TASKBOARD_NAMES)
-        if blocked_names:
-            offenders.append(f"{path.relative_to(BACKEND_ROOT)} imports {module}:{','.join(blocked_names)}")
-    return offenders
-
-
-def _is_task_runtime_constructor_call(node: ast.AST) -> bool:
-    return isinstance(node, ast.Call) and (
-        (isinstance(node.func, ast.Name) and node.func.id == "TaskRuntimeService")
-        or (isinstance(node.func, ast.Attribute) and node.func.attr == "TaskRuntimeService")
-    )
-
-
-def _is_legacy_task_runtime_receiver(node: ast.AST) -> bool:
-    if _is_task_runtime_constructor_call(node):
-        return True
-    if isinstance(node, ast.Name):
-        return node.id in TASK_RUNTIME_RECEIVER_NAMES
-    if isinstance(node, ast.Attribute):
-        return node.attr in TASK_RUNTIME_RECEIVER_NAMES
-    return False
-
-
-def _legacy_task_runtime_method_calls(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not isinstance(func, ast.Attribute):
-            continue
-        if func.attr not in LEGACY_TASK_RUNTIME_METHODS:
-            continue
-        if not _is_legacy_task_runtime_receiver(func.value):
-            continue
-        offenders.append(
-            f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls legacy task-runtime method {func.attr}()"
-        )
-    return offenders
-
-
-def _raw_task_row_read_calls(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not isinstance(func, ast.Attribute):
-            continue
-        if func.attr not in RAW_TASK_ROW_READ_METHODS:
-            continue
-        if not _is_legacy_task_runtime_receiver(func.value):
-            continue
-        offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls raw {func.attr}()")
-    return offenders
-
-
-def _direct_task_row_file_globs(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not isinstance(func, ast.Attribute) or func.attr != "glob":
-            continue
-        pattern = node.args[0] if node.args else None
-        if isinstance(pattern, ast.Constant) and pattern.value == "task_*.json":
-            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} directly globs runtime task rows")
-    return offenders
-
-
-TASK_ROW_FILE_ACCESS_METHODS = {
-    "glob",
-    "open",
-    "read_bytes",
-    "read_text",
-    "rename",
-    "unlink",
-    "write_bytes",
-    "write_text",
-}
-TASKBOARD_ROW_WRITE_RECEIPT_ANCHORS = {
-    "_last_row_write_receipt",
-    "TaskBoardRowWriteReceipt",
-}
-TASKBOARD_CURRENT_ROW_HASH_NAMES = {"current", "current_hash"}
-TASK_RUNTIME_ROW_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME = "_row_write_receipt_details_for_task"
-TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_HELPER_PREFERRED_NAME = "_session_write_receipt_details_for_session"
-TASK_RUNTIME_ROW_WRITE_RECEIPT_KEYED_LOOKUP_METHOD = "row_write_receipt_for_task"
-TASK_RUNTIME_SESSION_WRITE_RECEIPT_KEYED_LOOKUP_METHOD = "_session_write_receipt_for_session"
-TASK_RUNTIME_SESSION_WRITE_RECEIPT_DETAILS_KEY = "session_write_receipt"
-TASKBOARD_KERNEL_WRITE_TEXT_NON_ROW_ALLOWLIST = {"_save_max_id"}
-TASKBOARD_DIRECT_ROW_WRITE_METHODS = {
-    "open",
-    "write_bytes",
-    "write_text",
-}
-TASKBOARD_DIRECT_ROW_REPLACE_METHODS = {
-    "rename",
-    "replace",
-}
-TASKBOARD_FILE_LOCK_METHOD = "self._file_lock"
-TASKBOARD_ROW_LOCK_PATH_HELPERS = {"self._task_row_lock_path"}
-TASKBOARD_TASK_ID_LOCK_NAMES = {"task_id"}
-
-
-def _looks_like_task_row_file_literal(value: str) -> bool:
-    return value == "task_*.json" or ("task_" in value and value.endswith(".json"))
-
-
-def _contains_task_row_file_literal(node: ast.AST) -> bool:
-    for child in ast.walk(node):
-        if (
-            isinstance(child, ast.Constant)
-            and isinstance(child.value, str)
-            and _looks_like_task_row_file_literal(child.value)
-        ):
-            return True
-        if isinstance(child, ast.JoinedStr):
-            literal_text = "".join(
-                part.value for part in child.values if isinstance(part, ast.Constant) and isinstance(part.value, str)
-            )
-            if "task_" in literal_text and ".json" in literal_text:
-                return True
-    return False
-
-
-def _direct_task_row_file_accesses(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        method = func.attr if isinstance(func, ast.Attribute) else (func.id if isinstance(func, ast.Name) else "")
-        if method not in TASK_ROW_FILE_ACCESS_METHODS:
-            continue
-        if _contains_task_row_file_literal(node):
-            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} directly accesses runtime task-row files")
-    return offenders
-
-
-def _contains_string_literal(node: ast.AST, value: str) -> bool:
-    return any(
-        isinstance(child, ast.Constant) and isinstance(child.value, str) and child.value == value
-        for child in ast.walk(node)
-    )
-
-
-def _task_runtime_execution_writer_violations(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        call = _call_name(node.func)
-        if call == "AppendFactEventCommandV1" and _contains_string_literal(node, TASK_RUNTIME_EXECUTION_STREAM_V1):
-            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} appends task_runtime.execution facts")
-            continue
-        method = call.rsplit(".", maxsplit=1)[-1]
-        if method in TASK_RUNTIME_EXECUTION_DIRECT_WRITE_METHODS and _contains_string_literal(
-            node,
-            TASK_RUNTIME_EXECUTION_EVENT_FILE,
-        ):
-            offenders.append(
-                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} writes task_runtime.execution.jsonl directly"
-            )
-    return offenders
-
-
-def _task_runtime_execution_reader_violations(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        call = _call_name(node.func)
-        if call in {"QueryFactEventsV1", "query_fact_events"} and _contains_string_literal(
-            node,
-            TASK_RUNTIME_EXECUTION_STREAM_V1,
-        ):
-            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} reads task_runtime.execution facts")
-            continue
-        method = call.rsplit(".", maxsplit=1)[-1]
-        if method in TASK_RUNTIME_EXECUTION_DIRECT_READ_METHODS and _contains_string_literal(
-            node,
-            TASK_RUNTIME_EXECUTION_EVENT_FILE,
-        ):
-            offenders.append(
-                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} reads task_runtime.execution.jsonl directly"
-            )
-    return offenders
-
-
-def _legacy_task_board_alias_references(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Attribute):
-            continue
-        if node.attr != "task_board":
-            continue
-        offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} references legacy task_board alias")
-    return offenders
-
-
-def _annotation_name(node: ast.AST | None) -> str:
-    if node is None:
-        return ""
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        prefix = _annotation_name(node.value)
-        return f"{prefix}.{node.attr}" if prefix else node.attr
-    if isinstance(node, ast.Subscript):
-        return _annotation_name(node.value)
-    if isinstance(node, ast.Constant):
-        return str(node.value or "")
-    return ""
-
-
-def _target_name(node: ast.AST) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    return ""
-
-
-def _legacy_task_runtime_symbol_aliases(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and _is_task_runtime_constructor_call(node.value):
-            for target_node in node.targets:
-                target = _target_name(target_node)
-                if target in {"taskboard", "_taskboard", "task_board"}:
-                    offenders.append(
-                        f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} names TaskRuntimeService as {target}"
-                    )
-        if isinstance(node, ast.AnnAssign):
-            annotation = _annotation_name(node.annotation)
-            target = _target_name(node.target)
-            if annotation.endswith("TaskRuntimeService") and target in {"taskboard", "_taskboard", "task_board"}:
-                offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} names TaskRuntimeService as {target}")
-        if isinstance(node, ast.FunctionDef):
-            returns = _annotation_name(node.returns)
-            if node.name == "taskboard" and returns.endswith("TaskRuntimeService"):
-                offenders.append(
-                    f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} exposes TaskRuntimeService as taskboard"
-                )
-    return offenders
-
-
-def _taskboard_class() -> ast.ClassDef:
-    source = TASK_RUNTIME_INTERNAL_BOARD.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "TaskBoard":
-            return node
-    raise AssertionError("TaskBoard class not found")
-
-
-def _class_def(path: Path, name: str) -> ast.ClassDef:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == name:
-            return node
-    raise AssertionError(f"{path.relative_to(BACKEND_ROOT)}:{name} class not found")
-
-
-def _taskboard_method(name: str) -> ast.FunctionDef:
-    taskboard = _taskboard_class()
-    for node in taskboard.body:
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f"TaskBoard.{name}() not found")
-
-
-def _call_name(node: ast.AST) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        prefix = _call_name(node.value)
-        return f"{prefix}.{node.attr}" if prefix else node.attr
-    return ""
-
-
-def _parent_lookup(tree: ast.AST) -> dict[ast.AST, ast.AST]:
-    parents: dict[ast.AST, ast.AST] = {}
-    for parent in ast.walk(tree):
-        for child in ast.iter_child_nodes(parent):
-            parents[child] = parent
-    return parents
-
-
-def _enclosing_function_name(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str:
-    current = node
-    while current in parents:
-        current = parents[current]
-        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return current.name
-    return "<module>"
-
-
-def _is_raw_taskboard_factory_call(node: ast.AST) -> bool:
-    return isinstance(node, ast.Call) and _call_name(node.func) in {"TaskBoard", "create_taskboard"}
-
-
-def _taskboard_receiver_name(node: ast.AST) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return _call_name(node)
-    return ""
-
-
-def _raw_taskboard_create_calls(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    taskboard_receivers: set[str] = set()
-
-    for node in ast.walk(tree):
-        targets: list[ast.AST] = []
-        value: ast.AST | None = None
-        if isinstance(node, ast.Assign):
-            targets = list(node.targets)
-            value = node.value
-        elif isinstance(node, ast.AnnAssign):
-            targets = [node.target]
-            value = node.value
-        if value is None or not _is_raw_taskboard_factory_call(value):
-            continue
-        for target in targets:
-            receiver = _taskboard_receiver_name(target)
-            if receiver:
-                taskboard_receivers.add(receiver)
-
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not isinstance(func, ast.Attribute) or func.attr != "create":
-            continue
-        receiver = _taskboard_receiver_name(func.value)
-        if receiver in taskboard_receivers or _is_raw_taskboard_factory_call(func.value):
-            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls raw TaskBoard.create()")
-    return offenders
-
-
-def _task_runtime_service_raw_board_write_calls() -> Counter[tuple[str, str]]:
-    return _task_runtime_service_raw_board_calls(TASK_RUNTIME_SERVICE_RAW_BOARD_WRITE_METHODS)
-
-
-def _task_runtime_service_raw_board_read_calls() -> Counter[tuple[str, str]]:
-    return _task_runtime_service_raw_board_calls(TASK_RUNTIME_SERVICE_RAW_BOARD_READ_METHODS)
-
-
-def _task_runtime_service_raw_board_calls(methods: set[str]) -> Counter[tuple[str, str]]:
-    source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    parents = _parent_lookup(tree)
-    calls: Counter[tuple[str, str]] = Counter()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not isinstance(func, ast.Attribute):
-            continue
-        if _call_name(func.value) != "self._board":
-            continue
-        if func.attr not in methods:
-            continue
-        calls[(_enclosing_function_name(node, parents), func.attr)] += 1
-    return calls
-
-
-def _task_runtime_service_method_defs() -> dict[str, ast.FunctionDef]:
-    service_class = _class_def(TASK_RUNTIME_INTERNAL_SERVICE, "TaskRuntimeService")
-    return {node.name: node for node in service_class.body if isinstance(node, ast.FunctionDef)}
-
-
-def _walk_task_runtime_method_body(method_def: ast.FunctionDef) -> list[ast.AST]:
-    """Walk one TaskRuntimeService method without entering nested scopes."""
-
-    nodes: list[ast.AST] = []
-
-    def visit(node: ast.AST) -> None:
-        if node is not method_def and isinstance(
-            node,
-            ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef,
-        ):
-            return
-        nodes.append(node)
-        for child in ast.iter_child_nodes(node):
-            visit(child)
-
-    visit(method_def)
-    return nodes
-
-
-def _direct_self_board_list_all_calls(method_def: ast.FunctionDef) -> list[ast.Call]:
-    return [
-        node
-        for node in _walk_task_runtime_method_body(method_def)
-        if isinstance(node, ast.Call) and _call_name(node.func) == "self._board.list_all"
-    ]
-
-
-def _direct_self_board_get_calls(method_def: ast.FunctionDef) -> list[ast.Call]:
-    return [
-        node
-        for node in _walk_task_runtime_method_body(method_def)
-        if isinstance(node, ast.Call) and _call_name(node.func) == "self._board.get"
-    ]
-
-
-def _method_body_directly_calls_self_method(method_def: ast.FunctionDef, method_name: str) -> bool:
-    return any(
-        isinstance(node, ast.Call) and _call_is_self_method(node, method_name)
-        for node in _walk_task_runtime_method_body(method_def)
-    )
-
-
-def _direct_self_method_calls(method_def: ast.FunctionDef, method_name: str) -> list[ast.Call]:
-    return [
-        node
-        for node in _walk_task_runtime_method_body(method_def)
-        if isinstance(node, ast.Call) and _call_is_self_method(node, method_name)
-    ]
-
-
-def _function_def(path: Path, name: str) -> ast.FunctionDef:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f"{path.relative_to(BACKEND_ROOT)}:{name}() not found")
-
-
-def _function_call_counts(path: Path, function_name: str) -> Counter[str]:
-    function_def = _function_def(path, function_name)
-    calls: Counter[str] = Counter()
-    for node in ast.walk(function_def):
-        if isinstance(node, ast.Call):
-            calls[_call_name(node.func)] += 1
-    return calls
-
-
-def _assigned_constant_tuple(path: Path, name: str) -> tuple[str, ...]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
-            continue
-        if not isinstance(node.value, ast.Tuple):
-            raise AssertionError(f"{name} must remain a literal tuple")
-        values: list[str] = []
-        for item in node.value.elts:
-            if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
-                raise AssertionError(f"{name} entries must remain literal strings")
-            values.append(item.value)
-        return tuple(values)
-    raise AssertionError(f"{path.relative_to(BACKEND_ROOT)}:{name} assignment not found")
-
-
-def _assigned_frozenset_literal_strings(path: Path, name: str) -> set[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
-            continue
-        return _literal_string_collection_values(node.value, context=name)
-    raise AssertionError(f"{path.relative_to(BACKEND_ROOT)}:{name} assignment not found")
-
-
-def _string_literal(node: ast.AST | None) -> str:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    return ""
-
-
-def _literal_string_collection_values(node: ast.AST, *, context: str) -> set[str]:
-    value_node = node
-    if isinstance(value_node, ast.Call) and _call_name(value_node.func) == "frozenset":
-        if len(value_node.args) != 1 or value_node.keywords:
-            raise AssertionError(f"{context} must remain a one-argument frozenset literal")
-        value_node = value_node.args[0]
-    if not isinstance(value_node, (ast.Set, ast.List, ast.Tuple)):
-        raise AssertionError(f"{context} must remain an AST-readable literal collection")
-
-    values: set[str] = set()
-    for item in value_node.elts:
-        literal_value = _string_literal(item)
-        if not literal_value:
-            raise AssertionError(f"{context} entries must remain literal strings")
-        values.add(literal_value)
-    return values
-
-
-def _enum_string_member_values(enum_class: ast.ClassDef) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for node in enum_class.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
-            continue
-        value = _string_literal(node.value)
-        if value:
-            values[node.targets[0].id] = value
-    if not values:
-        raise AssertionError(f"{enum_class.name} must expose AST-readable string enum members")
-    return values
-
-
-def _task_status_member_value(node: ast.AST, enum_values: dict[str, str], *, context: str) -> str:
-    literal_value = _string_literal(node)
-    if literal_value:
-        return literal_value
-    if (
-        isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "TaskStatus"
-        and node.attr in enum_values
-    ):
-        return enum_values[node.attr]
-    raise AssertionError(f"{context} must reference TaskStatus enum members or literal strings")
-
-
-def _task_status_is_terminal_values() -> set[str]:
-    task_status_class = _class_def(TASK_RUNTIME_INTERNAL_BOARD, "TaskStatus")
-    enum_values = _enum_string_member_values(task_status_class)
-
-    is_terminal = None
-    for node in task_status_class.body:
-        if isinstance(node, ast.FunctionDef) and node.name == "is_terminal":
-            is_terminal = node
-            break
-    if is_terminal is None:
-        raise AssertionError("TaskStatus.is_terminal property not found")
-
-    returns = [node.value for node in ast.walk(is_terminal) if isinstance(node, ast.Return) and node.value is not None]
-    if len(returns) != 1:
-        raise AssertionError("TaskStatus.is_terminal must keep a single AST-readable return")
-
-    expression = returns[0]
-    if (
-        not isinstance(expression, ast.Compare)
-        or len(expression.ops) != 1
-        or not isinstance(expression.ops[0], ast.In)
-        or len(expression.comparators) != 1
-    ):
-        raise AssertionError("TaskStatus.is_terminal must remain a membership test")
-
-    terminal_collection = expression.comparators[0]
-    if not isinstance(terminal_collection, (ast.Set, ast.List, ast.Tuple)):
-        raise AssertionError("TaskStatus.is_terminal must compare against a literal collection")
-
-    return {
-        _task_status_member_value(item, enum_values, context="TaskStatus.is_terminal")
-        for item in terminal_collection.elts
-    }
-
-
-def _subscript_key(node: ast.AST) -> str:
-    if not isinstance(node, ast.Subscript):
-        return ""
-    return _string_literal(node.slice)
-
-
-def _contains_runtime_execution_subscript(node: ast.AST) -> bool:
-    if isinstance(node, ast.Subscript) and _subscript_key(node) == "runtime_execution":
-        return True
-    return any(_contains_runtime_execution_subscript(child) for child in ast.iter_child_nodes(node))
-
-
-def _runtime_execution_metadata_writes(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if _contains_runtime_execution_subscript(target):
-                    offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} assigns runtime_execution")
-        elif isinstance(node, ast.AnnAssign) and _contains_runtime_execution_subscript(node.target):
-            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} assigns runtime_execution")
-        elif isinstance(node, ast.AugAssign) and _contains_runtime_execution_subscript(node.target):
-            offenders.append(f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} mutates runtime_execution")
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr not in RUNTIME_EXECUTION_MUTATING_METHODS:
-                continue
-            first_arg = node.args[0] if node.args else None
-            if _string_literal(first_arg) == "runtime_execution":
-                offenders.append(
-                    f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls {node.func.attr}('runtime_execution')"
-                )
-    return offenders
-
-
-def _literal_status_update_task_row_calls(path: Path, statuses: set[str]) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not isinstance(func, ast.Attribute) or func.attr != "update_task_row":
-            continue
-        for keyword in node.keywords:
-            if keyword.arg != "status":
-                continue
-            status = _string_literal(keyword.value)
-            if status in statuses:
-                offenders.append(
-                    f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls update_task_row(status={status!r})"
-                )
-    return offenders
-
-
-def _literal_status_method_calls(path: Path, method_name: str, statuses: set[str]) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not isinstance(func, ast.Attribute) or func.attr != method_name:
-            continue
-        for keyword in node.keywords:
-            if keyword.arg != "status":
-                continue
-            status = _string_literal(keyword.value)
-            if status in statuses:
-                offenders.append(
-                    f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} calls {method_name}(status={status!r})"
-                )
-    return offenders
-
-
-def _update_task_row_boundary_violations(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    rel = path.relative_to(BACKEND_ROOT).as_posix()
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not isinstance(func, ast.Attribute) or func.attr != "update_task_row":
-            continue
-        status_keyword = next((keyword for keyword in node.keywords if keyword.arg == "status"), None)
-        if rel == "polaris/cells/roles/adapters/internal/base.py":
-            if status_keyword is None:
-                offenders.append(f"{rel}:{node.lineno} calls update_task_row() without the shared status guard")
-            continue
-        if status_keyword is not None:
-            offenders.append(
-                f"{rel}:{node.lineno} passes status= to update_task_row(); use a TaskRuntimeService owner transition"
-            )
-            continue
-        if rel not in TASK_RUNTIME_UPDATE_ROW_METADATA_ONLY_ALLOWLIST:
-            offenders.append(
-                f"{rel}:{node.lineno} is not an approved metadata-only update_task_row() projection writer"
-            )
-    return offenders
-
-
-def _function_body_references_name(path: Path, function_name: str, referenced_name: str) -> bool:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if node.name != function_name:
-            continue
-        return any(isinstance(child, ast.Name) and child.id == referenced_name for child in ast.walk(node))
-    return False
-
-
-def _function_body_references_any_name(
-    path: Path,
-    function_name: str,
-    referenced_names: set[str],
-) -> bool:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if node.name != function_name:
-            continue
-        return any(isinstance(child, ast.Name) and child.id in referenced_names for child in ast.walk(node))
-    return False
-
-
-def _owner_transition_call_boundary_violations(path: Path) -> list[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    rel = path.relative_to(BACKEND_ROOT).as_posix()
-    owner_methods = set(TASK_RUNTIME_OWNER_TRANSITION_CALL_ALLOWLIST)
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not isinstance(func, ast.Attribute) or func.attr not in owner_methods:
-            continue
-        allowed_paths = TASK_RUNTIME_OWNER_TRANSITION_CALL_ALLOWLIST[func.attr]
-        if rel not in allowed_paths:
-            offenders.append(f"{rel}:{node.lineno} calls {func.attr}() outside the reviewed WS2 allowlist")
-    return offenders
-
-
-def _function_definition(path: Path, function_name: str) -> ast.FunctionDef | None:
-    """Return one module-level function definition by name."""
-
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == function_name:
-            return node
-    return None
-
-
-def _module_defines_symbol(path: Path, symbol: str) -> bool:
-    """Return whether a public module declares the required symbol."""
-
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    return any(isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name == symbol for node in tree.body)
-
-
-def _function_uses_typed_public_settlement(path: Path, function_name: str) -> list[str]:
-    """Verify the PM caller flows retained identity through public settlement."""
-
-    function = _function_definition(path, function_name)
-    if function is None:
-        return [f"{path.relative_to(BACKEND_ROOT)}:{function_name}() is missing"]
-    assignments = [node for node in ast.walk(function) if isinstance(node, ast.Assign)]
-    retained_identity_names = {
-        target.elts[0].id
-        for assignment in assignments
-        if isinstance(assignment.value, ast.Call)
-        and isinstance(assignment.value.func, ast.Name)
-        and assignment.value.func.id == "_task_runtime_terminal_identity"
-        for target in assignment.targets
-        if isinstance(target, ast.Tuple) and target.elts and isinstance(target.elts[0], ast.Name)
-    }
-    if not retained_identity_names:
-        return [
-            f"{path.relative_to(BACKEND_ROOT)}:{function_name}() must retain identity from "
-            "_task_runtime_terminal_identity()"
-        ]
-
-    constructors = [
-        assignment
-        for assignment in assignments
-        if len(assignment.targets) == 1
-        and isinstance(assignment.targets[0], ast.Name)
-        and isinstance(assignment.value, ast.Call)
-        and isinstance(assignment.value.func, ast.Name)
-        and assignment.value.func.id == TASK_RUNTIME_TYPED_SETTLEMENT_CONTRACT
-    ]
-    required_keywords = {"workspace", "identity", "outcome", "summary", "metadata"}
-    if not constructors:
-        return [
-            f"{path.relative_to(BACKEND_ROOT)}:{function_name}() must construct "
-            f"{TASK_RUNTIME_TYPED_SETTLEMENT_CONTRACT}"
-        ]
-    valid_command_names: set[str] = set()
-    for assignment in constructors:
-        constructor = assignment.value
-        assert isinstance(constructor, ast.Call)
-        keywords = {keyword.arg: keyword.value for keyword in constructor.keywords if keyword.arg}
-        if not required_keywords <= set(keywords):
-            continue
-        identity_value = keywords["identity"]
-        if not isinstance(identity_value, ast.Name) or identity_value.id not in retained_identity_names:
-            continue
-        target = assignment.targets[0]
-        assert isinstance(target, ast.Name)
-        valid_command_names.add(target.id)
-    if not valid_command_names:
-        return [
-            f"{path.relative_to(BACKEND_ROOT)}:{function_name}() must construct a complete typed settlement "
-            "command whose identity is returned by _task_runtime_terminal_identity()"
-        ]
-    service_calls = [
-        node
-        for node in ast.walk(function)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == TASK_RUNTIME_TYPED_SETTLEMENT_SERVICE
-    ]
-    if not any(
-        len(call.args) == 1 and isinstance(call.args[0], ast.Name) and call.args[0].id in valid_command_names
-        for call in service_calls
-    ):
-        return [
-            f"{path.relative_to(BACKEND_ROOT)}:{function_name}() must pass its typed settlement command variable "
-            f"to {TASK_RUNTIME_TYPED_SETTLEMENT_SERVICE}()"
-        ]
-    return []
-
-
-def _retired_terminal_caller_violations(path: Path) -> list[str]:
-    """Return direct legacy terminal calls outside the TaskRuntime owner cell."""
-
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    offenders: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-            continue
-        if node.func.attr in TASK_RUNTIME_RETIRED_TERMINAL_METHODS:
-            offenders.append(
-                f"{path.relative_to(BACKEND_ROOT)}:{node.lineno} directly calls retired terminal method "
-                f"{node.func.attr}()"
-            )
-    return offenders
-
-
-
-
 
 
 def test_raw_taskboard_is_private_to_task_runtime_cell() -> None:
@@ -1392,7 +277,7 @@ def test_ws2_b2_execution_attempt_authority_stays_task_runtime_public() -> None:
 
     offenders: list[str] = []
     for path in (DIRECTOR_ADAPTER, DIRECTOR_EXECUTE_METHOD, KERNEL_TRANSACTION_FACTORY):
-        source = path.read_text(encoding="utf-8")
+        source = _canonical_source_text(path)
         tree = ast.parse(source)
         rel = path.relative_to(BACKEND_ROOT).as_posix()
         public_authority_import = False
@@ -1418,7 +303,7 @@ def test_ws2_b2_execution_attempt_authority_stays_task_runtime_public() -> None:
         if path in {DIRECTOR_EXECUTE_METHOD, KERNEL_TRANSACTION_FACTORY} and not public_authority_import:
             offenders.append(f"{rel} does not import TaskRuntimeExecutionAttemptAuthorityV1 from TaskRuntime public")
 
-    director_entry_tree = ast.parse(DIRECTOR_ADAPTER.read_text(encoding="utf-8"))
+    director_entry_tree = ast.parse(_canonical_source_text(DIRECTOR_ADAPTER))
     director_entry = next(
         (
             node
@@ -1441,7 +326,7 @@ def test_ws2_b2_execution_attempt_authority_stays_task_runtime_public() -> None:
     ):
         offenders.append("DirectorAdapter.execute() must delegate exactly once to its Director task entry")
 
-    claim_source = DIRECTOR_EXECUTE_METHOD.read_text(encoding="utf-8")
+    claim_source = _canonical_source_text(DIRECTOR_EXECUTE_METHOD)
     claim_tree = ast.parse(claim_source)
     factory_calls = [
         node
@@ -1476,11 +361,14 @@ def test_ws2_b2_execution_attempt_authority_stays_task_runtime_public() -> None:
             node for node in ast.walk(finalize) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         ]
         if not any(
-            isinstance(node.func.value, ast.Name) and node.func.value.id == "authority" and node.func.attr == "settle"
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "authority"
+            and node.func.attr == "settle"
             for node in calls
         ):
             offenders.append("_finalize_claimed_execution() must settle through the public authority")
-        if any(node.func.attr == "settle_execution_attempt" for node in calls):
+        if any(isinstance(node.func, ast.Attribute) and node.func.attr == "settle_execution_attempt" for node in calls):
             offenders.append("_finalize_claimed_execution() bypasses authority.settle()")
 
     for helper_name in ("_finalize_claimed_execution", "_suspend_claimed_execution_for_cancellation"):
@@ -1511,7 +399,8 @@ def test_ws2_b2_execution_attempt_authority_stays_task_runtime_public() -> None:
             node for node in ast.walk(guard) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         ]
         direct_authority_heartbeat = any(
-            isinstance(node.func.value, ast.Name)
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "authority"
             and node.func.attr == "heartbeat"
             for node in calls
@@ -1532,7 +421,10 @@ def test_ws2_b2_execution_attempt_authority_stays_task_runtime_public() -> None:
         )
         if not direct_authority_heartbeat and not (delegated_refresh and refresh_heartbeats_authority):
             offenders.append("Kernel tool guard must heartbeat through the public authority")
-        if any(node.func.attr == "heartbeat_task_runtime_execution_attempt" for node in calls):
+        if any(
+            isinstance(node.func, ast.Attribute) and node.func.attr == "heartbeat_task_runtime_execution_attempt"
+            for node in calls
+        ):
             offenders.append("Kernel tool guard bypasses authority.heartbeat()")
 
     assert not offenders, "WS2-B2 TaskRuntime public authority fence:\n" + "\n".join(offenders)
@@ -1661,7 +553,7 @@ def test_production_code_uses_task_runtime_alias() -> None:
 
 
 def test_role_worker_pool_uses_task_runtime_port_not_raw_taskboard() -> None:
-    source = ROLE_WORKER_POOL.read_text(encoding="utf-8")
+    source = _canonical_source_text(ROLE_WORKER_POOL)
     blocked_tokens = (
         "TaskBoardPort",
         "ReadyTaskLike",
@@ -1680,7 +572,7 @@ def test_role_worker_pool_uses_task_runtime_port_not_raw_taskboard() -> None:
 
 
 def test_role_worker_pool_task_runtime_port_does_not_require_live_listener() -> None:
-    source = ROLE_WORKER_POOL.read_text(encoding="utf-8")
+    source = _canonical_source_text(ROLE_WORKER_POOL)
     tree = ast.parse(source)
     port_class: ast.ClassDef | None = None
     legacy_port_class: ast.ClassDef | None = None
@@ -1709,7 +601,7 @@ def test_role_worker_pool_task_runtime_port_does_not_require_live_listener() -> 
 
 
 def test_delivery_pm_taskboard_mainline_uses_task_runtime_service() -> None:
-    source = DELIVERY_PM_TASKBOARD.read_text(encoding="utf-8")
+    source = _canonical_source_text(DELIVERY_PM_TASKBOARD)
     blocked_tokens = (
         "importlib.util",
         "create_taskboard",
@@ -1730,7 +622,7 @@ def test_delivery_pm_taskboard_mainline_uses_task_runtime_service() -> None:
 
 
 def test_delivery_cli_director_does_not_finalize_with_row_updates() -> None:
-    source = DELIVERY_CLI_DIRECTOR_SERVICE.read_text(encoding="utf-8")
+    source = _canonical_source_text(DELIVERY_CLI_DIRECTOR_SERVICE)
     blocked_tokens = (
         "update_task_row(",
         'event_type") == "updated"',
@@ -1746,7 +638,7 @@ def test_delivery_cli_director_does_not_finalize_with_row_updates() -> None:
 
 
 def test_qa_rework_exhaustion_uses_task_runtime_owner_failure_transition() -> None:
-    source = QA_ADAPTER.read_text(encoding="utf-8")
+    source = _canonical_source_text(QA_ADAPTER)
     offenders = _literal_status_update_task_row_calls(QA_ADAPTER, {"failed"})
 
     assert "fail_task_row_after_rework_exhausted" in source, (
@@ -1762,7 +654,7 @@ def test_qa_rework_exhaustion_uses_task_runtime_owner_failure_transition() -> No
 
 
 def test_pm_dedup_cancel_uses_task_runtime_owner_transition() -> None:
-    source = PM_BOARD_TASKS.read_text(encoding="utf-8")
+    source = _canonical_source_text(PM_BOARD_TASKS)
     offenders = _literal_status_update_task_row_calls(PM_BOARD_TASKS, {"cancelled"})
 
     assert "cancel_task_row_for_deduplication" in source, (
@@ -1777,7 +669,7 @@ def test_pm_dedup_cancel_uses_task_runtime_owner_transition() -> None:
 
 
 def test_pm_role_failure_uses_task_runtime_owner_failure_transition() -> None:
-    source = PM_ADAPTER.read_text(encoding="utf-8")
+    source = _canonical_source_text(PM_ADAPTER)
     offenders = _literal_status_method_calls(PM_ADAPTER, "_update_board_task", {"failed"})
 
     assert "fail_task_row_from_role_adapter" in source, (
@@ -1792,7 +684,7 @@ def test_pm_role_failure_uses_task_runtime_owner_failure_transition() -> None:
 
 
 def test_base_role_adapter_rejects_terminal_status_shortcuts() -> None:
-    source = ROLE_ADAPTER_BASE.read_text(encoding="utf-8")
+    source = _canonical_source_text(ROLE_ADAPTER_BASE)
 
     assert "_TERMINAL_TASK_ROW_STATUSES" in source
     assert "terminal_task_status_requires_task_runtime_owner_transition" in source
@@ -1828,30 +720,6 @@ def test_task_runtime_terminal_projection_covers_taskboard_terminal_statuses() -
         f"TaskBoard terminal values: {sorted(taskboard_terminal_values)}. "
         f"Runtime projection terminal values: {sorted(runtime_terminal_values)}."
     )
-
-
-# ---------------------------------------------------------------------------
-# WS2 execution-status row-write fence — execution-like status guard
-# ---------------------------------------------------------------------------
-#
-# Role adapters must not write execution-like TaskRow statuses (running,
-# in_progress, claimed) through _update_board_task().  Execution status is
-# owned by TaskRuntimeService owner transitions (claim_execution,
-# complete_execution, fail_execution).  Writing execution-like status
-# through a role adapter would bypass execution-event projection.
-#
-# _update_board_task() already blocks terminal statuses (completed, failed,
-# cancelled, timeout) via _is_terminal_task_row_status.  This fence extends
-# the invariant to execution-like statuses so the SSoT boundary is
-# comprehensive.
-
-_EXECUTION_LIKE_TASK_ROW_STATUSES = frozenset({"running", "in_progress", "claimed"})
-
-ROLE_ADAPTER_PATHS: dict[str, Path] = {
-    "pm_adapter": PM_ADAPTER,
-    "qa_adapter": QA_ADAPTER,
-    "director_adapter": DIRECTOR_ADAPTER,
-}
 
 
 def test_base_role_adapter_has_execution_status_guard() -> None:
@@ -1973,7 +841,7 @@ def test_execution_status_fence_allows_metadata_only_update() -> None:
 
 
 def test_director_adapter_progress_does_not_finalize_task_rows() -> None:
-    source = DIRECTOR_ADAPTER.read_text(encoding="utf-8")
+    source = _canonical_source_text(DIRECTOR_ADAPTER)
 
     assert "super()._update_task_progress(" in source, (
         "Director progress events must use BaseRoleAdapter's metadata-only progress projection."
@@ -1984,8 +852,8 @@ def test_director_adapter_progress_does_not_finalize_task_rows() -> None:
 
 def test_task_runtime_raw_tool_factory_surface_is_removed() -> None:
     sources = {
-        "internal": TASK_RUNTIME_INTERNAL_BOARD.read_text(encoding="utf-8"),
-        "public": TASK_RUNTIME_PUBLIC_BOARD_CONTRACT.read_text(encoding="utf-8"),
+        "internal": _canonical_source_text(TASK_RUNTIME_INTERNAL_BOARD),
+        "public": _canonical_source_text(TASK_RUNTIME_PUBLIC_BOARD_CONTRACT),
     }
     blocked_tokens = (
         "class TaskBoardToolInterface",
@@ -2007,7 +875,7 @@ def test_task_runtime_raw_tool_factory_surface_is_removed() -> None:
 
 
 def test_raw_taskboard_has_no_workflow_state_bridge_hook() -> None:
-    source = TASK_RUNTIME_INTERNAL_BOARD.read_text(encoding="utf-8")
+    source = _canonical_source_text(TASK_RUNTIME_INTERNAL_BOARD)
     blocked_tokens = (
         "state_bridge",
         "notify_task_created",
@@ -2055,7 +923,7 @@ def test_taskboard_terminal_event_stream_is_owner_only_compatibility_projection(
             continue
         if path == POLARIS_ROOT / "cells" / "events" / "fact_stream" / "public" / "catalog.py":
             continue
-        if TASKBOARD_TERMINAL_EVENT_STREAM in path.read_text(encoding="utf-8"):
+        if TASKBOARD_TERMINAL_EVENT_STREAM in _canonical_source_text(path):
             offenders.append(str(path.relative_to(BACKEND_ROOT)))
 
     assert not offenders, (
@@ -2149,10 +1017,16 @@ def test_taskboard_save_task_checks_current_row_hash_before_replace() -> None:
 
 
 def test_director_resume_preparation_uses_task_runtime_owner() -> None:
-    sources = {
-        "factory_http_router": FACTORY_HTTP_ROUTER.read_text(encoding="utf-8"),
-        "factory_bench_runner": FACTORY_BENCH_RUNNER.read_text(encoding="utf-8"),
-    }
+    factory_facade = importlib.import_module("polaris.delivery.http.routers.factory")
+    bench_facade = importlib.import_module("scripts.factory_bench.run_factory_bench")
+    concrete_sources: dict[str, Path] = {}
+    for label, facade in (("factory_http_router", factory_facade), ("factory_bench_runner", bench_facade)):
+        rehydrate = inspect.getsourcefile(facade._rehydrate_director_resume_taskboard)
+        reset = inspect.getsourcefile(facade._reset_current_director_resume_taskboard)
+        assert rehydrate is not None and reset == rehydrate
+        concrete_sources[label] = Path(rehydrate)
+        assert concrete_sources[label].is_relative_to(BACKEND_ROOT)
+    sources = {label: _canonical_source_text(path) for label, path in concrete_sources.items()}
     blocked_tokens = (
         "_director_resume_reset_task_payload",
         'glob("task_*.json")',
@@ -2196,9 +1070,30 @@ def test_director_resume_preparation_uses_task_runtime_owner() -> None:
     )
 
 
+def test_resume_fence_detects_actual_helper_task_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    test_director_resume_preparation_uses_task_runtime_owner()
+    facade = importlib.import_module("scripts.factory_bench.run_factory_bench")
+    concrete = inspect.getsourcefile(facade._rehydrate_director_resume_taskboard)
+    assert concrete is not None
+    target = Path(concrete)
+    read_text = Path.read_text
+
+    def mutated(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        return (
+            source + "\ndef forbidden_resume(task_file):\n    task_file.write_text('raw')\n"
+            if path == target
+            else source
+        )
+
+    monkeypatch.setattr(Path, "read_text", mutated)
+    with pytest.raises(AssertionError, match="must not rewrite"):
+        test_director_resume_preparation_uses_task_runtime_owner()
+
+
 def test_factory_stage_executor_reads_task_rows_through_task_runtime_projection() -> None:
     offenders = _direct_task_row_file_globs(FACTORY_STAGE_EXECUTOR)
-    source = FACTORY_STAGE_EXECUTOR.read_text(encoding="utf-8")
+    source = "\n".join(_canonical_source_text(path) for path in sorted(FACTORY_STAGE_EXECUTOR.glob("*.py")))
 
     assert not offenders, (
         "Factory stage executor must not scan runtime/tasks/task_*.json as an "
@@ -2215,9 +1110,149 @@ def test_factory_stage_executor_reads_task_rows_through_task_runtime_projection(
     )
 
 
+def test_factory_projection_fence_detects_active_mixin_glob(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = BACKEND_ROOT / "polaris/cells/factory/pipeline/internal/factory_stage_executor/_mixin_04.py"
+    read_text = Path.read_text
+
+    def mutated(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        return (
+            source + "\ndef forbidden_factory_read(root):\n    return root.glob('task_*.json')\n"
+            if path == target
+            else source
+        )
+
+    monkeypatch.setattr(Path, "read_text", mutated)
+    with pytest.raises(AssertionError, match="must not scan runtime/tasks"):
+        test_factory_stage_executor_reads_task_rows_through_task_runtime_projection()
+
+
+def test_task_runtime_source_fence_reads_actual_composed_method_bodies() -> None:
+    from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+    from polaris.tests.architecture._task_runtime_taskboard_boundary_fence_helpers import _class_def
+
+    service = _class_def(TASK_RUNTIME_INTERNAL_SERVICE, "TaskRuntimeService")
+    methods = {node.name: node for node in service.body if isinstance(node, ast.FunctionDef)}
+    for name in ("claim_execution", "task_exists", "settle_execution_attempt"):
+        actual_method = getattr(TaskRuntimeService, name)
+        concrete = ast.parse("class ActualSource:\n" + inspect.getsource(actual_method)).body[0]
+        assert isinstance(concrete, ast.ClassDef)
+        expected = concrete.body[0]
+        assert name in methods
+        assert ast.dump(methods[name], include_attributes=False) == ast.dump(expected, include_attributes=False)
+        assert "_mixin_" in str(inspect.getsourcefile(actual_method))
+
+
+def test_task_exists_fence_detects_actual_mixin_raw_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _check_task_exists_forbidden_raw_reads() == []
+    target = TASK_RUNTIME_OWNER / "internal/service/_mixin_recovery_reexec.py"
+    read_text = Path.read_text
+
+    def mutated(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        if path != target:
+            return source
+        tree = ast.parse(source)
+        method = next(
+            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "task_exists"
+        )
+        lines = source.splitlines(keepends=True)
+        lines.insert(method.body[0].lineno - 1, "        return self._board.get(task_id)\n")
+        return "".join(lines)
+
+    monkeypatch.setattr(Path, "read_text", mutated)
+    assert _check_task_exists_forbidden_raw_reads()
+
+
+def test_claim_entity_fence_rejects_process_cached_row_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    test_claim_execution_routes_task_entity_read_through_claim_helper()
+    target = TASK_RUNTIME_OWNER / "internal/service/_mixin_recovery_reexec.py"
+    read_text = Path.read_text
+
+    def cached(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        return (
+            source.replace("self._board.get_persisted(normalized)", "self._board.get(normalized)")
+            if path == target
+            else source
+        )
+
+    monkeypatch.setattr(Path, "read_text", cached)
+    with pytest.raises(AssertionError, match="durable owner row"):
+        test_claim_execution_routes_task_entity_read_through_claim_helper()
+
+
+@pytest.mark.parametrize("operation", ("get", "reopen"))
+def test_reviewed_raw_owner_fence_rejects_new_unreviewed_method(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    test_task_runtime_service_raw_board_reads_are_reviewed()
+    test_task_runtime_service_raw_board_writes_are_reviewed()
+    target = TASK_RUNTIME_OWNER / "internal/service/_mixin_recovery_reexec.py"
+    read_text = Path.read_text
+
+    def mutated(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        return (
+            source + f"\n    def _unreviewed_owner_bypass(self):\n        return self._board.{operation}(1)\n"
+            if path == target
+            else source
+        )
+
+    monkeypatch.setattr(Path, "read_text", mutated)
+    checker = (
+        test_task_runtime_service_raw_board_reads_are_reviewed
+        if operation == "get"
+        else test_task_runtime_service_raw_board_writes_are_reviewed
+    )
+    with pytest.raises(AssertionError, match="_unreviewed_owner_bypass"):
+        checker()
+
+
+def test_owner_transition_review_cannot_be_borrowed_by_another_function(monkeypatch: pytest.MonkeyPatch) -> None:
+    test_task_runtime_owner_transition_callers_are_reviewed()
+    target = POLARIS_ROOT / "cells/factory/pipeline/internal/factory_stage_executor/_mixin_03.py"
+    read_text = Path.read_text
+
+    def mutated(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        return (
+            source
+            + "\n    def _unreviewed_reopen(self):\n        runtime.reopen_task_row(1, reason='canonical_delivery_verified_after_terminal_director_attempt')\n"
+            if path == target
+            else source
+        )
+
+    monkeypatch.setattr(Path, "read_text", mutated)
+    with pytest.raises(AssertionError, match="outside the reviewed WS2"):
+        test_task_runtime_owner_transition_callers_are_reviewed()
+
+
+@pytest.mark.parametrize(
+    ("body", "blocked"),
+    (
+        ("task_runtime = value if isinstance(value, Mapping) else {}\n    return task_runtime.get('rows')", False),
+        ("task_runtime = TaskRuntimeService('workspace')\n    return task_runtime.get('task-1')", True),
+        (
+            "task_runtime = value if isinstance(value, Mapping) else {}\n    task_runtime = TaskRuntimeService('workspace')\n    return task_runtime.get('task-1')",
+            True,
+        ),
+    ),
+)
+def test_service_receiver_fence_distinguishes_mapping_from_real_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, blocked: bool
+) -> None:
+    from polaris.tests.architecture import _task_runtime_taskboard_boundary_fence_helpers as fences
+
+    path = tmp_path / "consumer.py"
+    path.write_text("from collections.abc import Mapping\ndef probe(value):\n    " + body + "\n", encoding="utf-8")
+    monkeypatch.setattr(fences, "BACKEND_ROOT", tmp_path)
+    assert bool(_legacy_task_runtime_method_calls(path)) is blocked
+
+
 def test_runtime_artifact_store_reads_task_rows_through_task_runtime_projection() -> None:
     offenders = _direct_task_row_file_globs(RUNTIME_ARTIFACT_STORE_ARTIFACTS)
-    source = RUNTIME_ARTIFACT_STORE_ARTIFACTS.read_text(encoding="utf-8")
+    source = _canonical_source_text(RUNTIME_ARTIFACT_STORE_ARTIFACTS)
 
     assert not offenders, (
         "runtime.artifact_store must not scan runtime/tasks/task_*.json as an "
@@ -2230,10 +1265,15 @@ def test_runtime_artifact_store_reads_task_rows_through_task_runtime_projection(
 
 
 def test_factory_bench_task_runtime_event_file_is_workspace_evidence_only() -> None:
-    evidence_paths = _assigned_constant_tuple(FACTORY_BENCH_RUNNER, "_RUNTIME_WORKSPACE_EVIDENCE_RELATIVE_PATHS")
-    source = FACTORY_BENCH_RUNNER.read_text(encoding="utf-8")
-    workspace_matcher = _function_def(FACTORY_BENCH_RUNNER, "_file_mentions_workspace")
-    runtime_matcher = _function_def(FACTORY_BENCH_RUNNER, "_runtime_dir_matches_workspace")
+    facade = importlib.import_module("scripts.factory_bench.run_factory_bench")
+    concrete = inspect.getsourcefile(facade._file_mentions_workspace)
+    assert concrete is not None and concrete == inspect.getsourcefile(facade._runtime_dir_matches_workspace)
+    source_path = Path(concrete)
+    assert source_path.is_relative_to(BACKEND_ROOT)
+    evidence_paths = _assigned_constant_tuple(source_path, "_RUNTIME_WORKSPACE_EVIDENCE_RELATIVE_PATHS")
+    source = _canonical_source_text(source_path)
+    workspace_matcher = _function_def(source_path, "_file_mentions_workspace")
+    runtime_matcher = _function_def(source_path, "_runtime_dir_matches_workspace")
     matcher_calls = {_call_name(node.func) for node in ast.walk(workspace_matcher) if isinstance(node, ast.Call)}
     runtime_matcher_calls = {_call_name(node.func) for node in ast.walk(runtime_matcher) if isinstance(node, ast.Call)}
 
@@ -2256,6 +1296,32 @@ def test_factory_bench_task_runtime_event_file_is_workspace_evidence_only() -> N
         and node.value in {"status", "execution_state", "resume_state", "task_row_snapshot"}
         for node in ast.walk(workspace_matcher)
     ), "Workspace evidence matching must not inspect task execution fields from task_runtime.execution events."
+
+
+def test_bench_workspace_evidence_fence_detects_actual_status_decoder(monkeypatch: pytest.MonkeyPatch) -> None:
+    test_factory_bench_task_runtime_event_file_is_workspace_evidence_only()
+    facade = importlib.import_module("scripts.factory_bench.run_factory_bench")
+    concrete = inspect.getsourcefile(facade._file_mentions_workspace)
+    assert concrete is not None
+    target = Path(concrete)
+    read_text = Path.read_text
+
+    def mutated(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        if path != target:
+            return source
+        method = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef) and node.name == "_file_mentions_workspace"
+        )
+        lines = source.splitlines(keepends=True)
+        lines.insert(method.body[0].lineno - 1, "    status = json.loads('{}')\n")
+        return "".join(lines)
+
+    monkeypatch.setattr(Path, "read_text", mutated)
+    with pytest.raises(AssertionError, match="bounded text evidence"):
+        test_factory_bench_task_runtime_event_file_is_workspace_evidence_only()
 
 
 def test_raw_taskboard_dependency_state_changes_are_row_local() -> None:
@@ -2297,7 +1363,7 @@ def test_raw_taskboard_dependency_state_changes_are_row_local() -> None:
 
 
 def test_task_runtime_service_avoids_raw_taskboard_convenience_writes() -> None:
-    source = TASK_RUNTIME_INTERNAL_SERVICE.read_text(encoding="utf-8")
+    source = _canonical_source_text(TASK_RUNTIME_INTERNAL_SERVICE)
     blocked_tokens = (
         "self._board.claim(",
         "self._board.complete(",
@@ -2399,6 +1465,9 @@ def test_claim_execution_routes_task_entity_read_through_claim_helper() -> None:
         "self._board.get() bridge for claim raw entity reads; "
         f"found {len(helper_get_calls)} direct calls."
     )
+    assert all(
+        isinstance(call.func, ast.Attribute) and call.func.attr == "get_persisted" for call in helper_get_calls
+    ), "Claim authority must reload the durable owner row; process-local TaskBoard.get() cache is insufficient."
     assert not direct_get_offenders, (
         "TaskRuntimeService.claim_execution() must not call "
         f"self._board.get() directly; route raw Task entity reads through "
@@ -2721,5 +1790,3 @@ def test_find_terminal_session_snapshot_does_not_read_raw_taskboard() -> None:
         "not by re-reading raw TaskBoard metadata through self._board.*(). "
         "Offenders:\n" + "\n".join(offenders)
     )
-
-

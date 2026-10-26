@@ -37,6 +37,12 @@ def _facts(workspace: Path) -> tuple[dict[str, Any], ...]:
 def _setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, failing: bool = False, full_scope: bool = False
 ) -> tuple[Any, Any, Any, Any]:
+    setenv = monkeypatch.setenv
+
+    def private_setenv(name: str, value: str, prepend: str | None = None) -> None:
+        setenv(name, str(tmp_path / "authority-home") if name == "KERNELONE_HOME" else value, prepend)
+
+    monkeypatch.setattr(monkeypatch, "setenv", private_setenv)
     executor, run, port = _verifier_fixture(
         tmp_path,
         monkeypatch,
@@ -187,3 +193,47 @@ def test_incomplete_current_proof_never_appends_completion(
     with pytest.raises((ValueError, RuntimeError), match=r"revalidation|policy_rejected"):
         _command(executor, run, before, **changes)
     assert _facts(Path(executor.workspace)) == original
+
+
+@pytest.mark.parametrize("related", [True, False])
+def test_deferred_revalidation_rechecks_owner_version_at_receipt_frontier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, related: bool
+) -> None:
+    executor, run, _port, before = _setup(tmp_path, monkeypatch)
+    service = TaskRuntimeService(str(executor.workspace))
+    row = service.resolve_factory_task_row(external_task_id=TASK, factory_run_id=run.id)
+    assert row is not None
+    original = broker.query_project_verification_receipt
+    changed = False
+
+    def update_during_receipt_read(query: Any) -> Any:
+        nonlocal changed
+        receipt = original(query)
+        if not changed:
+            changed = True
+            if related:
+                service.update_task_row(row["id"], metadata={"private_concurrent_update": True})
+            else:
+                service.create_task_row(subject="Unrelated task during deferred receipt verification")
+        return receipt
+
+    monkeypatch.setattr(broker, "query_project_verification_receipt", update_during_receipt_read)
+    if related:
+        with pytest.raises(ValueError, match="task_boundary_revalidation_current_basis_drift"):
+            _command(executor, run, before)
+    else:
+        assert _command(executor, run, before).revalidated_verdict.ok
+    assert changed
+
+
+def test_deferred_revalidation_rejects_changed_current_claim_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executor, run, _port, before = _setup(tmp_path, monkeypatch)
+    service = TaskRuntimeService(str(executor.workspace))
+    row = service.resolve_factory_task_row(external_task_id=TASK, factory_run_id=run.id)
+    assert row is not None
+    token = row["metadata"]["job_token"]
+    service.update_task_row(row["id"], metadata={"job_token": {**token, "private_changed_token": True}})
+    with pytest.raises(ValueError, match="task_boundary_revalidation_claim_token_changed"):
+        _command(executor, run, before)

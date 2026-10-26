@@ -9,11 +9,13 @@ authority maintenance, and bounded per-stream queries.
 
 - `AppendFactEventCommandV1`
 - `AppendIfGuardedSnapshotCommandV1`
+- `AppendPayloadFactEventCommandV1`
 - `AppendSegmentedFactEventCommandV1`
 - `BootstrapFactStreamWorkspaceCommandV1`
 - `EnrollFactStreamStreamsCommandV1`
 - `EnsureSegmentedFactLedgerCommandV1`
 - `FactEventAppendedV1`
+- `FactPayloadReferenceV1`
 - `FactStreamError`
 - `FactStreamHeadV1`
 - `FactStreamLockIdentityV1`
@@ -29,6 +31,8 @@ authority maintenance, and bounded per-stream queries.
 - `ProvisionFactStreamLockAuthorityCommandV1`
 - `QueryFactEventsV1`
 - `QueryFactStreamHeadV1`
+- `QueryPayloadFactByIdempotencyKeyV1`
+- `QueryPayloadFactEventsV1`
 - `QuerySegmentedFactEventsV1`
 - `QuerySegmentedFactLedgerHeadV1`
 - `ReadGuardedFactSnapshotCommandV1`
@@ -36,8 +40,10 @@ authority maintenance, and bounded per-stream queries.
 - `SegmentedFactLedgerHeadV1`
 - `SegmentedFactLedgerReadyV1`
 - `SegmentedFactQueryResultV1`
+- `StoreFactPayloadCommandV1`
 - `append_fact_event`
 - `append_if_guarded_snapshot`
+- `append_payload_fact_event`
 - `append_segmented_fact_event`
 - `bootstrap_fact_stream_workspace`
 - `configure_debug_tracing`
@@ -51,25 +57,33 @@ authority maintenance, and bounded per-stream queries.
 - `provision_fact_stream_lock_authority`
 - `query_fact_events`
 - `query_fact_stream_head`
+- `query_payload_fact_by_idempotency_key`
+- `query_payload_fact_events`
+- `query_payload_fact_ledger_presence`
 - `query_segmented_fact_events`
 - `query_segmented_fact_ledger_head`
 - `read_guarded_fact_snapshot`
 - `sanitize_headers`
 - `set_debug_tracing_enabled`
+- `store_fact_payload`
 
 ## Public Contracts
 
 - commands:
   - `AppendFactEventCommandV1`
   - `AppendIfGuardedSnapshotCommandV1`
+  - `AppendPayloadFactEventCommandV1`
   - `AppendSegmentedFactEventCommandV1`
   - `BootstrapFactStreamWorkspaceCommandV1`
   - `EnrollFactStreamStreamsCommandV1`
   - `EnsureSegmentedFactLedgerCommandV1`
   - `ProvisionFactStreamLockAuthorityCommandV1`
+  - `StoreFactPayloadCommandV1`
 - queries:
   - `QueryFactEventsV1`
   - `QueryFactStreamHeadV1`
+  - `QueryPayloadFactByIdempotencyKeyV1`
+  - `QueryPayloadFactEventsV1`
   - `QuerySegmentedFactEventsV1`
   - `QuerySegmentedFactLedgerHeadV1`
   - `ReadGuardedFactSnapshotCommandV1`
@@ -78,6 +92,7 @@ authority maintenance, and bounded per-stream queries.
   - `GuardedFactEventV1`
   - `SegmentedFactEventAppendedV1`
 - results:
+  - `FactPayloadReferenceV1`
   - `FactStreamHeadV1`
   - `FactStreamMaintenanceReceiptV1`
   - `FactStreamProvenanceV1`
@@ -114,6 +129,9 @@ without depending on another Polaris Cell.
 
 ## Verification
 
+- `polaris/cells/events/fact_stream/public/tests/test_public_surface.py`
+- `polaris/cells/events/fact_stream/public/tests/test_payload_fact_history.py`
+- `polaris/cells/events/fact_stream/public/tests/test_payload_fact_exact_lookup.py`
 - `polaris/cells/events/fact_stream/public/tests/test_guarded_fact_append.py`
 - `polaris/cells/events/fact_stream/public/tests/test_public_contracts.py`
 - `polaris/cells/events/fact_stream/public/tests/test_public_service.py`
@@ -155,3 +173,8 @@ retain their original bytes, identities, sequence numbers, hashes and references
 This capability does not automatically migrate a live stream or remove its old
 lifetime limit. A future legacy cutover requires an explicit stopped-owner
 protocol; no dual-write or raw-digest substitution is provided here.
+
+`QueryPayloadFactByIdempotencyKeyV1` / `query_payload_fact_by_idempotency_key`
+uses the existing manifest and locator to verify one exact small-record key and
+its expanded payload. It does not expand unrelated payloads, initialize storage
+or repair state. The same cold-read integrity and hash distinctions apply.

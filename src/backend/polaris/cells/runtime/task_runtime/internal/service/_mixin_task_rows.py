@@ -7,6 +7,7 @@ from collections import OrderedDict
 from contextlib import nullcontext
 from contextvars import ContextVar, Token
 from copy import deepcopy
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, TypedDict
 
 from polaris.cells.events.fact_stream.public.contracts import (
@@ -22,6 +23,7 @@ from polaris.cells.runtime.task_runtime.internal.task_board import (
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TASK_RUNTIME_EXECUTION_STREAM_V1,
     QuerySameTaskLocalReworkAuthorizationV1,
+    RuntimeTaskFactoryRunBindingResultV1,
     SameTaskLocalReworkAuthorizationQueryResultV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
 )
@@ -162,14 +164,20 @@ class _TaskRowsMixin(_ServiceMixinBase):
         *,
         reason: str = "",
         metadata: dict[str, Any] | None = None,
+        expected_binding: RuntimeTaskFactoryRunBindingResultV1 | None = None,
     ) -> dict[str, Any] | None:
-        """Reopen a task and return the runtime row projection with event evidence."""
+        """Reopen a task, optionally comparing a prior binding observation.
+
+        An expected binding is a state predicate, never an execution grant.
+        Omitting it retains the existing unconditional owner transition.
+        """
 
         self._require_writable()
         _task, row, execution_event, downstream_events, blocker = self._reopen_with_execution_event(
             task_id,
             reason=reason,
             metadata=metadata,
+            expected_binding=expected_binding,
         )
         if blocker is not None:
             normalized = self.normalize_task_id(task_id)
@@ -817,6 +825,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
         reason: str = "",
         metadata: dict[str, Any] | None = None,
         expected_factory_recovery: tuple[str, int, str, str, str, str] | None = None,
+        expected_binding: RuntimeTaskFactoryRunBindingResultV1 | None = None,
     ) -> tuple[
         Task | None,
         dict[str, Any] | None,
@@ -827,21 +836,62 @@ class _TaskRowsMixin(_ServiceMixinBase):
         normalized = self.normalize_task_id(task_id)
         if normalized is None:
             return None, None, None, [], None
+        if expected_factory_recovery is not None and expected_binding is not None:
+            raise ValueError("reopen comparison predicates are mutually exclusive")
+        binding_record = None
+        if expected_binding is not None:
+            if type(expected_binding) is not RuntimeTaskFactoryRunBindingResultV1:
+                raise TypeError("expected_binding must be RuntimeTaskFactoryRunBindingResultV1")
+            binding_record = expected_binding.to_record()
+            if (
+                not binding_record["ok"]
+                or binding_record["event_recorded"] is not True
+                or Path(binding_record["workspace"]).resolve() != Path(self.workspace).resolve()
+                or binding_record["task_id"] != str(normalized)
+            ):
+                raise RuntimeError("task_reopen_compare_and_set_failed")
+        guarded_reopen = expected_factory_recovery is not None or binding_record is not None
         with (
             self._get_session_lock(normalized),
             self._board._file_lock(self._session_file_lock_path(normalized)),
-            self._board.transaction() if expected_factory_recovery is not None else nullcontext(),
-            self._board._mutation_guard() if expected_factory_recovery is not None else nullcontext() as mutation_guard,
+            self._board.transaction() if guarded_reopen else nullcontext(),
+            self._board._mutation_guard() if guarded_reopen else nullcontext() as mutation_guard,
         ):
-            session = self._read_session_locked(normalized)
-            if expected_factory_recovery is not None:
-                session_id, attempt, external_id, factory_run_id, contract_hash, projection_hash = (
-                    expected_factory_recovery
-                )
+            session = self._read_session_locked(normalized, raise_infrastructure_errors=binding_record is not None)
+            if guarded_reopen:
                 snapshot = self._board._load_task_snapshot_from_disk(normalized)
                 current, before_hash = snapshot if snapshot is not None else (None, "")
                 current_metadata = current.metadata if current is not None else {}
                 projection = current_metadata.get("task_completion_projection")
+                if expected_factory_recovery is not None:
+                    session_id, attempt, external_id, factory_run_id, contract_hash, projection_hash = (
+                        expected_factory_recovery
+                    )
+                else:
+                    assert binding_record is not None
+                    expected_row = binding_record["task_row"]
+                    expected_metadata = expected_row.get("metadata") if isinstance(expected_row, Mapping) else None
+                    external_id = (
+                        str(expected_metadata.get("external_task_id") or "")
+                        if isinstance(expected_metadata, Mapping)
+                        else ""
+                    )
+                    factory_run_id = binding_record["factory_run_id"]
+                    if (
+                        current is None
+                        or not isinstance(expected_row, Mapping)
+                        or type(expected_row.get("id")) is not int
+                        or expected_row["id"] != normalized
+                        or not external_id
+                        or current_metadata.get("factory_run_id") != factory_run_id
+                        or not self._metadata_matches_external_task_id(current_metadata, external_id)
+                    ):
+                        raise RuntimeError("task_reopen_compare_and_set_failed")
+                    observed_row = self._augment_task_row_with_session(current.to_dict(), session=session)
+                    if expected_row.get("status") not in {"completed", "failed", "cancelled", "blocked"} or any(
+                        expected_row.get(key) != observed_row.get(key) for key in current.to_dict()
+                    ):
+                        raise RuntimeError("task_reopen_compare_and_set_failed")
                 owners: list[int] = []
                 for path in self._board.tasks_dir.glob("task_*.json"):
                     if path.name.endswith(".session.json"):
@@ -857,7 +907,13 @@ class _TaskRowsMixin(_ServiceMixinBase):
                         "factory_run_id"
                     ) == factory_run_id and self._metadata_matches_external_task_id(candidate.metadata, external_id):
                         owners.append(candidate.id)
-                if (
+                if owners != [normalized]:
+                    raise RuntimeError(
+                        "task_reopen_compare_and_set_failed"
+                        if binding_record is not None
+                        else "factory_task_recovery_compare_and_set_failed"
+                    )
+                if expected_factory_recovery is not None and (
                     current is None
                     or owners != [normalized]
                     or current.status != TaskStatus.FAILED
@@ -939,7 +995,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
                         pre_barrier = self._directed_effect_inactive_pre_barrier_locked(session)
                 if not pre_barrier.allowed:
                     return None, None, None, [], pre_barrier
-            if expected_factory_recovery is not None:
+            if guarded_reopen:
                 task = self._board.reopen(
                     normalized,
                     reason=reason,
@@ -957,7 +1013,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
                     session,
                     allow_terminal_downgrade=True,
                 )
-        if expected_factory_recovery is None:
+        if not guarded_reopen:
             task = self._board.reopen(
                 normalized,
                 reason=reason,
@@ -977,7 +1033,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
             reopened_task_id=normalized,
             dependent_ids=self._row_blocks_ids(row),
         )
-        if expected_factory_recovery is not None:
+        if guarded_reopen:
             self._board.notify_ready_tasks()
         return task, row, execution_event, downstream_events, None
 

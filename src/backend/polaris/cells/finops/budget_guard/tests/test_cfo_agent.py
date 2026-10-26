@@ -1,13 +1,13 @@
-"""Unit tests for finops.budget_guard cell — CFOAgent and BudgetKFSStore.
+"""Unit tests for finops.budget_guard cell — BudgetService and BudgetKFSStore.
 
 Covers:
-- CFOAgent._tool_check_budget() normal and budget-exceeded scenarios
-- CFOAgent._tool_record_usage() normal scenarios
-- CFOAgent._tool_allocate_budget() normal scenarios
-- CFOAgent._tool_get_budget_status() scenarios
-- CFOAgent._tool_get_usage_stats() scenarios
-- CFOAgent._tool_set_budget_limit() scenarios
-- CFOAgent._tool_set_global_budget() scenarios
+- BudgetService.check_budget() normal and budget-exceeded scenarios
+- BudgetService.record_usage() normal scenarios
+- BudgetService.allocate_budget() normal scenarios
+- BudgetService.get_budget_status() scenarios
+- BudgetService.get_usage_stats() scenarios
+- BudgetService.set_budget_limit() scenarios
+- BudgetService.set_global_budget() scenarios
 - BudgetKFSStore read/write/recovery scenarios
 - BudgetThresholdExceededEventV1 contract validation
 - FinOpsBudgetError contract validation
@@ -32,7 +32,7 @@ from polaris.cells.finops.budget_guard.public.contracts import (
     RecordUsageCommandV1,
     ReserveBudgetCommandV1,
 )
-from polaris.cells.finops.budget_guard.public.service import CFOAgent
+from polaris.cells.finops.budget_guard.public.service import BudgetService
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.fs.contracts import FileWriteReceipt, KernelFileSystemAdapter
 
@@ -120,29 +120,29 @@ class _FakeKFSAdapter(KernelFileSystemAdapter):
         raise FileNotFoundError(f"FakeKFS: {key} not found")
 
 
-def _fake_fs() -> KernelFileSystem:
-    return KernelFileSystem(".", _FakeKFSAdapter())
+def _fake_fs(workspace: Path) -> KernelFileSystem:
+    return KernelFileSystem(str(workspace), _FakeKFSAdapter())
 
 
-# ── CFOAgent fixtures ────────────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def fake_fs() -> KernelFileSystem:
-    return _fake_fs()
+# ── BudgetService fixtures ────────────────────────────────────────────────────────────
 
 
 @pytest.fixture
-def cfo_agent(fake_fs: KernelFileSystem) -> CFOAgent:
-    """Isolated CFOAgent with in-memory KFS adapter."""
-    return CFOAgent(workspace=".", fs=fake_fs)
+def fake_fs(tmp_path: Path) -> KernelFileSystem:
+    return _fake_fs(tmp_path)
 
 
 @pytest.fixture
-def cfo_with_budget(fake_fs: KernelFileSystem) -> CFOAgent:
-    """CFOAgent with a pre-allocated budget of 1000 tokens for task 'test-task'."""
-    agent = CFOAgent(workspace=".", fs=fake_fs)
-    agent._tool_allocate_budget(
+def budget_service(fake_fs: KernelFileSystem) -> BudgetService:
+    """Isolated BudgetService with in-memory KFS adapter."""
+    return BudgetService(workspace=fake_fs.workspace, fs=fake_fs)
+
+
+@pytest.fixture
+def service_with_budget(fake_fs: KernelFileSystem) -> BudgetService:
+    """BudgetService with a pre-allocated budget of 1000 tokens for task 'test-task'."""
+    agent = BudgetService(workspace=fake_fs.workspace, fs=fake_fs)
+    agent.allocate_budget(
         task_id="test-task",
         budget_type="general",
         limit=1000,
@@ -231,7 +231,7 @@ class TestUsageRecord:
 
 class TestBudgetKFSStore:
     def test_save_and_retrieve_budget(self, fake_fs: KernelFileSystem) -> None:
-        store = BudgetKFSStore(workspace=".", scope_id="scope1", fs=fake_fs)
+        store = BudgetKFSStore(workspace=fake_fs.workspace, scope_id="scope1", fs=fake_fs)
         budget = BudgetRecord(
             budget_id="b1",
             task_id="task-a",
@@ -246,18 +246,18 @@ class TestBudgetKFSStore:
 
     def test_save_budget_is_persisted(self, fake_fs: KernelFileSystem) -> None:
         """Verify write-through: state survives after store instance is replaced."""
-        store1 = BudgetKFSStore(workspace=".", scope_id="scope2", fs=fake_fs)
+        store1 = BudgetKFSStore(workspace=fake_fs.workspace, scope_id="scope2", fs=fake_fs)
         budget = BudgetRecord(budget_id="b2", task_id="task-b", budget_type="compute", limit=3000)
         store1.save_budget(budget)
 
         # New store instance — should recover from KFS
-        store2 = BudgetKFSStore(workspace=".", scope_id="scope2", fs=fake_fs)
+        store2 = BudgetKFSStore(workspace=fake_fs.workspace, scope_id="scope2", fs=fake_fs)
         retrieved = store2.get_budget("b2")
         assert retrieved is not None
         assert retrieved.limit == 3000
 
     def test_append_usage_record(self, fake_fs: KernelFileSystem) -> None:
-        store = BudgetKFSStore(workspace=".", scope_id="scope3", fs=fake_fs)
+        store = BudgetKFSStore(workspace=fake_fs.workspace, scope_id="scope3", fs=fake_fs)
         usage = UsageRecord(
             record_id="u1",
             task_id="task-c",
@@ -271,17 +271,17 @@ class TestBudgetKFSStore:
         assert rows[0].amount == 100
 
     def test_usage_persists_after_reload(self, fake_fs: KernelFileSystem) -> None:
-        store1 = BudgetKFSStore(workspace=".", scope_id="scope4", fs=fake_fs)
+        store1 = BudgetKFSStore(workspace=fake_fs.workspace, scope_id="scope4", fs=fake_fs)
         store1.append_usage(
             UsageRecord(record_id="u2", task_id="task-d", agent_id="pm", resource_type="tokens", amount=250)
         )
-        store2 = BudgetKFSStore(workspace=".", scope_id="scope4", fs=fake_fs)
+        store2 = BudgetKFSStore(workspace=fake_fs.workspace, scope_id="scope4", fs=fake_fs)
         rows = store2.usage_by_task("task-d")
         assert len(rows) == 1
         assert rows[0].amount == 250
 
     def test_usage_totals(self, fake_fs: KernelFileSystem) -> None:
-        store = BudgetKFSStore(workspace=".", scope_id="scope5", fs=fake_fs)
+        store = BudgetKFSStore(workspace=fake_fs.workspace, scope_id="scope5", fs=fake_fs)
         store.append_usage(
             UsageRecord(record_id="u3", task_id="task-e", agent_id="a1", resource_type="tokens", amount=100)
         )
@@ -296,14 +296,14 @@ class TestBudgetKFSStore:
         assert totals["compute"] == 50
 
     def test_budgets_by_task(self, fake_fs: KernelFileSystem) -> None:
-        store = BudgetKFSStore(workspace=".", scope_id="scope6", fs=fake_fs)
+        store = BudgetKFSStore(workspace=fake_fs.workspace, scope_id="scope6", fs=fake_fs)
         store.save_budget(BudgetRecord(budget_id="b3", task_id="task-f", budget_type="general", limit=500))
         store.save_budget(BudgetRecord(budget_id="b4", task_id="task-f", budget_type="compute", limit=300))
         rows = store.budgets_by_task("task-f")
         assert len(rows) == 2
 
     def test_usage_by_agent(self, fake_fs: KernelFileSystem) -> None:
-        store = BudgetKFSStore(workspace=".", scope_id="scope7", fs=fake_fs)
+        store = BudgetKFSStore(workspace=fake_fs.workspace, scope_id="scope7", fs=fake_fs)
         store.append_usage(
             UsageRecord(record_id="u6", task_id="t1", agent_id="director", resource_type="tokens", amount=80)
         )
@@ -313,21 +313,21 @@ class TestBudgetKFSStore:
         assert rows[0].agent_id == "director"
 
     def test_nonexistent_budget_returns_none(self, fake_fs: KernelFileSystem) -> None:
-        store = BudgetKFSStore(workspace=".", scope_id="scope8", fs=fake_fs)
+        store = BudgetKFSStore(workspace=fake_fs.workspace, scope_id="scope8", fs=fake_fs)
         assert store.get_budget("nonexistent") is None
 
     def test_empty_task_query_returns_empty(self, fake_fs: KernelFileSystem) -> None:
-        store = BudgetKFSStore(workspace=".", scope_id="scope9", fs=fake_fs)
+        store = BudgetKFSStore(workspace=fake_fs.workspace, scope_id="scope9", fs=fake_fs)
         assert store.budgets_by_task("ghost-task") == []
         assert store.usage_by_task("ghost-task") == []
 
 
-# ── CFOAgent: allocate_budget ──────────────────────────────────────────────────
+# ── BudgetService: allocate_budget ──────────────────────────────────────────────────
 
 
-class TestCFOAgentAllocate:
-    def test_allocate_budget_success(self, cfo_agent: CFOAgent) -> None:
-        result = cfo_agent._tool_allocate_budget(
+class TestBudgetServiceAllocate:
+    def test_allocate_budget_success(self, budget_service: BudgetService) -> None:
+        result = budget_service.allocate_budget(
             task_id="task-alloc",
             budget_type="general",
             limit=5000,
@@ -338,13 +338,13 @@ class TestCFOAgentAllocate:
         assert result["budget"]["limit"] == 5000
         assert result["budget"]["task_id"] == "task-alloc"
 
-    def test_allocate_budget_empty_task_id(self, cfo_agent: CFOAgent) -> None:
-        result = cfo_agent._tool_allocate_budget(task_id="", budget_type="general", limit=1000)
+    def test_allocate_budget_empty_task_id(self, budget_service: BudgetService) -> None:
+        result = budget_service.allocate_budget(task_id="", budget_type="general", limit=1000)
         assert result["ok"] is False
         assert result["error"] == "task_id_required"
 
-    def test_allocate_budget_negative_limit_clamped(self, cfo_agent: CFOAgent) -> None:
-        result = cfo_agent._tool_allocate_budget(
+    def test_allocate_budget_negative_limit_clamped(self, budget_service: BudgetService) -> None:
+        result = budget_service.allocate_budget(
             task_id="task-neg",
             budget_type="general",
             limit=-999,
@@ -354,63 +354,63 @@ class TestCFOAgentAllocate:
         assert result["budget"]["limit"] == 0
 
 
-# ── CFOAgent: check_budget ────────────────────────────────────────────────────
+# ── BudgetService: check_budget ────────────────────────────────────────────────────
 
 
-class TestCFOAgentCheckBudget:
-    def test_check_budget_no_budget_allocated(self, cfo_agent: CFOAgent) -> None:
-        result = cfo_agent._tool_check_budget(task_id="unallocated-task", estimated_cost=100)
+class TestBudgetServiceCheckBudget:
+    def test_check_budget_no_budget_allocated(self, budget_service: BudgetService) -> None:
+        result = budget_service.check_budget(task_id="unallocated-task", estimated_cost=100)
         assert result["ok"] is True
         assert result["within_budget"] is True
         assert result["reason"] == "no_budget_allocated"
 
-    def test_check_budget_within_limit(self, cfo_with_budget: CFOAgent) -> None:
+    def test_check_budget_within_limit(self, service_with_budget: BudgetService) -> None:
         # Pre-allocated budget: limit=1000, used=0
-        result = cfo_with_budget._tool_check_budget(task_id="test-task", estimated_cost=500)
+        result = service_with_budget.check_budget(task_id="test-task", estimated_cost=500)
         assert result["ok"] is True
         assert result["within_budget"] is True
         assert result["remaining"] == 1000
 
-    def test_check_budget_exceeds_limit(self, cfo_with_budget: CFOAgent) -> None:
+    def test_check_budget_exceeds_limit(self, service_with_budget: BudgetService) -> None:
         # Pre-allocated budget: limit=1000, used=0; request 1500 > 1000
-        result = cfo_with_budget._tool_check_budget(task_id="test-task", estimated_cost=1500)
+        result = service_with_budget.check_budget(task_id="test-task", estimated_cost=1500)
         assert result["ok"] is True
         assert result["within_budget"] is False
         assert result["reason"] == "exceeds_limit"
         assert result["remaining"] == 1000
         assert result["requested"] == 1500
 
-    def test_check_budget_after_partial_usage(self, cfo_with_budget: CFOAgent) -> None:
+    def test_check_budget_after_partial_usage(self, service_with_budget: BudgetService) -> None:
         # Record 600 tokens usage first
-        cfo_with_budget._tool_record_usage(
+        service_with_budget.record_usage(
             task_id="test-task",
             agent_id="director",
             resource_type="general",
             amount=600,
         )
         # Remaining: 1000 - 600 = 400; requesting 500 exceeds it
-        result = cfo_with_budget._tool_check_budget(task_id="test-task", estimated_cost=500)
+        result = service_with_budget.check_budget(task_id="test-task", estimated_cost=500)
         assert result["within_budget"] is False
         assert result["remaining"] == 400
 
-    def test_check_budget_zero_cost_always_allowed(self, cfo_with_budget: CFOAgent) -> None:
-        result = cfo_with_budget._tool_check_budget(task_id="test-task", estimated_cost=0)
+    def test_check_budget_zero_cost_always_allowed(self, service_with_budget: BudgetService) -> None:
+        result = service_with_budget.check_budget(task_id="test-task", estimated_cost=0)
         assert result["within_budget"] is True
 
 
-# ── CFOAgent: record_usage ─────────────────────────────────────────────────────
+# ── BudgetService: record_usage ─────────────────────────────────────────────────────
 
 
-class TestCFOAgentRecordUsage:
-    def test_record_usage_success(self, cfo_agent: CFOAgent) -> None:
+class TestBudgetServiceRecordUsage:
+    def test_record_usage_success(self, budget_service: BudgetService) -> None:
         # Allocate first
-        cfo_agent._tool_allocate_budget(
+        budget_service.allocate_budget(
             task_id="task-rec",
             budget_type="general",
             limit=2000,
             unit="tokens",
         )
-        result = cfo_agent._tool_record_usage(
+        result = budget_service.record_usage(
             task_id="task-rec",
             agent_id="director",
             resource_type="general",
@@ -422,156 +422,156 @@ class TestCFOAgentRecordUsage:
         assert result["usage"]["task_id"] == "task-rec"
         assert result["usage"]["agent_id"] == "director"
 
-    def test_record_usage_updates_budget_used_counter(self, cfo_agent: CFOAgent) -> None:
-        cfo_agent._tool_allocate_budget(
+    def test_record_usage_updates_budget_used_counter(self, budget_service: BudgetService) -> None:
+        budget_service.allocate_budget(
             task_id="task-upd",
             budget_type="general",
             limit=1000,
             unit="tokens",
         )
-        cfo_agent._tool_record_usage(
+        budget_service.record_usage(
             task_id="task-upd",
             agent_id="pm",
             resource_type="general",
             amount=400,
         )
-        status = cfo_agent._tool_get_budget_status("task-upd")
+        status = budget_service.get_budget_status("task-upd")
         budgets = status["budgets"]
         assert len(budgets) == 1
         assert budgets[0]["used"] == 400
 
-    def test_record_usage_multiple_accumulates(self, cfo_agent: CFOAgent) -> None:
-        cfo_agent._tool_allocate_budget(
+    def test_record_usage_multiple_accumulates(self, budget_service: BudgetService) -> None:
+        budget_service.allocate_budget(
             task_id="task-multi",
             budget_type="general",
             limit=3000,
             unit="tokens",
         )
-        cfo_agent._tool_record_usage(task_id="task-multi", agent_id="a1", resource_type="general", amount=100)
-        cfo_agent._tool_record_usage(task_id="task-multi", agent_id="a2", resource_type="general", amount=200)
-        status = cfo_agent._tool_get_budget_status("task-multi")
+        budget_service.record_usage(task_id="task-multi", agent_id="a1", resource_type="general", amount=100)
+        budget_service.record_usage(task_id="task-multi", agent_id="a2", resource_type="general", amount=200)
+        status = budget_service.get_budget_status("task-multi")
         assert status["budgets"][0]["used"] == 300
 
 
-# ── CFOAgent: get_budget_status ────────────────────────────────────────────────
+# ── BudgetService: get_budget_status ────────────────────────────────────────────────
 
 
-class TestCFOAgentGetBudgetStatus:
-    def test_get_status_no_budget(self, cfo_agent: CFOAgent) -> None:
-        result = cfo_agent._tool_get_budget_status("ghost")
+class TestBudgetServiceGetBudgetStatus:
+    def test_get_status_no_budget(self, budget_service: BudgetService) -> None:
+        result = budget_service.get_budget_status("ghost")
         assert result["ok"] is True
         assert result["has_budget"] is False
         assert result["budgets"] == []
 
-    def test_get_status_with_budget(self, cfo_with_budget: CFOAgent) -> None:
-        result = cfo_with_budget._tool_get_budget_status("test-task")
+    def test_get_status_with_budget(self, service_with_budget: BudgetService) -> None:
+        result = service_with_budget.get_budget_status("test-task")
         assert result["ok"] is True
         assert result["has_budget"] is True
         assert len(result["budgets"]) == 1
         assert result["budgets"][0]["limit"] == 1000
 
 
-# ── CFOAgent: get_usage_stats ──────────────────────────────────────────────────
+# ── BudgetService: get_usage_stats ──────────────────────────────────────────────────
 
 
-class TestCFOAgentGetUsageStats:
-    def test_stats_no_records(self, cfo_agent: CFOAgent) -> None:
-        result = cfo_agent._tool_get_usage_stats(task_id="empty-task")
+class TestBudgetServiceGetUsageStats:
+    def test_stats_no_records(self, budget_service: BudgetService) -> None:
+        result = budget_service.get_usage_stats(task_id="empty-task")
         assert result["ok"] is True
         assert result["record_count"] == 0
         assert result["totals"] == {}
 
-    def test_stats_by_task(self, cfo_agent: CFOAgent) -> None:
-        cfo_agent._tool_allocate_budget(
+    def test_stats_by_task(self, budget_service: BudgetService) -> None:
+        budget_service.allocate_budget(
             task_id="task-stat",
             budget_type="general",
             limit=5000,
             unit="tokens",
         )
-        cfo_agent._tool_record_usage(
+        budget_service.record_usage(
             task_id="task-stat",
             agent_id="director",
             resource_type="tokens",
             amount=500,
         )
-        result = cfo_agent._tool_get_usage_stats(task_id="task-stat")
+        result = budget_service.get_usage_stats(task_id="task-stat")
         assert result["record_count"] == 1
         assert result["totals"]["tokens"] == 500
 
-    def test_stats_by_agent(self, cfo_agent: CFOAgent) -> None:
-        cfo_agent._tool_allocate_budget(
+    def test_stats_by_agent(self, budget_service: BudgetService) -> None:
+        budget_service.allocate_budget(
             task_id="task-agent",
             budget_type="general",
             limit=5000,
             unit="tokens",
         )
-        cfo_agent._tool_record_usage(
+        budget_service.record_usage(
             task_id="task-agent",
             agent_id="director",
             resource_type="tokens",
             amount=700,
         )
-        result = cfo_agent._tool_get_usage_stats(agent_id="director")
+        result = budget_service.get_usage_stats(agent_id="director")
         assert result["record_count"] == 1
         assert result["totals"]["tokens"] == 700
 
 
-# ── CFOAgent: set_budget_limit ────────────────────────────────────────────────
+# ── BudgetService: set_budget_limit ────────────────────────────────────────────────
 
 
-class TestCFOAgentSetBudgetLimit:
-    def test_set_limit_success(self, cfo_agent: CFOAgent) -> None:
-        cfo_agent._tool_allocate_budget(
+class TestBudgetServiceSetBudgetLimit:
+    def test_set_limit_success(self, budget_service: BudgetService) -> None:
+        budget_service.allocate_budget(
             task_id="task-limit",
             budget_type="general",
             limit=1000,
             unit="tokens",
         )
         # Get the budget_id from status
-        status = cfo_agent._tool_get_budget_status("task-limit")
+        status = budget_service.get_budget_status("task-limit")
         budget_id = status["budgets"][0]["budget_id"]
 
-        result = cfo_agent._tool_set_budget_limit(budget_id=budget_id, new_limit=9999)
+        result = budget_service.set_budget_limit(budget_id=budget_id, new_limit=9999)
         assert result["ok"] is True
         assert result["budget"]["limit"] == 9999
 
-    def test_set_limit_not_found(self, cfo_agent: CFOAgent) -> None:
-        result = cfo_agent._tool_set_budget_limit(budget_id="nonexistent-id", new_limit=5000)
+    def test_set_limit_not_found(self, budget_service: BudgetService) -> None:
+        result = budget_service.set_budget_limit(budget_id="nonexistent-id", new_limit=5000)
         assert result["ok"] is False
         assert result["error"] == "budget_not_found"
 
-    def test_set_limit_negative_clamped_to_zero(self, cfo_agent: CFOAgent) -> None:
-        cfo_agent._tool_allocate_budget(
+    def test_set_limit_negative_clamped_to_zero(self, budget_service: BudgetService) -> None:
+        budget_service.allocate_budget(
             task_id="task-neg-limit",
             budget_type="general",
             limit=1000,
             unit="tokens",
         )
-        status = cfo_agent._tool_get_budget_status("task-neg-limit")
+        status = budget_service.get_budget_status("task-neg-limit")
         budget_id = status["budgets"][0]["budget_id"]
-        result = cfo_agent._tool_set_budget_limit(budget_id=budget_id, new_limit=-100)
+        result = budget_service.set_budget_limit(budget_id=budget_id, new_limit=-100)
         assert result["ok"] is True
         assert result["budget"]["limit"] == 0
 
 
-# ── CFOAgent: set_global_budget ───────────────────────────────────────────────
+# ── BudgetService: set_global_budget ───────────────────────────────────────────────
 
 
-class TestCFOAgentSetGlobalBudget:
-    def test_set_global_budget(self, cfo_agent: CFOAgent) -> None:
-        result = cfo_agent._tool_set_global_budget(limit=50000, unit="tokens")
+class TestBudgetServiceSetGlobalBudget:
+    def test_set_global_budget(self, budget_service: BudgetService) -> None:
+        result = budget_service.set_global_budget(limit=50000, unit="tokens")
         assert result["ok"] is True
         assert result["budget"]["budget_type"] == "global"
         assert result["budget"]["task_id"] == "global"
         assert result["budget"]["limit"] == 50000
 
-    def test_set_global_budget_negative_clamped(self, cfo_agent: CFOAgent) -> None:
-        result = cfo_agent._tool_set_global_budget(limit=-100, unit="tokens")
+    def test_set_global_budget_negative_clamped(self, budget_service: BudgetService) -> None:
+        result = budget_service.set_global_budget(limit=-100, unit="tokens")
         assert result["ok"] is True
         assert result["budget"]["limit"] == 0
 
 
-# ── CFOAgent: BudgetThresholdExceededEventV1 emission ──────────────────────────
+# ── BudgetService: BudgetThresholdExceededEventV1 emission ──────────────────────────
 
 
 class TestBudgetThresholdExceededEvent:
@@ -611,7 +611,7 @@ class TestBudgetThresholdExceededEvent:
             )
 
 
-# ── CFOAgent: FinOpsBudgetError ───────────────────────────────────────────────
+# ── BudgetService: FinOpsBudgetError ───────────────────────────────────────────────
 
 
 class TestFinOpsBudgetError:
@@ -638,7 +638,7 @@ class TestFinOpsBudgetError:
             FinOpsBudgetError("msg", code="")
 
 
-# ── CFOAgent: ReserveBudgetCommandV1 & RecordUsageCommandV1 validation ────────
+# ── BudgetService: ReserveBudgetCommandV1 & RecordUsageCommandV1 validation ────────
 
 
 class TestReserveBudgetCommandV1:
@@ -719,7 +719,7 @@ class TestRecordUsageCommandV1:
         assert cmd.metadata["key"] == "value"
 
 
-# ── CFOAgent: BudgetDecisionResultV1 ──────────────────────────────────────────
+# ── BudgetService: BudgetDecisionResultV1 ──────────────────────────────────────────
 
 
 class TestBudgetDecisionResultV1:
@@ -756,7 +756,7 @@ class TestBudgetDecisionResultV1:
             )
 
 
-# ── CFOAgent: GetBudgetStatusQueryV1 ──────────────────────────────────────────
+# ── BudgetService: GetBudgetStatusQueryV1 ──────────────────────────────────────────
 
 
 class TestGetBudgetStatusQueryV1:
@@ -774,10 +774,10 @@ class TestGetBudgetStatusQueryV1:
 
 
 class TestBudgetLifecycle:
-    def test_full_lifecycle(self, cfo_agent: CFOAgent) -> None:
+    def test_full_lifecycle(self, budget_service: BudgetService) -> None:
         """Simulate a complete budget lifecycle: allocate → check (ok) → record → check (exceeded)."""
         # 1. Allocate 1000-token budget
-        alloc = cfo_agent._tool_allocate_budget(
+        alloc = budget_service.allocate_budget(
             task_id="task-lifecycle",
             budget_type="general",
             limit=1000,
@@ -786,11 +786,11 @@ class TestBudgetLifecycle:
         assert alloc["ok"] is True
 
         # 2. Check within limit
-        check1 = cfo_agent._tool_check_budget(task_id="task-lifecycle", estimated_cost=500)
+        check1 = budget_service.check_budget(task_id="task-lifecycle", estimated_cost=500)
         assert check1["within_budget"] is True
 
         # 3. Record 600 tokens usage
-        record = cfo_agent._tool_record_usage(
+        record = budget_service.record_usage(
             task_id="task-lifecycle",
             agent_id="director",
             resource_type="general",
@@ -799,15 +799,15 @@ class TestBudgetLifecycle:
         assert record["ok"] is True
 
         # 4. Check — now 400 remaining, 500 request exceeds
-        check2 = cfo_agent._tool_check_budget(task_id="task-lifecycle", estimated_cost=500)
+        check2 = budget_service.check_budget(task_id="task-lifecycle", estimated_cost=500)
         assert check2["within_budget"] is False
         assert check2["reason"] == "exceeds_limit"
         assert check2["remaining"] == 400
 
         # 5. Get stats
-        stats = cfo_agent._tool_get_usage_stats(task_id="task-lifecycle")
+        stats = budget_service.get_usage_stats(task_id="task-lifecycle")
         assert stats["totals"]["general"] == 600
 
         # 6. Get status
-        status = cfo_agent._tool_get_budget_status("task-lifecycle")
+        status = budget_service.get_budget_status("task-lifecycle")
         assert status["budgets"][0]["used"] == 600

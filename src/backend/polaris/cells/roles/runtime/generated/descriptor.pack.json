@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-10-21T02:56:22.666353Z",
-  "source_hash": "93b2e49a1ed06e23",
+  "generated_at": "2026-10-25T21:20:43.790944Z",
+  "source_hash": "f46986462fdc36f9",
   "cell_id": "roles.runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -12,36 +12,36 @@
       "defined_in": "polaris/cells/roles/runtime/public/engineering_service.py",
       "methods": [
         {
-          "name": "snapshot",
-          "doc": "Expose one committed snapshot for initial and reconnect hydration."
-        },
-        {
-          "name": "find_request",
-          "doc": "Read saved request identity through the same workspace owner."
-        },
-        {
-          "name": "chat_role",
-          "doc": "Discuss through native K1 without engineering admission or action tools."
+          "name": "start",
+          "doc": ""
         },
         {
           "name": "observe",
           "doc": ""
         },
         {
-          "name": "start",
-          "doc": ""
+          "name": "snapshot",
+          "doc": "Expose one committed snapshot for initial and reconnect hydration."
+        },
+        {
+          "name": "current_snapshot",
+          "doc": "Discover current identity, then apply the same read-only freshness checks."
+        },
+        {
+          "name": "current_session_id",
+          "doc": "Resolve committed current identity without claiming fresh acceptance."
+        },
+        {
+          "name": "request_identity",
+          "doc": "Read committed request identity only; it carries no current verdict."
+        },
+        {
+          "name": "find_request",
+          "doc": "Read saved request identity through the same workspace owner."
         },
         {
           "name": "wait",
           "doc": "Join the existing owner, including its physical cleanup, without a new run."
-        },
-        {
-          "name": "consult_role",
-          "doc": "Return one read-only answer within the current Director's owned run."
-        },
-        {
-          "name": "run_collaborative",
-          "doc": "Run actual PM, CE and Director loops once, retaining ordinary advice."
         },
         {
           "name": "cancel",
@@ -50,6 +50,18 @@
         {
           "name": "resume",
           "doc": ""
+        },
+        {
+          "name": "chat_role",
+          "doc": "Discuss through native K1 without engineering admission or action tools."
+        },
+        {
+          "name": "consult_role",
+          "doc": "Return one read-only answer within the current Director's owned run."
+        },
+        {
+          "name": "run_collaborative",
+          "doc": "Run actual PM, CE and Director loops once, retaining ordinary advice."
         }
       ]
     }

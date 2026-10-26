@@ -107,3 +107,7 @@ EngineeringRunService supplies a host-only opaque reference owner to the existin
 Engineering SQLite remains the only run/event owner. Pins are retention metadata, not a second execution ledger. V1 audit pins keep their compatibility/query semantics; new runs do not generate Factory contracts. Owner metadata stays outside messages/tools/provider bodies. Quiescent cold initialization protects still-present old references; missing bytes are reported and never restored or replayed. Reads do not mint pins. Crash-after-pin orphans are retained, not automatically unpinned. Protected-over-budget stats are explicit rather than silently deleting referenced evidence.
 
 Root source review and component gates have passed; new frozen actual requests and project delivery remain unverified. Historical L2-18 missing refs and failed full acceptance remain unchanged. See root docs/blueprints/CONTEXT_DURABLE_REFERENCE_RETENTION_20261025.md.
+
+## Optional budget and model advisors (2026-10-26)
+
+`polaris.cells.roles.runtime.public.cfo_advisor.CFOAgent` and `polaris.cells.roles.runtime.public.hr_advisor.HRAgent` retain role tools, TASK/RESULT messages and RoleAgent lifecycle. Deterministic operations and their persisted budget/config state remain in `finops.budget_guard` and `llm.control_plane`; neither lower owner imports RoleAgent. These advisors do not create another EngineeringRunService or project outcome owner and are not mandatory planning stages.

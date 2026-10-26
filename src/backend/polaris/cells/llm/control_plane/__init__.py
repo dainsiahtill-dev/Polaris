@@ -3,12 +3,12 @@
 from polaris.cells.llm.control_plane.public import (
     GetLlmConfigQueryV1,
     GetLlmRuntimeStatusQueryV1,
-    HRAgent,
     ILLMControlPlane,
     InvokeLlmRoleCommandV1,
     LLMConfig,
     LlmConfigChangedEventV1,
     LlmConfigResultV1,
+    LLMConfigService,
     LLMConfigStore,
     LlmControlPlaneError,
     LlmControlPlaneService,
@@ -25,15 +25,16 @@ from polaris.cells.llm.control_plane.public import (
     invoke_llm_role,
     load_llm_config_port,
     save_llm_config,
+    validate_llm_provider_cfg,
 )
 
 __all__ = [
     "GetLlmConfigQueryV1",
     "GetLlmRuntimeStatusQueryV1",
-    "HRAgent",
     "ILLMControlPlane",
     "InvokeLlmRoleCommandV1",
     "LLMConfig",
+    "LLMConfigService",
     "LLMConfigStore",
     "LLMMessage",
     "LLMRequest",
@@ -52,4 +53,5 @@ __all__ = [
     "invoke_llm_role",
     "load_llm_config_port",
     "save_llm_config",
+    "validate_llm_provider_cfg",
 ]

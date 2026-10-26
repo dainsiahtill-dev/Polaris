@@ -141,16 +141,7 @@ def _workspace_path_exists(value: Any) -> bool:
 
 def _runtime_cache_env_value(settings: "Settings") -> str:
     runtime_settings = getattr(settings, "runtime", None)
-    explicit_cache_root = _normalize_abs_path(getattr(runtime_settings, "cache_root", ""))
-    if explicit_cache_root:
-        return explicit_cache_root
-    try:
-        from polaris.bootstrap.config import default_system_cache_base
-
-        return _normalize_abs_path(default_system_cache_base())
-    except (ImportError, RuntimeError, ValueError) as exc:
-        logger.debug("Failed to resolve default runtime cache root: %s", exc)
-        return ""
+    return _normalize_abs_path(getattr(runtime_settings, "cache_root", ""))
 
 
 def sync_process_settings_environment(settings: "Settings") -> None:
@@ -178,7 +169,7 @@ def sync_process_settings_environment(settings: "Settings") -> None:
     else:
         os.environ.pop("KERNELONE_RUNTIME_ROOT", None)
 
-    os.environ["KERNELONE_STATE_TO_RAMDISK"] = "1" if bool(getattr(runtime_settings, "use_ramdisk", True)) else "0"
+    os.environ["KERNELONE_STATE_TO_RAMDISK"] = "1" if bool(getattr(runtime_settings, "use_ramdisk", False)) else "0"
 
     runtime_cache_root = _runtime_cache_env_value(settings)
     if runtime_cache_root:

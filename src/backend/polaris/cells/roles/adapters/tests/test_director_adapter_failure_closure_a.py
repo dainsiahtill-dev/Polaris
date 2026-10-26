@@ -389,72 +389,118 @@ class TestDirectorFailureClosureA:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """No-provider retry must supersede an older mutation-bypass verdict."""
+        """Current owner receipts must prove the complete no-provider retry."""
+        from polaris.cells.roles.adapters.internal.director.execute_method import _claim
+        from polaris.cells.roles.adapters.tests.test_receipt_bound_preflight_completion import (
+            CHILD,
+            TASK,
+            _facts,
+            _preflight,
+            _setup,
+        )
+        from polaris.cells.runtime.execution_broker.public import project_verification as broker
 
-        paths = ["tests/product.test.js", "tests/test_product.py", "README.md"]
-        for path in paths:
-            target = tmp_path / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(f"verified {path}\n", encoding="utf-8")
+        case = _setup(tmp_path, monkeypatch)
+        contract = case["port"].completion_contract
+        owner_receipts: list[broker.ProjectVerificationReceiptV1] = []
+        for obligation in contract.obligations.verification:
+            if obligation.owner_task_id != TASK or obligation.applicability != "required":
+                continue
+            command = broker.authorize_project_verification_command(
+                broker.ResolveProjectVerificationAuthorityQueryV1(
+                    workspace=str(case["workspace"]),
+                    project_id=contract.project_id,
+                    run_id=contract.run_id,
+                    completion_contract_hash=contract.contract_hash,
+                    obligation_id=obligation.obligation_id,
+                )
+            )
+            executed = broker.run_project_verification(command)
+            assert type(executed.receipt) is broker.ProjectVerificationReceiptV1
+            assert executed.receipt.succeeded
+            owner_receipts.append(executed.receipt)
+        paths = [artifact.path for artifact in contract.obligations.artifacts if artifact.applicability == "required"]
+        artifact_refs: list[str] = []
+        for artifact in contract.obligations.artifacts:
+            if artifact.applicability != "required":
+                continue
+            receipt = broker.query_project_artifact_receipt(
+                broker.QueryProjectArtifactReceiptV1(
+                    workspace=str(case["workspace"]),
+                    project_id=contract.project_id,
+                    run_id=contract.run_id,
+                    completion_contract_hash=contract.contract_hash,
+                    obligation_id=artifact.obligation_id,
+                    owner_task_id=TASK,
+                    path=artifact.path,
+                )
+            )
+            assert type(receipt) is broker.ProjectArtifactReceiptV1
+            artifact_refs.append(receipt.receipt_ref)
+        artifact_refs.sort()
+        claim = next(event for event in _facts(case["workspace"]) if event["event_type"] == "claimed")
+        refs = [claim["event_id"], *artifact_refs, *[receipt.receipt_ref for receipt in owner_receipts]]
         appended: list[Any] = []
         lifecycle_appended: list[Any] = []
-        monkeypatch.setattr(execute_method_module, "append_run_ledger_event", appended.append)
-        monkeypatch.setattr(
-            execute_method_module,
-            "append_tool_call_lifecycle_event",
-            lifecycle_appended.append,
-        )
-        refs = [f"receipt://{index}" for index in range(3)]
+        gate_events: list[Any] = []
+        append_event = _claim.append_run_ledger_event
+        append_lifecycle = _claim.append_tool_call_lifecycle_event
 
-        verdict = execute_method_module._append_receipt_bound_preflight_task_boundary(
-            SimpleNamespace(workspace=str(tmp_path)),
-            context={
-                "metadata": {
-                    "task_completion_projection": {
-                        "schema_version": "polaris.task_completion_projection.v1",
-                        "task_id": "TASK-2",
-                        "project_id": "L1-02",
-                        "run_id": "factory-run-1",
-                        "project_contract_hash": "c" * 64,
-                        "owned_artifacts": [
-                            {
-                                "applicability": "required",
-                                "obligation_id": f"artifact-{index}",
-                                "owner_task_id": "TASK-2",
-                                "path": path,
-                            }
-                            for index, path in enumerate(paths)
-                        ],
-                    }
-                }
-            },
-            target_task_id="16",
-            run_id="director-retry-1",
-            finalize_result={"identity": {"external_task_id": "TASK-2"}},
-            receipt_evidence={
-                "schema_version": "polaris.current_task_project_artifact_receipt_evidence.v1",
-                "authority": "runtime.execution_broker.project_artifact_receipt.v1",
-                "ok": True,
-                "required_artifact_count": 3,
-                "receipt_count": 3,
-                "receipt_paths": paths,
-                "receipt_refs": refs,
-            },
-        )
+        def observe_event(command: Any) -> Any:
+            if command.event.get("event_type") == "task_boundary_verdict":
+                appended.append(command)
+            elif (
+                command.event.get("event_type") == "gate_evaluated"
+                and command.event.get("stage") == "workspace_validation"
+            ):
+                gate_events.append(command)
+            return append_event(command)
 
+        def observe_lifecycle(command: Any) -> Any:
+            lifecycle_appended.append(command)
+            return append_lifecycle(command)
+
+        monkeypatch.setattr(_claim, "append_run_ledger_event", observe_event)
+        monkeypatch.setattr(_claim, "append_tool_call_lifecycle_event", observe_lifecycle)
+        result = _preflight(case)
+        assert result is not None and result["success"] is True
+        assert case["authority"].snapshot().closed
+        assert len(appended) == 1
+        verdict = appended[0].event["task_boundary_verdict"]
         assert verdict["status"] == "completed_verified"
-        assert verdict["task_id"] == "TASK-2"
+        assert verdict["task_id"] == TASK
         assert verdict["evidence_refs"] == refs
         assert len(lifecycle_appended) == 1
         lifecycle = lifecycle_appended[0].lifecycle_receipt
         assert lifecycle["ok"] is True
         assert lifecycle["dispatch_status"] == "verified_existing_artifacts"
         assert lifecycle["dispatched_tool_calls_count"] == 0
-        assert [item["receipt_ref"] for item in lifecycle["effect_receipt_refs"]] == refs
-        assert len(appended) == 1
+        assert [item["receipt_ref"] for item in lifecycle["effect_receipt_refs"]] == artifact_refs
         event = appended[0].event
         assert event["task_boundary_verdict"]["status"] == "completed_verified"
-        assert event["job_token"]["project_id"] == "L1-02"
+        assert event["job_token"]["project_id"] == contract.project_id
+        assert len(paths) == len(artifact_refs) == 3
+        assert len(gate_events) == 1
+        assert gate_events[0].event["job_token"] == case["context"]["job_token"]
+        assert "qa" in gate_events[0].event["job_token"]["gate_policy"]["required_evidence_modalities"]
+        assert event["task_boundary_verdict"]["required_verifiers"]
+        assert set(verdict["required_verifiers"]) == set(verdict["completed_verifiers"])
+        assert lifecycle_appended[0].run_id == CHILD
+
+    def test_receipt_bound_preflight_missing_required_verifier_keeps_claim_open(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from polaris.cells.roles.adapters.tests.test_receipt_bound_preflight_completion import (
+            _facts,
+            _preflight,
+            _setup,
+        )
+
+        case = _setup(tmp_path, monkeypatch)
+        before = _facts(case["workspace"], "execution.control_plane")
+        assert _preflight(case) is None
+        assert not case["authority"].snapshot().closed
+        assert _facts(case["workspace"], "execution.control_plane") == before
 
     def test_cross_task_completion_projection_settles_failed_without_leaking_lease(
         self,
@@ -887,7 +933,7 @@ class TestDirectorFailureClosureA:
             assert command.identity == execution_attempt
             return TaskRuntimeExecutionAttemptSettlementVerdictV1(
                 success=False,
-                code="execution_event_append_failed",
+                code="row_projection_failed",
                 workspace=command.workspace,
                 identity=command.identity,
                 outcome=command.outcome,
@@ -917,14 +963,14 @@ class TestDirectorFailureClosureA:
         expected_settlement_projection = {
             "success": False,
             "code": "settlement_rejected",
-            "reason": "execution_event_append_failed",
+            "reason": "row_projection_failed",
             "identity": execution_attempt.to_record(),
             "outcome": "suspended",
             "callback_error_type": "",
             "task_runtime_verdict": {
                 "success": False,
-                "code": "execution_event_append_failed",
-                "reason": "execution_event_append_failed",
+                "code": "row_projection_failed",
+                "reason": "row_projection_failed",
                 "workspace": "/workspace",
                 "identity": execution_attempt.to_record(),
                 "outcome": "suspended",
@@ -942,8 +988,8 @@ class TestDirectorFailureClosureA:
         assert {key: result[key] for key in expected_settlement_projection} == expected_settlement_projection
         assert result["task_runtime_verdict"] == {
             "success": False,
-            "code": "execution_event_append_failed",
-            "reason": "execution_event_append_failed",
+            "code": "row_projection_failed",
+            "reason": "row_projection_failed",
             "workspace": "/workspace",
             "identity": execution_attempt.to_record(),
             "outcome": "suspended",
@@ -963,11 +1009,11 @@ class TestDirectorFailureClosureA:
             "phase": "executing",
             "step_kind": "task_runtime",
             "step_title": "Director cancellation suspend failed",
-            "step_detail": "execution_event_append_failed",
+            "step_detail": "row_projection_failed",
             "status": "failed",
             "run_id": "run-1",
             "code": "director_task_runtime_suspend_failed",
-            "reason": "execution_event_append_failed",
+            "reason": "row_projection_failed",
             "refs": {
                 "task_runtime_suspend_result": expected_settlement_projection,
                 "task_runtime_session_id": "session-1",
@@ -2831,7 +2877,7 @@ export function summary() {
         )
 
     @pytest.mark.asyncio
-    async def test_execute_fails_when_changed_file_has_no_domain_signal(self, tmp_path: Any) -> None:
+    async def test_safe_candidate_without_domain_words_still_requires_final_qa(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         target = tmp_path / "src" / "fish" / "arena.ts"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -2880,13 +2926,30 @@ export function summary() {
             context={"run_id": "run-director-semantic-quality"},
         )
 
-        assert result["success"] is False
-        assert result["error_code"] == "director_materialization_semantic_quality_failed"
-        assert "no project-domain signal" in result["semantic_quality_error"]
+        assert result["success"] is True
+        assert result["tools_executed"] == 1
+        assert result["changed_files"] == ["src/fish/arena.ts"]
+        assert target.read_text(encoding="utf-8").startswith("export function calculateInvoiceTotal")
+        assert result["qa_required_for_final_verdict"] is True
+        assert "task_boundary_verdict" not in result and "accepted" not in result
         updated = adapter.task_runtime.get_task(task_id)
         assert updated is not None
         raw_metadata = updated.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
         raw_adapter_result = metadata.get("adapter_result")
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
-        assert adapter_result.get("materialization_error") == "director_materialization_semantic_quality_failed"
+        assert not adapter_result.get("materialization_error")
+        assert adapter_result.get("tools_executed") == 1
+
+
+def test_safe_candidate_validation_still_rejects_unsafe_paths_and_patch_residue(tmp_path: Path) -> None:
+    from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
+
+    executor = DirectorPatchExecutor(workspace=str(tmp_path))
+    unsafe = executor.validate_generated_output({}, ["../outside.py"])
+    assert unsafe is not None and "unsafe path" in unsafe
+    assert not (tmp_path.parent / "outside.py").exists()
+    target = tmp_path / "candidate.py"
+    target.write_text("<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n", encoding="utf-8")
+    residue = executor.validate_generated_output({}, ["candidate.py"])
+    assert residue is not None and "quality gate failed" in residue

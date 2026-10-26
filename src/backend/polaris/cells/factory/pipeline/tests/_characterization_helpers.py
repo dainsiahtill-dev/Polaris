@@ -19,10 +19,12 @@ from typing import Any
 import pytest
 from polaris.cells.chief_engineer.blueprint.public import (
     BuildChiefEngineerBlueprintPortfolioCommandV1,
+    CaptureChiefEngineerPortfolioAuthorityQueryV1,
     ChiefEngineerPortfolioTaskV1,
     GenerateTaskBlueprintCommandV1,
     VerificationCommandAuthorityV1,
     build_chief_engineer_blueprint_portfolio,
+    capture_chief_engineer_portfolio_authority,
     derive_project_kind_authority_from_catalog_snapshot,
     generate_task_blueprint,
     project_chief_engineer_task_blueprint,
@@ -31,7 +33,6 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
 )
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
@@ -192,7 +193,9 @@ def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
         bindings.append(binding)
         return binding
 
-    def revoke_authority_binding(binding: FactoryRoleEvidenceAuthorityBindingV1) -> None:
+    def revoke_authority_binding(
+        binding: FactoryRoleEvidenceAuthorityBindingV1,
+    ) -> None:
         del binding
 
     port.acquire_cutoff = acquire_cutoff  # type: ignore[method-assign]
@@ -453,7 +456,9 @@ def _single_task_chief_engineer_result() -> SimpleNamespace:
     )
 
 
-def _invalid_chief_engineer_stream_result(output: str = '{"construction_plan": <invalid>}') -> SimpleNamespace:
+def _invalid_chief_engineer_stream_result(
+    output: str = '{"construction_plan": <invalid>}',
+) -> SimpleNamespace:
     return SimpleNamespace(
         ok=False,
         status="failed",
@@ -653,7 +658,7 @@ def _write_review_for_blueprint(
     )
 
 
-def _write_handoff_ready_review_for_tasks(
+async def _write_handoff_ready_review_for_tasks(
     executor: OrchestrationStageExecutor,
     *,
     run_id: str,
@@ -668,7 +673,7 @@ def _write_handoff_ready_review_for_tasks(
             if isinstance(raw_targets, list)
             else ["src/index.ts"]
         )
-        result = _generate_domain_blueprint(
+        result = await _generate_domain_blueprint(
             Path(executor.workspace),
             task_id=task_id,
             objective=f"Build pirate treasure budget planner for {task_id}",
@@ -700,7 +705,7 @@ def _write_handoff_ready_review_for_tasks(
     )
 
 
-def _generate_domain_blueprint(
+async def _generate_domain_blueprint(
     workspace: Path,
     *,
     task_id: str,
@@ -743,27 +748,36 @@ def _generate_domain_blueprint(
         }
         for index, path in enumerate(target_files, start=1)
     ]
+
+    async def synthetic_portfolio_source(
+        query: CaptureChiefEngineerPortfolioAuthorityQueryV1,
+    ) -> dict[str, Any]:
+        """Synthetic shape fixture only; not committed Factory PM authority."""
+        return {
+            "workspace": str(workspace),
+            "run_id": run_id,
+            "project_id": project_id,
+            "pm_stage_event_id": f"pm-stage-{run_id}",
+            "pm_contract_hash": "a" * 64,
+            "tasks": (portfolio_task,),
+            "catalog_snapshot": catalog_snapshot,
+            "catalog_snapshot_hash": project_completion_catalog_snapshot_hash(catalog_snapshot),
+            "verifier_policy_hash": verifier_policy_hash,
+            "verifier_policy_snapshot": verifier_policy_snapshot,
+            "verifier_policy_snapshot_hash": project_completion_verifier_policy_snapshot_hash(verifier_policy_snapshot),
+            "verification_command_authority": (build_authority,),
+        }
+
+    authority_carrier = await capture_chief_engineer_portfolio_authority(
+        CaptureChiefEngineerPortfolioAuthorityQueryV1(str(workspace), run_id, (portfolio_task,)),
+        source_port=synthetic_portfolio_source,
+    )
     portfolio = build_chief_engineer_blueprint_portfolio(
         BuildChiefEngineerBlueprintPortfolioCommandV1(
             workspace=str(workspace),
             run_id=run_id,
             tasks=(portfolio_task,),
-            authority_carrier=_issue_chief_engineer_portfolio_authority_carrier(
-                workspace=str(workspace),
-                run_id=run_id,
-                project_id=project_id,
-                pm_stage_event_id=f"pm-stage-{run_id}",
-                pm_contract_hash="a" * 64,
-                tasks=(portfolio_task,),
-                catalog_snapshot=catalog_snapshot,
-                catalog_snapshot_hash=project_completion_catalog_snapshot_hash(catalog_snapshot),
-                verifier_policy_hash=verifier_policy_hash,
-                verifier_policy_snapshot=verifier_policy_snapshot,
-                verifier_policy_snapshot_hash=project_completion_verifier_policy_snapshot_hash(
-                    verifier_policy_snapshot
-                ),
-                verification_command_authority=(build_authority,),
-            ),
+            authority_carrier=authority_carrier,
             llm_blueprint={
                 "construction_plan": {
                     "implementation": list(execution_checklist),

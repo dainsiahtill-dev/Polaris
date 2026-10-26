@@ -1,0 +1,9 @@
+# 修复诊断按实际输入来源归一
+
+状态：全仓已发现债务，待最小修复。小SCC重构回归中已复现同一raw finding同时生成legacy artifact_quality_error和typed undeclared_runtime_import，两者被重复计为独立diagnostic；当前coverage门禁12通过/1失败。移除无用taxonomy import的前后查询结果相同，未证明与身份解环有关。
+
+唯一owner仍DirectorRuntime现有diagnostic归一与public coverage投影。先按同一输入finding的来源关系处理typed和legacy表达，已有有效typed证据时不能再把同源泛化fallback当第二个独立缺陷；无有效typed信息时仍保留legacy发现。禁止仅改expected count、按相似字符串全局删诊断、吞掉真实独立输入或绕开coverage。
+
+先保存当前原例红，再加两条独立输入不得合并、typed无效仍legacy回退、不同path/code/owner保持、UNKNOWN/unsupported仍保留等反例。修复源机制后跑现有coverage/repair catalog/planning/receipt投影相邻检查，原测试断言不得降低。仅诊断归一，不执行目标修复、不改产物、权限、策略binding或新工程循环。
+
+具体证据：主仓`.polaris/audits/technical-debt-clearance-20261025/small-scc-fix/adjacent-coverage-defect.json`。源码范围由原诊断入口及public覆盖consumer的实际call path确定，不重写规则目录。达到原红例及相邻反例通过即结束该主题，其余全仓债务继续分别关闭。

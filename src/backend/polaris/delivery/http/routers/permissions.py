@@ -21,6 +21,7 @@ from polaris.cells.policy.permission.public import (
     PermissionService,
     get_permission_service,
 )
+from polaris.cells.roles.kernel.public.permission_policy_adapter import get_permission_tool_policy_adapter
 from polaris.cells.roles.profile.public import (
     Action,
     Resource,
@@ -142,7 +143,10 @@ class PolicyListResponse(BaseModel):
 async def _get_permission_service(request: Request) -> PermissionService:
     state = get_state(request)
     workspace = active_workspace_value(state.settings)
-    return await get_permission_service(str(workspace or ""))
+    workspace_token = str(workspace or "")
+    return await get_permission_service(
+        workspace_token, tool_policy_port=get_permission_tool_policy_adapter(workspace_token)
+    )
 
 
 @router.post("/check", response_model=PermissionCheckResponse, dependencies=[Depends(require_auth)])

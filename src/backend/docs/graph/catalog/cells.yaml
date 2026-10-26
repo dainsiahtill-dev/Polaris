@@ -149,12 +149,27 @@ cells:
       - fs.read:runtime/factory/ledger/*
     verification:
       tests:
-        - polaris/cells/control_plane/run_ledger/tests/test_public_service.py
-        - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
+      - polaris/cells/control_plane/run_ledger/tests/test_public_service.py
+      - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
       gaps:
-        - Compatibility readers still accept runtime/factory/ledger until
-          historical internal stress-harness evidence ages out.
-
+      - Compatibility readers may explicitly accept historical internal stress-harness ledger files under runtime/factory/ledger
+        until old test evidence ages out; production projection defaults must remain runtime/control_plane/ledger only.
+      smoke_commands: []
+      test_effects_allowed:
+      - path: polaris/cells/control_plane/run_ledger/tests/test_committed_readonly_batch_layouts.py
+        effects_allowed:
+        - process.spawn:python/committed_fact_cold_layout
+        reason: Cold historical committed-record probes compare owner snapshots and bytes without replaying source effects.
+      test_dependencies:
+      - path: polaris/cells/control_plane/run_ledger/tests/test_committed_readonly_batch_layouts.py
+        depends_on:
+        - roles.kernel
+      - path: polaris/cells/control_plane/run_ledger/tests/test_failed_product_resource_settlement.py
+        depends_on:
+        - roles.kernel
+      - path: polaris/cells/control_plane/run_ledger/tests/test_deferred_boundary_revalidation.py
+        depends_on:
+        - roles.kernel
   - id: control_plane.verifier_policy
     title: Control Plane Verifier Policy
     kind: capability
@@ -196,12 +211,21 @@ cells:
       - fs.write:workspace/.polaris/verifier_policy.json
     verification:
       tests:
-        - polaris/cells/control_plane/verifier_policy/tests/test_public_service.py
-        - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
+      - polaris/cells/control_plane/verifier_policy/tests/test_public_service.py
+      - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
       gaps:
-        - Command policy decisions are evidence, never spawn capabilities;
-          runtime.execution_broker must re-evaluate the exact query while
-          atomically consuming its one-use fenced launch lease.
+      - This Cell evaluates command proposals but never mints spawn capability; runtime.execution_broker must re-evaluate the
+        exact query while consuming its own one-use fenced launch lease.
+      smoke_commands: []
+      test_effects_allowed:
+      - path: polaris/cells/control_plane/verifier_policy/tests/test_direct_node_test_runner.py
+        effects_allowed:
+        - process.spawn:node/direct_test_runner
+        reason: Real Node runner verifies physical success failure and zero-test rejection in isolated fixture files.
+      - path: polaris/cells/control_plane/verifier_policy/tests/test_node_direct_command_profiles.py
+        effects_allowed:
+        - process.spawn:node/direct_command_profiles
+        reason: Real direct Node test commands preserve nonzero and zero-test verdicts for accepted command profiles.
 
   - id: control_plane.verifier_execution
     title: Control Plane Verifier Execution
@@ -264,17 +288,20 @@ cells:
       - polaris.delivery.http.routers.control_plane
       - polaris.delivery.ws.runtime_endpoint
     owned_paths:
-      - polaris/delivery/http/app_factory.py
-      - polaris/delivery/http/dependencies.py
-      - polaris/delivery/http/error_handlers.py
-      - polaris/delivery/http/middleware/**
-      - polaris/delivery/http/routers/__init__.py
-      - polaris/delivery/http/routers/_shared.py
-      - polaris/delivery/http/routers/aggregate_chat.py
-      - polaris/delivery/http/routers/control_plane.py
-      - polaris/delivery/http/routers/jetstream_utils.py
-      - polaris/delivery/http/routers/sse_utils.py
-      - polaris/delivery/http/v2/__init__.py
+    - polaris/delivery/http/app_factory.py
+    - polaris/delivery/http/dependencies.py
+    - polaris/delivery/http/error_handlers.py
+    - polaris/delivery/http/middleware/**
+    - polaris/delivery/http/routers/__init__.py
+    - polaris/delivery/http/routers/_shared.py
+    - polaris/delivery/http/routers/aggregate_chat.py
+    - polaris/delivery/http/routers/control_plane.py
+    - polaris/delivery/http/routers/jetstream_utils.py
+    - polaris/delivery/http/routers/sse_utils.py
+    - polaris/delivery/http/v2/__init__.py
+    - polaris/delivery/http/routers/permissions.py
+    - polaris/tests/integration/delivery/routers/test_permission_tool_policy_composition.py
+    - polaris/tests/unit/delivery/http/routers/test_permissions_v2.py
     public_contracts:
       modules:
         - polaris.cells.delivery.api_gateway.public.contracts
@@ -289,11 +316,14 @@ cells:
       errors:
         - ApiGatewayErrorV1
     depends_on:
-      - roles.runtime
-      - runtime.projection
-      - policy.workspace_guard
-      - control_plane.run_ledger
-      - control_plane.verifier_policy
+    - roles.runtime
+    - runtime.projection
+    - policy.workspace_guard
+    - control_plane.run_ledger
+    - control_plane.verifier_policy
+    - policy.permission
+    - roles.kernel
+    - roles.profile
     subgraphs:
       - storage_archive_pipeline
     state_owners: []
@@ -304,11 +334,19 @@ cells:
       - fs.read:workspace/history/*
     verification:
       tests:
-        - tests/architecture/test_polaris_layout.py
-        - polaris/delivery/http/routers/test_aggregate_chat.py
+      - tests/architecture/test_polaris_layout.py
+      - polaris/delivery/http/routers/test_aggregate_chat.py
       gaps:
-        - Router-to-cell alignment is still being decomposed.
-
+      - Router-to-cell alignment is still being decomposed.
+      test_dependencies:
+      - path: polaris/tests/integration/delivery/routers/test_permission_tool_policy_composition.py
+        depends_on:
+        - policy.permission
+      - path: polaris/tests/unit/delivery/http/routers/test_permissions_v2.py
+        depends_on:
+        - roles.kernel
+        - runtime.state_owner
+        - storage.layout
   - id: delivery.cli
     title: CLI Delivery
     kind: capability
@@ -527,83 +565,91 @@ cells:
       close, and terminal admission now belong to this Cell. DEO-4 legacy removal
       and architecture fencing are closed; pre-bench is the only active gate.
     current_modules:
-      - polaris.cells.runtime.task_runtime.public.service
-      - polaris.cells.runtime.task_runtime.internal.service
-      - polaris.cells.runtime.task_runtime.internal.execution_session
-      - polaris.cells.runtime.task_runtime.internal.directed_effect_operation
-      - polaris.cells.runtime.task_runtime.internal.task_board
+    - polaris.cells.runtime.task_runtime.public.service
+    - polaris.cells.runtime.task_runtime.public.operation_identity
+    - polaris.cells.runtime.task_runtime.internal.service
+    - polaris.cells.runtime.task_runtime.internal.execution_session
+    - polaris.cells.runtime.task_runtime.internal.directed_effect_operation
+    - polaris.cells.runtime.task_runtime.internal.task_board
+    - polaris.cells.runtime.task_runtime.internal.execution_claim_evidence
+    - polaris.cells.runtime.task_runtime.public.execution_claim_evidence
     owned_paths:
       - polaris/cells/runtime/task_runtime/**
     public_contracts:
       modules:
-        - polaris.cells.runtime.task_runtime.public.contracts
-        - polaris.cells.runtime.task_runtime.public.execution_effect_closure
+      - polaris.cells.runtime.task_runtime.public.contracts
+      - polaris.cells.runtime.task_runtime.public.execution_effect_closure
+      - polaris.cells.runtime.task_runtime.public.operation_identity
+      - polaris.cells.runtime.task_runtime.public.execution_claim_evidence
       commands:
-        - CreateRuntimeTaskCommandV1
-        - UpdateRuntimeTaskCommandV1
-        - ReopenRuntimeTaskCommandV1
-        - BindRuntimeTaskToFactoryRunCommandV1
-        - FenceExpiredFactoryRunSessionsCommandV1
-        - PrepareOwnerReworkExecutionCommandV1
-        - PrepareSameTaskLocalReworkCommandV1
-        - OpenTaskRuntimeExecutionAttemptAuthorityCommandV1
-        - HeartbeatTaskRuntimeExecutionAttemptCommandV1
-        - SettleTaskRuntimeExecutionAttemptCommandV1
-        - EnrollDirectedEffectParentRegistryStreamCommandV1
-        - EnrollDirectedEffectOperationStreamCommandV1
-        - AdmitDirectedEffectParentCommandV1
-        - AdmitDirectedEffectParentBatchCommandV1
-        - SealDirectedEffectInventoryCommandV1
-        - AdmitDirectedEffectOperationCommandV1
-        - FinalizeDirectedEffectInventoryAdmissionCommandV1
-        - ClaimDirectedEffectCommandV1
-        - AbortDirectedEffectOperationCommandV1
-        - CommitDirectedEffectReceiptCommandV1
-        - MarkDirectedEffectRecoveryPendingCommandV1
-        - DeadLetterDirectedEffectOperationCommandV1
-        - ReconcileAmbiguousDirectedEffectsCommandV1
+      - CreateRuntimeTaskCommandV1
+      - UpdateRuntimeTaskCommandV1
+      - ReopenRuntimeTaskCommandV1
+      - BindRuntimeTaskToFactoryRunCommandV1
+      - FenceExpiredFactoryRunSessionsCommandV1
+      - PrepareOwnerReworkExecutionCommandV1
+      - PrepareSameTaskLocalReworkCommandV1
+      - OpenTaskRuntimeExecutionAttemptAuthorityCommandV1
+      - HeartbeatTaskRuntimeExecutionAttemptCommandV1
+      - SettleTaskRuntimeExecutionAttemptCommandV1
+      - EnrollDirectedEffectParentRegistryStreamCommandV1
+      - EnrollDirectedEffectOperationStreamCommandV1
+      - AdmitDirectedEffectParentCommandV1
+      - AdmitDirectedEffectParentBatchCommandV1
+      - SealDirectedEffectInventoryCommandV1
+      - AdmitDirectedEffectOperationCommandV1
+      - FinalizeDirectedEffectInventoryAdmissionCommandV1
+      - ClaimDirectedEffectCommandV1
+      - AbortDirectedEffectOperationCommandV1
+      - CommitDirectedEffectReceiptCommandV1
+      - MarkDirectedEffectRecoveryPendingCommandV1
+      - DeadLetterDirectedEffectOperationCommandV1
+      - ReconcileAmbiguousDirectedEffectsCommandV1
       queries:
-        - ListRuntimeTasksQueryV1
-        - GetRuntimeTaskQueryV1
-        - QuerySameTaskLocalReworkAuthorizationV1
-        - ValidateTaskRuntimeExecutionAttemptQueryV1
-        - GetDirectedEffectParentRegistryQueryV1
-        - GetDirectedEffectOperationQueryV1
-        - GetDirectedEffectInventoryQueryV1
-        - GetDirectedEffectParentReadinessQueryV1
-        - QueryExecutionEffectClosureV1
-        - QueryExecutionEffectClosuresV1
+      - ListRuntimeTasksQueryV1
+      - GetRuntimeTaskQueryV1
+      - QuerySameTaskLocalReworkAuthorizationV1
+      - ValidateTaskRuntimeExecutionAttemptQueryV1
+      - GetDirectedEffectParentRegistryQueryV1
+      - GetDirectedEffectOperationQueryV1
+      - GetDirectedEffectInventoryQueryV1
+      - GetDirectedEffectParentReadinessQueryV1
+      - QueryExecutionEffectClosureV1
+      - QueryExecutionEffectClosuresV1
+      - QueryExecutionClaimEvidenceV1
       events:
-        - RuntimeTaskLifecycleEventV1
-        - TaskRuntimeExecutionFactV1
+      - RuntimeTaskLifecycleEventV1
+      - TaskRuntimeExecutionFactV1
       results:
-        - RuntimeTaskResultV1
-        - RuntimeTaskFactoryRunBindingResultV1
-        - ExpiredFactoryRunSessionFenceResultV1
-        - OwnerReworkExecutionPreparationResultV1
-        - SameTaskLocalReworkPreparationResultV1
-        - SameTaskLocalReworkAuthorizationQueryResultV1
-        - TaskRuntimeExecutionAttemptValidationVerdictV1
-        - TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1
-        - TaskRuntimeExecutionAttemptHeartbeatVerdictV1
-        - TaskRuntimeExecutionAttemptSettlementVerdictV1
-        - DirectedEffectStreamEnrollmentResultV1
-        - DirectedEffectOperationResultV1
-        - DirectedEffectClaimGrantV1
-        - DirectedEffectInventoryProjectionV1
-        - DirectedEffectInventoryResultV1
-        - DirectedEffectParentRegistryResultV1
-        - DirectedEffectParentReadinessStateCountV1
-        - DirectedEffectParentReadinessProjectionV1
-        - DirectedEffectParentReadinessResultV1
-        - DirectedEffectRecoverySweepItemV1
-        - DirectedEffectRecoverySweepResultV1
-        - ObservableTaskRowsProjectionV1
-        - ExecutionEffectClosureObservationV1
-        - ExecutionEffectCommitObservationV1
-        - ExecutionEffectTerminalFailureObservationV1
+      - RuntimeTaskResultV1
+      - RuntimeTaskFactoryRunBindingResultV1
+      - ExpiredFactoryRunSessionFenceResultV1
+      - OwnerReworkExecutionPreparationResultV1
+      - SameTaskLocalReworkPreparationResultV1
+      - SameTaskLocalReworkAuthorizationQueryResultV1
+      - TaskRuntimeExecutionAttemptValidationVerdictV1
+      - TaskRuntimeExecutionAttemptAuthorityOpenVerdictV1
+      - TaskRuntimeExecutionAttemptHeartbeatVerdictV1
+      - TaskRuntimeExecutionAttemptSettlementVerdictV1
+      - DirectedEffectStreamEnrollmentResultV1
+      - DirectedEffectOperationResultV1
+      - DirectedEffectClaimGrantV1
+      - DirectedEffectInventoryProjectionV1
+      - DirectedEffectInventoryResultV1
+      - DirectedEffectParentRegistryResultV1
+      - DirectedEffectParentReadinessStateCountV1
+      - DirectedEffectParentReadinessProjectionV1
+      - DirectedEffectParentReadinessResultV1
+      - DirectedEffectRecoverySweepItemV1
+      - DirectedEffectRecoverySweepResultV1
+      - ObservableTaskRowsProjectionV1
+      - ExecutionEffectClosureObservationV1
+      - ExecutionEffectCommitObservationV1
+      - ExecutionEffectTerminalFailureObservationV1
+      - ExecutionClaimEvidenceV1
       errors:
-        - RuntimeTaskRuntimeError
+      - RuntimeTaskRuntimeError
+      - ExecutionClaimEvidenceError
     depends_on:
       - events.fact_stream
     subgraphs:
@@ -621,18 +667,39 @@ cells:
       - ws.outbound:runtime/*
     verification:
       tests:
-        - polaris/cells/runtime/task_runtime/tests/test_service.py
-        - polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation.py
-        - polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_concurrency.py
-        - polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py
-        - polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py
-        - polaris/tests/test_runtime_projection_snapshot_tasks.py
-        - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
-        - polaris/cells/runtime/task_runtime/public/tests/test_batch_execution_effect_closure.py
+      - polaris/cells/runtime/task_runtime/tests/test_service.py
+      - polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation.py
+      - polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_concurrency.py
+      - polaris/cells/runtime/task_runtime/tests/test_directed_effect_operation_guarded_fence.py
+      - polaris/cells/runtime/task_runtime/tests/test_execution_attempt_settlement.py
+      - polaris/tests/test_runtime_projection_snapshot_tasks.py
+      - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
+      - polaris/cells/runtime/task_runtime/public/tests/test_execution_effect_closure.py
+      - polaris/cells/runtime/task_runtime/public/tests/test_batch_execution_effect_closure.py
       gaps:
-        - DEO-2A, DEO-2B, DEO-2C, and DEO-2D are closed and complete. Repository inventory proves one physical mutation consumer and zero unbound mutation surfaces; TaskRuntime remains the sole durable directed-effect authority.
-        - DEO-3 durable receipt settlement and DEO-4 legacy removal are closed and complete under their locked plans. The architecture fence preserves TaskRuntime as sole durable authority and the canonical mutation port as sole physical consumer. Pre-bench is active; Provider and Bench remain not_schedulable.
+      - DEO-2A, DEO-2B, DEO-2C, and DEO-2D are closed and complete. Repository inventory proves one physical mutation consumer
+        and zero unbound mutation surfaces; TaskRuntime remains the sole durable directed-effect authority.
+      - DEO-3 durable receipt settlement and DEO-4 legacy removal are closed and complete under docs/superpowers/plans/2026-07-20-deo-3-durable-receipt-settlement.md.
+        The DEO-4 architecture fence preserves TaskRuntime as the sole durable authority and the canonical mutation port as the
+        sole physical consumer. R36 cross-event-loop asyncio.Lock ownership and R37 degraded-projection fail-fast are closed.
+        The requalified TaskRuntime + Factory fact chain is 2126 passed with 12 warnings and architecture is 1411 passed with
+        8 skipped; the R38 isolated L1-04 run exposed and closed an undersized bench timeout contract (540s total -> 188s CE physical
+        cap). The full acceptance contract is restored to 5400s plus a 6000s outer guard. The one fresh isolated L1-04 R39 authorization
+        is consumed; Bench remains frozen pending its full audit.
       smoke_commands: []
+      test_effects_allowed:
+      - path: polaris/cells/runtime/task_runtime/public/tests/test_historical_execution_effect_closure.py
+        effects_allowed:
+        - process.spawn:python/historical_closure_cold_read
+        reason: A new interpreter verifies historical failed and suspended closure facts without Director imports or effect replay.
+      - path: polaris/cells/runtime/task_runtime/tests/test_execution_session_publication_contract.py
+        effects_allowed:
+        - process.spawn:python/session_publication_cold_recovery
+        reason: Fresh process reopens owner publication facts and verifies canonical identity plus heartbeat boundaries.
+      - path: polaris/cells/runtime/task_runtime/tests/test_factory_logical_task_recovery.py
+        effects_allowed:
+        - process.spawn:python/logical_task_recovery
+        reason: Independent processes test one durable recovery owner and prevent duplicate reopen or foreign ticket authority.
 
   - id: runtime.task_market
     title: Runtime Task Market
@@ -1296,46 +1363,52 @@ cells:
     tags:
       - composite
     current_modules:
-      - polaris.cells.llm.control_plane.internal
-      - polaris.kernelone.llm
-      - polaris.infrastructure.llm
+    - polaris.cells.llm.control_plane.internal
+    - polaris.kernelone.llm
+    - polaris.infrastructure.llm
+    - polaris.cells.llm.control_plane.public.service
+    - polaris.cells.llm.control_plane.internal.llm_config_agent
     owned_paths:
-      - polaris/cells/llm/control_plane/internal/**
-      - polaris/delivery/http/routers/llm.py
-      - polaris/delivery/http/routers/providers.py
-      - polaris/delivery/http/routers/interview.py
-      - polaris/delivery/http/routers/tests.py
-      - polaris/delivery/http/routers/llm_models.py
+    - polaris/cells/llm/control_plane/internal/**
+    - polaris/delivery/http/routers/llm.py
+    - polaris/delivery/http/routers/providers.py
+    - polaris/delivery/http/routers/interview.py
+    - polaris/delivery/http/routers/tests.py
+    - polaris/delivery/http/routers/llm_models.py
+    - polaris/cells/llm/control_plane/__init__.py
+    - polaris/cells/llm/control_plane/public/**
+    - polaris/cells/llm/control_plane/tests/**
+    - polaris/tests/unit/cells/llm/control_plane/internal/test_llm_config_agent.py
     public_contracts:
       modules:
-        - polaris.cells.llm.control_plane.public.contracts
+      - polaris.cells.llm.control_plane.public.contracts
+      - polaris.cells.llm.control_plane.public.service
       commands:
-        - SaveLlmConfigCommandV1
-        - InvokeLlmRoleCommandV1
+      - SaveLlmConfigCommandV1
+      - InvokeLlmRoleCommandV1
       queries:
-        - GetLlmConfigQueryV1
-        - GetLlmRuntimeStatusQueryV1
-        - CheckLlmModelCapabilityQueryV1
+      - GetLlmConfigQueryV1
+      - GetLlmRuntimeStatusQueryV1
+      - CheckLlmModelCapabilityQueryV1
       events:
-        - LlmConfigChangedEventV1
-        - LlmInvocationCompletedEventV1
+      - LlmConfigChangedEventV1
+      - LlmInvocationCompletedEventV1
       results:
-        - LlmConfigResultV1
-        - LlmInvocationResultV1
-        - LlmModelCapabilityResultV1
+      - LlmConfigResultV1
+      - LlmInvocationResultV1
+      - LlmModelCapabilityResultV1
       errors:
-        - LlmControlPlaneErrorV1
+      - LlmControlPlaneErrorV1
     depends_on:
-      - policy.workspace_guard
-      - policy.permission
-      - audit.evidence
-      - runtime.state_owner
-      - runtime.execution_broker
-      - context.engine
-      - finops.budget_guard
-      - roles.runtime
-      - llm.provider_config
-      - storage.layout
+    - policy.workspace_guard
+    - policy.permission
+    - audit.evidence
+    - runtime.state_owner
+    - runtime.execution_broker
+    - context.engine
+    - finops.budget_guard
+    - llm.provider_config
+    - storage.layout
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -1647,16 +1720,23 @@ cells:
     - polaris.cells.roles.runtime.internal.engineering_loop
     - polaris.cells.roles.runtime.internal.engineering_session
     - polaris.cells.roles.runtime.public.service
+    - polaris.cells.roles.runtime.internal.cfo_advisor
+    - polaris.cells.roles.runtime.public.cfo_advisor
+    - polaris.cells.roles.runtime.internal.hr_advisor
+    - polaris.cells.roles.runtime.public.hr_advisor
     owned_paths:
     - polaris/cells/roles/runtime/public/**
     - polaris/cells/roles/runtime/internal/**
     - polaris/delivery/http/routers/role_chat.py
     - polaris/delivery/http/routers/role_session.py
+    - polaris/cells/roles/runtime/tests/**
     public_contracts:
       modules:
       - polaris.cells.roles.runtime.public.contracts
       - polaris.cells.roles.runtime.public.contracts.engineering_run
       - polaris.cells.roles.runtime.public.engineering_resource_state
+      - polaris.cells.roles.runtime.public.cfo_advisor
+      - polaris.cells.roles.runtime.public.hr_advisor
       commands:
       - RoleRunCommand
       - InstantiateRoleRuntimeObjectCommandV1
@@ -1782,10 +1862,14 @@ cells:
       - polaris/cells/roles/runtime/tests/test_engineering_events.py
       - polaris/tests/architecture/test_engineering_no_legacy_admission.py
       gaps:
-      - Graph/source synchronization and focused tests do not prove all workloads. Fresh direct/collaborative/recovery
-        acceptance and required release/catalog gates must be reported from actual runs.
-      - Legacy readers and optional utilities remain in source; their retained imports do not authorize new legacy
-        execution. Physical provider HTTP totals/cost require independent transport evidence.
+      - Graph/source synchronization and focused tests do not prove all workloads. Fresh direct/collaborative/recovery acceptance
+        and required release/catalog gates must be reported from actual runs.
+      - Legacy readers and optional utilities remain in source; their retained imports do not authorize new legacy execution.
+        Physical provider HTTP totals/cost require independent transport evidence.
+      test_dependencies:
+      - path: polaris/cells/roles/runtime/tests/test_hr_advisor.py
+        depends_on:
+        - llm.control_plane
     descriptor_surface:
       include_public_contracts: false
       classes:
@@ -1897,27 +1981,31 @@ cells:
       - ws.outbound:runtime/*
     verification:
       tests:
-        - tests/test_role_adapters_taskboard_alignment.py
-        - tests/test_director_adapter_sequential_config.py
-        - tests/test_architect_adapter_docs_extract.py
-        - polaris/cells/roles/adapters/tests/test_deterministic_repair_strategy_catalog.py
-        - polaris/tests/architecture/test_director_repair_kernel_boundary.py
-        - polaris/cells/roles/adapters/tests/test_director_directed_effect_policy_snapshot.py
-        - polaris/cells/roles/adapters/tests/test_director_directed_effect_mutation_port.py
-        - polaris/cells/roles/adapters/tests/test_director_execution_authority.py
-        - polaris/cells/roles/adapters/tests/test_director_deo_production_wiring.py
-        - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
+      - tests/test_role_adapters_taskboard_alignment.py
+      - tests/test_director_adapter_sequential_config.py
+      - tests/test_architect_adapter_docs_extract.py
+      - polaris/cells/roles/adapters/tests/test_deterministic_repair_strategy_catalog.py
+      - polaris/tests/architecture/test_director_repair_kernel_boundary.py
+      - polaris/cells/roles/adapters/tests/test_director_directed_effect_policy_snapshot.py
+      - polaris/cells/roles/adapters/tests/test_director_directed_effect_mutation_port.py
+      - polaris/cells/roles/adapters/tests/test_director_execution_authority.py
+      - polaris/cells/roles/adapters/tests/test_director_deo_production_wiring.py
+      - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
       gaps:
-        - Director optional execution backends still route through roles.adapters while business-cell convergence into director.execution remains in progress.
-        - Adapter export boundary is still being normalized against the role kernel.
-        - Director repair-kernel directory, summary, planning, and deterministic strategy catalog facts are owned by director.runtime public service boundaries, not roles.adapters.
-        - >-
-          DEO-4 is closed: exact process-local executor identity,
-          non-injectable canonical mutation port, durable post-consume recovery,
-          and the production alias/taint/importlib/re-export fence prove zero
-          legacy physical execution seams. Pre-bench is active; Provider and
-          Bench remain not_schedulable.
-
+      - Director optional execution backends still route through roles.adapters while business-cell convergence into director.execution
+        remains in progress.
+      - Adapter export boundary is still being normalized against the role kernel.
+      - Director repair-kernel directory, summary, planning, and deterministic strategy catalog facts are owned by director.runtime
+        public service boundaries, not roles.adapters.
+      - 'DEO-4 is closed: exact process-local executor identity, non-injectable canonical mutation port, durable post-consume
+        recovery, and the production alias/taint/importlib/re-export fence prove zero legacy physical execution seams. Pre-bench
+        is active; Provider and Bench remain not_schedulable.'
+      test_effects_allowed:
+      - path: polaris/cells/roles/adapters/tests/test_public_deadline_handoff.py
+        effects_allowed:
+        - process.spawn:python/public_deadline_cold_import
+        reason: Fresh interpreter verifies the existing public float deadline handoff without private consumer imports, provider
+          calls or target effects.
   - id: roles.engine
     title: Roles Engine
     kind: capability
@@ -2053,6 +2141,7 @@ cells:
     - polaris.cells.roles.kernel.internal.transaction.finalization
     - polaris.cells.roles.kernel.internal.transaction.delivery_contract
     - polaris.cells.roles.kernel.public.outcome_recovery
+    - polaris.cells.roles.kernel.public.permission_policy_adapter
     owned_paths:
     - polaris/cells/roles/kernel/**
     public_contracts:
@@ -2065,6 +2154,7 @@ cells:
       - polaris.cells.roles.kernel.public.directed_effect_contracts
       - polaris.cells.roles.kernel.public.directed_effect_service
       - polaris.cells.roles.kernel.public.outcome_recovery
+      - polaris.cells.roles.kernel.public.permission_policy_adapter
       commands:
       - ExecuteRoleKernelCommandV1
       - FactoryRoleEvidenceCutoffRequestV1
@@ -2096,7 +2186,6 @@ cells:
     - control_plane.run_ledger
     - events.fact_stream
     - director.runtime
-    - director.execution
     - roles.profile
     - roles.session
     - runtime.execution_broker
@@ -2116,22 +2205,19 @@ cells:
     verification:
       tests:
       - polaris/cells/roles/kernel/tests/test_pm_generation_contracts.py
-      - tests/test_roles_kernel.py
-      - tests/test_runtime_role_binding.py
+      - tests/test_prompt_builder_retry.py
+      - tests/test_output_parser_patch_file.py
+      - tests/test_quality_checker_director_tool_calls.py
+      - tests/test_llm_caller_helpers.py
+      - tests/test_llm_invoker_decomposition_characterization.py
+      - tests/test_llm_invoker_role_binding_fallback.py
+      - tests/test_llm_invoker_final_request_receipt.py
+      - tests/test_llm_caller_capability_profile.py
+      - tests/test_structured_output_transport.py
       - tests/test_role_kernel_write_budget.py
-      - polaris/cells/roles/kernel/internal/transaction/tests/test_stream_orchestrator.py
-      - polaris/cells/roles/kernel/internal/transaction/tests/test_task_contract_builder.py
-      - polaris/cells/roles/kernel/internal/transaction/tests/test_cognitive_gateway.py
-      - polaris/cells/roles/kernel/internal/transaction/tests/test_protocol_canonicalization.py
-      - polaris/cells/roles/kernel/internal/transaction/tests/test_slm_coprocessor.py
-      - polaris/cells/roles/kernel/internal/transaction/tests/test_intent_embedding_router.py
-      - polaris/cells/roles/kernel/tests/test_transaction_controller.py
-      - polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py
-      - polaris/cells/roles/kernel/tests/test_integration_transactional_flow.py
-      - polaris/cells/roles/kernel/tests/test_kernel_guard.py
-      - polaris/cells/roles/kernel/tests/test_turn_contracts_v2.py
-      - polaris/cells/roles/kernel/tests/test_transaction_kernel_handoff_contract.py
-      - polaris/cells/roles/kernel/tests/test_context_gateway_integration.py
+      - tests/test_turn_engine_semantic_stages.py
+      - tests/test_turn_engine_policy_convergence.py
+      - tests/test_kernel_stream_tool_loop.py
       - polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py
       - polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py
       - polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py
@@ -2139,18 +2225,71 @@ cells:
       - polaris/cells/roles/kernel/tests/test_llm_caller_components.py
       - polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py
       - polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py
-      - polaris/kernelone/llm/engine/tests/test_executor.py
-      - polaris/kernelone/llm/engine/stream/tests/test_executor.py
       - polaris/cells/roles/kernel/tests/test_directed_effect_contracts.py
       - polaris/cells/roles/kernel/tests/test_directed_effect_policy_guard.py
       - polaris/cells/roles/kernel/tests/test_directed_effect_dispatch_fence.py
       - polaris/cells/roles/kernel/tests/test_directed_effect_lifecycle.py
+      - polaris/cells/roles/kernel/tests/test_deferred_repair_effects.py
+      - polaris/cells/roles/kernel/tests/test_tool_batch_runtime.py
       - polaris/cells/roles/kernel/tests/test_directed_effect_runtime_wiring.py
+      - polaris/kernelone/llm/engine/tests/test_executor.py
+      - polaris/kernelone/llm/engine/stream/tests/test_executor.py
       - polaris/cells/roles/kernel/tests/test_pending_turn_outcome_recovery.py
       gaps:
-      - Kernel public boundary still needs final routing cleanup for a few parser/helper exports.
-      - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry full-request
-        qualification remain guarded; B3.3 propagation metadata does not authorize provider dispatch.
+      - Some callers still import role kernel components through transitional compatibility paths instead of canonical public
+        contracts.
+      - 'Turn semantic-stage separation is explicit at runtime through AssistantTurnArtifacts, but parser input and transcript
+        output are not yet compile-time-distinct types.
+
+        '
+      - 'KernelOne llm stream contracts still pass through a re-export chain (shared_contracts -> engine.contracts -> executor)
+        and rely on parity tests until more consumers adopt canonical source imports.
+
+        '
+      - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry full-request qualification remain guarded;
+        B3.3 propagation metadata does not authorize provider dispatch.
+      - DEO-2D closes unbound mutation dispatch and bounded deferred-request traversal; DEO-3 still owns durable receipt commit,
+        recovery, and parent close.
+      - "Phase 4 execution unification (Task #47): RoleExecutionKernel confirmed as the single execution engine supporting CHAT\
+        \ and WORKFLOW modes: - kernel.run(role, request) — blocking execution with RoleTurnResult - kernel.run_stream(role, request)\
+        \ — async generator yielding event dicts Both accept RoleTurnRequest with mode=RoleExecutionMode.CHAT or WORKFLOW. Unified\
+        \ path (mandatory):\n    RoleRuntimeService → RoleExecutionKernel (CHAT | WORKFLOW mode)\nRoles.kernel is the execution\
+        \ engine; roles.runtime is the facade + lifecycle. Frozen standalone surfaces (StandaloneRoleAgent, AgentService, RoleAgentTUI)\
+        \ are non-production compatibility windows — all production routes must go through RoleExecutionKernel.\n"
+      smoke_commands: []
+      test_effects_allowed:
+      - path: polaris/cells/roles/kernel/tests/test_protocol_parser_dependency_cut.py
+        effects_allowed:
+        - process.spawn:python/protocol_parser_cold_import
+        reason: Cold public parser import and frozen legacy corpus with Director imports denied; no provider or tool execution.
+      - path: polaris/cells/roles/kernel/tests/run_ledger_owner_scenarios.py
+        effects_allowed:
+        - process.spawn:python/run_ledger_synthetic_failed_cli
+        - fs.write:workspace/verify.py
+        - fs.write:workspace/AGENTS.md
+        - fs.write:workspace/source.txt
+        reason: One fixed private python verify.py exits2 through actual policy/mutation/process owners; three explicit synthetic
+          inputs. Actual FactStream/TaskRuntime/RunLedger writes remain owned by their real public command owners.
+      - path: polaris/cells/roles/kernel/tests/test_run_ledger_owner_scenarios.py
+        effects_allowed:
+        - fs.write:workspace/synthetic-process-observation.json
+        reason: Synthetic process runner PID, exit2 and empty descendants; not platform/native evidence.
+      test_dependencies:
+      - path: polaris/cells/roles/kernel/tests/test_permission_policy_adapter.py
+        depends_on:
+        - policy.permission
+        - roles.profile
+      - path: polaris/cells/roles/kernel/tests/run_ledger_owner_scenarios.py
+        depends_on:
+        - control_plane.run_ledger
+        - events.fact_stream
+        - roles.adapters
+        - roles.profile
+        - runtime.task_runtime
+      - path: polaris/cells/roles/kernel/tests/test_run_ledger_owner_scenarios.py
+        depends_on:
+        - events.fact_stream
+        - runtime.task_runtime
     generated_artifacts:
     - generated/context.pack.json
 
@@ -2404,28 +2543,48 @@ cells:
     tags:
       - composite
     current_modules:
-      - polaris.delivery.http.routers.factory
-      - polaris.delivery.cli.factory.projection_lab
-      - polaris.delivery.cli.factory.projection_change_analysis
-      - polaris.delivery.cli.factory.projection_reproject
-      - polaris.cells.factory.pipeline.public.contracts
-      - polaris.cells.factory.pipeline.public.service
-      - polaris.cells.factory.pipeline.internal.factory_event_chain
-      - polaris.cells.factory.pipeline.internal.factory_role_evidence_authority
-      - polaris.cells.factory.pipeline.internal.factory_run_admission
-      - polaris.cells.factory.pipeline.internal.factory_run_service
-      - polaris.cells.factory.pipeline.internal.factory_stage_artifact_bindings
-      - polaris.cells.factory.pipeline.internal.factory_stage_persistence
-      - polaris.cells.factory.pipeline.internal.factory_store
-      - polaris.cells.factory.pipeline.internal.resource_http_service_renderer
-      - polaris.cells.factory.pipeline.internal.projection_change_analysis
-      - polaris.cells.factory.pipeline.internal.projection_lab
+    - polaris.delivery.http.routers.factory
+    - polaris.delivery.cli.factory.projection_lab
+    - polaris.delivery.cli.factory.projection_change_analysis
+    - polaris.delivery.cli.factory.projection_reproject
+    - polaris.cells.factory.pipeline.public.contracts
+    - polaris.cells.factory.pipeline.public.service
+    - polaris.cells.factory.pipeline.internal.factory_event_chain
+    - polaris.cells.factory.pipeline.internal.factory_role_evidence_authority
+    - polaris.cells.factory.pipeline.internal.factory_run_admission
+    - polaris.cells.factory.pipeline.internal.factory_run_service
+    - polaris.cells.factory.pipeline.internal.factory_stage_artifact_bindings
+    - polaris.cells.factory.pipeline.internal.factory_stage_persistence
+    - polaris.cells.factory.pipeline.internal.factory_store
+    - polaris.cells.factory.pipeline.internal.resource_http_service_renderer
+    - polaris.cells.factory.pipeline.internal.projection_change_analysis
+    - polaris.cells.factory.pipeline.internal.projection_lab
+    - polaris.delivery.http.routers._factory_handlers.mapping
+    - polaris.delivery.http.routers._factory_handlers.runtime
+    - polaris.delivery.http.routers._factory_handlers.stage_ops
+    - polaris.delivery.http.routers._factory_handlers.stage_ops._common
+    - polaris.delivery.http.routers._factory_handlers.stage_ops.artifacts
+    - polaris.delivery.http.routers._factory_handlers.stage_ops.director_resume
+    - polaris.delivery.http.routers._factory_handlers.stage_ops.failure_classification
+    - polaris.delivery.http.routers._factory_handlers.stage_ops.quality_gate_rework
+    - polaris.delivery.http.routers._factory_handlers.stage_ops.run_summary
+    - polaris.delivery.http.routers._factory_handlers.stage_ops.stage_context
     owned_paths:
-      - polaris/delivery/http/routers/factory.py
-      - polaris/delivery/cli/factory/**
-      - polaris/cells/factory/pipeline/public/**
-      - polaris/cells/factory/pipeline/internal/**
-      - polaris/cells/factory/pipeline/tests/**
+    - polaris/delivery/http/routers/factory.py
+    - polaris/delivery/cli/factory/**
+    - polaris/cells/factory/pipeline/public/**
+    - polaris/cells/factory/pipeline/internal/**
+    - polaris/cells/factory/pipeline/tests/**
+    - polaris/delivery/http/routers/_factory_handlers/mapping.py
+    - polaris/delivery/http/routers/_factory_handlers/runtime.py
+    - polaris/delivery/http/routers/_factory_handlers/stage_ops/__init__.py
+    - polaris/delivery/http/routers/_factory_handlers/stage_ops/_common.py
+    - polaris/delivery/http/routers/_factory_handlers/stage_ops/artifacts.py
+    - polaris/delivery/http/routers/_factory_handlers/stage_ops/director_resume.py
+    - polaris/delivery/http/routers/_factory_handlers/stage_ops/failure_classification.py
+    - polaris/delivery/http/routers/_factory_handlers/stage_ops/quality_gate_rework.py
+    - polaris/delivery/http/routers/_factory_handlers/stage_ops/run_summary.py
+    - polaris/delivery/http/routers/_factory_handlers/stage_ops/stage_context.py
     public_contracts:
       modules:
         - polaris.cells.factory.pipeline.public.contracts
@@ -3115,7 +3274,8 @@ cells:
       for Director tasks. Owns TaskService, WorkerService, WorkerExecutor, and bootstrap
       template catalog.
     owned_paths:
-      - polaris/cells/director/tasking/**
+    - polaris/cells/director/tasking/**
+    - polaris/cells/director/tasking/tests/test_code_generation_policy.py
     public_contracts:
       modules:
         - polaris.cells.director.tasking.public.contracts
@@ -3532,10 +3692,11 @@ cells:
       - polaris.domain.entities.capability
       - polaris.domain.entities.policy
     owned_paths:
-      - polaris/cells/policy/permission/internal/**
-      - polaris/cells/policy/permission/public/**
-      - polaris/domain/entities/capability.py
-      - polaris/domain/entities/policy.py
+    - polaris/cells/policy/permission/internal/**
+    - polaris/cells/policy/permission/public/**
+    - polaris/domain/entities/capability.py
+    - polaris/domain/entities/policy.py
+    - polaris/tests/test_permission_service.py
     public_contracts:
       modules:
         - polaris.cells.policy.permission.public.contracts
@@ -3552,10 +3713,9 @@ cells:
       errors:
         - PermissionPolicyErrorV1
     depends_on:
-      - policy.workspace_guard
-      - audit.evidence
-      - roles.kernel
-      - roles.profile
+    - policy.workspace_guard
+    - audit.evidence
+    - roles.profile
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -3567,13 +3727,26 @@ cells:
       - fs.write:workspace/policy/state_*.json
     verification:
       tests:
-        - tests/test_permission_service.py
-        - tests/test_permission_role_inheritance.py
-        - tests/test_permission_conditions.py
-        - polaris/cells/policy/permission/public/tests/test_public_contracts.py
+      - tests/test_permission_service.py
+      - tests/test_permission_role_inheritance.py
+      - tests/test_permission_conditions.py
+      - polaris/cells/policy/permission/public/tests/test_public_contracts.py
       gaps:
-        - Some policy checks are still executed directly in service call-sites.
-
+      - Some policy checks are still executed directly in service call-sites.
+      test_dependencies:
+      - path: polaris/cells/policy/permission/public/tests/test_tool_policy_port.py
+        depends_on:
+        - roles.kernel
+        - roles.profile
+      - path: polaris/tests/test_permission_service.py
+        depends_on:
+        - roles.kernel
+        - roles.profile
+      test_effects_allowed:
+      - path: polaris/cells/policy/permission/public/tests/test_tool_policy_port.py
+        effects_allowed:
+        - process.spawn:python/permission_owner_cold_import
+        reason: Cold RBAC owner import with RoleKernel imports blocked; no provider, tool or target execution.
   - id: finops.budget_guard
     title: FinOps Budget Guard
     kind: policy
@@ -3584,35 +3757,40 @@ cells:
       Enforce token and execution budget controls with explicit reserve/consume
       accounting and threshold signals.
     current_modules:
-      - polaris.cells.finops.budget_guard.public.contracts
-      - polaris.cells.finops.budget_guard.public.service
-      - polaris.kernelone.runtime.usage_metrics
-      - polaris.domain.services.token_service
-      - polaris.infrastructure.accel.query.adaptive_budget
+    - polaris.cells.finops.budget_guard.public.contracts
+    - polaris.cells.finops.budget_guard.public.service
+    - polaris.kernelone.runtime.usage_metrics
+    - polaris.domain.services.token_service
+    - polaris.infrastructure.accel.query.adaptive_budget
+    - polaris.cells.finops.budget_guard.internal.budget_service
+    - polaris.cells.finops.budget_guard.internal.budget_store
     owned_paths:
-      - polaris/cells/finops/budget_guard/public/**
-      - polaris/kernelone/runtime/usage_metrics.py
-      - polaris/domain/services/token_service.py
-      - polaris/infrastructure/accel/query/adaptive_budget.py
+    - polaris/cells/finops/budget_guard/public/**
+    - polaris/kernelone/runtime/usage_metrics.py
+    - polaris/domain/services/token_service.py
+    - polaris/infrastructure/accel/query/adaptive_budget.py
+    - polaris/cells/finops/budget_guard/__init__.py
+    - polaris/cells/finops/budget_guard/internal/**
+    - polaris/cells/finops/budget_guard/tests/**
+    - polaris/tests/test_finops_budget_guard.py
     public_contracts:
       modules:
-        - polaris.cells.finops.budget_guard.public.contracts
-        - polaris.cells.finops.budget_guard.public.service
+      - polaris.cells.finops.budget_guard.public.contracts
+      - polaris.cells.finops.budget_guard.public.service
       commands:
-        - ReserveBudgetCommandV1
-        - RecordUsageCommandV1
+      - ReserveBudgetCommandV1
+      - RecordUsageCommandV1
       queries:
-        - GetBudgetStatusQueryV1
+      - GetBudgetStatusQueryV1
       events:
-        - BudgetThresholdExceededEventV1
+      - BudgetThresholdExceededEventV1
       results:
-        - BudgetDecisionResultV1
+      - BudgetDecisionResultV1
       errors:
-        - FinOpsBudgetErrorV1
+      - FinOpsBudgetError
     depends_on:
-      - policy.permission
-      - audit.evidence
-      - roles.runtime
+    - policy.permission
+    - audit.evidence
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -3623,11 +3801,25 @@ cells:
       - fs.write:runtime/events/runtime.events.jsonl
     verification:
       tests:
-        - tests/test_llm_token_budget.py
-        - tests/test_token_estimator.py
+      - tests/test_llm_token_budget.py
+      - tests/test_token_estimator.py
       gaps:
-        - Per-role budget partitioning is not fully unified yet.
-
+      - Per-role budget partitioning is not fully unified yet.
+      test_dependencies:
+      - path: polaris/tests/test_finops_budget_guard.py
+        depends_on:
+        - roles.runtime
+      test_effects_allowed:
+      - path: polaris/cells/finops/budget_guard/tests/test_budget_public_independence.py
+        effects_allowed:
+        - process.spawn:python/budget_public_cold_import
+        reason: Fresh private interpreter blocks roles.runtime while the existing public budget command writes and cold-reopens
+          real KFS state; no provider or target process.
+      - path: polaris/tests/test_finops_budget_guard.py
+        effects_allowed:
+        - fs.write:workspace/.polaris/runtime/state/budget
+        reason: Test-local UTF8 filesystem adapter forwards actual BudgetKFSStore persistence in the owning temporary workspace;
+          no target or service writes.
   - id: events.fact_stream
     title: Events Fact Stream
     kind: capability
@@ -3650,11 +3842,13 @@ cells:
       exports:
       - AppendFactEventCommandV1
       - AppendIfGuardedSnapshotCommandV1
+      - AppendPayloadFactEventCommandV1
       - AppendSegmentedFactEventCommandV1
       - BootstrapFactStreamWorkspaceCommandV1
       - EnrollFactStreamStreamsCommandV1
       - EnsureSegmentedFactLedgerCommandV1
       - FactEventAppendedV1
+      - FactPayloadReferenceV1
       - FactStreamError
       - FactStreamHeadV1
       - FactStreamLockIdentityV1
@@ -3670,6 +3864,8 @@ cells:
       - ProvisionFactStreamLockAuthorityCommandV1
       - QueryFactEventsV1
       - QueryFactStreamHeadV1
+      - QueryPayloadFactByIdempotencyKeyV1
+      - QueryPayloadFactEventsV1
       - QuerySegmentedFactEventsV1
       - QuerySegmentedFactLedgerHeadV1
       - ReadGuardedFactSnapshotCommandV1
@@ -3677,8 +3873,10 @@ cells:
       - SegmentedFactLedgerHeadV1
       - SegmentedFactLedgerReadyV1
       - SegmentedFactQueryResultV1
+      - StoreFactPayloadCommandV1
       - append_fact_event
       - append_if_guarded_snapshot
+      - append_payload_fact_event
       - append_segmented_fact_event
       - bootstrap_fact_stream_workspace
       - configure_debug_tracing
@@ -3692,19 +3890,14 @@ cells:
       - provision_fact_stream_lock_authority
       - query_fact_events
       - query_fact_stream_head
+      - query_payload_fact_by_idempotency_key
+      - query_payload_fact_events
+      - query_payload_fact_ledger_presence
       - query_segmented_fact_events
       - query_segmented_fact_ledger_head
       - read_guarded_fact_snapshot
       - sanitize_headers
       - set_debug_tracing_enabled
-      - AppendPayloadFactEventCommandV1
-      - FactPayloadReferenceV1
-      - QueryPayloadFactEventsV1
-      - StoreFactPayloadCommandV1
-      - append_payload_fact_event
-      - fact_payload_streams
-      - query_payload_fact_events
-      - query_payload_fact_ledger_presence
       - store_fact_payload
     public_contracts:
       modules:
@@ -3756,6 +3949,7 @@ cells:
     - fs.write:runtime/events/*
     verification:
       tests:
+      - polaris/cells/events/fact_stream/public/tests/test_public_surface.py
       - polaris/cells/events/fact_stream/public/tests/test_guarded_fact_append.py
       - polaris/cells/events/fact_stream/public/tests/test_public_contracts.py
       - polaris/cells/events/fact_stream/public/tests/test_public_service.py

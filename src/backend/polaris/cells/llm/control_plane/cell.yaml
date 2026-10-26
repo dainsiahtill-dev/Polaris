@@ -10,6 +10,8 @@ purpose: 'Composite LLM capability boundary covering configuration, provider run
   '
 current_modules:
 - polaris.cells.llm.control_plane.public.contracts
+- polaris.cells.llm.control_plane.public.service
+- polaris.cells.llm.control_plane.internal.llm_config_agent
 tags:
 - composite
 owned_paths:
@@ -19,9 +21,14 @@ owned_paths:
 - polaris/delivery/http/routers/interview.py
 - polaris/delivery/http/routers/tests.py
 - polaris/delivery/http/routers/llm_models.py
+- polaris/cells/llm/control_plane/__init__.py
+- polaris/cells/llm/control_plane/public/**
+- polaris/cells/llm/control_plane/tests/**
+- polaris/tests/unit/cells/llm/control_plane/internal/test_llm_config_agent.py
 public_contracts:
   modules:
   - polaris.cells.llm.control_plane.public.contracts
+  - polaris.cells.llm.control_plane.public.service
   commands:
   - SaveLlmConfigCommandV1
   - InvokeLlmRoleCommandV1
@@ -44,7 +51,6 @@ depends_on:
 - runtime.state_owner
 - runtime.execution_broker
 - context.engine
-- roles.runtime
 - llm.provider_config
 - storage.layout
 subgraphs: []

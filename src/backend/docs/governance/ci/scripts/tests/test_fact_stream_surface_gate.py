@@ -129,8 +129,9 @@ def _write_surface_fixture(repo_root: Path) -> None:
 
     contract_bindings = [name for name in _PUBLIC_EXPORTS if name[0].isupper()]
     service_bindings = [
-        name for name in _PUBLIC_EXPORTS if name[0].islower()
-        and name not in {"fact_stream_bootstrap_streams", "bootstrap_fact_stream_workspace"}
+        name
+        for name in _PUBLIC_EXPORTS
+        if name[0].islower() and name not in {"fact_stream_bootstrap_streams", "bootstrap_fact_stream_workspace"}
     ]
     origins = {
         "contracts": contract_bindings,
@@ -139,7 +140,9 @@ def _write_surface_fixture(repo_root: Path) -> None:
         "workspace_bootstrap": ["bootstrap_fact_stream_workspace"],
     }
     public_imports = "".join(f"from .{module} import {', '.join(names)}\n" for module, names in origins.items())
-    (public_root / "__init__.py").write_text(public_imports + "\n__all__ = " + _python_list(_PUBLIC_EXPORTS), encoding="utf-8")
+    (public_root / "__init__.py").write_text(
+        public_imports + "\n__all__ = " + _python_list(_PUBLIC_EXPORTS), encoding="utf-8"
+    )
     definitions = "".join(
         f"class {name}({'RuntimeError' if name == 'FactStreamError' else 'object'}):\n    pass\n\n"
         for name in contract_bindings
@@ -153,6 +156,56 @@ def _write_surface_fixture(repo_root: Path) -> None:
             "".join(f"def {name}():\n    pass\n\n" for name in origins[module]),
             encoding="utf-8",
         )
+    guarded_names = (
+        "AppendIfGuardedSnapshotCommandV1",
+        "GuardedFactAppendedV1",
+        "GuardedFactEventV1",
+        "GuardedFactSnapshotProofV1",
+        "GuardedFactSnapshotV1",
+        "ReadGuardedFactSnapshotCommandV1",
+    )
+    sourcing = repo_root / "polaris/kernelone/events/sourcing"
+    sourcing.mkdir(parents=True)
+    (sourcing / "guarded.py").write_text(
+        "".join(f"class {name}:\n    pass\n\n" for name in guarded_names), encoding="utf-8"
+    )
+    (sourcing / "payload_store.py").write_text("class PayloadReferenceV1:\n    pass\n", encoding="utf-8")
+    contracts_path = public_root / "contracts.py"
+    content = contracts_path.read_text(encoding="utf-8")
+    for name in guarded_names:
+        content = content.replace(
+            f"class {name}(object):\n    pass\n\n",
+            f"from polaris.kernelone.events.sourcing.guarded import {name}\n",
+        )
+    content = content.replace(
+        "class FactPayloadReferenceV1(object):\n    pass\n\n",
+        "from polaris.kernelone.events.sourcing.payload_store import PayloadReferenceV1 as FactPayloadReferenceV1\n",
+    )
+    contracts_path.write_text(content, encoding="utf-8")
+    debug_names = (
+        "configure_debug_tracing",
+        "emit_debug_event",
+        "install_global_debug_hooks",
+        "is_debug_tracing_enabled",
+        "log_stream_token",
+        "sanitize_headers",
+        "set_debug_tracing_enabled",
+    )
+    internal = cell_root / "internal"
+    internal.mkdir()
+    (internal / "debug_trace.py").write_text(
+        "".join(f"def {name}():\n    pass\n\n" for name in debug_names if name != "sanitize_headers")
+        + "def _sanitize_headers():\n    pass\n\nsanitize_headers = _sanitize_headers\n",
+        encoding="utf-8",
+    )
+    service_path = public_root / "service.py"
+    content = service_path.read_text(encoding="utf-8")
+    for name in debug_names:
+        content = content.replace(
+            f"def {name}():\n    pass\n\n",
+            f"from polaris.cells.events.fact_stream.internal.debug_trace import {name}\n",
+        )
+    service_path.write_text(content, encoding="utf-8")
     imports = ", ".join(_PUBLIC_EXPORTS)
     (cell_root / "__init__.py").write_text(
         f"from .public import {imports}\n\n__all__ = " + _python_list(_PUBLIC_EXPORTS),
@@ -397,3 +450,36 @@ def test_payload_contract_discovery_cannot_omit_existing_dto(tmp_path: Path) -> 
     messages = [issue.message for issue in _surface_issues(tmp_path)]
 
     assert any("nonexistent commands: StoreFactPayloadCommandV1" in message for message in messages)
+
+
+@pytest.mark.parametrize("attack", ("missing_external", "wrong_existing_alias", "cycle", "missing_local"))
+def test_import_alias_must_resolve_to_approved_existing_origin(attack: str, tmp_path: Path) -> None:
+    """An import's local name alone cannot prove a public capability exists."""
+    _write_surface_fixture(tmp_path)
+    public_root = tmp_path / "polaris/cells/events/fact_stream/public"
+    path = public_root / "service.py"
+    replacements = {
+        "missing_external": "from nonexistent_fact_surface_module import absent_query as query_payload_fact_events\n",
+        "wrong_existing_alias": "from .service import query_fact_events as query_payload_fact_events\n",
+        "cycle": "from .origin_cycle import query_payload_fact_events\n",
+        "missing_local": "from .origin_missing import query_payload_fact_events\n",
+    }
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "def query_payload_fact_events():\n    pass\n\n", replacements[attack], 1
+        ),
+        encoding="utf-8",
+    )
+    if attack == "cycle":
+        (public_root / "origin_cycle.py").write_text(
+            "from .service import query_payload_fact_events\n", encoding="utf-8"
+        )
+
+    messages = [issue.message for issue in _surface_issues(tmp_path)]
+
+    assert any("public binding" in message and "query_payload_fact_events" in message for message in messages)
+
+
+def test_real_repo_alias_origins_remain_accepted_without_executing_audited_code() -> None:
+    repo_root = Path(__file__).resolve().parents[5]
+    assert _surface_issues(repo_root) == []

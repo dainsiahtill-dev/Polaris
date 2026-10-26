@@ -822,11 +822,13 @@ class FactStreamError(RuntimeError):
 __all__ = [
     "AppendFactEventCommandV1",
     "AppendIfGuardedSnapshotCommandV1",
+    "AppendPayloadFactEventCommandV1",
     "AppendSegmentedFactEventCommandV1",
     "BootstrapFactStreamWorkspaceCommandV1",
     "EnrollFactStreamStreamsCommandV1",
     "EnsureSegmentedFactLedgerCommandV1",
     "FactEventAppendedV1",
+    "FactPayloadReferenceV1",
     "FactStreamError",
     "FactStreamHeadV1",
     "FactStreamMaintenanceReceiptV1",
@@ -839,6 +841,8 @@ __all__ = [
     "ProvisionFactStreamLockAuthorityCommandV1",
     "QueryFactEventsV1",
     "QueryFactStreamHeadV1",
+    "QueryPayloadFactByIdempotencyKeyV1",
+    "QueryPayloadFactEventsV1",
     "QuerySegmentedFactEventsV1",
     "QuerySegmentedFactLedgerHeadV1",
     "ReadGuardedFactSnapshotCommandV1",
@@ -846,6 +850,7 @@ __all__ = [
     "SegmentedFactLedgerHeadV1",
     "SegmentedFactLedgerReadyV1",
     "SegmentedFactQueryResultV1",
+    "StoreFactPayloadCommandV1",
 ]
 
 

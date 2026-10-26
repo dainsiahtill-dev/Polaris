@@ -124,6 +124,47 @@ $defs:
             $ref: "#/$defs/string_list"
           notes:
             $ref: "#/$defs/string_list"
+          test_dependencies:
+            type: array
+            uniqueItems: true
+            items:
+              type: object
+              additionalProperties: false
+              required: [path, depends_on]
+              properties:
+                path:
+                  $ref: "#/$defs/test_source_path"
+                depends_on:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items:
+                    $ref: "#/$defs/cell_id"
+          test_effects_allowed:
+            type: array
+            uniqueItems: true
+            items:
+              type: object
+              additionalProperties: false
+              required: [path, effects_allowed, reason]
+              properties:
+                path:
+                  $ref: "#/$defs/test_source_path"
+                effects_allowed:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items:
+                    type: string
+                    pattern: '^(process\.spawn|network\.[a-z_]+|http\.[a-z_]+|fs\.write):[^*?\[\]\s]+$'
+                reason:
+                  type: string
+                  pattern: '\S'
+  test_source_path:
+    type: string
+    minLength: 1
+    description: Exact backend-relative existing owned test file; checker also validates physical ownership.
+    pattern: '^(?!/)(?!.*(?:^|/)\.{1,2}(?:/|$))(?!.*[\\:*?\[\]])[^/]+(?:/[^/]+)*/tests/(?:[^/]+/)*[^/]+$'
   migration_block:
     type: object
     additionalProperties: true

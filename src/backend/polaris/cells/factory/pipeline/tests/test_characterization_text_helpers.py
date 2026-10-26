@@ -36,7 +36,6 @@ from polaris.cells.chief_engineer.blueprint.public import (
 )
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintResultV1,
-    _issue_chief_engineer_portfolio_authority_carrier,
 )
 from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.events.fact_stream.public import (
@@ -60,7 +59,9 @@ from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
 from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
     FactoryRoleEvidenceAuthorityPort,
 )
-from polaris.cells.factory.pipeline.internal.factory_run_completion import RunCompletionWaiter
+from polaris.cells.factory.pipeline.internal.factory_run_completion import (
+    RunCompletionWaiter,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -68,11 +69,18 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
-from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import _fencing_token
+from polaris.cells.factory.pipeline.internal.factory_settlement_consumer import (
+    _fencing_token,
+)
 from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
     evaluate_canonical_factory_authority,
 )
-from polaris.cells.factory.pipeline.internal.run_ledger import load_run_ledger_projection
+from polaris.cells.factory.pipeline.internal.run_ledger import (
+    load_run_ledger_projection,
+)
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
+    _executor,
+)
 from polaris.cells.roles.adapters.public import (
     build_director_materialization_quality_repair_message,
     extract_workspace_quality_summary,
@@ -92,11 +100,6 @@ from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_logical_path
 
 
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
-    _executor,
-)
-
-
 class TestTextShapingHelpers:
     def test_compact_text_under_limit_returns_stripped(self) -> None:
         assert OrchestrationStageExecutor._compact_text_for_prompt("  hello  ", max_chars=100) == "hello"
@@ -114,7 +117,9 @@ class TestTextShapingHelpers:
     def test_compact_text_handles_none(self) -> None:
         assert OrchestrationStageExecutor._compact_text_for_prompt(None, max_chars=10) == ""  # type: ignore[arg-type]
 
-    def test_compact_workspace_quality_evidence_for_qa_preserves_parseable_failure(self) -> None:
+    def test_compact_workspace_quality_evidence_for_qa_preserves_parseable_failure(
+        self,
+    ) -> None:
         payload = {
             "schema_version": "factory.workspace_quality_checks.v1",
             "source": "factory_stage_executor",
@@ -173,7 +178,10 @@ class TestTextShapingHelpers:
                         "goal": "Render a paper plane flight canvas.",
                         "scope": "index.html, src/web.ts",
                         "target_files": ["index.html", "src/web.ts"],
-                        "steps": ["Create browser bootstrap", "Draw a non-empty first frame"],
+                        "steps": [
+                            "Create browser bootstrap",
+                            "Draw a non-empty first frame",
+                        ],
                         "acceptance": ["npm run build passes", "canvas paints pixels"],
                         "metadata": {"internal": "not prompt data"},
                     }
@@ -331,7 +339,10 @@ class TestTextShapingHelpers:
         metadata = captured["task"]["metadata"]
         assert metadata["ce_blueprint"]["artifact"] == "workspace-local:.polaris/blueprints/factory-run.review.json"
         assert "ce_TASK-1_runtime_schedule" in metadata["ce_blueprint"]["evidence"]
-        assert metadata["factory_workspace_quality_repair"]["target_files"] == ["package.json", "src/index.js"]
+        assert metadata["factory_workspace_quality_repair"]["target_files"] == [
+            "package.json",
+            "src/index.js",
+        ]
 
     def test_quality_repair_prompt_compaction_preserves_blueprint_after_four_goals(
         self,
@@ -495,7 +506,9 @@ class TestPMDeterministicContractMetadata:
 
         assert metadata == {}
 
-    def test_explicit_context_flag_enables_deterministic_pm_without_bench_semantics(self) -> None:
+    def test_explicit_context_flag_enables_deterministic_pm_without_bench_semantics(
+        self,
+    ) -> None:
         run = FactoryRun(
             id="factory-explicit",
             config=FactoryConfig(name="explicit-run"),

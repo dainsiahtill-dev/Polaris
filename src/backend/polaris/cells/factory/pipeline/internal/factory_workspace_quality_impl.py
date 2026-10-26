@@ -28,6 +28,7 @@ from polaris.cells.runtime.execution_broker.public import (
 )
 from polaris.cells.runtime.task_runtime.public import (
     BindRuntimeTaskToFactoryRunCommandV1,
+    RuntimeTaskFactoryRunBindingResultV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
 from polaris.cells.runtime.task_runtime.public.service import (
@@ -1770,12 +1771,32 @@ def _claim_workspace_quality_repair_attempt(
             normalized_targets=normalized_targets,
         )
 
+    def bound_owner_row(binding: RuntimeTaskFactoryRunBindingResultV1, external_id: str) -> dict[str, Any]:
+        if (
+            type(binding) is not RuntimeTaskFactoryRunBindingResultV1
+            or not binding.ok
+            or binding.event_recorded is not True
+            or Path(binding.workspace).resolve() != Path(executor.workspace).resolve()
+            or binding.factory_run_id != run_id
+        ):
+            raise RuntimeError("workspace_quality_repair_owner_binding_invalid")
+        row = dict(binding.task_row)
+        row_metadata = row.get("metadata")
+        row_metadata = row_metadata if isinstance(row_metadata, Mapping) else {}
+        if (
+            type(row.get("id")) is not int
+            or binding.task_id != str(row["id"])
+            or row_metadata.get("factory_run_id") != run_id
+            or str(row_metadata.get("external_task_id") or row.get("external_task_id") or "").strip() != external_id
+        ):
+            raise RuntimeError("workspace_quality_repair_owner_binding_invalid")
+        return row
+
     owner_rows = [
-        candidate
-        for candidate in task_runtime.list_task_rows(include_terminal=True)
-        if row_owner_score(candidate)[0] > 0
+        candidate for candidate in task_runtime.list_observable_task_rows() if row_owner_score(candidate)[0] > 0
     ]
     canonical_owners: dict[str, dict[str, Any]] = {}
+    owner_bindings: dict[str, RuntimeTaskFactoryRunBindingResultV1] = {}
     for candidate in owner_rows:
         candidate_metadata = candidate.get("metadata")
         candidate_metadata = candidate_metadata if isinstance(candidate_metadata, Mapping) else {}
@@ -1785,9 +1806,28 @@ def _claim_workspace_quality_repair_attempt(
         canonical = task_runtime.resolve_factory_task_row(external_task_id=logical_id, factory_run_id=run_id)
         if canonical is None:
             raise RuntimeError("workspace_quality_repair_canonical_owner_missing")
-        canonical_owners[logical_id] = canonical
-    owner_rows = list(canonical_owners.values())
+        physical_id = task_runtime.normalize_task_id(canonical.get("id"))
+        if physical_id is None:
+            raise RuntimeError("workspace_quality_repair_owner_task_id_invalid")
+        # Obtain the real owner observation before final scoring. The existing
+        # late bind remains after reopen; this exact-row bind is idempotent for
+        # the already committed Factory owner and grants no execution lease.
+        binding = bind_runtime_task_to_factory_run(
+            BindRuntimeTaskToFactoryRunCommandV1(str(executor.workspace), str(physical_id), run_id)
+        )
+        if not binding.ok:
+            raise RuntimeError(f"workspace_quality_repair_binding_failed:{binding.code}")
+        canonical_owners[logical_id] = bound_owner_row(binding, logical_id)
+        owner_bindings[logical_id] = binding
+    owner_rows = [row for row in canonical_owners.values() if row_owner_score(row)[0] > 0]
     owner_row = max(owner_rows, key=row_owner_score) if owner_rows else None
+    owner_binding = None
+    if owner_row is not None:
+        metadata = owner_row.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        owner_binding = owner_bindings.get(
+            str(metadata.get("external_task_id") or owner_row.get("external_task_id") or "").strip()
+        )
     if owner_row is None:
         # A terminal Factory drain deliberately removes live TaskRuntime rows
         # after freezing their authority.  A QA-only retry preserves that
@@ -1867,28 +1907,32 @@ def _claim_workspace_quality_repair_attempt(
             binding_failures = materialized.get("binding_failures")
             if binding_failures:
                 raise RuntimeError("workspace_quality_repair_frozen_owner_binding_failed")
-            # ``_materialize_pm_plan_taskboard`` owns a separate service
-            # instance. Reopen TaskRuntime here so this claimant cannot retain
-            # the pre-restore empty board cache and report ``task_not_found``.
-            # ``get_task`` is the fact-only observer and can hide the restored
-            # terminal owner after COMPLETED_VERIFIED drain; mutation restore
-            # must walk ``list_task_rows(include_terminal=True)``.
+            # A restored terminal owner may remain hidden from the observer.
+            # Preserve the actual public binding returned by materialization,
+            # together with a fresh service for the subsequent owner mutation.
             task_runtime = TaskRuntimeService(str(executor.workspace))
-            restored_row = None
-            for candidate in task_runtime.list_task_rows(include_terminal=True):
-                if not isinstance(candidate, Mapping):
-                    continue
-                candidate_metadata = candidate.get("metadata")
-                candidate_metadata = candidate_metadata if isinstance(candidate_metadata, Mapping) else {}
-                candidate_external = str(
-                    candidate_metadata.get("external_task_id") or candidate.get("external_task_id") or ""
-                ).strip()
-                if candidate_external == frozen_owner_id:
-                    restored_row = candidate
-                    break
-            if not isinstance(restored_row, Mapping):
+            carried_rows = materialized.get("bound_task_rows")
+            matches = [
+                row
+                for row in (carried_rows if isinstance(carried_rows, list) else [])
+                if isinstance(row, Mapping) and row.get("external_task_id") == frozen_owner_id
+            ]
+            if len(matches) != 1 or not isinstance(matches[0].get("binding"), Mapping):
                 raise RuntimeError("workspace_quality_repair_frozen_owner_restore_failed")
-            owner_row = restored_row
+            carried = matches[0]
+            try:
+                owner_binding = RuntimeTaskFactoryRunBindingResultV1(**dict(carried["binding"]))
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("workspace_quality_repair_frozen_owner_restore_failed") from exc
+            owner_row = bound_owner_row(owner_binding, frozen_owner_id)
+            if (
+                carried.get("row") != owner_row
+                or carried.get("task_id") != owner_binding.task_id
+                or carried.get("workspace") != owner_binding.workspace
+                or carried.get("factory_run_id") != owner_binding.factory_run_id
+                or carried.get("event_recorded") is not True
+            ):
+                raise RuntimeError("workspace_quality_repair_frozen_owner_restore_failed")
     if owner_row is not None:
         owner_metadata = owner_row.get("metadata")
         owner_metadata = owner_metadata if isinstance(owner_metadata, Mapping) else {}
@@ -1900,6 +1944,8 @@ def _claim_workspace_quality_repair_attempt(
             raise RuntimeError("workspace_quality_repair_owner_task_id_invalid")
         owner_status = str(owner_row.get("status") or owner_row.get("raw_status") or "").strip().lower()
         if owner_status in {"completed", "failed", "cancelled", "blocked"}:
+            if owner_binding is None:
+                raise RuntimeError("workspace_quality_repair_owner_binding_invalid")
             reopened = task_runtime.reopen_task_row(
                 task_row_id,
                 reason="workspace_quality_gate_failed",
@@ -1908,6 +1954,7 @@ def _claim_workspace_quality_repair_attempt(
                     "workspace_quality_repair": True,
                     "repair_attempt": repair_attempt,
                 },
+                expected_binding=owner_binding,
             )
             if not isinstance(reopened, Mapping) or str(reopened.get("status") or "").lower() not in {
                 "pending",

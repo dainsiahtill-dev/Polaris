@@ -39,10 +39,18 @@ effects_allowed:
   - fs.write:workspace/.polaris/verifier_policy.json
 verification:
   tests:
-    - polaris/cells/control_plane/verifier_policy/tests/test_public_service.py
-    - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
+  - polaris/cells/control_plane/verifier_policy/tests/test_public_service.py
+  - polaris/tests/unit/delivery/http/routers/test_control_plane_router.py
   gaps:
-    - This Cell evaluates command proposals but never mints spawn capability;
-      runtime.execution_broker must re-evaluate the exact query while consuming
-      its own one-use fenced launch lease.
+  - This Cell evaluates command proposals but never mints spawn capability; runtime.execution_broker must re-evaluate the
+    exact query while consuming its own one-use fenced launch lease.
   smoke_commands: []
+  test_effects_allowed:
+  - path: polaris/cells/control_plane/verifier_policy/tests/test_direct_node_test_runner.py
+    effects_allowed:
+    - process.spawn:node/direct_test_runner
+    reason: Real Node runner verifies physical success failure and zero-test rejection in isolated fixture files.
+  - path: polaris/cells/control_plane/verifier_policy/tests/test_node_direct_command_profiles.py
+    effects_allowed:
+    - process.spawn:node/direct_command_profiles
+    reason: Real direct Node test commands preserve nonzero and zero-test verdicts for accepted command profiles.

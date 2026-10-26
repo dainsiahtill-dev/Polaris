@@ -20,6 +20,9 @@ owned_paths:
 - polaris/delivery/http/routers/_shared.py
 - polaris/delivery/http/routers/jetstream_utils.py
 - polaris/delivery/http/v2/__init__.py
+- polaris/delivery/http/routers/permissions.py
+- polaris/tests/integration/delivery/routers/test_permission_tool_policy_composition.py
+- polaris/tests/unit/delivery/http/routers/test_permissions_v2.py
 public_contracts:
   modules:
   - polaris.cells.delivery.api_gateway.public.contracts
@@ -36,6 +39,9 @@ public_contracts:
 depends_on:
 - runtime.projection
 - policy.workspace_guard
+- policy.permission
+- roles.kernel
+- roles.profile
 subgraphs:
 - storage_archive_pipeline
 state_owners: []
@@ -50,5 +56,14 @@ verification:
   gaps:
   - Router-level capability routing is still in migration.
   smoke_commands: []
+  test_dependencies:
+  - path: polaris/tests/integration/delivery/routers/test_permission_tool_policy_composition.py
+    depends_on:
+    - policy.permission
+  - path: polaris/tests/unit/delivery/http/routers/test_permissions_v2.py
+    depends_on:
+    - roles.kernel
+    - runtime.state_owner
+    - storage.layout
 generated_artifacts:
 - generated/context.pack.json

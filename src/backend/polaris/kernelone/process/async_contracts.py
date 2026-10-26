@@ -41,6 +41,7 @@ import asyncio
 import contextlib
 import logging
 import queue
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -659,6 +660,7 @@ async def _merge_two_streams(
     in the order they are put into the queue (approximate arrival order).
     """
     queue: asyncio.Queue[StreamChunk | None] = asyncio.Queue(maxsize=500)
+
     async def pump(src: AsyncIterator[StreamChunk]) -> None:
         try:
             async for chunk in src:
@@ -754,8 +756,8 @@ class PopenAsyncHandle:
         # Thread-safe queues for pump threads to deposit lines. asyncio.Queue is
         # not safe to mutate from these background threads and can silently lose
         # subprocess stderr/stdout in broker logs.
-        self._stdout_queue: queue.Queue[str] = queue.Queue(maxsize=500)
-        self._stderr_queue: queue.Queue[str] = queue.Queue(maxsize=500)
+        self._stdout_queue: queue.Queue[str | None] = queue.Queue(maxsize=500)
+        self._stderr_queue: queue.Queue[str | None] = queue.Queue(maxsize=500)
         self._stdout_lines: list[str] = []
         self._stderr_lines: list[str] = []
         self._stream_done = False
@@ -765,7 +767,10 @@ class PopenAsyncHandle:
 
     @property
     def pid(self) -> int:
-        return self._proc.pid
+        pid: object = self._proc.pid
+        if isinstance(pid, bool) or not isinstance(pid, int):
+            raise TypeError("process pid must be an integer")
+        return pid
 
     @property
     def status(self) -> ProcessStatus:
@@ -797,7 +802,7 @@ class PopenAsyncHandle:
                 )
             finally:
                 with contextlib.suppress(queue.Full):
-                    self._stdout_queue.put_nowait("")  # EOF sentinel
+                    self._stdout_queue.put_nowait(None)  # EOF is distinct from a genuine empty line
 
         def pump_stderr() -> None:
             try:
@@ -816,14 +821,14 @@ class PopenAsyncHandle:
                 )
             finally:
                 with contextlib.suppress(queue.Full):
-                    self._stderr_queue.put_nowait("")  # EOF sentinel
+                    self._stderr_queue.put_nowait(None)  # EOF is distinct from a genuine empty line
 
         t_out = threading.Thread(target=pump_stdout, daemon=True, name=f"popen-stdout-{self.pid}")
         t_err = threading.Thread(target=pump_stderr, daemon=True, name=f"popen-stderr-{self.pid}")
         t_out.start()
         t_err.start()
 
-    async def stream(self) -> AsyncIterator[StreamChunk]:  # type: ignore[type-var]
+    async def stream(self) -> AsyncIterator[StreamChunk]:
         """Stream output lines from stdout and stderr as they arrive.
 
         Lines are yielded in the order captured from each stream.  Each stream
@@ -850,7 +855,7 @@ class PopenAsyncHandle:
                 while True:
                     try:
                         line = self._stdout_queue.get_nowait()
-                        if line == "":
+                        if line is None:
                             stdout_eof = True
                             yield StreamChunk(line="", source=ProcessStreamSource.STDOUT, pid=pid)
                             break
@@ -862,7 +867,7 @@ class PopenAsyncHandle:
                 while True:
                     try:
                         line = self._stderr_queue.get_nowait()
-                        if line == "":
+                        if line is None:
                             stderr_eof = True
                             yield StreamChunk(line="", source=ProcessStreamSource.STDERR, pid=pid)
                             break
@@ -912,36 +917,44 @@ class PopenAsyncHandle:
                     exc_info=True,
                 )
 
+    def _record_exit_code(self, observed: object) -> int:
+        if isinstance(observed, bool) or not isinstance(observed, int):
+            raise TypeError("process exit code must be an integer")
+        self._exit_code = observed
+        self._proc_alive = False
+        if self._status in (ProcessStatus.PENDING, ProcessStatus.RUNNING):
+            self._status = ProcessStatus.SUCCESS if observed == 0 else ProcessStatus.FAILED
+        return observed
+
+    def _poll_exit_code(self) -> int | None:
+        observed: object = self._proc.poll()
+        if observed is None:
+            self._proc_alive = True
+            return None
+        return self._record_exit_code(observed)
+
     async def wait(self, timeout: float | None = None) -> ProcessStatus:
-        if self._status not in (ProcessStatus.PENDING, ProcessStatus.RUNNING):
+        if self._poll_exit_code() is not None:
             return self._status
-
         await self._write_stdin_once("wait")
-
         effective_timeout = timeout if timeout is not None else self._timeout_seconds
         loop = asyncio.get_running_loop()
         try:
             exit_code = await loop.run_in_executor(
                 None,
-                lambda: self._proc.wait(
-                    timeout=effective_timeout if effective_timeout > 0 else None,
-                ),
+                lambda: self._proc.wait(timeout=effective_timeout if effective_timeout > 0 else None),
             )
-        except TimeoutError:
-            # Popen.wait timed out; process is still alive.
-            self._status = ProcessStatus.TIMED_OUT
+        except (subprocess.TimeoutExpired, TimeoutError):
+            if self._status is not ProcessStatus.CANCELLED:
+                self._status = ProcessStatus.TIMED_OUT
+            self._poll_exit_code()
             return self._status
-
-        self._exit_code = exit_code
-        self._proc_alive = False
-        self._status = ProcessStatus.SUCCESS if exit_code == 0 else ProcessStatus.FAILED
+        self._record_exit_code(exit_code)
         return self._status
 
     async def is_alive(self) -> bool:
-        if self._status not in (ProcessStatus.PENDING, ProcessStatus.RUNNING):
-            return False
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: self._proc.poll() is None)
+        return await loop.run_in_executor(None, lambda: self._poll_exit_code() is None)
 
     async def write_stdin(self, data: str) -> None:
         loop = asyncio.get_running_loop()
@@ -977,52 +990,41 @@ class PopenAsyncHandle:
                         pipe.close()
 
     async def terminate(self, timeout: float = 5.0) -> bool:
-        if self._status in (
-            ProcessStatus.SUCCESS,
-            ProcessStatus.FAILED,
-            ProcessStatus.TIMED_OUT,
-            ProcessStatus.CANCELLED,
-        ):
+        if self._poll_exit_code() is not None:
             return True
+        logical_status = self._status
         loop = asyncio.get_running_loop()
+        forced = False
         try:
             self._proc.terminate()
             try:
-                await loop.run_in_executor(
-                    None,
-                    lambda: self._proc.wait(timeout=timeout),
-                )
-            except TimeoutError:
+                exit_code = await loop.run_in_executor(None, lambda: self._proc.wait(timeout=timeout))
+            except (subprocess.TimeoutExpired, TimeoutError):
+                forced = True
                 self._proc.kill()
-                await loop.run_in_executor(None, self._proc.wait)
-                self._status = ProcessStatus.CANCELLED
-                return False
-        except (FileNotFoundError, ProcessLookupError, OSError):
-            self._exit_code = self._proc.returncode
-            self._proc_alive = False
-            self._status = ProcessStatus.CANCELLED
-            return True
-        self._exit_code = self._proc.returncode
-        self._proc_alive = False
-        self._status = ProcessStatus.CANCELLED
-        return True
+                exit_code = await loop.run_in_executor(None, lambda: self._proc.wait(timeout=self._timeout_seconds))
+        except (FileNotFoundError, ProcessLookupError):
+            if self._poll_exit_code() is None:
+                raise
+        else:
+            self._record_exit_code(exit_code)
+        self._status = ProcessStatus.TIMED_OUT if logical_status is ProcessStatus.TIMED_OUT else ProcessStatus.CANCELLED
+        return not forced
 
     async def kill(self) -> None:
-        if self._status in (
-            ProcessStatus.SUCCESS,
-            ProcessStatus.FAILED,
-            ProcessStatus.TIMED_OUT,
-            ProcessStatus.CANCELLED,
-        ):
+        if self._poll_exit_code() is not None:
             return
+        logical_status = self._status
         loop = asyncio.get_running_loop()
         try:
             self._proc.kill()
-            await loop.run_in_executor(None, self._proc.wait)
-        except (FileNotFoundError, ProcessLookupError, OSError):
-            pass
-        self._proc_alive = False
-        self._status = ProcessStatus.CANCELLED
+            exit_code = await loop.run_in_executor(None, lambda: self._proc.wait(timeout=self._timeout_seconds))
+        except (FileNotFoundError, ProcessLookupError):
+            if self._poll_exit_code() is None:
+                raise
+        else:
+            self._record_exit_code(exit_code)
+        self._status = ProcessStatus.TIMED_OUT if logical_status is ProcessStatus.TIMED_OUT else ProcessStatus.CANCELLED
 
     async def result(self) -> StreamResult:
         if self._status in (ProcessStatus.PENDING, ProcessStatus.RUNNING):
