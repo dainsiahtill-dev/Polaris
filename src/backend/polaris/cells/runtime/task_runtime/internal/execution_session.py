@@ -305,7 +305,11 @@ def is_running_execution_status(status: str) -> bool:
     return str(status or "").strip().lower() in {"active", "claimed", "in_progress", "running"}
 
 
-def project_task_row_from_execution_fact_payload(fact: dict[str, Any]) -> dict[str, Any]:
+def project_task_row_from_execution_fact_payload(
+    fact: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Project one task-runtime execution fact payload into a task row.
 
     Boundary:
@@ -314,6 +318,11 @@ def project_task_row_from_execution_fact_payload(fact: dict[str, Any]) -> dict[s
         current event/session fields.  Callers may use the result for read
         projection only; claim/write authorization still belongs to the
         TaskRuntimeService row/session APIs.
+
+        ``now`` is an explicit observation instant for the canonical fact's own
+        lease deadline.  It exists so tests can align the owner-created fact
+        with the observation moment without touching durable facts; production
+        callers pass ``None`` and the current UTC time is used.
 
         The ``fact_event_seq`` field is projected as a read-only top-level
         sequence marker so consumers can correlate fact-derived rows with the
@@ -389,7 +398,96 @@ def project_task_row_from_execution_fact_payload(fact: dict[str, Any]) -> dict[s
     fact_event_seq = _coerce_fact_event_seq(fact.get("fact_event_seq"))
     if fact_event_seq is not None:
         row["fact_event_seq"] = fact_event_seq
-    return row
+    return apply_fact_lease_temporal_projection(row, fact, now=now)
+
+
+def apply_fact_lease_temporal_projection(
+    row: dict[str, Any],
+    fact: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Apply the canonical fact's own lease deadline to an already projected row.
+
+    Boundary:
+        This is a read-only temporal projection over the canonical
+        ``task_runtime.execution`` fact.  It never reads an external session
+        file, never persists status, never appends a fact, and never replays an
+        effect.  The fact remains the single authority for identity, status and
+        lease deadline; only the *evaluation* of that deadline is temporal.
+
+        A still-valid fact lease stays authoritative even if a non-authoritative
+        session file was edited to an expired value: this projection does not
+        consult that file at all.  When the fact's own lease deadline has
+        genuinely passed, the row is projected like an expired active session
+        (``pending`` / resumable) instead of counting as running work.
+
+        The helper only adjusts the temporal status fields of the row it is
+        given.  It never rebuilds the row from the fact payload, so state
+        inherited from a compact heartbeat (for example the committed static
+        task body) is preserved.
+
+        Input contract:
+            The canonical fact's ``lease_expires_at`` must carry an explicit UTC
+            offset to take part in the comparison.  A deadline without an
+            offset, or an unparseable one, is UNKNOWN: the fact's own status is
+            kept, the row is not demoted, and nothing is raised.  The same
+            applies to an explicit ``now`` without a timezone.  A naive instant
+            is never interpreted in the local timezone.
+
+    Complexity:
+        O(1) time and memory over the projected row metadata size.
+    """
+
+    status = str(row.get("status") or "").strip().lower()
+    lease_expires_at = str(fact.get("lease_expires_at") or "").strip()
+    if not is_running_execution_status(status) or not lease_expires_at:
+        return row
+
+    expires_at = parse_utc_iso(lease_expires_at)
+    if expires_at is None:
+        # An unparseable deadline is unknown, not expired-by-assumption: keep
+        # the fact's own status rather than inventing a terminal projection.
+        return row
+    if expires_at.tzinfo is None:
+        # A deadline without an offset cannot be compared with an absolute
+        # instant. Treat it as unknown rather than assuming the local timezone
+        # or an expiry: keep the fact's own status and never raise.
+        return row
+
+    reference = now or utc_now()
+    if reference.tzinfo is None:
+        # An observation instant without a timezone is not an absolute instant.
+        # Comparing it against an absolute deadline would silently mix the local
+        # timezone into the decision, so the comparison is refused and the fact's
+        # own status is kept.
+        return row
+    if expires_at > reference:
+        return row
+
+    projected = dict(row)
+    metadata = dict(projected.get("metadata") or {})
+    runtime_execution = dict(metadata.get("runtime_execution") or {})
+    effective_status = "pending"
+    resume_state = "resumable"
+    runtime_execution["effective_status"] = effective_status
+    runtime_execution["resume_state"] = resume_state
+    runtime_execution["resume_available"] = True
+    runtime_execution["raw_status"] = status
+    runtime_execution["lease_expired_at_observation"] = reference.isoformat()
+    metadata["runtime_execution"] = runtime_execution
+    metadata["claimed_by"] = ""
+    metadata["resume_state"] = resume_state
+    metadata["resume_available"] = True
+    projected["metadata"] = metadata
+    projected["status"] = effective_status
+    projected["state"] = effective_status
+    projected["execution_state"] = effective_status
+    projected["running"] = False
+    projected["claimed_by"] = ""
+    projected["resume_state"] = resume_state
+    projected["resume_available"] = True
+    return projected
 
 
 def require_non_empty_field(payload: dict[str, Any], field_name: str) -> str:
@@ -1425,6 +1523,7 @@ class TaskExecutionSessionWriteReceipt:
 __all__ = [
     "TaskExecutionSession",
     "TaskExecutionSessionWriteReceipt",
+    "apply_fact_lease_temporal_projection",
     "build_task_execution_bulk_suspend_result",
     "build_task_execution_claim_attempt",
     "build_task_execution_claim_next_result",

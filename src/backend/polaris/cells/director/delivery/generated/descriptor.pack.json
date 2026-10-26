@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-10-26T12:13:11.405806Z",
-  "source_hash": "c58eb149c070c768",
+  "generated_at": "2026-10-26T16:43:31.533834Z",
+  "source_hash": "a11ae90b49da1054",
   "cell_id": "director.delivery",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -665,84 +665,6 @@
       "name": "conversation_plain_text",
       "description": "Render a conversation as plain text.",
       "defined_in": "polaris/delivery/cli/director/console_render.py"
-    },
-    {
-      "type": "class",
-      "name": "DirectorLLMClient",
-      "description": "支持工具调用的 Director LLM 客户端.",
-      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "invoke_with_tools",
-          "doc": "调用 LLM，支持工具调用."
-        },
-        {
-          "name": "_invoke_plain",
-          "doc": "Fail closed: this frozen compatibility module must not invoke LLMs."
-        },
-        {
-          "name": "_invoke_messages",
-          "doc": "使用消息列表调用 LLM."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "DirectorToolEnabledImplementation",
-      "description": "支持 LLM 工具的 Director 实现.",
-      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "implement_task_with_tools",
-          "doc": "使用工具实现任务."
-        },
-        {
-          "name": "analyze_code_with_tools",
-          "doc": "使用工具分析代码."
-        }
-      ]
-    },
-    {
-      "type": "class",
-      "name": "DirectorToolsV2WithAgentAccel",
-      "description": "扩展 DirectorToolsV2，集成 Standard Toolkit 工具.",
-      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": ""
-        },
-        {
-          "name": "execute",
-          "doc": "执行 Standard Toolkit 工具."
-        }
-      ]
-    },
-    {
-      "type": "function",
-      "name": "enhance_director_with_llm_tools",
-      "description": "创建支持 LLM 工具的 Director 客户端.",
-      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py"
-    },
-    {
-      "type": "function",
-      "name": "create_enhanced_director_tools",
-      "description": "创建增强的 Director 工具.",
-      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py"
-    },
-    {
-      "type": "function",
-      "name": "patch_director_runtime",
-      "description": "初始化 Director 工具增强（当前无需 legacy monkey patch）.",
-      "defined_in": "polaris/delivery/cli/director/director_llm_tools.py"
     },
     {
       "type": "class",

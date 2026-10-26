@@ -93,4 +93,16 @@ verification:
     effects_allowed:
     - fs.write:private_ce_capture_catalog_fixture
     reason: Synthetic catalog input through real private KFS only; no host authority, provider, process or target repair.
+  - path: polaris/cells/chief_engineer/blueprint/tests/test_blueprint_persistence.py
+    effects_allowed:
+    - fs.write:private_ce_blueprint_fixture
+    reason: Writes a deliberately invalid blueprint JSON file inside the disposable persistence directory to prove corrupt-state rejection; no host authority or target repair.
+  - path: polaris/cells/chief_engineer/blueprint/tests/test_risks.py
+    effects_allowed:
+    - fs.write:private_ce_risk_fixture
+    reason: Writes synthetic risk records and one deliberately corrupt risk file under the disposable workspace runtime/risks directory to prove read/reject behaviour; no host authority or target repair.
+  - path: polaris/cells/chief_engineer/blueprint/tests/test_rollback_guard.py
+    effects_allowed:
+    - process.spawn:git/rollback_guard_repository
+    reason: Runs git init/add/commit inside a disposable tmp_path repository to prove blueprint rollback guard behaviour; the repository is a test fixture and is not the target project.
 generated_artifacts: []

@@ -40,6 +40,9 @@ public_contracts:
   - polaris.kernelone.context.context_os
   - polaris.kernelone.context.context_os.contracts
   - polaris.kernelone.workflow
+  - polaris.kernelone.context.context_os.summarizers.contracts
+  - polaris.kernelone.context.context_os.summarizers.slm_config
+  - polaris.kernelone.context.context_os.summarizers.slm
   commands: []
   queries:
   - ProjectionRequest
@@ -62,8 +65,23 @@ verification:
   - polaris/kernelone/context/tests/**
   - polaris/kernelone/context/context_os/tests/**
   - polaris/kernelone/workflow/tests/**
+  - polaris/kernelone/context/context_os/summarizers/tests/test_slm_summarizer.py
+  - polaris/kernelone/context/context_os/summarizers/tests/test_summarizers.py
+  - polaris/tests/unit/bootstrap/test_slm_binding_assembly.py
   gaps:
   - Workflow engine contracts not yet fully defined.
   smoke_commands: []
+  test_dependencies:
+    - path: polaris/kernelone/context/context_os/summarizers/tests/test_slm_summarizer.py
+      depends_on:
+      - roles.kernel
+    - path: polaris/kernelone/context/context_os/summarizers/tests/test_summarizers.py
+      depends_on:
+      - roles.kernel
+  test_effects_allowed:
+    - path: polaris/kernelone/context/tests/test_engine_providers.py
+      effects_allowed:
+      - fs.write:private_kernelone_provider_fixture
+      reason: Writes synthetic contract.json and events.jsonl provider fixtures inside a disposable project root to exercise the provider protocol; no host authority or target repair.
 generated_artifacts:
 - generated/context.pack.json

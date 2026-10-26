@@ -2,7 +2,7 @@
 
 ADR-0067-extension: ContextOS 2.0 SLM 语义压缩层
 
-利用 CognitiveGateway（本地/局域网小模型 via Ollama）进行语义压缩，
+利用宿主注入的 SLM 网关（本地/局域网小模型 via Ollama）进行语义压缩，
 替代 LLMLingua 成为 Tier 1 智能摘要层。
 
 特点:
@@ -11,8 +11,11 @@ ADR-0067-extension: ContextOS 2.0 SLM 语义压缩层
 - 超时熔断: 2.5s 超时保护，防止 SLM 冷启动阻塞
 - 线程隔离: 在独立线程中运行 async 网关，兼容 sync 接口
 
-依赖:
-- polaris.cells.roles.kernel.internal.transaction (CognitiveGateway, SLMCoprocessor)
+依赖方向:
+- 本模块只消费 ``summarizers.contracts`` / ``summarizers.slm_config`` 声明的
+  窄协议（``SummarizerGatewayProtocol`` / ``SLMBinding``）。
+- SLM 网关与 SLM 配置由拥有它们的 Cell（roles.kernel）在宿主装配时注入，
+  KernelOne 底座不引用任何业务 Cell，也不自己复制配置默认值。
 """
 
 from __future__ import annotations
@@ -20,41 +23,23 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
-from typing import Any, Protocol
+from typing import Any
 
-from polaris.cells.roles.kernel.public.transaction_contracts import (
-    SLMCoprocessor,
-    TransactionConfig,
-)
 from polaris.kernelone.context.context_os.summarizers.contracts import (
+    SLMConfigProtocol,
     SummarizationError,
+    SummarizerGatewayProtocol,
     SummaryStrategy,
 )
+from polaris.kernelone.context.context_os.summarizers.slm_config import (
+    get_default_slm_binding,
+)
 
-
-class SummarizerGatewayProtocol(Protocol):
-    """Protocol for gateway used by SLMSummarizer.
-
-    Decouples SLMSummarizer from concrete CognitiveGateway/SLMCoprocessor
-    implementations to avoid cross-Cell direct imports.
-    """
-
-    async def is_slm_healthy(self) -> bool:
-        """Check if SLM backend is healthy."""
-        ...
-
-    async def compress_text(self, prompt: str, *, max_tokens: int) -> str:
-        """Compress text using SLM.
-
-        Args:
-            prompt: The prompt to compress.
-            max_tokens: Target token count.
-
-        Returns:
-            Compressed text.
-        """
-        ...
-
+__all__ = [
+    "SLMConfigProtocol",
+    "SLMSummarizer",
+    "SummarizerGatewayProtocol",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -128,12 +113,12 @@ _PROMPT_TEMPLATES: dict[str, str] = {
 class SLMSummarizer:
     """SLM-based semantic compressor for ContextOS.
 
-    Uses CognitiveGateway (local/LAN small LLM via Ollama) for semantic
-    compression of context content. Falls back to simple truncation on
-    timeout or health check failure.
+    Uses the SLM gateway installed by the host (or an explicitly injected
+    gateway) for semantic compression of context content.  Falls back to
+    simple truncation on timeout or health check failure.
 
-    This summarizer runs the async CognitiveGateway in a background
-    thread to remain compatible with the sync SummarizerInterface.
+    This summarizer runs the async gateway in a background thread to remain
+    compatible with the sync SummarizerInterface.
 
     Example:
         ```python
@@ -151,7 +136,7 @@ class SLMSummarizer:
 
     def __init__(
         self,
-        config: TransactionConfig | None = None,
+        config: SLMConfigProtocol | None = None,
         timeout_seconds: float = 2.5,
         max_content_length: int = 8000,
         gateway: SummarizerGatewayProtocol | None = None,
@@ -159,18 +144,45 @@ class SLMSummarizer:
         """Initialize SLMSummarizer.
 
         Args:
-            config: TransactionConfig with SLM settings. If None, uses defaults.
+            config: SLM configuration object owned by the SLM provider
+                (for example a roles.kernel ``TransactionConfig``).  When
+                given, it is forwarded unchanged to the binding so every
+                non-default value (base URL, provider, model, keep-alive,
+                timeout, enable flag) reaches the owner intact.  When
+                omitted, the installed binding's own configuration is used.
             timeout_seconds: Timeout for SLM calls (including health check).
             max_content_length: Pre-truncate content longer than this before sending to SLM.
-            gateway: Optional gateway instance. If None, lazily creates one internally.
+            gateway: Optional gateway instance. If None, the gateway is
+                resolved lazily from the installed SLM binding.
         """
-        self.config = config or TransactionConfig()
+        self._config = config
         self.timeout_seconds = timeout_seconds
         self.max_content_length = max_content_length
         self._gateway: SummarizerGatewayProtocol | None = gateway
         self._executor: concurrent.futures.ThreadPoolExecutor | None = concurrent.futures.ThreadPoolExecutor(
             max_workers=1
         )
+
+    @property
+    def config(self) -> SLMConfigProtocol | None:
+        """Effective SLM configuration.
+
+        The explicitly supplied configuration wins; otherwise the
+        configuration owned by the installed binding is used.  Returns
+        ``None`` when neither is available (the summarizer is then
+        unconfigured and refuses to fabricate a gateway).
+        """
+        if self._config is not None:
+            return self._config
+        binding = get_default_slm_binding()
+        if binding is None:
+            return None
+        return binding.config()
+
+    @config.setter
+    def config(self, value: SLMConfigProtocol | None) -> None:
+        """Replace the explicit SLM configuration."""
+        self._config = value
 
     def close(self) -> None:
         """Shutdown thread pool executor. Must be called explicitly."""
@@ -187,39 +199,29 @@ class SLMSummarizer:
         self.close()
 
     def _get_gateway(self) -> SummarizerGatewayProtocol:
-        """Lazy initialization of CognitiveGateway.
+        """Resolve the SLM gateway.
 
-        优先复用全局预热过的 CognitiveGateway 单例，避免重复创建 SLM
-        连接和冷启动。若单例尚未初始化，则 fallback 到本地新建。
+        Resolution order:
+            1. An explicitly injected gateway (used as-is).
+            2. The gateway produced by the installed SLM binding, which
+               receives the explicit configuration when one was supplied.
+
+        The gateway is created lazily on first use: constructing the
+        summarizer never connects to the model.
         """
         if self._gateway is not None:
             return self._gateway
 
-        from polaris.cells.roles.kernel.public.transaction_contracts import (
-            CognitiveGateway,
-        )
+        binding = get_default_slm_binding()
+        if binding is None:
+            raise SummarizationError(
+                "SLM summarization unavailable: no SLM binding installed",
+                strategy=self.strategy,
+            )
 
-        # 优先复用全局已预热单例
-        singleton = CognitiveGateway.get_default_instance_sync()
-        # 在测试 mock 环境中，singleton 可能是 MagicMock 对象；
-        # 通过检查类名来过滤，确保只复用真实的 CognitiveGateway 实例。
-        if (
-            singleton is not None
-            and getattr(singleton, "__class__", None) is not None
-            and singleton.__class__.__name__ == "CognitiveGateway"
-        ):
-            logger.debug("SLMSummarizer attached to warmed CognitiveGateway singleton")
-            self._gateway = singleton
-            return self._gateway
-
-        # Fallback: 本地新建（无预热，首次调用会触发冷启动）
-
-        slm = SLMCoprocessor(config=self.config)
-        self._gateway = CognitiveGateway(
-            config=self.config,
-            slm_coprocessor=slm,
-        )
-        return self._gateway
+        gateway = binding.gateway(self._config)
+        self._gateway = gateway
+        return gateway
 
     def _build_prompt(self, content: str, content_type: str) -> str:
         """Select and render prompt template for given content type."""
@@ -291,7 +293,7 @@ class SLMSummarizer:
     ) -> str:
         """Generate semantic compression summary using SLM.
 
-        Runs the async CognitiveGateway in a background thread to avoid
+        Runs the async gateway in a background thread to avoid
         event loop conflicts in sync contexts.
 
         Args:
@@ -368,9 +370,14 @@ class SLMSummarizer:
         summarize() with timeout protection.
 
         Returns:
-            True if SLM is enabled in config.
+            True if SLM is enabled in the effective configuration.  An
+            unconfigured summarizer (no explicit config and no installed
+            binding) is never available.
         """
-        return self.config.slm_enabled
+        config = self.config
+        if config is None:
+            return False
+        return config.slm_enabled
 
     def get_compression_stats(self) -> dict[str, Any]:
         """Get compression statistics.
@@ -378,12 +385,13 @@ class SLMSummarizer:
         Returns:
             Compression stats dict.
         """
+        config = self.config
         return {
             "strategy": self.strategy.name,
-            "slm_enabled": self.config.slm_enabled,
-            "slm_model": self.config.slm_model_name,
-            "slm_provider": self.config.slm_provider,
-            "slm_keep_alive": getattr(self.config, "slm_keep_alive", "5m"),
+            "slm_enabled": config.slm_enabled if config is not None else False,
+            "slm_model": config.slm_model_name if config is not None else None,
+            "slm_provider": config.slm_provider if config is not None else None,
+            "slm_keep_alive": config.slm_keep_alive if config is not None else None,
             "timeout_seconds": self.timeout_seconds,
             "max_content_length": self.max_content_length,
             "available": self.is_available(),

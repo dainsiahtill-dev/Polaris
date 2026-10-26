@@ -56,4 +56,13 @@ verification:
   gaps:
   - Code intelligence indexing strategy still relies on infrastructure adapter tuning.
   smoke_commands: []
+  test_effects_allowed:
+    - path: polaris/cells/workspace/integrity/tests/test_projection_independent_reads.py
+      effects_allowed:
+      - process.spawn:python/workspace_projection_independent_read
+      reason: Runs a fixed python -c probe inside a disposable workspace to prove projection reads stay independent; no host authority or target repair.
+    - path: polaris/cells/workspace/integrity/tests/test_public_lazy_exports.py
+      effects_allowed:
+      - process.spawn:python/workspace_public_lazy_exports_probe
+      reason: Runs a fixed python -c probe inside a disposable workspace to prove the public lazy export surface resolves; no host authority or target repair.
 generated_artifacts: []

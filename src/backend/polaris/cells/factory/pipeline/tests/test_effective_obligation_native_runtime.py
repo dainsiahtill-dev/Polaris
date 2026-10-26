@@ -8,7 +8,7 @@ import json
 from collections.abc import Iterator
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
@@ -17,14 +17,17 @@ from polaris.cells.events.fact_stream.public import (
     fact_stream_bootstrap_streams,
 )
 from polaris.cells.factory.pipeline.public.service import FactoryConfig, FactoryRunService
-from polaris.cells.factory.pipeline.tests import test_ce_schema_residual_runtime as native_fixture
+from polaris.cells.factory.pipeline.tests.native_endpoint_fixture import (
+    NativeEndpoint,
+    native_endpoint_context,
+)
 from polaris.cells.roles.kernel.public.provider_attempt_lifecycle_replay import (
     QUERY_FACTORY_PROVIDER_ATTEMPT_LIFECYCLE_REPLAY_SCHEMA,
     QueryFactoryProviderAttemptLifecycleReplayV1,
     query_factory_provider_attempt_lifecycle_replay,
 )
 
-_BASE_ENDPOINT = native_fixture._NativeEndpoint
+_BASE_ENDPOINT = NativeEndpoint
 
 
 class _EffectiveEndpoint(_BASE_ENDPOINT):
@@ -110,11 +113,19 @@ def effective_native_endpoint(
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> Iterator[_EffectiveEndpoint]:
-    monkeypatch.setattr(native_fixture, "_NativeEndpoint", _EffectiveEndpoint)
-    # Reuse its real loopback server, process-local config and deny-external-network
-    # isolation rather than duplicating transport/credential fixtures.
-    fixture_body = cast(Any, native_fixture.isolated_native_endpoint).__wrapped__
-    yield from fixture_body(tmp_path, monkeypatch, request)
+    """Assemble the shared loopback native endpoint with the effective roster.
+
+    The endpoint resource, its network deny, provider configuration and
+    teardown are owned by native_endpoint_fixture; this fixture only performs
+    pytest assembly and injects the substituted response behaviour.
+    """
+    with native_endpoint_context(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        outcome=str(request.param),
+        endpoint_class=_EffectiveEndpoint,
+    ) as endpoint:
+        yield endpoint
 
 
 @pytest.mark.parametrize("effective_native_endpoint", ["accept"], indirect=True)

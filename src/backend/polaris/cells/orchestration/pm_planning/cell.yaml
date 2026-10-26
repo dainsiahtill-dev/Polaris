@@ -77,4 +77,8 @@ verification:
   gaps:
   - Initial business-cell declaration; implementation convergence is in progress.
   smoke_commands: []
+  test_dependencies:
+    - path: polaris/cells/orchestration/pm_planning/tests/test_planning_inputs.py
+      depends_on:
+      - roles.adapters
 generated_artifacts: []

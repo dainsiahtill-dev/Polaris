@@ -170,5 +170,18 @@ verification:
     depends_on:
     - roles.kernel
     - roles.adapters
+  - path: polaris/cells/runtime/task_runtime/public/tests/test_dead_letter_execution_effect_closure.py
+    depends_on:
+    - control_plane.run_ledger
+    - factory.pipeline
+  - path: polaris/cells/runtime/task_runtime/public/tests/test_operation_identity.py
+    depends_on:
+    - director.runtime
+  - path: polaris/cells/runtime/task_runtime/public/tests/test_removed_execution_effect_closure.py
+    depends_on:
+    - factory.pipeline
+  - path: polaris/cells/runtime/task_runtime/tests/test_execution_session.py
+    depends_on:
+    - control_plane.run_ledger
 generated_artifacts:
   - generated/context.pack.json

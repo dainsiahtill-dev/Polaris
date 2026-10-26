@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -10,8 +11,9 @@ import pytest
 from polaris.cells.factory.pipeline.internal import factory_stage_executor as stage_executor_module
 from polaris.cells.factory.pipeline.internal.factory_run_service import FactoryConfig, FactoryRun, FactoryRunStatus
 from polaris.cells.factory.pipeline.tests._characterization_helpers import _executor, _factory_stage_context
-from polaris.cells.factory.pipeline.tests.test_ce_schema_residual_runtime import (
-    isolated_native_endpoint as _isolated_native_endpoint_fixture,
+from polaris.cells.factory.pipeline.tests.native_endpoint_fixture import (
+    NativeEndpoint,
+    native_endpoint_context,
 )
 from polaris.cells.factory.pipeline.tests.test_semantic_pm_ce_handoff import _intent
 from polaris.cells.roles.kernel.internal.context_gateway.context_override_processor import ContextOverrideProcessor
@@ -104,8 +106,22 @@ def test_explicit_empty_authority_cannot_be_bypassed_by_declared_phase(claimed_p
 
 
 @pytest.fixture
-def deferred_native_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> Any:
-    yield from _isolated_native_endpoint_fixture.__wrapped__(tmp_path, monkeypatch, request)
+def deferred_native_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Iterator[NativeEndpoint]:
+    """Assemble the shared loopback native endpoint for the deferred CE test.
+
+    The endpoint resource, its network deny, provider configuration and
+    teardown are owned by native_endpoint_fixture; this fixture only performs
+    pytest assembly of that shared resource.
+    """
+    with native_endpoint_context(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        outcome=str(request.param),
+        endpoint_class=NativeEndpoint,
+    ) as endpoint:
+        yield endpoint
 
 
 @pytest.mark.parametrize("deferred_native_endpoint", ["accept", "retry"], indirect=True)

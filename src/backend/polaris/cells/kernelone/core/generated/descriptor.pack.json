@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:42.882739Z",
-  "source_hash": "793da083c54e3f66",
+  "generated_at": "2026-10-26T16:43:31.267079Z",
+  "source_hash": "a4556244509baf38",
   "cell_id": "kernelone.core",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -2923,7 +2923,7 @@
     {
       "type": "function",
       "name": "_normalize_text",
-      "description": "Normalize text by collapsing whitespace and stripping.",
+      "description": "Fold prose whitespace without rewriting quoted data or removing tags.",
       "defined_in": "polaris/kernelone/context/context_os/helpers.py"
     },
     {
@@ -3946,10 +3946,6 @@
           "doc": ""
         },
         {
-          "name": "handle_dict_metadata",
-          "doc": ""
-        },
-        {
           "name": "to_dict",
           "doc": ""
         }
@@ -4111,7 +4107,7 @@
         },
         {
           "name": "from_mapping",
-          "doc": "Deserialize from dict, restoring content from receipt refs if present."
+          "doc": "Restore receipt content and propagate invalid event/reference errors."
         },
         {
           "name": "_restore_receipt",
@@ -5393,7 +5389,7 @@
         },
         {
           "name": "_validate_projection",
-          "doc": "Validate projection before commit (CAS check)."
+          "doc": "Validate projection structure before commit."
         },
         {
           "name": "_commit_projection",
@@ -5783,6 +5779,29 @@
     },
     {
       "type": "class",
+      "name": "SummarizerGatewayProtocol",
+      "description": "SLM 摘要网关能力契约",
+      "defined_in": "polaris/kernelone/context/context_os/summarizers/contracts.py",
+      "methods": [
+        {
+          "name": "is_slm_healthy",
+          "doc": "检查 SLM 后端是否健康"
+        },
+        {
+          "name": "compress_text",
+          "doc": "使用 SLM 压缩文本"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "SLMConfigProtocol",
+      "description": "SLM 运行配置的只读形状",
+      "defined_in": "polaris/kernelone/context/context_os/summarizers/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "SumySummarizer",
       "description": "基于 sumy 的抽取式摘要器",
       "defined_in": "polaris/kernelone/context/context_os/summarizers/extractive.py",
@@ -5902,22 +5921,6 @@
     },
     {
       "type": "class",
-      "name": "SummarizerGatewayProtocol",
-      "description": "Protocol for gateway used by SLMSummarizer.",
-      "defined_in": "polaris/kernelone/context/context_os/summarizers/slm.py",
-      "methods": [
-        {
-          "name": "is_slm_healthy",
-          "doc": "Check if SLM backend is healthy."
-        },
-        {
-          "name": "compress_text",
-          "doc": "Compress text using SLM."
-        }
-      ]
-    },
-    {
-      "type": "class",
       "name": "SLMSummarizer",
       "description": "SLM-based semantic compressor for ContextOS.",
       "defined_in": "polaris/kernelone/context/context_os/summarizers/slm.py",
@@ -5927,12 +5930,20 @@
           "doc": "Initialize SLMSummarizer."
         },
         {
+          "name": "config",
+          "doc": "Effective SLM configuration."
+        },
+        {
+          "name": "config",
+          "doc": "Replace the explicit SLM configuration."
+        },
+        {
           "name": "close",
           "doc": "Shutdown thread pool executor. Must be called explicitly."
         },
         {
           "name": "_get_gateway",
-          "doc": "Lazy initialization of CognitiveGateway."
+          "doc": "Resolve the SLM gateway."
         },
         {
           "name": "_build_prompt",
@@ -5967,6 +5978,40 @@
           "doc": "Get compression statistics."
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "SLMBinding",
+      "description": "Runtime binding between the SLM owner and the KernelOne summarizer.",
+      "defined_in": "polaris/kernelone/context/context_os/summarizers/slm_config.py",
+      "methods": [
+        {
+          "name": "config",
+          "doc": "Return the SLM configuration object owned by the binding."
+        },
+        {
+          "name": "gateway",
+          "doc": "Return the gateway used for SLM compression."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "set_default_slm_binding",
+      "description": "Install the process-wide default SLM binding.",
+      "defined_in": "polaris/kernelone/context/context_os/summarizers/slm_config.py"
+    },
+    {
+      "type": "function",
+      "name": "get_default_slm_binding",
+      "description": "Return the installed default SLM binding.",
+      "defined_in": "polaris/kernelone/context/context_os/summarizers/slm_config.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_default_slm_binding",
+      "description": "Clear the installed default SLM binding.",
+      "defined_in": "polaris/kernelone/context/context_os/summarizers/slm_config.py"
     },
     {
       "type": "class",
@@ -6238,6 +6283,30 @@
           "doc": "Build LLM messages from role context, history, and budget."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "is_model_proposal",
+      "description": "",
+      "defined_in": "polaris/kernelone/context/contributions.py"
+    },
+    {
+      "type": "function",
+      "name": "model_proposal_metadata",
+      "description": "",
+      "defined_in": "polaris/kernelone/context/contributions.py"
+    },
+    {
+      "type": "function",
+      "name": "model_proposal_reference",
+      "description": "",
+      "defined_in": "polaris/kernelone/context/contributions.py"
+    },
+    {
+      "type": "function",
+      "name": "prompt_contribution_content",
+      "description": "Shape only prompt projection; never rewrite raw source/audit content.",
+      "defined_in": "polaris/kernelone/context/contributions.py"
     },
     {
       "type": "function",
@@ -7621,6 +7690,36 @@
     },
     {
       "type": "function",
+      "name": "_observation_digest",
+      "description": "",
+      "defined_in": "polaris/kernelone/context/prompt_safety.py"
+    },
+    {
+      "type": "function",
+      "name": "project_tool_result_data",
+      "description": "Remove structured authority recursively without rewriting literal tool data.",
+      "defined_in": "polaris/kernelone/context/prompt_safety.py"
+    },
+    {
+      "type": "function",
+      "name": "_contains_tool_authority",
+      "description": "",
+      "defined_in": "polaris/kernelone/context/prompt_safety.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_tool_observation_source",
+      "description": "Seal one owner-joined native observation; this grants no execution authority.",
+      "defined_in": "polaris/kernelone/context/prompt_safety.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_tool_observation_sources",
+      "description": "Match each private source to one actual native call/result occurrence.",
+      "defined_in": "polaris/kernelone/context/prompt_safety.py"
+    },
+    {
+      "type": "function",
       "name": "_trim_prompt_safe_text",
       "description": "",
       "defined_in": "polaris/kernelone/context/prompt_safety.py"
@@ -8496,6 +8595,10 @@
           "doc": ""
         },
         {
+          "name": "_new_context_os",
+          "doc": ""
+        },
+        {
           "name": "_resolve_context_os_domain",
           "doc": ""
         },
@@ -8550,7 +8653,7 @@
     {
       "type": "function",
       "name": "_normalize_text",
-      "description": "",
+      "description": "Clean prose and external tags without rewriting quoted data.",
       "defined_in": "polaris/kernelone/context/session_continuity.py"
     },
     {
@@ -9282,6 +9385,12 @@
       "name": "score_diff",
       "description": "Compute per-dimension and overall deltas between two scorecards.",
       "defined_in": "polaris/kernelone/context/strategy_scoring.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_quoted_text",
+      "description": "Trim prose edges while preserving complete or incomplete quoted data.",
+      "defined_in": "polaris/kernelone/context/text_normalization.py"
     },
     {
       "type": "class",

@@ -135,4 +135,16 @@ verification:
     - fs.write:private_ce_host_capture_pm_fixture
     - process.spawn:python/ce_authority_cold_reopen
     reason: Synthetic PM input followed by real existing Factory commit/receipt/cold read; isolated interpreter reopens same private Store. No model/provider/target or service effect.
+  - path: polaris/cells/factory/pipeline/tests/test_browser_failure_evidence.py
+    effects_allowed:
+    - process.spawn:python/browser_failure_evidence_probe
+    reason: Runs a fixed python -c probe inside a disposable workspace to prove browser failure evidence is captured; no host authority or target repair.
+  - path: polaris/cells/factory/pipeline/tests/test_factory_event_chain.py
+    effects_allowed:
+    - process.spawn:python/factory_event_chain_probe
+    reason: Spawns fixed python -c probes inside a disposable workspace to prove the factory event chain ordering; no host authority or target repair.
+  - path: polaris/cells/factory/pipeline/tests/test_node_esm_import_owner.py
+    effects_allowed:
+    - process.spawn:node/node_esm_import_owner_probe
+    reason: Runs node/tsc inside a disposable tmp_path TypeScript fixture to prove the ESM import owner repair changes real import behaviour; the fixture is not the target project.
 generated_artifacts: []

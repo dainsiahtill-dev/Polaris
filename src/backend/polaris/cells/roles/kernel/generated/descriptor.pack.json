@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-10-26T10:36:04.294428Z",
-  "source_hash": "34c2ce04ec1d48bc",
+  "generated_at": "2026-10-26T16:52:02.777292Z",
+  "source_hash": "08bd729466269639",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -17478,6 +17478,38 @@
       "name": "publish_speculation_event",
       "description": "Publish kernel speculation telemetry through the public Cell boundary.",
       "defined_in": "polaris/cells/roles/kernel/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleKernelSLMBinding",
+      "description": "roles.kernel implementation of the KernelOne SLM binding port.",
+      "defined_in": "polaris/cells/roles/kernel/public/slm_binding.py",
+      "methods": [
+        {
+          "name": "config",
+          "doc": "Return the owner's SLM configuration object unchanged."
+        },
+        {
+          "name": "gateway",
+          "doc": "Return the SLM gateway for the requested configuration."
+        },
+        {
+          "name": "_resolve_config",
+          "doc": "Validate and return the effective configuration."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_slm_config_fields",
+      "description": "Extract the SLM-relevant fields of a configuration object.",
+      "defined_in": "polaris/cells/roles/kernel/public/slm_binding.py"
+    },
+    {
+      "type": "function",
+      "name": "build_slm_binding",
+      "description": "Build the roles.kernel SLM binding for the KernelOne summarizer port.",
+      "defined_in": "polaris/cells/roles/kernel/public/slm_binding.py"
     },
     {
       "type": "class",

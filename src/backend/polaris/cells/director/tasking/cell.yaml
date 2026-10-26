@@ -72,4 +72,9 @@ verification:
     '
   smoke_commands: []
   tests: []
+  test_effects_allowed:
+    - path: polaris/cells/director/tasking/tests/test_task_execution_runner.py
+      effects_allowed:
+      - process.spawn:python/director_task_execution_runner
+      reason: Runs the task execution runner as a module in a disposable workspace to prove task execution and failure reporting; no host authority or target repair.
 generated_artifacts: []

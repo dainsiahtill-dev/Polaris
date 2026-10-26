@@ -58,5 +58,10 @@ verification:
   gaps:
   - Runtime event writers are not fully funneled through this boundary yet.
   smoke_commands: []
+  test_effects_allowed:
+    - path: polaris/cells/audit/evidence/tests/test_evidence_contract.py
+      effects_allowed:
+      - fs.write:private_evidence_event_fixture
+      reason: Appends a synthetic evidence event line to a disposable fixture file to exercise the append/verify contract; no host authority or target repair.
 generated_artifacts:
 - generated/context.pack.json

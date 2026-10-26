@@ -1,5 +1,27 @@
 # Roles Kernel Cell
 
+## Current engineering boundary (2026-10-27)
+
+New engineering runs are owned by `roles.runtime.public.engineering_service.EngineeringRunService`.
+The legacy Factory / `execute_role_session` / `RoleExecutionKernel` write admission is retired.
+The legacy contracts below describe frozen records or explicit technical tools; they are not
+planning, hash, portfolio or turn-batch requirements for the current engineering loop.
+
+For ContextOS SLM integration, start at `public/slm_binding.py` (`build_slm_binding`).
+This Cell owns the concrete `TransactionConfig`, `CognitiveGateway` and coprocessor.
+KernelOne consumes the config/gateway protocols in
+`polaris.kernelone.context.context_os.summarizers.contracts` and the narrow binding port in
+`slm_config`; `bootstrap.assembly.ensure_minimal_kernelone_bindings` installs the producer lazily.
+An explicit configuration reaches the actual gateway unchanged. Warm reuse requires matching
+SLM settings, and producer contract errors propagate to the host.
+
+Verification: `polaris/cells/roles/kernel/tests/test_slm_binding.py`,
+`polaris/tests/unit/bootstrap/test_slm_binding_assembly.py`, and the KernelOne summarizer tests.
+The scoped experiments use a declared synthetic SLM transport and do not establish model quality,
+real endpoint availability, or unattended project delivery.
+
+## Legacy and optional technical surfaces
+
 ## Purpose
 
 Provide the shared execution kernel for role prompt construction, output

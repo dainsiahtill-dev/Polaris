@@ -72,5 +72,8 @@ verification:
   - path: polaris/cells/control_plane/run_ledger/tests/test_file_prewrite_negative_settlement.py
     depends_on:
     - roles.kernel
+  - path: polaris/cells/control_plane/run_ledger/tests/test_artifact_reuse_settlement.py
+    depends_on:
+    - factory.pipeline
 generated_artifacts:
   - generated/context.pack.json

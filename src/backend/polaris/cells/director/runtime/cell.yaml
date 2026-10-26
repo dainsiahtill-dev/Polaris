@@ -103,4 +103,25 @@ verification:
   - polaris/cells/director/runtime/public/tests/test_directed_effect_policy_contracts.py
   - polaris/cells/director/runtime/tests/test_repair_kernel_contract.py
   - polaris/tests/architecture/test_deo_2d_zero_unbound_mutation_surfaces.py
+  test_effects_allowed:
+    - path: polaris/cells/director/runtime/tests/test_compiled_node_entrypoint_repair.py
+      effects_allowed:
+      - process.spawn:node/compiled_entrypoint_repair_probe
+      reason: Runs npm build/start inside a disposable tmp_path project to prove compiled Node entrypoint repair actually starts; the project is a test fixture and is not the target project.
+    - path: polaris/cells/director/runtime/tests/test_npm_repair_preserves_test_execution.py
+      effects_allowed:
+      - process.spawn:node/npm_repair_test_execution
+      reason: Runs npm test inside a disposable tmp_path project to prove the npm repair preserves the project's own test execution; the project is a test fixture and is not the target project.
+    - path: polaris/cells/director/runtime/tests/test_repair_kernel_contract_3.py
+      effects_allowed:
+      - process.spawn:python/repair_kernel_contract_probe
+      reason: Runs a fixed python -c probe inside a disposable workspace to prove the repair kernel accepts and rejects the same diagnostic; no host authority or target repair.
+    - path: polaris/cells/director/runtime/tests/test_repair_kernel_javascript_python_runtime.py
+      effects_allowed:
+      - process.spawn:python/repair_kernel_runtime_probe
+      reason: Runs fixed python -c probes inside a disposable workspace to prove the JavaScript/Python repair runtime fails and completes as designed; no host authority or target repair.
+    - path: polaris/cells/director/runtime/tests/test_ts5110_owned_config_frontier.py
+      effects_allowed:
+      - process.spawn:python/ts5110_owned_config_probe
+      reason: Runs a fixed python -c probe inside a disposable workspace to prove the owned-config frontier behaviour; no host authority or target repair.
 generated_artifacts: []

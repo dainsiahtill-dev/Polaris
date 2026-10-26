@@ -73,4 +73,9 @@ verification:
     cognitive_runtime_required/context_os_expected, but broader orchestration
     promotion gates still need uniform required-mode enforcement.
   smoke_commands: []
+  test_effects_allowed:
+    - path: polaris/cells/factory/cognitive_runtime/tests/test_public_service.py
+      effects_allowed:
+      - fs.write:private_cognitive_graph_catalog_fixture
+      reason: Writes a synthetic graph catalog fixture inside the disposable workspace so the public cognitive service can read it back; no host authority or target repair.
 generated_artifacts: []

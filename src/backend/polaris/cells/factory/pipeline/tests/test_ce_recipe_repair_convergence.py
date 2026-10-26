@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,6 +12,10 @@ import pytest
 from polaris.cells.chief_engineer.blueprint.public import ChiefEngineerBlueprintErrorV1, VerificationCommandAuthorityV1
 from polaris.cells.chief_engineer.blueprint.public.service._delegated_recipes import prepare_delegated_recipes
 from polaris.cells.factory.pipeline.tests._characterization_helpers import _executor
+from polaris.cells.factory.pipeline.tests.native_endpoint_fixture import (
+    NativeEndpoint,
+    native_endpoint_context,
+)
 
 
 def _task() -> Any:
@@ -140,10 +145,22 @@ def test_public_recipe_diagnostics_do_not_create_patch_authority(tmp_path: Path)
 
 
 @pytest.fixture
-def recipe_native_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> Any:
-    from polaris.cells.factory.pipeline.tests.test_ce_schema_residual_runtime import isolated_native_endpoint
+def recipe_native_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Iterator[NativeEndpoint]:
+    """Assemble the shared loopback native endpoint for the recipe repair test.
 
-    yield from isolated_native_endpoint.__wrapped__(tmp_path, monkeypatch, request)
+    The endpoint resource, its network deny, provider configuration and
+    teardown are owned by native_endpoint_fixture; this fixture only performs
+    pytest assembly of that shared resource.
+    """
+    with native_endpoint_context(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        outcome=str(request.param),
+        endpoint_class=NativeEndpoint,
+    ) as endpoint:
+        yield endpoint
 
 
 @pytest.mark.parametrize("recipe_native_endpoint", ["accept"], indirect=True)

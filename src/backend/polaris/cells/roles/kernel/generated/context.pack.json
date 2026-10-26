@@ -3,11 +3,24 @@
   "title": "Roles Kernel",
   "kind": "capability",
   "purpose": "Provide the shared role execution kernel, typed semantic final-request evidence cutoff, and caller-owned structured result transport used by role flows.",
-  "summary": "Canonical generated context for roles.kernel, including physical provider-attempt qualification and a provider-tool structured result protocol that is normalized before executable Tool Lifecycle decoding.",
+  "summary": "Current engineering runs belong to EngineeringRunService. roles.kernel supplies optional owner-built SLM binding via public/slm_binding.py and retains frozen legacy/explicit technical contracts; those legacy schemas are not admission requirements for new engineering runs.",
   "owned_paths": [
     "polaris/cells/roles/kernel/**"
   ],
   "public_contracts": {
+    "modules": [
+      "polaris.cells.roles.kernel.public.generation_outcome",
+      "polaris.cells.roles.kernel.public.llm_caller_contracts",
+      "polaris.cells.roles.kernel.public.contracts",
+      "polaris.cells.roles.kernel.public.structured_output_contracts",
+      "polaris.cells.roles.kernel.public.final_request_evidence_cutoff",
+      "polaris.cells.roles.kernel.public.directed_effect_contracts",
+      "polaris.cells.roles.kernel.public.directed_effect_service",
+      "polaris.cells.roles.kernel.public.deferred_repair_service",
+      "polaris.cells.roles.kernel.public.outcome_recovery",
+      "polaris.cells.roles.kernel.public.permission_policy_adapter",
+      "polaris.cells.roles.kernel.public.slm_binding"
+    ],
     "commands": [
       "BuildRolePromptCommandV1",
       "ParseRoleOutputCommandV1",
@@ -28,6 +41,7 @@
       "RoleKernelQualityCheckedEventV1"
     ],
     "results": [
+      "RoleGenerationOutcomeV1",
       "RoleKernelResultV1",
       "FactoryRoleEvidenceCutoffAckV1",
       "FactoryRoleEvidenceCutoffSourceHeadV1",
@@ -35,14 +49,14 @@
       "FactoryRoleSemanticRequestIdentityV1",
       "FactoryRoleSemanticCandidateV1",
       "FactoryRoleFrozenSemanticRequestV1",
+      "DeferredDirectorRepairRequestV1",
+      "DeferredDirectorRepairEffectBindingV1",
+      "DeferredDirectorRepairSynthesisResultV1",
       "PreparedTurnOutcomeReferenceV1",
       "RecoveredTurnOutcomeV1"
     ],
     "errors": [
       "RoleKernelErrorV1"
-    ],
-    "modules": [
-      "polaris.cells.roles.kernel.public.outcome_recovery"
     ]
   },
   "neighbors": [
@@ -70,6 +84,9 @@
     "process.spawn:roles/*"
   ],
   "invariants": [
+    "New engineering execution is owned by roles.runtime.public.engineering_service.EngineeringRunService; old Factory/execute_role_session/RoleExecutionKernel writes cannot be a fallback.",
+    "The SLM producer keeps concrete model configuration and gateway ownership inside roles.kernel; KernelOne consumes only typed config/gateway protocols, and existing host bootstrap installs the binding lazily.",
+    "An explicit requested SLM configuration must govern the actual gateway. A warmed gateway with different model/base URL/provider/timeout cannot override it. Contract failures remain visible.",
     "Cross-Cell callers use only roles.kernel public contracts; no external caller imports roles.kernel internal modules.",
     "Caller-owned JSON result schemas enter through RoleStructuredOutputContractV1; the exact reserved result tool is audited and qualified as a non-executable provider protocol, while every executable or unknown tool remains subject to ToolSpecRegistry provenance; result payloads are locally validated and normalized before TransactionKernel can dispatch a tool or create an effect receipt.",
     "FactoryRoleEvidenceCutoffAckV1 remains locator-only; resolve_cutoff_proof strictly reconstructs a detached FactoryRoleEvidenceCutoffProofV1 from committed authority facts.",
@@ -87,6 +104,7 @@
     "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
   ],
   "test_targets": [
+    "polaris/cells/roles/kernel/tests/test_slm_binding.py",
     "polaris/cells/roles/kernel/tests/test_final_request_evidence_cutoff.py",
     "polaris/cells/factory/pipeline/tests/test_factory_role_evidence_authority.py",
     "polaris/cells/roles/kernel/tests/test_factory_role_evidence_binding.py",
@@ -103,6 +121,7 @@
     "read_order": [
       "cell.yaml",
       "README.agent.md",
+      "public/slm_binding.py",
       "generated/context.pack.json",
       "generated/verify.pack.json",
       "public/final_request_evidence_cutoff.py",

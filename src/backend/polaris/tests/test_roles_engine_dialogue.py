@@ -190,7 +190,6 @@ class TestAdapterCallsRuntimeBoundary:
         "polaris.delivery.http.routers.role_chat",
         "polaris.delivery.http.routers.role_runtime_chat",
         "polaris.delivery.cli.pm.chief_engineer_llm_tools",
-        "polaris.delivery.cli.director.director_llm_tools",
         "polaris.cells.orchestration.pm_planning.internal.pipeline_ports",
         "polaris.cells.factory.pipeline.internal.projection_lab",
         "polaris.cells.director.tasking.internal.code_generation_engine",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from polaris.bootstrap.config import Settings, get_settings
@@ -57,6 +58,37 @@ from polaris.kernelone.storage import register_business_roots_resolver
 logger = logging.getLogger(__name__)
 
 
+def _install_slm_binding() -> None:
+    """Install the SLM binding that backs the ContextOS SLM summarizer tier.
+
+    roles.kernel owns the SLM gateway and the SLM configuration; this host
+    wiring only *installs* the producer into the narrow KernelOne port so the
+    KernelOne foundation does not have to import a business Cell.
+
+    The installation is lazy and idempotent:
+
+    - the producer is built without creating a gateway, so no model
+      connection happens at startup;
+    - an already installed binding is never replaced, so repeated assembly
+      passes and an explicitly configured binding both survive.
+
+    Raises:
+        ImportError: When the owner Cell cannot be imported in this
+            deployment, i.e. the SLM tier cannot be provided at all.  This
+            is an explicit signal - not a silent degradation.
+        Exception: Any other failure raised while producing the binding
+            (for example a contract violation inside the owner Cell) is
+            propagated unchanged so the real defect stays visible instead
+            of being masked by a broad ``except``.
+    """
+    from polaris.cells.roles.kernel.public.slm_binding import build_slm_binding
+    from polaris.kernelone.context.context_os.summarizers.slm_config import (
+        set_default_slm_binding,
+    )
+
+    set_default_slm_binding(build_slm_binding())
+
+
 def ensure_minimal_kernelone_bindings() -> None:
     """Install the minimal Polaris runtime bindings for standalone tooling.
 
@@ -81,6 +113,8 @@ def ensure_minimal_kernelone_bindings() -> None:
 
     register_business_roots_resolver(resolve_polaris_roots)  # type: ignore[arg-type]
 
+    _install_slm_binding()
+
     # Ensure LLM realtime event bridge is initialized for runtime artifact persistence.
     # Without this, events are silently dropped and no runtime artifacts are produced.
     if get_llm_realtime_bridge() is None:
@@ -93,14 +127,15 @@ def _inject_embedding_port(settings: Settings) -> None:
     set_default_ollama_adapter(None)
 
     # 1. Try Local GPU Transformer
-    torch_module: Any | None
+    torch_module: ModuleType | None = None
     try:
-        import torch as torch_module
+        import torch as torch_import
     except ImportError:
-        torch_module = None
+        pass
     except OSError as exc:
         logger.debug("PyTorch import unavailable during embedding injection: %s", exc)
-        torch_module = None
+    else:
+        torch_module = torch_import
     if torch_module is not None:
         try:
             if torch_module.cuda.is_available():

@@ -98,4 +98,8 @@ verification:
     effects_allowed:
     - fs.write:private_prewrite_partial_io_fault_fixture
     reason: Explicit negative partial-IO fixture writes only its own synthetic src/a.txt through KFS; never authoritative success evidence or a production permission.
+  - path: polaris/cells/roles/adapters/tests/test_director_adapter_failure_closure_b.py
+    effects_allowed:
+    - process.spawn:python/director_adapter_failure_closure_probe
+    reason: Runs a fixed python -c probe inside a disposable workspace to prove director adapter failure closure; no host authority or target repair.
 generated_artifacts: []

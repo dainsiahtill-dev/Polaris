@@ -59,4 +59,9 @@ verification:
   - Provider response payloads remain represented through their authoritative
     ContextOS snapshot refs rather than copied into the causal report.
   smoke_commands: []
+  test_effects_allowed:
+    - path: polaris/cells/audit/diagnosis/internal/tests/test_exact_run_causal_service.py
+      effects_allowed:
+      - fs.write:private_audit_journal_fixture
+      reason: Writes a synthetic normalized journal JSONL fixture inside the disposable test workspace so the causal audit can read it back; no host authority, provider or target repair.
 generated_artifacts: []

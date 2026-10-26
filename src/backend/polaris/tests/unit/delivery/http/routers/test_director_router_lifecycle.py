@@ -5,7 +5,9 @@ Split from the historical test_v2_director_router.py Director Lifecycle section.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+import time
+from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,7 +17,6 @@ from polaris.bootstrap.config import Settings
 from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
 from polaris.cells.events.fact_stream.public.service import append_fact_event
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.kernelone.storage import resolve_runtime_path
 from polaris.tests.unit.delivery.http.routers._helpers import (
     _patch_director_blueprint_persistence,
     _ready_blueprint,
@@ -646,6 +647,7 @@ async def test_director_diagnostics_does_not_count_expired_runtime_session_as_ru
     client: AsyncClient,
     mock_settings: Settings,
     tmp_path: Path,
+    fact_stream_authority: Callable[[Path], str],
 ) -> None:
     """Projection RUNNING rows must be normalized by canonical runtime lease state."""
 
@@ -654,29 +656,43 @@ async def test_director_diagnostics_does_not_count_expired_runtime_session_as_ru
     mock_settings.workspace = str(workspace)
     mock_settings.workspace_path = ""
 
+    # This workspace is not the HTTP lifespan workspace, so it has no
+    # FactStream authority.  Establish it through the public bootstrap owner
+    # so the runtime can append the real execution facts that the claim path
+    # requires.
+    fact_stream_authority(workspace)
+
     task_runtime = TaskRuntimeService(str(workspace))
     task = task_runtime.create_task_row(
         subject="Recover expired Director task",
         description="The projection row is stale but runtime lease has expired.",
         metadata={"pm_task_id": "PM-expired-runtime"},
     )
+    # Expire the lease through the real owner: a short lease makes the
+    # owner-created canonical fact carry a deadline that genuinely passes.
+    # The historical mechanism edited the non-authoritative session file, which
+    # cannot influence a fact-authoritative projection and must not be restored.
     claimed = task_runtime.claim_execution(
         task["id"],
         worker_id="director",
         role_id="director",
         run_id="run-expired-runtime",
-        lease_ttl_seconds=60,
+        lease_ttl_seconds=1,
         selection_source="unit",
         external_task_id="PM-expired-runtime",
     )
     assert claimed["success"] is True
 
-    session_path = Path(resolve_runtime_path(str(workspace), f"runtime/tasks/task_{task['id']}.session.json"))
-    session_payload = json.loads(session_path.read_text(encoding="utf-8"))
-    expired_at = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
-    session_payload["last_heartbeat_at"] = (datetime.now(timezone.utc) - timedelta(minutes=7)).isoformat()
-    session_payload["lease_expires_at"] = expired_at
-    session_path.write_text(json.dumps(session_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    fact_lease = str(
+        (task_runtime.list_task_rows_from_execution_facts()[0].get("metadata") or {})
+        .get("task_runtime_execution_fact", {})
+        .get("lease_expires_at", "")
+    )
+    assert fact_lease
+    deadline = datetime.fromisoformat(fact_lease)
+    remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+    if remaining > 0:
+        time.sleep(remaining + 0.2)
 
     mock_idle_worker = MagicMock()
     mock_idle_worker.to_dict.return_value = {"id": "worker-idle", "status": "idle", "healthy": True}
@@ -1234,8 +1250,16 @@ async def test_director_diagnostics_runtime_overlay_filters_workflow_shell(
     mock_director.list_tasks.assert_not_awaited()
 
 
-def test_runtime_task_rows_for_workspace_uses_observable_task_rows(tmp_path: Path) -> None:
+def test_runtime_task_rows_for_workspace_uses_observable_task_rows(
+    tmp_path: Path,
+    fact_stream_authority: Callable[[Path], str],
+) -> None:
     from polaris.delivery.http.v2 import director
+
+    # This test never enters the HTTP lifespan, so the workspace has no
+    # FactStream authority.  Establish it through the public bootstrap owner
+    # so the runtime appends real facts instead of failing closed.
+    fact_stream_authority(tmp_path)
 
     task_runtime = TaskRuntimeService(str(tmp_path))
     created = task_runtime.create_task_row(subject="Observable diagnostics row")

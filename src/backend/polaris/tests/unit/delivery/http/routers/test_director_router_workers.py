@@ -258,11 +258,12 @@ async def test_director_get_worker_not_found(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_director_task_llm_events(client: AsyncClient) -> None:
+async def test_director_task_llm_events(client: AsyncClient, mock_settings: Settings) -> None:
     """Get task LLM events should return events for a specific task."""
+    active_workspace = str(getattr(mock_settings, "workspace_path", ""))
     mock_event = MagicMock()
     mock_event.event_type = "llm_call_start"
-    mock_event.metadata = {"workspace": "."}
+    mock_event.metadata = {"workspace": active_workspace}
     mock_event.to_dict.return_value = {
         "event_type": "llm_call_start",
         "run_id": "run-1",
@@ -330,11 +331,15 @@ async def test_director_task_llm_events_filters_requested_workspace(client: Asyn
 
 
 @pytest.mark.asyncio
-async def test_director_task_llm_events_filters_active_workspace_by_default(client: AsyncClient) -> None:
+async def test_director_task_llm_events_filters_active_workspace_by_default(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
     """Director task LLM events should filter to active workspace without query workspace."""
+    active_workspace = str(getattr(mock_settings, "workspace_path", ""))
     matching_event = MagicMock()
     matching_event.event_type = "llm_call_start"
-    matching_event.metadata = {"workspace": "."}
+    matching_event.metadata = {"workspace": active_workspace}
     matching_event.to_dict.return_value = {
         "event_type": "llm_call_start",
         "run_id": "run-active",
@@ -360,17 +365,21 @@ async def test_director_task_llm_events_filters_active_workspace_by_default(clie
 
     assert response.status_code == 200
     data = response.json()
-    assert data["workspace"] == "."
+    # The active workspace is the private fixture workspace, not the historical
+    # "." default: "." resolved to the backend source root and projected the
+    # main repository's legacy runtime instead of this private workspace.
+    assert data["workspace"] == active_workspace
     assert data["stats"]["total"] == 1
     assert data["events"][0]["run_id"] == "run-active"
 
 
 @pytest.mark.asyncio
-async def test_director_global_llm_events(client: AsyncClient) -> None:
+async def test_director_global_llm_events(client: AsyncClient, mock_settings: Settings) -> None:
     """Get global LLM events should return all events."""
+    active_workspace = str(getattr(mock_settings, "workspace_path", ""))
     mock_event = MagicMock()
     mock_event.event_type = "llm_error"
-    mock_event.metadata = {"workspace": "."}
+    mock_event.metadata = {"workspace": active_workspace}
     mock_event.to_dict.return_value = {
         "event_type": "llm_error",
         "run_id": "run-1",

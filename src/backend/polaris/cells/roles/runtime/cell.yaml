@@ -174,6 +174,26 @@ verification:
     effects_allowed:
     - process.spawn:python/runtime_session_component_verifier
     reason: Existing fixed interpreter -c wrapper invokes only answer.py to compare 42, and second call executes the same answer.py. Disposable component workspace only; these old public writer tests currently stop at deliberate legacy_engine_retired and do not authorize new legacy execution.
+  - path: polaris/cells/roles/runtime/tests/test_engineering_context_retention.py
+    effects_allowed:
+    - process.spawn:python/engineering_context_retention_probe
+    reason: Runs a fixed python -c probe inside a disposable workspace to prove engineering context retention; no host authority or target repair.
+  - path: polaris/cells/roles/runtime/tests/test_engineering_event_selection.py
+    effects_allowed:
+    - process.spawn:python/engineering_event_selection_probe
+    reason: Runs a fixed python -c probe inside a disposable workspace to prove engineering event selection; no host authority or target repair.
+  - path: polaris/cells/roles/runtime/tests/test_engineering_events.py
+    effects_allowed:
+    - process.spawn:python/engineering_events_probe
+    reason: Spawns fixed python -c probes and a loopback Node server inside a disposable workspace to prove engineering event emission and replay; no host authority or target repair.
+  - path: polaris/cells/roles/runtime/tests/test_engineering_no_legacy_imports.py
+    effects_allowed:
+    - process.spawn:python/engineering_no_legacy_imports_probe
+    reason: Runs fixed python -c probes inside a disposable workspace to prove legacy write entries are refused; no host authority or target repair.
+  - path: polaris/cells/roles/runtime/tests/test_engineering_session.py
+    effects_allowed:
+    - process.spawn:python/engineering_session_probe
+    reason: Spawns a fixed python -c probe inside a disposable workspace to prove engineering session lifecycle; no host authority or target repair.
 descriptor_surface:
   include_public_contracts: false
   classes:

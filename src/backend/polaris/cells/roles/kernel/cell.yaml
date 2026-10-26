@@ -54,6 +54,7 @@ public_contracts:
   - polaris.cells.roles.kernel.public.deferred_repair_service
   - polaris.cells.roles.kernel.public.outcome_recovery
   - polaris.cells.roles.kernel.public.permission_policy_adapter
+  - polaris.cells.roles.kernel.public.slm_binding
   commands:
   - BuildRolePromptCommandV1
   - ParseRoleOutputCommandV1
@@ -143,6 +144,7 @@ verification:
   - polaris/kernelone/llm/engine/stream/tests/test_executor.py
   - polaris/cells/roles/kernel/tests/test_pending_turn_outcome_recovery.py
   - polaris/cells/roles/kernel/tests/test_adapters_kernel_boundary_scenarios.py
+  - polaris/cells/roles/kernel/tests/test_slm_binding.py
   gaps:
   - Some callers still import role kernel components through transitional compatibility paths instead of canonical public contracts.
   - 'Turn semantic-stage separation is explicit at runtime through AssistantTurnArtifacts, but parser input and transcript output are not yet compile-time-distinct types.
@@ -153,7 +155,7 @@ verification:
     '
   - B3.4-B3.5 physical-attempt parity/budget, snapshot persistence, and all-role/retry full-request qualification remain guarded; B3.3 propagation metadata does not authorize provider dispatch.
   - DEO-2D closes unbound mutation dispatch and bounded deferred-request traversal; DEO-3 still owns durable receipt commit, recovery, and parent close.
-  - "Phase 4 execution unification (Task #47): RoleExecutionKernel confirmed as the single execution engine supporting CHAT and WORKFLOW modes: - kernel.run(role, request) — blocking execution with RoleTurnResult - kernel.run_stream(role, request) — async generator yielding event dicts Both accept RoleTurnRequest with mode=RoleExecutionMode.CHAT or WORKFLOW. Unified path (mandatory):\n    RoleRuntimeService → RoleExecutionKernel (CHAT | WORKFLOW mode)\nRoles.kernel is the execution engine; roles.runtime is the facade + lifecycle. Frozen standalone surfaces (StandaloneRoleAgent, AgentService, RoleAgentTUI) are non-production compatibility windows — all production routes must go through RoleExecutionKernel.\n"
+  - "Historical RoleExecutionKernel CHAT/WORKFLOW description applies only to frozen legacy records and explicit optional technical tools. New engineering runs are owned by roles.runtime.public.engineering_service.EngineeringRunService; old Factory/execute_role_session/RoleExecutionKernel write admission is retired and cannot be a fallback. See current AGENTS engineering mainline."
   smoke_commands: []
   test_effects_allowed:
   - path: polaris/cells/roles/kernel/tests/test_protocol_parser_dependency_cut.py
@@ -184,6 +186,24 @@ verification:
     effects_allowed:
     - fs.write:workspace/policy.md
     reason: Explicit synthetic UTF-8 read-input file created through KFS; actual TransactionKernel parser, read/denial, projector and public boundary evaluation execute. No positive replacement commit receipt.
+  - path: polaris/cells/roles/kernel/tests/test_continuous_observation_turn.py
+    effects_allowed:
+    - process.spawn:python/continuous_observation_turn_probe
+    reason: Runs a fixed python -c probe inside a disposable workspace to prove continuous observation turn handling; no host authority or target repair.
+  - path: polaris/cells/roles/kernel/tests/test_controller_pending_outcome_recovery.py
+    effects_allowed:
+    - process.spawn:python/pending_outcome_recovery_probe
+    reason: Runs fixed python -c probes inside a disposable workspace to prove pending outcome recovery and replay; no host authority or target repair.
+  - path: polaris/cells/roles/kernel/tests/test_pending_turn_outcome_recovery.py
+    effects_allowed:
+    - process.spawn:python/pending_turn_outcome_recovery_probe
+    reason: Runs a fixed python -c probe inside a disposable workspace to prove pending turn outcome recovery; no host authority or target repair.
+  - path: polaris/cells/roles/kernel/tests/test_slm_binding.py
+    effects_allowed:
+    - process.spawn:python/slm_binding_cold_import
+    reason: Runs bounded isolated Python cold-import probes with explicit private environment;
+      actual owner config/gateway and synthetic transport controls remain separate.
+      No paid provider, target repair or production permission grant.
   test_dependencies:
   - path: polaris/cells/roles/kernel/tests/test_permission_policy_adapter.py
     depends_on:
@@ -204,6 +224,26 @@ verification:
     depends_on:
     - roles.adapters
   - path: polaris/cells/roles/kernel/tests/test_adapters_kernel_boundary_scenarios.py
+    depends_on:
+    - roles.adapters
+  - path: polaris/cells/roles/kernel/internal/context_gateway/tests/test_current_message_budget.py
+    depends_on:
+    - factory.pipeline
+  - path: polaris/cells/roles/kernel/tests/test_bound_verification_commands.py
+    depends_on:
+    - chief_engineer.blueprint
+  - path: polaris/cells/roles/kernel/tests/test_director_persistent_execution_http.py
+    depends_on:
+    - chief_engineer.blueprint
+    - roles.adapters
+    - roles.runtime
+  - path: polaris/cells/roles/kernel/tests/test_job_token_scope_precedence.py
+    depends_on:
+    - director.tasking
+  - path: polaris/cells/roles/kernel/tests/test_role_runtime_session_identity.py
+    depends_on:
+    - roles.runtime
+  - path: polaris/cells/roles/kernel/tests/test_same_path_partial_jit_closure.py
     depends_on:
     - roles.adapters
 generated_artifacts:

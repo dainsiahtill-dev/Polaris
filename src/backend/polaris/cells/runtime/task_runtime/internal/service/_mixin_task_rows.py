@@ -7,6 +7,7 @@ from collections import OrderedDict
 from contextlib import nullcontext
 from contextvars import ContextVar, Token
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, TypedDict
 
@@ -33,6 +34,7 @@ from ..directed_effect_operation import (
 )
 from ..execution_session import (
     _coerce_fact_event_seq,
+    apply_fact_lease_temporal_projection,
     is_terminal_session_status,
     is_terminal_task_row_status,
     project_task_row_execution_event,
@@ -1427,6 +1429,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
         event: Mapping[str, Any],
         *,
         heartbeat_base: Mapping[str, Any] | None = None,
+        now: datetime | None = None,
     ) -> dict[str, Any] | None:
         """Project one FactStream event into the task-runtime row read model.
 
@@ -1434,6 +1437,10 @@ class _TaskRowsMixin(_ServiceMixinBase):
         from the payload.  This helper applies the same seq carry-forward rule
         for every fact-derived TaskRuntime read model so direct lookup,
         observable rows, and list projections cannot drift.
+
+        ``now`` is the read-only observation instant used to evaluate the
+        canonical fact's own lease deadline.  It never changes a durable fact
+        and never re-reads a non-authoritative session file.
         """
 
         payload = event.get("payload")
@@ -1461,7 +1468,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
                     metadata.update(deepcopy(dict(delta_metadata)))
             snapshot["metadata"] = metadata
             projection_fact = {**fact, "task_row_snapshot": snapshot}
-        row = project_task_row_from_execution_fact_payload(projection_fact)
+        row = project_task_row_from_execution_fact_payload(projection_fact, now=now)
         if row and heartbeat_base is not None:
             # The materialized row is derived; the inspected fact remains the
             # actual compact payload, with its original sequence and body.
@@ -1796,7 +1803,45 @@ class _TaskRowsMixin(_ServiceMixinBase):
                 break
         return events
 
-    def list_task_rows_from_execution_facts(self, *, limit: int = 500) -> list[dict[str, Any]]:
+    def _apply_fact_row_lease_temporal_projection(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Re-evaluate each canonical fact's own lease deadline at observation time.
+
+        Boundary:
+            This is a read-only temporal re-projection of already materialized
+            fact rows.  It never reads a non-authoritative session file, never
+            persists status, never appends a fact, and never replays an effect.
+            Cached rows keep their canonical fact payload; only the evaluation
+            of that payload's own lease deadline is repeated, so a cached row
+            cannot freeze running work past its deadline.
+
+        Complexity:
+            O(r) time and memory over the projected row count.
+        """
+
+        projected: list[dict[str, Any]] = []
+        for row in rows:
+            metadata = row.get("metadata")
+            fact = metadata.get("task_runtime_execution_fact") if isinstance(metadata, dict) else None
+            if not isinstance(fact, dict):
+                projected.append(row)
+                continue
+            # Only the temporal status fields are adjusted. The row is never
+            # rebuilt from the fact payload, so state inherited from a compact
+            # heartbeat stays intact.
+            projected.append(apply_fact_lease_temporal_projection(row, fact, now=now))
+        return projected
+
+    def list_task_rows_from_execution_facts(
+        self,
+        *,
+        limit: int = 500,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """Return latest-per-task read models from ``task_runtime.execution`` facts.
 
         Boundary:
@@ -1833,7 +1878,10 @@ class _TaskRowsMixin(_ServiceMixinBase):
         cache = _EXECUTION_FACT_ROWS_PROJECTION_CACHE.get()
         cache_key = (self.workspace, event_limit)
         if cache is not None and cache_key in cache:
-            return [dict(row) for row in cache[cache_key]]
+            return self._apply_fact_row_lease_temporal_projection(
+                [dict(row) for row in cache[cache_key]],
+                now=now,
+            )
         stream_head = self._query_execution_fact_stream_head()
         cached_rows = self._cached_execution_fact_rows(
             event_limit=event_limit,
@@ -1842,7 +1890,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
         if cached_rows is not None:
             if cache is not None:
                 cache[cache_key] = tuple(dict(row) for row in cached_rows)
-            return cached_rows
+            return self._apply_fact_row_lease_temporal_projection(cached_rows, now=now)
 
         latest_by_task: dict[str, dict[str, Any]] = {}
         complete_head: int | None = None
@@ -1900,7 +1948,7 @@ class _TaskRowsMixin(_ServiceMixinBase):
                 stream_head=complete_head,
                 latest_by_task=latest_by_task,
             )
-        return rows
+        return self._apply_fact_row_lease_temporal_projection(rows, now=now)
 
     def _find_latest_execution_fact_row_for_task(
         self,

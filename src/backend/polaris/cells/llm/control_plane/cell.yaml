@@ -71,4 +71,9 @@ verification:
   gaps:
   - Child-cell split for config/evaluation/provider_runtime is not completed.
   smoke_commands: []
+  test_effects_allowed:
+    - path: polaris/cells/llm/control_plane/tests/test_llm_config_dependency_boundary.py
+      effects_allowed:
+      - process.spawn:python/llm_config_dependency_boundary_probe
+      reason: Runs a fixed python -c probe inside a disposable workspace to prove the LLM config dependency boundary holds; no provider call and no target repair.
 generated_artifacts: []

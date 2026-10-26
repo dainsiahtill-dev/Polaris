@@ -8,8 +8,7 @@ import json
 from collections.abc import Iterator
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from polaris.cells.events.fact_stream.public import (
@@ -19,14 +18,16 @@ from polaris.cells.events.fact_stream.public import (
 )
 from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
 from polaris.cells.factory.pipeline.public.service import FactoryConfig, FactoryRunService
-from polaris.cells.factory.pipeline.tests import test_ce_schema_residual_runtime as native_fixture
-from polaris.cells.factory.pipeline.tests.test_ce_schema_residual_runtime import _NativeEndpoint
+from polaris.cells.factory.pipeline.tests.native_endpoint_fixture import (
+    NativeEndpoint,
+    native_endpoint_context,
+)
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 
 
 def test_composed_group_split_emits_only_actual_inert_path_normalization() -> None:
     """Group-ID splitting must not invent a path correction for an unchanged row."""
-    source = _NativeEndpoint._ce_payload()
+    source = NativeEndpoint._ce_payload()
     source["project_completion_contract"]["obligations"]["artifacts"].extend(
         {
             "obligation_id": obligation_id,
@@ -45,10 +46,9 @@ def test_composed_group_split_emits_only_actual_inert_path_normalization() -> No
         workspace="fixture",
         metadata={"structured_output": source},
     )
-    owner = SimpleNamespace(
-        workspace="fixture",
-        _chief_engineer_structured_output_contract=OrchestrationStageExecutor._chief_engineer_structured_output_contract,
-    )
+    # The real same-owner executor is the accurate self for this production
+    # method; the owner constructor has no workspace side effect.
+    owner = OrchestrationStageExecutor(Path("fixture"))
     recovered = OrchestrationStageExecutor._recover_chief_engineer_portfolio_structural_result(
         owner,
         result=prior,
@@ -116,7 +116,7 @@ def test_structural_recovery_signal_keeps_exact_path_finding_without_authority()
     assert "handoff_ready" not in signals[0]
 
 
-class _ArtifactShapeEndpoint(_NativeEndpoint):
+class _ArtifactShapeEndpoint(NativeEndpoint):
     def response(self, request: dict[str, Any]) -> dict[str, Any]:
         text = "\n".join(str(row.get("content") or "") for row in request.get("messages", []))
         if "polaris.role_identity.v1:pm" in text:
@@ -124,7 +124,7 @@ class _ArtifactShapeEndpoint(_NativeEndpoint):
         self.requests.append(deepcopy(request))
         self.ce_calls += 1
         assert self.ce_calls <= 3, "CE recovery must remain bounded"
-        payload = _NativeEndpoint._ce_payload()
+        payload = NativeEndpoint._ce_payload()
         payload["project_completion_contract"]["obligations"]["artifacts"].append(
             {
                 "obligation_id": "inert-resources",
@@ -173,8 +173,19 @@ class _ArtifactShapeEndpoint(_NativeEndpoint):
 def artifact_native_endpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> Iterator[_ArtifactShapeEndpoint]:
-    monkeypatch.setattr(native_fixture, "_NativeEndpoint", _ArtifactShapeEndpoint)
-    yield from cast(Any, native_fixture.isolated_native_endpoint).__wrapped__(tmp_path, monkeypatch, request)
+    """Assemble the shared loopback native endpoint with the inert shape repair.
+
+    The endpoint resource, its network deny, provider configuration and
+    teardown are owned by native_endpoint_fixture; this fixture only performs
+    pytest assembly and injects the substituted response behaviour.
+    """
+    with native_endpoint_context(
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        outcome=str(request.param),
+        endpoint_class=_ArtifactShapeEndpoint,
+    ) as endpoint:
+        yield endpoint
 
 
 @pytest.mark.parametrize("artifact_native_endpoint", ["accept", "foreign_owner"], indirect=True)

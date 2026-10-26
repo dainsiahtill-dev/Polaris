@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from polaris.cells.roles.kernel.public.transaction_contracts import TransactionConfig
@@ -10,6 +11,10 @@ from polaris.kernelone.context.context_os.summarizers.contracts import (
     SummaryStrategy,
 )
 from polaris.kernelone.context.context_os.summarizers.slm import SLMSummarizer
+from polaris.kernelone.context.context_os.summarizers.slm_config import (
+    reset_default_slm_binding,
+    set_default_slm_binding,
+)
 
 # -----------------------------------------------------------------------------
 # Fixtures
@@ -70,6 +75,14 @@ class AuthMiddleware:
         request.user_id = payload["sub"]
         return request
 """.strip()
+
+
+@pytest.fixture(autouse=True)
+def _clear_installed_binding():
+    """Keep the process-wide SLM binding out of these unit tests."""
+    reset_default_slm_binding()
+    yield
+    reset_default_slm_binding()
 
 
 # -----------------------------------------------------------------------------
@@ -148,8 +161,7 @@ class TestSLMSummarizerFallback:
         with pytest.raises(SummarizationError):
             summarizer.summarize(sample_long_text, max_tokens=50)
 
-    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
-    def test_raises_on_empty_result(self, mock_gateway_cls, sample_long_text):
+    def test_raises_on_empty_result(self, sample_long_text):
         """When SLM returns empty, should raise SummarizationError."""
         from polaris.kernelone.context.context_os.summarizers.contracts import (
             SummarizationError,
@@ -158,10 +170,9 @@ class TestSLMSummarizerFallback:
         mock_gateway = MagicMock()
         mock_gateway.is_slm_healthy = AsyncMock(return_value=True)
         mock_gateway.compress_text = AsyncMock(return_value="")
-        mock_gateway_cls.return_value = mock_gateway
 
         config = TransactionConfig(slm_enabled=True)
-        summarizer = SLMSummarizer(config=config)
+        summarizer = SLMSummarizer(config=config, gateway=mock_gateway)
         with pytest.raises(SummarizationError):
             summarizer.summarize(sample_long_text, max_tokens=50)
 
@@ -188,63 +199,55 @@ class TestSLMSummarizerAsync:
         gateway.compress_text = AsyncMock(return_value=compress_result)
         return gateway
 
-    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
-    def test_summarize_with_healthy_slm(self, mock_gateway_cls, sample_long_text):
+    def test_summarize_with_healthy_slm(self, sample_long_text):
         """When SLM is healthy, should return compressed text."""
         mock_gateway = self._make_mock_gateway(
             healthy=True, compress_result="Compressed: timeout in connection_pool.py:234"
         )
-        mock_gateway_cls.return_value = mock_gateway
 
         config = TransactionConfig(slm_enabled=True)
-        summarizer = SLMSummarizer(config=config, timeout_seconds=2.5)
+        summarizer = SLMSummarizer(config=config, timeout_seconds=2.5, gateway=mock_gateway)
         result = summarizer.summarize(sample_long_text, max_tokens=50)
 
         assert result == "Compressed: timeout in connection_pool.py:234"
         mock_gateway.is_slm_healthy.assert_awaited_once()
         mock_gateway.compress_text.assert_awaited_once()
 
-    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
-    def test_summarize_raises_when_unhealthy(self, mock_gateway_cls, sample_long_text):
+    def test_summarize_raises_when_unhealthy(self, sample_long_text):
         """When SLM is unhealthy, should raise SummarizationError."""
         from polaris.kernelone.context.context_os.summarizers.contracts import (
             SummarizationError,
         )
 
         mock_gateway = self._make_mock_gateway(healthy=False)
-        mock_gateway_cls.return_value = mock_gateway
 
         config = TransactionConfig(slm_enabled=True)
-        summarizer = SLMSummarizer(config=config)
+        summarizer = SLMSummarizer(config=config, gateway=mock_gateway)
         with pytest.raises(SummarizationError):
             summarizer.summarize(sample_long_text, max_tokens=50)
 
         mock_gateway.is_slm_healthy.assert_awaited_once()
         mock_gateway.compress_text.assert_not_awaited()
 
-    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
-    def test_summarize_raises_on_empty_result(self, mock_gateway_cls, sample_long_text):
+    def test_summarize_raises_on_empty_result(self, sample_long_text):
         """When SLM returns empty string, should raise SummarizationError."""
         from polaris.kernelone.context.context_os.summarizers.contracts import (
             SummarizationError,
         )
 
         mock_gateway = self._make_mock_gateway(healthy=True, compress_result="")
-        mock_gateway_cls.return_value = mock_gateway
 
         config = TransactionConfig(slm_enabled=True)
-        summarizer = SLMSummarizer(config=config)
+        summarizer = SLMSummarizer(config=config, gateway=mock_gateway)
         with pytest.raises(SummarizationError):
             summarizer.summarize(sample_long_text, max_tokens=50)
 
-    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
-    def test_summarize_uses_correct_prompt_template(self, mock_gateway_cls, sample_dialogue):
+    def test_summarize_uses_correct_prompt_template(self, sample_dialogue):
         """Should use dialogue prompt template for dialogue content type."""
         mock_gateway = self._make_mock_gateway(healthy=True, compress_result="Summary of auth discussion.")
-        mock_gateway_cls.return_value = mock_gateway
 
         config = TransactionConfig(slm_enabled=True)
-        summarizer = SLMSummarizer(config=config)
+        summarizer = SLMSummarizer(config=config, gateway=mock_gateway)
         result = summarizer.summarize(sample_dialogue, max_tokens=50, content_type="dialogue")
 
         assert result == "Summary of auth discussion."
@@ -253,14 +256,12 @@ class TestSLMSummarizerAsync:
         prompt = call_args[0][0] if call_args[0] else call_args[1]["prompt"]
         assert "dialogue" in prompt.lower() or "conversation" in prompt.lower()
 
-    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
-    def test_summarize_uses_code_prompt_for_code(self, mock_gateway_cls, sample_code):
+    def test_summarize_uses_code_prompt_for_code(self, sample_code):
         """Should use code prompt template for code content type."""
         mock_gateway = self._make_mock_gateway(healthy=True, compress_result="Auth functions and middleware.")
-        mock_gateway_cls.return_value = mock_gateway
 
         config = TransactionConfig(slm_enabled=True)
-        summarizer = SLMSummarizer(config=config)
+        summarizer = SLMSummarizer(config=config, gateway=mock_gateway)
         result = summarizer.summarize(sample_code, max_tokens=50, content_type="code")
 
         assert result == "Auth functions and middleware."
@@ -268,14 +269,12 @@ class TestSLMSummarizerAsync:
         prompt = call_args[0][0] if call_args[0] else call_args[1]["prompt"]
         assert "code" in prompt.lower() or "artifact" in prompt.lower()
 
-    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
-    def test_summarize_pre_truncates_long_content(self, mock_gateway_cls):
+    def test_summarize_pre_truncates_long_content(self):
         """Should pre-truncate content longer than max_content_length."""
         mock_gateway = self._make_mock_gateway(healthy=True, compress_result="Short summary.")
-        mock_gateway_cls.return_value = mock_gateway
 
         config = TransactionConfig(slm_enabled=True)
-        summarizer = SLMSummarizer(config=config, max_content_length=500)
+        summarizer = SLMSummarizer(config=config, max_content_length=500, gateway=mock_gateway)
         very_long = "x" * 10000
         result = summarizer.summarize(very_long, max_tokens=50)
 
@@ -294,8 +293,7 @@ class TestSLMSummarizerAsync:
 class TestSLMSummarizerTimeout:
     """Tests for timeout circuit breaker behavior."""
 
-    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
-    def test_timeout_raises(self, mock_gateway_cls, sample_long_text):
+    def test_timeout_raises(self, sample_long_text):
         """When health check times out, should raise SummarizationError."""
         from polaris.kernelone.context.context_os.summarizers.contracts import (
             SummarizationError,
@@ -310,15 +308,13 @@ class TestSLMSummarizerTimeout:
         mock_gateway = MagicMock()
         mock_gateway.is_slm_healthy = slow_health_check
         mock_gateway.compress_text = AsyncMock(return_value="")
-        mock_gateway_cls.return_value = mock_gateway
 
         config = TransactionConfig(slm_enabled=True)
-        summarizer = SLMSummarizer(config=config, timeout_seconds=0.1)
+        summarizer = SLMSummarizer(config=config, timeout_seconds=0.1, gateway=mock_gateway)
         with pytest.raises(SummarizationError):
             summarizer.summarize(sample_long_text, max_tokens=50)
 
-    @patch("polaris.cells.roles.kernel.public.transaction_contracts.CognitiveGateway")
-    def test_thread_timeout_raises(self, mock_gateway_cls, sample_long_text):
+    def test_thread_timeout_raises(self, sample_long_text):
         """When the thread itself times out, should raise SummarizationError."""
         from polaris.kernelone.context.context_os.summarizers.contracts import (
             SummarizationError,
@@ -333,12 +329,149 @@ class TestSLMSummarizerTimeout:
         mock_gateway = MagicMock()
         mock_gateway.is_slm_healthy = AsyncMock(return_value=True)
         mock_gateway.compress_text = very_slow_compress
-        mock_gateway_cls.return_value = mock_gateway
 
         config = TransactionConfig(slm_enabled=True)
-        summarizer = SLMSummarizer(config=config, timeout_seconds=0.1)
+        summarizer = SLMSummarizer(config=config, timeout_seconds=0.1, gateway=mock_gateway)
         with pytest.raises(SummarizationError):
             summarizer.summarize(sample_long_text, max_tokens=50)
+
+
+# -----------------------------------------------------------------------------
+# Binding Injection Tests
+# -----------------------------------------------------------------------------
+
+
+class _RecordingBinding:
+    """Minimal SLMBinding implementation used to observe binding calls."""
+
+    def __init__(self, config: Any, gateway: Any) -> None:
+        self._config = config
+        self._gateway = gateway
+        self.gateway_calls: list[Any] = []
+
+    def config(self) -> Any:
+        return self._config
+
+    def gateway(self, config: Any | None = None) -> Any:
+        self.gateway_calls.append(config)
+        return self._gateway
+
+
+class TestSLMSummarizerBindingInjection:
+    """Tests for the installed-binding path (host assembly contract)."""
+
+    def test_unconfigured_summarizer_is_not_available(self):
+        """Without an explicit config and without a binding, the tier is unavailable."""
+        summarizer = SLMSummarizer()
+        assert summarizer.is_available() is False
+
+    def test_unconfigured_summarizer_raises_explicitly(self, sample_long_text):
+        """Without a binding, summarize() must fail explicitly, not truncate silently."""
+        from polaris.kernelone.context.context_os.summarizers.contracts import (
+            SummarizationError,
+        )
+
+        summarizer = SLMSummarizer()
+        with pytest.raises(SummarizationError):
+            summarizer.summarize(sample_long_text, max_tokens=50)
+
+    def test_installed_binding_supplies_config(self):
+        """The summarizer reads its configuration from the installed binding."""
+        config = TransactionConfig(slm_enabled=True, slm_model_name="bound-model")
+        binding = _RecordingBinding(config, MagicMock())
+        set_default_slm_binding(binding)
+
+        summarizer = SLMSummarizer()
+        assert summarizer.config is config
+        assert summarizer.is_available() is True
+
+    def test_explicit_config_wins_over_binding(self):
+        """An explicitly supplied configuration overrides the binding's own."""
+        bound = TransactionConfig(slm_enabled=True, slm_model_name="bound-model")
+        explicit = TransactionConfig(slm_enabled=True, slm_model_name="explicit-model")
+        binding = _RecordingBinding(bound, MagicMock())
+        set_default_slm_binding(binding)
+
+        summarizer = SLMSummarizer(config=explicit)
+        assert summarizer.config is explicit
+        assert summarizer.get_compression_stats()["slm_model"] == "explicit-model"
+
+    def test_explicit_config_is_forwarded_to_binding_verbatim(self, sample_long_text):
+        """The binding receives the exact configuration object, with all fields."""
+        gateway = MagicMock()
+        gateway.is_slm_healthy = AsyncMock(return_value=True)
+        gateway.compress_text = AsyncMock(return_value="Compressed summary from the bound gateway.")
+
+        explicit = TransactionConfig(
+            slm_enabled=True,
+            slm_provider="ollama",
+            slm_model_name="custom-model:1b",
+            slm_base_url="http://127.0.0.1:9999",
+            slm_keep_alive="30m",
+            slm_timeout=77,
+        )
+        binding = _RecordingBinding(TransactionConfig(), gateway)
+        set_default_slm_binding(binding)
+
+        summarizer = SLMSummarizer(config=explicit)
+        result = summarizer.summarize(sample_long_text, max_tokens=50)
+
+        assert result == "Compressed summary from the bound gateway."
+        assert binding.gateway_calls == [explicit]
+        assert binding.gateway_calls[0] is explicit
+        assert binding.gateway_calls[0].slm_base_url == "http://127.0.0.1:9999"
+        assert binding.gateway_calls[0].slm_keep_alive == "30m"
+        assert binding.gateway_calls[0].slm_timeout == 77
+        assert binding.gateway_calls[0].slm_model_name == "custom-model:1b"
+
+    def test_binding_without_override_uses_binding_config(self, sample_long_text):
+        """Without an explicit config, the binding is asked for its own config."""
+        gateway = MagicMock()
+        gateway.is_slm_healthy = AsyncMock(return_value=True)
+        gateway.compress_text = AsyncMock(return_value="Compressed summary from the bound gateway.")
+
+        own = TransactionConfig(slm_enabled=True, slm_model_name="owner-model")
+        binding = _RecordingBinding(own, gateway)
+        set_default_slm_binding(binding)
+
+        summarizer = SLMSummarizer()
+        result = summarizer.summarize(sample_long_text, max_tokens=50)
+
+        assert result == "Compressed summary from the bound gateway."
+        assert binding.gateway_calls == [None]
+
+    def test_explicit_gateway_wins_over_binding(self, sample_long_text):
+        """An explicitly injected gateway is used as-is, without the host."""
+        gateway = MagicMock()
+        gateway.is_slm_healthy = AsyncMock(return_value=True)
+        gateway.compress_text = AsyncMock(return_value="Compressed summary from the injected gateway.")
+
+        binding = _RecordingBinding(TransactionConfig(), MagicMock())
+        set_default_slm_binding(binding)
+
+        summarizer = SLMSummarizer(config=TransactionConfig(slm_enabled=True), gateway=gateway)
+        result = summarizer.summarize(sample_long_text, max_tokens=50)
+
+        assert result == "Compressed summary from the injected gateway."
+        assert binding.gateway_calls == []
+        gateway.compress_text.assert_awaited_once()
+
+    def test_close_releases_the_executor(self, sample_long_text):
+        """close() shuts the thread pool down and further calls fail explicitly."""
+        from polaris.kernelone.context.context_os.summarizers.contracts import (
+            SummarizationError,
+        )
+
+        summarizer = SLMSummarizer(config=TransactionConfig(slm_enabled=True))
+        summarizer.close()
+        with pytest.raises(SummarizationError):
+            summarizer.summarize(sample_long_text, max_tokens=50)
+
+    def test_context_manager_closes_the_executor(self):
+        """The context manager closes the summarizer on exit."""
+        with SLMSummarizer() as summarizer:
+            assert summarizer._executor is not None
+        assert summarizer._executor is None
 
 
 # -----------------------------------------------------------------------------

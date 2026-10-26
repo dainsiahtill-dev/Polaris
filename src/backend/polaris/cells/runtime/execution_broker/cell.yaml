@@ -88,4 +88,13 @@ verification:
   - Legacy sync process callers still need full call-site migration to async-first
     broker contracts.
   smoke_commands: []
+  test_effects_allowed:
+    - path: polaris/cells/runtime/execution_broker/tests/test_nested_project_verification_sandbox.py
+      effects_allowed:
+      - process.spawn:python/nested_verification_sandbox_probe
+      reason: Runs a fixed python -c probe inside a disposable workspace to prove nested project verification stays sandboxed; no host authority or target repair.
+    - path: polaris/cells/runtime/execution_broker/tests/test_project_verification_sandbox.py
+      effects_allowed:
+      - process.spawn:python/project_verification_sandbox_probe
+      reason: Spawns fixed python -c probes inside a disposable workspace to prove project verification runs sandboxed; no host authority or target repair.
 generated_artifacts: []

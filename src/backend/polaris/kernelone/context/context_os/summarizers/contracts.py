@@ -2,6 +2,9 @@
 
 ADR-0067: ContextOS 2.0 摘要策略选型
 定义统一的摘要器接口，支持多种实现和运行时降级。
+
+本模块只声明"能力"，不引用任何具体实现：KernelOne 底座消费这里的
+Protocol，由拥有该能力的 Cell / 宿主在装配时注入实现。
 """
 
 from __future__ import annotations
@@ -97,3 +100,61 @@ class SummarizerInterface(Protocol):
             True 如果摘要器可以正常使用
         """
         ...
+
+
+@runtime_checkable
+class SummarizerGatewayProtocol(Protocol):
+    """SLM 摘要网关能力契约
+
+    KernelOne 底座只消费这个协议，不引用任何具体网关实现。
+    拥有该能力的 Cell (roles.kernel) 在宿主装配时注入真实实现。
+    """
+
+    async def is_slm_healthy(self) -> bool:
+        """检查 SLM 后端是否健康
+
+        Returns:
+            True 表示 SLM 后端可以提供服务
+        """
+        ...
+
+    async def compress_text(self, prompt: str, *, max_tokens: int) -> str:
+        """使用 SLM 压缩文本
+
+        Args:
+            prompt: 待压缩的 prompt
+            max_tokens: 目标 token 数
+
+        Returns:
+            压缩后的文本
+        """
+        ...
+
+
+@runtime_checkable
+class SLMConfigProtocol(Protocol):
+    """SLM 运行配置的只读形状
+
+    KernelOne 底座只读取这几个字段来报告 SLM 状态，因此这里声明它们
+    的**只读**形状，而不是声明一个不透明的 Any。
+
+    本协议**不复制任何默认值**：模型名、provider、base URL、超时等
+    默认值仍然只有拥有者 (roles.kernel) 一处。拥有者可以把真实的配置
+    对象 (例如 ``TransactionConfig``) 原样传给网关，本协议只保证这些
+    字段可读。
+
+    注意：拥有者可以在自己的 Cell 内把该对象校验/收窄为具体类型并
+    原样使用；底座不依赖这个具体类型。
+    """
+
+    slm_enabled: bool
+    """SLM 是否启用。"""
+
+    slm_provider: str
+    """SLM provider 键 (例如 ``"ollama"``)。"""
+
+    slm_model_name: str
+    """SLM 模型标识。"""
+
+    slm_keep_alive: str
+    """Provider 侧的模型驻留提示。"""
