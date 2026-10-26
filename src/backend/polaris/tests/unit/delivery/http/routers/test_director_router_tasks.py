@@ -9,13 +9,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-from polaris.bootstrap.config import Settings
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
+from polaris.tests.unit.delivery.http.routers.conftest import _DirectorRouterTestSettings
 
 
 @pytest.mark.asyncio
 async def test_director_create_task(client: AsyncClient) -> None:
-    """Director create task should return task response."""
+    """Retired task creation must refuse the legacy write without submitting it.
+
+    OLD GOAL (retired): POST /v2/director/tasks submitted a task to the legacy
+    ``DirectorService`` and answered ``200`` with the created task row.
+    CURRENT MEANING: new work is created through ``EngineeringRunService``
+    (``POST /v2/engineering/runs``); the legacy task write route is retired and
+    refuses with ``410 legacy_engine_retired`` before any task is submitted.
+    """
     from polaris.domain.entities import TaskPriority, TaskResult, TaskStatus
 
     mock_task = MagicMock()
@@ -52,16 +59,25 @@ async def test_director_create_task(client: AsyncClient) -> None:
                 "priority": "MEDIUM",
             },
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["id"] == "task-123"
-        assert data["subject"] == "Test task"
-        assert data["status"] == "PENDING"
+
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "legacy_engine_retired"
+    assert "/v2/engineering/runs" in detail["supported_endpoints"]
+    mock_container.return_value.resolve_async.assert_not_awaited()
+    mock_director.submit_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_create_task_uses_workspace_query_for_service_and_metadata(client: AsyncClient) -> None:
-    """Director task creation should be pinned to the explicitly requested workspace."""
+    """A workspace-scoped task create on the retired route is refused, not rebound.
+
+    OLD GOAL (retired): the ``workspace`` query selected a rebound Director
+    service and the submitted task metadata carried that workspace.
+    CURRENT MEANING: the legacy task write route is retired.  The workspace
+    request variant is refused with ``410 legacy_engine_retired``; no service is
+    resolved or rebound and no task metadata is produced.
+    """
     from polaris.domain.entities import TaskPriority, TaskResult, TaskStatus
 
     target_workspace = "C:/Temp/Product"
@@ -115,23 +131,24 @@ async def test_director_create_task_uses_workspace_query_for_service_and_metadat
             },
         )
 
-    assert response.status_code == 200
-    mock_rebind.assert_awaited_once_with(str(Path(target_workspace).resolve()))
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_rebind.assert_not_awaited()
+    mock_container.return_value.resolve_async.assert_not_awaited()
     stale_director.submit_task.assert_not_awaited()
-    workspace_director.submit_task.assert_awaited_once()
-    submitted_metadata = workspace_director.submit_task.await_args.kwargs["metadata"]
-    assert submitted_metadata["source"] == "desktop"
-    assert submitted_metadata["workspace"] == target_workspace
-    assert submitted_metadata["director_workspace"] == target_workspace
-    data = response.json()
-    assert data["id"] == "task-workspace"
-    assert data["metadata"]["workspace"] == target_workspace
-    assert data["metadata"]["director_workspace"] == target_workspace
+    workspace_director.submit_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_create_task_with_command(client: AsyncClient) -> None:
-    """Director create task should accept command field."""
+    """A command-carrying task create on the retired route is refused and runs nothing.
+
+    OLD GOAL (retired): a task carrying a ``command`` was submitted to the legacy
+    Director service, which could execute it.
+    CURRENT MEANING: command execution is owned by the engineering run's
+    permission-scoped tools; the retired route refuses the request variant with
+    ``410 legacy_engine_retired`` and never submits or executes the command.
+    """
     from polaris.domain.entities import TaskPriority, TaskResult, TaskStatus
 
     mock_task = MagicMock()
@@ -171,15 +188,22 @@ async def test_director_create_task_with_command(client: AsyncClient) -> None:
                 "metadata": {"command": "pytest"},
             },
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["id"] == "task-456"
-        assert data["priority"] == "HIGH"
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_container.return_value.resolve_async.assert_not_awaited()
+    mock_director.submit_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_create_task_accepts_lowercase_priority(client: AsyncClient) -> None:
-    """Director create task should accept TaskPriority enum values."""
+    """The lowercase-priority variant is refused on the retired route before parsing.
+
+    OLD GOAL (retired): a lowercase priority was normalised to the
+    ``TaskPriority`` enum and submitted.
+    CURRENT MEANING: the retired route refuses first, so no priority is
+    normalised and no task is submitted.
+    """
     from polaris.domain.entities import TaskPriority, TaskResult, TaskStatus
 
     mock_task = MagicMock()
@@ -216,18 +240,22 @@ async def test_director_create_task_accepts_lowercase_priority(client: AsyncClie
             },
         )
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["id"] == "task-789"
-    assert data["priority"] == "HIGH"
-    submit_call = mock_director.submit_task.await_args
-    assert submit_call is not None
-    assert submit_call.kwargs["priority"] is TaskPriority.HIGH
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_container.return_value.resolve_async.assert_not_awaited()
+    mock_director.submit_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_create_task_rejects_invalid_priority(client: AsyncClient) -> None:
-    """Invalid task priority should return a structured 400 instead of a 500."""
+    """An invalid priority is refused by retirement, not by legacy validation.
+
+    OLD GOAL (retired): an unknown priority produced a structured ``400
+    INVALID_TASK_PRIORITY`` with the allowed values.
+    CURRENT MEANING: the retired route refuses every request before any legacy
+    validation runs, so the refusal is ``410 legacy_engine_retired`` and no
+    legacy validation payload is produced.
+    """
     mock_director = MagicMock()
     mock_director.submit_task = AsyncMock()
     mock_director.config.workspace = "."
@@ -252,11 +280,11 @@ async def test_director_create_task_rejects_invalid_priority(client: AsyncClient
             },
         )
 
-    assert response.status_code == 400
-    data = response.json()
-    assert data["error"]["code"] == "INVALID_TASK_PRIORITY"
-    assert data["error"]["details"]["priority"] == "urgent"
-    assert "HIGH" in data["error"]["details"]["allowed"]
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "legacy_engine_retired"
+    assert "INVALID_TASK_PRIORITY" not in str(detail)
+    mock_container.return_value.resolve_async.assert_not_awaited()
     mock_director.submit_task.assert_not_awaited()
 
 
@@ -418,10 +446,10 @@ async def test_director_list_tasks_uses_task_market_execution_rows(client: Async
 @pytest.mark.asyncio
 async def test_director_list_tasks_prefers_active_workspace_path(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Director task projection should use workspace_path before stale workspace."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Product"
     mock_director = MagicMock()
     mock_director.list_tasks = AsyncMock(return_value=[])
@@ -458,10 +486,10 @@ async def test_director_list_tasks_prefers_active_workspace_path(
 @pytest.mark.asyncio
 async def test_director_list_tasks_accepts_workspace_override(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Director task projection should honor the requested workspace query."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Stale"
     mock_director = MagicMock()
     mock_director.list_tasks = AsyncMock(return_value=[])
@@ -706,10 +734,10 @@ async def test_director_get_task_falls_back_to_projection(client: AsyncClient) -
 @pytest.mark.asyncio
 async def test_director_get_task_projection_fallback_prefers_active_workspace_path(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Director task detail projection fallback should use the active workspace."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Product"
     mock_director = MagicMock()
     mock_director.get_task = AsyncMock(return_value=None)
@@ -752,10 +780,10 @@ async def test_director_get_task_projection_fallback_prefers_active_workspace_pa
 @pytest.mark.asyncio
 async def test_director_get_task_projection_fallback_accepts_workspace_override(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Director task detail fallback should honor the requested workspace query."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Stale"
     mock_director = MagicMock()
     mock_director.get_task = AsyncMock(return_value=None)
@@ -833,7 +861,14 @@ async def test_director_get_task_not_found(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_director_cancel_task_success(client: AsyncClient) -> None:
-    """Director cancel task should return ok when successful."""
+    """Retired task cancellation must refuse without cancelling a task.
+
+    OLD GOAL (retired): POST /v2/director/tasks/{task_id}/cancel cancelled the
+    task through the legacy Director service and answered ``200 {"ok": true}``.
+    CURRENT MEANING: run cancellation belongs to ``EngineeringRunService``; the
+    legacy task cancel route is retired and refuses with
+    ``410 legacy_engine_retired`` before any task is cancelled.
+    """
     mock_director = MagicMock()
     mock_director.cancel_task = AsyncMock(return_value=True)
     mock_director.config.workspace = "."
@@ -851,19 +886,29 @@ async def test_director_cancel_task_success(client: AsyncClient) -> None:
         mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_cancel)
 
         response = await client.post("/v2/director/tasks/task-123/cancel")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["ok"] is True
-        assert data["task_id"] == "task-123"
+
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "legacy_engine_retired"
+    assert "/v2/engineering/runs" in detail["supported_endpoints"]
+    mock_container.return_value.resolve_async.assert_not_awaited()
+    mock_director.cancel_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_cancel_task_returns_requested_workspace_evidence(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
-    """Director task cancel should echo the workspace used by desktop controls."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    """A workspace-scoped task cancel on the retired route is refused, not echoed.
+
+    OLD GOAL (retired): the requested workspace was echoed back as evidence of the
+    workspace the cancel had used.
+    CURRENT MEANING: the retired route refuses the workspace-scoped variant with
+    ``410 legacy_engine_retired``; no workspace-scoped cancel happens and no
+    workspace evidence is produced.
+    """
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Stale"
     mock_director = MagicMock()
     mock_director.cancel_task = AsyncMock(return_value=True)
@@ -883,13 +928,23 @@ async def test_director_cancel_task_returns_requested_workspace_evidence(
 
         response = await client.post("/v2/director/tasks/task-123/cancel?workspace=C%3A%2FTemp%2FVerified")
 
-    assert response.status_code == 200
-    assert response.json()["workspace"] == "C:/Temp/Verified"
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "legacy_engine_retired"
+    assert "workspace" not in detail
+    mock_container.return_value.resolve_async.assert_not_awaited()
+    mock_director.cancel_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_cancel_task_returns_service_success_payload(client: AsyncClient) -> None:
-    """Director cancel task should preserve a successful service payload."""
+    """A successful legacy cancel payload is never produced on the retired route.
+
+    OLD GOAL (retired): a successful legacy cancel payload (``ok``, ``status``,
+    ``worker``) was forwarded to the caller.
+    CURRENT MEANING: the legacy cancel is never attempted, so no service payload
+    exists to forward; the route refuses with ``410 legacy_engine_retired``.
+    """
     mock_director = MagicMock()
     mock_director.cancel_task = AsyncMock(
         return_value={
@@ -914,17 +969,23 @@ async def test_director_cancel_task_returns_service_success_payload(client: Asyn
         mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_cancel_payload)
 
         response = await client.post("/v2/director/tasks/task-123/cancel")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["ok"] is True
-        assert data["task_id"] == "task-123"
-        assert data["status"] == "CANCELLED"
-        assert data["worker"] == "worker-1"
+
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "legacy_engine_retired"
+    assert "worker" not in str(detail)
+    mock_container.return_value.resolve_async.assert_not_awaited()
+    mock_director.cancel_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_cancel_task_fails(client: AsyncClient) -> None:
-    """Director cancel task should 400 when cancellation fails."""
+    """A failing legacy cancel is never attempted on the retired route.
+
+    OLD GOAL (retired): a failed cancellation produced ``400``.
+    CURRENT MEANING: the legacy cancel is never attempted, so there is no failure
+    to map; the route refuses with ``410 legacy_engine_retired``.
+    """
     mock_director = MagicMock()
     mock_director.cancel_task = AsyncMock(return_value=False)
     mock_director.config.workspace = "."
@@ -942,12 +1003,22 @@ async def test_director_cancel_task_fails(client: AsyncClient) -> None:
         mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve)
 
         response = await client.post("/v2/director/tasks/task-123/cancel")
-        assert response.status_code == 400
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_container.return_value.resolve_async.assert_not_awaited()
+    mock_director.cancel_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_cancel_task_respects_service_failure_payload(client: AsyncClient) -> None:
-    """Director cancel task should not treat a non-empty ok=false payload as success."""
+    """A legacy failure payload is never produced on the retired route.
+
+    OLD GOAL (retired): a non-empty ``ok=false`` legacy payload was mapped to
+    ``400`` with the service error message.
+    CURRENT MEANING: the legacy cancel is never attempted, so no failure payload
+    exists; the route refuses with ``410 legacy_engine_retired``.
+    """
     mock_director = MagicMock()
     mock_director.cancel_task = AsyncMock(
         return_value={
@@ -971,5 +1042,10 @@ async def test_director_cancel_task_respects_service_failure_payload(client: Asy
         mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_cancel_failure_payload)
 
         response = await client.post("/v2/director/tasks/task-123/cancel")
-        assert response.status_code == 400
-        assert response.json()["detail"] == "Task not found or not cancellable"
+
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "legacy_engine_retired"
+    assert "Task not found or not cancellable" not in str(detail)
+    mock_container.return_value.resolve_async.assert_not_awaited()
+    mock_director.cancel_task.assert_not_awaited()

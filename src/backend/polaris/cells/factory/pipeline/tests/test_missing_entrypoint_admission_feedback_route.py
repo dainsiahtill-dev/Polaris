@@ -21,8 +21,10 @@ from polaris.cells.chief_engineer.blueprint.public import (
     build_chief_engineer_blueprint_portfolio,
     validate_director_handoff_from_payload,
 )
+from polaris.cells.chief_engineer.blueprint.public.tests.library_completion_fixture import (
+    build_library_completion_requirements,
+)
 from polaris.cells.chief_engineer.blueprint.public.tests.test_public_contractsa import (
-    _library_completion_requirements,
     _portfolio_command_authority,
 )
 from polaris.cells.control_plane.run_ledger.public import RunLedgerProjectionResultV1
@@ -89,7 +91,7 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, script: str = "
     entry = VerificationCommandAuthorityV1(
         task_id=task.task_id, modality="entrypoint", argv=("npm", "run", "start", "--", "--ticks=20")
     )
-    completion = _library_completion_requirements(
+    completion = build_library_completion_requirements(
         "src/cli/main.ts",
         "package.json",
         "tsconfig.json",

@@ -4642,6 +4642,10 @@ cells:
           effects_allowed:
           - fs.write:private_kernelone_provider_fixture
           reason: Writes synthetic contract.json and events.jsonl provider fixtures inside a disposable project root to exercise the provider protocol; no host authority or target repair.
+        - path: polaris/kernelone/context/context_os/tests/test_emergency_compaction_metrics_boundary.py
+          effects_allowed:
+          - process.spawn:python/contextos_legacy_alias_cold_import
+          reason: Bounded isolated Python cold import observes historical ContextOS public aliases without loading Cell modules; no provider, target repair or production permission grant.
   - id: kernelone.traceability
     title: Traceability Kernel
     kind: capability

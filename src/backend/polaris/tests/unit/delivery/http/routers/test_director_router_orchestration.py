@@ -5,22 +5,49 @@ Integration QA sections."""
 
 from __future__ import annotations
 
-import json
+import sqlite3
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-from polaris.bootstrap.config import Settings
 from polaris.kernelone.storage.io_paths import build_cache_root
 from polaris.tests.unit.delivery.http.routers._helpers import (
     _director_run_diagnostics,
 )
+from polaris.tests.unit.delivery.http.routers.conftest import _DirectorRouterTestSettings
+
+
+def _engineering_run_rows(workspace: Path) -> dict[str, int]:
+    """Count the engineering owner's own run/event/tool rows for one workspace.
+
+    The engineering owner is the only current write authority for new work, so
+    a retired legacy write must leave these counters unchanged.
+    """
+    database = workspace / ".polaris" / "runtime" / "engineering" / "sessions.sqlite3"
+    if not database.is_file():
+        return {"runs": 0, "events": 0, "tool_calls": 0}
+    with sqlite3.connect(database) as connection:
+        return {
+            table: int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            for table in ("runs", "events", "tool_calls")
+        }
 
 
 @pytest.mark.asyncio
-async def test_director_run_orchestration(client: AsyncClient) -> None:
-    """Director run orchestration should create a run."""
+async def test_director_run_orchestration(
+    client: AsyncClient,
+    director_router_private_workspace: Path,
+) -> None:
+    """Retired Director orchestration run must refuse without dispatching a run.
+
+    OLD GOAL (retired): POST /v2/director/run preflighted readiness, queued the
+    ready PM/blueprint tasks and answered ``200`` with a ``run_id``.
+    CURRENT MEANING: orchestration execution belongs to
+    ``EngineeringRunService`` behind ``/v2/engineering/runs``; the legacy route is
+    retired and refuses with ``410 legacy_engine_retired`` before any readiness
+    preflight, dispatch service, or run record exists.
+    """
     mock_result = MagicMock()
     mock_result.run_id = "run-789"
     mock_result.status = "running"
@@ -56,22 +83,36 @@ async def test_director_run_orchestration(client: AsyncClient) -> None:
                 "execution_mode": "parallel",
             },
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["run_id"] == "run-789"
-        assert data["status"] == "running"
-        assert data["workspace"] == "."
-        assert data["tasks_queued"] == 2
-        mock_preflight.assert_awaited_once()
+
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "legacy_engine_retired"
+    assert "/v2/engineering/runs" in detail["supported_endpoints"]
+    # No readiness preflight, no dispatch service, no legacy run record.
+    mock_preflight.assert_not_awaited()
+    mock_service_cls.assert_not_called()
+    mock_service.execute_director_run.assert_not_awaited()
+    assert _engineering_run_rows(director_router_private_workspace) == {
+        "runs": 0,
+        "events": 0,
+        "tool_calls": 0,
+    }
 
 
 @pytest.mark.asyncio
 async def test_director_run_orchestration_defaults_to_active_workspace_path(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
-    """Director run should resolve omitted workspace through active desktop settings."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    """A retired orchestration run never resolves the active desktop workspace.
+
+    OLD GOAL (retired): an omitted workspace was resolved through the active
+    desktop settings and forwarded to the dispatch service.
+    CURRENT MEANING: the legacy route is retired, so no workspace resolution,
+    readiness preflight, or dispatch happens; the request variant is refused
+    uniformly with ``410 legacy_engine_retired``.
+    """
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Product"
     mock_result = MagicMock()
     mock_result.run_id = "run-active"
@@ -108,25 +149,27 @@ async def test_director_run_orchestration_defaults_to_active_workspace_path(
             },
         )
 
-    assert response.status_code == 200
-    execute_args = mock_service.execute_director_run.await_args
-    assert execute_args is not None
-    _, kwargs = execute_args
-    assert kwargs["workspace"] == "C:/Temp/Product"
-    assert response.json()["workspace"] == "C:/Temp/Product"
-    mock_preflight.assert_awaited_once()
-    preflight_args = mock_preflight.await_args
-    assert preflight_args is not None
-    assert preflight_args.args[1] == "C:/Temp/Product"
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_preflight.assert_not_awaited()
+    mock_service_cls.assert_not_called()
+    mock_service.execute_director_run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_run_orchestration_preserves_explicit_workspace(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
-    """Director run should not override explicit non-dot API workspace values."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    """An explicit workspace on the retired route is refused, never honoured.
+
+    OLD GOAL (retired): an explicit non-dot workspace was preserved and forwarded
+    to the dispatch service as the execution workspace.
+    CURRENT MEANING: the route is retired; the explicit-workspace request variant
+    is refused with ``410 legacy_engine_retired`` and no workspace-scoped effect
+    is produced.
+    """
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Product"
     mock_result = MagicMock()
     mock_result.run_id = "run-explicit"
@@ -164,21 +207,23 @@ async def test_director_run_orchestration_preserves_explicit_workspace(
             },
         )
 
-    assert response.status_code == 200
-    execute_args = mock_service.execute_director_run.await_args
-    assert execute_args is not None
-    _, kwargs = execute_args
-    assert kwargs["workspace"] == "D:/Explicit/Product"
-    assert response.json()["workspace"] == "D:/Explicit/Product"
-    mock_preflight.assert_awaited_once()
-    preflight_args = mock_preflight.await_args
-    assert preflight_args is not None
-    assert preflight_args.args[1] == "D:/Explicit/Product"
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_preflight.assert_not_awaited()
+    mock_service_cls.assert_not_called()
+    mock_service.execute_director_run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_run_orchestration_serial_mode(client: AsyncClient) -> None:
-    """Director run orchestration should support serial mode."""
+    """The serial-mode request variant on the retired route is refused too.
+
+    OLD GOAL (retired): ``execution_mode="serial"`` with a task filter produced a
+    serial orchestration run.
+    CURRENT MEANING: execution mode selection belongs to the current engineering
+    owner; the retired route refuses every request variant with the same
+    ``410 legacy_engine_retired`` contract and starts nothing.
+    """
     mock_result = MagicMock()
     mock_result.run_id = "run-abc"
     mock_result.status = "running"
@@ -214,16 +259,23 @@ async def test_director_run_orchestration_serial_mode(client: AsyncClient) -> No
                 "task_filter": "priority:high",
             },
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["run_id"] == "run-abc"
-        assert "serial" in data["message"]
-        mock_preflight.assert_awaited_once()
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_preflight.assert_not_awaited()
+    mock_service_cls.assert_not_called()
+    mock_service.execute_director_run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_run_orchestration_accepts_task_id(client: AsyncClient) -> None:
-    """Director run orchestration should forward selected task id into options."""
+    """A selected-task request variant on the retired route is refused, not dispatched.
+
+    OLD GOAL (retired): a ``task_id`` was forwarded into the dispatch options and
+    narrowed the run to that task.
+    CURRENT MEANING: the retired route refuses the variant uniformly; task
+    selection is a current-entry concern of the engineering owner.
+    """
     mock_result = MagicMock()
     mock_result.run_id = "run-task"
     mock_result.status = "running"
@@ -260,20 +312,24 @@ async def test_director_run_orchestration_accepts_task_id(client: AsyncClient) -
             },
         )
 
-        assert response.status_code == 200
-        _, kwargs = mock_service.execute_director_run.await_args
-        assert kwargs["tasks"] == ["PM-42"]
-        assert kwargs["options"]["task_id"] == "PM-42"
-        assert kwargs["options"]["task_filter"] == "PM-42"
-        assert response.json()["tasks_queued"] == 1
-        mock_preflight.assert_awaited_once()
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_preflight.assert_not_awaited()
+    mock_service_cls.assert_not_called()
+    mock_service.execute_director_run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_run_orchestration_uses_diagnostics_ready_tasks_when_no_task_selected(
     client: AsyncClient,
 ) -> None:
-    """Director run should execute diagnostics-ready workflow tasks by default."""
+    """Ready-task selection never happens on the retired orchestration route.
+
+    OLD GOAL (retired): without an explicit task the route read the readiness
+    diagnostics and executed the ready workflow tasks.
+    CURRENT MEANING: the route is retired, so the readiness diagnostics are not
+    even built and no ready-task selection or dispatch occurs.
+    """
     mock_result = MagicMock()
     mock_result.run_id = "run-ready"
     mock_result.status = "running"
@@ -309,21 +365,24 @@ async def test_director_run_orchestration_uses_diagnostics_ready_tasks_when_no_t
             },
         )
 
-        assert response.status_code == 200
-        _, kwargs = mock_service.execute_director_run.await_args
-        assert kwargs["tasks"] == ["PM-42"]
-        assert kwargs["options"]["task_filter"] == "PM-42"
-        assert kwargs["options"]["metadata"]["task_selection_source"] == "diagnostics_ready"
-        assert kwargs["options"]["metadata"]["selected_task_ids"] == ["PM-42"]
-        assert response.json()["tasks_queued"] == 1
-        mock_preflight.assert_awaited_once()
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_preflight.assert_not_awaited()
+    mock_service_cls.assert_not_called()
+    mock_service.execute_director_run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_run_orchestration_merges_direct_and_blueprint_ready_tasks(
     client: AsyncClient,
 ) -> None:
-    """Director run should not hide direct PM tasks when CE blueprint tasks are also ready."""
+    """Mixed direct/blueprint ready-task selection never happens on the retired route.
+
+    OLD GOAL (retired): ready direct PM tasks and CE blueprint tasks were merged
+    into one dispatched task set.
+    CURRENT MEANING: the retired route refuses the request; no diagnostics are
+    built and no task set is computed or dispatched.
+    """
     mock_result = MagicMock()
     mock_result.run_id = "run-mixed-ready"
     mock_result.status = "running"
@@ -363,21 +422,25 @@ async def test_director_run_orchestration_merges_direct_and_blueprint_ready_task
             },
         )
 
-        assert response.status_code == 200
-        _, kwargs = mock_service.execute_director_run.await_args
-        assert kwargs["tasks"] == ["chief-1", "direct-1"]
-        assert kwargs["options"]["task_filter"] is None
-        assert kwargs["options"]["metadata"]["task_selection_source"] == "diagnostics_mixed_ready"
-        assert kwargs["options"]["metadata"]["selected_task_ids"] == ["chief-1", "direct-1"]
-        assert response.json()["tasks_queued"] == 2
-        mock_preflight.assert_awaited_once()
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_preflight.assert_not_awaited()
+    mock_service_cls.assert_not_called()
+    mock_service.execute_director_run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_run_orchestration_blocks_when_diagnostics_cannot_execute(
     client: AsyncClient,
 ) -> None:
-    """Director run should fail closed when readiness diagnostics report blockers."""
+    """The retired route refuses before readiness blockers could be reported.
+
+    OLD GOAL (retired): unexecutable readiness diagnostics produced ``409
+    DIRECTOR_EXECUTION_BLOCKED`` with the blocker list.
+    CURRENT MEANING: the route is retired, so diagnostics are never built; the
+    refusal is the uniform ``410 legacy_engine_retired`` contract.  The legacy
+    dispatch service is still not constructed.
+    """
     with (
         patch(
             "polaris.cells.orchestration.pm_dispatch.public.service.OrchestrationCommandService",
@@ -400,11 +463,11 @@ async def test_director_run_orchestration_blocks_when_diagnostics_cannot_execute
             },
         )
 
-    assert response.status_code == 409
-    data = response.json()
-    assert data["error"]["code"] == "DIRECTOR_EXECUTION_BLOCKED"
-    assert data["error"]["details"]["execution_blockers"] == ["director_no_ready_tasks"]
-    assert data["error"]["details"]["diagnostics"]["can_execute"] is False
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "legacy_engine_retired"
+    assert "DIRECTOR_EXECUTION_BLOCKED" not in detail.get("message", "")
+    mock_preflight.assert_not_awaited()
     mock_service_cls.assert_not_called()
 
 
@@ -435,10 +498,10 @@ async def test_director_get_orchestration_found(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_director_get_orchestration_honors_requested_workspace(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Director run evidence should not leak runs from a different desktop workspace."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Requested"
     mock_snapshot = MagicMock()
     mock_snapshot.run_id = "run-789"
@@ -463,10 +526,10 @@ async def test_director_get_orchestration_honors_requested_workspace(
 @pytest.mark.asyncio
 async def test_director_get_orchestration_hides_workspace_mismatch(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Director run detail should return 404 when a run belongs to another workspace."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Requested"
     mock_snapshot = MagicMock()
     mock_snapshot.run_id = "run-789"
@@ -514,8 +577,19 @@ async def test_director_get_orchestration_accepts_plain_string_status(client: As
 
 
 @pytest.mark.asyncio
-async def test_director_cancel_orchestration_run(client: AsyncClient) -> None:
-    """Director cancel orchestration should call the runtime cancel path."""
+async def test_director_cancel_orchestration_run(
+    client: AsyncClient,
+    director_router_private_workspace: Path,
+) -> None:
+    """The retired cancel route refuses without querying or cancelling a run.
+
+    OLD GOAL (retired): POST /v2/director/runs/{run_id}/cancel queried the run and
+    cancelled it through the legacy orchestration runtime.
+    CURRENT MEANING: run cancellation belongs to ``EngineeringRunService``
+    (``POST /v2/engineering/runs/{session_id}/cancel``); the legacy route is
+    retired and refuses with ``410 legacy_engine_retired`` before any run is read
+    or mutated.
+    """
     mock_current_snapshot = MagicMock()
     mock_current_snapshot.run_id = "run-789"
     mock_current_snapshot.status.value = "running"
@@ -538,22 +612,34 @@ async def test_director_cancel_orchestration_run(client: AsyncClient) -> None:
         mock_orch.return_value = mock_service
 
         response = await client.post("/v2/director/runs/run-789/cancel")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["run_id"] == "run-789"
-        assert data["status"] == "cancelled"
-        assert data["tasks_queued"] == 1
-        mock_service.query_run.assert_awaited_once_with("run-789")
-        mock_service.cancel_run.assert_awaited_once_with("run-789")
+
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "legacy_engine_retired"
+    assert "/v2/engineering/runs" in detail["supported_endpoints"]
+    mock_orch.assert_not_awaited()
+    mock_service.query_run.assert_not_awaited()
+    mock_service.cancel_run.assert_not_awaited()
+    assert _engineering_run_rows(director_router_private_workspace) == {
+        "runs": 0,
+        "events": 0,
+        "tool_calls": 0,
+    }
 
 
 @pytest.mark.asyncio
 async def test_director_cancel_orchestration_hides_workspace_mismatch(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
-    """Director run cancel should not cancel a run from another desktop workspace."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    """A foreign-workspace cancel request on the retired route is refused uniformly.
+
+    OLD GOAL (retired): a run belonging to another desktop workspace produced
+    ``404`` so the run stayed hidden and uncancelled.
+    CURRENT MEANING: the route is retired; the workspace-scoped request variant
+    is refused with ``410 legacy_engine_retired`` and no run is read or cancelled.
+    """
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Requested"
     mock_snapshot = MagicMock()
     mock_snapshot.run_id = "run-789"
@@ -572,13 +658,22 @@ async def test_director_cancel_orchestration_hides_workspace_mismatch(
 
         response = await client.post("/v2/director/runs/run-789/cancel?workspace=C%3A%2FTemp%2FRequested")
 
-    assert response.status_code == 404
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_orch.assert_not_awaited()
+    mock_service.query_run.assert_not_awaited()
     mock_service.cancel_run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_cancel_orchestration_terminal_run_is_idempotent(client: AsyncClient) -> None:
-    """Director cancel orchestration should return terminal snapshots unchanged."""
+    """Terminal-run cancel idempotence is not a retired-route concern.
+
+    OLD GOAL (retired): cancelling a terminal run returned the unchanged terminal
+    snapshot and never called the cancel path.
+    CURRENT MEANING: the route is retired; the cancel request is refused with
+    ``410 legacy_engine_retired`` and no run is queried or cancelled.
+    """
     mock_snapshot = MagicMock()
     mock_snapshot.run_id = "run-789"
     mock_snapshot.status.value = "completed"
@@ -595,17 +690,23 @@ async def test_director_cancel_orchestration_terminal_run_is_idempotent(client: 
         mock_orch.return_value = mock_service
 
         response = await client.post("/v2/director/runs/run-789/cancel")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["run_id"] == "run-789"
-        assert data["status"] == "completed"
-        mock_service.query_run.assert_awaited_once_with("run-789")
-        mock_service.cancel_run.assert_not_awaited()
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_orch.assert_not_awaited()
+    mock_service.query_run.assert_not_awaited()
+    mock_service.cancel_run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_cancel_orchestration_string_status_is_idempotent(client: AsyncClient) -> None:
-    """Director cancel should not require enum-like status values for terminal runs."""
+    """String-status terminal cancel is refused on the retired route.
+
+    OLD GOAL (retired): a snapshot with a plain string status was returned
+    unchanged and never cancelled.
+    CURRENT MEANING: the route is retired; the request is refused with
+    ``410 legacy_engine_retired`` and no snapshot is read.
+    """
     mock_snapshot = MagicMock()
     mock_snapshot.run_id = "run-string-status"
     mock_snapshot.status = "completed"
@@ -622,18 +723,22 @@ async def test_director_cancel_orchestration_string_status_is_idempotent(client:
         mock_orch.return_value = mock_service
 
         response = await client.post("/v2/director/runs/run-string-status/cancel")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["run_id"] == "run-string-status"
-        assert data["status"] == "completed"
-        assert data["tasks_queued"] == 2
-        mock_service.query_run.assert_awaited_once_with("run-string-status")
-        mock_service.cancel_run.assert_not_awaited()
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_orch.assert_not_awaited()
+    mock_service.query_run.assert_not_awaited()
+    mock_service.cancel_run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_cancel_orchestration_not_found(client: AsyncClient) -> None:
-    """Director cancel orchestration should 404 for unknown run_id."""
+    """An unknown run id on the retired cancel route is refused, not looked up.
+
+    OLD GOAL (retired): an unknown run id produced ``404 Run not found``.
+    CURRENT MEANING: the route is retired; the refusal is uniform
+    ``410 legacy_engine_retired`` and no run lookup happens.
+    """
     with patch(
         "polaris.delivery.http.v2.director.get_orchestration_service",
         new_callable=AsyncMock,
@@ -643,8 +748,11 @@ async def test_director_cancel_orchestration_not_found(client: AsyncClient) -> N
         mock_orch.return_value = mock_service
 
         response = await client.post("/v2/director/runs/nonexistent/cancel")
-        assert response.status_code == 404
-        assert "Run not found" in response.json()["detail"]
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["error_code"] == "legacy_engine_retired"
+    mock_orch.assert_not_awaited()
+    mock_service.query_run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -682,14 +790,22 @@ async def test_director_get_orchestration_server_error(client: AsyncClient) -> N
 @pytest.mark.asyncio
 async def test_director_integration_qa_persists_to_active_runtime_root(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
     tmp_path: Path,
 ) -> None:
-    """API-triggered integration QA should persist artifacts in the active runtime root."""
+    """The retired API-triggered integration QA writes nothing to the runtime root.
+
+    OLD GOAL (retired): POST /v2/director/integration-qa persisted an
+    ``integration_qa.result.json`` into the active runtime root and echoed both
+    result paths.
+    CURRENT MEANING: verification is owned by the engineering run's own
+    verification contract; the legacy QA trigger is retired, refuses with
+    ``410 legacy_engine_retired`` and persists no QA artifact at all.
+    """
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     runtime_base = tmp_path / "runtime-base"
-    mock_settings.workspace = str(workspace)
+    mock_settings.workspace = workspace
     mock_settings.workspace_path = str(workspace)
     mock_settings.ramdisk_root = str(runtime_base)
     cache_root = build_cache_root(str(runtime_base), str(workspace))
@@ -715,15 +831,15 @@ async def test_director_integration_qa_persists_to_active_runtime_root(
         patch(
             "polaris.cells.orchestration.workflow_runtime.public.service.persist_director_result_from_runtime",
             return_value=director_result,
-        ),
+        ) as mock_persist_director_result,
         patch(
             "polaris.cells.orchestration.workflow_runtime.public.service.build_integration_qa_tasks_from_director_result",
             return_value=task_rows,
-        ),
+        ) as mock_build_qa_tasks,
         patch(
             "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._resolve_verify_runner",
             return_value=lambda _workspace: (True, "Integration verification passed", []),
-        ),
+        ) as mock_verify_runner,
         patch(
             "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._attach_pm_dispatch_qa_cognitive_receipt",
         ),
@@ -737,15 +853,14 @@ async def test_director_integration_qa_persists_to_active_runtime_root(
             },
         )
 
-    assert response.status_code == 200
-    data = response.json()
-    result = data["result"]
-    result_path = Path(result["result_path"])
-    runtime_result_path = Path(result["runtime_result_path"])
-    assert result_path == Path(cache_root) / "runs" / "api-qa-1" / "qa" / "integration_qa.result.json"
-    assert runtime_result_path == Path(cache_root) / "results" / "integration_qa.result.json"
-    assert result_path.is_file()
-    assert runtime_result_path.is_file()
-    persisted = json.loads(runtime_result_path.read_text(encoding="utf-8"))
-    assert persisted["reason"] == "integration_qa_passed"
-    assert persisted["passed"] is True
+    assert response.status_code == 410
+    detail = response.json()["detail"]
+    assert detail["error_code"] == "legacy_engine_retired"
+    assert "/v2/engineering/runs" in detail["supported_endpoints"]
+    # No legacy QA pipeline runs and no QA artifact is persisted.
+    mock_persist_director_result.assert_not_called()
+    mock_build_qa_tasks.assert_not_called()
+    mock_verify_runner.assert_not_called()
+    assert not (Path(cache_root) / "runs" / "api-qa-1" / "qa").exists()
+    assert not (Path(cache_root) / "results" / "integration_qa.result.json").exists()
+    assert not (Path(cache_root) / "runs").exists()

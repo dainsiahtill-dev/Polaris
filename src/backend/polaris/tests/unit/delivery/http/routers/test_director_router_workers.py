@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-from polaris.bootstrap.config import Settings
+from polaris.tests.unit.delivery.http.routers.conftest import _DirectorRouterTestSettings
 
 
 @pytest.mark.asyncio
@@ -103,10 +103,10 @@ async def test_director_list_workers_falls_back_to_projection(client: AsyncClien
 @pytest.mark.asyncio
 async def test_director_list_workers_projection_accepts_workspace_override(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Projected worker fallback should honor the requested workspace query."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Stale"
     mock_director = MagicMock()
     mock_director.list_workers = AsyncMock(return_value=[])
@@ -258,7 +258,7 @@ async def test_director_get_worker_not_found(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_director_task_llm_events(client: AsyncClient, mock_settings: Settings) -> None:
+async def test_director_task_llm_events(client: AsyncClient, mock_settings: _DirectorRouterTestSettings) -> None:
     """Get task LLM events should return events for a specific task."""
     active_workspace = str(getattr(mock_settings, "workspace_path", ""))
     mock_event = MagicMock()
@@ -333,7 +333,7 @@ async def test_director_task_llm_events_filters_requested_workspace(client: Asyn
 @pytest.mark.asyncio
 async def test_director_task_llm_events_filters_active_workspace_by_default(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Director task LLM events should filter to active workspace without query workspace."""
     active_workspace = str(getattr(mock_settings, "workspace_path", ""))
@@ -374,7 +374,7 @@ async def test_director_task_llm_events_filters_active_workspace_by_default(
 
 
 @pytest.mark.asyncio
-async def test_director_global_llm_events(client: AsyncClient, mock_settings: Settings) -> None:
+async def test_director_global_llm_events(client: AsyncClient, mock_settings: _DirectorRouterTestSettings) -> None:
     """Get global LLM events should return all events."""
     active_workspace = str(getattr(mock_settings, "workspace_path", ""))
     mock_event = MagicMock()

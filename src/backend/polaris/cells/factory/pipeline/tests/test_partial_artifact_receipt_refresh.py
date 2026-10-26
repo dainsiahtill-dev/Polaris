@@ -20,8 +20,10 @@ from polaris.cells.chief_engineer.blueprint.public import (
     ChiefEngineerPortfolioTaskV1,
     build_chief_engineer_blueprint_portfolio,
 )
+from polaris.cells.chief_engineer.blueprint.public.tests.library_completion_fixture import (
+    build_library_completion_requirements,
+)
 from polaris.cells.chief_engineer.blueprint.public.tests.test_public_contractsa import (
-    _library_completion_requirements,
     _portfolio_command_authority,
 )
 from polaris.cells.factory.pipeline.internal import (
@@ -58,7 +60,7 @@ def partial_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleName
             **_portfolio_command_authority(tasks=tasks, project_kind="library", workspace=tmp_path, run_id="run"),
             llm_blueprint={
                 "construction_plan": {"project_interface_contract": {}},
-                "project_completion_contract": _library_completion_requirements(
+                "project_completion_contract": build_library_completion_requirements(
                     _MISSING,
                     _REPAIRED,
                     owner_task_ids=("DEO-LIFECYCLE", "DEO-LIFECYCLE"),

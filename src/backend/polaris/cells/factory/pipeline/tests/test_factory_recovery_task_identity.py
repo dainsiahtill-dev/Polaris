@@ -16,8 +16,10 @@ from polaris.cells.chief_engineer.blueprint.public import (
     project_chief_engineer_task_blueprint,
     validate_director_handoff_from_payload,
 )
+from polaris.cells.chief_engineer.blueprint.public.tests.library_completion_fixture import (
+    build_library_completion_requirements,
+)
 from polaris.cells.chief_engineer.blueprint.public.tests.test_public_contractsa import (
-    _library_completion_requirements,
     _portfolio_command_authority,
 )
 from polaris.cells.factory.pipeline.internal.factory_run_models import FactoryConfig, FactoryRun, FactoryRunStatus
@@ -51,7 +53,7 @@ def _failed_ce_owner(tmp_path: Path) -> tuple[TaskRuntimeService, dict[str, Any]
             ),
             llm_blueprint={
                 "construction_plan": {"project_interface_contract": {}},
-                "project_completion_contract": _library_completion_requirements(
+                "project_completion_contract": build_library_completion_requirements(
                     "src/shared.py",
                     "src/a.py",
                     owner_task_ids=("WORK-A", "WORK-A"),

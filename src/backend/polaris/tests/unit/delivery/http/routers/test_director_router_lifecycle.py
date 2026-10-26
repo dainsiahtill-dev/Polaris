@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-from polaris.bootstrap.config import Settings
 from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
 from polaris.cells.events.fact_stream.public.service import append_fact_event
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
@@ -21,11 +20,19 @@ from polaris.tests.unit.delivery.http.routers._helpers import (
     _patch_director_blueprint_persistence,
     _ready_blueprint,
 )
+from polaris.tests.unit.delivery.http.routers.conftest import _DirectorRouterTestSettings
 
 
 @pytest.mark.asyncio
 async def test_director_start_stop(client: AsyncClient) -> None:
-    """Director start and stop should delegate to DirectorService."""
+    """Retired Director start/stop must refuse the legacy write without touching an owner.
+
+    OLD GOAL (retired): POST /v2/director/start and POST /v2/director/stop delegated
+    to the legacy ``DirectorService`` and answered ``200 {"ok": true, "state": ...}``.
+    CURRENT MEANING: engineering execution belongs to ``EngineeringRunService``
+    behind ``/v2/engineering/runs``; both legacy write routes are retired and
+    answer ``410 legacy_engine_retired`` before any owner is constructed.
+    """
     mock_director = MagicMock()
     mock_director.start = AsyncMock()
     mock_director.stop = AsyncMock()
@@ -48,23 +55,37 @@ async def test_director_start_stop(client: AsyncClient) -> None:
         mock_container.return_value.resolve_async = AsyncMock(side_effect=_resolve_start_stop)
 
         start_resp = await client.post("/v2/director/start")
-        assert start_resp.status_code == 200
-        assert start_resp.json()["ok"] is True
-        assert start_resp.json()["state"] == "RUNNING"
-        mock_roles_ready.assert_called_once()
+        assert start_resp.status_code == 410
+        assert start_resp.json()["detail"]["error_code"] == "legacy_engine_retired"
+        assert "/v2/engineering/runs" in start_resp.json()["detail"]["supported_endpoints"]
 
         stop_resp = await client.post("/v2/director/stop")
-        assert stop_resp.status_code == 200
-        assert stop_resp.json()["ok"] is True
+        assert stop_resp.status_code == 410
+        assert stop_resp.json()["detail"]["error_code"] == "legacy_engine_retired"
+        assert "/v2/engineering/runs" in stop_resp.json()["detail"]["supported_endpoints"]
+
+    # The retired write must not reach the legacy owner, its readiness gate, or
+    # any legacy runtime side effect.
+    mock_container.return_value.resolve_async.assert_not_awaited()
+    mock_roles_ready.assert_not_called()
+    mock_director.start.assert_not_awaited()
+    mock_director.stop.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_director_lifecycle_routes_accept_workspace_query_override(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
-    """Director desktop lifecycle controls should use the requested workspace for gates and evidence."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    """A workspace override on the retired lifecycle routes is still refused, not honoured.
+
+    OLD GOAL (retired): the requested workspace selected the gate state and was
+    echoed back as ``200 {"workspace": ...}``.
+    CURRENT MEANING: the request variant is still accepted by the transport but
+    the retired write is refused with ``410 legacy_engine_retired``; no owner,
+    readiness gate, or workspace-scoped effect may run.
+    """
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Stale"
     mock_director = MagicMock()
     mock_director.start = AsyncMock()
@@ -90,18 +111,29 @@ async def test_director_lifecycle_routes_accept_workspace_query_override(
         start_resp = await client.post("/v2/director/start", params={"workspace": "C:/Temp/Product"})
         stop_resp = await client.post("/v2/director/stop", params={"workspace": "C:/Temp/Product"})
 
-    assert start_resp.status_code == 200
-    assert stop_resp.status_code == 200
-    assert start_resp.json()["workspace"] == "C:/Temp/Product"
-    assert stop_resp.json()["workspace"] == "C:/Temp/Product"
-    role_gate_state = mock_roles_ready.call_args.args[0]
-    assert Path(str(role_gate_state.settings.workspace)).as_posix().endswith("C:/Temp/Product")
+    assert start_resp.status_code == 410
+    assert start_resp.json()["detail"]["error_code"] == "legacy_engine_retired"
+    assert stop_resp.status_code == 410
+    assert stop_resp.json()["detail"]["error_code"] == "legacy_engine_retired"
+    # The refusal payload never leaks the requested workspace as an honoured binding.
+    assert "workspace" not in start_resp.json()["detail"]
+    mock_container.return_value.resolve_async.assert_not_awaited()
+    mock_roles_ready.assert_not_called()
+    mock_director.start.assert_not_awaited()
+    mock_director.stop.assert_not_awaited()
     assert str(mock_settings.workspace) == "C:/Repo/Polaris"
 
 
 @pytest.mark.asyncio
 async def test_director_start_blocks_when_lifecycle_roles_not_ready(client: AsyncClient) -> None:
-    """Director start should fail closed when Director LLM readiness is blocked."""
+    """The retired start route refuses before the readiness gate can even block it.
+
+    OLD GOAL (retired): an unready Director LLM role produced ``409
+    RUNTIME_ROLES_NOT_READY`` and no service start.
+    CURRENT MEANING: the route is retired, so the readiness gate is not consulted
+    at all; the refusal is the uniform ``410 legacy_engine_retired`` contract and
+    no legacy owner is constructed.
+    """
     from polaris.delivery.http.routers._shared import StructuredHTTPException
 
     mock_director = MagicMock()
@@ -128,10 +160,13 @@ async def test_director_start_blocks_when_lifecycle_roles_not_ready(client: Asyn
 
         response = await client.post("/v2/director/start")
 
-    assert response.status_code == 409
+    assert response.status_code == 410
     data = response.json()
-    assert data["error"]["code"] == "RUNTIME_ROLES_NOT_READY"
-    assert data["error"]["details"]["missing_roles"] == ["director"]
+    assert data["detail"]["error_code"] == "legacy_engine_retired"
+    assert data["detail"]["supported_endpoints"]
+    # The readiness blocker is never evaluated on a retired route.
+    mock_roles_ready.assert_not_called()
+    mock_container.return_value.resolve_async.assert_not_awaited()
     mock_director.start.assert_not_awaited()
 
 
@@ -214,10 +249,10 @@ async def test_director_status_auto_uses_merged_projection(client: AsyncClient) 
 @pytest.mark.asyncio
 async def test_director_status_prefers_active_workspace_path(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Director status projection should use the active desktop workspace path."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Product"
     with patch(
         "polaris.cells.runtime.projection.public.service.RuntimeProjectionService.build_async",
@@ -240,10 +275,10 @@ async def test_director_status_prefers_active_workspace_path(
 @pytest.mark.asyncio
 async def test_director_status_accepts_workspace_override(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
 ) -> None:
     """Director status projection should honor the desktop-selected workspace."""
-    mock_settings.workspace = "C:/Repo/Polaris"
+    mock_settings.workspace = Path("C:/Repo/Polaris")
     mock_settings.workspace_path = "C:/Temp/Stale"
     with patch(
         "polaris.cells.runtime.projection.public.service.RuntimeProjectionService.build_async",
@@ -373,7 +408,7 @@ async def test_director_diagnostics_reports_ready_queue_and_workers(client: Asyn
 @pytest.mark.asyncio
 async def test_director_diagnostics_accepts_workspace_query_override(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
     tmp_path: Path,
 ) -> None:
     """Director diagnostics should bind projection and LLM checks to the requested workspace."""
@@ -381,7 +416,7 @@ async def test_director_diagnostics_accepts_workspace_query_override(
     requested_workspace = tmp_path / "requested"
     active_workspace.mkdir()
     requested_workspace.mkdir()
-    mock_settings.workspace = str(active_workspace)
+    mock_settings.workspace = active_workspace
     mock_settings.workspace_path = ""
 
     mock_director = MagicMock()
@@ -645,7 +680,7 @@ async def test_director_diagnostics_accepts_matching_chief_engineer_blueprint_st
 @pytest.mark.asyncio
 async def test_director_diagnostics_does_not_count_expired_runtime_session_as_running(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
     tmp_path: Path,
     fact_stream_authority: Callable[[Path], str],
 ) -> None:
@@ -653,7 +688,7 @@ async def test_director_diagnostics_does_not_count_expired_runtime_session_as_ru
 
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    mock_settings.workspace = str(workspace)
+    mock_settings.workspace = workspace
     mock_settings.workspace_path = ""
 
     # This workspace is not the HTTP lifespan workspace, so it has no
@@ -888,11 +923,11 @@ async def test_director_diagnostics_rejects_traceability_only_blueprint_artifact
 @pytest.mark.asyncio
 async def test_director_diagnostics_accepts_runtime_blueprint_task_update_map(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
     tmp_path: Path,
 ) -> None:
     """Aggregate CE runtime blueprints can prove task coverage through task_update_map."""
-    mock_settings.workspace = str(tmp_path)
+    mock_settings.workspace = tmp_path
     mock_settings.workspace_path = ""
     blueprint_path = tmp_path / "chief_engineer.blueprint.json"
     blueprint_path.write_text(
@@ -1127,11 +1162,11 @@ async def test_director_diagnostics_includes_unmaterialized_pm_contract_dependen
 @pytest.mark.asyncio
 async def test_director_diagnostics_runtime_overlay_filters_workflow_shell(
     client: AsyncClient,
-    mock_settings: Settings,
+    mock_settings: _DirectorRouterTestSettings,
     tmp_path: Path,
 ) -> None:
     """Runtime rows should replace stale workflow shell rows while preserving contract gaps."""
-    mock_settings.workspace = str(tmp_path)
+    mock_settings.workspace = tmp_path
     mock_settings.workspace_path = ""
 
     mock_idle_worker = MagicMock()

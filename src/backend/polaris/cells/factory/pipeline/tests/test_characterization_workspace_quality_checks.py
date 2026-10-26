@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from polaris.cells.factory.pipeline.internal.factory_workspace_quality_impl impo
 )
 from polaris.cells.factory.pipeline.tests._characterization_helpers import (
     _executor,
+    _factory_stage_context,
     _with_task_runtime_authority,
 )
 from polaris.cells.roles.adapters.internal.director.quality_gate._candidate_guard import (
@@ -33,6 +35,27 @@ from polaris.cells.roles.adapters.internal.director.quality_gate._candidate_guar
 from polaris.cells.runtime.task_runtime.public.contracts import (
     TaskRuntimeExecutionAttemptIdentityV1,
 )
+
+
+def _run_bound_workspace_quality_commands(
+    expected_run_id: str,
+    commands: list[list[str]],
+) -> Callable[..., list[list[str]]]:
+    """Return a workspace-quality command substitute that keeps the run binding.
+
+    Production resolves workspace quality commands with the current Factory run
+    identity so the authenticated Chief Engineer verifier recipe stays bound to
+    that exact run. A substitute must accept the same keyword and prove the
+    identity it was given instead of swallowing it.
+    """
+
+    def resolve(context: dict[str, Any], *, run: FactoryRun | None = None) -> list[list[str]]:
+        del context
+        assert run is not None
+        assert run.id == expected_run_id
+        return [list(command) for command in commands]
+
+    return resolve
 
 
 class TestRunWorkspaceQualityChecks:
@@ -7374,8 +7397,10 @@ class TestRunWorkspaceQualityChecks:
             ProjectCompletionContractV1,
             build_chief_engineer_blueprint_portfolio,
         )
+        from polaris.cells.chief_engineer.blueprint.public.tests.library_completion_fixture import (
+            build_library_completion_requirements,
+        )
         from polaris.cells.chief_engineer.blueprint.public.tests.test_public_contractsa import (
-            _library_completion_requirements,
             _portfolio_command_authority,
         )
 
@@ -7403,7 +7428,7 @@ class TestRunWorkspaceQualityChecks:
                 **_portfolio_command_authority(tasks=tasks, project_kind="library", workspace=tmp_path, run_id=run.id),
                 llm_blueprint={
                     "construction_plan": {"project_interface_contract": {}},
-                    "project_completion_contract": _library_completion_requirements(
+                    "project_completion_contract": build_library_completion_requirements(
                         "package.json",
                         "src/index.ts",
                         owner_task_ids=("TASK-PREP", "TASK-PREP"),
@@ -7497,7 +7522,14 @@ class TestRunWorkspaceQualityChecks:
         def record_phases(payload: dict[str, Any]) -> None:
             phases_seen.append(str(payload.get("phase") or ""))
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-prepare-after-repair",
+                [["npm", "run", "build"]],
+            ),
+        )
         monkeypatch.setattr(
             executor,
             "_workspace_quality_prepare_commands",
@@ -7551,6 +7583,52 @@ class TestRunWorkspaceQualityChecks:
             status=FactoryRunStatus.RUNNING,
             created_at="2026-06-21T00:00:00+00:00",
         )
+        from polaris.cells.chief_engineer.blueprint.public import (
+            BuildChiefEngineerBlueprintPortfolioCommandV1,
+            ChiefEngineerPortfolioTaskV1,
+            build_chief_engineer_blueprint_portfolio,
+        )
+        from polaris.cells.chief_engineer.blueprint.public.tests.library_completion_fixture import (
+            build_library_completion_requirements,
+        )
+        from polaris.cells.chief_engineer.blueprint.public.tests.test_public_contractsa import (
+            _portfolio_command_authority,
+        )
+
+        probe_test_path = tmp_path / "tests" / "test_index.ts"
+        probe_test_path.parent.mkdir(parents=True, exist_ok=True)
+        probe_test_path.write_text("export const ok = true;\n", encoding="utf-8")
+        probe_tasks = (
+            ChiefEngineerPortfolioTaskV1(
+                task_id="TASK-1",
+                objective="Probe",
+                target_files=("src/index.ts", "src/models/moonphase.ts", "tests/test_index.ts"),
+            ),
+        )
+        probe_portfolio = build_chief_engineer_blueprint_portfolio(
+            BuildChiefEngineerBlueprintPortfolioCommandV1(
+                workspace=str(tmp_path),
+                run_id=run.id,
+                tasks=probe_tasks,
+                **_portfolio_command_authority(
+                    tasks=probe_tasks, project_kind="library", workspace=tmp_path, run_id=run.id
+                ),
+                llm_blueprint={
+                    "construction_plan": {"project_interface_contract": {}},
+                    "project_completion_contract": build_library_completion_requirements(
+                        "src/index.ts",
+                        "src/models/moonphase.ts",
+                        owner_task_ids=("TASK-1", "TASK-1"),
+                        test_path="tests/test_index.ts",
+                        test_owner_task_id="TASK-1",
+                    ),
+                    "risk_flags": [],
+                },
+            )
+        )
+        run.metadata["stage_results"] = {
+            "chief_engineer_review": {"status": "success", "artifacts": [probe_portfolio.portfolio_path]}
+        }
         calls: list[list[str]] = []
 
         def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
@@ -7589,29 +7667,18 @@ class TestRunWorkspaceQualityChecks:
                 "error": "",
             }
 
-        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(
+            executor,
+            "_workspace_quality_commands",
+            _run_bound_workspace_quality_commands(
+                "factory-quality-multiround-repair",
+                [["npm", "run", "build"]],
+            ),
+        )
         monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
         monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
 
-        async def fake_apply_workspace_quality_deterministic_repairs(
-            *,
-            run: FactoryRun,
-            artifact_quality_errors: list[str],
-            repair_attempt: int,
-        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-            del repair_attempt
-            return executor._apply_workspace_quality_repairs(
-                run_id=run.id,
-                artifact_quality_errors=artifact_quality_errors,
-            )
-
-        monkeypatch.setattr(
-            executor,
-            "_apply_workspace_quality_deterministic_repairs",
-            fake_apply_workspace_quality_deterministic_repairs,
-        )
-
-        passed, artifact = await executor._run_workspace_quality_checks(run, {})
+        passed, artifact = await executor._run_workspace_quality_checks(run, _factory_stage_context())
 
         assert passed is False
         assert calls == [["npm", "run", "build"]]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 import polaris.cells.chief_engineer.blueprint.public as blueprint_public
 import polaris.cells.chief_engineer.blueprint.public.service as blueprint_service_module
@@ -28,6 +29,7 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintProvenanceSnapshotV1,
     TaskBlueprintResultV1,
     VerificationCommandAuthorityV1,
+    VerificationModalityV1,
     _ChiefEngineerPortfolioAuthorityCarrierV1,
     _issue_chief_engineer_portfolio_authority_carrier,
     project_completion_catalog_snapshot_hash,
@@ -45,6 +47,10 @@ from polaris.cells.chief_engineer.blueprint.public.service import (
 )
 from polaris.cells.chief_engineer.blueprint.public.service._task_blueprint import (
     _job_token_target_files,
+)
+from polaris.cells.chief_engineer.blueprint.public.tests.library_completion_fixture import (
+    build_library_completion_requirements,
+    build_verification_command_authority,
 )
 from polaris.cells.control_plane.run_ledger.public import stable_hash
 
@@ -117,15 +123,18 @@ def test_job_token_target_files_excludes_sibling_owned_pm_overlap(tmp_path: Path
 
 def _command_authority(
     task_id: str,
-    modality: str,
+    modality: VerificationModalityV1,
     argv: tuple[str, ...],
 ) -> VerificationCommandAuthorityV1:
-    return VerificationCommandAuthorityV1(
-        task_id=task_id,
-        modality=modality,  # type: ignore[arg-type]
-        argv=argv,
-        cwd=".",
-    )
+    """Build one public verification command authority for this module's tests.
+
+    This private alias keeps the historical call sites used across this module
+    while delegating the DTO construction to the shared test-support module.
+    The public DTO stays the fail-closed authority for verifier recipes, so an
+    unknown modality is rejected exactly as before.
+    """
+
+    return build_verification_command_authority(task_id, modality, argv)
 
 
 def _library_completion_requirements(
@@ -133,74 +142,20 @@ def _library_completion_requirements(
     owner_task_ids: tuple[str, ...],
     test_path: str,
     test_owner_task_id: str,
-) -> dict:
-    assert len(owner_task_ids) == len(artifact_paths)
-    artifact_rows = [
-        {
-            "obligation_id": f"artifact-{index}",
-            "path": path,
-            "semantic_role": "source",
-            "applicability": "required",
-            "owner_task_id": owner_task_ids[index - 1],
-        }
-        for index, path in enumerate(artifact_paths, start=1)
-    ]
-    test_artifact_id = "artifact-test"
-    artifact_rows.append(
-        {
-            "obligation_id": test_artifact_id,
-            "path": test_path,
-            "semantic_role": "test",
-            "applicability": "required",
-            "owner_task_id": test_owner_task_id,
-        }
+) -> dict[str, Any]:
+    """Return the shared library completion contract input for this module.
+
+    This private alias keeps the historical call signature used across this
+    module while delegating the input construction to the shared test-support
+    module, which owns the single implementation.
+    """
+
+    return build_library_completion_requirements(
+        *artifact_paths,
+        owner_task_ids=owner_task_ids,
+        test_path=test_path,
+        test_owner_task_id=test_owner_task_id,
     )
-    return {
-        "obligations": {
-            "artifacts": artifact_rows,
-            "entrypoints": [
-                {
-                    "obligation_id": "entrypoint-library-na",
-                    "kind": "library",
-                    "applicability": "not_applicable",
-                    "owner_task_id": None,
-                    "source_path": None,
-                    "runtime_path": None,
-                    "command": None,
-                }
-            ],
-            "verification": [
-                {
-                    "obligation_id": "verify-build",
-                    "modality": "build",
-                    "command_authority_hash": _command_authority(
-                        owner_task_ids[0], "build", ("python", "-m", "compileall", "src")
-                    ).authority_hash,
-                    "applicability": "required",
-                    "covers_obligation_ids": [artifact_rows[0]["obligation_id"]],
-                    "owner_task_id": owner_task_ids[0],
-                },
-                {
-                    "obligation_id": "verify-test",
-                    "modality": "test",
-                    "command_authority_hash": _command_authority(
-                        test_owner_task_id, "test", ("pytest", "-q")
-                    ).authority_hash,
-                    "applicability": "required",
-                    "covers_obligation_ids": [test_artifact_id],
-                    "owner_task_id": test_owner_task_id,
-                },
-                {
-                    "obligation_id": "verify-environment-na",
-                    "modality": "environment_prep",
-                    "command_authority_hash": None,
-                    "applicability": "not_applicable",
-                    "covers_obligation_ids": [],
-                    "owner_task_id": None,
-                },
-            ],
-        },
-    }
 
 
 def _application_completion_requirements() -> dict:
@@ -281,15 +236,16 @@ def _portfolio_command_authority(
 ) -> dict:
     owner_task_ids = tuple(task.task_id for task in tasks)
     entrypoint_owners = set(entrypoint_owner_task_ids or owner_task_ids)
+    recipes: tuple[tuple[VerificationModalityV1, tuple[str, ...]], ...] = (
+        ("environment_prep", ("python", "-m", "pip", "install", "-e", ".")),
+        ("build", ("python", "-m", "compileall", "src")),
+        ("test", ("pytest", "-q")),
+        ("entrypoint", ("python", "-m", "src.main")),
+    )
     command_authority = command_authority_override or tuple(
         _command_authority(task_id, modality, argv)
         for task_id in owner_task_ids
-        for modality, argv in (
-            ("environment_prep", ("python", "-m", "pip", "install", "-e", ".")),
-            ("build", ("python", "-m", "compileall", "src")),
-            ("test", ("pytest", "-q")),
-            ("entrypoint", ("python", "-m", "src.main")),
-        )
+        for modality, argv in recipes
         if modality != "entrypoint" or task_id in entrypoint_owners
     )
     verifier_policy_snapshot = {

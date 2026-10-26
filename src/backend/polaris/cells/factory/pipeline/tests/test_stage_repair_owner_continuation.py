@@ -486,8 +486,10 @@ def test_real_ce_projection_routes_real_typed_plan_without_grant_or_hash_transpl
         generate_task_blueprint,
         project_chief_engineer_task_blueprint,
     )
+    from polaris.cells.chief_engineer.blueprint.public.tests.library_completion_fixture import (
+        build_library_completion_requirements,
+    )
     from polaris.cells.chief_engineer.blueprint.public.tests.test_public_contractsa import (
-        _library_completion_requirements,
         _portfolio_command_authority,
     )
     from polaris.cells.director.runtime.public import PlanDirectorRepairCommandV1, plan_director_repair
@@ -509,7 +511,7 @@ def test_real_ce_projection_routes_real_typed_plan_without_grant_or_hash_transpl
             **_portfolio_command_authority(tasks=tasks, project_kind="library", workspace=tmp_path, run_id="factory-1"),
             llm_blueprint={
                 "construction_plan": {"project_interface_contract": {}},
-                "project_completion_contract": _library_completion_requirements(
+                "project_completion_contract": build_library_completion_requirements(
                     "src/model.ts",
                     "src/web.ts",
                     owner_task_ids=("TASK-1", "TASK-2"),

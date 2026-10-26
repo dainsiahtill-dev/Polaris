@@ -34,6 +34,9 @@ from polaris.cells.chief_engineer.blueprint.public import (
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TaskBlueprintResultV1,
 )
+from polaris.cells.chief_engineer.blueprint.public.tests.library_completion_fixture import (
+    build_library_completion_requirements,
+)
 from polaris.cells.events.fact_stream.public import (
     BootstrapFactStreamWorkspaceCommandV1,
     bootstrap_fact_stream_workspace,
@@ -84,6 +87,12 @@ __all__ = [
     "_write_minimal_chief_engineer_plan",
     "_write_review_for_blueprint",
 ]
+
+#: Build verifier recipe frozen by this characterization suite. It differs from
+#: the Chief Engineer library recipe (``compileall src``) because this suite
+#: characterizes a different workspace layout; both recipes are passed
+#: explicitly to the shared fixture instead of duplicating the input builder.
+_FACTORY_LIBRARY_BUILD_ARGV: tuple[str, ...] = ("python", "-m", "compileall", ".")
 
 
 def _characterization_authority_port() -> FactoryRoleEvidenceAuthorityPort:
@@ -304,79 +313,22 @@ def _library_completion_requirements(
     test_path: str,
     test_owner_task_id: str,
 ) -> dict[str, Any]:
-    assert len(owner_task_ids) == len(target_files)
-    artifacts = [
-        {
-            "obligation_id": f"artifact-{index}",
-            "path": path,
-            "semantic_role": "source",
-            "applicability": "required",
-            "owner_task_id": owner_task_ids[index - 1],
-        }
-        for index, path in enumerate(target_files, start=1)
-    ]
-    test_artifact_id = "artifact-test"
-    artifacts.append(
-        {
-            "obligation_id": test_artifact_id,
-            "path": test_path,
-            "semantic_role": "test",
-            "applicability": "required",
-            "owner_task_id": test_owner_task_id,
-        }
+    """Return the shared library completion contract input for this suite.
+
+    This characterization suite freezes a build recipe of
+    ``compileall .`` (its observed workspace layout), which differs from the
+    Chief Engineer recipe of ``compileall src``. The shared fixture takes the
+    build recipe explicitly so both suites keep their own authority hashes
+    while sharing one input implementation.
+    """
+
+    return build_library_completion_requirements(
+        *target_files,
+        owner_task_ids=owner_task_ids,
+        test_path=test_path,
+        test_owner_task_id=test_owner_task_id,
+        build_argv=_FACTORY_LIBRARY_BUILD_ARGV,
     )
-    build_authority = VerificationCommandAuthorityV1(
-        task_id=owner_task_ids[0],
-        modality="build",
-        argv=("python", "-m", "compileall", "."),
-    )
-    test_authority = VerificationCommandAuthorityV1(
-        task_id=test_owner_task_id,
-        modality="test",
-        argv=("pytest", "-q"),
-    )
-    return {
-        "obligations": {
-            "artifacts": artifacts,
-            "entrypoints": [
-                {
-                    "obligation_id": "entrypoint-library-na",
-                    "kind": "library",
-                    "applicability": "not_applicable",
-                    "owner_task_id": None,
-                    "source_path": None,
-                    "runtime_path": None,
-                    "command": None,
-                }
-            ],
-            "verification": [
-                {
-                    "obligation_id": "verify-build",
-                    "modality": "build",
-                    "command_authority_hash": build_authority.authority_hash,
-                    "applicability": "required",
-                    "covers_obligation_ids": [artifacts[0]["obligation_id"]],
-                    "owner_task_id": owner_task_ids[0],
-                },
-                {
-                    "obligation_id": "verify-test",
-                    "modality": "test",
-                    "command_authority_hash": test_authority.authority_hash,
-                    "applicability": "required",
-                    "covers_obligation_ids": [test_artifact_id],
-                    "owner_task_id": test_owner_task_id,
-                },
-                {
-                    "obligation_id": "verify-environment-na",
-                    "modality": "environment_prep",
-                    "command_authority_hash": None,
-                    "applicability": "not_applicable",
-                    "covers_obligation_ids": [],
-                    "owner_task_id": None,
-                },
-            ],
-        },
-    }
 
 
 def _write_minimal_chief_engineer_plan(executor: OrchestrationStageExecutor) -> None:

@@ -2,6 +2,17 @@
 
 状态：继续在 main 清理技术债务，尚未完成全仓资格审查或冻结。真实模型的新 Bench 运行数为0，原目录120项尚未重启；v28 L1-01目标目录仍不存在。历史FAILED／CANCELLED／UNKNOWN及原始失败记录均保留。
 
+## 2026-10-27 第二批：三项限定验收，下一债务已派工
+
+本批基于 main `517230555e487e0883cff9429da2aab53ab92865`，真实 Hermes／MiniMax-M3.1-Flash 实施，Root 独立核对源码、原始结果及失败。整个项目仍未完成重构，未冻结，未恢复原120项 Bench。
+
+- **旧 HTTP 测试合同与类型闭合。** 27个旧写入口场景改为已批准的410拒绝契约，原请求参数／变体逐一保持；其余原测试运行逻辑在准确fixture类型／Path输入归一化后相同，包括仍有效的cache-clear。85个原测试全部保留，没有改生产路由或恢复旧owner。Root联合正式工程入口正例、旧入口无效果及fixture回归：197 PASS；5个文件Ruff／format与显式pyproject严格mypy通过，检查期间对应源码无漂移。38条原类型诊断已关闭。员工原会话因工具迭代耗尽exit1、报告未交齐的事实保留；同一session仅恢复回收已有更宽cohort与报告，不把CLI最终自述当验收。证据 `Root-review-http/Root-acceptance.json`。
+- **共享合成输入收敛。** CE纯library输入从test模块私有函数提取为同owner命名test-support模块，9个Factory直接消费者迁移；Factory使用`compileall .`、CE使用`compileall src`的真实语义差异保留。Root16组原／新数据和可变对象隔离、4组非法输入错误顺序／消息对照通过；原测试AST在导入／名称迁移归一化后均保留，私有carrier issuer函数内联相同typed tuple后AST与原版完全一致。12文件Ruff／format通过，新helper显式pyproject严格mypy通过，旧混合测试类型诊断63到62、无新增。Root17节点16 PASS／1原有mock签名失败，未把该失败隐藏；员工更宽Factory111失败基线、中间110／最终109失败原始结果保留，两个时序波动不计修复收益。证据 `Root-review-library/Root-acceptance.json`。仍导入私有issuer的债务继续OPEN，不能宣称对应catalog事件已全部减少。
+- **后续两项已实际启动。** 共享输入验收后，新会话处理`_workspace_quality_commands(context, run=run)`与旧lambda不接受`run`的交接漂移；原RED复现，要求保留修后prepare／check顺序和run身份。HTTP验收及员工报告收尾后，新会话处理`test_runtime_fact_stream_probe.py`本地伪Settings造成的5个setupERROR，优先复用现有真实fixture／FactStream authority，不加字段补丁或伪receipt。见 `employee-3-quality-fixtures/`、`employee-1-fact-probe-fixtures/`。更宽HTTP原始回收为68 FAIL／544 PASS／55 ERROR，未作全面前后对照，仍是开放问题，不能仅因文件未改就声称全部已归因为历史问题。
+- **ContextOS旧V1清理完成限定验收。** 私有V1实现无支持消费者，公开名原已绑定V2；删除千余行死实现，未增加metrics port／第二owner。Root检查enum／policy四个class原AST相同，全部历史公共别名仍为原V2对象，默认policy值保持；真实冷导入0个Cell，对实际旧facade注入ImportError能够如实传播。Root当前兼容／恢复／replay／原metric owner／既有fence联合104 PASS、3文件Ruff／format及2文件显式pyproject严格mypy通过，源码无漂移。原70节点检查的7条metadata／dataclass断言失败与XML保留，不能把当前V2接口与旧期望冲突直接抹除。Root删除models.py一条过期fence豁免，以正式generator仅更新kernelone.core现有descriptor，source hash／receipt匹配，其余114资产未变。员工承认曾两次热换共享main，Root已封存违规、核对最终恢复及无残留该ContextOS pytest；热换实验不作验收，源代码限定验收不抹掉操作违规。重复metric测试及新跨私有导入已撤回，仅保留4条必要公开兼容行为用例。证据 `Root-review-context-retirement/Root-acceptance.json`、`Root-worker-baseline-swap-incident.json`。
+
+以上证据根为 `.polaris/refactor-management/full-refactor-wave2-20261027-013741/`。最后稳定完整catalog扫描仍是上一批257条诊断事件，不是独立缺陷数量；本批尚无新的冻结完整扫描结果，循环依赖、其余私有边界、既有类型与功能失败、全仓回归／整体独立审查均未宣称完成。外部Hermes实施消耗不属于Polaris项目交付证据，费用未知，不能记为零。主实例未获重启授权，继续保护原服务；长期记忆功能仍不在范围内。
+
 ## 2026-10-27 负责人收尾验收
 
 本轮三个接口机制已完成限定验收：

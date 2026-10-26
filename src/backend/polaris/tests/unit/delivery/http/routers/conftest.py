@@ -91,7 +91,7 @@ def mock_settings(
     monkeypatch: pytest.MonkeyPatch,
     director_router_private_workspace: Path,
     director_router_private_kernel_home: Path,
-) -> Settings:
+) -> _DirectorRouterTestSettings:
     """Create a real, JSON-serialisable Settings instance for testing."""
     workspace = director_router_private_workspace
     settings = _DirectorRouterTestSettings(

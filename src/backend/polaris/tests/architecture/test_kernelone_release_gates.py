@@ -74,7 +74,6 @@ DEPRECATION_SHIM_PATHS: frozenset[str] = frozenset(
         # ACGA 2.0 migration: KernelOne task trace events resolve message bus via DI container
         "polaris/kernelone/events/task_trace_events.py",
         # ACGA 2.0 migration: KernelOne context models import metrics for budget tracking
-        "polaris/kernelone/context/context_os/models.py",
         # ACGA 2.0 migration: KernelOne cognitive orchestrator bridges cells alignment service
         "polaris/kernelone/cognitive/orchestrator.py",
         # ACGA 2.0 migration: KernelOne multi-agent bus port bridges cells runtime bus

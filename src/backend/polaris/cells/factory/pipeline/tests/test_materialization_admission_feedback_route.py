@@ -20,8 +20,10 @@ from polaris.cells.chief_engineer.blueprint.public import (
     project_chief_engineer_task_blueprint,
     validate_director_handoff_from_payload,
 )
+from polaris.cells.chief_engineer.blueprint.public.tests.library_completion_fixture import (
+    build_library_completion_requirements,
+)
 from polaris.cells.chief_engineer.blueprint.public.tests.test_public_contractsa import (
-    _library_completion_requirements,
     _portfolio_command_authority,
 )
 from polaris.cells.control_plane.run_ledger.public import RunLedgerProjectionResultV1
@@ -65,7 +67,7 @@ def _fixture(
         task_id=task.task_id, modality="build", argv=("python", "-m", "compileall", "src")
     )
     authorities = (build, test) if prior_build else (test,)
-    completion = _library_completion_requirements(
+    completion = build_library_completion_requirements(
         "src/module.js",
         owner_task_ids=(task.task_id,),
         test_path="tests/module.test.mjs",
