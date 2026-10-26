@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from polaris.cells.roles.kernel.tests import test_director_persistent_execution_http as harness
+from polaris.cells.roles.kernel.tests.runtime_boundary_scenarios import install_final_answer_projection_fault
 
 
 def _replace_once(source: str, old: str, new: str) -> str:
@@ -24,25 +25,7 @@ def _replace_once(source: str, old: str, new: str) -> str:
 async def _run_two_file_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str = "repair"):
     observations: dict[str, object] = {"mode": mode}
     if mode in {"missing_commit", "nonrepairable"}:
-        from dataclasses import replace
-
-        from polaris.cells.roles.kernel.internal.kernel.stream_event_projection import StreamEventProjector
-        from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
-
-        actual_project = StreamEventProjector.project
-
-        async def project_with_fault(self, event):
-            if isinstance(event, CompletionEvent) and event.turn_kind == "final_answer" and not event.batch_receipt:
-                observations[mode] = int(observations.get(mode, 0)) + 1
-                # Explicit boundary fault injection, not a replacement receipt.
-                event = (
-                    replace(event, commit_receipt={})
-                    if mode == "missing_commit"
-                    else replace(event, status="failed", error="Private nonrepairable execution failure")
-                )
-            return await actual_project(self, event)
-
-        monkeypatch.setattr(StreamEventProjector, "project", project_with_fault)
+        install_final_answer_projection_fault(monkeypatch, observations, mode)
     if mode == "foreign_owner":
         from dataclasses import replace
 

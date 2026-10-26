@@ -12,17 +12,20 @@ current_modules:
 - polaris.cells.delivery.api_gateway.public.contracts
 tags: []
 owned_paths:
-- polaris/delivery/http/app_factory.py
-- polaris/delivery/http/dependencies.py
-- polaris/delivery/http/error_handlers.py
-- polaris/delivery/http/middleware/**
-- polaris/delivery/http/routers/__init__.py
-- polaris/delivery/http/routers/_shared.py
-- polaris/delivery/http/routers/jetstream_utils.py
-- polaris/delivery/http/v2/__init__.py
-- polaris/delivery/http/routers/permissions.py
-- polaris/tests/integration/delivery/routers/test_permission_tool_policy_composition.py
-- polaris/tests/unit/delivery/http/routers/test_permissions_v2.py
+  - polaris/delivery/http/app_factory.py
+  - polaris/delivery/http/dependencies.py
+  - polaris/delivery/http/error_handlers.py
+  - polaris/delivery/http/middleware/**
+  - polaris/delivery/http/routers/__init__.py
+  - polaris/delivery/http/routers/_shared.py
+  - polaris/delivery/http/routers/jetstream_utils.py
+  - polaris/delivery/http/v2/__init__.py
+  - polaris/delivery/http/routers/permissions.py
+  - polaris/tests/integration/delivery/routers/test_permission_tool_policy_composition.py
+  - polaris/tests/unit/delivery/http/routers/test_permissions_v2.py
+  - polaris/cells/delivery/api_gateway/public/__init__.py
+  - polaris/cells/delivery/api_gateway/public/contracts.py
+  - polaris/cells/delivery/api_gateway/public/service.py
 public_contracts:
   modules:
   - polaris.cells.delivery.api_gateway.public.contracts

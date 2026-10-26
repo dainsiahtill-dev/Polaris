@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-10-25T19:15:21.364078Z",
-  "source_hash": "78966064277dd430",
+  "generated_at": "2026-10-26T10:36:03.043262Z",
+  "source_hash": "107ce281d2b37e76",
   "cell_id": "runtime.task_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -488,6 +488,36 @@
     },
     {
       "type": "class",
+      "name": "QueryExecutionClaimEvidenceV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/execution_claim_evidence.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ExecutionClaimEvidenceV1",
+      "description": "Immutable owner observation, re-queryable at a caller's decision frontier.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/execution_claim_evidence.py",
+      "methods": [
+        {
+          "name": "claim_metadata",
+          "doc": ""
+        },
+        {
+          "name": "current_metadata",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ExecutionClaimEvidenceError",
+      "description": "An explicit owner rejection, preserving the failing observation code.",
+      "defined_in": "polaris/cells/runtime/task_runtime/public/execution_claim_evidence.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "QueryExecutionEffectClosureV1",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_runtime/public/execution_effect_closure.py",
@@ -537,7 +567,7 @@
         },
         {
           "name": "reopen_task_row",
-          "doc": "Reopen a task and return the runtime row projection with event evidence."
+          "doc": "Reopen a task, optionally comparing a prior binding observation."
         },
         {
           "name": "get_task",

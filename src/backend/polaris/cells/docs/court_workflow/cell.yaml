@@ -13,9 +13,12 @@ current_modules:
 tags:
 - composite
 owned_paths:
-- polaris/cells/docs/court_workflow/internal/**
-- polaris/delivery/http/routers/docs.py
-- polaris/delivery/http/routers/court.py
+  - polaris/cells/docs/court_workflow/internal/**
+  - polaris/delivery/http/routers/docs.py
+  - polaris/delivery/http/routers/court.py
+  - polaris/cells/docs/court_workflow/public/__init__.py
+  - polaris/cells/docs/court_workflow/public/contracts.py
+  - polaris/cells/docs/court_workflow/public/service.py
 public_contracts:
   modules:
   - polaris.cells.docs.court_workflow.public.contracts

@@ -232,19 +232,19 @@ def _persisted_depth_context(run: Any) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cold_reload", [False, True])
-async def test_real_pm_commit_and_cold_authority_rebuild_preserve_admitted_depth(
+async def test_legacy_pm_commit_and_cold_authority_rebuild_preserve_recorded_depth(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cold_reload: bool
 ) -> None:
     from polaris.cells.factory.pipeline.internal import factory_stage_executor as stage_module
     from polaris.cells.factory.pipeline.internal.factory_stage_executor._mixin_01 import _Mixin01
     from polaris.cells.factory.pipeline.internal.factory_store import FactoryStore
-    from polaris.cells.factory.pipeline.tests.test_formal_project_identity import PROJECT, TASK, _admitted
+    from polaris.cells.factory.pipeline.tests.test_formal_project_identity import PROJECT, TASK, _persisted_legacy_owner
     from polaris.kernelone.storage import resolve_storage_roots
 
-    # Only upstream PM computation, readiness and scheduling are synthetic in
-    # _admitted. FactoryStore stage commit, immutable PM binding and this actual
-    # authority method stay real; no _characterization_helpers._executor is used.
-    run, executor, tasks = await _admitted(
+    # Historical record inputs are explicitly synthetic; no current admission
+    # or PM role executes. Existing FactoryStore commit, PM binding and this
+    # actual readonly authority method stay real.
+    run, executor, tasks = await _persisted_legacy_owner(
         tmp_path, monkeypatch, metadata={"project_id": PROJECT, "delivery_depth_contract": _contract()}
     )
     runtime = Path(resolve_storage_roots(str(tmp_path)).runtime_root)
@@ -278,12 +278,12 @@ async def test_real_pm_commit_and_cold_authority_rebuild_preserve_admitted_depth
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tamper", ["pm_document", "incoming_depth", "caller_admitted_depth", "current_depth_conflict"])
-async def test_real_authority_still_rejects_tampered_pm_or_depth_projection(
+async def test_legacy_authority_still_rejects_tampered_pm_or_depth_projection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
 ) -> None:
-    from polaris.cells.factory.pipeline.tests.test_formal_project_identity import PROJECT, _admitted
+    from polaris.cells.factory.pipeline.tests.test_formal_project_identity import PROJECT, _persisted_legacy_owner
 
-    run, executor, tasks = await _admitted(
+    run, executor, tasks = await _persisted_legacy_owner(
         tmp_path, monkeypatch, metadata={"project_id": PROJECT, "delivery_depth_contract": _contract()}
     )
     current = _persisted_depth_context(run)

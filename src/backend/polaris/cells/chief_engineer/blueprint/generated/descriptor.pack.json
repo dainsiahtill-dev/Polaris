@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:41.884019Z",
-  "source_hash": "234307561f1f7700",
+  "generated_at": "2026-10-26T07:30:11.233358Z",
+  "source_hash": "a3a12df02c4642f0",
   "cell_id": "chief_engineer.blueprint",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -402,7 +402,7 @@
     {
       "type": "function",
       "name": "_ce_fission_max_output_tokens",
-      "description": "Output-token budget for the CE step-fission LLM call (I3-r17).",
+      "description": "Reuse the structured CE default and explicit deployment override.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
     },
     {
@@ -456,6 +456,18 @@
     {
       "type": "function",
       "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_derive_leaf_job_token",
+      "description": "Derive a post-hardening leaf capability from the CE parent token.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_validated_parent_job_token",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
     },
@@ -655,8 +667,14 @@
     },
     {
       "type": "function",
+      "name": "create_role_cli_parser",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_cli.py"
+    },
+    {
+      "type": "function",
       "name": "main",
-      "description": "Main entry point for Chief Engineer role agent.",
+      "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/chief_engineer_cli.py"
     },
     {
@@ -904,6 +922,24 @@
     },
     {
       "type": "class",
+      "name": "PortfolioBehaviorFeasibilityError",
+      "description": "Raised before any immutable portfolio artifact is persisted.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/portfolio_behavior_feasibility.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "validate_portfolio_behavior_feasibility",
+      "description": "Validate reference closure; runtime verification establishes behavioral coverage.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/portfolio_behavior_feasibility.py"
+    },
+    {
+      "type": "class",
       "name": "PostMortemLog",
       "description": "Workspace-scoped post-mortem / incident-review log.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/post_mortem.py",
@@ -996,6 +1032,12 @@
     },
     {
       "type": "function",
+      "name": "build_project_completion_contract",
+      "description": "Build one immutable, canonical, status-free completion contract.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/project_completion_contract.py"
+    },
+    {
+      "type": "function",
       "name": "_utc_now",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/quality_gate.py"
@@ -1032,6 +1074,12 @@
     },
     {
       "type": "function",
+      "name": "is_verification_only_blueprint",
+      "description": "Require exact CE input and command bindings for an artifactless task.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/readonly_handoff.py"
+    },
+    {
+      "type": "function",
       "name": "_utc_now",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/release_readiness.py"
@@ -1041,6 +1089,12 @@
       "name": "build_release_readiness",
       "description": "Synthesize an executive release decision from the governance surface.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/release_readiness.py"
+    },
+    {
+      "type": "function",
+      "name": "persist_chief_engineer_review_document",
+      "description": "Persist one CE-owned review at its stable compatibility path.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/review_store.py"
     },
     {
       "type": "class",
@@ -1237,6 +1291,30 @@
       "name": "build_rollback_link",
       "description": "Build a :class:`RollbackLinkV1` for the given blueprint.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_link.py"
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerSemanticRepairCandidateStore",
+      "description": "CAS-bound candidate store under the CE-owned runtime state root.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/semantic_repair_store.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_path",
+          "doc": ""
+        },
+        {
+          "name": "persist",
+          "doc": "Persist once; equal content is idempotent and divergent content fails."
+        },
+        {
+          "name": "load",
+          "doc": "Load by exact run/project/hash CAS identity."
+        }
+      ]
     },
     {
       "type": "function",
@@ -1613,87 +1691,75 @@
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_radar.py"
     },
     {
-      "type": "class",
-      "name": "RiskSeverity",
-      "description": "Severity ladder for a Risk Register entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
-      "methods": []
+      "type": "function",
+      "name": "build_project_completion_contract",
+      "description": "Build a completion contract after the public types are initialized.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/__init__.py"
     },
     {
       "type": "class",
-      "name": "RiskStatus",
-      "description": "Lifecycle status of a Risk Register entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
-      "methods": []
+      "name": "ChiefEngineerBehaviorExampleV1",
+      "description": "One concrete behavior example shared by implementers and verifiers.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_behavior.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",
-      "name": "TechDebtSeverity",
-      "description": "Severity ladder for a Tech-Debt Ledger entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
-      "methods": []
+      "name": "ChiefEngineerBehaviorInvariantV1",
+      "description": "One domain-neutral owned semantic invariant, optionally cross-task.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_behavior.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",
-      "name": "TechDebtStatus",
-      "description": "Lifecycle status of a Tech-Debt Ledger entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
-      "methods": []
+      "name": "ChiefEngineerSharedBehaviorContractV1",
+      "description": "Immutable CE behavior authority projected into every linked task.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_behavior.py",
+      "methods": [
+        {
+          "name": "to_reference",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
     },
     {
-      "type": "class",
-      "name": "RollbackStrategy",
-      "description": "Rollback strategy attached to a blueprint.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
-      "methods": []
+      "type": "function",
+      "name": "shared_behavior_contract_seed",
+      "description": "Return canonical content used by both hash validation and persistence.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_behavior.py"
     },
     {
-      "type": "class",
-      "name": "ADRStatus",
-      "description": "Lifecycle status of an Architecture Decision Record (decision log).",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "TechRadarRing",
-      "description": "ThoughtWorks-style Tech-Radar ring for a library / technology.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "IncidentSeverity",
-      "description": "Incident severity ladder for a post-mortem (sev1 = most severe).",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ReleaseDecision",
-      "description": "Executive release / change-advisory verdict.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "PostMortemStatus",
-      "description": "Lifecycle status of a post-mortem / incident review.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
-      "methods": []
+      "type": "function",
+      "name": "shared_behavior_contract_hash",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_behavior.py"
     },
     {
       "type": "class",
       "name": "GenerateTaskBlueprintCommandV1",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ChiefEngineerPortfolioTaskV1",
       "description": "Authoritative PM task facts supplied to a project-level CE portfolio.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": [
         {
           "name": "to_dict",
@@ -1703,16 +1769,42 @@
     },
     {
       "type": "class",
+      "name": "_ChiefEngineerPortfolioAuthorityCarrierV1",
+      "description": "Opaque, one-run authority sealed inside CE after trusted host capture.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "BuildChiefEngineerBlueprintPortfolioCommandV1",
-      "description": "Build one advisory CE portfolio for a set of authoritative PM tasks.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "description": "Build one CE portfolio using an opaque Factory-issued authority carrier.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CaptureChiefEngineerPortfolioAuthorityQueryV1",
+      "description": "Host-only identity for a transient Factory source capture, never seeds.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryProjectCompletionContractV1",
+      "description": "Read one persisted CE-owned completion contract by exact authority identity.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ChiefEngineerProjectInterfaceContractV1",
       "description": "Shared task/file ownership and advisory project interface declarations.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": [
         {
           "name": "to_reference",
@@ -1728,7 +1820,7 @@
       "type": "class",
       "name": "ChiefEngineerBlueprintPortfolioV1",
       "description": "Immutable project-level CE advice with task-scoped canonical overlays.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": [
         {
           "name": "to_reference",
@@ -1752,28 +1844,28 @@
       "type": "class",
       "name": "GetBlueprintStatusQueryV1",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "QueryBlueprintProvenanceV1",
       "description": "Validate one already-captured blueprint mapping without storage access.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "TaskBlueprintGeneratedEventV1",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ArchitectureDecisionV1",
       "description": "Structured Chief Engineer architecture or dependency decision.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": [
         {
           "name": "from_mapping",
@@ -1789,14 +1881,14 @@
       "type": "class",
       "name": "TaskBlueprintResultV1",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "TaskBlueprintProvenanceSnapshotV1",
       "description": "Pure provenance verdict for one exact Chief Engineer blueprint payload.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": [
         {
           "name": "to_dict",
@@ -1808,7 +1900,7 @@
       "type": "class",
       "name": "ChiefEngineerBlueprintErrorV1",
       "description": "Raised when `chief_engineer.blueprint` contract processing fails.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py",
       "methods": [
         {
           "name": "__init__",
@@ -1817,10 +1909,230 @@
       ]
     },
     {
+      "type": "function",
+      "name": "_portfolio_authority_receipt_hash",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py"
+    },
+    {
+      "type": "function",
+      "name": "_issue_chief_engineer_portfolio_authority_carrier",
+      "description": "CE-internal mint; trusted host capture owns the production source call.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py"
+    },
+    {
+      "type": "function",
+      "name": "_portfolio_authority_carrier_signature",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py"
+    },
+    {
+      "type": "function",
+      "name": "_verify_chief_engineer_portfolio_authority_carrier",
+      "description": "Verify opaque owner signature without exposing signing material.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_blueprint_dtos.py"
+    },
+    {
+      "type": "class",
+      "name": "ArtifactObligationV1",
+      "description": "One required, optional, or explicitly inapplicable project artifact.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "EntrypointObligationV1",
+      "description": "One language-neutral executable or explicitly N/A entrypoint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectKindAuthorityV1",
+      "description": "Factory-owned application/library classification and its immutable source.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "VerificationCommandAuthorityV1",
+      "description": "One exact verifier recipe bound by authenticated PM or delegated CE authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "VerificationObligationV1",
+      "description": "One command-backed verifier or explicit N/A verifier modality.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionObligationsV1",
+      "description": "Canonical obligation set; it contains no execution or lifecycle status.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectCompletionContractV1",
+      "description": "Immutable CE-owned obligations required for project completion.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py",
+      "methods": [
+        {
+          "name": "to_seed_dict",
+          "doc": "Return the canonical hash seed, excluding derived id and hash."
+        },
+        {
+          "name": "from_dict",
+          "doc": "Strictly reconstruct and verify one persisted completion contract."
+        },
+        {
+          "name": "exact_rows",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_literal",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonicalize_completion_id_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_project_completion_contract_seed",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_completion_contract_hash",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_completion_contract_id",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_completion.py"
+    },
+    {
+      "type": "class",
+      "name": "RiskSeverity",
+      "description": "Severity ladder for a Risk Register entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_enums.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RiskStatus",
+      "description": "Lifecycle status of a Risk Register entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_enums.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TechDebtSeverity",
+      "description": "Severity ladder for a Tech-Debt Ledger entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_enums.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TechDebtStatus",
+      "description": "Lifecycle status of a Tech-Debt Ledger entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_enums.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RollbackStrategy",
+      "description": "Rollback strategy attached to a blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_enums.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ADRStatus",
+      "description": "Lifecycle status of an Architecture Decision Record (decision log).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_enums.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TechRadarRing",
+      "description": "ThoughtWorks-style Tech-Radar ring for a library / technology.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_enums.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "IncidentSeverity",
+      "description": "Incident severity ladder for a post-mortem (sev1 = most severe).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_enums.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReleaseDecision",
+      "description": "Executive release / change-advisory verdict.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_enums.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PostMortemStatus",
+      "description": "Lifecycle status of a post-mortem / incident review.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_enums.py",
+      "methods": []
+    },
+    {
       "type": "class",
       "name": "RiskRecordV1",
       "description": "A single Risk Register entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -1832,35 +2144,35 @@
       "type": "class",
       "name": "RegisterRiskCommandV1",
       "description": "Register a new risk in the workspace Risk Register.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ListRisksQueryV1",
       "description": "Filter Risk Register entries.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "UpdateRiskStatusCommandV1",
       "description": "Transition a risk to a new status.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "RiskEventV1",
       "description": "Audit event emitted on risk state change.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "TechDebtRecordV1",
       "description": "A single Technical-Debt Ledger entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -1872,35 +2184,35 @@
       "type": "class",
       "name": "RegisterTechDebtCommandV1",
       "description": "Register a new tech-debt entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ListTechDebtQueryV1",
       "description": "Filter Tech-Debt Ledger entries.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "UpdateTechDebtStatusCommandV1",
       "description": "Transition a tech-debt entry to a new status.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "TechDebtEventV1",
       "description": "Audit event emitted on tech-debt state change.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "QualityGateResultV1",
       "description": "Structured quality-gate result for a blueprint.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -1912,7 +2224,7 @@
       "type": "class",
       "name": "RollbackLinkV1",
       "description": "Rollback linkage attached to a blueprint.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -1924,7 +2236,7 @@
       "type": "class",
       "name": "ADRRecordV1",
       "description": "A single Architecture Decision Record (human-facing decision log).",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -1936,35 +2248,35 @@
       "type": "class",
       "name": "RegisterADRCommandV1",
       "description": "Record a new Architecture Decision Record.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ListADRsQueryV1",
       "description": "Filter Architecture Decision Records.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "UpdateADRStatusCommandV1",
       "description": "Transition an ADR to a new status.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ADREventV1",
       "description": "Audit event emitted on ADR state change.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "TechRadarEntryV1",
       "description": "A single Tech-Radar entry (a library/technology placed on a ring).",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -1976,28 +2288,28 @@
       "type": "class",
       "name": "RegisterTechRadarCommandV1",
       "description": "Place a library on a Tech-Radar ring.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ListTechRadarQueryV1",
       "description": "Filter Tech-Radar entries.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "UpdateTechRadarRingCommandV1",
       "description": "Move a Tech-Radar entry to a new ring.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "StackPolicyViolationV1",
       "description": "A blueprint dependency that violates the Tech Radar (hold/deprecated).",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -2009,14 +2321,14 @@
       "type": "class",
       "name": "TechRadarEventV1",
       "description": "Audit event emitted on Tech-Radar state change.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "PostMortemRecordV1",
       "description": "A single post-mortem / incident review (blameless, learning-oriented).",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -2028,35 +2340,35 @@
       "type": "class",
       "name": "RegisterPostMortemCommandV1",
       "description": "Record a new post-mortem / incident review.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ListPostMortemsQueryV1",
       "description": "Filter post-mortems.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "UpdatePostMortemStatusCommandV1",
       "description": "Transition a post-mortem to a new status.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "PostMortemEventV1",
       "description": "Audit event emitted on post-mortem state change.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": []
     },
     {
       "type": "class",
       "name": "ReleaseReadinessV1",
       "description": "Executive GO / NO-GO that aggregates the whole governance surface.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -2068,7 +2380,7 @@
       "type": "class",
       "name": "GovernanceSummaryV1",
       "description": "Aggregate governance view attached to a blueprint.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -2080,7 +2392,7 @@
       "type": "class",
       "name": "HandoffDecisionV1",
       "description": "Director-handoff gate decision for a blueprint.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -2092,7 +2404,7 @@
       "type": "class",
       "name": "CeHandoffDecisionBindingsV1",
       "description": "Immutable hash bindings for `ce_handoff_decision.v1`.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -2104,7 +2416,7 @@
       "type": "class",
       "name": "CeHandoffDecisionV1",
       "description": "Schema-compatible Chief Engineer handoff authority object.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_governance.py",
       "methods": [
         {
           "name": "to_dict",
@@ -2114,1410 +2426,1649 @@
     },
     {
       "type": "function",
+      "name": "project_completion_verifier_policy_snapshot_hash",
+      "description": "Bind the exact Factory-compiled verifier-policy snapshot without reimplementing its owner hash.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "project_completion_catalog_snapshot_hash",
+      "description": "Hash the exact platform catalog snapshot consumed by CE authority derivation.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
+    },
+    {
+      "type": "function",
       "name": "_require_non_empty",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_require_exact_non_empty",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_completion_token",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_optional_completion_command",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_verifier_argv",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_verifier_cwd",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_verification_command_authority_hash",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_kind_authority_hash",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_verification_command_proof",
+      "description": "Delegate proof rejection while retaining CE command authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_require_provenance_text",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_require_provenance_identity",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_require_provenance_blueprint_id",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_require_provenance_path",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_require_provenance_sha256",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_strict_provenance_target_paths",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_to_dict_copy",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_string_tuple",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_strict_unique_string_tuple",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_normalize_relative_portfolio_path",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_require_safe_filename_token",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_relative_path_tuple",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "function",
       "name": "_json_safe_mapping",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_helpers.py"
     },
     {
       "type": "class",
-      "name": "_PortfolioLlmBlueprint",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py",
-      "methods": []
-    },
-    {
-      "type": "function",
-      "name": "_utc_now",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_safe_token",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_path",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_hashable_blueprint_payload",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_hash",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_provenance_text",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "query_blueprint_provenance",
-      "description": "Validate one strict-parsed immutable blueprint mapping without I/O.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_hashable_portfolio_payload",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_portfolio_hash",
-      "description": "Hash canonical portfolio content without self-referential hash fields.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_string_list",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_semantic_tokens_from_text",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_semantic_tokens_from_values",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_mapping",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_compact_llm_blueprint_value",
-      "description": "Return a bounded JSON-safe value for advisory CE LLM blueprint data.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_plan_field_strings",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_llm_blueprint_overlay",
-      "description": "Normalize CE LLM output into an advisory-only persisted overlay.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_semantic_terms_from_delivery_contracts",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_pascal_case",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_snake_case",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_module_role_from_path",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_module_stem",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_module_owner_terms",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_planned_public_symbols",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_public_symbols_from_export_summary",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "add",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_existing_export_symbols_by_path",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_summary_line_for_interface_symbol",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_workspace_existing_target_file_summaries",
-      "description": "Return bounded actual export summaries from the workspace symbol index.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_merge_existing_target_file_summaries",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_needs_workspace_interface_snapshot",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_owner_terms_overlap",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_module_interface_contract",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_semantic_support_boundary_path",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_semantic_support_boundary",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_semantic_alignment_audit",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_first_string_list",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_merge_string_lists",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_blueprint_file_path",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_declared_file_paths",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_payload_from_context",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_delivery_depth_payload",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_target_files_from_context",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_path_looks_like_test",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_delivery_depth_minimums",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_positive_int",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_infer_language_from_targets",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_default_delivery_depth_test_target",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_delivery_depth_test_targets",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_qa_acceptance_from_task",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_delivery_depth_contract_from_context",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_delivery_plan_document_from_context",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_contract_fields",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_contract_completeness",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_tuple_from_payload",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_existing_target_files_from_payload",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_task_token",
-      "description": "Normalize task identifiers for comparison.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_latest_blueprint_for_task",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_portfolio_contract_error",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_portfolio_array",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_portfolio_mapping",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_portfolio_advisory_path",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_scope_entry_text",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_parse_scope_suggestions",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_merge_scope_paths",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_merge_scope_rejections",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_plan_path_suggestions",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_readable_portfolio_value",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "name": "ChiefEngineerPortfolioStructuralRecoveryV1",
+      "description": "Auditable, content-preserving recovery of malformed CE tool arguments.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
     },
     {
-      "type": "function",
-      "name": "_portfolio_risk_flag",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "type": "class",
+      "name": "ChiefEngineerSemanticRepairCandidateV1",
+      "description": "One schema-valid CE provider candidate bound to immutable authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py",
+      "methods": [
+        {
+          "name": "from_dict",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
     },
     {
-      "type": "function",
-      "name": "_normalize_portfolio_risk_flags",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "type": "class",
+      "name": "ChiefEngineerSemanticRepairDiagnosisV1",
+      "description": "Stable semantic diagnosis authorizing only enumerated patch operations.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
     },
     {
-      "type": "function",
-      "name": "_merge_risk_flags",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "type": "class",
+      "name": "ChiefEngineerSemanticRepairPatchV1",
+      "description": "Typed CE semantic patch with diagnosis-scoped entrypoint replacement.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "from_provider_dict",
+          "doc": "Parse only diagnosis-authorized groups from the exact provider envelope."
+        },
+        {
+          "name": "rows",
+          "doc": ""
+        },
+        {
+          "name": "exact",
+          "doc": ""
+        }
+      ]
     },
     {
-      "type": "function",
-      "name": "_merge_portfolio_construction_plan",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "type": "class",
+      "name": "ChiefEngineerSemanticRepairReceiptV1",
+      "description": "Immutable proof that typed composition preserved all untouched sections.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "function",
-      "name": "_normalize_interface_declarations",
+      "name": "_canonical_payload_hash",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py"
     },
     {
       "type": "function",
-      "name": "_parse_portfolio_llm_blueprint",
+      "name": "_exact_mapping",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py"
     },
     {
       "type": "function",
-      "name": "_task_plan_components",
+      "name": "_require_task_set_hash",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py"
     },
     {
       "type": "function",
-      "name": "_scope_advisory_for_task",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "name": "_normalize_verification_recipe_upsert",
+      "description": "Validate semantic recipe content; command hashes are exclusively server-owned.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py"
     },
     {
       "type": "function",
-      "name": "_deterministic_portfolio_plan",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "name": "chief_engineer_semantic_repair_task_set_hash",
+      "description": "Return canonical task-set CAS identity for candidate construction.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts/_semantic_repair.py"
     },
     {
       "type": "function",
-      "name": "_project_interface_seed",
+      "name": "is_task_intent",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_delegated_recipes.py"
     },
     {
       "type": "function",
-      "name": "_bind_portfolio_task_overlays",
+      "name": "prepare_delegated_recipes",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_delegated_recipes.py"
     },
     {
       "type": "function",
-      "name": "_persist_immutable_blueprint_portfolio",
+      "name": "record_failure",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "build_chief_engineer_blueprint_portfolio",
-      "description": "Build and immutably persist one advisory portfolio for PM tasks.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_delegated_recipes.py"
     },
     {
       "type": "function",
-      "name": "project_chief_engineer_task_blueprint",
-      "description": "Project one portfolio task into ``generate_task_blueprint`` LLM shape.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_project_blueprint_portfolio_context",
+      "name": "recipe",
       "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "generate_task_blueprint",
-      "description": "Generate and persist a task-level Chief Engineer blueprint.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "get_blueprint_status",
-      "description": "Return the latest persisted Chief Engineer blueprint status for a task.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_delegated_recipes.py"
     },
     {
       "type": "function",
       "name": "register_risk",
       "description": "Register a new entry in the workspace Risk Register.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "list_risks",
       "description": "List Risk Register entries for the workspace with optional filters.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "update_risk_status",
       "description": "Transition a risk to a new status; append a history entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "register_tech_debt",
       "description": "Register a new entry in the workspace Tech-Debt Ledger.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "list_tech_debt",
       "description": "List Tech-Debt Ledger entries for the workspace with optional filters.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "update_tech_debt_status",
       "description": "Transition a tech-debt entry to a new status; append a history entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "register_adr",
       "description": "Record a new Architecture Decision Record in the workspace.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "list_adrs",
       "description": "List Architecture Decision Records for the workspace with optional filters.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "update_adr_status",
       "description": "Transition an ADR to a new status; append a history entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "summarize_adrs",
       "description": "Return aggregate counts for the workspace Architecture Decision Log.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "summarize_risks",
       "description": "Return aggregate counts for the workspace Risk Register.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "summarize_tech_debt",
       "description": "Return aggregate counts for the workspace Tech-Debt Ledger.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "register_tech_radar",
       "description": "Place a library on a Tech-Radar ring for the workspace.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "list_tech_radar",
       "description": "List Tech-Radar entries for the workspace with an optional ring filter.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "update_tech_radar_ring",
       "description": "Move a Tech-Radar entry to a new ring; append a history entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "summarize_tech_radar",
       "description": "Return aggregate counts for the workspace Tech Radar.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "check_stack_policy",
       "description": "Return a stack-policy violation for each library on a hold/deprecated ring.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "register_post_mortem",
       "description": "Record a new post-mortem / incident review for the workspace.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "list_post_mortems",
       "description": "List post-mortems for the workspace with optional filters.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "update_post_mortem_status",
       "description": "Transition a post-mortem to a new status; append a history entry.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "summarize_post_mortems",
       "description": "Return aggregate counts for the workspace post-mortem log.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "assess_release_readiness",
       "description": "Synthesize an executive release GO / NO-GO from the governance surface.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "get_blueprint_governance",
       "description": "Read the governance summary for a persisted blueprint.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "evaluate_handoff_decision",
-      "description": "Decide whether a blueprint may be handed to the Director.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "evaluate_handoff_decision_for_blueprint",
-      "description": "Load a persisted blueprint and decide whether it may be handed off.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_binding_hash_or_missing",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_execution_profile_hash_from_blueprint",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "build_ce_handoff_decision",
-      "description": "Build the strict `ce_handoff_decision.v1` object.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "evaluate_ce_handoff_decision_for_blueprint",
-      "description": "Load a persisted blueprint and build strict `ce_handoff_decision.v1`.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_merged_payload_metadata",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_id_from_payload",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_id_from_payload",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "_handoff_validation_result",
-      "description": "",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "validate_director_handoff_from_payload",
-      "description": "Validate whether a payload may enter Director dispatch.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "function",
-      "name": "assert_handoff_ready",
-      "description": "Raise when a blueprint must not be handed to the Director.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "build_blueprint_governance",
       "description": "Compute the governance summary for a blueprint payload.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
       "name": "attach_governance_to_blueprint",
       "description": "Compute governance and optionally persist it for a blueprint.",
-      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerBlueprintSummary",
-      "description": "Chief Engineer blueprint summary bound to the shared contract.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerBlueprintListResponse",
-      "description": "Chief Engineer blueprint list response bound to the shared contract.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerBlueprintDetailResponse",
-      "description": "Chief Engineer blueprint detail response bound to the shared contract.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerGenerateBlueprintRequest",
-      "description": "Desktop request for generating a task-level Chief Engineer blueprint.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerBulkBlueprintTaskRequest",
-      "description": "One task entry in a Chief Engineer bulk blueprint generation request.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerBulkGenerateBlueprintRequest",
-      "description": "Bulk request for covering multiple PM/Director tasks with CE blueprints.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerTaskBlueprintResultResponse",
-      "description": "Chief Engineer command/query result with persisted blueprint context.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerBulkBlueprintError",
-      "description": "Per-task failure captured during bulk blueprint generation.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerBulkGenerateBlueprintResponse",
-      "description": "Bulk blueprint generation evidence for the Chief Engineer desktop.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerBlueprintDeleteResponse",
-      "description": "Deletion evidence for a persisted Chief Engineer blueprint.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerDiagnosticsWorkspaceStatus",
-      "description": "Workspace readiness section for Chief Engineer desktop diagnostics.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerDiagnosticsLLMStatus",
-      "description": "Chief Engineer role-specific LLM readiness section.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerDiagnosticsBlueprintStatus",
-      "description": "Blueprint store readiness section for Chief Engineer desktop diagnostics.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerPMTaskPlanProbe",
-      "description": "Read-only PM task plan evidence for Chief Engineer handoff diagnostics.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerDiagnosticsResponse",
-      "description": "Side-effect-free Chief Engineer desktop readiness snapshot.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerRegisterRiskRequest",
-      "description": "Desktop request to register a Risk Register entry.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerUpdateRiskStatusRequest",
-      "description": "Desktop request to transition a risk to a new status.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerRegisterTechDebtRequest",
-      "description": "Desktop request to register a Tech-Debt Ledger entry.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerUpdateTechDebtStatusRequest",
-      "description": "Desktop request to transition a tech-debt entry to a new status.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerRegisterADRRequest",
-      "description": "Desktop request to record an Architecture Decision Record.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerUpdateADRStatusRequest",
-      "description": "Desktop request to transition an ADR to a new status.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerRegisterTechRadarRequest",
-      "description": "Desktop request to place a library on a Tech-Radar ring.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerUpdateTechRadarRingRequest",
-      "description": "Desktop request to move a Tech-Radar entry to a new ring.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerStackPolicyCheckRequest",
-      "description": "Desktop request to check libraries against the Tech Radar.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerRegisterPostMortemRequest",
-      "description": "Desktop request to record a post-mortem / incident review.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "ChiefEngineerUpdatePostMortemStatusRequest",
-      "description": "Desktop request to transition a post-mortem to a new status.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
-      "methods": []
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_governance.py"
     },
     {
       "type": "function",
-      "name": "_utc_now",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "name": "evaluate_handoff_decision",
+      "description": "Decide whether a blueprint may be handed to the Director.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
     },
     {
       "type": "function",
-      "name": "_validate_blueprint_id",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "name": "evaluate_handoff_decision_for_blueprint",
+      "description": "Load a persisted blueprint and decide whether it may be handed off.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
     },
     {
       "type": "function",
-      "name": "_string_list",
+      "name": "_binding_hash_or_missing",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
     },
     {
       "type": "function",
-      "name": "_read_json_file",
+      "name": "_execution_profile_hash_from_blueprint",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
     },
     {
       "type": "function",
-      "name": "_pm_task_plan_candidate_paths",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "name": "build_ce_handoff_decision",
+      "description": "Build the strict `ce_handoff_decision.v1` object.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
     },
     {
       "type": "function",
-      "name": "_pm_task_plan_rows",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "name": "evaluate_ce_handoff_decision_for_blueprint",
+      "description": "Load a persisted blueprint and build strict `ce_handoff_decision.v1`.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
     },
     {
       "type": "function",
-      "name": "_task_id_from_plan_task",
+      "name": "_merged_payload_metadata",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "_load_pm_task_plan_probe",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_task_id",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "_dict_value",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_contract_list",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_handoff_missing_fields",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_payload_is_handoff_ready",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "_blueprint_payload_is_traceability_only",
-      "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
     },
     {
       "type": "function",
       "name": "_blueprint_id_from_payload",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
     },
     {
       "type": "function",
-      "name": "_blueprint_summary",
+      "name": "_task_id_from_payload",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
     },
     {
       "type": "function",
-      "name": "_settings_for_request",
+      "name": "_handoff_validation_result",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
     },
     {
       "type": "function",
-      "name": "_state_for_settings",
+      "name": "_project_task_completion_contract",
+      "description": "Return one bounded Director repair contract derived from CE authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_validated_job_token",
+      "description": "Return the exact CE JobToken after binding it to blueprint authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_director_handoff_from_payload",
+      "description": "Validate whether a payload may enter Director dispatch.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
+    },
+    {
+      "type": "function",
+      "name": "assert_handoff_ready",
+      "description": "Raise when a blueprint must not be handed to the Director.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_handoff.py"
+    },
+    {
+      "type": "function",
+      "name": "chief_engineer_source_suffixes_for_language",
+      "description": "Return immutable CE-owned source suffix authority for one PM language.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_task_declares_ce_owned_topology",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_persistence_for_request",
+      "name": "_is_ce_source_topology_path",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_blueprint_payload_for_result",
+      "name": "_is_ce_test_topology_path",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_blueprint_result_response",
+      "name": "_is_ce_production_source_path",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_generate_blueprint_for_task",
+      "name": "_ce_delegated_artifact_roles",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_blueprint_reference_update",
+      "name": "_ce_artifact_role_matches_path",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_run_contract_copy_path",
+      "name": "_ce_topology_authorizes_artifact",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_apply_blueprint_references_to_plan_payload",
+      "name": "_utc_now",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_sync_blueprint_references_to_pm_task_plans",
+      "name": "_safe_token",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_sync_blueprint_references_or_raise",
+      "name": "_blueprint_path",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_workspace_value",
+      "name": "_hashable_blueprint_payload",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_build_workspace_diagnostics",
+      "name": "_blueprint_hash",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_role_payload",
+      "name": "_blueprint_provenance_text",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_build_llm_diagnostics",
+      "name": "query_blueprint_provenance",
+      "description": "Validate one strict-parsed immutable blueprint mapping without I/O.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_hashable_portfolio_payload",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_build_blueprint_diagnostics",
+      "name": "_portfolio_hash",
+      "description": "Hash canonical portfolio content without self-referential hash fields.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_diagnostic_issues",
+      "name": "_semantic_tokens_from_text",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "_generate_blockers",
-      "description": "Return hard blockers for Chief Engineer blueprint generation.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "_handoff_blockers",
-      "description": "Return hard blockers that should disable Chief Engineer -> Director handoff.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "_llm_event_stats",
+      "name": "_semantic_tokens_from_values",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "get_chief_engineer_diagnostics",
-      "description": "Return side-effect-free Chief Engineer desktop readiness diagnostics.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "get_chief_engineer_llm_events",
-      "description": "Return Chief Engineer LLM event history from the shared roles kernel.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "get_chief_engineer_cache_stats",
-      "description": "Return shared LLM cache statistics for Chief Engineer desktop evidence.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "clear_chief_engineer_cache",
-      "description": "Clear the shared LLM cache through the Chief Engineer role surface.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "get_chief_engineer_token_budget_stats",
-      "description": "Return shared token-budget statistics for Chief Engineer desktop evidence.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "list_chief_engineer_blueprints",
-      "description": "List persisted Chief Engineer blueprints for the active workspace.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "generate_chief_engineer_blueprint",
-      "description": "Generate and persist a Chief Engineer blueprint through the cell command contract.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "bulk_generate_chief_engineer_blueprints",
-      "description": "Generate Chief Engineer blueprints for multiple tasks through the cell contract.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "get_chief_engineer_blueprint_status",
-      "description": "Return Chief Engineer blueprint status for a task through the cell query contract.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "get_chief_engineer_blueprint",
-      "description": "Load one persisted Chief Engineer blueprint by id.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "delete_chief_engineer_blueprint",
-      "description": "Delete one persisted Chief Engineer blueprint by id.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "_governance_workspace",
-      "description": "Resolve and validate the workspace for a governance request.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "register_chief_engineer_risk",
-      "description": "Register a new Risk Register entry for the workspace.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "list_chief_engineer_risks",
-      "description": "List Risk Register entries for the workspace with optional filters.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "update_chief_engineer_risk_status",
-      "description": "Transition a Risk Register entry to a new status.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "register_chief_engineer_tech_debt",
-      "description": "Register a new Tech-Debt Ledger entry for the workspace.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "list_chief_engineer_tech_debt",
-      "description": "List Tech-Debt Ledger entries for the workspace with optional filters.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "update_chief_engineer_tech_debt_status",
-      "description": "Transition a Tech-Debt Ledger entry to a new status.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "register_chief_engineer_adr",
-      "description": "Record a new Architecture Decision Record for the workspace.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "list_chief_engineer_adrs",
-      "description": "List Architecture Decision Records with optional filters.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "update_chief_engineer_adr_status",
-      "description": "Transition an Architecture Decision Record to a new status.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "get_chief_engineer_handoff_decision",
-      "description": "Return the Director-handoff gate decision for a persisted blueprint.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "register_chief_engineer_tech_radar",
-      "description": "Place a library on a Tech-Radar ring for the workspace.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "list_chief_engineer_tech_radar",
-      "description": "List Tech-Radar entries with an optional ring filter.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "update_chief_engineer_tech_radar_ring",
-      "description": "Move a Tech-Radar entry to a new ring.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "check_chief_engineer_stack_policy",
-      "description": "Check a list of libraries against the Tech Radar (hold/deprecated).",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "register_chief_engineer_post_mortem",
-      "description": "Record a new post-mortem / incident review for the workspace.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "list_chief_engineer_post_mortems",
-      "description": "List post-mortems with optional filters.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "update_chief_engineer_post_mortem_status",
-      "description": "Transition a post-mortem to a new status.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
-    },
-    {
-      "type": "function",
-      "name": "_split_csv",
+      "name": "_mapping",
       "description": "",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
     },
     {
       "type": "function",
-      "name": "get_chief_engineer_release_readiness",
-      "description": "Executive GO / NO-GO that aggregates the whole governance surface.",
-      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+      "name": "_compact_llm_blueprint_value",
+      "description": "Return a bounded JSON-safe value for advisory CE LLM blueprint data.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_plan_field_strings",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_llm_blueprint_overlay",
+      "description": "Normalize CE LLM output into an advisory-only persisted overlay.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_delivery_product_subject",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_planning_contains_delivery_product_subject",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_semantic_terms_from_delivery_contracts",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_pascal_case",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_snake_case",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_module_role_from_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_module_stem",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_module_owner_terms",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_planned_public_symbols",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_public_symbols_from_export_summary",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "add",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_existing_export_symbols_by_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_summary_line_for_interface_symbol",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_existing_target_file_summaries",
+      "description": "Return bounded actual export summaries from the workspace symbol index.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_existing_target_file_summaries",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_needs_workspace_interface_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_terms_overlap",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_module_interface_contract",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_semantic_support_boundary_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_semantic_support_boundary",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_semantic_alignment_audit",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_string_lists",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_blueprint_file_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_declared_file_paths",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_payload_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_delivery_depth_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_target_files_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_looks_like_test",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_delivery_depth_minimums",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_language_from_targets",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_default_delivery_depth_test_target",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_delivery_depth_test_target_candidates",
+      "description": "Return deterministic, distinct test targets for a project depth contract.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_delivery_depth_test_targets",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_acceptance_from_task",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_delivery_depth_contract_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_delivery_plan_document_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_contract_fields",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_completeness",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_tuple_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_existing_target_files_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_token",
+      "description": "Normalize task identifiers for comparison.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_latest_blueprint_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_helpers.py"
+    },
+    {
+      "type": "class",
+      "name": "_PortfolioLlmBlueprint",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_PortfolioArtifactProjection",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "_NormalizedPortfolioCompletion",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "project_chief_engineer_portfolio_delivery_depth_feasibility",
+      "description": "Project whether CE artifact authority can satisfy delivery depth.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "project_chief_engineer_completion_contract_semantic_errors",
+      "description": "Project owner-contract command failures before portfolio persistence.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "project_chief_engineer_delivery_depth_feasibility_from_pm_tasks",
+      "description": "Project feasibility from persisted PM payloads using CE normalization.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_portfolio_contract_error",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalized_away_entrypoint_obligation_ids",
+      "description": "Return provider-declared entrypoint ids removed by authority normalization.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_portfolio_array",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_portfolio_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_portfolio_advisory_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_entry_text",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_scope_suggestions",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_scope_paths",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_scope_rejections",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_plan_path_suggestions",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_readable_portfolio_value",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_portfolio_risk_flag",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_portfolio_risk_flags",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_risk_flags",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_portfolio_construction_plan",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_interface_declarations",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_strict_completion_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_strict_completion_rows",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_completion_path_is_within_scope",
+      "description": "Return component-safe PM scope containment, never raw string-prefix containment.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_expandable_scope_paths",
+      "description": "Return PM scopes that are directories rather than repeated exact targets.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_authorizes_completion_path",
+      "description": "Apply immutable PM exact-target and directory-scope authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_target_semantic_role",
+      "description": "Classify one exact PM target without widening artifact authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_delegated_cpp_header_companions",
+      "description": "Close a proven C++ source/header layout without guessing topology.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_entrypoint_kind",
+      "description": "Classify an exact PM entrypoint from committed project and command facts.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "classify_chief_engineer_pm_entrypoint_kind",
+      "description": "Public deterministic projection of PM/catalog entrypoint kind authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "derive_project_kind_authority_from_catalog_snapshot",
+      "description": "Derive exemption-bearing project kind from one identity-bound catalog snapshot.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_portfolio_catalog_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_revalidate_portfolio_authority_carrier",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "capture_chief_engineer_portfolio_authority",
+      "description": "Capture a trusted host source before CE seals its transient authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_portfolio_artifact_rows",
+      "description": "Pure shared PM-scope/topology projection; never issues execution authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "task_delegates",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "canonical_delegated_python_entrypoint",
+      "description": "Resolve a bounded ``python -m`` package entrypoint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "canonical_delegated_native_entrypoint",
+      "description": "Resolve one bounded native executable chosen under CE topology authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "owners_for_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "transitively_depends_on",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "unique_terminal_owner",
+      "description": "Return the sole final writer in a PM-authorized shared-path dependency chain.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "project_pm_target_row",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_owner_rows",
+      "description": "Repair only model owner drift that PM authority can resolve uniquely.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "collapse_duplicate_artifact_paths",
+      "description": "Keep one completion artifact obligation per path.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "sort_key",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_normalization_blocked_obligation_ids",
+      "description": "Observe bounded declared identity; never project executable authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "project_chief_engineer_effective_obligation_view",
+      "description": "Observe effective identities without I/O, enrollment, or execution authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_portfolio_completion_contract",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalized_entrypoint_obligation",
+      "description": "Keep entrypoint shape repair distinct from subsequent immutable owner/ID checks.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_missing_semantic_task_recipe_diagnostics",
+      "description": "Explain missing task capability using the same immutable artifact scope.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_portfolio_completion_contract",
+      "description": "Retain canonical validation and diagnose task capability before handoff.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_portfolio_completion_contract_impl",
+      "description": "Pure canonicalization using authenticated immutable facts, without live enrollment.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "authorities_for",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "dependency_complete_verifier_authority",
+      "description": "Bind a verifier only after every covered artifact can exist.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "covers_every_owner",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_delegated_entrypoint_authority",
+      "description": "Resolve one explicitly delegated bounded entrypoint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "project_pm_authoritative_entrypoints",
+      "description": "Project executable entrypoints from committed PM authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "authority_for_row",
+      "description": "Bind advisory verifier semantics to committed PM command authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "verification_obligation",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_advisory_runtime_path",
+      "description": "Drop malformed CE runtime locators while preserving PM command authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_linked_entrypoint_ids",
+      "description": "Split one proven artifact/entrypoint view into unique identities.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "claim_verification_obligation_id",
+      "description": "Reserve one verifier id without colliding with delivery facts.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_portfolio_llm_blueprint",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_plan_components",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_scope_advisory_for_task",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_authoritative_task_plan",
+      "description": "Project the non-negotiable PM task boundary into every CE overlay.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_deterministic_portfolio_plan",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_interface_seed",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_portfolio_task_read_context",
+      "description": "Bind readonly inputs to task-local or dependency-owned CE artifacts.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_go_entrypoint_package_topology",
+      "description": "Close executable Go package topology from PM-owned file authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_bind_portfolio_task_overlays",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_persist_immutable_blueprint_portfolio",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "query_project_completion_contract",
+      "description": "Read one exact immutable completion contract through the CE owner port.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "build_chief_engineer_blueprint_portfolio",
+      "description": "Build and immutably persist one advisory portfolio for PM tasks.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "project_chief_engineer_task_blueprint",
+      "description": "Project one portfolio task into ``generate_task_blueprint`` LLM shape.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_blueprint_portfolio_context",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_portfolio.py"
+    },
+    {
+      "type": "class",
+      "name": "_UnsafePortfolioStructuralRecoveryError",
+      "description": "Raised internally when a malformed payload cannot be relocated safely.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_delegated_artifact_roles",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_delegates_artifact",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_authorizes_artifact",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_unique_artifact_owner",
+      "description": "Repair only a wrong known owner when immutable PM authority is unique.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_hash",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_depth_artifact_split_upserts",
+      "description": "Normalize an unambiguous provider group-id reuse into an artifact split.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_rows",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_artifact_semantic_role",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_classify_interface_declaration",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_unwrap_provider_item_array",
+      "description": "Unwrap a provider's ``{\"item\": ...}`` encoding for known array fields.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_plan_array_field",
+      "description": "Flatten only transport-nested members of a known task-plan array.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "append_leaf",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_behavior_invariant_row",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_append_unique_behavior_invariant",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_expand_obligation_refs",
+      "description": "Expand one provider group-id reference into canonical row ids.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_shared_artifact_obligation_groups",
+      "description": "Split safe provider artifact group labels into unique obligation ids.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_inert_artifact_terminal_separators",
+      "description": "Recover one inert directory notation, never active artifact authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_lifted_task_plan",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_lifted_task_plan_is_redundant",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_chief_engineer_portfolio_tool_arguments",
+      "description": "Relocate known CE portfolio members without inventing semantic content.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_artifact_from_row",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_entrypoint_from_row",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_behavior_from_row",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_replace_by_id",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_introduces_duplicate_value",
+      "description": "Whether an incremental patch increases an already-duplicate value count.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_assert_upsert_identity_immutable",
+      "description": "Reject semantic patches that repurpose an existing obligation id.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_semantic_sections",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_candidate_effective_obligation_view",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_invalid_behavior_obligation_references",
+      "description": "Locate residual references without changing the candidate or authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_invalid_behavior_task_references",
+      "description": "Name task identities separately from interface consumer kinds.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_diagnosed_recipe_rows",
+      "description": "Bind owner-issued failure paths to the exact frozen collection and identity.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_compose_verification_recipe_rows",
+      "description": "Change only diagnosed recipe content; preservation is checked before server compilation.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_recipe_repair_diagnostics",
+      "description": "Explain new-argv alternatives without rewriting hash-bound old-argv facts.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "project_chief_engineer_semantic_repair_provider_context",
+      "description": "Project the exact, minimal base state required to author a safe patch.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_chief_engineer_semantic_repair_provider_patch",
+      "description": "Bind provider-authored semantic content to active server CAS authority.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "compose_chief_engineer_semantic_repair",
+      "description": "Compose one typed patch, preserving unrelated schema-valid sections.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "persist_chief_engineer_semantic_repair_candidate",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "load_chief_engineer_semantic_repair_candidate",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "build_chief_engineer_semantic_repair_patch_schema",
+      "description": "Return diagnosis-scoped provider schema for typed semantic repair.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_semantic_repair.py"
+    },
+    {
+      "type": "function",
+      "name": "_job_token_target_files",
+      "description": "Bind one JobToken to immutable task-owned artifact paths.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_task_blueprint.py"
+    },
+    {
+      "type": "function",
+      "name": "generate_task_blueprint",
+      "description": "Generate and persist a task-level Chief Engineer blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_task_blueprint.py"
+    },
+    {
+      "type": "function",
+      "name": "get_blueprint_status",
+      "description": "Return the latest persisted Chief Engineer blueprint status for a task.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service/_task_blueprint.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

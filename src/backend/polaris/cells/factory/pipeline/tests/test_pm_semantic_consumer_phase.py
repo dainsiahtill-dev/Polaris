@@ -156,11 +156,10 @@ def test_semantic_admission_to_ce_handoff_preserves_required_ownership(tmp_path)
         project_chief_engineer_task_blueprint,
         validate_director_handoff_from_payload,
     )
-    from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import (
-        _command,
-        _payload,
-        _task,
+    from polaris.cells.chief_engineer.blueprint.public.tests.portfolio_payload_fixture import (
+        synthetic_task_intent_portfolio_payload as _payload,
     )
+    from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import _command, _task
 
     tasks = _tasks()
     tasks[0]["id"] = "TASK-A"

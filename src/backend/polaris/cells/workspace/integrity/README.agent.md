@@ -21,7 +21,6 @@ Workspace legality checks, docs bootstrap safety, and file/change integrity prim
 ## Depends On
 
 - `policy.workspace_guard`
-- `runtime.projection`
 - `storage.layout`
 
 ## State Ownership
@@ -69,3 +68,7 @@ Workspace legality checks, docs bootstrap safety, and file/change integrity prim
 - `tests/test_workspace_policy_guard.py`
 - `tests/test_hyper_opt.py`
 
+
+## Read ownership (2026-10-26)
+
+Workspace state JSON and the existing tui_runtime.md title are read by this owner through KernelFileSystem. Public read_readme_title(workspace) is read-only and has one implementation; runtime.projection retains a compatibility alias to it. This creates no new model tool or file permission. Missing/invalid data and path-security behavior retain their tested contracts.

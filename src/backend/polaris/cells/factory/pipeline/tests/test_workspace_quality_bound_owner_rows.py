@@ -375,6 +375,11 @@ def test_normal_exact_numeric_binding_never_mutates_an_external_numeric_alias(wo
         subject="Different unbound logical task", metadata={"external_task_id": str(owner["id"])}
     )
     before = _facts(workspace)
+    before_bytes = {
+        str(path.relative_to(workspace)): path.read_bytes()
+        for path in (workspace / ".polaris/runtime").rglob("*")
+        if path.is_file()
+    }
     with pytest.raises(RuntimeError):
         quality._claim_workspace_quality_repair_attempt(
             OrchestrationStageExecutor(workspace), run=_run(), repair_attempt=1, target_files=["src/a.py"]
@@ -382,6 +387,11 @@ def test_normal_exact_numeric_binding_never_mutates_an_external_numeric_alias(wo
     current = next(row for row in service.list_observable_task_rows() if row["id"] == alias["id"])
     assert not current["metadata"].get("factory_run_id"), "numeric owner lookup bound a different logical row"
     assert _facts(workspace) == before
+    assert {
+        str(path.relative_to(workspace)): path.read_bytes()
+        for path in (workspace / ".polaris/runtime").rglob("*")
+        if path.is_file()
+    } == before_bytes
 
 
 @pytest.mark.parametrize("fault", ["none", "missing", "old_row", "incomplete"])

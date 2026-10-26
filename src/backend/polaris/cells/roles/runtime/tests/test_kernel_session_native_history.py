@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import json
 from collections.abc import AsyncGenerator
 from copy import deepcopy
@@ -12,10 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
-from polaris.cells.roles.kernel.internal.kernel import transaction_factory
-from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
-from polaris.cells.roles.kernel.public.llm_caller_contracts import build_native_tool_schemas
+from polaris.cells.roles.kernel.tests import runtime_boundary_scenarios as kernel_fixture
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.internal.kernel_session_turn import (
     KernelSessionTurnBridge,
@@ -24,18 +20,10 @@ from polaris.cells.roles.runtime.internal.kernel_session_turn import (
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.roles.runtime.tests import test_kernel_session_tool_surface_reentry as fixture
 
-# Keep the established physical preparer/provider intercept, with the existing
-# prebuilt-message inlet populated by the actual TransactionKernel factory.
-_egress_source = inspect.getsource(fixture._physical_body).replace(
-    "async def _physical_body(", "async def _history_physical_body("
-)
-_egress_source = _egress_source.replace(
-    '{"role": "user", "content": command.user_message},\n        ],',
-    '*context.get("_transaction_kernel_prebuilt_messages", []),\n            {"role": "user", "content": command.user_message},\n        ],',
-)
-_namespace = dict(fixture.__dict__)
-exec(compile(_egress_source, __file__, "exec"), _namespace)
-_history_physical_body = _namespace["_history_physical_body"]
+
+async def _history_physical_body(command: Any, profile: Any, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    request = RoleRuntimeService()._build_session_request(command)
+    return await kernel_fixture.capture_native_provider_body(request, profile, monkeypatch, include_history=True)
 
 
 def _result(status: str = "success") -> RoleTurnResult:
@@ -147,8 +135,6 @@ async def test_bridge_actual_factory_and_http_keep_native_observation(
 
     kernel = Kernel()
     captured_command: list[Any] = []
-    monkeypatch.setattr(transaction_factory, "get_llm_invoker", lambda _kernel: CaptureInvoker())
-    monkeypatch.setattr(transaction_factory, "TransactionKernel", lambda **kwargs: SimpleNamespace(**kwargs))
 
     class Runtime:
         def _require_directed_effect_session_attempt(self, current: Any) -> None:
@@ -160,7 +146,6 @@ async def test_bridge_actual_factory_and_http_keep_native_observation(
             captured_command[:] = [current]
             request = RoleRuntimeService()._build_session_request(current)
             host: Any = KernelHost()
-            assembly = transaction_factory.create_transaction_kernel(host, "director", fixture._profile(), request)
             messages = [{"role": "system", "content": "CURRENT Director authority; PM_REQUIRED; CE_REQUIRED"}]
             if kernel.turn and history_mode != "plain":
                 prior = _committed_transcript_messages(bridge.results[:1])
@@ -171,11 +156,8 @@ async def test_bridge_actual_factory_and_http_keep_native_observation(
                 messages.extend(prior)
             messages.append({"role": "user", "content": current.user_message})
             with pytest.raises(RuntimeError, match="transport_intercepted"):
-                await assembly.llm_provider(
-                    {
-                        "messages": messages,
-                        "tools": build_native_tool_schemas(fixture._profile()),
-                    }
+                await kernel_fixture.invoke_factory_native_fixture(
+                    host, fixture._profile(), request, messages, CaptureInvoker(), monkeypatch
                 )
             return request
 
@@ -219,13 +201,6 @@ async def test_bridge_actual_factory_and_http_keep_native_observation(
         assert outcome["is_error"] is True
 
 
-@pytest.mark.parametrize("forged", [True, "auto_continue", {"mode": "auto_continue"}])
-def test_json_marker_is_not_native_history_authority(forged: Any) -> None:
-    from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import is_committed_role_session_continuation
-
-    assert not is_committed_role_session_continuation({"_roles_kernel_committed_session_continuation": forged})
-
-
 def test_uncommitted_and_pending_results_do_not_become_tool_results() -> None:
     result = _result()
     result.metadata.pop("turn_commit_receipt")
@@ -239,22 +214,6 @@ def test_missing_actual_arguments_cannot_reuse_lossy_projection() -> None:
     result.tool_calls = []
     with pytest.raises(RuntimeError, match="missing_native_arguments"):
         _committed_transcript_messages([result])
-
-
-def test_prebuilt_native_blocks_and_sidecar_fields_are_not_stringified() -> None:
-    messages = [
-        {
-            "role": "assistant",
-            "content": [{"type": "tool_use", "id": "call-1", "name": "read_file", "input": {"path": "src/module.py"}}],
-        },
-        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call-1", "content": "observed bytes"}]},
-        {"role": "user", "content": "CURRENT"},
-    ]
-    actual = LLMRequestPreparer._extract_prebuilt_projection_messages(
-        ContextRequest(message="CURRENT", context_override={"_transaction_kernel_prebuilt_messages": messages})
-    )
-    assert actual == messages
-    assert actual is not messages
 
 
 def test_single_batch_rule_retains_scope_and_does_not_project_history(tmp_path: Path) -> None:

@@ -1,48 +1,54 @@
 # Polaris 全仓收敛进展（2026-10-26）
 
-当前阶段：技术债务清理与接口收敛，尚未进入全仓验收或冻结。新 Bench 继续暂停。全部源码修改在主仓 main；没有创建新分支、修改原始目标项目或改写历史失败。
+状态：继续在 main 清理技术债务，尚未完成全仓资格审查或冻结。真实模型的新 Bench 运行数为0，原目录120项尚未重启；v28 L1-01目标目录仍不存在。历史FAILED／CANCELLED／UNKNOWN及原始失败记录均保留。
 
-## 已有实现与限定验证
+## 当前主线已核对
 
-- 存储与工具权限：默认项目 `.polaris/runtime`，RAM disk 显式启用；SQLite 创建前检查 workspace／namespace。权限核心消费 host 注入的只读策略，RoleKernel 保留真实 Gateway 适配。独立冷环境406 PASS、1个既有平台 SKIP，另4项 host 反证通过；通用权限 HTTP 仍只提供 RBAC 判断。
-- 显式空权限：RoleAgent 的 `[]` 不再被当作 `None` 注册额外工具。原2失败保留，修后相邻27 PASS、独立6 PASS。KernelOne 原有空集合语义没有改变；无效果 handler 不能证明真实工具执行。
-- 底层边界：协议解析直接复用 KernelOne；浮点 deadline 经 public 边界传递，不扩大不足0.1秒的剩余租约。Root 相邻335 PASS。效果身份与不可变 payload 依原 owner 拆分，旧类型／序列化仍有独立限定证据。
-- 预算与配置：BudgetService／LLMConfigService 提供确定性服务，CFO／HR RoleAgent 留在 roles.runtime，保留工具、消息及生命周期。CFO Root与独审各109 PASS；HR Root311 PASS、独审限定66 PASS，并核对179个原测试节点一一保留。三个旧低层 Agent 导出路径明确迁移，没有留下反向 lazy fallback。此次不是完整 host/provider 验收。
-- 配置路径：原逻辑取整个绝对路径中第一次出现的子串，嵌套项目可误归主仓；改为最近的完整物理目录组件，正确处理 `.polaris/runtime`。10项新反例和相邻共212 PASS、128条既有 warning；真实私有 KFS 写入和冷读通过，旧 `workspace/runtime` 写入仍被拒绝。独审15 PASS，真实私有 KFS 冷恢复及有限反例通过。Windows 实机未验证。
-- 测试真实性：RunLedger 的假 owner outcome 改为真实 policy／DEO／TaskRuntime／TurnLedger／committer 交接。联合175 PASS、Root复验108 PASS；受控 provider envelope、角色资料与只读 I/O 输入仍是夹具，不算正式 Native 证据。
-- TaskRuntime：claim 证据归属回到已有任务 owner，Director completion 与 Factory receipt revalidation 使用不同固定用途。58项 owner／消费者与71项相邻通过；独审37 PASS及独立冷恢复／并发反证通过。终态 receipt 核对不授予新执行权；协作锁可能产生空 lock 文件，不能宣称物理零写入。
-- 当前源码发现：退役3份普通导入不会选择的影子文件；SourceLocator 核对实际 package／MRO／定义，原测试定义及断言保留。`.source` 被纳入现有扫描范围，140 PASS与独立41个额外输入通过；只有 `_repository_class.source` 的执行 loader 已确认，另一份实际加载仍为 UNKNOWN。
-- 生成资料：正式生成器已在当时冻结输入上更新 FinOps、LLM Control Plane、RoleRuntime 三份 descriptor，并核对真实 receipt、输入 hash 与其他资产不变。实际并集115份资产，其中114份生产 pack、1份 fixture；三份生产 descriptor 变化，其余111份生产 pack未变。随后配置 helper及精确测试声明修改后，FinOps／LLM pack已另起 round2 完成刷新；TR pack仍等待恢复修复冻结。静态生成不证明语义召回或项目交付。
+当前正式HTTP／UI／chat／CLI，以及取消／恢复共同进入已有EngineeringRunService。旧Factory、RoleRuntime及旧角色执行总控的写入口明确拒绝；新主循环仍复用KernelOne模型调用、最终native request捕获、ContextOS审计、KFS与进程沙箱。不能把仍可被trusted Python导入的旧类当成正式支持入口，也不能据此声称旧源码已全部删除。
 
-补充：FactStream 全部公开测试及 trace 测试本次183 PASS，19份相关源码／测试前后 hash 不变；覆盖 payload 历史／精确查找／隔离、guarded append 和 workspace bootstrap。它不是新工程任务或 Native 验收。
+ContextOS与简单历史上下文哪种更好，本轮没有对照结论。上述调用路径只证明已核对的底座复用与审计能力，不证明全部旧上下文策略都被新主循环消费，更不证明更可靠／更便宜。长期记忆未纳入本轮。
 
-## 当前正在关闭的真实缺陷
+## 本轮真实闭合的边界
 
-1. **输出丢尾**：真实空行与内部 EOF 同用空字符串。内部 EOF 改为 `None`，保留空行数据；独审旧4 FAIL／3 PASS、修后7 PASS，另5项真实双流实验通过。历史第一次物理丢失缺少原始管道证据，仍为 UNKNOWN。相邻111项中4项旧失败保留，不能说整个进程模块已通过。
-2. **超时后进程存活**：真实 `subprocess.TimeoutExpired` 未被正确处理；逻辑 `TIMED_OUT` 又令 terminate／kill 短路。真实私有子进程已复现并回收；修复必须以 poll／wait 确认物理退出，不能用逻辑终态冒充资源释放。正在修改现有 KernelOne process／runtime 边界。
-3. **任务旧身份恢复**：旧调用者可能重开被新会话领取的任务。正在现有 owner 锁与 CAS 内加入期望 binding 比较，保护合法恢复。另已复现 binder 从 raw row 读取 projection-only 字段导致重复追加恢复事实，正在同一 owner 修正严格事实读取；不以额外事件或重试掩盖问题。
-4. **剩余架构边界**：Factory 对 CE 私有 authority issuer 的2处生产引用、跨 Cell 私有测试依赖、未声明依赖／效果、完整 SCC及占位产物质量语义仍未关闭。不能用公开改名、测试豁免或扩大 cycle allowlist 消掉问题。
+- **存在但损坏不再当缺失**：TaskRuntime复用KernelOne guarded regular snapshot，一次读取，损坏UTF8／JSON、不可读、非regular明确失败；真正缺失的数字外部alias仍能合法推进。默认旧读取路径不被全局替换。CRLF／CR真实CAS兼容已验。Root当前绑定／session／失败结算联合160 PASS，相关源码hash前后不变。
+- **晚绑定不能丢执行身份**：新raw-row路径曾丢外层run，内层仍含真实run，导致失败任务不能释放资源。旧／新真实对照确认是本次producer回归；纯事件投影恢复已捕获的执行run，无session锁倒序、无Ledger跳过规则。原9个失败节点已逐个通过。失败任务可以closed／release=true，passed仍为false。
+- **真实owner替代手写正例事实**：文件预写拒绝通过真实DEO、物理mutation、TurnLedger和canonical committer产生V3事实／receipt；跨Cell测试只消费命名test scenario与公共观察值。Root30 PASS，非作者独审30 PASS。非法范围的模块路径含明确synthetic policy输入，不证明生产preview会放行；另真实Gateway／PolicyGuard负控拒非法且字节不变、正控合法修改有实际receipt。故意伪造的负例不返回真实commit credit。
+- **旧测试不复活旧写入口**：formal15保留身份、路径、防伪、异常与参数断言，fixture改为明确合成历史记录，经真实持久序列化／PM binding、cold read_only和显式CE技术工具检查。新配对测试先验证旧POST真实410且文件、SQL、设置、provider都无effects，再经当前正式Engineering HTTP使用真实write_file与实际Python文件内容断言验证，达accepted且同request重复保持同ID／deadline。Root联合54 PASS；模型仅ScriptedProvider，不算真实LLM或Bench成功。
+- **测试本身的债务也清理**：publisher fixture保留真实TaskRuntime方法，只替换最底层NATS transport为record/no-send，不伪造published=true。随后移除35个unused绑定与1条多余noqa，修8处真实typing输入／守卫；39个测试名、签名、参数和旧断言保留。Root48 PASS，Ruff／format／mypy通过，另有非作者AST／动态消费者独审无发现。
 
-5. **队列满后丢尾与缺 EOF**：Root真实私有子进程输出601行、exit0，500项队列满后pump提前退出；stream只收到500行并持续等待，尾部100行（含TAIL_OK）仍在管道。原进程已回收，相关AST前后稳定。仅强制一种合法调度，不证明历史频率；该机制尚未修复，不能调大容量掩盖。
+此前存储／权限406 PASS＋1既有平台SKIP、空权限边界27／独审6、CFO109、HR311、FactStream公开历史183＋origin22、Source发现140与独立41输入等仍保留其原版本与范围。它们不相加成整仓覆盖，也不自动扩大成项目交付。
 
-## 全仓状态与停止条件
+## 资源底座：限定范围独审已接受
 
-最新完整严格扫描快照 `Root-after-owner-metadata-correction-hard-fail.json`：756条事件，含276跨私有引用、412依赖声明、67效果声明、1循环事件；schema和测试权限声明错误均为0。此前765条含 Root 写错一条测试效果 glob所引出的声明及相关错误，已改为精确 token。765／759／762旧快照保留。事件并非独立根因，新增 owner／扫描覆盖也会改变数量，净变化不能解释成交付提升。
+进程模块曾真实复现空行／EOF混淆、500队列满后丢尾且不结束、真正TimeoutExpired未处理、父进程退出但子代仍持pipe／无pipe存活、停止与迟到wait的状态覆盖。候选复用现有KernelOne组协调：official spawn隔离并绑定group、唯一pipe reader／自然EOF、500有界背压与单cursor续传，保原同步communicate分支。
 
-未完成：已知缺陷关闭、全仓必要静态与行为回归、冻结候选独立审查、新隔离原始 L1-01 零外部代修完整交付／资源闭合、其余119项串行评测与逐项人工质量验收。v28 L1-01 目录仍不存在。主 backend、NATS、frontend 原 PID／birth 保持，健康与 Launcher 均200；没有重启服务。
+独审又发现drain阶段不能冒充已接受stop：信号被拒后自主exit2曾被错标CANCELLED。新候选以停止接受与终态提交线性化修正，另外修复真实Popen stdin.closed布尔property调用错误。作者联合180 PASS并保存XML；非作者原拒signal反例复跑转绿、独立15控制通过，Root已核180 XML与当前3源pins，接受该限定模块范围。UNKNOWN close／lookup连续性另由ExecutionFacade保留原owner句柄，真实同ID合法后续清理joint已进入该组；synthetic port测试不能独自证明物理清理。
 
-## 证据入口
+进程证据只证明受控spawn组无活成员、leader reap与pipe EOF；harness／subreaper waitpid单列，不宣称产品全树reap或跨组逃逸containment。原被拒候选、竞态RED和所有首次失败保留。
 
-私有根 `.polaris/audits/technical-debt-clearance-20261025/`：
+## 后续收敛快照
 
-- `Root-convergence-current-state.json`：可延续当前状态、文件 owner、开放问题。
-- `storage-permission-review/fix-round1/`、`role-agent-empty-allowlist/`：存储／权限首失败与复测。
-- `cfo-owner-split-fix/`、`hr-owner-split-fix/`、`Root-config-workspace-inference/`：拆分、旧节点保留、真实 KFS 与推断反例。
-- `source-artifact-coverage/`、`canonical-shadow-fix/`、`tr-descriptor-producer/`：源码发现、影子删除与实际类表面。
-- `run-ledger-test-boundary-audit/implementation/`、`task-runtime-claim-evidence-owner/`：真实 owner 交接和独审。
-- `command-output-tail-audit/independent-review/report.json`、`process-strict-types-fix/`：EOF独审与超时物理反例。
-- `factory-wq-bound-owner-fix/`：恢复竞争与重复 binding 首失败。
-- `Root-owner-pack-refresh/`、`Root-owner-context-projections/`：生成前后资产、实际 receipt、工作上下文与 inventory 分类纠正。
-- `Root-process-output-capacity/counterexample-v2.json`：601行实际进程输出与EOF反例。
+最新诊断为491条事件（205跨私有、219依赖、66效果、1循环事件，schema／test authority为0），不是491个独立缺陷，也不证明交付率。Root登记了30个此前漏归属的现有Cell路径，补齐Bootstrap实际24个装配依赖；没有扩大生产权限或cycle allowlist。新增历史夹具接口只返回公共CE结果／输入数据，QA与深度消费者Root联合57 PASS，旧HTTP准入没有恢复。
 
-各组测试存在重叠，不相加作全仓覆盖数。组件实验不替代实际 LLM 请求、模型费用、Native／Bench 结果。未知保持 UNKNOWN；长期记忆不在本次范围。
+两个测试边界桶20／37处私有访问迁移已获非作者限定审阅，仍保留26／40个旧失败，不能把静态归零当整个suite通过；当前正对1条过时质量slice断言和第一组typing旧债逐项修复。workspace／projection首条真实反向引用已获Root197 PASS与非作者44 PASS限定接受；同当前catalog的源码对照证明只移除该真实边，元数据已同步且反向依赖保留，两Cell pack已刷新。完整范围仍未冻结，真实新Bench仍为0。
+
+## 全仓仍未清零
+
+最新完整严格扫描 `Root-after-owner-closures-current-hard-fail.json` 为741条事件：264跨私有引用、409依赖声明、67效果声明、1循环事件；schema及test authority错误为0，扫描输入前后未变。其中生产跨私有引用为0；依赖声明297处属生产、112处属测试，尚需逐项核对，不能只补声明换绿。事件不是独立缺陷数，净减少不等于交付能力提高。旧756／765／759／762快照保留，没有扩大baseline或cycle allowlist。
+
+尚未完成：PM9与其余旧fixture的当前owner／历史边界迁移、剩余跨私有测试依赖、缺失声明／效果、完整SCC、必要backend／frontend／KernelOne回归、全候选独立审查与冻结、真实模型隔离L1-01零外部代修闭环、原120逐项运行及人工质量检验。不得将安全失败结算算成成功交付。
+
+## 证据与下一步
+
+私有证据根 `.polaris/audits/technical-debt-clearance-20261025/`：
+
+- `Root-convergence-current-state.json`：可延续当前状态与开放问题。
+- `Root-current-module-verification/latest-{binding,file-prewrite,formal}.json`：Root160／30／54实际命令、XML及输入pins。
+- `factory-wq-bound-owner-fix/independent-binding-review/`、`late-binding-owner-audit/producer-fix/`：损坏行反例、strict修复、旧／新producer真对照。
+- `file-prewrite-owner-test-fix/independent-review/`：真实owner与明确synthetic上游的适用边界。
+- `current-vs-legacy-entry-reachability/`及其`formal15-e1/`：入口可达性、逐断言迁移、真实持久bytes和新入口推进。
+- `Root-stage-fixture-cleanup/`：48、静态与非作者审阅。
+- `process-group-stream-convergence/independent-review/`、`process-stop-cause-linearization-fix/`、`execution-facade-unknown-lookup/`：被拒版本／新候选／UNKNOWN引用连续性；当前限定接受见`process-stop-cause-linearization-fix/Root-acceptance.json`。
+- `Root-owner-pack-refresh/`、`Root-test-owner-grants/`：精确资产与test-only声明；round4已刷新当前TR／Kernel／Adapters／RunLedger四份descriptor，输入hash和真实receipt核对，其他111份并集资产不变。不证明召回／交付，不扩大生产权限。
+
+继续先关闭当前模块与相邻接口、完成全仓必要接受标准并冻结，再按唯一启动者串行跑原120项；每项由Root检查真实产物质量。主backend／NATS／frontend受保护，未重启、未改主workspace；源修改与临时模块测试不等于main服务已部署该版本。模型账单、真实provider质量与完整请求成本未在本轮量化，未知保留UNKNOWN。

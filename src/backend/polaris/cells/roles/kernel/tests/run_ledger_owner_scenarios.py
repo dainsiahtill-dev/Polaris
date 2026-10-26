@@ -1,7 +1,9 @@
 """Kernel-owned synthetic scenarios, outside every production import surface.
 
-Decoded inputs/read responses are explicit fixture controls. Policy, TaskRuntime,
-DEO, mutation, recovery and durable owner commit use their original owners.
+Decoded inputs/read responses are explicit fixture controls. File-prewrite
+policy/snapshot inputs deliberately reach physical rejection; separate controls
+exercise production policy. TaskRuntime, DEO, mutation, recovery and durable
+positive owner commits use their original owners.
 Returned public values are observations, never Native qualification or authority.
 Real module facts belong solely to synthetic experiments, not Native or Bench
 project delivery receipts. External engineering reports never enter product SSoT.
@@ -10,13 +12,25 @@ project delivery receipts. External engineering reports never enter product SSoT
 from __future__ import annotations
 
 import asyncio
+from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypedDict
 
 from polaris.cells.control_plane.run_ledger.public import build_tool_call_lifecycle_receipt
 from polaris.cells.control_plane.run_ledger.public.ledger import stable_hash
+from polaris.cells.director.runtime.public import (
+    DirectorEffectPolicyRevalidationResultV1,
+    DirectorEffectTargetStateEvidenceV1,
+    hash_directed_effect_policy_revalidation_evidence,
+)
+from polaris.cells.director.runtime.public.directed_effect_policy_contracts import (
+    hash_directed_effect_target_state_components,
+)
 from polaris.cells.events.fact_stream.public import (
+    AppendFactEventCommandV1,
     BootstrapFactStreamWorkspaceCommandV1,
+    FactStreamProvenanceV1,
+    append_fact_event,
     bootstrap_fact_stream_workspace,
     fact_stream_bootstrap_streams,
 )
@@ -51,6 +65,11 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecisionKind,
     TurnId,
 )
+from polaris.cells.roles.kernel.tests.test_directed_effect_lifecycle import (
+    _candidate,
+    _job_restriction_evidence,
+    _RecordingPolicyPort,
+)
 from polaris.cells.roles.profile.public.service import RoleProfile, RoleToolPolicy
 from polaris.cells.runtime.task_runtime.public import (
     BindRuntimeTaskToFactoryRunCommandV1,
@@ -62,9 +81,25 @@ from polaris.cells.runtime.task_runtime.public import (
     settle_task_runtime_execution_attempt_typed,
 )
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.storage import resolve_workspace_runtime_identity
 
 
-def claim_synthetic_attempt(workspace: str) -> TaskRuntimeExecutionAttemptIdentityV1:
+class _OwnerCommitInputs(TypedDict):
+    workspace: str
+    run_id: str
+    task_id: str
+    transition_id: str
+    ledger: TurnLedger
+    result: dict[str, Any]
+    completion_status: str
+    session_id: str
+
+
+def claim_synthetic_attempt(
+    workspace: str,
+    *,
+    factory_run_id: str | None = None,
+) -> TaskRuntimeExecutionAttemptIdentityV1:
     """Create one actual private attempt using public FactStream/TaskRuntime."""
     bootstrap_fact_stream_workspace(
         BootstrapFactStreamWorkspaceCommandV1(
@@ -75,6 +110,15 @@ def claim_synthetic_attempt(workspace: str) -> TaskRuntimeExecutionAttemptIdenti
     )
     service = TaskRuntimeService(workspace)
     task_id = int(service.create_task_row(subject="synthetic RunLedger owner handoff")["id"])
+    if factory_run_id is not None:
+        binding = bind_runtime_task_to_factory_run(
+            BindRuntimeTaskToFactoryRunCommandV1(
+                workspace=workspace,
+                task_id=str(task_id),
+                factory_run_id=factory_run_id,
+            )
+        )
+        assert binding.ok, binding
     claim = service.claim_execution(
         task_id,
         worker_id="worker",
@@ -216,7 +260,7 @@ async def produce_readonly_owner_case(
         native_tool_call_envelopes=envelopes,
         provider_response_hash="b" * 64,
     ).to_dict()
-    args = {
+    args: _OwnerCommitInputs = {
         "workspace": str(root),
         "run_id": attempt.run_id,
         "task_id": attempt.external_task_id,
@@ -493,6 +537,469 @@ async def produce_failed_cli_owner_case(root: Path) -> dict[str, Any]:
         "commit_receipt": durable.receipt,
         "sealed_turn": durable.sealed_turn,
     }
+
+
+class _FilePolicyInputs(_RecordingPolicyPort):
+    """Synthetic policy inputs; physical target observation is real and KFS-bound.
+
+    The production preview rejects an invalid range before physical execution.
+    This fixture deliberately admits it to exercise the editing owner's typed
+    rejection and its canonical Kernel commit, without claiming policy acceptance.
+    """
+
+    def __init__(self, root: Path) -> None:
+        super().__init__(events=[])
+        self._filesystem = KernelFileSystem(str(root), get_default_adapter())
+
+    async def revalidate(self, request: Any) -> DirectorEffectPolicyRevalidationResultV1:
+        snapshot = request.bound_snapshot.snapshot
+        baseline = snapshot.baseline_target_state_evidence
+        content_hash = sha256(self._filesystem.workspace_read_bytes(baseline.target_path)).hexdigest()
+        target_hash = hash_directed_effect_target_state_components(
+            target_path=baseline.target_path,
+            exists=True,
+            before_content_hash=content_hash,
+            minimal_content_evidence=baseline.minimal_content_evidence,
+            agents_policy_hash=baseline.agents_policy_hash,
+            is_no_file_state=False,
+        )
+        target = DirectorEffectTargetStateEvidenceV1(
+            target_path=baseline.target_path,
+            exists=True,
+            before_content_hash=content_hash,
+            minimal_content_evidence=baseline.minimal_content_evidence,
+            agents_policy_hash=baseline.agents_policy_hash,
+            target_state_hash=target_hash,
+            is_no_file_state=False,
+        )
+        evidence_hash = hash_directed_effect_policy_revalidation_evidence(
+            status="allowed",
+            allowed=True,
+            error_code=None,
+            current_policy_version=snapshot.policy_version,
+            current_policy_hash=snapshot.policy_hash,
+            current_target_state_evidence=target,
+            current_normalized_operation_hash=snapshot.normalized_operation_hash,
+            target_observation_performed=True,
+        )
+        return DirectorEffectPolicyRevalidationResultV1(
+            status="allowed",
+            allowed=True,
+            error_code=None,
+            current_policy_version=snapshot.policy_version,
+            current_policy_hash=snapshot.policy_hash,
+            current_target_state_evidence=target,
+            current_target_state_hash=target_hash,
+            current_normalized_operation_hash=snapshot.normalized_operation_hash,
+            target_observation_performed=True,
+            current_evidence_hash=evidence_hash,
+        )
+
+
+async def _execute_file_owner_batch(
+    root: Path,
+    attempt: TaskRuntimeExecutionAttemptIdentityV1,
+    *,
+    arguments: dict[str, Any],
+    native_arguments: dict[str, Any],
+    turn: str,
+    batch_id: str,
+    call_id: str,
+    production_policy: bool = False,
+) -> tuple[TaskRuntimeExecutionAttemptIdentityV1, dict[str, Any], ToolInvocation, ToolBatch]:
+    """Execute real editing owners with explicit synthetic or production policy inputs."""
+    authority = create_task_runtime_execution_attempt_authority(attempt)
+    profile = RoleProfile(
+        role_id="director",
+        display_name="Synthetic Director",
+        description="No provider",
+        tool_policy=RoleToolPolicy(whitelist=["edit_blocks"], allow_code_write=True),
+    )
+    scope = ("src/a.txt",) if production_policy else ("src/",)
+    gateway = RoleToolGateway(
+        profile,
+        str(root),
+        session_id=attempt.session_id,
+        run_id=attempt.run_id,
+        task_id=attempt.external_task_id,
+        capability_scope=scope,
+        capability_token={
+            "token_id": "synthetic-file-prewrite",
+            "execution_envelope_hash": "a" * 64,
+            "capability_audit_ok": True,
+            "allowed_write_paths": list(scope),
+            "allowed_commands": [],
+        },
+    )
+    policy = create_director_effect_policy_snapshot_port(str(root)) if production_policy else _FilePolicyInputs(root)
+    invocation = ToolInvocation(
+        call_id=ToolCallId(call_id),
+        tool_name="edit_blocks",
+        raw_tool_name="edit_blocks",
+        arguments=arguments,
+        native_arguments=native_arguments,
+    )
+    definition = ToolBatch(batch_id=BatchId(batch_id), invocations=[invocation], serial_writes=[invocation])
+    allowed, refusal = gateway.check_tool_permission("edit_blocks", native_arguments)
+    assert allowed, refusal
+    candidate = _candidate(
+        attempt,
+        ordinal=0,
+        tool_call_id=call_id,
+        normalized_tool_name="edit_blocks",
+        normalized_arguments=tuple(sorted(arguments.items())),
+        target_path="src/a.txt",
+        target_before_content_hash=sha256(
+            KernelFileSystem(str(root), get_default_adapter()).workspace_read_bytes("src/a.txt")
+        ).hexdigest(),
+        turn_id=turn,
+        batch_id=batch_id,
+        allowed_paths=scope,
+    )
+    restrictions = _job_restriction_evidence(allowed_paths=scope)
+    if production_policy:
+        verdict = await DirectedEffectPolicyGuard(gateway, policy).evaluate_authoritative(
+            DirectedEffectAuthoritativePolicyGuardRequestV1(
+                invocation=invocation,
+                workspace=str(root),
+                inventory_ordinal=0,
+                execution_attempt=attempt,
+                turn_id=turn,
+                batch_id=batch_id,
+            )
+        )
+        assert verdict.status == "authorized", verdict
+        assert verdict.preflight is not None and verdict.snapshot is not None
+        assert verdict.authorization_binding is not None
+        assert verdict.current_job_token_restriction_evidence is not None
+        candidate = DirectedEffectLifecycleCandidateV1(
+            preflight=verdict.preflight,
+            snapshot=verdict.snapshot,
+            authorization_binding=verdict.authorization_binding,
+        )
+        restrictions = verdict.current_job_token_restriction_evidence
+    ready = DirectedEffectLifecycleService(policy_snapshot_port=policy).prepare_batch(
+        execution_attempt=attempt,
+        execution_attempt_authority=authority,
+        turn_id=turn,
+        batch_id=batch_id,
+        candidates=(candidate,),
+    )
+    assert ready.status == "ready", ready
+    prepared = ready.prepared_batch
+    assert prepared is not None
+    fences = create_directed_effect_fence_ports()
+    mutation = create_director_directed_effect_mutation_port(
+        workspace=str(root),
+        policy_snapshot_port=policy,
+        fence_consume_port=fences.consume,
+    )
+
+    async def reject_generic_execution(tool: str, _arguments: dict[str, Any]) -> Any:
+        raise AssertionError(f"synthetic file call escaped real mutation owner: {tool}")
+
+    runtime = ToolBatchRuntime(
+        executor=reject_generic_execution,
+        directed_effect_runtime=DirectedEffectRuntimeDependenciesV1(
+            policy_snapshot_port=policy,
+            fence_admin_port=fences.admin,
+            mutation_port=mutation,
+        ),
+        directed_effect_required=True,
+        directed_effect_execution_attempt=prepared.execution_attempt,
+        directed_effect_execution_attempt_authority=authority,
+        prepared_directed_effect_batch=prepared,
+        directed_effect_restrictions_by_call_id=((call_id, restrictions),),
+        directed_effect_dispatch_call_ids=(call_id,),
+    )
+    receipts = await runtime.execute_batch(definition, TurnId(turn))
+    return prepared.execution_attempt, receipts[0].to_dict(), invocation, definition
+
+
+def _file_owner_ledger(
+    root: Path,
+    attempt: TaskRuntimeExecutionAttemptIdentityV1,
+    batch: dict[str, Any],
+    invocation: ToolInvocation,
+    definition: ToolBatch,
+) -> TurnLedger:
+    ledger = TurnLedger(turn_id=batch["turn_id"])
+    ledger.record_invocation_batch(batch["batch_id"], [invocation])
+    ledger.record_decision(
+        TurnDecision(
+            turn_id=TurnId(batch["turn_id"]),
+            kind=TurnDecisionKind.TOOL_BATCH,
+            visible_message="Synthetic file owner result; no delivery claim",
+            tool_batch=definition,
+            finalize_mode=FinalizeMode.NONE,
+            domain="code",
+            metadata={
+                "native_tool_call_envelopes": [
+                    {
+                        "schema_version": "native_tool_call_envelope.v1",
+                        "index": 0,
+                        "call_id": str(invocation.call_id),
+                        "tool_name": invocation.tool_name,
+                        "arguments_hash": stable_hash(invocation.native_arguments),
+                    }
+                ]
+            },
+        )
+    )
+    return ledger
+
+
+def _commit_file_owner_batch(
+    root: Path,
+    attempt: TaskRuntimeExecutionAttemptIdentityV1,
+    batch: dict[str, Any],
+    invocation: ToolInvocation,
+    definition: ToolBatch,
+) -> outcome_commit.DurableTurnCommit:
+    """The existing committer alone creates the authoritative owner outcome."""
+    ledger = _file_owner_ledger(root, attempt, batch, invocation, definition)
+    return outcome_commit.commit_turn_result(
+        workspace=str(root),
+        run_id=attempt.run_id,
+        task_id=attempt.external_task_id,
+        transition_id=batch["turn_id"] + ":owner-commit",
+        ledger=ledger,
+        result={"batch_receipt": batch},
+        completion_status="failed" if batch["failure_count"] else "success",
+        failure_reason="Synthetic file result; not project acceptance" if batch["failure_count"] else None,
+        session_id=attempt.session_id,
+    )
+
+
+def _append_synthetic_corrupt_file_owner(
+    root: Path,
+    attempt: TaskRuntimeExecutionAttemptIdentityV1,
+    batch: dict[str, Any],
+    invocation: ToolInvocation,
+    definition: ToolBatch,
+    mutate: Callable[[dict[str, Any]], None],
+) -> None:
+    """Forge only a rejection fixture, never a positive owner commit or receipt.
+
+    Its unmodified input comes from the real ledger projection. The callback
+    preserves the original exact mismatches at the cold validation boundary.
+    """
+    ledger = _file_owner_ledger(root, attempt, batch, invocation, definition)
+    execution = outcome_commit._execution_from_result(ledger=ledger, result={"batch_receipt": batch})
+    outcome = ledger.to_turn_outcome(
+        run_id=attempt.run_id,
+        decision=ledger.final_decision,
+        execution=execution,
+    ).model_dump(mode="json", exclude={"commit_ref"})
+    original_hash = stable_hash(outcome)
+    mutate(outcome)
+    assert stable_hash(outcome) != original_hash, "synthetic negative requires an actual owner-input corruption"
+    turn = batch["turn_id"]
+    transition = "synthetic-corrupt-file-prewrite-transition"
+    provenance = FactStreamProvenanceV1(
+        workspace=str(root),
+        run_id=attempt.run_id,
+        task_id=attempt.external_task_id,
+        turn_id=turn,
+        transition_id=transition,
+    )
+    storage = resolve_workspace_runtime_identity(str(root))
+    append_fact_event(
+        AppendFactEventCommandV1(
+            workspace=str(root),
+            stream="roles.kernel.turn_outcomes",
+            event_type="turn_outcome_committed",
+            source="roles.kernel.transaction",
+            run_id=attempt.run_id,
+            task_id=attempt.external_task_id,
+            correlation_id=turn,
+            provenance=provenance,
+            strict_integrity=True,
+            idempotency_key=":".join(
+                (
+                    "synthetic-corrupt-file-owner",
+                    storage.token,
+                    attempt.run_id,
+                    attempt.external_task_id,
+                    turn,
+                    transition,
+                )
+            ),
+            payload={
+                "schema_version": "roles.kernel.turn_outcome_fact.v2",
+                "run_id": attempt.run_id,
+                "task_id": attempt.external_task_id,
+                "turn_id": turn,
+                "transition_id": transition,
+                "provenance": provenance.to_record(),
+                "storage_identity": storage.to_record(),
+                "session_binding": {"session_id": attempt.session_id},
+                "outcome": outcome,
+                "outcome_hash": stable_hash(outcome),
+            },
+        )
+    )
+
+
+async def produce_file_prewrite_owner_case(
+    root: Path,
+    *,
+    aliases: bool = False,
+    settle: bool = True,
+    mutate: Callable[[dict[str, Any]], None] | None = None,
+    expect_unchanged: bool = True,
+    factory_run_id: str | None = None,
+) -> dict[str, Any]:
+    """Observe physical rejection under synthetic policy inputs, never admission.
+
+    The default case uses the real canonical committer. ``mutate`` instead
+    creates an explicitly synthetic corrupt owner input, never a commit receipt.
+    """
+    attempt = claim_synthetic_attempt(str(root), factory_run_id=factory_run_id)
+    filesystem = KernelFileSystem(str(root), get_default_adapter())
+    filesystem.workspace_write_text("src/a.txt", "alpha\nbeta\n", encoding="utf-8")
+    filesystem.workspace_write_text("AGENTS.md", "# Synthetic file component workspace\n", encoding="utf-8")
+    arguments = {"file": "src/a.txt", "start": 7, "end": 9, "replace": ""}
+    native = {"file": "src/a.txt", "startLine": 7, "endLine": 9, "newText": ""} if aliases else dict(arguments)
+    attempt, batch, invocation, definition = await _execute_file_owner_batch(
+        root,
+        attempt,
+        arguments=arguments,
+        native_arguments=native,
+        turn="file-prewrite-turn",
+        batch_id="file-prewrite-batch",
+        call_id="file-prewrite-call",
+    )
+    public_commit = {}
+    if mutate is None:
+        durable = _commit_file_owner_batch(root, attempt, batch, invocation, definition)
+        public_commit = {
+            "outcome": durable.outcome,
+            "commit_receipt": durable.receipt,
+            "sealed_turn": durable.sealed_turn,
+        }
+    else:
+        _append_synthetic_corrupt_file_owner(root, attempt, batch, invocation, definition, mutate)
+    settled = None
+    if settle:
+        settled = settle_task_runtime_execution_attempt_typed(
+            SettleTaskRuntimeExecutionAttemptCommandV1(
+                workspace=str(root),
+                identity=attempt,
+                outcome="failed",
+                summary="Private file rejection; delivery failed",
+            )
+        )
+    if expect_unchanged:
+        assert filesystem.workspace_read_text("src/a.txt", encoding="utf-8") == "alpha\nbeta\n"
+    return {
+        "attempt": attempt,
+        "batch": batch,
+        "settled": settled,
+        "synthetic_owner_corruption": mutate is not None,
+        **public_commit,
+    }
+
+
+async def continue_file_edit_owner_case(
+    root: Path,
+    attempt: TaskRuntimeExecutionAttemptIdentityV1,
+) -> dict[str, Any]:
+    """Execute and commit the original legal next batch under the same owner."""
+    arguments = {"file": "src/a.txt", "blocks": "<<<< SEARCH\nbeta\n====\nBETA\n>>>> REPLACE\n"}
+    attempt, batch, invocation, definition = await _execute_file_owner_batch(
+        root,
+        attempt,
+        arguments=arguments,
+        native_arguments=dict(arguments),
+        turn="file-followup-turn",
+        batch_id="file-followup-batch",
+        call_id="file-followup-call",
+    )
+    durable = _commit_file_owner_batch(root, attempt, batch, invocation, definition)
+    return {
+        "attempt": attempt,
+        "batch": batch,
+        "outcome": durable.outcome,
+        "commit_receipt": durable.receipt,
+        "sealed_turn": durable.sealed_turn,
+    }
+
+
+async def produce_file_policy_guard_case(root: Path, *, legal: bool) -> dict[str, Any]:
+    """Production Gateway/PolicyGuard control, separate from synthetic policy inputs."""
+    attempt = claim_synthetic_attempt(str(root))
+    filesystem = KernelFileSystem(str(root), get_default_adapter())
+    filesystem.workspace_write_text("src/a.txt", "alpha\nbeta\n", encoding="utf-8")
+    filesystem.workspace_write_text("AGENTS.md", "# Synthetic policy component workspace\n", encoding="utf-8")
+    arguments = {
+        "file": "src/a.txt",
+        "start": 2 if legal else 7,
+        "end": 2 if legal else 9,
+        "replace": "BETA" if legal else "",
+    }
+    if legal:
+        attempt, batch, invocation, definition = await _execute_file_owner_batch(
+            root,
+            attempt,
+            arguments=arguments,
+            native_arguments=dict(arguments),
+            turn="file-policy-turn",
+            batch_id="file-policy-batch",
+            call_id="file-policy-call",
+            production_policy=True,
+        )
+        durable = _commit_file_owner_batch(root, attempt, batch, invocation, definition)
+        return {
+            "status": "authorized",
+            "batch": batch,
+            "outcome": durable.outcome,
+            "commit_receipt": durable.receipt,
+            "sealed_turn": durable.sealed_turn,
+        }
+    profile = RoleProfile(
+        role_id="director",
+        display_name="Synthetic Director",
+        description="No provider",
+        tool_policy=RoleToolPolicy(whitelist=["edit_blocks"], allow_code_write=True),
+    )
+    gateway = RoleToolGateway(
+        profile,
+        str(root),
+        session_id=attempt.session_id,
+        run_id=attempt.run_id,
+        task_id=attempt.external_task_id,
+        capability_scope=("src/a.txt",),
+        capability_token={
+            "token_id": "synthetic-file-prewrite",
+            "execution_envelope_hash": "a" * 64,
+            "capability_audit_ok": True,
+            "allowed_write_paths": ["src/a.txt"],
+            "allowed_commands": [],
+        },
+    )
+    before = {str(path): filesystem.workspace_read_bytes(str(path)) for path in root.rglob("*") if path.is_file()}
+    verdict = await DirectedEffectPolicyGuard(
+        gateway,
+        create_director_effect_policy_snapshot_port(str(root)),
+    ).evaluate_authoritative(
+        DirectedEffectAuthoritativePolicyGuardRequestV1(
+            invocation=ToolInvocation(
+                call_id=ToolCallId("file-policy-call"),
+                tool_name="edit_blocks",
+                raw_tool_name="edit_blocks",
+                arguments=arguments,
+                native_arguments=dict(arguments),
+            ),
+            workspace=str(root),
+            inventory_ordinal=0,
+            execution_attempt=attempt,
+            turn_id="file-policy-turn",
+            batch_id="file-policy-batch",
+        )
+    )
+    after = {str(path): filesystem.workspace_read_bytes(str(path)) for path in root.rglob("*") if path.is_file()}
+    return {"status": verdict.status, "error_code": verdict.error_code, "before": before, "after": after}
 
 
 def produce_task_boundary_case(workspace: Path, *, task_id: str, run_id: str, scenario: str) -> dict[str, Any]:

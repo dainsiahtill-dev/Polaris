@@ -26,6 +26,9 @@ depends_on:
 - director.execution
 - roles.runtime
 - runtime.execution_broker
+- roles.session
+- runtime.task_runtime
+- events.fact_stream
 subgraphs: []
 state_owners: []
 effects_allowed:
@@ -38,4 +41,14 @@ verification:
     public contracts.'
   smoke_commands: []
   tests: []
+  test_dependencies:
+  - path: polaris/delivery/cli/director/tests/test_console_host_e2e_smoke.py
+    depends_on:
+    - roles.kernel
+  - path: polaris/delivery/cli/director/tests/test_console_host_orchestrator.py
+    depends_on:
+    - roles.kernel
+  - path: polaris/delivery/cli/director/tests/test_orchestrator_e2e_integration.py
+    depends_on:
+    - roles.kernel
 generated_artifacts: []

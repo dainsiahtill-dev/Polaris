@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:43.207183Z",
-  "source_hash": "388d90e35f0163ae",
+  "generated_at": "2026-10-26T11:49:17.077955Z",
+  "source_hash": "f30696532fe79c90",
   "cell_id": "orchestration.pm_planning",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -1262,6 +1262,24 @@
     },
     {
       "type": "function",
+      "name": "_task_declares_ce_owned_topology",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_task_has_affirmative_topology_hint",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_go_text_match_is_negated",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
+    },
+    {
+      "type": "function",
       "name": "_go_task_is_verification_only",
       "description": "",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/domain_contracts.py"
@@ -1490,6 +1508,12 @@
     },
     {
       "type": "function",
+      "name": "_task_declares_ce_owned_topology",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
       "name": "_is_documentation_only_task_scope",
       "description": "",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
@@ -1612,6 +1636,12 @@
       "type": "function",
       "name": "_split_director_task_boundary_contracts_in_place",
       "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_bind_split_generated_outputs",
+      "description": "Conserve declarations through exact target partitions and validated DAGs.",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/gate.py"
     },
     {
@@ -1851,7 +1881,7 @@
     {
       "type": "function",
       "name": "_has_placeholder_or_manifest_only_acceptance",
-      "description": "",
+      "description": "Check each weak-gate match in its local clause, including its polarity.",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
     },
     {
@@ -1895,6 +1925,24 @@
       "name": "_fallback_file_evidence_path_for_scope",
       "description": "",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/primitives.py"
+    },
+    {
+      "type": "function",
+      "name": "_literal_verifier_input",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/verification_readiness.py"
+    },
+    {
+      "type": "function",
+      "name": "verification_operand_readiness_diagnostics",
+      "description": "Diagnose only exact declared producers; do not infer npm scripts or effects.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/verification_readiness.py"
+    },
+    {
+      "type": "function",
+      "name": "dependency_closure",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/quality_gate/verification_readiness.py"
     },
     {
       "type": "class",
@@ -2439,6 +2487,899 @@
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/wsjf.py"
     },
     {
+      "type": "function",
+      "name": "_resolve_pm_task_quality_mode",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_pm_task_quality_retries",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_domain_autofix_model_retry_required",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_autofix_domain_coverage_critical_issues",
+      "description": "Return hard quality failures when PM domain coverage synthesis is too broad.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_quality_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_quality_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_contains_pm_prompt_leakage",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_count_normalized_pm_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_autofix_pm_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_count_real_pm_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_quality_autofix_synthesized_domain_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_count_pm_quality_critical_issues",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_quality_candidate_rank",
+      "description": "Rank PM retry candidates by delivery value, not raw task count.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_parse_failed_pm_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_should_promote_pm_quality_candidate",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_looks_like_placeholder_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_task_paths",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_docs_scope_allowed",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_evaluate_pm_task_quality",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_pm_json_retry_prompt",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_domain_retry_guidance",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_pm_quality_retry_prompt",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_engine_config",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_measurable_acceptance_anchor",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_task_text_list",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_pick_task_scope_hint",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_infer_pm_task_phase",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "run_pm_planning_iteration",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_register_pm_traceability",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_handle_invoke_error",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/pipeline.py"
+    },
+    {
+      "type": "class",
+      "name": "GeneratedOutputV1",
+      "description": "Immutable expected artifact; carries no effect or write authority.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py",
+      "methods": [
+        {
+          "name": "from_dict",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PMArtifactContractResultV1",
+      "description": "Pure admission and inventory projection, never an execution verdict.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py",
+      "methods": [
+        {
+          "name": "ok",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_pm_artifact_relative_path",
+      "description": "Resolve only unambiguous workspace-relative plan paths, without touching disk.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_primary_source_targets",
+      "description": "Distinguish product inputs from test targets and declaration-only TypeScript.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_typed_verifiers",
+      "description": "Retain exact typed command/cwd rows; malformed rows confer no classification.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_direct_verifier_script",
+      "description": "Read a direct interpreter operand, never eval/shell text or incidental filenames.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_typescript_emitted_output_kind",
+      "description": "Recognize emitted code families without treating caches as emitted code.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_emitting_typescript_build",
+      "description": "Bind finite tsc options to the declared code/declaration/map output kind.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_declared_auxiliary_targets",
+      "description": "Classify declarations per owner; this does not prove effects or verifier success.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_pm_verification_commands",
+      "description": "Return non-authoritative diagnostics without silently losing bad rows.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "reject",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_generated_outputs",
+      "description": "Validate exact declaration shape without inventing or executing anything.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "reject",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_artifact_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_pm_artifact_contracts",
+      "description": "Single PM/Factory artifact, action, language and generated graph gate.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "reject",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "collect",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/artifact_contracts.py"
+    },
+    {
+      "type": "class",
+      "name": "PmProductPlanningInputV1",
+      "description": "Directive-bound advisory semantics, with no task or write authority.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "semantic_text",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "GeneratePmTaskContractCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetPmPlanningStatusQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PmTaskContractGeneratedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PmTaskContractResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PmPlanningError",
+      "description": "Raised when `orchestration.pm_planning` contract processing fails.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "parse_pm_product_planning_input",
+      "description": "Reject stale or malformed advisory data without relaxing planning gates.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_risk_category",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_risk_severity",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_risk_probability",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_risk_status",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_commitment_status",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_decision_status",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_risks",
+      "description": "Return a fail-closed risk register summary.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_risks",
+      "description": "List risk register entries with optional filters.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "register_risk",
+      "description": "Register a new risk register entry.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "update_risk_status",
+      "description": "Update the status of a risk register entry.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_commitments",
+      "description": "Return a fail-closed commitment register summary.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_commitments",
+      "description": "List commitments with optional filters.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "register_commitment",
+      "description": "Register a new commitment.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "update_commitment_status",
+      "description": "Update the status of a commitment.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_decisions",
+      "description": "Return a fail-closed decision register summary.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_decisions",
+      "description": "List governance decisions with optional filters.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "register_decision",
+      "description": "Register a governance decision.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "update_decision_status",
+      "description": "Update the status of a governance decision.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_project_status_report",
+      "description": "Build and publish the composed PM project status report.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_backlog_ranking",
+      "description": "Rank tasks by priority against the current contract.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_critical_path",
+      "description": "Compute the critical path from the current PM task contract.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_definition_of_ready_for_workspace",
+      "description": "Evaluate the current PM task contract against Definition-of-Ready rules.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/governance_service.py"
+    },
+    {
+      "type": "class",
+      "name": "PmTaskIntentError",
+      "description": "Structured feedback about an unqualified PM draft.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "PmTaskIntentV1",
+      "description": "Immutable text-backed product contract, with independent projections.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py",
+      "methods": [
+        {
+          "name": "from_payload",
+          "doc": ""
+        },
+        {
+          "name": "to_dict",
+          "doc": ""
+        },
+        {
+          "name": "to_task_contracts",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_text",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "_texts",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "_advisory",
+      "description": "Validate bounded JSON advice; nested suggestions never become capabilities.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "visit",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "_reserved_authority_field",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_advisory",
+      "description": "Classify undeclared JSON facts once; reject reserved direct authority.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "visit",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "_project",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_pm_task_intent",
+      "description": "Validate product acceptance, dependencies and explicit boundaries, then project.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "project_pm_task_intent_draft",
+      "description": "Retain correctable semantic omissions; admission still requires strict validation.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "is_pm_task_intent",
+      "description": "Recognize the declared semantic protocol; metadata alone is insufficient.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "pm_task_intent_payload",
+      "description": "Rebuild the product envelope without granting admission or execution.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_pm_task_intent_tasks",
+      "description": "Revalidate projected rows at public product admission; reject mixed protocols.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/public/task_intent.py"
+    },
+    {
+      "type": "class",
+      "name": "ProcessHandle",
+      "description": "Handle for a managed process.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py",
+      "methods": [
+        {
+          "name": "pid",
+          "doc": "Get process ID."
+        },
+        {
+          "name": "is_running",
+          "doc": "Check if process is running."
+        },
+        {
+          "name": "terminate",
+          "doc": "Terminate the process."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RoleModelSelection",
+      "description": "Resolved role model binding used for subprocess launch defaults.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PMService",
+      "description": "Service for PM (Project Manager) operations.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "handle",
+          "doc": "Get current process handle."
+        },
+        {
+          "name": "refresh_storage_layout",
+          "doc": "Refresh storage binding after workspace/runtime settings updates."
+        },
+        {
+          "name": "rebind_settings",
+          "doc": "Bind this long-lived service to the application settings object."
+        },
+        {
+          "name": "run_once",
+          "doc": "Run PM once."
+        },
+        {
+          "name": "start_loop",
+          "doc": "Start PM in loop mode."
+        },
+        {
+          "name": "stop",
+          "doc": "Stop PM process."
+        },
+        {
+          "name": "_write_stop_flag",
+          "doc": ""
+        },
+        {
+          "name": "_wait_for_exit",
+          "doc": ""
+        },
+        {
+          "name": "_is_process_alive",
+          "doc": ""
+        },
+        {
+          "name": "_force_kill_tree",
+          "doc": "Force kill a process tree."
+        },
+        {
+          "name": "_resolve_execution_status",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_execution_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "_is_execution_active",
+          "doc": ""
+        },
+        {
+          "name": "get_status",
+          "doc": ""
+        },
+        {
+          "name": "_build_start_response",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_lifecycle_status_path",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_engine_status_path",
+          "doc": ""
+        },
+        {
+          "name": "_read_lifecycle_status",
+          "doc": ""
+        },
+        {
+          "name": "_write_lifecycle_status",
+          "doc": ""
+        },
+        {
+          "name": "_write_lifecycle_terminal_status",
+          "doc": ""
+        },
+        {
+          "name": "_contract_is_current_for_run",
+          "doc": ""
+        },
+        {
+          "name": "_is_pid_alive_sync",
+          "doc": ""
+        },
+        {
+          "name": "_check_backend_available",
+          "doc": ""
+        },
+        {
+          "name": "_clear_stop_flag",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_log_path",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_contract_path",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_effective_workspace",
+          "doc": ""
+        },
+        {
+          "name": "_refresh_storage_layout",
+          "doc": ""
+        },
+        {
+          "name": "_build_command",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_role_selection",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_role_model_arg",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_pm_model_arg",
+          "doc": ""
+        },
+        {
+          "name": "_resolve_planning_timeout_seconds",
+          "doc": ""
+        },
+        {
+          "name": "_apply_planning_timeout_floor",
+          "doc": ""
+        },
+        {
+          "name": "_pm_uses_codex_runtime",
+          "doc": ""
+        },
+        {
+          "name": "_spawn_process",
+          "doc": "Spawn PM process through runtime.execution_broker cell."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_parse_positive_int",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_prepend_pythonpath_entry",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_clamp_pm_planning_timeout",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_contract_terminal_error",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_engine_terminal_state",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_engine_active_state",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_float_or_none",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_timestamp_seconds",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_engine_terminal_state_is_current",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_text_value",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_pm_service",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_pm_service",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_terminate_process_impl",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_cleanup_handle",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/service.py"
+    },
+    {
       "type": "class",
       "name": "PMRunOrchestrationRequest",
       "description": "PM 运行编排请求（统一编排 API）",
@@ -2634,19 +3575,19 @@
     {
       "type": "function",
       "name": "pm_run_once",
-      "description": "Run PM once.",
+      "description": "Reject retired execution before preflight, storage or scheduling.",
       "defined_in": "polaris/delivery/http/v2/pm.py"
     },
     {
       "type": "function",
       "name": "pm_start",
-      "description": "Start PM in loop mode.",
+      "description": "Reject retired execution before preflight, storage or scheduling.",
       "defined_in": "polaris/delivery/http/v2/pm.py"
     },
     {
       "type": "function",
       "name": "pm_stop",
-      "description": "Stop PM process with graceful shutdown support.",
+      "description": "Only the original frozen owner may control legacy execution.",
       "defined_in": "polaris/delivery/http/v2/pm.py"
     },
     {
@@ -2664,7 +3605,7 @@
     {
       "type": "function",
       "name": "pm_run_orchestration",
-      "description": "Execute PM run - unified entry point",
+      "description": "Reject retired execution before preflight, storage or scheduling.",
       "defined_in": "polaris/delivery/http/v2/pm.py"
     },
     {
@@ -2676,7 +3617,7 @@
     {
       "type": "function",
       "name": "pm_cancel_orchestration",
-      "description": "Cancel a PM orchestration run and return the resulting snapshot.",
+      "description": "New processes cannot mutate a frozen legacy owner without its authority.",
       "defined_in": "polaris/delivery/http/v2/pm.py"
     },
     {

@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 from polaris.cells.chief_engineer.blueprint.public.contracts import VerificationCommandAuthorityV1
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
-from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
-from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
-from polaris.cells.roles.profile.public import RoleProfile, RoleTurnRequest
+from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import observe_command_projection_permission
 
 
 def _context() -> dict[str, Any]:
@@ -55,17 +52,8 @@ def _promote(context: dict[str, Any], workspace: Path) -> None:
     DirectorAdapter._ensure_director_verification_commands(message="Implement requested behavior", context=context)
 
 
-def _gateway(context: dict[str, Any], workspace: Path) -> Any:
-    profile = RoleProfile(role_id="director", display_name="Director", description="Command projection")
-    profile = replace(
-        profile, tool_policy=replace(profile.tool_policy, whitelist=["execute_command"], allow_command_execution=True)
-    )
-    return KernelToolExecutor(RoleExecutionKernel(workspace=str(workspace)), str(workspace)).create_gateway(
-        profile,
-        RoleTurnRequest(
-            workspace=str(workspace), message="Implement requested behavior", task_id="TASK-1", context_override=context
-        ),
-    )
+def _gateway(context: dict[str, Any], workspace: Path) -> tuple[bool, Any]:
+    return observe_command_projection_permission(context, workspace)
 
 
 @pytest.mark.parametrize("child_run", [False, True])
@@ -78,7 +66,7 @@ def test_claimed_numeric_task_projects_exact_ce_rows_into_real_gateway(tmp_path:
     rows = deepcopy(context["metadata"]["task_completion_projection"]["verification_command_authority"])
     _promote(context, tmp_path)
     gateway = _gateway(context, tmp_path)
-    assert gateway.check_tool_permission("execute_command", {"command": "python verify.py"})[0] is True
+    assert gateway[0] is True
     assert context["verification_command_authority"] == rows
     assert context["metadata"]["verification_command_authority"] == rows
     assert context["verification_commands"] == ["python verify.py"]
@@ -130,8 +118,8 @@ async def test_actual_adapter_projection_reaches_persistent_http_effects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Reuse sealed HTTP/effect fixture through the actual adapter call boundary."""
-    from polaris.cells.roles.kernel.tests.test_director_persistent_execution_http import (
-        test_canonical_director_session_reads_writes_repairs_and_verifies_over_http,
+    from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import (
+        run_persistent_director_http_projection,
     )
     from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
@@ -193,7 +181,5 @@ async def test_actual_adapter_projection_reaches_persistent_http_effects(
         return captured["result"]
 
     monkeypatch.setattr(RoleRuntimeService, "execute_role_session", through_adapter)
-    await test_canonical_director_session_reads_writes_repairs_and_verifies_over_http(
-        tmp_path, monkeypatch, "repair"
-    )
+    await run_persistent_director_http_projection(tmp_path, monkeypatch)
     assert captured["adapter_result"]["success"] is True

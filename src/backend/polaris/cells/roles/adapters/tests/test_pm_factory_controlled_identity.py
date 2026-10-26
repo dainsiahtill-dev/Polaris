@@ -27,10 +27,9 @@ from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration
 )
 from polaris.cells.roles.adapters.internal import runtime_dialogue
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
-from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
-from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker, _binding
-from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
+from polaris.cells.roles.kernel.public import LLMInvoker, RoleExecutionKernel
 from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import bind_factory_role_evidence_authority
+from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import install_local_pm_request_capture
 from polaris.cells.roles.profile.public.service import (
     RoleProfile,
     RoleProfileRegistry,
@@ -42,7 +41,6 @@ from polaris.infrastructure.llm.providers.provider_helpers import _http_pooling
 from polaris.infrastructure.log_pipeline.jetstream_publisher import JetStreamPublisher
 from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.engine.provider_native_request import build_openai_native_messages
-from polaris.kernelone.llm.runtime_config import RoleBindingSlot
 
 
 def _pol77_model_revision(wire: dict[str, Any], *, root_template: bool = False) -> dict[str, Any]:
@@ -399,10 +397,7 @@ def _local_runtime(
         tool_policy=RoleToolPolicy(whitelist=["repo_tree", "file_exists"]),
     )
     registry.register(profile)
-    slot = RoleBindingSlot(role_id="pm", provider_id="local-provider", model="local-model", binding_id="local-binding")
-    monkeypatch.setattr(_binding, "get_role_binding_candidates", lambda _role: (slot,))
-    monkeypatch.setattr(_binding, "get_role_binding_override", lambda _role: None)
-    monkeypatch.setattr(_binding, "is_role_binding_healthy", lambda *_args, **_kwargs: True)
+    freezes = install_local_pm_request_capture(monkeypatch)
     monkeypatch.setattr(
         AIExecutor,
         "_get_provider_config",
@@ -435,14 +430,7 @@ def _local_runtime(
     runtime._test_commands = commands
     runtime._test_timeouts = timeouts
     monkeypatch.setattr(runtime_dialogue, "_create_role_runtime_service", lambda: runtime)
-    freezes: list[Any] = []
     wire_requests: list[dict[str, Any]] = []
-    original_prepare = LLMRequestPreparer._prepare_llm_request
-
-    async def prepare(self: Any, **kwargs: Any) -> Any:
-        prepared = await original_prepare(self, **kwargs)
-        freezes.append(prepared.factory_semantic_request)
-        return prepared
 
     def post(url: str, *, headers: Any, json: Any, timeout: Any) -> requests.Response:
         del headers
@@ -468,7 +456,6 @@ def _local_runtime(
         ).encode("utf-8")
         return response
 
-    monkeypatch.setattr(LLMRequestPreparer, "_prepare_llm_request", prepare)
     monkeypatch.setattr(_http_pooling, "bounded_http_post", post)
     return runtime, freezes, wire_requests
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
 from copy import deepcopy
@@ -10,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from polaris.cells.roles.kernel.public.turn_contracts import BatchReceipt
+from polaris.cells.roles.kernel.tests.runtime_boundary_scenarios import committed_result, project_denied_batch_fixture
 from polaris.cells.roles.profile.public.service import RoleTurnResult
 from polaris.cells.roles.runtime.internal.kernel_session_turn import (
     _committed_transcript_messages,
@@ -20,55 +19,8 @@ from polaris.kernelone.audit.context_os_prompt import audit_context_os_prompt_me
 from polaris.kernelone.context.prompt_safety import validate_tool_observation_sources
 
 
-def committed_result(
-    tool: str = "execute_command", *, turn: str = "committed-1", call_id: str = "call-1"
-) -> RoleTurnResult:
-    """Use the actual transaction decoder with detached synthetic owner values."""
-    # Enter through the transaction module, as production does, before its decoder.
-    from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import TurnDecisionDecoder
-
-    if tool == "execute_command":
-        arguments = {"command": "npx tsc -p tsconfig.json", "timeout": 60}
-    elif tool == "write_file":
-        arguments = {"path": "example.ts", "text": "export const timeout_seconds = 60;\n"}
-    else:
-        arguments = {"file": "example.ts"}
-    invocation = TurnDecisionDecoder()._parse_native_tool(
-        {"type": "tool_use", "id": call_id, "name": tool, "input": arguments}
-    )
-    payload: dict[str, Any] = (
-        {
-            "command": {
-                "executable": "npx",
-                "args": ["tsc", "-p", "tsconfig.json"],
-                "cwd": "/fixture/project",
-                "env_policy": "inherit",
-                "timeout_seconds": 60,
-            },
-            "ok": True,
-            "exit_code": 0,
-            "stdout": "",
-            "stderr": "",
-            "timed_out": False,
-        }
-        if tool == "execute_command"
-        else {"file": "example.ts", "content": "export const timeout_seconds = 60;\n"}
-    )
-    row = {"call_id": call_id, "tool_name": tool, "status": "success", "result": payload}
-    batch = {"batch_id": turn + "-batch", "results": [row], "success_count": 1, "failure_count": 0}
-    return RoleTurnResult(
-        tool_calls=[{"tool": tool, "call_id": call_id, "args": deepcopy(invocation.arguments)}],
-        batch_receipt=deepcopy(batch),
-        metadata={
-            "transaction_kind": "continue_multi_turn",
-            "needs_followup_workflow": True,
-            "turn_commit_receipt": {"turn_id": turn, "validation_passed": True},
-            "turn_outcome": {
-                "turn_id": turn,
-                "execution": {"invocations": [invocation.to_dict()], "receipt": deepcopy(batch)},
-            },
-        },
-    )
+def _project_denied_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RoleTurnResult:
+    return project_denied_batch_fixture(tmp_path, monkeypatch)
 
 
 def test_cold_inventory_regeneration_keeps_native_and_normalized_namespaces_separate() -> None:
@@ -192,62 +144,6 @@ def test_success_label_cannot_bind_a_structurally_failed_physical_result() -> No
     _replace_fixture_payload(result, payload)
     with pytest.raises(ValueError, match="tool_observation_failed_result"):
         _committed_transcript_sources([result], role="director")
-
-
-def _project_denied_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> RoleTurnResult:
-    """Real producer serialization; only publication/boundary fact I/O is detached."""
-    from polaris.cells.roles.kernel.internal.kernel import stream_event_projection as projection
-    from polaris.cells.roles.kernel.internal.kernel.tests.test_stream_event_projection import (
-        _make_stream_completion_projector,
-        _Publisher,
-    )
-    from polaris.cells.roles.kernel.internal.turn_decision_decoder import TurnDecisionDecoder
-    from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
-
-    rows = []
-    invocations = []
-    for call_id, tool, arguments, error in (
-        ("tree-call", "repo_tree", {"path": ".", "depth": 3}, "deo_batch_mutation_admission_rejected"),
-        ("denied-call", "execute_command", {"command": "pwd && ls -la"}, "deo_command_scope_denied"),
-    ):
-        invocations.append(
-            TurnDecisionDecoder()
-            ._parse_native_tool({"type": "tool_use", "id": call_id, "name": tool, "input": arguments})
-            .to_dict()
-        )
-        rows.append(
-            {
-                "call_id": call_id,
-                "tool_name": tool,
-                "status": "error",
-                "result": {"ok": False, "error": error, "error_type": error},
-                "error": error,
-                "effect_receipt": None,
-                "directed_effect_claim_status": "not_claimed",
-            }
-        )
-    batch = {"turn_id": "denied-turn", "batch_id": "denied-batch", "results": rows, "failure_count": 2}
-    # The actual immutable owner serializer supplies defaults omitted by the event.
-    committed = BatchReceipt.model_validate(deepcopy(batch), strict=True).model_dump(mode="python")
-    monkeypatch.setattr(projection, "append_role_turn_task_boundary_verdict", lambda **_: None)
-    projector = _make_stream_completion_projector(tmp_path, _Publisher())
-    projected = asyncio.run(
-        projector.project(
-            CompletionEvent(
-                turn_id="denied-turn",
-                status="success",
-                turn_kind="continue_multi_turn",
-                batch_receipt=deepcopy(batch),
-                commit_receipt={"turn_id": "denied-turn", "validation_passed": True},
-                turn_outcome={
-                    "turn_id": "denied-turn",
-                    "execution": {"invocations": invocations, "receipt": committed},
-                },
-            )
-        )
-    )
-    assert projected is not None
-    return projected.event["result"]
 
 
 @pytest.mark.parametrize("cold", [False, True])

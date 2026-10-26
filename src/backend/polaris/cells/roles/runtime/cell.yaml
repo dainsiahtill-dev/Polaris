@@ -160,14 +160,20 @@ verification:
   - polaris/cells/roles/runtime/tests/test_engineering_events.py
   - polaris/tests/architecture/test_engineering_no_legacy_admission.py
   gaps:
-  - Graph/source synchronization and focused tests do not prove all workloads. Fresh direct/collaborative/recovery acceptance
-    and required release/catalog gates must be reported from actual runs.
-  - Legacy readers and optional utilities remain in source; their retained imports do not authorize new legacy execution.
-    Physical provider HTTP totals/cost require independent transport evidence.
+  - Graph/source synchronization and focused tests do not prove all workloads. Fresh direct/collaborative/recovery acceptance and required release/catalog gates must be reported from actual runs.
+  - Legacy readers and optional utilities remain in source; their retained imports do not authorize new legacy execution. Physical provider HTTP totals/cost require independent transport evidence.
   test_dependencies:
   - path: polaris/cells/roles/runtime/tests/test_hr_advisor.py
     depends_on:
     - llm.control_plane
+  - path: polaris/cells/roles/runtime/tests/test_kernel_session_tool_surface_reentry.py
+    depends_on:
+    - roles.adapters
+  test_effects_allowed:
+  - path: polaris/cells/roles/runtime/tests/test_kernel_session_continuation.py
+    effects_allowed:
+    - process.spawn:python/runtime_session_component_verifier
+    reason: Existing fixed interpreter -c wrapper invokes only answer.py to compare 42, and second call executes the same answer.py. Disposable component workspace only; these old public writer tests currently stop at deliberate legacy_engine_retired and do not authorize new legacy execution.
 descriptor_surface:
   include_public_contracts: false
   classes:

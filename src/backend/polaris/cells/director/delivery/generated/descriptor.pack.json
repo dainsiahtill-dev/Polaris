@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:39.141530Z",
-  "source_hash": "0c08ef7e88514aa3",
+  "generated_at": "2026-10-26T12:13:11.405806Z",
+  "source_hash": "c58eb149c070c768",
   "cell_id": "director.delivery",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -43,38 +43,8 @@
     },
     {
       "type": "function",
-      "name": "_bootstrap_backend_import_path",
-      "description": "Lazy import of polaris modules after path bootstrap.",
-      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
-    },
-    {
-      "type": "function",
-      "name": "_bootstrap_director_fact_stream",
-      "description": "Delegate one formal Director entrypoint to FactStream bootstrap.",
-      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
-    },
-    {
-      "type": "function",
       "name": "create_parser",
-      "description": "Create thin argument parser.",
-      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
-    },
-    {
-      "type": "function",
-      "name": "run_director_console",
-      "description": "Run director in console mode.",
-      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
-    },
-    {
-      "type": "function",
-      "name": "run_director_server",
-      "description": "Run director in server mode.",
-      "defined_in": "polaris/delivery/cli/director/cli_thin.py"
-    },
-    {
-      "type": "function",
-      "name": "create_task",
-      "description": "Create a new task via director.",
+      "description": "",
       "defined_in": "polaris/delivery/cli/director/cli_thin.py"
     },
     {

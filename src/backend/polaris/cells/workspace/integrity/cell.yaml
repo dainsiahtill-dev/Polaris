@@ -22,6 +22,7 @@ owned_paths:
 public_contracts:
   modules:
   - polaris.cells.workspace.integrity.public.contracts
+  - polaris.cells.workspace.integrity.public.service
   commands:
   - ValidateWorkspaceCommandV1
   - EnsureDocsReadyCommandV1
@@ -33,10 +34,9 @@ public_contracts:
   errors:
   - WorkspaceIntegrityErrorV1
 depends_on:
-- policy.workspace_guard
-- runtime.execution_broker
-- runtime.projection
-- storage.layout
+  - policy.workspace_guard
+  - runtime.execution_broker
+  - storage.layout
 subgraphs:
 - execution_governance_pipeline
 state_owners:
@@ -51,6 +51,8 @@ verification:
   - tests/test_docs_template_quality.py
   - tests/test_workspace_policy_guard.py
   - tests/test_hyper_opt.py
+  - polaris/cells/workspace/integrity/tests/test_projection_independent_reads.py
+  - polaris/cells/runtime/projection/tests/test_workspace_title_compatibility.py
   gaps:
   - Code intelligence indexing strategy still relies on infrastructure adapter tuning.
   smoke_commands: []

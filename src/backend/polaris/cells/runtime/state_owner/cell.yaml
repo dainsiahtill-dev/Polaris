@@ -12,7 +12,10 @@ current_modules:
 - polaris.cells.runtime.state_owner.public.contracts
 tags: []
 owned_paths:
-- polaris/cells/runtime/state_owner/internal/**
+  - polaris/cells/runtime/state_owner/internal/**
+  - polaris/cells/runtime/state_owner/public/__init__.py
+  - polaris/cells/runtime/state_owner/public/contracts.py
+  - polaris/cells/runtime/state_owner/public/service.py
 public_contracts:
   modules:
   - polaris.cells.runtime.state_owner.public.contracts

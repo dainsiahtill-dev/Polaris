@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:43.808433Z",
-  "source_hash": "4ccd66899c7e7d8d",
+  "generated_at": "2026-10-26T11:49:16.855941Z",
+  "source_hash": "257ae1af8f42fa56",
   "cell_id": "orchestration.pm_dispatch",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -112,6 +112,18 @@
       "name": "_build_director_workflow_result",
       "description": "Normalize workflow submission outcome into Director result payload.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/engine_dispatch.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_inline_qa_consumer",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/inline_qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_mainline_full_integration_qa_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch/inline_qa_consumer.py"
     },
     {
       "type": "function",
@@ -813,19 +825,19 @@
         },
         {
           "name": "execute_pm_run",
-          "doc": "Execute PM run - unified entry point for PM orchestration."
+          "doc": "Reject the retired pipeline before allocating a run or invoking roles."
         },
         {
           "name": "execute_director_run",
-          "doc": "Execute Director run - unified entry point for Director orchestration."
+          "doc": "Reject the retired pipeline before allocating a run or invoking roles."
         },
         {
           "name": "execute_qa_run",
-          "doc": "Execute QA run - unified entry point for QA orchestration."
+          "doc": "Reject the retired pipeline before allocating a run or invoking roles."
         },
         {
           "name": "execute_factory_run",
-          "doc": "Execute Factory run - unified entry point for Factory orchestration."
+          "doc": "Reject the retired pipeline before allocating a run or invoking roles."
         },
         {
           "name": "_generate_run_id",
@@ -913,24 +925,6 @@
       "type": "function",
       "name": "_pm_task_rows_from_payload",
       "description": "Extract PM task rows from the persisted PM task contract payload.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_augment_task_delivery_targets",
-      "description": "Include explicit file tokens from task text in Director write scope.",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_explicit_task_file_tokens",
-      "description": "",
-      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_normalize_task_file_token",
-      "description": "",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/orchestration_command_service.py"
     },
     {
@@ -1151,6 +1145,78 @@
     },
     {
       "type": "class",
+      "name": "DispatchPmTasksCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResumePmIterationCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetPmDispatchStatusQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PmTaskDispatchedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PmIterationAdvancedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PmDispatchResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PmDispatchError",
+      "description": "Raised when `orchestration.pm_dispatch` contract processing fails.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "reachable_provider_pool",
+      "description": "Public wrapper for the reachable-provider probe.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/public/service.py"
+    },
+    {
+      "type": "class",
       "name": "RoleEntrySpecRequest",
       "description": "角色条目请求",
       "defined_in": "polaris/delivery/http/v2/orchestration.py",
@@ -1200,8 +1266,20 @@
     },
     {
       "type": "function",
+      "name": "_bound_history_workspace",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_history_workspace",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/orchestration.py"
+    },
+    {
+      "type": "function",
       "name": "create_run",
-      "description": "创建编排运行",
+      "description": "Reject retired execution before preflight, storage or scheduling.",
       "defined_in": "polaris/delivery/http/v2/orchestration.py"
     },
     {
@@ -1219,13 +1297,13 @@
     {
       "type": "function",
       "name": "signal_run",
-      "description": "发送控制信号",
+      "description": "New processes cannot mutate a frozen legacy owner without its authority.",
       "defined_in": "polaris/delivery/http/v2/orchestration.py"
     },
     {
       "type": "function",
       "name": "cancel_run",
-      "description": "取消运行",
+      "description": "New processes cannot mutate a frozen legacy owner without its authority.",
       "defined_in": "polaris/delivery/http/v2/orchestration.py"
     },
     {

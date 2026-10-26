@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.util
 import json
@@ -170,3 +171,138 @@ async def test_real_terminal_taskruntime_authority_rejects_before_command_and_co
         QuerySegmentedFactLedgerHeadV1(workspace=str(tmp_path), logical_stream="roles.kernel.turn_outcomes.v3")
     )
     assert not psutil.Process().children(recursive=True)
+
+
+@pytest.mark.asyncio
+async def test_file_prewrite_scenario_uses_real_owner_commit_and_public_negative_closure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from polaris.cells.roles.kernel.public.turn_contracts import CommitReceipt, TurnOutcome
+
+    producer = scenario_module()
+    original = outcome_commit.commit_turn_result
+    calls: list[tuple[str, str, str]] = []
+
+    def observe(**kwargs: Any) -> Any:
+        calls.append((kwargs["run_id"], kwargs["task_id"], kwargs["completion_status"]))
+        return original(**kwargs)
+
+    monkeypatch.setattr(outcome_commit, "commit_turn_result", observe)
+    case = await producer.produce_file_prewrite_owner_case(tmp_path, aliases=True)
+    assert not {"ledger", "gateway", "prepared_batch", "runtime", "durable"} & set(case)
+    assert isinstance(case["outcome"], TurnOutcome)
+    assert isinstance(case["commit_receipt"], CommitReceipt)
+    attempt = case["attempt"]
+    assert calls == [(attempt.run_id, attempt.external_task_id, "failed")]
+    batch = case["batch"]
+    row = batch["raw_results"][0]
+    assert row["result"]["failure_kind"] == "file_prewrite_rejected"
+    assert row["effect_receipt"] is row["effect_receipt_commit"] is None
+    assert case["settled"].success
+    assert (tmp_path / "src/a.txt").read_text(encoding="utf-8") == "alpha\nbeta\n"
+    facts = query_payload_fact_events(
+        QueryPayloadFactEventsV1(workspace=str(tmp_path), logical_stream="roles.kernel.turn_outcomes.v3", limit=100)
+    ).events
+    assert [event["event_type"] for event in facts] == ["turn_outcome_prepared", "turn_outcome_committed"]
+    committed = facts[-1]
+    assert committed["event_id"] == case["commit_receipt"].fact_event_id
+    assert committed["expanded_payload"]["outcome_hash"] == case["commit_receipt"].outcome_hash
+    closure = query_execution_effect_closure(QueryExecutionEffectClosureV1(str(tmp_path), attempt))
+    assert closure.status == "closed" and closure.receipts == ()
+    assert len(closure.terminal_failures) == 1 and closure.terminal_failures[0].failure_kind == "file_prewrite_rejected"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legal", [False, True])
+async def test_file_policy_guard_boundary_retains_real_preview_rejection_and_legal_edit(
+    tmp_path: Path,
+    legal: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    producer = scenario_module()
+    original = producer.create_director_directed_effect_mutation_port
+    calls = []
+
+    def observe(**kwargs: Any) -> Any:
+        calls.append(kwargs["workspace"])
+        return original(**kwargs)
+
+    monkeypatch.setattr(producer, "create_director_directed_effect_mutation_port", observe)
+    case = await producer.produce_file_policy_guard_case(tmp_path, legal=legal)
+    assert len(calls) == int(legal)
+    if legal:
+        assert case["status"] == "authorized"
+        assert case["outcome"].outcome_status.value == "completed"
+        row = case["batch"]["raw_results"][0]
+        assert row["status"] == "success", row
+        assert row["effect_receipt_commit"]["code"] == "receipt_committed"
+        assert (tmp_path / "src/a.txt").read_text(encoding="utf-8") == "alpha\nBETA\n"
+    else:
+        assert case["status"] == "denied" and case["error_code"] == "deo_tool_normalization_failed"
+        assert case["before"] == case["after"]
+        assert (tmp_path / "src/a.txt").read_text(encoding="utf-8") == "alpha\nbeta\n"
+        assert not query_payload_fact_ledger_presence(
+            QuerySegmentedFactLedgerHeadV1(workspace=str(tmp_path), logical_stream="roles.kernel.turn_outcomes.v3")
+        )
+
+
+def test_file_prewrite_consumers_use_named_owner_scenarios_without_private_foreign_imports() -> None:
+    cells = Path(__file__).resolve().parents[3]
+    consumers = (
+        cells / "runtime/task_runtime/public/tests/test_file_prewrite_negative_closure.py",
+        cells / "control_plane/run_ledger/tests/test_file_prewrite_negative_settlement.py",
+    )
+    for path in consumers:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                assert ".internal." not in str(node.module), (path, node.module)
+                assert not any(alias.name.startswith("_") for alias in node.names), (path, node.module)
+        assert not any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "_commit_owner"
+            for node in tree.body
+        )
+
+
+@pytest.mark.asyncio
+async def test_corrupt_file_owner_scenario_is_explicit_negative_without_real_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from polaris.cells.events.fact_stream.public import QueryFactEventsV1, query_fact_events
+
+    def forbidden_commit(**_kwargs: Any) -> Any:
+        raise AssertionError("synthetic corrupt fact must never be presented as a real owner commit")
+
+    def mismatch(outcome: dict[str, Any]) -> None:
+        outcome["decision"]["metadata"]["native_tool_call_envelopes"][0]["arguments_hash"] = "f" * 64
+
+    monkeypatch.setattr(outcome_commit, "commit_turn_result", forbidden_commit)
+    case = await scenario_module().produce_file_prewrite_owner_case(tmp_path, aliases=True, mutate=mismatch)
+    assert case["synthetic_owner_corruption"] is True
+    assert not {"commit_receipt", "sealed_turn", "outcome"} & set(case)
+    facts = query_fact_events(
+        QueryFactEventsV1(
+            workspace=str(tmp_path),
+            stream="roles.kernel.turn_outcomes",
+            strict_integrity=True,
+            limit=100,
+        )
+    ).events
+    assert len(facts) == 1
+    outcome = facts[0]["payload"]["outcome"]
+    assert outcome["decision"]["metadata"]["native_tool_call_envelopes"][0]["arguments_hash"] == "f" * 64
+    assert outcome["execution"]["invocations"][0]["arguments"]["start"] == 7
+    assert (
+        outcome["execution"]["receipt"]["raw_results"][0]["result"]["prewrite_rejection"]["arguments_hash"] != "f" * 64
+    )
+    assert (
+        query_execution_effect_closure(QueryExecutionEffectClosureV1(str(tmp_path), case["attempt"])).status
+        == "unknown"
+    )
+
+
+@pytest.mark.asyncio
+async def test_corrupt_file_owner_scenario_refuses_noop_forgery(tmp_path: Path) -> None:
+    with pytest.raises(AssertionError, match="requires an actual owner-input corruption"):
+        await scenario_module().produce_file_prewrite_owner_case(tmp_path, mutate=lambda _outcome: None)

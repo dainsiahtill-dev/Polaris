@@ -15,11 +15,16 @@ current_modules:
 - polaris.cells.orchestration.workflow_runtime.public.project_completion_cursor
 tags: []
 owned_paths:
-- polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py
-- polaris/cells/orchestration/workflow_runtime/public/model_ceiling_bootstrap.py
-- polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py
-- polaris/cells/orchestration/workflow_runtime/internal/**
-- polaris/infrastructure/db/repositories/workflow_runtime_store.py
+  - polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py
+  - polaris/cells/orchestration/workflow_runtime/public/model_ceiling_bootstrap.py
+  - polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py
+  - polaris/cells/orchestration/workflow_runtime/internal/**
+  - polaris/infrastructure/db/repositories/workflow_runtime_store.py
+  - polaris/cells/orchestration/workflow_runtime/public/__init__.py
+  - polaris/cells/orchestration/workflow_runtime/public/contracts.py
+  - polaris/cells/orchestration/workflow_runtime/public/process_launch.py
+  - polaris/cells/orchestration/workflow_runtime/public/runtime.py
+  - polaris/cells/orchestration/workflow_runtime/public/service.py
 public_contracts:
   modules:
   - polaris.cells.orchestration.workflow_runtime.public.contracts

@@ -16,18 +16,13 @@ import os
 import re
 from typing import Any
 
-# ACGA-compliant: Import from public facade instead of internal module
-# file_io_facade re-exports from internal.file_io as a stable public interface
-from polaris.cells.runtime.projection.public.file_io_facade import (
-    read_json,
-    read_readme_title,
-)
 from polaris.cells.workspace.integrity.internal.fs_utils import (
     normalize_rel_path,
     workspace_has_docs,
     workspace_status_path,
 )
 from polaris.domain.exceptions import ConflictError
+from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.fs.text_ops import write_text_atomic as _write_text_atomic
 from polaris.kernelone.utils.time_utils import utc_now_str
 
@@ -157,14 +152,39 @@ def _resolve_effective_qa_commands(
     return default_qa_commands(profile, hint_text=hint_text)
 
 
+def read_readme_title(workspace: str) -> str:
+    """Read the existing workspace title; host query with no additional authority."""
+    if not workspace:
+        return ""
+    path = os.path.join(workspace, "tui_runtime.md")
+    if not os.path.isfile(path):
+        return ""
+    try:
+        fs = KernelFileSystem(workspace, get_default_adapter())
+        content = fs.workspace_read_text("tui_runtime.md", encoding="utf-8")
+        for line in content.split("\n"):
+            text = line.strip()
+            if not text:
+                continue
+            if text.startswith("#"):
+                text = text.lstrip("#").strip()
+            return text[:120]
+    except (OSError, UnicodeDecodeError):
+        return ""
+    return ""
+
+
 def read_workspace_status(workspace: str) -> dict[str, Any] | None:
     path = workspace_status_path(workspace)
     if not path or not os.path.isfile(path):
         return None
     try:
-        data = read_json(path)
+        fs = KernelFileSystem(os.path.dirname(path), get_default_adapter())
+        data = json.loads(fs.workspace_read_text(os.path.basename(path), encoding="utf-8"))
         return data if isinstance(data, dict) else None
-    except (RuntimeError, ValueError) as exc:
+    except (OSError, ValueError):
+        return None
+    except RuntimeError as exc:
         logger.debug("read_workspace_status failed for %s: %s", path, exc)
         return None
 

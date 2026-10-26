@@ -9,9 +9,7 @@ from polaris.cells.roles.adapters.internal.director.quality_gate import (
     _build_materialization_quality_failure_evidence_context,
     _build_materialization_quality_workspace_evidence_context,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.context_audit._request_core import (
-    _delivery_depth_contract_summary,
-)
+from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import observe_final_request_metadata
 from polaris.kernelone.events.final_request_evidence import summarize_workspace_quality_evidence_context_slot
 
 
@@ -104,7 +102,9 @@ def test_workspace_and_delivery_contract_summaries_preserve_policy_numbers() -> 
             }
         }
     )
-    assert _delivery_depth_contract_summary(request) == {
+    assert observe_final_request_metadata(request.context, [])["request_metadata_summary"][
+        "delivery_depth_contract_summary"
+    ] == {
         "schema_version": "factory.delivery-depth-contract.v1",
         "level": 3,
         "minimums": {"min_prod_files": 7, "min_test_files": 2},

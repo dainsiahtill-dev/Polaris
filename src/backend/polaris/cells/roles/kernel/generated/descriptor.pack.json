@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-10-14T13:05:53.143483Z",
-  "source_hash": "fa326d6fa2558ce7",
+  "generated_at": "2026-10-26T10:36:04.294428Z",
+  "source_hash": "34c2ce04ec1d48bc",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -2959,12 +2959,20 @@
           "doc": "创建探索计划"
         },
         {
+          "name": "_initial_receipt_results",
+          "doc": ""
+        },
+        {
+          "name": "_remember_read_results",
+          "doc": ""
+        },
+        {
           "name": "_execute_tools",
-          "doc": "执行工具列表"
+          "doc": "Component execution uses canonical batch receipts, never raw success wrappers."
         },
         {
           "name": "_execute_tools_stream",
-          "doc": "流式执行工具列表，产出 ToolBatchEvent。"
+          "doc": ""
         },
         {
           "name": "_continue_exploration",
@@ -3901,6 +3909,24 @@
       "type": "function",
       "name": "_capability_authority_mappings",
       "description": "Return trusted turn containers, including TaskRuntime metadata wrappers.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_selected_role_turn_capability_token",
+      "description": "Use the existing explicit-token-before-envelope precedence everywhere.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalized_write_scope",
+      "description": "Normalize flat write grants without interpreting nested context hints.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_intersect_write_scopes",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/kernel/tool_executor.py"
     },
     {
@@ -13126,6 +13152,13 @@
     },
     {
       "type": "class",
+      "name": "_OwnerWorkflowReceipts",
+      "description": "Detached observation supplied by the executing owner, never by metadata.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/handoff_handlers.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "HandoffHandler",
       "description": "移交处理器 — 处理 workflow / development / ask_user 决策。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/handoff_handlers.py",
@@ -13155,6 +13188,24 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_current_workflow_owner_receipts",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/handoff_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_owner_receipt_scope",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/handoff_handlers.py"
+    },
+    {
+      "type": "function",
+      "name": "_initial_batch_failure",
+      "description": "A delegated native batch must already have exact owner-recorded results.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/handoff_handlers.py"
     },
     {
       "type": "function",
@@ -14635,6 +14686,14 @@
           "doc": "Authorize and seal every mutation before any member of the batch executes."
         },
         {
+          "name": "_committed_cohort_targets",
+          "doc": "Require owner-persisted commits before admitting dependent mutations."
+        },
+        {
+          "name": "_execute_dependent_effect_cohorts",
+          "doc": "Use existing admission/dispatch owners for dependent serial cohorts."
+        },
+        {
           "name": "_validate_directed_effect_feedback_attempt",
           "doc": "Require the same live owner before continuing a no-effect denial."
         },
@@ -14929,8 +14988,20 @@
     },
     {
       "type": "function",
+      "name": "_mutation_canonical_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_serial_mutation_cohorts",
+      "description": "Preserve declared order, giving each target at most one mutation per cohort.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_helpers.py"
+    },
+    {
+      "type": "function",
       "name": "_collapse_last_write_wins_mutations",
-      "description": "Keep the last mutation per target path; soft-drop superseded earlier writes.",
+      "description": "Collapse only independent whole-file replacements of the same target.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor/_helpers.py"
     },
     {
@@ -16902,6 +16973,12 @@
       "defined_in": "polaris/cells/roles/kernel/public/llm_caller_contracts.py"
     },
     {
+      "type": "function",
+      "name": "clamp_role_execution_timeout_seconds_to_deadline",
+      "description": "Apply the live execution deadline without rounding or extending its lease.",
+      "defined_in": "polaris/cells/roles/kernel/public/llm_caller_contracts.py"
+    },
+    {
       "type": "class",
       "name": "PreparedTurnOutcomeReferenceV1",
       "description": "A locator for a real prepared fact; it is not a completion or capability.",
@@ -16945,6 +17022,40 @@
       "name": "replay_prepared_turn_outcome",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/public/outcome_recovery.py"
+    },
+    {
+      "type": "class",
+      "name": "RoleKernelToolPolicyAdapter",
+      "description": "Reuse actual gateway checks without exposing any execution capability.",
+      "defined_in": "polaris/cells/roles/kernel/public/permission_policy_adapter.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "workspace",
+          "doc": ""
+        },
+        {
+          "name": "_profiles",
+          "doc": ""
+        },
+        {
+          "name": "role_permissions",
+          "doc": "Project the existing role matrix; exact tool checks remain separate."
+        },
+        {
+          "name": "check_tool_permission",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_permission_tool_policy_adapter",
+      "description": "Reuse one workspace binding; profiles and tool snapshots remain live.",
+      "defined_in": "polaris/cells/roles/kernel/public/permission_policy_adapter.py"
     },
     {
       "type": "class",
@@ -17902,7 +18013,7 @@
     {
       "type": "function",
       "name": "_validate_captured_effective_spec_semantics",
-      "description": "Classify category fields together, rejecting ambiguous captured semantics.",
+      "description": "Adapt KernelOne captured semantics to the unchanged Role contract.",
       "defined_in": "polaris/cells/roles/kernel/public/turn_contracts.py"
     },
     {

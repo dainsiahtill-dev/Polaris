@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         detect_project_profile,
         ensure_docs_ready_or_raise,
         is_safe_docs_path,
+        read_readme_title,
         read_workspace_status,
         select_docs_target_root,
         write_workspace_status,
@@ -58,6 +59,7 @@ __all__ = [
     "get_code_parser",
     "is_safe_docs_path",
     "normalize_rel_path",
+    "read_readme_title",
     "read_workspace_status",
     "select_docs_target_root",
     "validate_workspace",
@@ -217,6 +219,7 @@ def __getattr__(name: str) -> Any:
         "detect_project_profile",
         "ensure_docs_ready_or_raise",
         "is_safe_docs_path",
+        "read_readme_title",
         "read_workspace_status",
         "select_docs_target_root",
         "write_workspace_status",
@@ -229,6 +232,7 @@ def __getattr__(name: str) -> Any:
             detect_project_profile,
             ensure_docs_ready_or_raise,
             is_safe_docs_path,
+            read_readme_title,
             read_workspace_status,
             select_docs_target_root,
             write_workspace_status,
@@ -241,6 +245,7 @@ def __getattr__(name: str) -> Any:
         g["detect_project_profile"] = detect_project_profile
         g["ensure_docs_ready_or_raise"] = ensure_docs_ready_or_raise
         g["is_safe_docs_path"] = is_safe_docs_path
+        g["read_readme_title"] = read_readme_title
         g["read_workspace_status"] = read_workspace_status
         g["select_docs_target_root"] = select_docs_target_root
         g["write_workspace_status"] = write_workspace_status

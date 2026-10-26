@@ -326,8 +326,20 @@ class ExecutionFacade:
         return list(self._known_handles.values())
 
     async def close(self, *, cancel_running: bool = True) -> None:
+        """Retain known owner handles until their runtime effects are closed."""
         await self._runtime.close(cancel_running=cancel_running)
-        self._known_handles.clear()
+        unclosed_ids = {
+            snapshot.execution_id
+            for snapshot in self._runtime.list_snapshots()
+            if not snapshot.status.terminal
+            or (
+                snapshot.lane == ExecutionLane.SUBPROCESS
+                and snapshot.metadata.get("process_cleanup_status") == "unknown"
+            )
+        }
+        self._known_handles = {
+            execution_id: handle for execution_id, handle in self._known_handles.items() if execution_id in unclosed_ids
+        }
 
     async def _collect_process_output(
         self,

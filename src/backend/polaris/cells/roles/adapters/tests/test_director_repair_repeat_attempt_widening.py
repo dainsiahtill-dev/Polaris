@@ -722,8 +722,8 @@ async def test_quality_repair_zero_artifact_sibling_exports_when_rebind_missing(
         DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
         TrustedDirectorDependencyArtifactSnapshotV2,
     )
-    from polaris.cells.roles.kernel.internal.llm_caller.context_audit._payloads import (
-        _looks_like_actual_sibling_exports,
+    from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import (
+        observe_sibling_request_evidence,
     )
 
     message = str(captured.get("message") or "")
@@ -740,7 +740,7 @@ async def test_quality_repair_zero_artifact_sibling_exports_when_rebind_missing(
         TrustedDirectorDependencyArtifactSnapshotV2
     )
     messages = [{"role": "user", "content": message}]
-    assert _looks_like_actual_sibling_exports(exports, messages=messages) is True
+    assert observe_sibling_request_evidence(exports, messages=messages)["accepted"] is True
 
 
 @pytest.mark.asyncio
@@ -757,8 +757,8 @@ async def test_quality_repair_replaces_empty_body_sibling_snapshot_with_zero_art
         DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
         TrustedDirectorDependencyArtifactSnapshotV2,
     )
-    from polaris.cells.roles.kernel.internal.llm_caller.context_audit._payloads import (
-        _looks_like_actual_sibling_exports,
+    from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import (
+        observe_sibling_request_evidence,
     )
 
     (tmp_path / "tests").mkdir()
@@ -802,7 +802,9 @@ async def test_quality_repair_replaces_empty_body_sibling_snapshot_with_zero_art
     assert exports.get("module_count") == 0
     assert exports.get("zero_artifact_parent_task_ids") == ["TASK-1-source-modules"]
     message = str(captured.get("message") or "")
-    assert _looks_like_actual_sibling_exports(exports, messages=[{"role": "user", "content": message}]) is True
+    assert (
+        observe_sibling_request_evidence(exports, messages=[{"role": "user", "content": message}])["accepted"] is True
+    )
 
 
 @pytest.mark.asyncio

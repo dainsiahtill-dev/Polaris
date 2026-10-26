@@ -13,8 +13,9 @@ current_modules:
 - polaris.cells.policy.workspace_guard.public.service
 tags: []
 owned_paths:
-- polaris/cells/policy/workspace_guard/service.py
-- polaris/cells/policy/workspace_guard/public/**
+  - polaris/cells/policy/workspace_guard/service.py
+  - polaris/cells/policy/workspace_guard/public/**
+  - polaris/cells/policy/workspace_guard/internal/guard_service.py
 public_contracts:
   modules:
   - polaris.cells.policy.workspace_guard.public.contracts

@@ -518,7 +518,9 @@ def build_task_runtime_execution_event_payload(
         "execution_state": effective_status,
         "subject": str(task_row.get("subject") or ""),
         "session_id": session.session_id if session is not None else "",
-        "run_id": session.run_id if session is not None else str(task_row.get("workflow_run_id") or ""),
+        "run_id": session.run_id
+        if session is not None
+        else str(task_row.get("workflow_run_id") or runtime_execution.get("run_id") or ""),
         "claimed_by": str(task_row.get("claimed_by") or ""),
         "last_claimed_by": str(task_row.get("last_claimed_by") or ""),
         "attempt": int(session.attempt)
@@ -690,7 +692,7 @@ def build_task_runtime_execution_event_append_result(
     fact_event_seq: Any = None,
     fact_seq: Any = None,
     published: bool = False,
-    details: Mapping[str, Any] | None = None,
+    details: object = None,
     append_error: Any = "",
     publish_error: Any = "",
     failure_evidence: Mapping[str, Any] | None = None,

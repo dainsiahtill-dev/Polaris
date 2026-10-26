@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T17:10:20.540567Z",
-  "source_hash": "0c2c9509b1873a4b",
+  "generated_at": "2026-10-26T12:13:11.238565Z",
+  "source_hash": "e3d5de108347b583",
   "cell_id": "director.execution",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -646,13 +646,13 @@
     {
       "type": "function",
       "name": "start_director",
-      "description": "Start the Director service.",
+      "description": "Reject retired role mutations before constructing their owners.",
       "defined_in": "polaris/delivery/http/v2/director.py"
     },
     {
       "type": "function",
       "name": "stop_director",
-      "description": "Stop the Director service.",
+      "description": "Only the original frozen owner may control legacy execution.",
       "defined_in": "polaris/delivery/http/v2/director.py"
     },
     {
@@ -676,7 +676,7 @@
     {
       "type": "function",
       "name": "create_task",
-      "description": "Create and submit a new task.",
+      "description": "Reject retired role mutations before constructing their owners.",
       "defined_in": "polaris/delivery/http/v2/director.py"
     },
     {
@@ -694,7 +694,7 @@
     {
       "type": "function",
       "name": "cancel_task",
-      "description": "Cancel a task.",
+      "description": "Only the original frozen owner may control legacy execution.",
       "defined_in": "polaris/delivery/http/v2/director.py"
     },
     {
@@ -736,7 +736,7 @@
     {
       "type": "function",
       "name": "director_run_integration_qa",
-      "description": "Run the canonical post-dispatch integration QA after Director reaches terminal state.",
+      "description": "Reject retired role mutations before constructing their owners.",
       "defined_in": "polaris/delivery/http/v2/director.py"
     },
     {
@@ -748,7 +748,7 @@
     {
       "type": "function",
       "name": "director_run_orchestration",
-      "description": "Execute Director run - unified entry point",
+      "description": "Reject retired role mutations before constructing their owners.",
       "defined_in": "polaris/delivery/http/v2/director.py"
     },
     {
@@ -760,7 +760,7 @@
     {
       "type": "function",
       "name": "director_cancel_orchestration",
-      "description": "Cancel a Director orchestration run and return the resulting snapshot.",
+      "description": "New processes cannot mutate a frozen legacy owner without its authority.",
       "defined_in": "polaris/delivery/http/v2/director.py"
     }
   ],

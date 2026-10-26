@@ -15,8 +15,8 @@ def test_context_gateway_config_is_kernel_public_contract() -> None:
 
 def test_runtime_kernel_injects_ce_and_qa_context_asset_readers(monkeypatch: Any, tmp_path: Any) -> None:
     """Runtime-composed kernels mount CE/QA asset readers without kernel business imports."""
-    from polaris.cells.roles.kernel.internal.kernel.context_gateway_config_builder import build_context_gateway_config
     from polaris.cells.roles.kernel.public.service import ContextGatewayConfig
+    from polaris.cells.roles.kernel.tests.runtime_boundary_scenarios import resolve_injected_context_fixture
     from polaris.cells.roles.runtime.public import service as runtime_service
 
     blueprint_result = object()
@@ -51,7 +51,7 @@ def test_runtime_kernel_injects_ce_and_qa_context_asset_readers(monkeypatch: Any
             "recent_decisions": resident_decision_trace,
         },
     }
-    config = build_context_gateway_config(
+    config = resolve_injected_context_fixture(
         factory,
         "chief_engineer",
         MagicMock(),

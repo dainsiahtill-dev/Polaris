@@ -14,13 +14,19 @@ current_modules:
 - polaris.cells.orchestration.pm_planning.public.task_intent
 tags: []
 owned_paths:
-- polaris/cells/orchestration/pm_planning/public/contracts.py
-- polaris/cells/orchestration/pm_planning/public/task_intent.py
-- polaris/cells/orchestration/pm_planning/tests/test_planning_inputs.py
-- polaris/cells/orchestration/pm_planning/internal/**
-- polaris/cells/orchestration/pm_planning/public/artifact_contracts.py
-- polaris/cells/orchestration/pm_planning/tests/test_artifact_contracts.py
-- polaris/delivery/http/v2/pm.py
+  - polaris/cells/orchestration/pm_planning/public/contracts.py
+  - polaris/cells/orchestration/pm_planning/public/task_intent.py
+  - polaris/cells/orchestration/pm_planning/tests/test_planning_inputs.py
+  - polaris/cells/orchestration/pm_planning/internal/**
+  - polaris/cells/orchestration/pm_planning/public/artifact_contracts.py
+  - polaris/cells/orchestration/pm_planning/tests/test_artifact_contracts.py
+  - polaris/delivery/http/v2/pm.py
+  - polaris/cells/orchestration/pm_planning/pipeline.py
+  - polaris/cells/orchestration/pm_planning/public/__init__.py
+  - polaris/cells/orchestration/pm_planning/public/governance_service.py
+  - polaris/cells/orchestration/pm_planning/public/pipeline.py
+  - polaris/cells/orchestration/pm_planning/public/service.py
+  - polaris/cells/orchestration/pm_planning/service.py
 public_contracts:
   modules:
   - polaris.cells.orchestration.pm_planning.public.contracts

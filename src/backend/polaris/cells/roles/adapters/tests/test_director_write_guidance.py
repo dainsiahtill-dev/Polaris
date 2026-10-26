@@ -7,9 +7,9 @@ from pathlib import Path
 
 from polaris.cells.roles.adapters.internal.director.adapter import _prepare_role_dialogue_context
 from polaris.cells.roles.adapters.internal.director.execute_method import _project_completion_targets_into_task
-from polaris.cells.roles.kernel.internal.context_gateway.context_override_processor import ContextOverrideProcessor
-from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
-    build_single_batch_task_contract_hint,
+from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import (
+    observe_safe_context_guidance,
+    observe_write_guidance_request,
 )
 from polaris.kernelone.tool_execution.forced_tool_surface import build_forced_tool_surface
 
@@ -67,7 +67,7 @@ def test_single_batch_hint_does_not_promote_paths_mentioned_as_references() -> N
     ]
     tools = build_forced_tool_surface(["write_file"], pin_write_paths=["tests/verify.test.ts", "README.md"])
 
-    hint, _ = build_single_batch_task_contract_hint(context, tools)
+    hint = observe_write_guidance_request(context, tools)["hint"]
 
     coverage_line = next(line for line in hint.splitlines() if line.startswith("Mutation target files"))
     assert "tests/verify.test.ts, README.md" in coverage_line
@@ -106,7 +106,7 @@ def test_single_batch_hint_uses_real_tool_scope_without_message_metadata() -> No
     ]
     tools = build_forced_tool_surface(["write_file"], pin_write_paths=["tests/verify.test.ts", "README.md"])
 
-    hint, _ = build_single_batch_task_contract_hint(context, tools)
+    hint = observe_write_guidance_request(context, tools)["hint"]
 
     coverage_line = next(line for line in hint.splitlines() if line.startswith("Mutation target files"))
     assert "package.json" not in coverage_line and "index.html" not in coverage_line
@@ -116,7 +116,7 @@ def test_safe_guidance_survives_context_os_but_raw_control_helper_does_not() -> 
     context, _ = _prepare_role_dialogue_context(_context(), timeout_seconds=300, stage_label="first_call")
     original = deepcopy(context)
 
-    message = ContextOverrideProcessor(detect_prompt_injection=True).process_context_override(context)
+    message = observe_safe_context_guidance(context)["message"]
 
     assert message is not None
     assert "task_write_guidance: " + str(context["task_write_guidance"]) in message["content"]

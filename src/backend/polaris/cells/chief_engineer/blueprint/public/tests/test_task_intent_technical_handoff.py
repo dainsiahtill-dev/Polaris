@@ -72,74 +72,11 @@ def _command(tmp_path, payload, *, task=None, tasks=None, commands=(), project_k
 
 
 def _payload():
-    return {
-        "construction_plan": {
-            "task_plans": {"TASK-A": {"steps": ["Implement CLI", "Verify CLI"]}},
-            "project_interface_contract": {},
-            "shared_behavior_contract": {"invariants": []},
-        },
-        "project_completion_contract": {
-            "obligations": {
-                "artifacts": [
-                    {
-                        "obligation_id": "source",
-                        "path": "src/main.py",
-                        "semantic_role": "entrypoint",
-                        "applicability": "required",
-                        "owner_task_id": "TASK-A",
-                    },
-                    {
-                        "obligation_id": "tests",
-                        "path": "tests/test_main.py",
-                        "semantic_role": "test",
-                        "applicability": "required",
-                        "owner_task_id": "TASK-A",
-                    },
-                    {
-                        "obligation_id": "manifest",
-                        "path": "pyproject.toml",
-                        "semantic_role": "manifest",
-                        "applicability": "required",
-                        "owner_task_id": "TASK-A",
-                    },
-                ],
-                "entrypoints": [
-                    {
-                        "obligation_id": "cli",
-                        "kind": "cli",
-                        "applicability": "required",
-                        "owner_task_id": "TASK-A",
-                        "source_path": "src/main.py",
-                        "runtime_path": None,
-                        "command": "python -m src.main",
-                    }
-                ],
-                "verification": [
-                    {
-                        "obligation_id": "environment",
-                        "modality": "environment_prep",
-                        "command_authority_hash": None,
-                        "applicability": "required",
-                        "covers_obligation_ids": ["manifest"],
-                        "owner_task_id": "TASK-A",
-                        "argv": ["python", "-m", "pip", "install", "-e", "."],
-                        "cwd": ".",
-                    },
-                    {
-                        "obligation_id": "check",
-                        "modality": "test",
-                        "command_authority_hash": None,
-                        "applicability": "required",
-                        "covers_obligation_ids": ["source", "tests"],
-                        "owner_task_id": "TASK-A",
-                        "argv": ["python", "-m", "pytest", "-q"],
-                        "cwd": ".",
-                    },
-                ],
-            }
-        },
-        "risk_flags": [],
-    }
+    from polaris.cells.chief_engineer.blueprint.public.tests.portfolio_payload_fixture import (
+        synthetic_task_intent_portfolio_payload,
+    )
+
+    return synthetic_task_intent_portfolio_payload()
 
 
 def test_light_task_is_semantic_and_does_not_require_technical_paths():
@@ -372,13 +309,37 @@ def test_optional_ce_artifacts_and_commands_are_capabilities_only_in_handoff(tmp
 
     payload = _payload()
     obligations = payload["project_completion_contract"]["obligations"]
-    obligations["artifacts"].append({"obligation_id": "optional-docs", "path": "docs/color.md", "semantic_role": "docs", "applicability": "optional", "owner_task_id": "TASK-A"})
+    obligations["artifacts"].append(
+        {
+            "obligation_id": "optional-docs",
+            "path": "docs/color.md",
+            "semantic_role": "docs",
+            "applicability": "optional",
+            "owner_task_id": "TASK-A",
+        }
+    )
     optional = deepcopy(obligations["verification"][1])
     optional.update(obligation_id="optional-test", applicability="optional", argv=["pytest", "-q"])
     obligations["verification"].append(optional)
     portfolio = build_chief_engineer_blueprint_portfolio(_command(tmp_path, payload))
-    pm_task = {"id": "TASK-A", "title": "Deliver deterministic CLI output", "goal": "Deliver deterministic CLI output", "acceptance": ["CLI accepts a name and prints a deterministic greeting"], "product_acceptance": ["The complete product can be delivered"], "metadata": {"planning_contract_version": "pm.task_intent.v1"}}
-    result = generate_task_blueprint(GenerateTaskBlueprintCommandV1(workspace=str(tmp_path), task_id="TASK-A", run_id="run-intent", objective=pm_task["goal"], context={**portfolio.to_task_blueprint_context(), "pm_task_contract": pm_task}, llm_blueprint=project_chief_engineer_task_blueprint(portfolio, "TASK-A")))
+    pm_task = {
+        "id": "TASK-A",
+        "title": "Deliver deterministic CLI output",
+        "goal": "Deliver deterministic CLI output",
+        "acceptance": ["CLI accepts a name and prints a deterministic greeting"],
+        "product_acceptance": ["The complete product can be delivered"],
+        "metadata": {"planning_contract_version": "pm.task_intent.v1"},
+    }
+    result = generate_task_blueprint(
+        GenerateTaskBlueprintCommandV1(
+            workspace=str(tmp_path),
+            task_id="TASK-A",
+            run_id="run-intent",
+            objective=pm_task["goal"],
+            context={**portfolio.to_task_blueprint_context(), "pm_task_contract": pm_task},
+            llm_blueprint=project_chief_engineer_task_blueprint(portfolio, "TASK-A"),
+        )
+    )
     stored = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
     assert "docs/color.md" in stored["target_files"]
     assert "docs/color.md" in stored["job_token"]["allowed_write_paths"]
@@ -395,10 +356,30 @@ def test_optional_ce_artifacts_and_commands_are_capabilities_only_in_handoff(tmp
 
 
 def _readonly_fixture():
-    task = replace(_task(), task_id="VERIFY", objective="Verify upstream CLI and tests without writing", dependencies=("TASK-A",), context_files=("src/main.py", "tests/test_main.py", "pyproject.toml"), observable_acceptance=("Existing CLI tests pass",))
+    task = replace(
+        _task(),
+        task_id="VERIFY",
+        objective="Verify upstream CLI and tests without writing",
+        dependencies=("TASK-A",),
+        context_files=("src/main.py", "tests/test_main.py", "pyproject.toml"),
+        observable_acceptance=("Existing CLI tests pass",),
+    )
     payload = _payload()
-    payload["construction_plan"]["task_plans"]["VERIFY"] = {"steps": ["Read upstream artifacts", "Run the exact test recipe"]}
-    payload["project_completion_contract"]["obligations"]["verification"].append({"obligation_id": "readonly-check", "modality": "test", "command_authority_hash": None, "applicability": "required", "covers_obligation_ids": ["source", "tests"], "owner_task_id": "VERIFY", "argv": ["python", "-m", "pytest", "-q"], "cwd": "."})
+    payload["construction_plan"]["task_plans"]["VERIFY"] = {
+        "steps": ["Read upstream artifacts", "Run the exact test recipe"]
+    }
+    payload["project_completion_contract"]["obligations"]["verification"].append(
+        {
+            "obligation_id": "readonly-check",
+            "modality": "test",
+            "command_authority_hash": None,
+            "applicability": "required",
+            "covers_obligation_ids": ["source", "tests"],
+            "owner_task_id": "VERIFY",
+            "argv": ["python", "-m", "pytest", "-q"],
+            "cwd": ".",
+        }
+    )
     return task, payload
 
 
@@ -409,8 +390,27 @@ def test_semantic_readonly_task_receives_exact_read_capability_without_write_own
     task, payload = _readonly_fixture()
     portfolio = build_chief_engineer_blueprint_portfolio(_command(tmp_path, payload, tasks=(_task(), task)))
     assert portfolio.project_interface_contract.task_file_ownership["VERIFY"] == ()
-    pm_task = {"id": task.task_id, "title": task.objective, "goal": task.objective, "target_files": [], "scope_paths": [], "dependencies": list(task.dependencies), "context_files": list(task.context_files), "acceptance": list(task.observable_acceptance), "metadata": {"planning_contract_version": "pm.task_intent.v1"}}
-    result = generate_task_blueprint(GenerateTaskBlueprintCommandV1(workspace=str(tmp_path), task_id=task.task_id, run_id="run-intent", objective=task.objective, context={**portfolio.to_task_blueprint_context(), "pm_task_contract": pm_task}, llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id)))
+    pm_task = {
+        "id": task.task_id,
+        "title": task.objective,
+        "goal": task.objective,
+        "target_files": [],
+        "scope_paths": [],
+        "dependencies": list(task.dependencies),
+        "context_files": list(task.context_files),
+        "acceptance": list(task.observable_acceptance),
+        "metadata": {"planning_contract_version": "pm.task_intent.v1"},
+    }
+    result = generate_task_blueprint(
+        GenerateTaskBlueprintCommandV1(
+            workspace=str(tmp_path),
+            task_id=task.task_id,
+            run_id="run-intent",
+            objective=task.objective,
+            context={**portfolio.to_task_blueprint_context(), "pm_task_contract": pm_task},
+            llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id),
+        )
+    )
     stored = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
     assert stored["handoff_ready"] is True
     assert stored["target_files"] == []
@@ -438,12 +438,23 @@ def test_job_token_cannot_read_context_outside_ce_interface_binding(tmp_path):
     targets = list(portfolio.project_interface_contract.task_file_ownership["TASK-A"])
     with pytest.raises(ValueError, match="read context"):
         _control_plane_job_token(
-            workspace=str(tmp_path), task_id="TASK-A", blueprint_id="ce-test",
-            blueprint_path="runtime/blueprints/ce-test.json", blueprint_hash="c" * 64,
-            contract_hash="a" * 64, target_files=targets, scope_paths=targets,
-            acceptance_criteria=["The CLI works"], project_type="application", language="python",
-            payload={**portfolio.to_task_blueprint_context(), "run_id": "run-intent",
-                     "planning_contract_version": "pm.task_intent.v1", "context_files": ["private.py"]},
+            workspace=str(tmp_path),
+            task_id="TASK-A",
+            blueprint_id="ce-test",
+            blueprint_path="runtime/blueprints/ce-test.json",
+            blueprint_hash="c" * 64,
+            contract_hash="a" * 64,
+            target_files=targets,
+            scope_paths=targets,
+            acceptance_criteria=["The CLI works"],
+            project_type="application",
+            language="python",
+            payload={
+                **portfolio.to_task_blueprint_context(),
+                "run_id": "run-intent",
+                "planning_contract_version": "pm.task_intent.v1",
+                "context_files": ["private.py"],
+            },
         )
 
 
@@ -457,16 +468,39 @@ def test_task_market_consumer_preserves_validated_readonly_handoff(tmp_path, mon
 
     task, payload = _readonly_fixture()
     portfolio = build_chief_engineer_blueprint_portfolio(_command(tmp_path, payload, tasks=(_task(), task)))
-    pm_task = {"id": task.task_id, "title": task.objective, "goal": task.objective, "acceptance": list(task.observable_acceptance), "dependencies": list(task.dependencies), "metadata": {"planning_contract_version": "pm.task_intent.v1"}}
-    blueprint = generate_task_blueprint(GenerateTaskBlueprintCommandV1(workspace=str(tmp_path), task_id=task.task_id, run_id="run-intent", objective=task.objective, context={**portfolio.to_task_blueprint_context(), "pm_task_contract": pm_task}, llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id)))
+    pm_task = {
+        "id": task.task_id,
+        "title": task.objective,
+        "goal": task.objective,
+        "acceptance": list(task.observable_acceptance),
+        "dependencies": list(task.dependencies),
+        "metadata": {"planning_contract_version": "pm.task_intent.v1"},
+    }
+    blueprint = generate_task_blueprint(
+        GenerateTaskBlueprintCommandV1(
+            workspace=str(tmp_path),
+            task_id=task.task_id,
+            run_id="run-intent",
+            objective=task.objective,
+            context={**portfolio.to_task_blueprint_context(), "pm_task_contract": pm_task},
+            llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id),
+        )
+    )
     stored = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(blueprint.blueprint_id)
     market = MagicMock()
-    market.claim_work_item.side_effect = [SimpleNamespace(ok=True, task_id=task.task_id, lease_token="lease-readonly", payload=stored), SimpleNamespace(ok=False)]
+    market.claim_work_item.side_effect = [
+        SimpleNamespace(ok=True, task_id=task.task_id, lease_token="lease-readonly", payload=stored),
+        SimpleNamespace(ok=False),
+    ]
     market.acknowledge_task_stage.return_value = SimpleNamespace(ok=True, status="pending_exec")
-    monkeypatch.setattr("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service", lambda: market)
+    monkeypatch.setattr(
+        "polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service", lambda: market
+    )
     monkeypatch.setattr(CEConsumer, "_run_ce_preflight", lambda self, task_id, payload: {"blueprint_id": "bp-VERIFY"})
     monkeypatch.setenv("KERNELONE_CE_HANDOFF_ENFORCEMENT", "1")
-    result = CEConsumer(workspace=str(tmp_path), worker_id="readonly-consumer", enable_adr_blueprint_store=False).poll_once()
+    result = CEConsumer(
+        workspace=str(tmp_path), worker_id="readonly-consumer", enable_adr_blueprint_store=False
+    ).poll_once()
     assert result[0]["ok"] is True, result
     final = BlueprintPersistence(str(tmp_path), ensure_directory=False).load("bp-VERIFY")
     assert final["handoff_ready"] is True
@@ -486,18 +520,44 @@ def test_readonly_handoff_revalidates_immutable_portfolio_authority(tmp_path, at
     task, payload = _readonly_fixture()
     portfolio = build_chief_engineer_blueprint_portfolio(_command(tmp_path, payload, tasks=(_task(), task)))
     context = deepcopy(portfolio.to_task_blueprint_context())
-    context["pm_task_contract"] = {"id": task.task_id, "title": task.objective, "goal": task.objective, "acceptance": list(task.observable_acceptance), "dependencies": list(task.dependencies), "context_files": list(task.context_files), "metadata": {"planning_contract_version": "pm.task_intent.v1"}}
+    context["pm_task_contract"] = {
+        "id": task.task_id,
+        "title": task.objective,
+        "goal": task.objective,
+        "acceptance": list(task.observable_acceptance),
+        "dependencies": list(task.dependencies),
+        "context_files": list(task.context_files),
+        "metadata": {"planning_contract_version": "pm.task_intent.v1"},
+    }
     run_id = "run-intent"
     if attack == "rehash_read_scope":
         interface = context["project_interface_contract"]
         interface["task_read_context"][task.task_id].append("private.py")
-        basis = {key: value for key, value in interface.items() if key not in {"project_interface_contract_id", "project_interface_contract_ref", "project_interface_contract_hash"}}
+        basis = {
+            key: value
+            for key, value in interface.items()
+            if key
+            not in {
+                "project_interface_contract_id",
+                "project_interface_contract_ref",
+                "project_interface_contract_hash",
+            }
+        }
         interface["project_interface_contract_hash"] = stable_hash(basis)
         context["project_interface_contract_hash"] = interface["project_interface_contract_hash"]
     else:
         run_id = "another-run"
     with pytest.raises(ChiefEngineerBlueprintErrorV1, match=r"(immutable|portfolio|authority|identity)"):
-        generate_task_blueprint(GenerateTaskBlueprintCommandV1(workspace=str(tmp_path), task_id=task.task_id, run_id=run_id, objective=task.objective, context=context, llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id)))
+        generate_task_blueprint(
+            GenerateTaskBlueprintCommandV1(
+                workspace=str(tmp_path),
+                task_id=task.task_id,
+                run_id=run_id,
+                objective=task.objective,
+                context=context,
+                llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id),
+            )
+        )
 
 
 def test_semantic_readonly_handoff_cannot_turn_pm_context_path_into_write_capability(tmp_path):
@@ -506,8 +566,27 @@ def test_semantic_readonly_handoff_cannot_turn_pm_context_path_into_write_capabi
 
     task, payload = _readonly_fixture()
     portfolio = build_chief_engineer_blueprint_portfolio(_command(tmp_path, payload, tasks=(_task(), task)))
-    context = {**portfolio.to_task_blueprint_context(), "target_files": ["private.py"], "pm_task_contract": {"id": task.task_id, "title": task.objective, "goal": task.objective, "acceptance": list(task.observable_acceptance), "metadata": {"planning_contract_version": "pm.task_intent.v1"}}}
-    result = generate_task_blueprint(GenerateTaskBlueprintCommandV1(workspace=str(tmp_path), task_id=task.task_id, run_id="run-intent", objective=task.objective, context=context, llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id)))
+    context = {
+        **portfolio.to_task_blueprint_context(),
+        "target_files": ["private.py"],
+        "pm_task_contract": {
+            "id": task.task_id,
+            "title": task.objective,
+            "goal": task.objective,
+            "acceptance": list(task.observable_acceptance),
+            "metadata": {"planning_contract_version": "pm.task_intent.v1"},
+        },
+    }
+    result = generate_task_blueprint(
+        GenerateTaskBlueprintCommandV1(
+            workspace=str(tmp_path),
+            task_id=task.task_id,
+            run_id="run-intent",
+            objective=task.objective,
+            context=context,
+            llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id),
+        )
+    )
     stored = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
     assert stored["target_files"] == []
     assert stored["job_token"]["allowed_write_paths"] == []
@@ -521,11 +600,34 @@ def test_job_token_rechecks_owner_portfolio_after_interface_rehash(tmp_path):
     context = deepcopy(portfolio.to_task_blueprint_context())
     interface = context["project_interface_contract"]
     interface["task_read_context"][task.task_id].append("private.py")
-    basis = {key: value for key, value in interface.items() if key not in {"project_interface_contract_id", "project_interface_contract_ref", "project_interface_contract_hash"}}
+    basis = {
+        key: value
+        for key, value in interface.items()
+        if key
+        not in {"project_interface_contract_id", "project_interface_contract_ref", "project_interface_contract_hash"}
+    }
     interface["project_interface_contract_hash"] = stable_hash(basis)
     context["project_interface_contract_hash"] = interface["project_interface_contract_hash"]
     with pytest.raises(ChiefEngineerBlueprintErrorV1, match="immutable"):
-        _control_plane_job_token(workspace=str(tmp_path), task_id=task.task_id, payload={**context, "run_id": "run-intent", "planning_contract_version": "pm.task_intent.v1", "context_files": interface["task_read_context"][task.task_id]}, blueprint_id="bp-test", blueprint_path="runtime/blueprints/bp-test.json", blueprint_hash="b" * 64, contract_hash="a" * 64, target_files=[], scope_paths=[], acceptance_criteria=["Existing tests pass"], project_type="application", language="python")
+        _control_plane_job_token(
+            workspace=str(tmp_path),
+            task_id=task.task_id,
+            payload={
+                **context,
+                "run_id": "run-intent",
+                "planning_contract_version": "pm.task_intent.v1",
+                "context_files": interface["task_read_context"][task.task_id],
+            },
+            blueprint_id="bp-test",
+            blueprint_path="runtime/blueprints/bp-test.json",
+            blueprint_hash="b" * 64,
+            contract_hash="a" * 64,
+            target_files=[],
+            scope_paths=[],
+            acceptance_criteria=["Existing tests pass"],
+            project_type="application",
+            language="python",
+        )
 
 
 def test_ce_derives_upstream_inputs_for_test_writer_without_pm_context_hints(tmp_path):
@@ -535,12 +637,42 @@ def test_ce_derives_upstream_inputs_for_test_writer_without_pm_context_hints(tmp
     task, payload = _readonly_fixture()
     task = replace(task, context_files=())
     obligations = payload["project_completion_contract"]["obligations"]
-    obligations["artifacts"].append({"obligation_id": "verify-test", "path": "tests/test_verify.py", "semantic_role": "test", "applicability": "required", "owner_task_id": task.task_id})
+    obligations["artifacts"].append(
+        {
+            "obligation_id": "verify-test",
+            "path": "tests/test_verify.py",
+            "semantic_role": "test",
+            "applicability": "required",
+            "owner_task_id": task.task_id,
+        }
+    )
     obligations["verification"][-1]["covers_obligation_ids"].append("verify-test")
     portfolio = build_chief_engineer_blueprint_portfolio(_command(tmp_path, payload, tasks=(_task(), task)))
-    context = {**portfolio.to_task_blueprint_context(), "pm_task_contract": {"id": task.task_id, "title": task.objective, "goal": task.objective, "acceptance": list(task.observable_acceptance), "metadata": {"planning_contract_version": "pm.task_intent.v1"}}}
-    result = generate_task_blueprint(GenerateTaskBlueprintCommandV1(workspace=str(tmp_path), task_id=task.task_id, run_id="run-intent", objective=task.objective, context=context, llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id)))
+    context = {
+        **portfolio.to_task_blueprint_context(),
+        "pm_task_contract": {
+            "id": task.task_id,
+            "title": task.objective,
+            "goal": task.objective,
+            "acceptance": list(task.observable_acceptance),
+            "metadata": {"planning_contract_version": "pm.task_intent.v1"},
+        },
+    }
+    result = generate_task_blueprint(
+        GenerateTaskBlueprintCommandV1(
+            workspace=str(tmp_path),
+            task_id=task.task_id,
+            run_id="run-intent",
+            objective=task.objective,
+            context=context,
+            llm_blueprint=project_chief_engineer_task_blueprint(portfolio, task.task_id),
+        )
+    )
     stored = BlueprintPersistence(str(tmp_path), ensure_directory=False).load(result.blueprint_id)
     assert stored["job_token"]["allowed_write_paths"] == ["tests/test_verify.py"]
     assert set(stored["context_files"]) == {"src/main.py", "tests/test_main.py"}
-    assert set(stored["job_token"]["allowed_read_paths"]) == {"tests/test_verify.py", "src/main.py", "tests/test_main.py"}
+    assert set(stored["job_token"]["allowed_read_paths"]) == {
+        "tests/test_verify.py",
+        "src/main.py",
+        "tests/test_main.py",
+    }

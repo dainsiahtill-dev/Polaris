@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:42.095104Z",
-  "source_hash": "99df5f200b7a80f1",
+  "generated_at": "2026-10-26T11:49:16.750700Z",
+  "source_hash": "d92054932f555fed",
   "cell_id": "docs.court_workflow",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -306,6 +306,84 @@
       "name": "ensure_plan_file",
       "description": "",
       "defined_in": "polaris/cells/docs/court_workflow/internal/plan_template.py"
+    },
+    {
+      "type": "class",
+      "name": "GenerateCourtDocsCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/docs/court_workflow/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ApplyCourtDocsCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/docs/court_workflow/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PreviewCourtDocsQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/docs/court_workflow/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryCourtProjectionV1",
+      "description": "",
+      "defined_in": "polaris/cells/docs/court_workflow/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CourtDocsGeneratedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/docs/court_workflow/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CourtDocsResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/docs/court_workflow/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CourtWorkflowError",
+      "description": "Raised when `docs.court_workflow` contract processing fails.",
+      "defined_in": "polaris/cells/docs/court_workflow/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "IDocsCourtWorkflow",
+      "description": "",
+      "defined_in": "polaris/cells/docs/court_workflow/public/contracts.py",
+      "methods": [
+        {
+          "name": "start_court",
+          "doc": "Start a court workflow through the public integration entrypoint."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/docs/court_workflow/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/docs/court_workflow/public/contracts.py"
     },
     {
       "type": "function",

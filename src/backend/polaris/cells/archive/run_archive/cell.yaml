@@ -12,8 +12,13 @@ current_modules:
 - polaris.cells.archive.run_archive.public.contracts
 tags: []
 owned_paths:
-- polaris/cells/archive/run_archive/internal/archive_hook.py
-- polaris/cells/archive/run_archive/internal/history_archive_service.py
+  - polaris/cells/archive/run_archive/internal/archive_hook.py
+  - polaris/cells/archive/run_archive/internal/history_archive_service.py
+  - polaris/cells/archive/run_archive/internal/archive_sink.py
+  - polaris/cells/archive/run_archive/internal/stream_archiver.py
+  - polaris/cells/archive/run_archive/public/__init__.py
+  - polaris/cells/archive/run_archive/public/contracts.py
+  - polaris/cells/archive/run_archive/public/service.py
 public_contracts:
   modules:
   - polaris.cells.archive.run_archive.public.contracts

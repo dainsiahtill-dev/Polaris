@@ -13,11 +13,12 @@ current_modules:
 - polaris.cells.storage.layout.public.service
 tags: []
 owned_paths:
-- polaris/cells/storage/layout/public/**
-- polaris/cells/storage/layout/internal/**
-- polaris/kernelone/storage/layout.py
-- polaris/kernelone/storage/io_paths.py
-- polaris/kernelone/storage/policy.py
+  - polaris/cells/storage/layout/public/**
+  - polaris/cells/storage/layout/internal/**
+  - polaris/kernelone/storage/layout.py
+  - polaris/kernelone/storage/io_paths.py
+  - polaris/kernelone/storage/policy.py
+  - polaris/cells/storage/layout/__init__.py
 public_contracts:
   modules:
   - polaris.cells.storage.layout.public.contracts

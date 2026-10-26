@@ -17,8 +17,8 @@ from typing import Any
 
 import pytest
 from polaris.cells.chief_engineer.blueprint import public as ce
-from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import (
-    _payload,
+from polaris.cells.chief_engineer.blueprint.public.tests.portfolio_payload_fixture import (
+    synthetic_task_intent_portfolio_payload,
 )
 from polaris.cells.factory.pipeline.internal.factory_event_chain import (
     FactoryRunAdmissionV1,
@@ -162,7 +162,7 @@ async def test_candidate_build_reuses_carrier_from_real_committed_pm_source(
         run_id=run.id,
         tasks=executor._chief_engineer_portfolio_tasks(_synthetic_pm_tasks()),
         authority_carrier=carrier,
-        structured_output=_payload(),
+        structured_output=synthetic_task_intent_portfolio_payload(),
     )
     assert portfolio.project_completion_contract is not None
     assert portfolio.project_completion_contract.project_id == "synthetic-project"
@@ -212,7 +212,7 @@ async def test_new_interpreter_recaptures_original_store_and_rejects_old_signatu
         run_id=run.id,
         tasks=tasks,
         authority_carrier=carrier,
-        structured_output=_payload(),
+        structured_output=synthetic_task_intent_portfolio_payload(),
     )
     assert "authority_signature" not in json.dumps(portfolio.to_dict())
     child = r"""import asyncio,json,sys
@@ -221,7 +221,7 @@ from polaris.cells.chief_engineer.blueprint import public as ce
 from polaris.cells.factory.pipeline.internal.factory_run_service import FactoryRunService
 from polaris.cells.factory.pipeline.internal.factory_stage_executor import OrchestrationStageExecutor
 from polaris.cells.factory.pipeline.tests.test_ce_host_authority_capture import _synthetic_pm_tasks
-from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import _payload
+from polaris.cells.chief_engineer.blueprint.public.tests.portfolio_payload_fixture import synthetic_task_intent_portfolio_payload
 async def main():
     workspace=Path(sys.argv[1]);run=await FactoryRunService(workspace,read_only=True).get_run(sys.argv[2]);assert run is not None
     owner=OrchestrationStageExecutor(workspace);tasks=owner._chief_engineer_portfolio_tasks(_synthetic_pm_tasks())
@@ -229,12 +229,12 @@ async def main():
     fresh=getattr(carrier, "authority_signature", None);assert fresh!=sys.argv[3]
     object.__setattr__(carrier,"authority_signature",sys.argv[3])
     try:
-        owner._build_chief_engineer_portfolio_from_candidate(run_id=run.id,tasks=tasks,authority_carrier=carrier,structured_output=_payload(),revalidate_existing=True)
+        owner._build_chief_engineer_portfolio_from_candidate(run_id=run.id,tasks=tasks,authority_carrier=carrier,structured_output=synthetic_task_intent_portfolio_payload(),revalidate_existing=True)
         raise AssertionError("old process signature accepted")
     except ce.ChiefEngineerBlueprintErrorV1 as error:
         assert error.code=="invalid_project_completion_authority_carrier"
     object.__setattr__(carrier,"authority_signature",fresh)
-    recovered=owner._build_chief_engineer_portfolio_from_candidate(run_id=run.id,tasks=tasks,authority_carrier=carrier,structured_output=_payload(),revalidate_existing=True)
+    recovered=owner._build_chief_engineer_portfolio_from_candidate(run_id=run.id,tasks=tasks,authority_carrier=carrier,structured_output=synthetic_task_intent_portfolio_payload(),revalidate_existing=True)
     print(json.dumps({"project_id":recovered.project_completion_contract.project_id,"pm_contract_hash":authority.pm_contract_hash,"portfolio_hash":recovered.portfolio_hash,"old_signature_rejected":True}))
 asyncio.run(main())
 """

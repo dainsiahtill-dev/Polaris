@@ -9,7 +9,8 @@ import time
 from pathlib import Path
 
 import pytest
-from polaris.cells.roles.profile.public.service import RoleTurnResult
+from polaris.cells.roles.kernel.tests import runtime_boundary_scenarios as kernel_fixture
+from polaris.cells.roles.profile.public.service import RoleTurnRequest, RoleTurnResult
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 
@@ -19,9 +20,9 @@ class _PhysicalTurnKernel:
 
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace
-        self.requests = []
-        self.gate_exits = []
-        self.results = []
+        self.requests: list[RoleTurnRequest] = []
+        self.gate_exits: list[int] = []
+        self.results: list[RoleTurnResult] = []
 
     async def run(self, role, request):
         return self._execute(role, request)
@@ -111,9 +112,6 @@ def _install_runtime_boundary(monkeypatch, workspace, kernel):
 
 @pytest.mark.asyncio
 async def test_canonical_readonly_document_quote_reaches_real_kernel(tmp_path, monkeypatch):
-    from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
-    from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
-
     document = tmp_path / "policy.md"
     document.write_text("Do not run rm -rf. Retain the project files.\n", encoding="utf-8")
     tool_calls = []
@@ -139,16 +137,7 @@ async def test_canonical_readonly_document_quote_reaches_real_kernel(tmp_path, m
 
     class DocumentKernel:
         async def run_stream(self, role, request):
-            transaction = TransactionKernel(
-                llm_provider=provider,
-                tool_runtime=tools,
-                config=TransactionConfig(domain="code", role_id=role, workspace=str(tmp_path)),
-            )
-            result = await transaction.execute(
-                request.metadata["transaction_invocation_id"],
-                [{"role": "user", "content": request.message}],
-                [{"type": "function", "function": {"name": "read_file"}}],
-            )
+            result = await kernel_fixture.execute_readonly_transaction_fixture(role, request, tmp_path, provider, tools)
             yield {
                 "type": "complete",
                 "result": RoleTurnResult(
@@ -212,9 +201,6 @@ async def test_canonical_negative_destructive_quote_preserves_authorized_tool_lo
 
 @pytest.mark.asyncio
 async def test_canonical_prompt_exemption_keeps_real_kernel_tool_denial(tmp_path, monkeypatch):
-    from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig
-    from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
-
     protected = tmp_path / "protected.txt"
     protected.write_text("retain", encoding="utf-8")
     provider_calls = []
@@ -241,17 +227,8 @@ async def test_canonical_prompt_exemption_keeps_real_kernel_tool_denial(tmp_path
 
     class DeniedKernel:
         async def run_stream(self, role, request):
-            transaction = TransactionKernel(
-                llm_provider=provider,
-                tool_runtime=tools,
-                config=TransactionConfig(domain="code", role_id=role, workspace=str(tmp_path)),
-            )
             try:
-                await transaction.execute(
-                    request.metadata["transaction_invocation_id"],
-                    [{"role": "user", "content": request.message}],
-                    [{"type": "function", "function": {"name": "read_file"}}],
-                )
+                await kernel_fixture.execute_readonly_transaction_fixture(role, request, tmp_path, provider, tools)
             except RuntimeError as exc:
                 yield {"type": "error", "error": str(exc), "error_type": "kernel_tool_policy_denied"}
                 return
@@ -535,7 +512,7 @@ def test_continuation_policy_measures_receipt_progress_not_read_count(different_
 async def test_new_submission_on_same_role_session_receives_its_own_user_message(tmp_path, monkeypatch):
     class CompletedKernel:
         def __init__(self) -> None:
-            self.messages = []
+            self.messages: list[str] = []
 
         async def run_stream(self, role, request):
             self.messages.append(request.message)
@@ -592,11 +569,8 @@ def test_local_repair_keeps_session_in_verifying_phase():
 
 @pytest.mark.asyncio
 async def test_actual_stream_projector_keeps_failed_boundary_write_for_local_repair(tmp_path, monkeypatch):
-    from types import SimpleNamespace
 
     from polaris.cells.control_plane.run_ledger.public.task_boundary import evaluate_task_boundary_verdict
-    from polaris.cells.roles.kernel.internal.kernel import stream_event_projection as projection
-    from polaris.cells.roles.kernel.public.turn_events import CompletionEvent
 
     verdicts = []
 
@@ -610,16 +584,10 @@ async def test_actual_stream_projector_keeps_failed_boundary_write_for_local_rep
         verdicts.append(verdict)
         return verdict
 
-    monkeypatch.setattr(projection, "append_role_turn_task_boundary_verdict", append_boundary)
-
-    class Publisher:
-        async def publish_stream_event(self, **kwargs):
-            pass
-
     class ProjectorKernel:
         def __init__(self) -> None:
             self.turn_count = 0
-            self.messages = []
+            self.messages: list[str] = []
 
         async def run_stream(self, role, request):
             index = self.turn_count
@@ -663,37 +631,16 @@ async def test_actual_stream_projector_keeps_failed_boundary_write_for_local_rep
                         "arguments": {"command": f"{sys.executable} answer.py"},
                     }
                 )
-            projector = projection.StreamEventProjector(
-                kernel=SimpleNamespace(workspace=str(tmp_path)),
-                role=role,
-                profile=SimpleNamespace(role_id=role, model="fixture", provider_id="fixture"),
-                request=request,
-                fingerprint=SimpleNamespace(full_hash="fixture"),
-                context_gateway=SimpleNamespace(record_projection_outcome=lambda **_: None),
-                context_result=SimpleNamespace(token_estimate=12),
-                stream_run_id="projector-run",
-                uep_publisher=Publisher(),
-                runtime_tool_policy_audit={},
-                tool_filter_audit=None,
-            )
             receipt = {
                 "batch_id": f"projector-batch-{index}",
                 "results": rows,
                 "success_count": len(rows),
                 "failure_count": 0,
             }
-            projected = await projector.project(
-                CompletionEvent(
-                    turn_id=f"projector-{index}",
-                    status="success",
-                    turn_kind="tool_batch_with_receipt",
-                    batch_receipt=receipt,
-                    turn_outcome={"execution": {"invocations": invocations, "receipt": receipt}},
-                    commit_receipt={"transition_id": f"committed-{index}"},
-                )
+            event = await kernel_fixture.project_boundary_completion_fixture(
+                tmp_path, role, request, index, receipt, invocations, append_boundary, monkeypatch
             )
-            assert projected is not None
-            yield projected.event
+            yield event
 
     kernel = ProjectorKernel()
     service = _install_runtime_boundary(monkeypatch, tmp_path, kernel)
@@ -813,7 +760,7 @@ async def test_terminal_error_retains_committed_effects_without_inventing_recove
 async def test_failed_batch_with_empty_turn_error_feeds_safe_diagnostic_to_next_turn(tmp_path, monkeypatch):
     class FailedEditKernel:
         def __init__(self) -> None:
-            self.requests = []
+            self.requests: list[RoleTurnRequest] = []
 
         async def run_stream(self, role, request):
             self.requests.append(request)

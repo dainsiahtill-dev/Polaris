@@ -1901,6 +1901,12 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
 
         observable_row = self._resolve_task_row_for_mutation(command.task_id)
         if observable_row is None:
+            physical_reference = self.normalize_task_id(command.task_id)
+            if physical_reference is not None:
+                # A lenient lookup may hide a damaged physical row. Prove
+                # numeric absence before returning a normal not-found result.
+                with self._board.transaction(), self._board._mutation_guard():
+                    self._board._load_task_snapshot_from_disk(physical_reference, strict=True)
             return _build_factory_run_binding_result(
                 ok=False,
                 code="task_not_found",
@@ -1922,7 +1928,16 @@ class _RecoveryReexecMixin(_ServiceMixinBase):
             )
 
         with self._board.transaction(), self._board._mutation_guard() as guard:
-            snapshot = self._board._load_task_snapshot_from_disk(normalized_task_id)
+            physical_reference = self.normalize_task_id(command.task_id)
+            if (
+                physical_reference is not None
+                and physical_reference != normalized_task_id
+                and self._board._load_task_snapshot_from_disk(physical_reference, strict=True) is not None
+            ):
+                # Preserve external-token lookup compatibility, but never
+                # choose between two different real rows for the same token.
+                raise RuntimeError("factory_run_binding_task_reference_ambiguous")
+            snapshot = self._board._load_task_snapshot_from_disk(normalized_task_id, strict=True)
             if snapshot is None:
                 return _build_factory_run_binding_result(
                     ok=False,

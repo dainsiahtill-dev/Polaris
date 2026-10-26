@@ -6,14 +6,7 @@ import hashlib
 
 import pytest
 from polaris.cells.roles.adapters.internal.director.execution_tools import _create_director_tool_executor
-from polaris.cells.roles.kernel.tests.test_same_path_partial_jit_closure import (
-    ORIGINAL,
-    _commits,
-    _decision,
-    _execute,
-    _operations,
-    _real_chain,
-)
+from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import observe_line_range_execution
 from polaris.kernelone.editing.contracts import EditPrewriteRejectionV1, hash_edit_prewrite_arguments
 
 
@@ -22,50 +15,49 @@ from polaris.kernelone.editing.contracts import EditPrewriteRejectionV1, hash_ed
     "replacement,expected", [("BETA\n", "alpha\nBETA\ngamma\ndelta\n"), ("", "alpha\ngamma\ndelta\n")]
 )
 async def test_real_director_line_range_commit(tmp_path, monkeypatch, replacement, expected):
-    chain = _real_chain(tmp_path, monkeypatch)
-    result = await _execute(
-        chain,
-        _decision(
-            chain,
-            [
-                (
-                    "range",
-                    "edit_blocks",
-                    {
-                        "file": "owned.txt",
-                        "startLine": 2,
-                        "endLine": 2,
-                        "newText": replacement,
-                    },
-                )
-            ],
-        ),
+    observation = await observe_line_range_execution(
+        tmp_path,
+        monkeypatch,
+        [
+            (
+                "range",
+                "edit_blocks",
+                {
+                    "file": "owned.txt",
+                    "startLine": 2,
+                    "endLine": 2,
+                    "newText": replacement,
+                },
+            )
+        ],
     )
-    assert (chain.workspace / "owned.txt").read_text(encoding="utf-8") == expected
+    result = observation["result"]
+    assert observation["content"] == expected
     row = result["batch_receipt"]["results"][0]
     assert row["result"]["effect_receipt_commit"]["state"] == "RECEIPT_COMMITTED"
-    assert row["result"]["before_sha256"] == hashlib.sha256(ORIGINAL.encode("utf-8")).hexdigest()
+    assert row["result"]["before_sha256"] == hashlib.sha256(observation["original_content"].encode("utf-8")).hexdigest()
     assert row["result"]["after_sha256"] == hashlib.sha256(expected.encode("utf-8")).hexdigest()
-    assert len(_commits(chain)) == 1
+    assert len(observation["commits"]) == 1
 
 
 @pytest.mark.asyncio
 async def test_invalid_range_fails_before_operation_admission(tmp_path, monkeypatch):
-    chain = _real_chain(tmp_path, monkeypatch)
-    decision = _decision(chain, [("range", "edit_blocks", {"file": "owned.txt", "start": 2, "end": 2})])
-    try:
-        result = await _execute(chain, decision)
-    except RuntimeError:
-        result = None
-    assert (chain.workspace / "owned.txt").read_text(encoding="utf-8") == ORIGINAL
-    assert _operations(chain) == []
+    observation = await observe_line_range_execution(
+        tmp_path,
+        monkeypatch,
+        [("range", "edit_blocks", {"file": "owned.txt", "start": 2, "end": 2})],
+        tolerate_runtime_error=True,
+    )
+    result = observation["result"]
+    assert observation["content"] == observation["original_content"]
+    assert observation["operations"] == []
     if result is not None:
         assert result["batch_receipt"]["failure_count"] == 1
 
 
 def test_typed_prewrite_rejection_hashes_actual_input_and_unchanged_bytes(tmp_path):
     target = tmp_path / "owned.txt"
-    target.write_text(ORIGINAL, encoding="utf-8")
+    target.write_text("alpha\nbeta\ngamma\ndelta\n", encoding="utf-8")
     executor = _create_director_tool_executor(str(tmp_path))
     executor._bind_authorized_scope(["owned.txt"], effect_target="owned.txt")
     arguments = {"file": "owned.txt", "blocks": "invalid block content"}

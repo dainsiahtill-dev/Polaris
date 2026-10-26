@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from polaris.cells.roles.adapters.internal.director import dependency_artifact_evidence as evidence_module
+from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
 from polaris.cells.roles.adapters.internal.director.dependency_artifact_evidence import (
     DirectorDependencyArtifactEvidenceError,
     TrustedDirectorDependencyArtifactSnapshotV2,
@@ -17,6 +18,17 @@ from polaris.cells.roles.adapters.internal.director.dependency_artifact_evidence
     build_director_dependency_artifact_snapshot,
     project_director_dependency_artifact_snapshot,
 )
+
+
+class _TaskLookupDirectorAdapter(DirectorAdapter):
+    """Synthetic lookup input; dependency evidence still uses the real adapter."""
+
+    def __init__(self, workspace: str, *, task_lookup: Callable[[str], dict[str, object] | None]) -> None:
+        super().__init__(workspace)
+        self._task_lookup = task_lookup
+
+    def _get_task(self, task_id: str) -> dict[str, object] | None:
+        return self._task_lookup(task_id)
 
 
 def _effect_receipt(path: str, *, suffix: str = "1") -> dict[str, Any]:
@@ -230,8 +242,8 @@ def test_snapshot_skips_empty_receipt_bound_sibling_file(tmp_path: Path) -> None
     Live L2-16 remint-23: melodymodel.java was 0 bytes next to MelodyModel.java.
     The 5-module snapshot kept body='', _looks_like rejected the whole payload.
     """
-    from polaris.cells.roles.kernel.internal.llm_caller.context_audit._payloads import (
-        _looks_like_actual_sibling_exports,
+    from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import (
+        observe_sibling_request_evidence,
     )
 
     models = tmp_path / "src" / "main" / "java" / "polaris" / "factory" / "domain"
@@ -253,10 +265,12 @@ def test_snapshot_skips_empty_receipt_bound_sibling_file(tmp_path: Path) -> None
     assert payload["modules"][0]["path"] == filled
     assert payload["modules"][0]["body"] == body
     assert any(item.get("path") == empty for item in payload["uncovered_artifacts"])
-    assert _looks_like_actual_sibling_exports(payload, messages=None) is True
+    assert observe_sibling_request_evidence(payload, messages=None)["accepted"] is True
     marker = f"polaris.actual_sibling_exports.evidence.v2 snapshot_sha256={payload['snapshot_sha256']}"
     rendered = "\n".join(snapshot.message_lines())
-    assert _looks_like_actual_sibling_exports(payload, messages=[{"role": "user", "content": rendered}]) is True
+    assert (
+        observe_sibling_request_evidence(payload, messages=[{"role": "user", "content": rendered}])["accepted"] is True
+    )
     assert marker in rendered
 
 
@@ -385,11 +399,11 @@ def test_no_write_retry_receipts_bind_sibling_exports_for_failed_parent(tmp_path
     assert payload["zero_artifact_parent_task_ids"] == ["TASK-3-foundation"]
     assert payload["modules"][0]["path"] == path
     assert payload["modules"][0]["body"] == body
-    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
-        _looks_like_actual_sibling_exports,
+    from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import (
+        observe_sibling_request_evidence,
     )
 
-    assert _looks_like_actual_sibling_exports(payload, messages=None) is True
+    assert observe_sibling_request_evidence(payload, messages=None)["accepted"] is True
 
 
 def test_existing_scope_retry_uses_current_project_artifact_receipts(tmp_path: Path) -> None:
@@ -717,7 +731,6 @@ def test_projecting_none_wipes_sibling_exports_and_rebind_restores_them(tmp_path
     Rebind must rebuild the trusted token from the child task + parent receipts so
     final-request coverage keeps actual_sibling_exports present.
     """
-    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
     from polaris.cells.roles.adapters.internal.director.dependency_artifact_evidence import (
         DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
     )
@@ -727,12 +740,11 @@ def test_projecting_none_wipes_sibling_exports_and_rebind_restores_them(tmp_path
     source.write_text("export type GardenState = { tick: number };\n", encoding="utf-8")
     parent = _parent_row(paths=("src/models/types.ts",))
     child = _child_task([1])
-    adapter = DirectorAdapter(str(tmp_path))
-    adapter._get_task = lambda task_id: (
-        parent
-        if str(task_id) in {"1", "TASK-1"}
-        # type: ignore[method-assign]
-        else (child if str(task_id) in {"2", "TASK-2"} else None)
+    adapter = _TaskLookupDirectorAdapter(
+        str(tmp_path),
+        task_lookup=lambda task_id: (
+            parent if str(task_id) in {"1", "TASK-1"} else child if str(task_id) in {"2", "TASK-2"} else None
+        ),
     )
 
     context: dict[str, Any] = {
@@ -771,7 +783,6 @@ def test_rebind_refreshes_legal_direct_snapshot_after_parent_graph_becomes_avail
     test-writing Director still received only four modules instead of all eight.
     """
 
-    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
     from polaris.cells.roles.adapters.internal.director.dependency_artifact_evidence import (
         DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
     )
@@ -803,9 +814,8 @@ def test_rebind_refreshes_legal_direct_snapshot_after_parent_graph_becomes_avail
     # The parent graph is observable by dialogue time, after TASK-2 settlement.
     task_2["metadata"]["depends_on_external"] = ["TASK-1"]
     task_2["metadata"]["resolved_depends_on_task_ids"] = [1]
-    adapter = DirectorAdapter(str(tmp_path))
+    adapter = _TaskLookupDirectorAdapter(str(tmp_path), task_lookup=lambda task_id: rows.get(str(task_id)))
     rows = {"TASK-1": task_1, "1": task_1, "TASK-2": task_2, "2": task_2, "TASK-3": child, "3": child}
-    adapter._get_task = lambda task_id: rows.get(str(task_id))  # type: ignore[method-assign]
     context: dict[str, Any] = {"task": child, "task_id": "TASK-3"}
     context[DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY] = shallow
     project_director_dependency_artifact_snapshot(context, shallow)
@@ -825,7 +835,6 @@ def test_rebind_keeps_projected_zero_artifact_when_parent_receipts_missing(tmp_p
     _rebind then called _prepare, which project(None) wiped the payload, so the
     final request still failed missing_required_refs=actual_sibling_exports.
     """
-    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
     from polaris.cells.roles.adapters.internal.director.dependency_artifact_evidence import (
         DIRECTOR_DEPENDENCY_ARTIFACT_SNAPSHOT_CONTEXT_KEY,
         recover_trusted_director_dependency_artifact_snapshot,
@@ -833,12 +842,11 @@ def test_rebind_keeps_projected_zero_artifact_when_parent_receipts_missing(tmp_p
     from polaris.cells.roles.adapters.internal.director.quality_gate._repair_loop import (
         _quality_repair_zero_artifact_sibling_snapshot,
     )
-    from polaris.cells.roles.kernel.internal.llm_caller.context_audit._payloads import (
-        _looks_like_actual_sibling_exports,
+    from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import (
+        observe_sibling_request_evidence,
     )
 
-    adapter = DirectorAdapter(str(tmp_path))
-    adapter._get_task = lambda _task_id: None
+    adapter = _TaskLookupDirectorAdapter(str(tmp_path), task_lookup=lambda _task_id: None)
     task = {
         "task_id": "TASK-1-tests",
         "metadata": {"external_task_id": "TASK-1-tests"},
@@ -873,10 +881,10 @@ def test_rebind_keeps_projected_zero_artifact_when_parent_receipts_missing(tmp_p
     )
     final_payload = context["actual_sibling_exports"]
     marker = f"polaris.actual_sibling_exports.evidence.v2 snapshot_sha256={final_payload['snapshot_sha256']}"
-    assert _looks_like_actual_sibling_exports(
+    assert observe_sibling_request_evidence(
         final_payload,
         messages=[{"role": "user", "content": marker}],
-    )
+    )["accepted"]
 
 
 def test_recover_rejects_stale_nonempty_or_incomplete_zero_artifact_payload() -> None:
@@ -936,7 +944,6 @@ def test_incomplete_quality_repair_parent_receipts_do_not_shadow_ce_handoff(
     wrote PlantEngine.java. That write_tool_evidence row must not shadow the
     CE handoff + project-receipt rehydrate path for TASK-1-tests.
     """
-    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter
 
     path = "src/main/java/polaris/factory/main.java"
     run_id = "factory_l216_tests"
@@ -970,9 +977,9 @@ def test_incomplete_quality_repair_parent_receipts_do_not_shadow_ce_handoff(
             "resolved_depends_on_task_ids": ["TASK-1-source-modules"],
         },
     }
-    adapter = DirectorAdapter(str(tmp_path))
-    adapter._get_task = lambda task_id: (  # type: ignore[method-assign]
-        live_parent if "source-modules" in str(task_id) or str(task_id) in {"1"} else child
+    adapter = _TaskLookupDirectorAdapter(
+        str(tmp_path),
+        task_lookup=lambda task_id: live_parent if "source-modules" in str(task_id) or str(task_id) in {"1"} else child,
     )
 
     resolved = adapter._resolve_dependency_parent_task(
@@ -988,7 +995,7 @@ def test_incomplete_quality_repair_parent_receipts_do_not_shadow_ce_handoff(
 def test_preflight_parent_rehydration_preserves_declared_ancestor_dependencies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _core as adapter_core
+    from polaris.cells.roles.adapters.internal.director.adapter import _core as adapter_core
 
     run_id = "factory-parent-dependencies"
     live_parent = {
@@ -1018,8 +1025,7 @@ def test_preflight_parent_rehydration_preserves_declared_ancestor_dependencies(
             "task_completion_projection": {"run_id": run_id},
         },
     )
-    adapter = DirectorAdapter(str(tmp_path))
-    adapter._get_task = lambda _task_id: live_parent  # type: ignore[method-assign]
+    adapter = _TaskLookupDirectorAdapter(str(tmp_path), task_lookup=lambda _task_id: live_parent)
 
     resolved = adapter._resolve_dependency_parent_task("DOCS", child_task=child, context={"factory_run_id": run_id})
 
@@ -1040,10 +1046,7 @@ def test_rebind_restores_drained_parent_from_strict_ce_projection_and_project_re
     snapshot accepts only an exact execution-broker receipt whose hash matches
     the guarded file bytes.
     """
-    from polaris.cells.roles.adapters.internal.director.adapter import (
-        DirectorAdapter,
-        _core as adapter_core,
-    )
+    from polaris.cells.roles.adapters.internal.director.adapter import _core as adapter_core
 
     path = "src/engine/forecast.py"
     body = "def mood_from_weather(code: str) -> str:\n    return 'bright' if code == 'sun' else 'calm'\n"
@@ -1076,12 +1079,10 @@ def test_rebind_restores_drained_parent_from_strict_ce_projection_and_project_re
             "depends_on": ["TASK-2"],
         },
     }
-    adapter = DirectorAdapter(str(tmp_path))
-    adapter._get_task = lambda _task_id: {  # type: ignore[method-assign]
-        "id": "TASK-2",
-        "status": "pending",
-        "metadata": {"external_task_id": "TASK-2"},
-    }
+    adapter = _TaskLookupDirectorAdapter(
+        str(tmp_path),
+        task_lookup=lambda _task_id: {"id": "TASK-2", "status": "pending", "metadata": {"external_task_id": "TASK-2"}},
+    )
     monkeypatch.setattr(
         adapter_core,
         "get_blueprint_status",
@@ -1384,16 +1385,16 @@ def test_zero_owned_artifact_split_parent_keeps_sibling_project_receipts(tmp_pat
     # _looks_like_actual_sibling_exports rejected the payload because
     # module parents != dependency_ids when a CE split parent has 0 artifacts.
     # Coverage then failed closed with missing_required_refs=actual_sibling_exports.
-    from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
-        _looks_like_actual_sibling_exports,
+    from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import (
+        observe_sibling_request_evidence,
     )
 
-    assert _looks_like_actual_sibling_exports(payload, messages=None) is True
+    assert observe_sibling_request_evidence(payload, messages=None)["accepted"] is True
     assert (
-        _looks_like_actual_sibling_exports(
+        observe_sibling_request_evidence(
             payload,
             messages=[{"role": "system", "content": rendered}],
-        )
+        )["accepted"]
         is True
     )
 

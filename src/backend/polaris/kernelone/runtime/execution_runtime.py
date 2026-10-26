@@ -42,6 +42,7 @@ from polaris.kernelone.process.async_contracts import (
     StreamResult,
     SubprocessPopenRunner,
 )
+from polaris.kernelone.process.process_tree import ProcessTreeDrainError
 from polaris.kernelone.trace import create_task_with_context, get_tracer
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 
@@ -331,6 +332,7 @@ class ExecutionRuntime:
             metadata=metadata,
         )
         task_started = False
+        runner: SubprocessPopenRunner | None = None
 
         await self._process_semaphore.acquire()
         try:
@@ -354,7 +356,22 @@ class ExecutionRuntime:
             task_started = True
             return ExecutionHandle(self, state.execution_id)
         except (RuntimeError, ValueError) as exc:
+            resource = (
+                runner._take_failed_spawn_resource(exc)
+                if runner is not None
+                and type(runner) is SubprocessPopenRunner
+                and isinstance(exc, ProcessTreeDrainError)
+                else None
+            )
+            if resource is not None:
+                state.process_handle = resource
+                state.pid = resource.pid
+                self._record_process_cleanup(state, False, "official process group binding failed")
+                state.metadata["process_slot_retained"] = True
+                task_started = True  # This state, not a new task/registry, retains the slot.
             self._mark_failed(state, exc)
+            if resource is not None:
+                self._record_process_cleanup(state, False, "official process group binding failed")
             raise
         finally:
             # Release semaphore if task wasn't started successfully.

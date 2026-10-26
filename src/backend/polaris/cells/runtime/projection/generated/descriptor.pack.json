@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T17:10:20.445120Z",
-  "source_hash": "7f8c12f4bea27aad",
+  "generated_at": "2026-10-26T11:47:40.180351Z",
+  "source_hash": "7094fa373759b614",
   "cell_id": "runtime.projection",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -93,12 +93,6 @@
       "type": "function",
       "name": "write_text_atomic",
       "description": "Delegate to KernelOne atomic write for consistency and durability.",
-      "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
-    },
-    {
-      "type": "function",
-      "name": "read_readme_title",
-      "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/file_io.py"
     },
     {
@@ -462,6 +456,24 @@
     },
     {
       "type": "function",
+      "name": "bind_project_outcome_non_factory_owner_observation_port",
+      "description": "Bind the non-Factory owner adapter exactly once during bootstrap.",
+      "defined_in": "polaris/cells/runtime/projection/internal/project_outcome_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_bound_project_outcome_non_factory_owner_observation_port",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/project_outcome_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "observe_authoritative_project_outcome",
+      "description": "Observe both owner ports and bind one authoritative outcome result.",
+      "defined_in": "polaris/cells/runtime/projection/internal/project_outcome_authority.py"
+    },
+    {
+      "type": "function",
       "name": "bind_factory_chain_owner_observation_port",
       "description": "Bind process-wide owner observation port during bootstrap only.",
       "defined_in": "polaris/cells/runtime/projection/internal/project_outcome_factory_owner.py"
@@ -527,23 +539,9 @@
     },
     {
       "type": "class",
-      "name": "TaskSource",
-      "description": "Task list source selection.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py",
-      "methods": []
-    },
-    {
-      "type": "class",
-      "name": "RuntimeProjection",
-      "description": "Unified runtime projection container.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py",
-      "methods": []
-    },
-    {
-      "type": "class",
       "name": "ProjectionCache",
       "description": "投影缓存，封装 workspace -> projection 映射及 TTL 控制。",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py",
       "methods": [
         {
           "name": "__init__",
@@ -571,7 +569,7 @@
       "type": "class",
       "name": "RuntimeProjectionService",
       "description": "Service for building runtime projections.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py",
       "methods": [
         {
           "name": "build",
@@ -585,369 +583,413 @@
     },
     {
       "type": "function",
-      "name": "_safe_int",
-      "description": "Safely convert value to non-negative integer.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_dedupe_text_values",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_ordered_string_union",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_pm_contract_path",
-      "description": "Return True for PM task contract paths emitted by runtime storage.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_runtime_root_from_pm_contract_path",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_candidate_runtime_roots",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_resolve_runtime_artifact_candidates",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_read_first_json_candidate",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_workspace_artifact_candidates",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_read_factory_latest_plan_tasks",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_read_factory_blueprints_by_task",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_enrich_tasks_with_factory_blueprints",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_read_first_text_candidate",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_state_token",
-      "description": "Extract state token from payload.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_int_value",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_totals",
-      "description": "Get (total, active) task counts from payload.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_workflow_has_live_rows",
-      "description": "Check if workflow has live task rows.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_parse_engine_updated_at",
-      "description": "Parse engine status updated_at to epoch timestamp.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
       "name": "get_pm_local_status",
       "description": "Get PM status from PMService (authoritative source).",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "get_director_local_status",
       "description": "Get Director status from the bootstrap-bound owner observation port.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "get_workflow_director_status_sync",
       "description": "Get Director status from workflow archive (sync version).",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "get_workflow_director_status",
       "description": "Get Director status from workflow archive (async version).",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_enum_value",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_timestamp_sort_value",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_datetime_attr_isoformat",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_workspace_tokens_match",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_is_director_orchestration_snapshot",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_active_orchestration_state",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_director_status_for_runtime_task_row",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "_runtime_task_rows_payload",
       "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_orchestration_task_rows",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "_list_recent_orchestration_runs",
       "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "get_active_director_orchestration_status",
       "description": "Return active Director run state from the unified orchestration service.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "merge_director_status",
       "description": "Merge Director status with single source of truth logic.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_extract_run_ledger_run_id",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_read_run_ledger_projection_for_run",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_run_ledger_director_status_overlay",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_boundary_execution_state",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_boundary_status_projection",
-      "description": "Project one Run Ledger task-boundary verdict into runtime status fields.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_latest_task_boundary",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_row_task_id",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_boundary_row_from_latest",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_run_ledger_task_rows_overlay",
-      "description": "Overlay terminal task-boundary verdicts onto visible task rows.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "select_task_rows",
       "description": "Select live task rows from execution-control projections.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "build_engine_status",
       "description": "Build engine status from engine.status.json (fallback only).",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "build_anthro_state",
       "description": "Build memory state (memory, reflection).",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "build_resident_state",
       "description": "Build resident state snapshot when the resident subsystem is available.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "_get_cached_projection",
       "description": "Get cached projection if still valid.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "_set_cached_projection",
       "description": "Cache projection with timestamp.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "invalidate_projection_cache",
       "description": "Invalidate projection cache for workspace.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "build_runtime_projection",
       "description": "Build unified runtime projection from all sources.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "build_runtime_projection_sync",
       "description": "Synchronous wrapper for build_runtime_projection.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "_run_projection",
       "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "build_snapshot_payload_from_projection",
       "description": "从 projection 生成 /state/snapshot 标准载荷。",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_workspace_readiness_projection",
-      "description": "Return docs readiness in the canonical snapshot payload.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_derive_projection_fields",
-      "description": "Derive snapshot metadata fields from the current projection.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_director_state",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_director_tasks",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
-    },
-    {
-      "type": "function",
-      "name": "_completed_task_count",
-      "description": "",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "select_task_rows_from_projection",
       "description": "Select live task rows using projection priority rules.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
     },
     {
       "type": "function",
       "name": "load_runtime_task_rows",
-      "description": "Load task-runtime-owned observable rows for runtime projection.",
-      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+      "description": "Load bounded task-runtime-owned rows for runtime transport projection.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/__init__.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_int",
+      "description": "Safely convert value to non-negative integer.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_dedupe_text_values",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_ordered_string_union",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_task_observable_key",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_bounded_task_observable_value",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_task_observable_fields",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_task_error_fields",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_observable_task_row",
+      "description": "Return bounded transport summary without mutating TaskRuntime evidence.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_pm_contract_path",
+      "description": "Return True for PM task contract paths emitted by runtime storage.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_runtime_root_from_pm_contract_path",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_candidate_runtime_roots",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_runtime_artifact_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_first_json_candidate",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_artifact_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_factory_latest_plan_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_factory_blueprints_by_task",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_enrich_tasks_with_factory_blueprints",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_first_text_candidate",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_state_token",
+      "description": "Extract state token from payload.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_int_value",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_totals",
+      "description": "Get (total, active) task counts from payload.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_workflow_has_live_rows",
+      "description": "Check if workflow has live task rows.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_parse_engine_updated_at",
+      "description": "Parse engine status updated_at to epoch timestamp.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_enum_value",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_timestamp_sort_value",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_datetime_attr_isoformat",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_tokens_match",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_director_orchestration_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_active_orchestration_state",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_status_for_runtime_task_row",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_orchestration_task_rows",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_helpers.py"
+    },
+    {
+      "type": "class",
+      "name": "TaskSource",
+      "description": "Task list source selection.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_models.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RuntimeProjection",
+      "description": "Unified runtime projection container.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_models.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_extract_run_ledger_run_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_run_ledger_projection_for_run",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_run_ledger_director_status_overlay",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_boundary_execution_state",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_boundary_status_projection",
+      "description": "Project one Run Ledger task-boundary verdict into runtime status fields.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_latest_task_boundary",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_row_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_boundary_row_from_latest",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_run_ledger_task_rows_overlay",
+      "description": "Overlay terminal task-boundary verdicts onto visible task rows.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_run_ledger.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_readiness_projection",
+      "description": "Return docs readiness in the canonical snapshot payload.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_snapshot_derive.py"
+    },
+    {
+      "type": "function",
+      "name": "_derive_projection_fields",
+      "description": "Derive snapshot metadata fields from the current projection.",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_snapshot_derive.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_state",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_snapshot_derive.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_snapshot_derive.py"
+    },
+    {
+      "type": "function",
+      "name": "_completed_task_count",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service/_snapshot_derive.py"
     },
     {
       "type": "class",
@@ -1191,6 +1233,50 @@
       "name": "build_status_payload_sync",
       "description": "Build websocket status payload in a worker thread-safe context.",
       "defined_in": "polaris/cells/runtime/projection/internal/status_snapshot_builder.py"
+    },
+    {
+      "type": "class",
+      "name": "WorkflowRuntimeProjectionOwnerPortV1",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_runtime_owner.py",
+      "methods": [
+        {
+          "name": "workflow_config",
+          "doc": ""
+        },
+        {
+          "name": "describe_workflow",
+          "doc": ""
+        },
+        {
+          "name": "query_workflow",
+          "doc": ""
+        },
+        {
+          "name": "director_workflow_id",
+          "doc": ""
+        },
+        {
+          "name": "qa_workflow_id",
+          "doc": ""
+        },
+        {
+          "name": "list_runs",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "bind_workflow_runtime_projection_owner_port",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_runtime_owner.py"
+    },
+    {
+      "type": "function",
+      "name": "workflow_runtime_projection_owner_port",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/workflow_runtime_owner.py"
     },
     {
       "type": "function",
@@ -1536,6 +1622,18 @@
       "defined_in": "polaris/cells/runtime/projection/public/bootstrap.py"
     },
     {
+      "type": "function",
+      "name": "bind_project_outcome_non_factory_owner_observation_port",
+      "description": "Bind non-Factory ProjectOutcome owner facts; bootstrap only.",
+      "defined_in": "polaris/cells/runtime/projection/public/bootstrap.py"
+    },
+    {
+      "type": "function",
+      "name": "bind_workflow_runtime_projection_owner_port",
+      "description": "Bind the workflow-runtime reader in the process composition root.",
+      "defined_in": "polaris/cells/runtime/projection/public/bootstrap.py"
+    },
+    {
       "type": "class",
       "name": "RuntimeProjectionQueryV1",
       "description": "",
@@ -1679,7 +1777,50 @@
       "name": "ProjectOutcomeNonFactoryEvidenceRefsV1",
       "description": "Caller claims for axes not owned by ``factory.pipeline``.",
       "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": [
+        {
+          "name": "empty_axes",
+          "doc": "Return non-Factory axes that do not carry owner evidence refs."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeNonFactoryOwnerProjectionHashesV1",
+      "description": "Typed owner projection hashes for every non-Factory outcome axis.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": [
+        {
+          "name": "empty_axes",
+          "doc": "Return non-Factory axes lacking a current owner projection hash."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeAuthorityQueryV1",
+      "description": "Direct owner-bound outcome query with no caller-supplied facts.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
       "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeNonFactoryOwnerObservationV1",
+      "description": "Immutable direct-owner facts for the five non-Factory outcome axes.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeNonFactoryOwnerObservationPortV1",
+      "description": "Bootstrap-bound direct observation port for non-Factory owner facts.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": [
+        {
+          "name": "observe_project_outcome_non_factory",
+          "doc": "Return one exact owner observation for the requested identity."
+        }
+      ]
     },
     {
       "type": "class",
@@ -1754,12 +1895,28 @@
       "name": "ProjectOutcomeV1",
       "description": "Read-only multi-axis project outcome projection.",
       "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
-      "methods": []
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "_validate_and_normalize",
+          "doc": "Reject forged authority and normalize reducer-derived invariants."
+        }
+      ]
     },
     {
       "type": "class",
       "name": "ProjectOutcomeFactoryOwnerBindingV1",
       "description": "Outcome plus evidence that Factory chain ownership was directly observed.",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ProjectOutcomeAuthorityBindingV1",
+      "description": "Owner provenance around the single authoritative outcome verdict.",
       "defined_in": "polaris/cells/runtime/projection/public/contracts.py",
       "methods": []
     },
@@ -1773,6 +1930,12 @@
       "type": "function",
       "name": "_require_exact_int",
       "description": "Accept only exact ``int`` values (reject bool, str, float, other types).",
+      "defined_in": "polaris/cells/runtime/projection/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_sha256",
+      "description": "Validate one lowercase SHA-256 digest without accepting coercions.",
       "defined_in": "polaris/cells/runtime/projection/public/contracts.py"
     },
     {
@@ -1802,6 +1965,12 @@
       "description": "Canonical Chief Engineer blueprint detail response.",
       "defined_in": "polaris/cells/runtime/projection/public/role_contracts.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "query_authoritative_project_outcome",
+      "description": "Gather direct owner facts; caller cannot inject axes or evidence refs.",
+      "defined_in": "polaris/cells/runtime/projection/public/service.py"
     },
     {
       "type": "function",

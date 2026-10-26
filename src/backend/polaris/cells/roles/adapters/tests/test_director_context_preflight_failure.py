@@ -4,14 +4,15 @@ from polaris.cells.control_plane.run_ledger.public import FailureClassV1
 from polaris.cells.roles.adapters.internal.director.execute_method._phases_failure import (
     _primary_llm_provider_failure_payload,
 )
-from polaris.cells.roles.kernel.internal.llm_caller.error_handling import classify_error, is_retryable_error
+from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import observe_context_error_retry
 
 
 def test_context_coverage_rejection_is_nonretryable_platform_failure() -> None:
     error = "LLM call failed: Final provider request evidence coverage failed; missing_required_refs=framework_best_practices"
-    category = classify_error(error)
+    observation = observe_context_error_retry(error)
+    category = observation["category"]
     assert category == "validation"
-    assert not is_retryable_error(category)
+    assert not observation["retryable"]
 
 
 def test_primary_call_preserves_context_failure_even_with_legacy_provider_category() -> None:
@@ -31,6 +32,7 @@ def test_primary_call_preserves_context_failure_even_with_legacy_provider_catego
 
 def test_provider_overload_is_retryable_transport_failure() -> None:
     error = '529 Server Error from provider: {"type":"error","error":{"type":"overloaded_error"}}'
-    category = classify_error(error)
+    observation = observe_context_error_retry(error)
+    category = observation["category"]
     assert category == "network"
-    assert is_retryable_error(category)
+    assert observation["retryable"]

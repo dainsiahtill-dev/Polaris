@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:49.951438Z",
-  "source_hash": "fc4eda9364af9944",
+  "generated_at": "2026-10-26T11:49:16.628756Z",
+  "source_hash": "15445556798ba98f",
   "cell_id": "archive.run_archive",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -84,6 +84,38 @@
       "name": "create_archive_hook",
       "description": "Create a new archive hook (for testing or isolated use).",
       "defined_in": "polaris/cells/archive/run_archive/internal/archive_hook.py"
+    },
+    {
+      "type": "class",
+      "name": "ArchiveSink",
+      "description": "UEP consumer that buffers stream events and archives them per turn.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/archive_sink.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Initialize sink."
+        },
+        {
+          "name": "start",
+          "doc": "Subscribe to EVENT messages on the bus."
+        },
+        {
+          "name": "stop",
+          "doc": "Unsubscribe and flush any remaining buffers."
+        },
+        {
+          "name": "_handle_message",
+          "doc": ""
+        },
+        {
+          "name": "_flush_turn",
+          "doc": ""
+        },
+        {
+          "name": "_flush_all",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",
@@ -186,6 +218,171 @@
       "name": "create_history_archive_service",
       "description": "Factory function to create a HistoryArchiveService.",
       "defined_in": "polaris/cells/archive/run_archive/internal/history_archive_service.py"
+    },
+    {
+      "type": "class",
+      "name": "StreamArchiver",
+      "description": "Archive stream_turn event sequences to gzip-compressed JSONL.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/stream_archiver.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "archive_turn",
+          "doc": "Archive an event sequence and return its archive_id."
+        },
+        {
+          "name": "get_archive",
+          "doc": "Read back an archived event sequence."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StreamArchiverError",
+      "description": "Raised when stream archiving or retrieval fails.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/stream_archiver.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_json_event_default",
+      "description": "Serialize supported temporal event values without hiding bad payloads.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/stream_archiver.py"
+    },
+    {
+      "type": "function",
+      "name": "create_stream_archiver",
+      "description": "Factory: build a ``StreamArchiver`` for the given workspace.",
+      "defined_in": "polaris/cells/archive/run_archive/internal/stream_archiver.py"
+    },
+    {
+      "type": "class",
+      "name": "ArchiveRunCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ListHistoryRunsQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "GetArchiveManifestQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ArchiveManifestV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "HistoryRunsResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunArchivedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RunArchiveError",
+      "description": "Raised when run archive publication fails.",
+      "defined_in": "polaris/cells/archive/run_archive/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_run_background",
+      "description": "Run a coroutine in background, handling both running loop and no-loop contexts.",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_runner",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_run_archive_service",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "archive_run",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "trigger_run_archive",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_do_archive",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_history_runs",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_run_manifest",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_run_events",
+      "description": "",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "trigger_factory_archive",
+      "description": "Public archive trigger for factory pipeline.",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_stream_archiver",
+      "description": "Create a ``StreamArchiver`` for the given workspace.",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_archive_sink",
+      "description": "Create an ArchiveSink instance wired to the given MessageBus.",
+      "defined_in": "polaris/cells/archive/run_archive/public/service.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

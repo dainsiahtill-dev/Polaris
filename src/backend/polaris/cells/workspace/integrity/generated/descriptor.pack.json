@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:41.018919Z",
-  "source_hash": "1d716f340d3a7ec1",
+  "generated_at": "2026-10-26T11:47:40.034085Z",
+  "source_hash": "825427fe7d956eec",
   "cell_id": "workspace.integrity",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -238,6 +238,12 @@
       "type": "function",
       "name": "_resolve_effective_qa_commands",
       "description": "",
+      "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
+    },
+    {
+      "type": "function",
+      "name": "read_readme_title",
+      "description": "Read the existing workspace title; host query with no additional authority.",
       "defined_in": "polaris/cells/workspace/integrity/internal/workspace_service.py"
     },
     {

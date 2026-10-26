@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import errno
+import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -30,6 +33,7 @@ from polaris.cells.runtime.task_runtime.public import (
     TaskRuntimeService,
     bind_runtime_task_to_factory_run,
 )
+from polaris.kernelone.fs import guarded_regular_file_snapshot as guarded_snapshot
 
 
 @pytest.fixture
@@ -59,6 +63,66 @@ def _owner(root: Path) -> tuple[TaskRuntimeService, dict[str, Any]]:
 
 def _bind(root: Path, row_id: int, factory: str = "factory-one") -> Any:
     return bind_runtime_task_to_factory_run(BindRuntimeTaskToFactoryRunCommandV1(str(root), str(row_id), factory))
+
+
+def _runtime_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in (root / ".polaris/runtime").rglob("*")
+        if path.is_file()
+    }
+
+
+def test_numeric_external_alias_without_physical_collision_keeps_compatibility(workspace: Path) -> None:
+    service = TaskRuntimeService(str(workspace))
+    row = service.create_task_row(subject="Unambiguous numeric external owner", metadata={"external_task_id": "901"})
+    first = bind_runtime_task_to_factory_run(BindRuntimeTaskToFactoryRunCommandV1(str(workspace), "901", "factory-one"))
+    assert first.ok and first.task_id == str(row["id"])
+    facts = _facts(workspace)
+    before = _runtime_bytes(workspace)
+    cold = TaskRuntimeService(str(workspace)).bind_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(str(workspace), "901", "factory-one")
+    )
+    assert cold.ok and cold.idempotent and cold.task_id == str(row["id"])
+    assert _facts(workspace) == facts
+    assert _runtime_bytes(workspace) == before
+
+
+def test_ambiguous_numeric_reference_cold_rejection_preserves_all_bytes_and_facts(workspace: Path) -> None:
+    service, physical = _owner(workspace)
+    alias = service.create_task_row(
+        subject="Distinct numeric alias", metadata={"external_task_id": str(physical["id"])}
+    )
+    assert alias["id"] != physical["id"]
+    facts = _facts(workspace)
+    before = _runtime_bytes(workspace)
+    command = BindRuntimeTaskToFactoryRunCommandV1(str(workspace), str(physical["id"]), "factory-one")
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="task_reference_ambiguous"):
+            TaskRuntimeService(str(workspace)).bind_task_to_factory_run(command)
+        assert _facts(workspace) == facts
+        assert _runtime_bytes(workspace) == before
+    code = """
+import json,sys
+from polaris.cells.runtime.task_runtime.public import BindRuntimeTaskToFactoryRunCommandV1,bind_runtime_task_to_factory_run
+try:
+    bind_runtime_task_to_factory_run(BindRuntimeTaskToFactoryRunCommandV1(sys.argv[1],sys.argv[2],'factory-one'))
+except RuntimeError as error:
+    print(json.dumps({'rejected':str(error)}))
+else:
+    raise AssertionError('cold ambiguous reference was accepted')
+"""
+    cold = subprocess.run(
+        [sys.executable, "-c", code, str(workspace), str(physical["id"])],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=20,
+    )
+    assert cold.returncode == 0, cold.stderr
+    assert "task_reference_ambiguous" in json.loads(cold.stdout)["rejected"]
+    assert _facts(workspace) == facts
+    assert _runtime_bytes(workspace) == before
 
 
 def test_cold_repeated_binding_adds_no_duplicate_fact(workspace: Path) -> None:
@@ -300,3 +364,125 @@ def test_held_binding_ticket_rejects_replaced_namespace(workspace: Path) -> None
         board.tasks_dir.mkdir()
         with pytest.raises(RuntimeError):
             board.bind_factory_run_id(row["id"], "factory-one", _mutation_guard=guard)
+
+
+def _runtime_entries(root: Path) -> dict[str, tuple[int, bytes | str]]:
+    """Capture bytes and entry kinds without following a competing link."""
+    entries: dict[str, tuple[int, bytes | str]] = {}
+    for path in (root / ".polaris/runtime").rglob("*"):
+        mode = stat.S_IFMT(path.lstat().st_mode)
+        content: bytes | str = ""
+        if stat.S_ISLNK(mode):
+            content = str(path.readlink())
+        elif stat.S_ISREG(mode):
+            content = path.read_bytes()
+        entries[str(path.relative_to(root))] = (mode, content)
+    return entries
+
+
+@pytest.mark.parametrize("entrypoint", ["numeric_competitor", "selected_row", "binding_primitive"])
+@pytest.mark.parametrize("fault", ["malformed_json", "invalid_utf8", "directory", "symlink", "dangling_symlink"])
+def test_binding_refuses_invalid_physical_snapshot_without_mutation(
+    workspace: Path, entrypoint: str, fault: str
+) -> None:
+    service, physical = _owner(workspace)
+    if entrypoint == "numeric_competitor":
+        service.create_task_row(
+            subject="Numeric alias must remain unbound", metadata={"external_task_id": str(physical["id"])}
+        )
+    board = service._board
+    relative = f"runtime/tasks/task_{physical['id']}.json"
+    row_path = workspace / ".polaris" / relative
+    if fault == "malformed_json":
+        board._kernel_fs.write_text(relative, "{invalid JSON", encoding="utf-8")
+    elif fault == "invalid_utf8":
+        board._kernel_fs.write_bytes(relative, b"\xff")
+    else:
+        board._kernel_fs.remove(relative)
+        if fault == "directory":
+            board._kernel_fs.workspace_mkdir(str(row_path))
+        else:
+            target = workspace / "private-row-target.json"
+            if fault == "symlink":
+                board._kernel_fs.workspace_write_text(str(target), json.dumps(physical), encoding="utf-8")
+            row_path.symlink_to(target)
+    before = _runtime_entries(workspace)
+    facts_before = _facts(workspace)
+    with pytest.raises(RuntimeError):
+        if entrypoint == "binding_primitive":
+            board.bind_factory_run_id(physical["id"], "factory-one")
+        else:
+            _bind(workspace, physical["id"])
+    assert _runtime_entries(workspace) == before
+    assert _facts(workspace) == facts_before
+
+
+@pytest.mark.parametrize("entrypoint", ["numeric_competitor", "selected_row", "binding_primitive"])
+@pytest.mark.parametrize("error_number", [errno.EACCES, errno.EIO])
+def test_binding_refuses_physical_snapshot_read_error_without_mutation(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch, entrypoint: str, error_number: int
+) -> None:
+    service, physical = _owner(workspace)
+    if entrypoint == "numeric_competitor":
+        service.create_task_row(
+            subject="Numeric alias must remain unbound", metadata={"external_task_id": str(physical["id"])}
+        )
+    row_path = workspace / ".polaris/runtime/tasks" / f"task_{physical['id']}.json"
+    before = _runtime_entries(workspace)
+    facts_before = _facts(workspace)
+    native_read = guarded_snapshot.os.read
+
+    def failed_read(fd: int, amount: int) -> bytes:
+        if os.readlink(f"/proc/self/fd/{fd}") == str(row_path):
+            raise OSError(error_number, "private physical snapshot read failure")
+        return native_read(fd, amount)
+
+    monkeypatch.setattr(guarded_snapshot.os, "read", failed_read)
+    with pytest.raises(RuntimeError) as failure:
+        if entrypoint == "binding_primitive":
+            service._board.bind_factory_run_id(physical["id"], "factory-one")
+        else:
+            _bind(workspace, physical["id"])
+    cause: BaseException = failure.value
+    while cause.__cause__ is not None:
+        cause = cause.__cause__
+    assert isinstance(cause, OSError) and cause.errno == error_number
+    assert _runtime_entries(workspace) == before
+    assert _facts(workspace) == facts_before
+
+
+@pytest.mark.parametrize("line_ending", ["\r\n", "\r"])
+def test_binding_guarded_snapshot_keeps_legacy_text_hash_for_legal_newlines(workspace: Path, line_ending: str) -> None:
+    service, row = _owner(workspace)
+    relative = f"runtime/tasks/task_{row['id']}.json"
+    payload = json.dumps(row, ensure_ascii=False, indent=2) + "\n"
+    service._board._kernel_fs.write_bytes(relative, payload.replace("\n", line_ending).encode("utf-8"))
+    expected_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    bound = _bind(workspace, row["id"])
+    assert bound.ok and bound.row_updated
+    assert bound.execution_event["details"]["row_write_receipt"]["before_hash"] == expected_hash
+    committed = _facts(workspace)
+    before = _runtime_entries(workspace)
+    assert _bind(workspace, row["id"]).idempotent
+    assert _facts(workspace) == committed
+    assert _runtime_entries(workspace) == before
+
+
+def test_strict_snapshot_distinguishes_absent_leaf_from_missing_namespace(workspace: Path) -> None:
+    service, row = _owner(workspace)
+    board = service._board
+    assert board._load_task_snapshot_from_disk(901, strict=True) is None
+    before = _runtime_entries(workspace)
+    facts_before = _facts(workspace)
+    displaced = workspace / ".polaris/runtime/private-displaced-tasks"
+    board.tasks_dir.rename(displaced)
+    try:
+        with pytest.raises(RuntimeError) as failure:
+            board._load_task_snapshot_from_disk(row["id"], strict=True)
+        assert isinstance(failure.value.__cause__, guarded_snapshot.GuardedRegularFileSnapshotError)
+        assert failure.value.__cause__.code == "guarded_snapshot_missing"
+        assert failure.value.__cause__.details["name"] == "tasks"
+    finally:
+        displaced.rename(board.tasks_dir)
+    assert _runtime_entries(workspace) == before
+    assert _facts(workspace) == facts_before

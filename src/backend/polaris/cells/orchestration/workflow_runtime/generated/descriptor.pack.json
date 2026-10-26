@@ -1,9 +1,9 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-08T17:29:06.213228Z",
-  "source_hash": "d13a5fbc6248b3d0",
+  "generated_at": "2026-10-26T11:49:17.279644Z",
+  "source_hash": "86623da68efee7ee",
   "cell_id": "orchestration.workflow_runtime",
-  "workspace": "/tmp/polaris-unattended-completion-wt/src/backend",
+  "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
     {
       "type": "class",
@@ -637,7 +637,43 @@
     },
     {
       "type": "function",
+      "name": "clear_model_ceiling_owner_observation_port",
+      "description": "Release the exact composition binding during lifespan shutdown/tests.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
+      "type": "function",
       "name": "_result",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_qualification_payload",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_result_seal_digest",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_seal_terminal_result",
+      "description": "Activate one process-local owner result without exporting a capability.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_discard",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_sealed_terminal_result",
       "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
     },
@@ -657,6 +693,12 @@
       "type": "function",
       "name": "qualify_model_ceiling_authoritatively",
       "description": "Recheck owner facts and derive the sole terminal model-ceiling stop.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
+    },
+    {
+      "type": "function",
+      "name": "revalidate_model_ceiling_result_authoritatively",
+      "description": "Reject copies/forgeries, then re-query owners before consumption.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/model_ceiling_authority.py"
     },
     {
@@ -2705,7 +2747,7 @@
         },
         {
           "name": "submit_run",
-          "doc": "提交编排运行"
+          "doc": "Old orchestration may execute only in its frozen original process."
         },
         {
           "name": "query_run",
@@ -2717,11 +2759,11 @@
         },
         {
           "name": "signal_run",
-          "doc": "发送控制信号"
+          "doc": "Old orchestration may execute only in its frozen original process."
         },
         {
           "name": "cancel_run",
-          "doc": "取消运行"
+          "doc": "Old orchestration may execute only in its frozen original process."
         },
         {
           "name": "list_runs",
@@ -2892,6 +2934,12 @@
     },
     {
       "type": "function",
+      "name": "_adapter_context_for_task",
+      "description": "Project one role task's authoritative orchestration context.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
       "name": "configure_orchestration_role_adapter_factory",
       "description": "Configure the application-owned role adapter factory for the singleton.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
@@ -2900,6 +2948,18 @@
       "type": "function",
       "name": "get_orchestration_role_adapter_factory",
       "description": "Return the registered role adapter factory.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_orchestration_service",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_orchestration_service",
+      "description": "",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/internal/unified_orchestration_service.py"
     },
     {
@@ -3020,6 +3080,79 @@
     },
     {
       "type": "class",
+      "name": "StartWorkflowCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "CancelWorkflowCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryWorkflowStatusV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QueryWorkflowEventsV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowExecutionStartedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowExecutionCompletedEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowExecutionResultV1",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkflowRuntimeError",
+      "description": "Raised when `orchestration.workflow_runtime` contract processing fails.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/contracts.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_dict_copy",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/contracts.py"
+    },
+    {
+      "type": "class",
       "name": "ModelCeilingCandidateV1",
       "description": "Non-authoritative identity locators for a possible model ceiling.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py",
@@ -3075,7 +3208,7 @@
     {
       "type": "class",
       "name": "ModelCeilingQualificationV1",
-      "description": "Sealed evidence summary for the sole terminal model-ceiling stop.",
+      "description": "Evidence summary. Authority exists only on an internally sealed result.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py",
       "methods": []
     },
@@ -3124,8 +3257,26 @@
     },
     {
       "type": "function",
+      "name": "_sha256_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py"
+    },
+    {
+      "type": "function",
+      "name": "model_ceiling_attempt_request_binding_hash",
+      "description": "Canonical owner invariant joining ContextOS and lifecycle request identity.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py"
+    },
+    {
+      "type": "function",
       "name": "qualify_model_ceiling",
       "description": "Qualify one identity using bootstrap-bound owner queries only.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py"
+    },
+    {
+      "type": "function",
+      "name": "revalidate_model_ceiling_result",
+      "description": "Re-query owner facts before any caller-supplied result is consumed.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling.py"
     },
     {
@@ -3133,6 +3284,92 @@
       "name": "bind_model_ceiling_owner_observation_port",
       "description": "Bind the process-composition adapter; bootstrap callers only.",
       "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling_bootstrap.py"
+    },
+    {
+      "type": "function",
+      "name": "clear_model_ceiling_owner_observation_port",
+      "description": "Release the exact process-composition binding.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/model_ceiling_bootstrap.py"
+    },
+    {
+      "type": "class",
+      "name": "RunMode",
+      "description": "Execution mode for process launch.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/process_launch.py",
+      "methods": [
+        {
+          "name": "is_persistent",
+          "doc": "Check if this mode runs persistently (not just once)."
+        },
+        {
+          "name": "is_director_mode",
+          "doc": "Check if this is a Director-specific mode."
+        },
+        {
+          "name": "is_pm_mode",
+          "doc": "Check if this is a PM-specific mode."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProcessLaunchRequest",
+      "description": "Request to launch a subprocess (PM or Director).",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/process_launch.py",
+      "methods": [
+        {
+          "name": "validate",
+          "doc": "Validate the request, returning list of error messages."
+        },
+        {
+          "name": "to_subprocess_args",
+          "doc": "Convert to subprocess.Popen arguments."
+        },
+        {
+          "name": "_build_utf8_env",
+          "doc": "Build environment dict with UTF-8 enforcement."
+        },
+        {
+          "name": "with_timeout",
+          "doc": "Create new request with specified timeout."
+        },
+        {
+          "name": "with_env",
+          "doc": "Create new request with additional environment variables."
+        },
+        {
+          "name": "get_effective_command_line",
+          "doc": "Get the full command line as string for logging."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Convert to dictionary for serialization."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ProcessLaunchResult",
+      "description": "Result of process launch attempt.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/process_launch.py",
+      "methods": [
+        {
+          "name": "is_success",
+          "doc": "Check if launch was successful."
+        },
+        {
+          "name": "is_completed",
+          "doc": "Check if process has completed."
+        },
+        {
+          "name": "duration_ms",
+          "doc": "Get execution duration in milliseconds."
+        },
+        {
+          "name": "to_dict",
+          "doc": "Convert to dictionary for serialization."
+        }
+      ]
     },
     {
       "type": "class",
@@ -3213,6 +3450,12 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "compose_project_completion_cursor",
+      "description": "Compose owner implementation while keeping its class Cell-private.",
+      "defined_in": "polaris/cells/orchestration/workflow_runtime/public/project_completion_cursor.py"
     },
     {
       "type": "class",

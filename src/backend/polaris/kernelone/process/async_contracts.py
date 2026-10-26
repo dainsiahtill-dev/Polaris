@@ -42,12 +42,24 @@ import contextlib
 import logging
 import queue
 import subprocess
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from polaris.kernelone.process.process_tree import isolated_process_group_kwargs, signal_process_tree
+from polaris.kernelone.process.process_tree import (
+    _PROCESS_TREE_WAIT_SLICE_SECONDS,
+    ProcessTreeDrainError,
+    _bind_spawned_process_group,
+    _owned_bound_group_running,
+    _OwnedProcessGroupIdentity,
+    _require_group_binding_support,
+    _stop_and_drain_owned_group,
+    isolated_process_group_kwargs,
+    signal_process_tree,
+)
 from polaris.kernelone.utils.time_utils import PROCESS_COMMAND_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
@@ -527,7 +539,11 @@ class _AsyncioProcessHandle:
                         )
                     )
             except (RuntimeError, ValueError) as exc:
-                _logger.warning("kernelone.process.async_contracts.stream.pump failed: %s", exc, exc_info=True)
+                _logger.warning(
+                    "kernelone.process.async_contracts.stream.pump failed: %s",
+                    exc,
+                    exc_info=True,
+                )
             finally:
                 await queue.put(None)  # Signal EOF
 
@@ -593,7 +609,11 @@ class _AsyncioProcessHandle:
             if await self.is_alive():
                 await self.terminate(timeout=3.0)
         except (RuntimeError, ValueError) as exc:
-            _logger.warning("kernelone.process.async_contracts.handle_cleanup failed: %s", exc, exc_info=True)
+            _logger.warning(
+                "kernelone.process.async_contracts.handle_cleanup failed: %s",
+                exc,
+                exc_info=True,
+            )
         finally:
             # Close stdin (StreamWriter has close() method).
             # stdout/stderr are StreamReader which don't have close() - they are
@@ -710,6 +730,9 @@ async def _merge_two_streams(
 #   (shell=False is the default when args is a list).
 
 
+_SPAWN_HANDLE_SEAL = object()
+
+
 class PopenAsyncHandle:
     """AsyncProcessHandle backed by subprocess.Popen.
 
@@ -724,18 +747,36 @@ class PopenAsyncHandle:
     """
 
     __slots__ = (
+        "_capture_lock",
+        "_consumer_active",
         "_exit_code",
+        "_group_identity",
+        "_owner_draining",
         "_proc",
         "_proc_alive",
+        "_pump_start_lock",
+        "_pumps",
+        "_reader_errors",
+        "_spawn_identity",
+        "_spawn_producer",
+        "_spawn_seal",
         "_started_at",
         "_status",
+        "_stderr_cursor",
+        "_stderr_eof",
+        "_stderr_eof_delivered",
         "_stderr_lines",
         "_stderr_queue",
         "_stdin_lines",
         "_stdin_lock",
         "_stdin_used",
+        "_stdout_cursor",
+        "_stdout_eof",
+        "_stdout_eof_delivered",
         "_stdout_lines",
         "_stdout_queue",
+        "_stop_accepted",
+        "_stop_lock",
         "_stream_done",
         "_timeout_seconds",
     )
@@ -746,8 +787,29 @@ class PopenAsyncHandle:
         timeout_seconds: int,
         stdin_lines: list[str] | None,
         started_at: datetime,
+        *,
+        group_identity: _OwnedProcessGroupIdentity | None = None,
+        spawn_producer: object | None = None,
+        spawn_identity: object | None = None,
+        spawn_seal: object | None = None,
     ) -> None:
         self._proc = proc  # subprocess.Popen
+        self._group_identity = group_identity
+        self._spawn_producer = spawn_producer
+        self._spawn_identity = spawn_identity
+        self._spawn_seal = spawn_seal
+        self._capture_lock = threading.Lock()
+        self._pump_start_lock = threading.Lock()
+        self._stdout_eof = threading.Event()
+        self._stderr_eof = threading.Event()
+        self._reader_errors: list[str] = []
+        self._consumer_active = False
+        self._stdout_cursor = self._stderr_cursor = 0
+        self._stdout_eof_delivered = self._stderr_eof_delivered = False
+        self._owner_draining = False
+        self._stop_lock = threading.Lock()
+        self._stop_accepted = False
+        self._pumps: tuple[threading.Thread, ...] = ()
         self._timeout_seconds = timeout_seconds
         self._stdin_lines = stdin_lines
         self._started_at = started_at
@@ -756,8 +818,8 @@ class PopenAsyncHandle:
         # Thread-safe queues for pump threads to deposit lines. asyncio.Queue is
         # not safe to mutate from these background threads and can silently lose
         # subprocess stderr/stdout in broker logs.
-        self._stdout_queue: queue.Queue[str | None] = queue.Queue(maxsize=500)
-        self._stderr_queue: queue.Queue[str | None] = queue.Queue(maxsize=500)
+        self._stdout_queue: queue.Queue[int] = queue.Queue(maxsize=500)
+        self._stderr_queue: queue.Queue[int] = queue.Queue(maxsize=500)
         self._stdout_lines: list[str] = []
         self._stderr_lines: list[str] = []
         self._stream_done = False
@@ -782,104 +844,126 @@ class PopenAsyncHandle:
         return self._proc
 
     def _start_pumps(self) -> None:
-        """Start background threads to pump stdout/stderr into asyncio queues."""
-        import threading
+        """Start the sole pipe readers exactly once, retaining actual EOF proof."""
+        with self._pump_start_lock:
+            if self._pumps:
+                return
 
-        def pump_stdout() -> None:
-            try:
-                for line in self._proc.stdout or []:
-                    normalized = line.rstrip("\n\r")
-                    self._stdout_lines.append(normalized)
-                    try:
-                        self._stdout_queue.put_nowait(normalized)
-                    except queue.Full:
-                        break
-            except (RuntimeError, ValueError) as exc:
-                _logger.warning(
-                    "kernelone.process.async_contracts.popen_stdout_pump failed: %s",
-                    exc,
-                    exc_info=True,
+            def pump(source: ProcessStreamSource) -> None:
+                reader = self._proc.stdout if source is ProcessStreamSource.STDOUT else self._proc.stderr
+                history = self._stdout_lines if source is ProcessStreamSource.STDOUT else self._stderr_lines
+                notifications = self._stdout_queue if source is ProcessStreamSource.STDOUT else self._stderr_queue
+                eof = self._stdout_eof if source is ProcessStreamSource.STDOUT else self._stderr_eof
+                try:
+                    for raw in reader or ():
+                        line = raw.rstrip("\n\r")
+                        with self._capture_lock:
+                            history.append(line)
+                            index = len(history) - 1
+                        while True:
+                            with self._capture_lock:
+                                deliver = self._consumer_active and not self._owner_draining
+                            if not deliver:
+                                break
+                            try:
+                                notifications.put(index, timeout=_PROCESS_TREE_WAIT_SLICE_SECONDS)
+                                break
+                            except queue.Full:
+                                continue  # Backpressure; never discard a pipe line.
+                    else:
+                        eof.set()  # Only actual iterator exhaustion proves EOF.
+                except Exception as exc:
+                    with self._capture_lock:
+                        self._reader_errors.append(f"{source.value}:{type(exc).__name__}:{exc}")
+                    _logger.exception(
+                        "Owned process pipe reader failed: pid=%s source=%s",
+                        self.pid,
+                        source.value,
+                    )
+
+            self._pumps = tuple(
+                threading.Thread(
+                    target=pump,
+                    args=(source,),
+                    daemon=True,
+                    name=f"popen-{source.value}-{self.pid}",
                 )
-            finally:
-                with contextlib.suppress(queue.Full):
-                    self._stdout_queue.put_nowait(None)  # EOF is distinct from a genuine empty line
-
-        def pump_stderr() -> None:
-            try:
-                for line in self._proc.stderr or []:
-                    normalized = line.rstrip("\n\r")
-                    self._stderr_lines.append(normalized)
-                    try:
-                        self._stderr_queue.put_nowait(normalized)
-                    except queue.Full:
-                        break
-            except (RuntimeError, ValueError) as exc:
-                _logger.warning(
-                    "kernelone.process.async_contracts.popen_stderr_pump failed: %s",
-                    exc,
-                    exc_info=True,
-                )
-            finally:
-                with contextlib.suppress(queue.Full):
-                    self._stderr_queue.put_nowait(None)  # EOF is distinct from a genuine empty line
-
-        t_out = threading.Thread(target=pump_stdout, daemon=True, name=f"popen-stdout-{self.pid}")
-        t_err = threading.Thread(target=pump_stderr, daemon=True, name=f"popen-stderr-{self.pid}")
-        t_out.start()
-        t_err.start()
+                for source in (ProcessStreamSource.STDOUT, ProcessStreamSource.STDERR)
+            )
+            self._stream_done = True
+            for thread in self._pumps:
+                thread.start()
 
     async def stream(self) -> AsyncIterator[StreamChunk]:
-        """Stream output lines from stdout and stderr as they arrive.
-
-        Lines are yielded in the order captured from each stream.  Each stream
-        reaching EOF is signalled by an empty ``StreamChunk``.  After both
-        streams reach EOF, this method yields no further items.
-
-        Implementation: starts background threads that read from the blocking
-        text-mode pipe handles and deposit lines into asyncio Queues.  This
-        method polls those queues asynchronously.
-        """
-        if not self._stream_done:
+        """Deliver each captured line once through a single resumable consumer."""
+        with self._capture_lock:
+            if self._consumer_active:
+                raise RuntimeError("process stream already has an active consumer")
+            self._consumer_active = True
+        try:
             self._start_pumps()
-            self._stream_done = True
-
-        await self._write_stdin_once("stream")
-
-        pid = self.pid
-        stdout_eof = False
-        stderr_eof = False
-
-        while not (stdout_eof and stderr_eof):
-            try:
-                # Drain all available stdout
+            await self._write_stdin_once("stream")
+            while True:
+                produced = False
+                for source in (ProcessStreamSource.STDOUT, ProcessStreamSource.STDERR):
+                    notifications = self._stdout_queue if source is ProcessStreamSource.STDOUT else self._stderr_queue
+                    while True:
+                        try:
+                            notifications.get_nowait()
+                        except queue.Empty:
+                            break
+                    with self._capture_lock:
+                        stop = len(self._stdout_lines if source is ProcessStreamSource.STDOUT else self._stderr_lines)
+                    while True:
+                        with self._capture_lock:
+                            history = self._stdout_lines if source is ProcessStreamSource.STDOUT else self._stderr_lines
+                            cursor = (
+                                self._stdout_cursor if source is ProcessStreamSource.STDOUT else self._stderr_cursor
+                            )
+                            if cursor >= stop:
+                                break
+                            line = history[cursor]
+                            if source is ProcessStreamSource.STDOUT:
+                                self._stdout_cursor += 1
+                            else:
+                                self._stderr_cursor += 1
+                        produced = True
+                        yield StreamChunk(line=line, source=source, pid=self.pid)
+                    with self._capture_lock:
+                        cursor = self._stdout_cursor if source is ProcessStreamSource.STDOUT else self._stderr_cursor
+                        history = self._stdout_lines if source is ProcessStreamSource.STDOUT else self._stderr_lines
+                        eof = self._stdout_eof if source is ProcessStreamSource.STDOUT else self._stderr_eof
+                        delivered = (
+                            self._stdout_eof_delivered
+                            if source is ProcessStreamSource.STDOUT
+                            else self._stderr_eof_delivered
+                        )
+                        final = eof.is_set() and cursor == len(history) and not delivered
+                        if final:
+                            if source is ProcessStreamSource.STDOUT:
+                                self._stdout_eof_delivered = True
+                            else:
+                                self._stderr_eof_delivered = True
+                    if final:
+                        produced = True
+                        yield StreamChunk(line="", source=source, pid=self.pid)
+                with self._capture_lock:
+                    errors = tuple(self._reader_errors)
+                    complete = self._stdout_eof_delivered and self._stderr_eof_delivered
+                if errors:
+                    raise ProcessTreeDrainError("process_pipe_reader_failed:" + ";".join(errors))
+                if complete:
+                    break
+                await asyncio.sleep(0 if produced else 0.01)
+        finally:
+            with self._capture_lock:
+                self._consumer_active = False
+            for notifications in (self._stdout_queue, self._stderr_queue):
                 while True:
                     try:
-                        line = self._stdout_queue.get_nowait()
-                        if line is None:
-                            stdout_eof = True
-                            yield StreamChunk(line="", source=ProcessStreamSource.STDOUT, pid=pid)
-                            break
-                        yield StreamChunk(line=line, source=ProcessStreamSource.STDOUT, pid=pid)
+                        notifications.get_nowait()
                     except queue.Empty:
                         break
-
-                # Drain all available stderr
-                while True:
-                    try:
-                        line = self._stderr_queue.get_nowait()
-                        if line is None:
-                            stderr_eof = True
-                            yield StreamChunk(line="", source=ProcessStreamSource.STDERR, pid=pid)
-                            break
-                        yield StreamChunk(line=line, source=ProcessStreamSource.STDERR, pid=pid)
-                    except queue.Empty:
-                        break
-
-                await asyncio.sleep(0.01)
-            except asyncio.CancelledError:
-                raise
-            except (RuntimeError, ValueError):
-                break
 
     def _write_stdin_sync(self) -> None:
         """Write stdin lines synchronously (called in thread pool)."""
@@ -917,51 +1001,107 @@ class PopenAsyncHandle:
                     exc_info=True,
                 )
 
+    def _require_group_identity(self) -> _OwnedProcessGroupIdentity:
+        if self._group_identity is None:
+            if (
+                self._spawn_seal is not _SPAWN_HANDLE_SEAL
+                or type(self._spawn_producer) is not SubprocessPopenRunner
+                or self._spawn_identity is None
+            ):
+                raise ProcessTreeDrainError("process_group_not_bound")
+            self._group_identity = _bind_spawned_process_group(self._proc)
+        return self._group_identity
+
+    def _owned_drain_confirmed(self) -> bool:
+        identity = self._require_group_identity()
+        running = _owned_bound_group_running(self._proc, identity)
+        code = self._poll_exit_code()
+        if running or code is None:
+            self._proc_alive = True
+            return False
+        with self._capture_lock:
+            errors = tuple(self._reader_errors)
+        if errors:
+            raise ProcessTreeDrainError("process_pipe_reader_failed:" + ";".join(errors))
+        confirmed = self._stdout_eof.is_set() and self._stderr_eof.is_set()
+        self._proc_alive = not confirmed
+        if confirmed and self._stop_lock.acquire(blocking=False):
+            try:
+                with self._capture_lock:
+                    if self._status in (ProcessStatus.PENDING, ProcessStatus.RUNNING):
+                        self._status = (
+                            ProcessStatus.CANCELLED
+                            if self._stop_accepted
+                            else ProcessStatus.SUCCESS
+                            if code == 0
+                            else ProcessStatus.FAILED
+                        )
+            finally:
+                self._stop_lock.release()
+        return confirmed
+
+    def _wait_for_owned_drain(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout if timeout > 0 else None
+        while True:
+            if self._owned_drain_confirmed() and self._status not in (ProcessStatus.PENDING, ProcessStatus.RUNNING):
+                return True
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                time.sleep(min(_PROCESS_TREE_WAIT_SLICE_SECONDS, remaining))
+            else:
+                time.sleep(_PROCESS_TREE_WAIT_SLICE_SECONDS)
+
+    def _drain_pipes(self, timeout: float) -> tuple[str, str]:
+        deadline = time.monotonic() + timeout
+        for eof in (self._stdout_eof, self._stderr_eof):
+            eof.wait(max(0.0, deadline - time.monotonic()))
+        with self._capture_lock:
+            errors = tuple(self._reader_errors)
+            stdout = "\n".join(self._stdout_lines)
+            stderr = "\n".join(self._stderr_lines)
+        if errors:
+            raise ProcessTreeDrainError("process_pipe_reader_failed:" + ";".join(errors))
+        if not (self._stdout_eof.is_set() and self._stderr_eof.is_set()):
+            raise subprocess.TimeoutExpired(self._proc.args, timeout, output=stdout, stderr=stderr)
+        return stdout, stderr
+
     def _record_exit_code(self, observed: object) -> int:
         if isinstance(observed, bool) or not isinstance(observed, int):
             raise TypeError("process exit code must be an integer")
         self._exit_code = observed
-        self._proc_alive = False
-        if self._status in (ProcessStatus.PENDING, ProcessStatus.RUNNING):
-            self._status = ProcessStatus.SUCCESS if observed == 0 else ProcessStatus.FAILED
         return observed
 
     def _poll_exit_code(self) -> int | None:
         observed: object = self._proc.poll()
-        if observed is None:
-            self._proc_alive = True
-            return None
-        return self._record_exit_code(observed)
+        return None if observed is None else self._record_exit_code(observed)
 
     async def wait(self, timeout: float | None = None) -> ProcessStatus:
-        if self._poll_exit_code() is not None:
-            return self._status
+        self._require_group_identity()
+        self._start_pumps()
         await self._write_stdin_once("wait")
         effective_timeout = timeout if timeout is not None else self._timeout_seconds
-        loop = asyncio.get_running_loop()
-        try:
-            exit_code = await loop.run_in_executor(
-                None,
-                lambda: self._proc.wait(timeout=effective_timeout if effective_timeout > 0 else None),
-            )
-        except (subprocess.TimeoutExpired, TimeoutError):
-            if self._status is not ProcessStatus.CANCELLED:
-                self._status = ProcessStatus.TIMED_OUT
-            self._poll_exit_code()
-            return self._status
-        self._record_exit_code(exit_code)
+        completed = await asyncio.to_thread(self._wait_for_owned_drain, effective_timeout)
+        if completed:
+            self._proc_alive = False
+        else:
+            with self._capture_lock:
+                if self._status in (ProcessStatus.PENDING, ProcessStatus.RUNNING):
+                    self._status = ProcessStatus.TIMED_OUT
         return self._status
 
     async def is_alive(self) -> bool:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: self._poll_exit_code() is None)
+        self._require_group_identity()
+        self._start_pumps()
+        return not await asyncio.to_thread(self._owned_drain_confirmed)
 
     async def write_stdin(self, data: str) -> None:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: self._do_write_stdin(data))
 
     def _do_write_stdin(self, data: str) -> None:
-        if self._proc.stdin is None or self._proc.stdin.closed():
+        if self._proc.stdin is None or self._proc.stdin.closed:
             raise BrokenPipeError("stdin is closed or process exited")
         try:
             self._proc.stdin.write(data)
@@ -973,58 +1113,87 @@ class PopenAsyncHandle:
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Async context manager: terminate + close pipes on exit."""
+        """Close pipes only after this creation-bound group and readers drained."""
+        cleanup_error: Exception | None = None
+        confirmed = False
         try:
             if await self.is_alive():
                 await self.terminate(timeout=3.0)
-        except (RuntimeError, ValueError) as exc:
-            _logger.warning(
-                "kernelone.process.async_contracts.popen_handle_cleanup failed: %s",
-                exc,
-                exc_info=True,
-            )
-        finally:
-            for pipe in (self._proc.stdout, self._proc.stderr, self._proc.stdin):
-                if pipe is not None:
-                    with contextlib.suppress(Exception):
-                        pipe.close()
+            confirmed = await self.is_alive() is False
+        except Exception as error:
+            cleanup_error = error
+            _logger.exception("Owned process context cleanup is unproven: pid=%s", self.pid)
+        except BaseException as cancellation:
+            cancellation.add_note("process_context_cleanup_unproven: owned handle and pipes retained")
+            if isinstance(exc_val, BaseException):
+                cancellation.add_note(f"original context exception: {type(exc_val).__name__}: {exc_val}")
+            raise
+        if not confirmed:
+            drain = ProcessTreeDrainError("process_context_cleanup_unproven: owned handle and pipes retained")
+            if cleanup_error is not None:
+                drain.add_note(f"cleanup exception: {type(cleanup_error).__name__}: {cleanup_error}")
+            if isinstance(exc_val, BaseException):
+                exc_val.add_note("process_context_cleanup_unproven: owned handle and pipes retained")
+                if not isinstance(exc_val, Exception):
+                    raise exc_val.with_traceback(exc_tb) from drain
+                raise drain from exc_val
+            raise drain from cleanup_error
+        for pipe in (self._proc.stdout, self._proc.stderr, self._proc.stdin):
+            if pipe is not None:
+                try:
+                    await asyncio.to_thread(pipe.close)
+                except Exception as error:
+                    raise ProcessTreeDrainError("process_context_pipe_close_unproven") from error
+
+    def _record_stop_accepted(self) -> None:
+        """Called only within the shared coordinator's signal-decision lock."""
+        self._stop_accepted = True
 
     async def terminate(self, timeout: float = 5.0) -> bool:
-        if self._poll_exit_code() is not None:
+        self._require_group_identity()
+        self._start_pumps()
+        if await asyncio.to_thread(self._owned_drain_confirmed):
             return True
-        logical_status = self._status
-        loop = asyncio.get_running_loop()
-        forced = False
-        try:
-            self._proc.terminate()
-            try:
-                exit_code = await loop.run_in_executor(None, lambda: self._proc.wait(timeout=timeout))
-            except (subprocess.TimeoutExpired, TimeoutError):
-                forced = True
-                self._proc.kill()
-                exit_code = await loop.run_in_executor(None, lambda: self._proc.wait(timeout=self._timeout_seconds))
-        except (FileNotFoundError, ProcessLookupError):
-            if self._poll_exit_code() is None:
-                raise
-        else:
-            self._record_exit_code(exit_code)
-        self._status = ProcessStatus.TIMED_OUT if logical_status is ProcessStatus.TIMED_OUT else ProcessStatus.CANCELLED
-        return not forced
+        forced = threading.Event()
+        with self._capture_lock:
+            self._owner_draining = True
+        identity = self._require_group_identity()
+        await asyncio.to_thread(
+            _stop_and_drain_owned_group,
+            self._proc,
+            identity.group_id,
+            identity=identity,
+            drain_pipes=self._drain_pipes,
+            stop_grace_seconds=timeout,
+            drain_timeout_seconds=self._timeout_seconds,
+            on_force=forced.set,
+            signal_lock=self._stop_lock,
+            on_signal_accepted=self._record_stop_accepted,
+        )
+        if not await asyncio.to_thread(self._owned_drain_confirmed):
+            raise ProcessTreeDrainError("process_group_drain_unproven")
+        return not forced.is_set()
 
     async def kill(self) -> None:
-        if self._poll_exit_code() is not None:
+        identity = self._require_group_identity()
+        self._start_pumps()
+        if await asyncio.to_thread(self._owned_drain_confirmed):
             return
-        logical_status = self._status
-        loop = asyncio.get_running_loop()
-        try:
-            self._proc.kill()
-            exit_code = await loop.run_in_executor(None, lambda: self._proc.wait(timeout=self._timeout_seconds))
-        except (FileNotFoundError, ProcessLookupError):
-            if self._poll_exit_code() is None:
-                raise
-        else:
-            self._record_exit_code(exit_code)
-        self._status = ProcessStatus.TIMED_OUT if logical_status is ProcessStatus.TIMED_OUT else ProcessStatus.CANCELLED
+        with self._capture_lock:
+            self._owner_draining = True
+        await asyncio.to_thread(
+            _stop_and_drain_owned_group,
+            self._proc,
+            identity.group_id,
+            force=True,
+            identity=identity,
+            drain_pipes=self._drain_pipes,
+            drain_timeout_seconds=self._timeout_seconds,
+            signal_lock=self._stop_lock,
+            on_signal_accepted=self._record_stop_accepted,
+        )
+        if not await asyncio.to_thread(self._owned_drain_confirmed):
+            raise ProcessTreeDrainError("process_group_drain_unproven")
 
     async def result(self) -> StreamResult:
         if self._status in (ProcessStatus.PENDING, ProcessStatus.RUNNING):
@@ -1064,6 +1233,18 @@ class SubprocessPopenRunner:
 
     __slots__ = ()
 
+    def _take_failed_spawn_resource(self, error: ProcessTreeDrainError) -> PopenAsyncHandle | None:
+        resource = error.owned_resource
+        if (
+            type(resource) is not PopenAsyncHandle
+            or resource._spawn_seal is not _SPAWN_HANDLE_SEAL
+            or resource._spawn_producer is not self
+            or error._owned_resource_producer is not self
+            or resource._spawn_identity is not error._owned_resource_identity
+        ):
+            return None
+        return resource
+
     async def spawn(
         self,
         args: list[str],
@@ -1073,6 +1254,7 @@ class SubprocessPopenRunner:
         env: dict[str, str] | None = None,
         stdin_lines: list[str] | None = None,
     ) -> PopenAsyncHandle:
+        _require_group_binding_support()
         if not args:
             raise ValueError("args must not be empty")
 
@@ -1101,14 +1283,28 @@ class SubprocessPopenRunner:
             text=True,
             encoding="utf-8",
             errors="replace",
+            **isolated_process_group_kwargs(),
         )
 
-        return PopenAsyncHandle(
+        identity = object()
+        handle = PopenAsyncHandle(
             proc=proc,
             timeout_seconds=effective_timeout,
             stdin_lines=stdin_lines,
             started_at=datetime.now(timezone.utc),
+            spawn_producer=self,
+            spawn_identity=identity,
+            spawn_seal=_SPAWN_HANDLE_SEAL,
         )
+        try:
+            handle._group_identity = _bind_spawned_process_group(proc)
+        except Exception as error:
+            failure = ProcessTreeDrainError("process_group_binding_unproven: owned resource retained")
+            failure.owned_resource = handle
+            failure._owned_resource_producer = self
+            failure._owned_resource_identity = identity
+            raise failure from error
+        return handle
 
 
 __all__ = [

@@ -5,60 +5,22 @@ from __future__ import annotations
 import ast
 import asyncio
 import contextlib
-import hashlib
 import inspect
 import json
-import logging
-import os
-import shutil
-import sys
 import textwrap
-import threading
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.cells.chief_engineer.blueprint.public import (
-    BlueprintPersistence,
-    BuildChiefEngineerBlueprintPortfolioCommandV1,
-    ChiefEngineerPortfolioTaskV1,
-    GenerateTaskBlueprintCommandV1,
-    VerificationCommandAuthorityV1,
-    build_chief_engineer_blueprint_portfolio,
-    derive_project_kind_authority_from_catalog_snapshot,
-    generate_task_blueprint,
-    project_chief_engineer_task_blueprint,
-    project_completion_catalog_snapshot_hash,
-    project_completion_verifier_policy_snapshot_hash,
-)
-from polaris.cells.chief_engineer.blueprint.public.contracts import (
-    TaskBlueprintResultV1,
-)
-from polaris.cells.control_plane.run_ledger.public import FailureClassV1
-from polaris.cells.events.fact_stream.public import (
-    BootstrapFactStreamWorkspaceCommandV1,
-    bootstrap_fact_stream_workspace,
-    fact_stream_bootstrap_streams,
-)
 from polaris.cells.events.fact_stream.public.service import (
     QueryFactEventsV1,
     query_fact_events,
 )
 from polaris.cells.factory.pipeline.internal import (
     factory_stage_executor as stage_executor_module,
-    factory_workspace_quality as workspace_quality_module,
     run_ledger as run_ledger_module,
-)
-from polaris.cells.factory.pipeline.internal.factory_deadline_policy import (
-    FactoryDeadlineBudgetPolicyV1,
-    FactoryDeadlineDispositionV1,
-    build_task_dependency_schedule,
-)
-from polaris.cells.factory.pipeline.internal.factory_role_evidence_authority import (
-    FactoryRoleEvidenceAuthorityPort,
 )
 from polaris.cells.factory.pipeline.internal.factory_run_completion import (
     RunCompletionWaiter,
@@ -79,7 +41,7 @@ from polaris.cells.factory.pipeline.internal.factory_stage_helpers import (
 from polaris.cells.factory.pipeline.internal.run_ledger import (
     load_run_ledger_projection,
 )
-from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # noqa: F401
+from polaris.cells.factory.pipeline.tests._characterization_helpers import (
     _authoritative_task_projection,
     _bootstrap_fact_stream_workspace,
     _executor,
@@ -88,22 +50,14 @@ from polaris.cells.factory.pipeline.tests._characterization_helpers import (  # 
     _with_task_runtime_authority,
 )
 from polaris.cells.roles.adapters.public import (
-    build_director_materialization_quality_repair_message,
-    extract_workspace_quality_summary,
     resolve_director_semantic_quality_repair_target_files,
-)
-from polaris.cells.roles.kernel.public.final_request_evidence_cutoff import (
-    FACTORY_ROLE_EVIDENCE_AUTHORITY_BINDING_SCHEMA,
-    FactoryRoleEvidenceAuthorityBindingV1,
 )
 from polaris.cells.runtime.task_runtime.public.contracts import (
     ObservableTaskRowsProjectionV1,
     SettleTaskRuntimeExecutionAttemptCommandV1,
-    TaskRuntimeExecutionAttemptHeartbeatVerdictV1,
     TaskRuntimeExecutionAttemptIdentityV1,
 )
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.kernelone.storage import resolve_logical_path
 
 
 def test_canonical_qa_commit_identity_uses_final_owned_task_child_run(
@@ -111,7 +65,12 @@ def test_canonical_qa_commit_identity_uses_final_owned_task_child_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executor = OrchestrationStageExecutor(tmp_path)
-    run = SimpleNamespace(id="factory-run")
+    run = FactoryRun(
+        id="factory-run",
+        config=FactoryConfig(name="synthetic QA identity"),
+        status=FactoryRunStatus.RUNNING,
+        created_at="2026-10-26T00:00:00+00:00",
+    )
     monkeypatch.setattr(
         executor,
         "_load_pm_plan_tasks",
@@ -203,6 +162,30 @@ async def test_direct_stage_missing_cutoff_port_fails_before_service_or_role_cal
     assert service_or_role_calls == []
 
 
+def _record_runtime_wakeups_without_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[str, dict[str, object]]]:
+    """Keep actual owner projection/session logic; record but do not send NATS.
+
+    Synthetic transport unavailability returns False, never fabricated publish
+    success. Authoritative TaskRuntime/FactStream transitions remain real.
+    """
+    from polaris.infrastructure.log_pipeline import jetstream_publisher
+
+    records: list[tuple[str, dict[str, object]]] = []
+
+    class RecordingUnavailableTransport:
+        def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
+            snapshot = json.loads(json.dumps(payload, ensure_ascii=False))
+            assert isinstance(snapshot, dict)
+            records.append((subject, snapshot))
+            return False
+
+    transport = RecordingUnavailableTransport()
+    monkeypatch.setattr(jetstream_publisher, "get_log_jetstream_publisher", lambda: transport)
+    return records
+
+
 def test_materialize_pm_task_projects_current_factory_workspace_lease(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -223,11 +206,7 @@ def test_materialize_pm_task_projects_current_factory_workspace_lease(
         run_id="factory-run-forged",
         fencing_token=999,
     )
-    monkeypatch.setattr(
-        TaskRuntimeService,
-        "_publish_factory_execution_event",
-        lambda _service, _payload: True,
-    )
+    wakeups = _record_runtime_wakeups_without_transport(monkeypatch)
     tasks = [
         {
             "id": "PM-LEASE-1",
@@ -321,6 +300,28 @@ def test_materialize_pm_task_projects_current_factory_workspace_lease(
     assert _fencing_token(terminal_payload) == 41
     assert terminal_payload["factory_workspace_run_lease"] == expected_refreshed_lease
 
+    # Actual session-aware projection references the real persisted terminal fact.
+    terminal_wakeups: list[tuple[str, dict[str, object]]] = []
+    for subject, envelope in wakeups:
+        payload = envelope.get("payload")
+        assert isinstance(payload, dict)
+        if payload.get("event_type") == "completed":
+            terminal_wakeups.append((subject, envelope))
+    assert len(terminal_wakeups) == 1
+    subject, envelope = terminal_wakeups[0]
+    realtime = envelope["payload"]
+    metadata = envelope["meta"]
+    assert isinstance(realtime, dict)
+    assert isinstance(metadata, dict)
+    assert subject.endswith(f".event.factory.{run_id}")
+    assert envelope["event_id"] == terminal_events[0]["event_id"]
+    assert metadata["fact_event_id"] == terminal_events[0]["event_id"]
+    assert metadata["fact_event_seq"] == terminal_events[0]["seq"]
+    assert realtime["role"] == "director"
+    assert realtime["stage"] == "director_dispatch"
+    assert realtime["session_id"] == identity.session_id
+    assert realtime["director_run_id"] == "director-child-run"
+
 
 @pytest.mark.parametrize(
     "run_metadata",
@@ -338,11 +339,7 @@ def test_materialize_pm_task_never_trusts_task_supplied_workspace_lease(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     _bootstrap_fact_stream_workspace(workspace)
-    monkeypatch.setattr(
-        TaskRuntimeService,
-        "_publish_factory_execution_event",
-        lambda _service, _payload: True,
-    )
+    wakeups = _record_runtime_wakeups_without_transport(monkeypatch)
 
     _executor(workspace)._materialize_pm_plan_taskboard(
         [
@@ -366,6 +363,20 @@ def test_materialize_pm_task_never_trusts_task_supplied_workspace_lease(
 
     assert row is not None
     assert "factory_workspace_run_lease" not in row["metadata"]
+    assert wakeups
+    actual_facts = query_fact_events(
+        QueryFactEventsV1(workspace=str(workspace), stream="task_runtime.execution")
+    ).events
+    actual_fact_ids = {event["event_id"] for event in actual_facts}
+    for _subject, envelope in wakeups:
+        realtime = envelope.get("payload")
+        metadata = envelope.get("meta")
+        assert isinstance(realtime, dict)
+        assert isinstance(metadata, dict)
+        assert metadata["fact_event_id"] in actual_fact_ids
+        assert realtime["role"] == "unknown"
+        assert "stage" not in realtime
+        assert "factory_workspace_run_lease" not in realtime
 
 
 @pytest.mark.parametrize(
@@ -484,6 +495,7 @@ def test_run_completion_blocks_degraded_task_runtime_projection(tmp_path: Path) 
     assert result is not None
     assert result.status == "blocked"
     assert result.reason_code == "task_runtime_fact_projection_not_ready"
+    assert result.metadata is not None
     assert result.metadata["canonical_authoritative"] is False
     assert result.metadata["degraded"] is True
 
@@ -509,6 +521,7 @@ def test_run_completion_conflict_matrix_prefers_failure(tmp_path: Path) -> None:
 
     assert result is not None
     assert result.status == "failed"
+    assert result.metadata is not None
     assert result.metadata["terminal_source"] == "canonical_conflict_matrix"
     assert result.metadata["canonical_conflict"] is True
 
@@ -706,6 +719,7 @@ async def test_run_completion_cancel_during_dispatch_waits_for_canonical_termina
     )
 
     assert result.status == "completed"
+    assert result.metadata is not None
     assert result.metadata["canonical_authoritative"] is True
     assert result.metadata["terminal_source"] == "task_runtime.execution_fact"
     assert fake_orchestration.cancelled == []
@@ -867,7 +881,7 @@ def test_read_claimable_director_task_ids_confines_parallel_claims_to_admitted_w
         "query_observable_task_rows_projection",
         lambda runtime: _authoritative_task_projection(
             Path(runtime.workspace),
-            rows=[
+            rows=(
                 {
                     "id": 1,
                     "status": "pending",
@@ -889,7 +903,7 @@ def test_read_claimable_director_task_ids_confines_parallel_claims_to_admitted_w
                         "depends_on": ["TASK-2"],
                     },
                 },
-            ],
+            ),
         ),
     )
 

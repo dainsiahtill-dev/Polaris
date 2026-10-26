@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-10-25T18:06:39.998642Z",
-  "source_hash": "bdd5fdb5dde24a2d",
+  "generated_at": "2026-10-26T07:30:12.124870Z",
+  "source_hash": "a8e79988b4fef0f5",
   "cell_id": "factory.pipeline",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -1990,7 +1990,7 @@
     },
     {
       "type": "function",
-      "name": "capture_claims",
+      "name": "capture_claim_evidence",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_materialization_impl.py"
     },
@@ -6415,6 +6415,14 @@
           "doc": ""
         },
         {
+          "name": "_capture_chief_engineer_portfolio_authority",
+          "doc": "Join the original Factory durable reader to the CE host capture."
+        },
+        {
+          "name": "read_factory_authority",
+          "doc": ""
+        },
+        {
           "name": "_chief_engineer_trusted_recipe_guidance",
           "doc": "Project server-owned command binding rules, never draft risk instructions."
         },
@@ -8356,6 +8364,12 @@
     {
       "type": "function",
       "name": "row_owner_score",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py"
+    },
+    {
+      "type": "function",
+      "name": "bound_owner_row",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_workspace_quality_impl.py"
     },

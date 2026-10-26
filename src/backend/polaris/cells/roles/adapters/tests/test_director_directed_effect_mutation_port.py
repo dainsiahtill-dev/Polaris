@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import pytest
 from polaris.cells.director.runtime.public import (
+    DirectedEffectErrorCodeV1,
     DirectedEffectImmutableMapV1,
     DirectorEffectCurrentPolicyEvidenceCaptureRequestV1,
     DirectorEffectCurrentPolicyEvidenceCaptureResultV1,
@@ -22,6 +23,7 @@ from polaris.cells.director.runtime.public import (
     DirectorEffectPolicyRevalidationResultV1,
     DirectorEffectPolicySnapshotRequestV1,
     DirectorEffectPolicySnapshotResultV1,
+    DirectorEffectPolicySnapshotStatusV1,
     DirectorEffectTargetStateEvidenceV1,
     DirectorRepairEffectV1,
     hash_directed_effect_arguments,
@@ -42,18 +44,10 @@ from polaris.cells.roles.kernel.public import (
     DirectedEffectMutationPortResultV1,
     DirectedEffectMutationPortV1,
 )
-from polaris.cells.roles.kernel.public.directed_effect_service import (
-    create_directed_effect_fence_ports,
-)
-from polaris.cells.roles.kernel.tests.test_directed_effect_contracts import (
-    _ARGUMENTS,
-    _attempt,
-    _claim_grant,
-    _current_policy_evidence,
-    _inventory,
-    _member,
-    _prepared_batch,
-    _prepared_member,
+from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import (
+    SYNTHETIC_ARGUMENTS as _ARGUMENTS,
+    build_synthetic_mutation_context as _context,
+    build_synthetic_repair_context as _repair_context,
 )
 from polaris.cells.runtime.task_runtime.public import DirectedEffectOperationResultV1
 
@@ -304,45 +298,6 @@ class _PhysicalSpy:
         return self.result
 
 
-def _context(
-    *,
-    workspace: str | None = None,
-    tool_name: str = "write_file",
-    arguments: tuple[tuple[str, object], ...] = _ARGUMENTS,
-) -> tuple[DirectedEffectExecutionContextV1, DirectedEffectFencePortsV1, str]:
-    attempt = _attempt()
-    if workspace is not None:
-        attempt = replace(attempt, workspace=workspace)
-    members = tuple(_member(index, normalized_tool_name=tool_name) for index in range(2))
-    batch = _prepared_batch(
-        execution_attempt=attempt,
-        inventory=_inventory(attempt, members),
-        normalized_arguments=arguments,
-    )
-    prepared = batch.prepared_members[0]
-    member = prepared.member
-    evidence = batch.authorization_evidence_by_call_id[0][1]
-    bound_snapshot = prepared.policy_binding.bound_snapshot
-    assert bound_snapshot is not None
-    claim_grant = _claim_grant(batch.execution_attempt, batch.parent_binding, member)
-    context = DirectedEffectExecutionContextV1(
-        context_id="context-1",
-        batch_id=batch.parent_binding.correlation.batch_id,
-        creator_pid=os.getpid(),
-        tool_call_id=member.tool_call_id,
-        normalized_tool_name=member.normalized_tool_name,
-        arguments_hash=evidence.arguments_hash,
-        authorization_evidence=evidence,
-        claim_grant=claim_grant,
-        bound_snapshot=bound_snapshot,
-        current_policy_evidence=_current_policy_evidence(batch, member, claim_grant),
-        current_job_token_restriction_evidence=(),
-    )
-    fence = create_directed_effect_fence_ports()
-    assert fence.admin.register(context).ok
-    return context, fence, batch.execution_attempt.workspace
-
-
 def _target_evidence(
     context: DirectedEffectExecutionContextV1,
     *,
@@ -376,8 +331,8 @@ def _revalidation_for_target(
     allowed: bool,
 ) -> DirectorEffectPolicyRevalidationResultV1:
     snapshot = context.bound_snapshot.snapshot
-    error_code = None if allowed else "deo_target_state_drift"
-    status = "allowed" if allowed else "denied"
+    error_code: DirectedEffectErrorCodeV1 | None = None if allowed else "deo_target_state_drift"
+    status: DirectorEffectPolicySnapshotStatusV1 = "allowed" if allowed else "denied"
     evidence_hash = hash_directed_effect_policy_revalidation_evidence(
         status=status,
         allowed=allowed,
@@ -427,60 +382,6 @@ def _repair_binding(*, tool_name: str) -> DeferredDirectorRepairEffectBindingV1:
         plan_hash="b" * 64,
         effect=effect,
     )
-
-
-def _repair_context(
-    binding: DeferredDirectorRepairEffectBindingV1,
-    *,
-    workspace: str | None = None,
-) -> tuple[
-    DirectedEffectExecutionContextV1,
-    DirectedEffectFencePortsV1,
-    str,
-    tuple[tuple[str, object], ...],
-]:
-    attempt = _attempt()
-    if workspace is not None:
-        attempt = replace(attempt, workspace=workspace)
-    member = _member(
-        0,
-        tool_call_id=binding.tool_call_id,
-        normalized_tool_name=binding.effect.tool_name,
-    )
-    inventory = _inventory(attempt, (member,))
-    prepared_member = _prepared_member(
-        member,
-        stream_head=3,
-        execution_attempt=attempt,
-        normalized_arguments=binding.effect.arguments,
-    )
-    batch = _prepared_batch(
-        execution_attempt=attempt,
-        inventory=inventory,
-        prepared_members=(prepared_member,),
-        call_id_index=((binding.tool_call_id, 0),),
-        normalized_arguments=binding.effect.arguments,
-    )
-    evidence = batch.authorization_evidence_by_call_id[0][1]
-    bound_snapshot = prepared_member.policy_binding.bound_snapshot
-    assert bound_snapshot is not None
-    claim_grant = _claim_grant(attempt, batch.parent_binding, member)
-    context = DirectedEffectExecutionContextV1(
-        context_id="repair-context",
-        batch_id=batch.parent_binding.correlation.batch_id,
-        creator_pid=os.getpid(),
-        tool_call_id=member.tool_call_id,
-        normalized_tool_name=member.normalized_tool_name,
-        arguments_hash=evidence.arguments_hash,
-        authorization_evidence=evidence,
-        claim_grant=claim_grant,
-        bound_snapshot=bound_snapshot,
-        current_policy_evidence=_current_policy_evidence(batch, member, claim_grant),
-        current_job_token_restriction_evidence=(),
-    )
-    fence = create_directed_effect_fence_ports()
-    assert fence.admin.register(context).ok
-    return context, fence, attempt.workspace, binding.effect.arguments
 
 
 def _forged_context(

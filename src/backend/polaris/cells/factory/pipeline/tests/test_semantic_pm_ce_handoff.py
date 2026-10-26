@@ -106,18 +106,19 @@ def test_final_ce_submission_schema_allows_delegated_recipes(tmp_path: Path) -> 
 
 
 def test_minimal_ce_plan_matches_actual_submission_schema(tmp_path: Path) -> None:
-    from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import _payload
+    from polaris.cells.chief_engineer.blueprint.public.tests.portfolio_payload_fixture import (
+        synthetic_task_intent_portfolio_payload as _payload,
+    )
 
     contract = _executor(tmp_path)._chief_engineer_structured_output_contract(("TASK-A",))
     validate(_payload(), contract.json_schema)
 
 
 def test_invalid_delegated_recipe_returns_correctable_ce_feedback(tmp_path: Path) -> None:
-    from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import (
-        _command,
-        _payload,
-        _task,
+    from polaris.cells.chief_engineer.blueprint.public.tests.portfolio_payload_fixture import (
+        synthetic_task_intent_portfolio_payload as _payload,
     )
+    from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import _command, _task
 
     payload = _payload()
     payload["project_completion_contract"]["obligations"]["verification"][1]["argv"] = ["echo", "pass"]
@@ -135,10 +136,10 @@ def test_qa_receives_same_run_ce_artifacts_instead_of_empty_pm_paths(tmp_path: P
         generate_task_blueprint,
         project_chief_engineer_task_blueprint,
     )
-    from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import (
-        _command,
-        _payload,
+    from polaris.cells.chief_engineer.blueprint.public.tests.portfolio_payload_fixture import (
+        synthetic_task_intent_portfolio_payload as _payload,
     )
+    from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import _command
 
     task = _intent()
     task["id"] = "TASK-A"

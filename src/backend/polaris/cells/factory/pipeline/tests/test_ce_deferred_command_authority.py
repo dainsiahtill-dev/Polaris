@@ -119,7 +119,9 @@ def test_delegated_ce_factory_request_reaches_sealed_localhost_provider(
     import hashlib
     import json
 
-    from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import _payload
+    from polaris.cells.chief_engineer.blueprint.public.tests.portfolio_payload_fixture import (
+        synthetic_task_intent_portfolio_payload as _payload,
+    )
     from polaris.cells.events.fact_stream.public import (
         BootstrapFactStreamWorkspaceCommandV1,
         bootstrap_fact_stream_workspace,
@@ -155,6 +157,7 @@ def test_delegated_ce_factory_request_reaches_sealed_localhost_provider(
         endpoint.requests.append(body)
         identity = body["messages"][0]["content"]
         message: dict[str, Any] = {"role": "assistant", "content": None}
+        payload: dict[str, Any]
         if "polaris.role_identity.v1:pm" in identity:
             payload = semantic_plan
             message["content"] = json.dumps(payload, ensure_ascii=False)
@@ -326,7 +329,9 @@ def test_retry_feasibility_preserves_semantic_depth_authority() -> None:
     from polaris.cells.chief_engineer.blueprint.public import (
         project_chief_engineer_delivery_depth_feasibility_from_pm_tasks,
     )
-    from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import _payload
+    from polaris.cells.chief_engineer.blueprint.public.tests.portfolio_payload_fixture import (
+        synthetic_task_intent_portfolio_payload as _payload,
+    )
 
     task = _intent()
     task["id"] = "TASK-A"

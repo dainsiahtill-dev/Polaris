@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 from typing import Any
 
+from polaris.cells.workspace.integrity.public.service import read_readme_title as read_readme_title
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.fs.text_ops import write_text_atomic as _kernel_write_text_atomic
 
@@ -195,24 +196,3 @@ def write_text_atomic(path: str, text: str, *, encoding: str = "utf-8") -> None:
     if not path:
         return
     _kernel_write_text_atomic(path, text or "", encoding=encoding)
-
-
-def read_readme_title(workspace: str) -> str:
-    if not workspace:
-        return ""
-    path = os.path.join(workspace, "tui_runtime.md")
-    if not os.path.isfile(path):
-        return ""
-    try:
-        fs = KernelFileSystem(workspace, get_default_adapter())
-        content = fs.workspace_read_text("tui_runtime.md", encoding="utf-8")
-        for line in content.split("\n"):
-            text = line.strip()
-            if not text:
-                continue
-            if text.startswith("#"):
-                text = text.lstrip("#").strip()
-            return text[:120]
-    except (OSError, UnicodeDecodeError):
-        return ""
-    return ""

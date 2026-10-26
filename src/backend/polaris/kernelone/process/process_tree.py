@@ -15,7 +15,9 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from _thread import LockType
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +33,80 @@ class ProcessTreeCancelledError(RuntimeError):
 
 class ProcessTreeDrainError(RuntimeError):
     """Physical tree drain could not be proved; cleanup must remain blocked."""
+
+    owned_resource: object | None = None
+    _owned_resource_producer: object | None = None
+    _owned_resource_identity: object | None = None
+
+
+_GROUP_IDENTITY_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _OwnedProcessGroupIdentity:
+    process: subprocess.Popen[str]
+    leader_pid: int
+    group_id: int
+    session_id: int
+    leader_start_token: str
+    seal: object
+
+
+def _process_start_token(pid: int) -> str:
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()
+        return fields[19]
+    except (OSError, ValueError, IndexError) as exc:
+        raise ProcessTreeDrainError("process_group_birth_unavailable") from exc
+
+
+def _require_group_binding_support() -> None:
+    if os.name != "posix" or not Path("/proc/self/stat").is_file():
+        raise ProcessTreeDrainError("process_group_binding_unsupported_platform")
+
+
+def _bind_spawned_process_group(process: subprocess.Popen[str]) -> _OwnedProcessGroupIdentity:
+    _require_group_binding_support()
+    pid = process.pid
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise ProcessTreeDrainError("process_group_identity_invalid")
+    try:
+        group_id = os.getpgid(pid)
+        session_id = os.getsid(pid)
+    except OSError as exc:
+        raise ProcessTreeDrainError("process_group_identity_unavailable") from exc
+    if group_id != pid or session_id != pid:
+        raise ProcessTreeDrainError("process_group_not_isolated")
+    return _OwnedProcessGroupIdentity(
+        process, pid, group_id, session_id, _process_start_token(pid), _GROUP_IDENTITY_SEAL
+    )
+
+
+def _validate_owned_group(process: subprocess.Popen[str], identity: _OwnedProcessGroupIdentity) -> None:
+    if (
+        type(identity) is not _OwnedProcessGroupIdentity
+        or identity.seal is not _GROUP_IDENTITY_SEAL
+        or identity.process is not process
+        or process.pid != identity.leader_pid
+        or identity.group_id != identity.leader_pid
+        or identity.session_id != identity.leader_pid
+    ):
+        raise ProcessTreeDrainError("process_group_not_bound")
+    try:
+        token = _process_start_token(identity.leader_pid)
+    except ProcessTreeDrainError as error:
+        if not isinstance(error.__cause__, (FileNotFoundError, ProcessLookupError)):
+            raise
+        if process.poll() is None:
+            raise ProcessTreeDrainError("process_group_leader_identity_unavailable") from error
+    else:
+        if token != identity.leader_start_token:
+            raise ProcessTreeDrainError("process_group_leader_identity_changed")
+
+
+def _owned_bound_group_running(process: subprocess.Popen[str], identity: _OwnedProcessGroupIdentity) -> bool:
+    _validate_owned_group(process, identity)
+    return _owned_group_running(identity.group_id)
 
 
 class ProcessTreeRunControl:
@@ -144,14 +220,15 @@ def signal_process_tree(pid: int, *, force: bool) -> bool:
         return False
 
 
-def _signal_owned_group(group_id: int, *, force: bool) -> None:
+def _signal_owned_group(group_id: int, *, force: bool) -> bool:
     """Signal the spawn-bound group, even after its leader has been reaped."""
     try:
         os.killpg(group_id, signal.SIGKILL if force else signal.SIGTERM)
+        return True
     except ProcessLookupError:
         # No signal recipient. This is not drain proof; the owner separately
         # observes group absence, leader reap and completed pipe draining.
-        return
+        return False
     except OSError as exc:
         raise ProcessTreeDrainError(f"process_tree_signal_failed:{type(exc).__name__}") from exc
 
@@ -186,31 +263,79 @@ def _owned_group_running(group_id: int) -> bool:
 
 
 def _stop_and_drain_owned_group(
-    process: subprocess.Popen[str], group_id: int, *, force: bool = False
+    process: subprocess.Popen[str],
+    group_id: int,
+    *,
+    force: bool = False,
+    identity: _OwnedProcessGroupIdentity | None = None,
+    drain_pipes: Callable[[float], tuple[str, str]] | None = None,
+    stop_grace_seconds: float | None = None,
+    drain_timeout_seconds: float | None = None,
+    on_force: Callable[[], None] | None = None,
+    signal_lock: LockType | None = None,
+    on_signal_accepted: Callable[[], None] | None = None,
 ) -> tuple[str, str]:
-    """Only the spawn owner can prove group death, leader reap and pipe drain."""
-    _signal_owned_group(group_id, force=force)
+    """The same spawn owner coordinates signals, leader/group death and pipe EOF.
+
+    Synchronous owners retain communicate. Stream owners supply their sole
+    reader's drain observation; communicate must never race those readers.
+    """
+
+    def signal_owned(*, force_signal: bool) -> None:
+        if identity is not None:
+            if group_id != identity.group_id:
+                raise ProcessTreeDrainError("process_group_not_bound")
+            _validate_owned_group(process, identity)
+
+        def send_and_record() -> None:
+            accepted = _signal_owned_group(group_id, force=force_signal)
+            if accepted is True:
+                if on_signal_accepted is not None:
+                    on_signal_accepted()
+                if force_signal and on_force is not None:
+                    on_force()
+
+        if signal_lock is None:
+            send_and_record()
+        else:
+            # Observers may inspect physical drain while a signal is pending,
+            # but logical exit attribution commits after this decision.
+            with signal_lock:
+                send_and_record()
+
+    signal_owned(force_signal=force)
     started = time.monotonic()
-    deadline = started + _PROCESS_TREE_DRAIN_TIMEOUT_SECONDS
+    grace = _PROCESS_TREE_STOP_GRACE_SECONDS if stop_grace_seconds is None else stop_grace_seconds
+    timeout = _PROCESS_TREE_DRAIN_TIMEOUT_SECONDS if drain_timeout_seconds is None else drain_timeout_seconds
+    deadline = started + timeout
     force_sent = force
     pipes_drained = False
     last_pipe_timeout: subprocess.TimeoutExpired | None = None
     stdout = stderr = ""
     while True:
         if not pipes_drained:
+            now = time.monotonic()
+            slice_seconds = min(_PROCESS_TREE_WAIT_SLICE_SECONDS, max(0.0, deadline - now))
+            if not force_sent:
+                slice_seconds = min(slice_seconds, max(0.0, started + grace - now))
             try:
-                stdout, stderr = process.communicate(timeout=_PROCESS_TREE_WAIT_SLICE_SECONDS)
+                if drain_pipes is None:
+                    stdout, stderr = process.communicate(timeout=slice_seconds)
+                else:
+                    stdout, stderr = drain_pipes(slice_seconds)
                 pipes_drained = True
                 last_pipe_timeout = None
             except subprocess.TimeoutExpired as exc:
-                # Preserve actual unconfirmed communicate evidence without
-                # fallible diagnostic I/O interrupting physical owner drain.
                 last_pipe_timeout = exc
-        if pipes_drained and process.poll() is not None and not _owned_group_running(group_id):
+        if identity is not None:
+            running = _owned_bound_group_running(process, identity)
+        else:
+            running = _owned_group_running(group_id)
+        if pipes_drained and process.poll() is not None and not running:
             return stdout, stderr
         now = time.monotonic()
-        if not force_sent and now - started >= _PROCESS_TREE_STOP_GRACE_SECONDS:
-            _signal_owned_group(group_id, force=True)
+        if not force_sent and now - started >= grace:
+            signal_owned(force_signal=True)
             force_sent = True
         if now >= deadline:
             raise ProcessTreeDrainError("process_tree_drain_deadline_expired") from last_pipe_timeout

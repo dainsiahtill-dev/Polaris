@@ -9,24 +9,15 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from polaris.cells.roles.kernel.internal.llm_caller.final_request_tool_surface import (
-    assert_tool_in_final_request_surface,
-)
-from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import LLMRequestPreparer
-from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import ensure_director_first_call_materialization_scope
-from polaris.cells.roles.kernel.internal.transaction.tool_surface import plan_transaction_tool_surface
 from polaris.cells.roles.kernel.public.llm_caller_contracts import (
     build_native_tool_schemas,
-    resolve_role_output_budget,
     stamp_director_quality_repair_one_call_policy,
 )
+from polaris.cells.roles.kernel.tests import runtime_boundary_scenarios as kernel_fixture
 from polaris.cells.roles.profile.public.service import RoleTurnResult, profile_from_dict
 from polaris.cells.roles.runtime.internal.kernel_session_turn import KernelSessionTurnBridge
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
-from polaris.infrastructure.llm.providers import anthropic_provider
-from polaris.kernelone.llm.engine.provider_native_request import project_factory_provider_native_request
-from polaris.kernelone.llm.types import InvokeResult, Usage
 
 
 def _profile(whitelist: list[str] | None = None) -> Any:
@@ -102,78 +93,7 @@ async def _physical_body(
     command: ExecuteRoleSessionCommandV1, profile: Any, monkeypatch: pytest.MonkeyPatch
 ) -> dict[str, Any]:
     request = RoleRuntimeService()._build_session_request(command)
-    context = request.context_override
-    plan = plan_transaction_tool_surface(
-        role="director",
-        profile=profile,
-        request=request,
-        context_result=SimpleNamespace(messages=[], token_estimate=0, metadata={}),
-        messages=[{"role": "user", "content": command.user_message}],
-        workspace=command.workspace,
-        mode="stream",
-    )
-    # The production transaction caller forwards the selected schemas to the
-    # physical preparer. Use that existing boundary and native serializer.
-    physical_context = {
-        **context,
-        "_transaction_kernel_forced_tool_definitions": plan.tool_definitions,
-        "_transaction_kernel_forced_tool_choice": plan.tool_choice_override or "auto",
-        "_transaction_kernel_prebuilt_messages": [
-            {"role": "system", "content": "You are the Director. Preserve the current task authority."},
-            {"role": "user", "content": command.user_message},
-        ],
-    }
-    prepared = await LLMRequestPreparer(workspace=command.workspace)._prepare_llm_request(
-        profile=profile,
-        system_prompt="You are the Director.",
-        context=SimpleNamespace(message=command.user_message, domain="code", context_override=physical_context),
-        temperature=0.0,
-        max_tokens=resolve_role_output_budget(context=context, requested=18_000),
-        stream=False,
-    )
-    native = project_factory_provider_native_request(
-        provider_type="anthropic_compat",
-        mode="invoke",
-        final_payload={
-            "model": profile.model,
-            "messages": prepared.messages,
-            "tools": prepared.request_options.get("tools") or [],
-            "tool_choice": prepared.request_options.get("tool_choice"),
-            "response_format": prepared.request_options.get("response_format"),
-            "temperature": prepared.request_options["temperature"],
-            "max_tokens": prepared.request_options["max_tokens"],
-            "stream": False,
-        },
-        provider_config={"base_url": "https://provider.test/anthropic"},
-    )
-    assert native is not None
-    expected = json.loads(native.expected_body_json)
-    captured: list[dict[str, Any]] = []
-
-    def intercept(_url: str, _headers: Any, payload: dict[str, Any], *_args: Any) -> InvokeResult:
-        captured.append(deepcopy(payload))
-        return InvokeResult(
-            ok=False, output="", latency_ms=0, usage=Usage.estimate("", ""), error="transport_intercepted"
-        )
-
-    # Intercept only the network boundary AFTER the production provider builds
-    # and sanitizes its actual outbound body. No fabricated successful reply.
-    monkeypatch.setattr(anthropic_provider, "invoke_with_retry", intercept)
-    anthropic_provider.AnthropicProvider().invoke(
-        prepared.input_text,
-        profile.model,
-        {
-            **prepared.request_options,
-            "chat_messages": prepared.messages,
-            "base_url": "https://provider.test/anthropic",
-            "api_key": "fixture",
-        },
-    )
-    assert len(captured) == 1
-    assert captured[0]["tools"] == expected["tools"]
-    assert captured[0].get("tool_choice") == expected.get("tool_choice")
-    assert captured[0]["max_tokens"] == expected["max_tokens"]
-    return captured[0]
+    return await kernel_fixture.capture_native_provider_body(request, profile, monkeypatch)
 
 
 @pytest.mark.asyncio
@@ -202,9 +122,7 @@ async def test_native_missing_target_followup_reenters_read_and_verify_with_orig
     }
     assert second_body.get("tool_choice") in (None, {"type": "auto"})
     assert second_body["max_tokens"] == 18_000
-    final_request = SimpleNamespace(options=second_body)
-    for tool in ("read_file", "execute_command"):
-        assert_tool_in_final_request_surface(tool_name=tool, active_request=final_request, prepared=None)
+    kernel_fixture.assert_native_tools_available(second_body, ("read_file", "execute_command"))
     assert second.context["execution_envelope"] == before["execution_envelope"]
     assert second.task_id == first.task_id and second.session_id == first.session_id
     assert second.timeout_seconds <= first.timeout_seconds
@@ -297,10 +215,7 @@ async def test_followup_reselection_preserves_current_tool_denial(
     body = await _physical_body(bridge._turn_command("turn-2", "Read and verify."), profile, monkeypatch)
     assert "read_file" in {tool["name"] for tool in body["tools"]}
     assert "execute_command" not in {tool["name"] for tool in body["tools"]}
-    with pytest.raises(RuntimeError, match="provider_tool_surface_violation"):
-        assert_tool_in_final_request_surface(
-            tool_name="execute_command", active_request=SimpleNamespace(options=body), prepared=None
-        )
+    kernel_fixture.assert_native_tool_denial(body)
 
 
 @pytest.mark.asyncio
@@ -341,15 +256,7 @@ async def test_existing_owned_cap_restores_previous_values_without_mutating_orig
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     command = _command(tmp_path, {"target_files": ["answer.py"], "delivery_mode": "materialize_changes"})
-    ensure_director_first_call_materialization_scope(
-        role="director",
-        context_override=command.context,
-        workspace=str(tmp_path),
-        tool_definitions=build_native_tool_schemas(_profile()),
-        from_scratch_target="answer.py",
-        materialize_requested=True,
-        transaction_tools_disabled=False,
-    )
+    kernel_fixture.stamp_initial_materialization_fixture(command.context, _profile(), tmp_path)
     assert command.context["llm_max_tokens"] == 7000
     before = deepcopy(command.context)
     bridge = KernelSessionTurnBridge(SimpleNamespace(), command)
@@ -454,20 +361,29 @@ async def test_permanent_forced_scope_cannot_reintroduce_denied_native_tool(
     body = await _physical_body(bridge._turn_command("turn-2", "Continue."), profile, monkeypatch)
     assert [tool["name"] for tool in body["tools"]] == ["read_file"]
     assert body["tool_choice"] == {"type": "any"}
-    with pytest.raises(RuntimeError, match="provider_tool_surface_violation"):
-        assert_tool_in_final_request_surface(
-            tool_name="execute_command", active_request=SimpleNamespace(options=body), prepared=None
-        )
+    kernel_fixture.assert_native_tool_denial(body)
 
 
 @pytest.mark.asyncio
 async def test_real_quality_repair_producer_reenters_original_registry_after_commit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from polaris.cells.roles.adapters.tests import test_quality_repair_authorized_scope as fixture
+    import hashlib
 
-    fixture._owned_workspace(tmp_path)
+    from polaris.cells.roles.adapters.tests import test_quality_repair_authorized_scope as fixture
+    from polaris.cells.roles.runtime.tests.quality_repair_reentry_fixture import (
+        AUTHORIZED_TOOLS,
+        READ_ONLY_REFERENCE,
+        REPAIRED_SOURCE,
+        run_actual_authorized_repair,
+        seed_quality_repair_inputs,
+    )
+
+    # Only upstream diagnosis/model decisions are synthetic. Current source,
+    # engineering tool effects, denied write and verifier results are actual.
+    seed_quality_repair_inputs(tmp_path, fixture.OWNED, fixture.REFERENCE)
     context = fixture._context()
+    context["director_execution_envelope"]["allowed_read_paths"] = [*fixture.OWNED, fixture.REFERENCE]
     context["director_interface_discrepancy_retry"] = {
         "authorized": True,
         "reason": "coverage_matched_but_unplannable",
@@ -486,14 +402,68 @@ async def test_real_quality_repair_producer_reenters_original_registry_after_com
     command = _command(tmp_path, {**produced, "execution_envelope": produced["director_execution_envelope"]})
     original = deepcopy(command.context)
     bridge = KernelSessionTurnBridge(SimpleNamespace(), command)
-    initial = await _physical_body(
-        bridge._turn_command("turn-1", "Repair the current source."), _profile(), monkeypatch
+    initial_command = bridge._turn_command("turn-1", "Repair the current source.")
+    initial = await _physical_body(initial_command, _profile(), monkeypatch)
+    assert {tool["name"] for tool in initial["tools"]} == AUTHORIZED_TOOLS
+    assert initial.get("tool_choice") in (None, {"type": "auto"})
+    actual = await run_actual_authorized_repair(
+        tmp_path, monkeypatch, owned=fixture.OWNED, reference=fixture.REFERENCE, instruction=adapter.calls[0]["message"]
     )
-    assert [tool["name"] for tool in initial["tools"]] == ["edit_file"]
-    assert initial["tool_choice"] == {"type": "tool", "name": "edit_file"}
-    bridge.results.append(_committed_followup())
+    assert actual["result_status"] == "completed", actual["snapshot"]
+    assert actual["verification"] == "passed"
+    assert actual["current_source"] == REPAIRED_SOURCE
+    assert actual["reference_before"] == actual["reference_after"] == READ_ONLY_REFERENCE
+    observations = [event["payload"] for event in actual["snapshot"]["events"] if event["kind"] == "tool_observed"]
+    by_id = {row["call_id"]: row for row in observations}
+    assert [row["call_id"] for row in observations] == [
+        "before-check",
+        "read-owned",
+        "deny-reference-write",
+        "repair-owned",
+        "read-after-commit",
+        "after-check",
+        actual["snapshot"]["checks"][0]["call_id"],
+    ]
+    assert observations[-1]["exit_code"] == actual["snapshot"]["checks"][0]["exit_code"] == 0
+    verification = next(
+        event["payload"] for event in actual["snapshot"]["events"] if event["kind"] == "verification_completed"
+    )
+    binding = verification["input_binding"]
+    assert (
+        binding["workspace_revision"] == verification["workspace_revision"] == actual["snapshot"]["workspace_revision"]
+    )
+    source_path = str(tmp_path / fixture.OWNED[1])
+    expected_source_hash = hashlib.sha256(REPAIRED_SOURCE.encode("utf-8")).hexdigest()
+    assert binding["source_manifest"][source_path]["sha256"] == expected_source_hash
+    assert binding["result_manifest"][source_path]["sha256"] == expected_source_hash
+    assert (
+        binding["result_manifest"][str(tmp_path / fixture.REFERENCE)]["sha256"]
+        == hashlib.sha256(READ_ONLY_REFERENCE.encode("utf-8")).hexdigest()
+    )
+    assert by_id["before-check"]["exit_code"] != 0
+    assert "TS2305" in by_id["before-check"]["content"]
+    assert not by_id["deny-reference-write"]["ok"]
+    assert "write path outside permission scope" in by_id["deny-reference-write"]["content"]
+    assert by_id["repair-owned"]["ok"]
+    assert REPAIRED_SOURCE.strip() in by_id["read-after-commit"]["content"]
+    assert by_id["after-check"]["exit_code"] == 0
+    assert actual["snapshot"]["checks"][0]["exit_code"] == 0
+    assert actual["snapshot"]["scope"]["write_roots"] == actual["declared_writes"]
+    assert actual["snapshot"]["scope"]["read_roots"] == actual["declared_reads"]
+    assert len(actual["native_requests"]) == 7
+    assert "TS2305" in json.dumps(actual["native_requests"][1])
+    assert "write path outside permission scope" in json.dumps(actual["native_requests"][3])
+    for request in actual["native_requests"]:
+        assert {tool["function"]["name"] for tool in request["tools"]} == AUTHORIZED_TOOLS
+    # New-owner SQLite observations remain new-owner facts. No fabricated old
+    # Kernel commit receipt is appended to the historical projection bridge.
+    assert bridge.results == []
     followup = bridge._turn_command("turn-2", "Read the actual edit and verify.")
     body = await _physical_body(followup, _profile(), monkeypatch)
+    assert (
+        followup.context["director_quality_repair"]["input_hash"]
+        != initial_command.context["director_quality_repair"]["input_hash"]
+    )
     assert {tool["name"] for tool in body["tools"]} >= {"read_file", "execute_command"}
     assert body.get("tool_choice") in (None, {"type": "auto"})
     assert followup.context["execution_envelope"] == original["execution_envelope"]
@@ -507,15 +477,7 @@ async def test_owned_bootstrap_stamp_cannot_retire_later_caller_replacement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: str
 ) -> None:
     command = _command(tmp_path, {"target_files": ["answer.py"], "delivery_mode": "materialize_changes"})
-    ensure_director_first_call_materialization_scope(
-        role="director",
-        context_override=command.context,
-        workspace=str(tmp_path),
-        tool_definitions=build_native_tool_schemas(_profile()),
-        from_scratch_target="answer.py",
-        materialize_requested=True,
-        transaction_tools_disabled=False,
-    )
+    kernel_fixture.stamp_initial_materialization_fixture(command.context, _profile(), tmp_path)
     command.context["llm_max_tokens"] = 4096
     command.context["max_output_tokens"] = 4096
     if replacement == "caller_force":
@@ -561,15 +523,4 @@ def test_exact_denied_force_is_a_planning_conflict_with_no_replacement_grant(tmp
     bridge.results.append(_committed_followup())
     command = bridge._turn_command("turn-2", "Continue.")
     request = RoleRuntimeService()._build_session_request(command)
-    plan = plan_transaction_tool_surface(
-        role="director",
-        profile=profile,
-        request=request,
-        context_result=SimpleNamespace(metadata={}),
-        messages=[],
-        workspace=str(tmp_path),
-        mode="stream",
-    )
-    assert plan.tool_definitions == []
-    assert plan.tool_choice_override is None
-    assert "Forced tool scope conflicts with role/runtime policy" in str(plan.conflict_error)
+    kernel_fixture.assert_exact_denied_planning_conflict(profile, request, tmp_path)

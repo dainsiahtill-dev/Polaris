@@ -26,11 +26,13 @@ from __future__ import annotations
 import copy
 import errno
 import hashlib
+import io
 import json
 import logging
 import math
 import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -52,7 +54,11 @@ from polaris.domain.entities.task import (
     TaskPriority as PolarisTaskPriority,
     TaskStatus as PolarisTaskStatus,
 )
-from polaris.kernelone.fs import KernelFileSystem
+from polaris.kernelone.fs import (
+    GuardedRegularFileSnapshotError,
+    KernelFileSystem,
+    read_guarded_regular_file_snapshot,
+)
 from polaris.kernelone.fs.locked_regular_file import InheritedLockDescriptorsV1, LockedRegularFileSetV1
 from polaris.kernelone.fs.registry import get_default_adapter
 from polaris.kernelone.storage import resolve_runtime_path
@@ -612,10 +618,35 @@ class TaskBoard:
                         raise
                     logger.warning("Failed to load task from %s: %s", task_file, exc)
 
-    def _load_task_snapshot_from_disk(self, task_id: int) -> tuple[Task, str] | None:
-        """Load one durable task row and hash the exact decoded UTF-8 payload."""
+    def _load_task_snapshot_from_disk(self, task_id: int, *, strict: bool = False) -> tuple[Task, str] | None:
+        """Load one durable row; strict reads distinguish absent from unproven.
+
+        Strict mutation reads reuse KernelOne's no-follow regular-file snapshot.
+        Its single byte observation is decoded with the legacy text reader's
+        universal-newline semantics so existing before-hash CAS stays compatible.
+        """
 
         task_path = self.tasks_dir / f"task_{int(task_id)}.json"
+        if strict:
+            try:
+                snapshot = read_guarded_regular_file_snapshot(str(self.tasks_dir), task_path.name, sys.maxsize)
+            except GuardedRegularFileSnapshotError as exc:
+                if exc.code == "guarded_snapshot_missing" and exc.details.get("name") == task_path.name:
+                    return None
+                raise RuntimeError("taskboard_task_snapshot_unreadable") from exc
+            except (OSError, ValueError) as exc:
+                raise RuntimeError("taskboard_task_snapshot_unreadable") from exc
+            try:
+                payload = io.StringIO(snapshot.content.decode("utf-8"), newline=None).read()
+                data = json.loads(payload)
+                if not isinstance(data, dict):
+                    raise ValueError("task snapshot must contain a JSON object")
+                task = Task.from_dict(data)
+                if task.id != int(task_id):
+                    raise ValueError("task snapshot identity differs from its physical row")
+            except (ValueError, TypeError, KeyError) as exc:
+                raise RuntimeError("taskboard_task_snapshot_invalid") from exc
+            return task, _sha256_text(payload)
         if not task_path.is_file():
             return None
         try:
@@ -1083,7 +1114,7 @@ class TaskBoard:
             with self.transaction():
                 if _mutation_guard is not None:
                     _mutation_guard.validate(os.path.abspath(self.tasks_dir))
-                snapshot = self._load_task_snapshot_from_disk(normalized_task_id)
+                snapshot = self._load_task_snapshot_from_disk(normalized_task_id, strict=True)
                 if snapshot is None:
                     return None
                 task, snapshot_hash = snapshot
@@ -1116,7 +1147,7 @@ class TaskBoard:
 
         if _mutation_guard is not None:
             _mutation_guard.validate(os.path.abspath(self.tasks_dir))
-        final_snapshot = self._load_task_snapshot_from_disk(normalized_task_id)
+        final_snapshot = self._load_task_snapshot_from_disk(normalized_task_id, strict=True)
         if final_snapshot is None:
             return None
         final_task, _final_snapshot_hash = final_snapshot

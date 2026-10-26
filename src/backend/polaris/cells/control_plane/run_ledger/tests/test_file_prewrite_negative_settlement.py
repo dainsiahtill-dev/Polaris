@@ -14,11 +14,11 @@ from polaris.cells.control_plane.run_ledger.public import (
     build_tool_call_lifecycle_receipt,
     query_factory_settlement_barrier,
 )
+from polaris.cells.roles.kernel.tests.run_ledger_owner_scenarios import produce_file_prewrite_owner_case
 from polaris.cells.runtime.task_runtime.public import (
     BindRuntimeTaskToFactoryRunCommandV1,
     bind_runtime_task_to_factory_run,
 )
-from polaris.cells.runtime.task_runtime.public.tests.test_file_prewrite_negative_closure import _file_rejection
 
 
 def _publish_failed_lifecycle(root: Path, attempt: Any, batch: dict[str, Any]) -> str:
@@ -76,7 +76,12 @@ def _publish_failed_lifecycle(root: Path, attempt: Any, batch: dict[str, Any]) -
 
 @pytest.mark.asyncio
 async def test_real_file_prewrite_proof_closes_only_resources_without_receipt_credit(tmp_path: Path) -> None:
-    attempt, batch, settled = await _file_rejection(tmp_path, aliases=True)
+    case = await produce_file_prewrite_owner_case(
+        tmp_path,
+        aliases=True,
+        factory_run_id="factory-file-prewrite-negative",
+    )
+    attempt, batch, settled = case["attempt"], case["batch"], case["settled"]
     assert settled.success, settled
     factory_run = _publish_failed_lifecycle(tmp_path, attempt, batch)
     observed = query_factory_settlement_barrier(tmp_path, factory_run)
@@ -94,7 +99,13 @@ async def test_missing_or_mismatched_file_negative_proof_keeps_resources_unknown
         for key in ("results", "raw_results"):
             outcome["execution"]["receipt"][key][0]["result"].pop("prewrite_rejection")
 
-    attempt, batch, settled = await _file_rejection(tmp_path, aliases=True, mutate=corrupt)
+    case = await produce_file_prewrite_owner_case(
+        tmp_path,
+        aliases=True,
+        mutate=corrupt,
+        factory_run_id="factory-file-prewrite-negative",
+    )
+    attempt, batch, settled = case["attempt"], case["batch"], case["settled"]
     assert settled.success, settled
     factory_run = _publish_failed_lifecycle(tmp_path, attempt, batch)
     observed = query_factory_settlement_barrier(tmp_path, factory_run)

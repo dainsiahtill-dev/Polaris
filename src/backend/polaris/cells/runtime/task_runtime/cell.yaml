@@ -144,15 +144,8 @@ verification:
   - polaris/cells/runtime/task_runtime/public/tests/test_execution_effect_closure.py
   - polaris/cells/runtime/task_runtime/public/tests/test_batch_execution_effect_closure.py
   gaps:
-  - DEO-2A, DEO-2B, DEO-2C, and DEO-2D are closed and complete. Repository inventory proves one physical mutation consumer
-    and zero unbound mutation surfaces; TaskRuntime remains the sole durable directed-effect authority.
-  - DEO-3 durable receipt settlement and DEO-4 legacy removal are closed and complete under docs/superpowers/plans/2026-07-20-deo-3-durable-receipt-settlement.md.
-    The DEO-4 architecture fence preserves TaskRuntime as the sole durable authority and the canonical mutation port as the
-    sole physical consumer. R36 cross-event-loop asyncio.Lock ownership and R37 degraded-projection fail-fast are closed.
-    The requalified TaskRuntime + Factory fact chain is 2126 passed with 12 warnings and architecture is 1411 passed with
-    8 skipped; the R38 isolated L1-04 run exposed and closed an undersized bench timeout contract (540s total -> 188s CE physical
-    cap). The full acceptance contract is restored to 5400s plus a 6000s outer guard. The one fresh isolated L1-04 R39 authorization
-    is consumed; Bench remains frozen pending its full audit.
+  - DEO-2A, DEO-2B, DEO-2C, and DEO-2D are closed and complete. Repository inventory proves one physical mutation consumer and zero unbound mutation surfaces; TaskRuntime remains the sole durable directed-effect authority.
+  - DEO-3 durable receipt settlement and DEO-4 legacy removal are closed and complete under docs/superpowers/plans/2026-07-20-deo-3-durable-receipt-settlement.md. The DEO-4 architecture fence preserves TaskRuntime as the sole durable authority and the canonical mutation port as the sole physical consumer. R36 cross-event-loop asyncio.Lock ownership and R37 degraded-projection fail-fast are closed. The requalified TaskRuntime + Factory fact chain is 2126 passed with 12 warnings and architecture is 1411 passed with 8 skipped; the R38 isolated L1-04 run exposed and closed an undersized bench timeout contract (540s total -> 188s CE physical cap). The full acceptance contract is restored to 5400s plus a 6000s outer guard. The one fresh isolated L1-04 R39 authorization is consumed; Bench remains frozen pending its full audit.
   smoke_commands: []
   test_effects_allowed:
   - path: polaris/cells/runtime/task_runtime/public/tests/test_historical_execution_effect_closure.py
@@ -167,5 +160,15 @@ verification:
     effects_allowed:
     - process.spawn:python/logical_task_recovery
     reason: Independent processes test one durable recovery owner and prevent duplicate reopen or foreign ticket authority.
+  - path: polaris/cells/runtime/task_runtime/tests/test_factory_run_binding_idempotence.py
+    effects_allowed:
+    - process.spawn:python/factory_binding_concurrency
+    - fs.write:private_task_binding_fault_fixture
+    reason: Private concurrent/cold interpreter cases and explicit malformed/UTF8/nonregular task-file faults; actual TaskRuntime owner remains real, no provider or target effects.
+  test_dependencies:
+  - path: polaris/cells/runtime/task_runtime/public/tests/test_file_prewrite_negative_closure.py
+    depends_on:
+    - roles.kernel
+    - roles.adapters
 generated_artifacts:
   - generated/context.pack.json

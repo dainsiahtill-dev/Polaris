@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from polaris.kernelone.fs import get_default_adapter
+from polaris.kernelone.process import process_tree
 from polaris.kernelone.process.async_contracts import PopenAsyncHandle, ProcessStatus, SubprocessPopenRunner
 
 
@@ -146,7 +147,15 @@ async def test_signal_failure_does_not_fabricate_physical_exit(
             raise error("controlled signal unavailable")
 
         with monkeypatch.context() as patch:
-            patch.setattr(handle.process, operation, denied)
+            owned_group = handle._require_group_identity().group_id
+            original_signal = process_tree._signal_owned_group
+
+            def denied_group(group_id: int, *, force: bool) -> bool:
+                if group_id == owned_group:
+                    denied()
+                return original_signal(group_id, force=force)
+
+            patch.setattr(process_tree, "_signal_owned_group", denied_group)
             with pytest.raises(error, match="controlled signal unavailable"):
                 if operation == "terminate":
                     await handle.terminate(timeout=0.02)

@@ -1,7 +1,7 @@
 """QA child identity must not rebind authenticated CE semantic reads.
 
-PM computation/readiness/publication use the existing private admission fixture.
-PM artifact commit, CE authority, portfolio, persistence and provenance are real.
+Historical PM source is explicit synthetic input from its Factory-owned fixture.
+PM artifact persistence, CE authority, portfolio, persistence and provenance are real.
 Only QA provider output and unrelated progress/TaskBoard transport are canned.
 """
 
@@ -19,12 +19,16 @@ from polaris.cells.chief_engineer.blueprint.public import (
     generate_task_blueprint,
     project_chief_engineer_task_blueprint,
 )
-from polaris.cells.chief_engineer.blueprint.public.tests.test_task_intent_technical_handoff import _payload
-from polaris.cells.factory.pipeline.tests.test_formal_project_identity import PROJECT, TASK, _admitted
-from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter, _bind_qa_transaction_execution_identity
-from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
-    _ensure_current_source_evidence_message_bound,
+from polaris.cells.chief_engineer.blueprint.public.tests.portfolio_payload_fixture import (
+    synthetic_task_intent_portfolio_payload,
 )
+from polaris.cells.factory.pipeline.tests.legacy_pm_owner_scenarios import (
+    LEGACY_PROJECT_ID as PROJECT,
+    LEGACY_TASK_ID as TASK,
+    produce_synthetic_legacy_ce_portfolio,
+)
+from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter, _bind_qa_transaction_execution_identity
+from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import observe_review_source_request
 from polaris.kernelone.storage import resolve_runtime_path
 
 QA_RUN = "qa-private-source-binding"
@@ -34,24 +38,25 @@ DIRECTOR_RUN = "director-private-source-binding"
 async def _source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[QAAdapter, dict[str, Any]]:
     monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "private-home"))
     monkeypatch.setenv("KERNELONE_JETSTREAM_PUBLISH", "0")
-    run, executor, tasks = await _admitted(tmp_path, monkeypatch, metadata={"project_id": PROJECT})
-    portfolio_tasks = executor._chief_engineer_portfolio_tasks(tasks)
-    authority = await executor._load_chief_engineer_portfolio_authority(
-        run=run, pm_tasks=tasks, portfolio_tasks=portfolio_tasks
-    )
-    candidate = _payload()
+    candidate = synthetic_task_intent_portfolio_payload()
     candidate["construction_plan"]["task_plans"][TASK] = candidate["construction_plan"]["task_plans"].pop("TASK-A")
     for rows in candidate["project_completion_contract"]["obligations"].values():
         for row in rows:
             row["owner_task_id"] = TASK
-    portfolio = executor._build_chief_engineer_portfolio_from_candidate(
-        run_id=run.id, tasks=portfolio_tasks, authority=authority, structured_output=candidate
+    source = await produce_synthetic_legacy_ce_portfolio(
+        tmp_path,
+        monkeypatch,
+        structured_output=candidate,
+        project_id=PROJECT,
     )
+    factory_run_id = source["factory_run_id"]
+    tasks = source["pm_tasks"]
+    portfolio = source["portfolio"]
     generated = generate_task_blueprint(
         GenerateTaskBlueprintCommandV1(
             task_id=TASK,
             workspace=str(tmp_path),
-            run_id=run.id,
+            run_id=factory_run_id,
             objective=tasks[0]["goal"],
             context={**portfolio.to_task_blueprint_context(), "pm_task_contract": tasks[0]},
             llm_blueprint=project_chief_engineer_task_blueprint(portfolio, TASK),
@@ -66,11 +71,11 @@ async def _source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[QAAd
         path.write_text("VALUE = 7\n" if path.suffix == ".py" else "[project]\nname = 'private-qa'\n", encoding="utf-8")
     parent = {
         "run_id": DIRECTOR_RUN,
-        "metadata": {"factory_run_id": run.id},
+        "metadata": {"factory_run_id": factory_run_id},
         "target_files": targets,
         "pm_task_contracts": tasks,
         "chief_engineer_blueprint": {
-            "factory_run_id": run.id,
+            "factory_run_id": factory_run_id,
             "portfolio": {"portfolio_hash": portfolio.portfolio_hash},
             "blueprints": [
                 {
@@ -107,10 +112,10 @@ async def test_execute_keeps_child_identity_and_real_factory_evidence_through_js
         assert ce["blueprints"][0]["task_id"] == TASK
         assert ce["source_observations"][0]["provenance"]["factory_run_id"] == parent["metadata"]["factory_run_id"]
         # Exercise the real final request evidence-message assembly locally.
-        messages = _ensure_current_source_evidence_message_bound(
+        messages = observe_review_source_request(
             [{"role": "system", "content": "QA independent reviewer"}, {"role": "user", "content": kwargs["message"]}],
             context,
-        )
+        )["messages"]
         rendered = json.dumps(messages, ensure_ascii=False)
         assert ce["source_observations"][0]["content_sha256"] in rendered
         assert "source_context" not in rendered

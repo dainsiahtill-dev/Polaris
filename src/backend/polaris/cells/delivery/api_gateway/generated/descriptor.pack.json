@@ -1,10 +1,57 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:38.340992Z",
-  "source_hash": "f3ea5d42d892e257",
+  "generated_at": "2026-10-26T11:49:16.693374Z",
+  "source_hash": "a55086f67106e226",
   "cell_id": "delivery.api_gateway",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "class",
+      "name": "ApiCommandV1",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/api_gateway/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ApiQueryV1",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/api_gateway/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ApiResponseV1",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/api_gateway/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ApiResponseEventV1",
+      "description": "",
+      "defined_in": "polaris/cells/delivery/api_gateway/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ApiGatewayError",
+      "description": "Raised when delivery cannot normalize an inbound request.",
+      "defined_in": "polaris/cells/delivery/api_gateway/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_startup_phase_started",
+      "description": "Emit a durable boundary before a potentially blocking startup phase.",
+      "defined_in": "polaris/delivery/http/app_factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_startup_phase_completed",
+      "description": "Emit phase latency so identity timeouts have a first failing owner.",
+      "defined_in": "polaris/delivery/http/app_factory.py"
+    },
     {
       "type": "function",
       "name": "_run_sync_cleanup_callbacks",
@@ -823,6 +870,119 @@
       "name": "publish_to_jetstream",
       "description": "Publish event to NAT JetStream.",
       "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
+    },
+    {
+      "type": "class",
+      "name": "SubjectInput",
+      "description": "主体输入",
+      "defined_in": "polaris/delivery/http/routers/permissions.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ResourceInput",
+      "description": "资源输入",
+      "defined_in": "polaris/delivery/http/routers/permissions.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PermissionCheckRequest",
+      "description": "权限检查请求",
+      "defined_in": "polaris/delivery/http/routers/permissions.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PermissionCheckResponse",
+      "description": "权限检查响应",
+      "defined_in": "polaris/delivery/http/routers/permissions.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleInfo",
+      "description": "角色信息",
+      "defined_in": "polaris/delivery/http/routers/permissions.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleListResponse",
+      "description": "角色列表响应",
+      "defined_in": "polaris/delivery/http/routers/permissions.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleAssignRequest",
+      "description": "角色分配请求",
+      "defined_in": "polaris/delivery/http/routers/permissions.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RoleAssignResponse",
+      "description": "角色分配响应",
+      "defined_in": "polaris/delivery/http/routers/permissions.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "EffectivePermissionsResponse",
+      "description": "有效权限响应",
+      "defined_in": "polaris/delivery/http/routers/permissions.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PolicyInfo",
+      "description": "策略信息",
+      "defined_in": "polaris/delivery/http/routers/permissions.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PolicyListResponse",
+      "description": "策略列表响应",
+      "defined_in": "polaris/delivery/http/routers/permissions.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_get_permission_service",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/permissions.py"
+    },
+    {
+      "type": "function",
+      "name": "check_permission",
+      "description": "检查权限",
+      "defined_in": "polaris/delivery/http/routers/permissions.py"
+    },
+    {
+      "type": "function",
+      "name": "get_effective_permissions",
+      "description": "获取主体的有效权限列表",
+      "defined_in": "polaris/delivery/http/routers/permissions.py"
+    },
+    {
+      "type": "function",
+      "name": "list_roles",
+      "description": "列出所有角色及其权限统计",
+      "defined_in": "polaris/delivery/http/routers/permissions.py"
+    },
+    {
+      "type": "function",
+      "name": "assign_role",
+      "description": "分配角色给主体",
+      "defined_in": "polaris/delivery/http/routers/permissions.py"
+    },
+    {
+      "type": "function",
+      "name": "list_policies",
+      "description": "列出所有权限策略",
+      "defined_in": "polaris/delivery/http/routers/permissions.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

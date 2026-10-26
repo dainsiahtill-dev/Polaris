@@ -56,6 +56,11 @@ depends_on:
 - llm.provider_runtime
 - roles.runtime
 - workspace.integrity
+- orchestration.workflow_runtime
+- roles.kernel
+- runtime.artifact_store
+- runtime.projection
+- runtime.task_market
 subgraphs:
 - execution_governance_pipeline
 state_owners:

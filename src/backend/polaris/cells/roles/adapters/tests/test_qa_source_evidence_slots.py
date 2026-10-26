@@ -10,10 +10,7 @@ from typing import Any
 
 import pytest
 from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter, _qa_review_evidence_slots
-from polaris.cells.roles.kernel.internal.context_gateway.gateway import TokenEstimator
-from polaris.cells.roles.kernel.internal.llm_caller.request_preparer import (
-    _ensure_current_source_evidence_message_bound,
-)
+from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import observe_review_source_request
 
 
 @pytest.mark.asyncio
@@ -31,7 +28,7 @@ async def test_large_source_is_preserved_in_both_judgement_and_json_repair_slots
 
     async def invoke(**kwargs: Any) -> dict[str, Any]:
         calls.append(kwargs)
-        assert TokenEstimator().estimate([{"role": "user", "content": kwargs["message"]}]) < 8000
+        assert observe_review_source_request([{"role": "user", "content": kwargs["message"]}], {})["gateway_message_token_estimate"] < 8000
         source = kwargs["context"]["context_evidence_slots"]["current_source"]
         records = {row["path"]: row for row in source["files"]}
         assert set(records) == set(originals)
@@ -94,10 +91,10 @@ def test_pm_ce_and_current_verifier_proof_reach_data_message_without_repair_hist
         {"files": [{"path": "README.md", "status": "missing", "content": ""}], "source_drift": []}, ensure_ascii=False
     )
     slots = _qa_review_evidence_slots(context, source)
-    messages = _ensure_current_source_evidence_message_bound(
+    messages = observe_review_source_request(
         [{"role": "system", "content": "QA identity"}, {"role": "user", "content": "Review the original scope"}],
         {"context_evidence_slots": slots},
-    )
+    )["messages"]
     rendered = messages[-2]["content"]
     for expected in (
         "保留原始湿度语义",

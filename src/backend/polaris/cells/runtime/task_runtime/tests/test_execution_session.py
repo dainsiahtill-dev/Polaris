@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import TypedDict
 
 import pytest
 from polaris.cells.runtime.task_runtime.internal.execution_session import (
@@ -27,6 +29,16 @@ from polaris.cells.runtime.task_runtime.internal.execution_session import (
     terminal_session_timestamp,
     terminal_task_status_value_for_session_status,
 )
+
+
+class _AppendEventKeywordFixture(TypedDict, total=False):
+    fact_event_id: str
+    fact_stream: str
+    fact_storage_path: str
+    fact_event_seq: int
+    published: bool
+    append_error: str
+    publish_error: str
 
 
 def _valid_session_payload() -> dict[str, object]:
@@ -357,6 +369,8 @@ def test_realtime_execution_projection_bounds_large_details_without_mutating_fac
     assert "primary_llm" not in projected["details"]
     assert "task_row_snapshot" not in projected
     assert projected["task_row_snapshot_projection"]["fact_event_seq"] == 41
+    assert isinstance(payload["details"], dict)
+    assert isinstance(payload["details"]["adapter_result"], dict)
     assert payload["details"]["adapter_result"]["output"] == huge
 
 
@@ -419,6 +433,9 @@ def test_build_task_row_snapshot_compacts_volumetric_adapter_audit_history() -> 
     ]
     assert len(projection["source_sha256"]) == 64
     assert len(json.dumps(snapshot, ensure_ascii=False).encode("utf-8")) < 16_000
+    assert isinstance(source["metadata"], dict)
+    assert isinstance(source["metadata"]["adapter_result"], dict)
+    assert isinstance(source["metadata"]["adapter_result"]["primary_llm"], dict)
     assert source["metadata"]["adapter_result"]["primary_llm"]["output"] == huge
 
 
@@ -488,7 +505,7 @@ def test_build_task_runtime_execution_event_append_result_projects_failure_evide
     ],
 )
 def test_build_task_runtime_execution_event_append_result_projects_non_empty_details_without_core_drift(
-    kwargs: dict[str, object],
+    kwargs: _AppendEventKeywordFixture,
     expected_core_fields: dict[str, object],
 ) -> None:
     details = {
@@ -1042,3 +1059,101 @@ def test_project_task_row_from_execution_fact_payload_omits_fact_event_seq_for_u
 
     assert row["task_id"] == "TASK-NONE"
     assert "fact_event_seq" not in row
+
+
+@pytest.mark.parametrize(
+    ("session_run", "workflow_run", "snapshot_run", "expected_run"),
+    [
+        (None, "", "", ""),
+        (None, "", "owner-run", "owner-run"),
+        (None, "workflow-run", "owner-run", "workflow-run"),
+        ("session-run", "workflow-run", "owner-run", "session-run"),
+        ("", "workflow-run", "owner-run", ""),
+    ],
+)
+def test_execution_event_run_projection_keeps_session_and_workflow_precedence(
+    session_run: str | None, workflow_run: str, snapshot_run: str, expected_run: str
+) -> None:
+    session = None
+    if session_run is not None:
+        session_payload = _valid_session_payload()
+        session_payload["run_id"] = session_run
+        session = TaskExecutionSession.from_dict(session_payload)
+    row = {
+        "id": 7,
+        "status": "failed",
+        "workflow_run_id": workflow_run,
+        "metadata": {"factory_run_id": "factory-not-execution-run", "runtime_execution": {"run_id": snapshot_run}},
+    }
+    payload = build_task_runtime_execution_event_payload(
+        event_type="factory_run_bound", workspace="/private-workspace", task_row=row, session=session
+    )
+    assert payload["run_id"] == expected_run
+    assert payload["factory_run_id"] == "factory-not-execution-run"
+    # The fallback preserves captured evidence, including a conflicting owner;
+    # it cannot rewrite that snapshot to make explicit precedence look coherent.
+    assert payload["task_row_snapshot"]["metadata"]["runtime_execution"]["run_id"] == snapshot_run
+
+
+def test_real_late_factory_bind_preserves_failed_execution_resource_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from polaris.cells.control_plane.run_ledger.public.service import query_factory_settlement_barrier
+    from polaris.cells.events.fact_stream.public import (
+        BootstrapFactStreamWorkspaceCommandV1,
+        QueryFactEventsV1,
+        bootstrap_fact_stream_workspace,
+        fact_stream_bootstrap_streams,
+        query_fact_events,
+    )
+    from polaris.cells.runtime.task_runtime.public import (
+        BindRuntimeTaskToFactoryRunCommandV1,
+        SettleTaskRuntimeExecutionAttemptCommandV1,
+        TaskRuntimeExecutionAttemptIdentityV1,
+        TaskRuntimeService,
+        bind_runtime_task_to_factory_run,
+    )
+    from polaris.cells.runtime.task_runtime.public.execution_effect_closure import (
+        QueryExecutionEffectClosureV1,
+        query_execution_effect_closure,
+    )
+
+    monkeypatch.setenv("KERNELONE_HOME", str(tmp_path / "kernelone"))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    bootstrap_fact_stream_workspace(
+        BootstrapFactStreamWorkspaceCommandV1(
+            str(workspace), streams=fact_stream_bootstrap_streams(), maintenance_reason="late binding run projection"
+        )
+    )
+    service = TaskRuntimeService(str(workspace))
+    row = service.create_task_row(
+        subject="Failed delivery before Factory association", metadata={"external_task_id": "OWNER"}
+    )
+    claim = service.claim_execution(
+        row["id"], worker_id="worker", role_id="director", run_id="execution-run", external_task_id="OWNER"
+    )
+    assert claim["success"]
+    identity = TaskRuntimeExecutionAttemptIdentityV1.from_record(claim["execution_attempt"])
+    assert service.settle_execution_attempt(
+        SettleTaskRuntimeExecutionAttemptCommandV1(str(workspace), identity, "failed", "Private failed delivery")
+    )["success"]
+    assert query_execution_effect_closure(QueryExecutionEffectClosureV1(str(workspace), identity)).status == "closed"
+    binding = bind_runtime_task_to_factory_run(
+        BindRuntimeTaskToFactoryRunCommandV1(str(workspace), str(row["id"]), "factory-late-association")
+    )
+    assert binding.ok
+    facts = query_fact_events(
+        QueryFactEventsV1(str(workspace), stream="task_runtime.execution", strict_integrity=True, limit=1000)
+    ).events
+    binding_facts = [fact for fact in facts if fact["event_type"] == "factory_run_bound"]
+    assert len(binding_facts) == 1
+    payload = binding_facts[0]["payload"]
+    assert payload["run_id"] == "execution-run"
+    assert payload["task_row_snapshot"]["metadata"]["runtime_execution"]["run_id"] == "execution-run"
+    assert query_execution_effect_closure(QueryExecutionEffectClosureV1(str(workspace), identity)).status == "closed"
+    barrier = query_factory_settlement_barrier(workspace, "factory-late-association")
+    assert barrier.closed and barrier.release_allowed
+    assert not barrier.passed
+    assert "lifecycle_failed" in barrier.blocking_reasons
+    assert "resource_closure_unproven" not in barrier.blocking_reasons

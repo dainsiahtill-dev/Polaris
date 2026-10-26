@@ -105,22 +105,18 @@ async def test_readonly_unplannable_probe_reaches_same_scoped_adapter_dispatch(
 async def test_actual_gateway_and_claim_still_reject_empty_or_foreign_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scope: list[str], target: str
 ) -> None:
-    from polaris.cells.roles.kernel.tests.test_same_path_partial_jit_closure import (
-        ORIGINAL,
-        _commits,
-        _decision,
-        _execute,
-        _real_chain,
-    )
+    from polaris.cells.roles.kernel.tests.adapters_kernel_boundary_scenarios import observe_line_range_execution
 
-    chain = _real_chain(tmp_path, monkeypatch, scope=scope)
-    decision = _decision(chain, [("denied", "write_file", {"file": target, "content": "unapproved\n"})])
-    try:
-        result = await _execute(chain, decision)
-    except RuntimeError:
-        result = None
-    assert (chain.workspace / "owned.txt").read_text(encoding="utf-8") == ORIGINAL
-    assert not (chain.workspace / "foreign.txt").exists()
-    assert _commits(chain) == []
+    observation = await observe_line_range_execution(
+        tmp_path,
+        monkeypatch,
+        [("denied", "write_file", {"file": target, "content": "unapproved\n"})],
+        scope=scope,
+        tolerate_runtime_error=True,
+    )
+    result = observation["result"]
+    assert observation["content"] == observation["original_content"]
+    assert not observation["foreign_exists"]
+    assert observation["commits"] == []
     if result is not None:
         assert result["batch_receipt"]["failure_count"] == 1

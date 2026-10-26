@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:51.065021Z",
-  "source_hash": "754cdfb0cd0f3f7a",
+  "generated_at": "2026-10-26T11:49:17.412062Z",
+  "source_hash": "aac294ffeead9147",
   "cell_id": "storage.layout",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -57,6 +57,12 @@
       "type": "function",
       "name": "default_polaris_cache_base",
       "description": "Return the default Polaris system cache base path.",
+      "defined_in": "polaris/cells/storage/layout/internal/layout_business.py"
+    },
+    {
+      "type": "function",
+      "name": "canonical_project_runtime_root",
+      "description": "Return Polaris's canonical target-project runtime root.",
       "defined_in": "polaris/cells/storage/layout/internal/layout_business.py"
     },
     {
@@ -568,6 +574,12 @@
     },
     {
       "type": "function",
+      "name": "read_only_platform_lock_roots",
+      "description": "Discover existing platform authorities without provisioning or env edits.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
       "name": "default_kernelone_cache_base",
       "description": "Get the default KernelOne system cache base path.",
       "defined_in": "polaris/kernelone/storage/layout.py"
@@ -586,6 +598,12 @@
     },
     {
       "type": "function",
+      "name": "canonical_workspace_runtime_root",
+      "description": "Return the canonical project-local runtime root.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
       "name": "_is_within_path",
       "description": "",
       "defined_in": "polaris/kernelone/storage/layout.py"
@@ -593,7 +611,13 @@
     {
       "type": "function",
       "name": "_is_runtime_base_writable",
-      "description": "Check if a runtime base is writable with caching.",
+      "description": "Prepare and probe the selected project root through guarded KFS effects.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_project_runtime_writer_selection",
+      "description": "Validate writer configuration before provisioning or consulting caches.",
       "defined_in": "polaris/kernelone/storage/layout.py"
     },
     {
@@ -606,6 +630,12 @@
       "type": "function",
       "name": "_runtime_projects_root",
       "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_project_runtime_paths",
+      "description": "Return ``(runtime_projects_root, runtime_root)``.",
       "defined_in": "polaris/kernelone/storage/layout.py"
     },
     {
@@ -634,6 +664,18 @@
     },
     {
       "type": "function",
+      "name": "_is_project_writer_roots",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_project_writer_roots",
+      "description": "",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
       "name": "_resolve_storage_roots_impl",
       "description": "Internal resolver — replaceable via DI / patching for testing.",
       "defined_in": "polaris/kernelone/storage/layout.py"
@@ -642,6 +684,12 @@
       "type": "function",
       "name": "resolve_storage_roots",
       "description": "Resolve storage roots with caching to avoid repeated filesystem probing.",
+      "defined_in": "polaris/kernelone/storage/layout.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_storage_roots_read_only",
+      "description": "Resolve the configured canonical namespace without probes or initialization.",
       "defined_in": "polaris/kernelone/storage/layout.py"
     },
     {

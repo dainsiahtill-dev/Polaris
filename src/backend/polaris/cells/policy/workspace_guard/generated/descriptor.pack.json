@@ -1,10 +1,49 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:48.307113Z",
-  "source_hash": "7ccbb46278d1f8b5",
+  "generated_at": "2026-10-26T11:49:17.330909Z",
+  "source_hash": "180a22b185f97922",
   "cell_id": "policy.workspace_guard",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "class",
+      "name": "GuardCheckResult",
+      "description": "Result of a workspace guard check.",
+      "defined_in": "polaris/cells/policy/workspace_guard/internal/guard_service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "WorkspaceGuardService",
+      "description": "Internal service for workspace guard operations.",
+      "defined_in": "polaris/cells/policy/workspace_guard/internal/guard_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "meta_project_root",
+          "doc": "Return the Polaris meta-project root."
+        },
+        {
+          "name": "check_write_allowed",
+          "doc": "Check if a write to the given path is allowed."
+        },
+        {
+          "name": "check_archive_write_allowed",
+          "doc": "Check if an archive write to the given path is allowed."
+        },
+        {
+          "name": "is_meta_project_workspace",
+          "doc": "Check if the given workspace is the Polaris meta-project."
+        },
+        {
+          "name": "get_guard_message",
+          "doc": "Build a human-readable guard violation message."
+        }
+      ]
+    },
     {
       "type": "class",
       "name": "WorkspaceWriteGuardQueryV1",
