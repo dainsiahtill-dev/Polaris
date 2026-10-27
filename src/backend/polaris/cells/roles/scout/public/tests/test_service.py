@@ -1,6 +1,8 @@
 """Tests for ScoutProbeService (UTF-8)."""
 
 import asyncio
+from collections.abc import Mapping
+from typing import Any
 
 import pytest
 from polaris.cells.roles.scout.internal.ports import FakeDistiller, FakeReadTool, canonical_args_key
@@ -388,3 +390,207 @@ async def test_a_cache_hit_whose_paths_leave_the_current_scope_is_refused() -> N
     # so the cached report must be re-validated against the current scope.
     with pytest.raises(ScoutProbeDeniedError):
         await svc.probe(ScoutProbeTargetV1(query="payment"))
+
+
+# ── the authority is an immutable snapshot of the host's committed facts ──
+
+
+def test_the_authority_does_not_share_the_callers_mutable_scope_list() -> None:
+    """The host's scope list must not stay shared with the authority.
+
+    Root's counterexample: the authority's ``__post_init__`` shallow-copied
+    the token, so the nested ``allowed_read_paths`` list stayed shared with
+    the caller. The caller emptied it afterwards, the authority's committed
+    scope silently became empty, and the authority then contradicted the
+    report that had been cached under the wider scope.
+    """
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    scope = ["allowed"]
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": scope},
+        read_roots=("allowed",),
+    )
+
+    scope.clear()
+
+    assert list(authority.capability_token["allowed_read_paths"]) == ["allowed"], (
+        "the authority's committed scope was changed by the caller"
+    )
+
+
+def test_the_authority_token_cannot_be_mutated_through_any_common_operation() -> None:
+    """The committed token must reject every mutation path, including ``|=``.
+
+    Root found that ``token |= {"allowed_read_paths": []}`` still emptied the
+    scope: CPython implements ``dict.__ior__`` and ``dict.__setitem__`` at C
+    level, so a ``dict`` subclass cannot block them and any subclass override
+    would be a false immutability promise. The token is therefore a
+    read-only mapping, which rejects them at every level.
+    """
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": ["allowed"]},
+        read_roots=("allowed",),
+    )
+    token: Any = authority.capability_token
+
+    with pytest.raises(TypeError):
+        token |= {"allowed_read_paths": []}
+    with pytest.raises(TypeError):
+        token["allowed_read_paths"] = []
+    with pytest.raises(TypeError):
+        del token["allowed_read_paths"]
+    with pytest.raises(AttributeError):
+        token.update({"allowed_read_paths": []})
+    with pytest.raises(AttributeError):
+        token.pop("allowed_read_paths", None)
+    with pytest.raises(AttributeError):
+        token.clear()
+    with pytest.raises(AttributeError):
+        token["allowed_read_paths"].append("other")
+
+    assert list(authority.capability_token["allowed_read_paths"]) == ["allowed"], (
+        "the committed scope was emptied through a mutation path"
+    )
+    assert list(authority.capability_token["allowed_read_paths"]) == ["allowed"]
+
+
+def test_the_authority_token_stays_json_serialisable_and_plain_copyable() -> None:
+    """Immutability must not break the consumers that carry the token around."""
+    import json
+
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": ["allowed"], "token_id": "t-1"},
+        read_roots=("allowed",),
+    )
+
+    payload = json.loads(json.dumps(dict(authority.capability_token)))
+    assert payload["allowed_read_paths"] == ["allowed"]
+    assert payload["token_id"] == "t-1"
+
+    plain = dict(authority.capability_token)
+    assert plain["allowed_read_paths"] == ("allowed",)
+
+
+@pytest.mark.asyncio
+async def test_a_caller_that_mutates_its_scope_list_cannot_desynchronize_the_cache() -> None:
+    """A caller-side scope mutation must not let a stale report be served.
+
+    The authority is a snapshot: the caller's later mutation of the list it
+    passed in cannot narrow the authority behind the service's back. The
+    cached report therefore still matches the authority that produced it, and
+    the probe keeps returning the content the authority actually authorizes.
+    """
+    from polaris.cells.roles.scout.internal.cache import TTLCache
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    shared_cache: TTLCache[ScoutReportV1] = TTLCache(ttl_seconds=60.0)
+    tool = _CountingReadTool("alpha/a.py")
+    scope = ["alpha"]
+
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": scope},
+        read_roots=("alpha",),
+    )
+    svc = ScoutProbeService(
+        read_tool=tool,
+        cache=shared_cache,
+        workspace="/workspace-a",
+        authority=authority,
+    )
+
+    first = await svc.probe(ScoutProbeTargetV1(query="payment"))
+    scope.clear()
+    second = await svc.probe(ScoutProbeTargetV1(query="payment"))
+
+    assert first.cache_hit is False
+    assert second.cache_hit is True
+    assert second.findings[0].path == "alpha/a.py"
+    assert list(authority.capability_token["allowed_read_paths"]) == ["alpha"]
+
+
+# ── the cache must follow the host's CURRENT tool decisions ──
+
+
+def test_a_host_that_forbids_a_read_tool_invalidates_the_cached_report() -> None:
+    """A host blacklist change must not be served from the cache.
+
+    The host's tool policy is not part of the committed token: the host can
+    forbid a read tool at any moment. A report produced while the tool was
+    allowed must not be served once the host forbids it, so the host's OWN
+    per-tool decision is bound into the cache key.
+    """
+    from polaris.cells.roles.scout.internal.cache import TTLCache
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    shared_cache: TTLCache[ScoutReportV1] = TTLCache(ttl_seconds=60.0)
+    tool = _CountingReadTool("alpha/a.py")
+    blacklisted: set[str] = set()
+
+    def authorizer(tool_name: str, _args: Mapping[str, Any]) -> tuple[bool, str]:
+        if tool_name in blacklisted:
+            return False, f"tool '{tool_name}' is in the role blacklist"
+        return True, ""
+
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": ["alpha"]},
+        read_roots=("alpha",),
+        tool_authorizer=authorizer,
+    )
+    svc = ScoutProbeService(
+        read_tool=tool,
+        cache=shared_cache,
+        workspace="/workspace-a",
+        authority=authority,
+    )
+
+    first = asyncio.run(svc.probe(ScoutProbeTargetV1(query="payment")))
+    assert first.cache_hit is False
+
+    # The host forbids a read tool AFTER the report was cached.
+    blacklisted.add("repo_rg")
+    calls_before = len(tool.calls)
+    second = asyncio.run(svc.probe(ScoutProbeTargetV1(query="payment")))
+
+    assert second.cache_hit is False, "the stale report was served after the host forbade a read tool"
+    assert len(tool.calls) > calls_before, "the forbidden probe did not re-read through the host's gate"
+
+
+def test_a_stable_legal_authority_still_hits_the_shared_cache() -> None:
+    """The legal case must keep working: a stable authority hits the cache.
+
+    The cache must not be disabled wholesale. With an unchanged authority the
+    second probe is served from the cache and does NOT read again.
+    """
+    from polaris.cells.roles.scout.internal.cache import TTLCache
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    shared_cache: TTLCache[ScoutReportV1] = TTLCache(ttl_seconds=60.0)
+    tool = _CountingReadTool("alpha/a.py")
+
+    def authorizer(_tool_name: str, _args: Mapping[str, Any]) -> tuple[bool, str]:
+        return True, ""
+
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": ["alpha"]},
+        read_roots=("alpha",),
+        tool_authorizer=authorizer,
+    )
+    svc = ScoutProbeService(
+        read_tool=tool,
+        cache=shared_cache,
+        workspace="/workspace-a",
+        authority=authority,
+    )
+
+    first = asyncio.run(svc.probe(ScoutProbeTargetV1(query="payment")))
+    calls_after_first = len(tool.calls)
+    second = asyncio.run(svc.probe(ScoutProbeTargetV1(query="payment")))
+
+    assert first.cache_hit is False
+    assert second.cache_hit is True, "the legal, stable authority lost its cache hit"
+    assert len(tool.calls) == calls_after_first, "the cached probe read again"

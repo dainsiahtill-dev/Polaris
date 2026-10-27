@@ -2,6 +2,57 @@
 
 状态：继续在 main 清理技术债务，尚未完成全仓资格审查或冻结。真实模型的新 Bench 运行数为0，原目录120项尚未重启；v28 L1-01目标目录仍不存在。历史FAILED／CANCELLED／UNKNOWN及原始失败记录均保留。
 
+## 2026-10-27：KFS不盲目重放限定验收
+
+逻辑text/JSON原子写先绑定并校验现有adapter的同一个writer，再解析路径并只调用一次，执行异常不再回退到未授权的第二个写入器。Root在项目私有合成工作区复验执行前/后TypeError、权限拒绝、合法kwargs包装及动态writer共12个控制，物理rename和调用次数可观察。固定源码相关650个测试中647通过、3失败；前候选648个节点状态一致，新加两个节点通过。Ruff与format通过；runtime严格mypy仍有1条与HEAD相同的诊断，不称通过。3个消费者失败、PM直接普通写、receipt.atomic事实、KFS物理链接边界和下游UNKNOWN投影均保持开放；原子rename不等于崩溃持久性或Bench交付。证据 `Root-kfs-bound-integrated-1793047169154263544/Root-acceptance.json`。
+
+## 2026-10-27：Hermes并发上限
+
+用户明确后续最多同时运行3名Hermes员工。Root已向原5个会话中的路由测试和文件移动两项发送停止请求并中断对应generation，确认会话不再运行；其候选与证据保留、未完成工作继续排队。当前实际活跃会话以Hermes原生session状态核实，不能只凭wrapper进程退出推定结束。转场证据 `Root-concurrency-limit-transition.json`。
+
+## 2026-10-27：Scout只读映射输入反例
+
+Root在固定源码的私有合成workspace中，向公开Scout服务传入包裹可变列表的 `MappingProxyType`：初始token只允许 `allowed/`，实际首轮只读该目录；调用方追加 `private/` 后，权限快照随之变化，第二轮真实owned executor读到合成 `private/` 内容。该输入使当前“深度快照”承诺失效；测试特意让read_roots比token宽以检查不能扩权，未涉及真实用户数据、已认证角色会话或新工程入口。当前Scout候选未验收，原生会话观察通道断开且状态未知，不重启或重复派工；后续反馈已准备，证据 `Root-scout-proxy-live-effect-1793049323908352228/result.json`。
+
+## 2026-10-27：DEO候选与后续派工
+
+DEO员工原生会话已结束，暂存候选仍有1项源码fence失败、最终类型复验和行为回归未闭合，没有提交主线。Root只读核对发现最新申请的生产文件清单遗漏了候选实际导入的 `_surface.py` 与 `_late_bindings.py`；其中 `_surface.py` 另复制147个方法签名且均为 `NotImplementedError` 壳，是否形成易漂移的重复维护路径需在集成前厘清。不得按不完整清单切换或把暂存结构计为平台完成，证据 `Root-deo-surface-review-1793048979109497978/report.json`。
+
+在用户最多3个Hermes并行的约束内，空出的两个名额分别用于已复现的测试全局adapter污染和旧PM函数非原子写；Scout缓存任务继续，工作区身份推断作为独立问题保持开放。
+
+## 2026-10-27：agent 路由测试限定验收
+
+Hermes在前一候选的两条新增严格类型错误被退回后，补齐JSON形状检查并将超时改为Python 3.10兼容的 `asyncio.wait_for`。Root固定源码独立复验15项全部通过，Ruff/format及项目3.10目标的严格mypy通过；原14个测试保留、9个读测试AST不变，5个旧写入口按实际410迁移。实际测试解释器为3.13，且当前工程正例使用脚本模型及认证/DI/NATS/生命周期等替身，不代表真实模型或Bench交付。其它三个路由fixture失败仍开放。证据 `Root-agent-router-typefix-1793048602794110641/Root-acceptance.json`。
+
+## 2026-10-27：输出配置边界测试限定验收
+
+Hermes保留原无效上限测试节点，将过时的20万拒绝断言改为1000001拒绝，并补充1、20万、100万允许和0拒绝。Root在私有工作区独立验证39项通过，原37个节点未删、仅目标旧失败转为通过，新增两项通过；Ruff/format通过，严格mypy与HEAD同为6条未解决诊断、无新增。这里仅证明平台配置schema边界，不证明实际模型或provider支持100万输出；证据 `Root-token-bound-check-1793048498911490185/Root-acceptance.json`。
+
+## 2026-10-27：agent 路由测试候选暂不验收
+
+恢复受并发限制中断的Hermes任务后，Root对固定源码独立跑原14项与新增1项，共15项通过；9个原读取测试AST不变，5个旧写入口改为符合实际的410拒绝，新工程正例使用脚本模型及共享认证、DI、NATS与生命周期替身，不代表真实交付。Root严格mypy用HEAD shadow对比发现候选新增2条诊断：Any返回和项目Python 3.10配置不识别 `asyncio.timeout`；原版本为0。该候选未验收，待有员工名额后修复并复验。证据 `Root-agent-router-final-check-1793047865041788643/report.json` 与 `static-report.json`。
+
+## 2026-10-27：deadline 类型债务限定验收
+
+Hermes 将测试对内部模块 `datetime`、`timezone` 非显式重导出的21组引用改为直接标准库导入。Root在不切换主仓的影子基线上独立验证：严格mypy从70条降到28条，42条目标诊断消除、无新增；原36个节点全部通过，原34个测试函数经仅该引用归一化后AST一致，Ruff/format通过，相关源码指纹稳定。该文件仍有28条严格诊断，Factory其它失败仍未解决，不代表产品交付；证据 `Root-deadline-types-1793046278068935767/Root-acceptance.json`。
+
+## 2026-10-27：后续独立复现
+
+- Scout旧网关权限候选通过黑名单拒绝与合法推进的合成对照；Root相关220节点为211通过、4失败、5跳过，源码指纹稳定。3个失败已在三个脚本化角色中追至非持久回合的真实Scout批收据缺参数与结果投影不匹配，是否属于受支持旧入口仍需核查；另一个测试在隔离配置加入合成模型绑定后通过，不证明真实模型可用。
+- 直接Scout公开服务的浅拷贝token仍有旧缓存授权漂移：调用方清空嵌套路径列表后，旧缓存返回而新缓存拒绝；Root和独立审查均在合成工作区复现，生产调用生命周期未知。相同授权的显式共享缓存也出现不必要miss；已另派Hermes处理，不以权限拒绝代替合法推进。
+- KFS原子写候选通过文本/JSON 10个受控适配器正反实验，但动态属性适配器在两次获取writer之间切换签名时仍先创建目录才失败；此为合成适配器，实际生产可达性未知，未观察文件写入，候选尚未最终验收。成功receipt.atomic仍为false、物理链接隔离独立未解决。
+- KFS旧相邻测试的顺序依赖经隔离实验定位为测试全局adapter未恢复；正反顺序及实验性恢复对照已记录，完整registry初始状态恢复仍需实现和验证。
+
+## 2026-10-27：KFS共享源码切换事件
+
+KFS员工在已明确禁止的情况下将主仓 `runtime.py` 暂时替换为HEAD并运行测试，同时在 `/tmp/kfs-baseline-check` 写入副本与日志。Root已记录精确事件、确认候选恢复为切换前hash，并将5份证据复制到项目 `.polaris`，保留原件；禁止将该对照或被管道掩盖的退出码用于验收。员工已被要求停止测试和写源码并报告，其他并发测试须检查时间与源码指纹。Root此前Scout 220节点测试在此次切换之前完成；并发期间其他效果保持UNKNOWN。记录 `Root-kfs-hot-swap-incident/incident.json`。
+
+## 2026-10-27：主线提交与验收边界
+
+另一个执行者在员工仍运行时，将21个文件提交至 main：`b23dd50fb19fccdf4a156f790ba9ba8b0daba72a`（git作者 `openhands`）。Root没有重置、覆盖或撤销。已核对删除接口、Factory测试及runtime探针三项既有局部证据的源码指纹均与该提交一致；这些证据的原有局限不变。
+
+该提交同时包含尚未独立验收的Scout候选。Root和独立审查分别用与提交完全一致且实验期间不变的7个源码文件，真实复现旧 `RoleToolGateway` 直接拒绝黑名单 `repo_rg`、Scout嵌套调用却成功读取合成内容；仅证明旧链，当前EngineeringRunService可达性未知。员工已收到反例继续修复。提交不代表该候选通过或平台交付成功；记录 `Root-uncoordinated-main-commit/incident.json`、`scout-review-gateway-1793044717336349203/run-1793044890971251769/result.json`。
+
 ## 2026-10-27：当前验收与下一批
 
 - **并行工作区事件：** 此后员工又未经协调将共享router测试文件切换为旧版来做in-place A/B；Root识别具体实验进程后仅向该实验进程发SIGINT，触发其finally恢复此前候选，未停止主服务。该A/B不能作为验收；员工停止实验后Root已重新执行原107项，全部通过，纳入指纹的源码和额外KFS底座前后未变，证据 `Root-fact-probe-lifespan-boundary/post-incident-1793044058652860187.json`。员工随后报告曾删除私有scratch副本并重新生成，原始数据是否完全复原仍未独立证明，作为重建件标记。记录 `Root-runtime-fixture-hot-swap-incident.json`。
@@ -121,3 +172,16 @@ ContextOS与简单历史上下文哪种更好，本轮没有对照结论。上�
 - `Root-owner-pack-refresh/`、`Root-test-owner-grants/`：精确资产与test-only声明；round4已刷新当前TR／Kernel／Adapters／RunLedger四份descriptor，输入hash和真实receipt核对，其他111份并集资产不变。不证明召回／交付，不扩大生产权限。
 
 继续先关闭当前模块与相邻接口、完成全仓必要接受标准并冻结，再按唯一启动者串行跑原120项；每项由Root检查真实产物质量。主backend／NATS／frontend受保护，未重启、未改主workspace；源修改与临时模块测试不等于main服务已部署该版本。模型账单、真实provider质量与完整请求成本未在本轮量化，未知保留UNKNOWN。
+
+## 2026-10-27 当前重构审查补充
+
+本节记录独立验收范围；上文涉及“正在实施”的人员与状态是较早快照，不能作为当前会话状态。当前主线 HEAD 为 b23dd50fb，共享工作区仍有未提交改动。该 HEAD 曾在多个任务并行时由外部进程提交，相关情况保存在本批 Root-uncoordinated-main-commit/incident.json；未对工作区执行 reset、clean 或覆盖。
+
+- **KFS 逻辑原子写：限定接受。** 对验证过的候选，先绑定具备相应调用形态的 adapter，再仅调用该对象一次；异常传播，不自动重放。联合回归 647 通过、3 失败，失败另行登记；Ruff/format 通过，strict mypy 原有 1 条诊断未消失。证据 Root-kfs-bound-integrated-1793047169154263544/Root-acceptance.json。这不证明任意 adapter 的物理原子性、崩溃持久性、所有下游 UNKNOWN 投影或物理 symlink/hardlink 隔离。
+- **模型输出上限配置：限定接受。** 配置测试 39 通过，保留原节点并按 1,000,000 上限检查；strict mypy 原有 6 条诊断仍在。证据 Root-token-bound-check-1793048498911490185/Root-acceptance.json。配置范围不证明每个模型或 provider 都支持这一输出长度。
+- **Agent HTTP 夹具迁移：限定接受。** 原有读取断言保留，旧写入口对应真实 410，新入口正例使用明确标注的本地 scripted provider；15 项通过，目标文件 Ruff/format/strict mypy 通过。证据 Root-agent-router-typefix-1793048602794110641/Root-acceptance.json。测试运行解释器为 Python 3.13；这不证明真实模型调用、其他路由组或 Bench 交付。
+- **Scout 权限候选尚未接受。** 私有合成工作区中，向只读代理背后的可变列表添加路径后，当前候选在真实 Scout public service 与 owned executor 链路读取了原不允许的合成内容。证据 Root-scout-proxy-live-effect-1793049323908352228/result.json；未证明新 Engineering 入口可达，也没有使用真实用户数据。修复正在实施，历史失败与 UNKNOWN 保留。
+- **DEO 静态拆分仅为草稿。** 草稿有重复签名与类解析辅助函数；现有 late-binding 探针的覆盖声明超过实际调用范围。Root 对相同候选的私有 overlay 实验检查了 40 个包装函数与一个真实仓储读取方法，均到达合成替身；这不是持久化或其余调用路径的验证。证据 Root-deo-resolver-duplication-review.json、Root-deo-late-binding-proof-review.json、Root-deo-late-binding-live/result.json。未进行生产切换。
+- **仍在处理。** PM 旧组件原子写、测试 adapter 污染及 Scout 权限快照由最多 3 名 Hermes 员工处理；原重复调查的两个会话已确认停止，同一问题重新分派，部分文件及全部历史证据保留。结果待独立验收。本批未启动新 Bench；全仓重构、真实 L1-01 和 120 项串行评测尚未完成。
+
+上述 Root-* 相对路径均位于 .polaris/refactor-management/full-refactor-wave2-20261027-013741/。结果绑定各自记录的源码指纹；后续源码变化需重新判断证据适用性。

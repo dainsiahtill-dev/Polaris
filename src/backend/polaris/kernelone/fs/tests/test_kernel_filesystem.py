@@ -348,3 +348,387 @@ def test_resolve_absolute_workspace_path_rejects_symlink_in_absolute_path(
     abs_link_path = str(link_target)
     with pytest.raises(PathSecurityError, match="Symlink detected"):
         fs.resolve_workspace_path(abs_link_path)
+
+
+# ---------------------------------------------------------------------------
+# Logical atomic writes must not guess adapter behavior from caught errors.
+#
+# The former implementation caught any ``TypeError`` raised by the adapter and
+# then wrote the file itself through a private temporary file.  That bypassed
+# the adapter's own permission and error contract, and it replayed a write that
+# the adapter had already committed, so a post-effect failure was reported as
+# a success.  These tests pin the replacement contract.
+# ---------------------------------------------------------------------------
+
+
+class _NoAtomicKeywordAdapter:
+    """Adapter whose ``write_text`` predates the protocol ``atomic`` keyword."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def write_text(self, path: str, content: str, *, encoding: str = "utf-8") -> int:
+        self.calls.append(path)
+        raise AssertionError("adapter must not be called for a rejected atomic write")
+
+    def write_bytes(self, path: str, content: bytes) -> int:
+        raise AssertionError("adapter must not be called for a rejected atomic write")
+
+    def append_text(
+        self,
+        path: str,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+        durability: DurabilityMode = "buffered",
+    ) -> int:
+        raise AssertionError("adapter must not be called for a rejected atomic write")
+
+    def read_text(self, path: str, *, encoding: str = "utf-8") -> str:
+        return Path(path).read_text(encoding=encoding)
+
+    def read_bytes(self, path: str) -> bytes:
+        return Path(path).read_bytes()
+
+    def write_json_atomic(self, path: str, data: Any, *, indent: int = 2) -> FileWriteReceipt:
+        raise AssertionError("adapter must not be called for a rejected atomic write")
+
+    def exists(self, path: str) -> bool:
+        return Path(path).exists()
+
+    def is_file(self, path: str) -> bool:
+        return Path(path).is_file()
+
+    def is_dir(self, path: str) -> bool:
+        return Path(path).is_dir()
+
+    def remove(self, path: str, *, missing_ok: bool = True) -> bool:
+        raise AssertionError("adapter must not be called for a rejected atomic write")
+
+
+class _DenyingAtomicAdapter:
+    """Adapter that denies the atomic write through its own policy."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def write_text(self, path: str, content: str, *, encoding: str = "utf-8", atomic: bool = False) -> int:
+        self.calls.append({"path": path, "atomic": atomic})
+        raise PermissionError("synthetic adapter write policy denial")
+
+    def write_bytes(self, path: str, content: bytes) -> int:
+        raise AssertionError("unexpected bytes write")
+
+    def append_text(
+        self,
+        path: str,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+        durability: DurabilityMode = "buffered",
+    ) -> int:
+        raise AssertionError("unexpected append")
+
+    def read_text(self, path: str, *, encoding: str = "utf-8") -> str:
+        return Path(path).read_text(encoding=encoding)
+
+    def read_bytes(self, path: str) -> bytes:
+        return Path(path).read_bytes()
+
+    def write_json_atomic(self, path: str, data: Any, *, indent: int = 2) -> FileWriteReceipt:
+        raise AssertionError("unexpected json write")
+
+    def exists(self, path: str) -> bool:
+        return Path(path).exists()
+
+    def is_file(self, path: str) -> bool:
+        return Path(path).is_file()
+
+    def is_dir(self, path: str) -> bool:
+        return Path(path).is_dir()
+
+    def remove(self, path: str, *, missing_ok: bool = True) -> bool:
+        raise AssertionError("unexpected remove")
+
+
+class _TypeErrorBeforeEffectAdapter(_DenyingAtomicAdapter):
+    """Adapter that fails with ``TypeError`` before any physical effect."""
+
+    def write_text(self, path: str, content: str, *, encoding: str = "utf-8", atomic: bool = False) -> int:
+        self.calls.append({"path": path, "atomic": atomic})
+        raise TypeError("synthetic adapter type error before effect")
+
+
+class _TypeErrorAfterEffectAdapter(_DenyingAtomicAdapter):
+    """Adapter that commits the atomic rename and then raises ``TypeError``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sentinel = TypeError("synthetic adapter type error after effect")
+
+    def write_text(self, path: str, content: str, *, encoding: str = "utf-8", atomic: bool = False) -> int:
+        self.calls.append({"path": path, "atomic": atomic})
+        import tempfile
+
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding=encoding, delete=False, dir=str(target.parent)) as handle:
+            handle.write(content)
+            temporary = Path(handle.name)
+        temporary.replace(target)
+        raise self.sentinel
+
+
+class _KwargsAtomicWrapperAdapter(_DenyingAtomicAdapter):
+    """Compliant ``**kwargs`` wrapper that forwards the atomic request."""
+
+    def write_text(self, path: str, content: str, **kwargs: Any) -> int:
+        self.calls.append({"path": path, "atomic": kwargs.get("atomic")})
+        encoding = str(kwargs.get("encoding", "utf-8"))
+        if kwargs.get("atomic"):
+            import tempfile
+
+            target = Path(path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding=encoding, delete=False, dir=str(target.parent)
+            ) as handle:
+                handle.write(content)
+                temporary = Path(handle.name)
+            temporary.replace(target)
+            return len(content.encode(encoding))
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding=encoding)
+        return len(content.encode(encoding))
+
+
+def _workspace_tree(root: Path) -> list[str]:
+    """Return the physical tree under ``root`` so side effects stay visible."""
+    if not root.exists():
+        return []
+    return sorted(str(item.relative_to(root)) for item in root.rglob("*"))
+
+
+def test_atomic_write_rejects_adapter_without_atomic_keyword_before_any_effect(
+    tmp_path: Path,
+) -> None:
+    """A non-compliant adapter must not be replaced by an unmanaged write."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    adapter = _NoAtomicKeywordAdapter()
+    fs = KernelFileSystem(str(workspace), adapter)  # type: ignore[arg-type]
+
+    with pytest.raises(NotImplementedError):
+        fs.write_text_atomic("runtime/probe/rejected.txt", "payload")
+
+    assert adapter.calls == []
+    assert _workspace_tree(workspace) == []
+
+
+def test_atomic_json_write_rejects_adapter_without_atomic_keyword_before_any_effect(
+    tmp_path: Path,
+) -> None:
+    """The JSON route must reject before it resolves a path or calls the adapter."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    adapter = _NoAtomicKeywordAdapter()
+    fs = KernelFileSystem(str(workspace), adapter)  # type: ignore[arg-type]
+
+    with pytest.raises(NotImplementedError):
+        fs.write_json_atomic("runtime/probe/rejected.json", {"payload": True})
+
+    assert adapter.calls == []
+    assert _workspace_tree(workspace) == []
+
+
+def test_atomic_write_propagates_adapter_policy_denial_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An adapter denial stays visible and is never retried through another writer."""
+    fs, workspace = _build_kernel_fs(monkeypatch, tmp_path)
+    adapter = _DenyingAtomicAdapter()
+    fs = KernelFileSystem(workspace, adapter)  # type: ignore[arg-type]
+
+    with pytest.raises(PermissionError, match="synthetic adapter write policy denial"):
+        fs.write_text_atomic("workspace/meta/kfs/status.md", "payload")
+
+    assert len(adapter.calls) == 1
+    assert adapter.calls[0]["atomic"] is True
+    assert not Path(str(adapter.calls[0]["path"])).exists()
+
+
+def test_atomic_write_propagates_type_error_before_effect_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A pre-effect ``TypeError`` is the adapter's failure, not a fallback signal."""
+    fs, workspace = _build_kernel_fs(monkeypatch, tmp_path)
+    adapter = _TypeErrorBeforeEffectAdapter()
+    fs = KernelFileSystem(workspace, adapter)  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="synthetic adapter type error before effect"):
+        fs.write_text_atomic("workspace/meta/kfs/status.md", "payload")
+
+    assert len(adapter.calls) == 1
+    assert not Path(str(adapter.calls[0]["path"])).exists()
+
+
+def test_atomic_write_after_effect_type_error_is_not_replayed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A post-effect failure keeps the original error and calls the adapter once."""
+    fs, workspace = _build_kernel_fs(monkeypatch, tmp_path)
+    adapter = _TypeErrorAfterEffectAdapter()
+    fs = KernelFileSystem(workspace, adapter)  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError) as captured:
+        fs.write_text_atomic("workspace/meta/kfs/status.md", "payload")
+
+    assert captured.value is adapter.sentinel
+    assert len(adapter.calls) == 1
+    committed = Path(str(adapter.calls[0]["path"]))
+    assert committed.read_text(encoding="utf-8") == "payload"
+
+
+def test_atomic_write_accepts_compliant_kwargs_wrapper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A ``**kwargs`` wrapper that honors ``atomic`` stays a legal adapter."""
+    fs, workspace = _build_kernel_fs(monkeypatch, tmp_path)
+    adapter = _KwargsAtomicWrapperAdapter()
+    fs = KernelFileSystem(workspace, adapter)  # type: ignore[arg-type]
+
+    receipt = fs.write_text_atomic("workspace/meta/kfs/status.md", "状态\n")
+
+    assert receipt.bytes_written > 0
+    assert len(adapter.calls) == 1
+    assert adapter.calls[0]["atomic"] is True
+    assert Path(receipt.absolute_path).read_text(encoding="utf-8") == "状态\n"
+
+
+# ---------------------------------------------------------------------------
+# The validated writer must be the writer that is actually used.
+#
+# The capability check resolves ``adapter.write_text`` and validates that
+# callable, but the write used to resolve the attribute a second time.  An
+# adapter whose ``write_text`` attribute is dynamic could therefore return a
+# different, incompatible callable for the write, so a write that passed the
+# refusal check could still fail with the adapter's own ``TypeError`` after
+# the runtime directories had already been created.  These tests pin that the
+# validated callable is bound once and used exactly once.
+# ---------------------------------------------------------------------------
+
+
+class _SwitchingWriterAdapter:
+    """Adapter whose ``write_text`` attribute yields a different callable per lookup.
+
+    The first lookup yields a compliant writer that performs a real atomic
+    rename.  Every later lookup yields a writer that cannot accept the
+    protocol ``atomic`` keyword, so it raises ``TypeError`` when called.
+    """
+
+    def __init__(self) -> None:
+        self.lookups = 0
+        self.writes = 0
+        self.writer_ids: list[int] = []
+
+    @property
+    def write_text(self) -> Any:
+        self.lookups += 1
+        if self.lookups == 1:
+
+            def compatible(path: str, content: str, *, encoding: str = "utf-8", atomic: bool = False) -> int:
+                self.writes += 1
+                import tempfile
+
+                target = Path(path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding=encoding, delete=False, dir=str(target.parent)
+                ) as handle:
+                    handle.write(content)
+                    temporary = Path(handle.name)
+                temporary.replace(target)
+                return len(content.encode(encoding))
+
+            self.writer_ids.append(id(compatible))
+            return compatible
+
+        def incompatible(path: str, content: str, *, encoding: str = "utf-8") -> int:
+            self.writes += 1
+            raise TypeError("incompatible() got an unexpected keyword argument 'atomic'")
+
+        self.writer_ids.append(id(incompatible))
+        return incompatible
+
+    def read_text(self, path: str, *, encoding: str = "utf-8") -> str:
+        return Path(path).read_text(encoding=encoding)
+
+    def read_bytes(self, path: str) -> bytes:
+        return Path(path).read_bytes()
+
+    def write_bytes(self, path: str, content: bytes) -> int:
+        raise AssertionError("unexpected bytes write")
+
+    def append_text(
+        self,
+        path: str,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+        durability: DurabilityMode = "buffered",
+    ) -> int:
+        raise AssertionError("unexpected append")
+
+    def write_json_atomic(self, path: str, data: Any, *, indent: int = 2) -> FileWriteReceipt:
+        raise AssertionError("unexpected json write")
+
+    def exists(self, path: str) -> bool:
+        return Path(path).exists()
+
+    def is_file(self, path: str) -> bool:
+        return Path(path).is_file()
+
+    def is_dir(self, path: str) -> bool:
+        return Path(path).is_dir()
+
+    def remove(self, path: str, *, missing_ok: bool = True) -> bool:
+        raise AssertionError("unexpected remove")
+
+
+def test_atomic_text_write_uses_the_validated_writer_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The validated callable is the callable that writes; it is never re-resolved."""
+    fs, workspace = _build_kernel_fs(monkeypatch, tmp_path)
+    adapter = _SwitchingWriterAdapter()
+    fs = KernelFileSystem(workspace, adapter)  # type: ignore[arg-type]
+
+    receipt = fs.write_text_atomic("workspace/meta/kfs/status.md", "状态\n")
+
+    assert adapter.lookups == 1
+    assert adapter.writes == 1
+    assert len(set(adapter.writer_ids)) == 1
+    assert Path(receipt.absolute_path).read_text(encoding="utf-8") == "状态\n"
+
+
+def test_atomic_json_write_uses_the_validated_writer_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The JSON route binds the same single validated callable as the text route."""
+    fs, workspace = _build_kernel_fs(monkeypatch, tmp_path)
+    adapter = _SwitchingWriterAdapter()
+    fs = KernelFileSystem(workspace, adapter)  # type: ignore[arg-type]
+
+    receipt = fs.write_json_atomic("workspace/meta/kfs/status.json", {"payload": True})
+
+    assert adapter.lookups == 1
+    assert adapter.writes == 1
+    assert len(set(adapter.writer_ids)) == 1
+    assert json.loads(Path(receipt.absolute_path).read_text(encoding="utf-8")) == {"payload": True}

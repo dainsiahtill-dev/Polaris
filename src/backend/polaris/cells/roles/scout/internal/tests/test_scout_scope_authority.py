@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -324,3 +325,261 @@ def test_repeated_probes_do_not_leak_or_drift(tmp_path: Path) -> None:
     assert first["ok"] is True
     assert second["ok"] is True
     assert not any("private" in path for path in first["paths"] + second["paths"])
+
+
+# ── host tool policy: the nested reads follow the host's own decision ──
+
+
+def test_a_nested_read_denied_by_the_host_policy_is_refused(tmp_path: Path) -> None:
+    """The host's per-tool decision must gate every nested Scout read.
+
+    The Scout composite expands ONE model-visible dispatch into SEVERAL
+    executor calls that never re-enter the host's gateway. Those nested calls
+    must therefore be authorized by the host itself, not by the executor's
+    allow-list alone (which does not carry the host's blacklist).
+    """
+    workspace = _build_workspace(tmp_path)
+    calls: list[str] = []
+
+    def authorizer(tool: str, args: Mapping[str, Any]) -> tuple[bool, str]:
+        calls.append(tool)
+        if tool == "repo_rg":
+            return False, "tool 'repo_rg' is in the role blacklist"
+        return True, ""
+
+    parent = AgentAccelToolExecutor(
+        str(workspace),
+        allowed_tools=frozenset({"scout_probe", "repo_rg", "repo_tree", "repo_symbols_index"}),
+        capability_token={"allowed_read_paths": ["alpha"]},
+    )
+    try:
+        from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+        authority = ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha"]},
+            allowed_tools=frozenset({"scout_probe", "repo_rg", "repo_tree", "repo_symbols_index"}),
+            read_roots=("alpha",),
+            borrowed_executor=parent,
+            tool_authorizer=authorizer,
+        )
+        from polaris.cells.roles.scout.internal.read_tool_adapter import RegistryReadTool
+        from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
+        from polaris.cells.roles.scout.public.service import ScoutProbeService
+
+        svc = ScoutProbeService(
+            read_tool=RegistryReadTool(workspace=str(workspace), authority=authority),
+            workspace=str(workspace),
+            authority=authority,
+        )
+        report = asyncio.run(svc.probe(ScoutProbeTargetV1(query="CANARY")))
+    finally:
+        parent.close_sync()
+
+    assert "repo_rg" in calls, "the nested read never consulted the host policy"
+    assert any("repo_rg" in str(err) for err in report.coverage["errors"]), (
+        f"the host denial was not preserved: {report.coverage['errors']!r}"
+    )
+    assert "blacklist" in " ".join(str(err) for err in report.coverage["errors"]), (
+        "the host's own denial reason was lost"
+    )
+    # The other read tools still ran: a partial denial keeps real results.
+    assert report.coverage["successful_calls"] >= 1
+
+
+def test_a_legal_nested_read_is_not_blocked_by_the_host_policy(tmp_path: Path) -> None:
+    """The host policy seam must not block a legal read."""
+    workspace = _build_workspace(tmp_path)
+    calls: list[str] = []
+
+    def authorizer(tool: str, args: Mapping[str, Any]) -> tuple[bool, str]:
+        calls.append(tool)
+        return True, ""
+
+    parent = AgentAccelToolExecutor(
+        str(workspace),
+        allowed_tools=frozenset({"scout_probe", "repo_rg", "repo_tree", "repo_symbols_index"}),
+        capability_token={"allowed_read_paths": ["alpha"]},
+    )
+    try:
+        from polaris.cells.roles.scout.internal.read_tool_adapter import RegistryReadTool
+        from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
+        from polaris.cells.roles.scout.public.service import ScoutProbeService, ScoutReadAuthorityV1
+
+        authority = ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha"]},
+            allowed_tools=frozenset({"scout_probe", "repo_rg", "repo_tree", "repo_symbols_index"}),
+            read_roots=("alpha",),
+            borrowed_executor=parent,
+            tool_authorizer=authorizer,
+        )
+        svc = ScoutProbeService(
+            read_tool=RegistryReadTool(workspace=str(workspace), authority=authority),
+            workspace=str(workspace),
+            authority=authority,
+        )
+        report = asyncio.run(svc.probe(ScoutProbeTargetV1(query="CANARY")))
+    finally:
+        parent.close_sync()
+
+    assert "repo_rg" in calls
+    assert report.coverage["errors"] == []
+    assert any(path.endswith("alpha/a.py") for path in (f.path for f in report.findings))
+
+
+# ── cache: a stale snapshot must not be promoted to the current permission ──
+
+
+def test_a_cached_report_is_not_served_after_the_parent_scope_shrinks(tmp_path: Path) -> None:
+    """A borrowed executor without a live authority reader must not serve a cache hit.
+
+    The executor's own gate is what actually authorizes the reads, and it can
+    change underneath us. Without an ``authority_reader`` the Scout cell
+    cannot re-observe that state, so an old snapshot must never be promoted
+    to the current permission: the probe re-reads through the borrowed
+    executor, which applies its CURRENT gate and refuses.
+    """
+    workspace = _build_workspace(tmp_path)
+    parent = AgentAccelToolExecutor(str(workspace), capability_token={"allowed_read_paths": ["alpha"]})
+    try:
+        first = _probe(parent, ALLOWED_CANARY)
+        assert first["ok"] is True
+
+        # The parent's scope shrinks to nothing (a state change of the host).
+        parent._capability_token["allowed_read_paths"] = []  # deliberate simulation of a host scope change
+
+        direct = parent.execute("repo_rg", {"pattern": ALLOWED_CANARY, "path": "alpha"})
+        assert direct.get("ok") is False, "the parent's own gate must refuse the read"
+
+        second = _probe(parent, ALLOWED_CANARY)
+        assert second["ok"] is False, "the stale cached report was served after the parent's scope shrank"
+        assert second["paths"] == []
+    finally:
+        parent.close_sync()
+
+
+def test_a_legal_read_still_proceeds_through_a_borrowed_executor(tmp_path: Path) -> None:
+    """The cache refusal must not cost a legal read its result."""
+    workspace = _build_workspace(tmp_path)
+    parent = AgentAccelToolExecutor(str(workspace), capability_token={"allowed_read_paths": ["alpha"]})
+    try:
+        result = _probe(parent, ALLOWED_CANARY)
+    finally:
+        parent.close_sync()
+
+    assert result["ok"] is True
+    assert any(path.endswith("alpha/a.py") for path in result["paths"]), (
+        f"the authorized root was not searched: {result!r}"
+    )
+    assert ALLOWED_CANARY in result["stdout"]
+
+
+# ── the committed scope is an immutable snapshot, not a shared list ──
+
+
+def test_the_authority_does_not_share_the_callers_scope_list(tmp_path: Path) -> None:
+    """A caller that empties its scope list must not narrow the authority.
+
+    Root's counterexample: the authority shallow-copied the token, so the
+    nested ``allowed_read_paths`` list stayed shared with the caller. The
+    caller emptied it afterwards and the authority's committed scope silently
+    became empty — while the report cached under the wider scope was still
+    served.
+    """
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    scope = ["alpha"]
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": scope},
+        read_roots=("alpha",),
+    )
+
+    scope.clear()
+
+    assert list(authority.capability_token["allowed_read_paths"]) == ["alpha"], (
+        "the caller emptied the authority's committed scope"
+    )
+
+
+def test_the_authority_token_rejects_every_mutation_path(tmp_path: Path) -> None:
+    """The committed token must reject every mutation, ``|=`` included.
+
+    Root found that ``token |= {"allowed_read_paths": []}`` still emptied the
+    scope, because CPython implements ``dict.__ior__`` at C level and a
+    ``dict`` subclass cannot block it. The token is a read-only mapping
+    instead, which rejects the operation at every level.
+    """
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": ["alpha"]},
+        read_roots=("alpha",),
+    )
+    token: Any = authority.capability_token
+
+    with pytest.raises(TypeError):
+        token |= {"allowed_read_paths": []}
+    with pytest.raises(TypeError):
+        token["allowed_read_paths"] = []
+    with pytest.raises(AttributeError):
+        token.update({"allowed_read_paths": []})
+    with pytest.raises(AttributeError):
+        token.clear()
+    with pytest.raises(AttributeError):
+        token["allowed_read_paths"].append("beta")
+
+    assert list(authority.capability_token["allowed_read_paths"]) == ["alpha"], (
+        "the committed scope was emptied through a mutation path"
+    )
+
+
+def test_a_stable_legal_probe_hits_the_cache_and_does_not_read_again(tmp_path: Path) -> None:
+    """The legal case must keep its cache hit and must not re-read.
+
+    The cache must not be disabled wholesale: with an unchanged authority the
+    second probe is served from the cache and performs no further read.
+    """
+    from polaris.cells.roles.scout.internal.cache import TTLCache
+    from polaris.cells.roles.scout.internal.read_tool_adapter import RegistryReadTool
+    from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1, ScoutReportV1
+    from polaris.cells.roles.scout.public.service import ScoutProbeService, ScoutReadAuthorityV1
+
+    workspace = _build_workspace(tmp_path)
+    parent = AgentAccelToolExecutor(str(workspace), capability_token={"allowed_read_paths": ["alpha"]})
+    shared_cache: TTLCache[ScoutReportV1] = TTLCache(ttl_seconds=60.0)
+
+    def authorizer(_tool_name: str, _args: Mapping[str, Any]) -> tuple[bool, str]:
+        return True, ""
+
+    def reader() -> ScoutReadAuthorityV1:
+        return ScoutReadAuthorityV1(
+            capability_token={"allowed_read_paths": ["alpha"]},
+            allowed_tools=frozenset({"scout_probe", "repo_rg", "repo_tree", "repo_symbols_index"}),
+            read_roots=("alpha",),
+            borrowed_executor=parent,
+            tool_authorizer=authorizer,
+        )
+
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": ["alpha"]},
+        allowed_tools=frozenset({"scout_probe", "repo_rg", "repo_tree", "repo_symbols_index"}),
+        read_roots=("alpha",),
+        borrowed_executor=parent,
+        authority_reader=reader,
+        tool_authorizer=authorizer,
+    )
+    svc = ScoutProbeService(
+        read_tool=RegistryReadTool(workspace=str(workspace), authority=authority),
+        cache=shared_cache,
+        workspace=str(workspace),
+        authority=authority,
+    )
+    try:
+        first = asyncio.run(svc.probe(ScoutProbeTargetV1(query="CANARY")))
+        second = asyncio.run(svc.probe(ScoutProbeTargetV1(query="CANARY")))
+    finally:
+        svc.close()
+        parent.close_sync()
+
+    assert first.cache_hit is False
+    assert second.cache_hit is True, "the legal, stable authority lost its cache hit"
+    assert any(path.endswith("alpha/a.py") for path in (f.path for f in second.findings))

@@ -152,6 +152,11 @@ def _handle_scout_probe(self: AgentAccelToolExecutor, **kwargs: Any) -> dict[str
             read_roots=_host_read_roots(self),
             borrowed_executor=self,
             authority_reader=lambda: _current_authority(self),
+            # The host's own per-tool authority for the nested read tools.
+            # It comes from the executor's HOST (the role gateway), never from
+            # the model's arguments, so the gateway's blacklist and path
+            # scope apply to the composite's internal reads too.
+            tool_authorizer=getattr(self, "_tool_authorizer", None),
         )
 
         service = build_default_scout_service(workspace, authority=authority)

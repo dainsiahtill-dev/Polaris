@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -40,7 +41,7 @@ class TestQualityGateDeadlineHandling:
         # stage after reserving the full Director critical path (400s) + QA + safety.
         # That is below the modeled physical floor (~205s) to stream the 16384-token
         # portfolio, so admission must fail closed instead of EXECUTE a doomed call.
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 508.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 508.0
         tasks = [
             {
                 "id": f"TASK-{index}",
@@ -80,7 +81,7 @@ class TestQualityGateDeadlineHandling:
         # 180s horizon with a reduced downstream reserve (125s) leaves ~50-55s for CE.
         # That exceeds min_start (40s) but is far below the ~205s physical floor to
         # stream the full portfolio, so admission must fail closed.
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 180.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 180.0
         decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
             {
                 "factory_run_deadline_epoch_seconds": deadline_epoch,
@@ -103,7 +104,7 @@ class TestQualityGateDeadlineHandling:
         # far below the full-portfolio floor (~205s). A budget that is below the
         # portfolio floor but above the repair floor must still admit the repair.
         # 400s horizon, reduced downstream reserve (125s) -> ~272-275s available.
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 400.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 400.0
         schedule = build_task_dependency_schedule([{"id": "TASK-1"}])
         portfolio_decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
             {
@@ -135,7 +136,7 @@ class TestQualityGateDeadlineHandling:
         # 230s horizon, reduced downstream reserve (125s) -> ~102-105s available.
         # Below the portfolio floor (~205s) but at/above the repair floor (~102.4s):
         # portfolio must BLOCK, repair must be admitted at the boundary.
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 230.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 230.0
         schedule = build_task_dependency_schedule([{"id": "TASK-1"}])
         portfolio_decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
             {
@@ -164,7 +165,7 @@ class TestQualityGateDeadlineHandling:
     def test_chief_engineer_deadline_projection_skips_llm_when_downstream_budget_is_at_risk(
         self,
     ) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 120.0
         decision = OrchestrationStageExecutor._chief_engineer_deadline_projection_decision(
             {
                 "factory_run_deadline_epoch_seconds": deadline_epoch,
@@ -182,7 +183,7 @@ class TestQualityGateDeadlineHandling:
     def test_chief_engineer_deadline_projection_accounts_for_remaining_ce_fanout(
         self,
     ) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 360.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 360.0
         tasks = [
             {
                 "id": f"TASK-{index}",
@@ -205,7 +206,7 @@ class TestQualityGateDeadlineHandling:
         assert -237 <= float(decision.available_for_stage_seconds or 0.0) <= -235
 
     def test_director_dispatch_timeout_caps_to_factory_deadline(self) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 12.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 12.0
         timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
             {
                 "director_dispatch_timeout_seconds": 1800,
@@ -218,7 +219,7 @@ class TestQualityGateDeadlineHandling:
         assert 1 <= timeout <= 12
 
     def test_director_dispatch_timeout_reserves_quality_gate_budget(self) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 300.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 300.0
         timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
             {
                 "director_dispatch_timeout_seconds": 1800,
@@ -233,7 +234,7 @@ class TestQualityGateDeadlineHandling:
     def test_director_dispatch_timeout_preserves_quality_budget_during_materialization(
         self,
     ) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 190.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 190.0
         timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
             {
                 "director_dispatch_timeout_seconds": 1800,
@@ -249,7 +250,7 @@ class TestQualityGateDeadlineHandling:
     def test_director_dispatch_timeout_keeps_quality_reserve_after_materialization(
         self,
     ) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 190.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 190.0
         timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
             {
                 "director_dispatch_timeout_seconds": 1800,
@@ -263,7 +264,7 @@ class TestQualityGateDeadlineHandling:
         assert 65 <= timeout <= 70
 
     def test_director_dispatch_timeout_uses_quality_gate_reserve_override(self) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 300.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 300.0
         timeout = OrchestrationStageExecutor._director_dispatch_timeout_seconds(
             {
                 "director_dispatch_timeout_seconds": 1800,
@@ -279,7 +280,7 @@ class TestQualityGateDeadlineHandling:
     def test_director_dispatch_deadline_admission_blocks_short_materialization_budget(
         self,
     ) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 120.0
         decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
             {
                 "factory_run_deadline_epoch_seconds": deadline_epoch,
@@ -301,7 +302,7 @@ class TestQualityGateDeadlineHandling:
     def test_director_dispatch_deadline_admission_allows_sufficient_budget(
         self,
     ) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 300.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 300.0
         decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
             {
                 "factory_run_deadline_epoch_seconds": deadline_epoch,
@@ -322,7 +323,7 @@ class TestQualityGateDeadlineHandling:
     def test_director_invalid_dependency_schedule_is_not_reported_as_deadline_exhaustion(
         self,
     ) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 300.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 300.0
         decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
             {
                 "factory_run_deadline_epoch_seconds": deadline_epoch,
@@ -349,7 +350,7 @@ class TestQualityGateDeadlineHandling:
     def test_director_dispatch_deadline_admission_uses_standard_budget_after_first_round(
         self,
     ) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 213.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 213.0
         decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
             {
                 "factory_run_deadline_epoch_seconds": deadline_epoch,
@@ -369,7 +370,7 @@ class TestQualityGateDeadlineHandling:
     def test_r43_later_materialization_wave_uses_same_minimum_qa_reserve_as_timeout_projection(
         self,
     ) -> None:
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 239.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 239.0
         decision = OrchestrationStageExecutor._director_dispatch_deadline_admission_decision(
             {
                 "factory_run_deadline_epoch_seconds": deadline_epoch,
@@ -447,7 +448,7 @@ class TestQualityGateDeadlineHandling:
             created_at="2026-06-22T00:00:00+00:00",
         )
         await _write_handoff_ready_review_for_tasks(executor, run_id=run.id, tasks=tasks)
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 120.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 120.0
 
         result = await executor._execute_director_dispatch(
             run,
@@ -499,7 +500,7 @@ class TestQualityGateDeadlineHandling:
 
         monkeypatch.setattr(executor, "_build_orchestration_service", fail_if_qa_started)
 
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 1.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 1.0
         result = await executor._execute_quality_gate(
             run,
             _factory_stage_context(
@@ -618,7 +619,7 @@ class TestQualityGateDeadlineHandling:
             lambda _run, _context: canonical_projection,
         )
 
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 44.4
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 44.4
         result = await executor._execute_quality_gate(
             run,
             _factory_stage_context(
@@ -1007,7 +1008,7 @@ class TestQualityGateDeadlineHandling:
 
         monkeypatch.setattr(executor, "_apply_workspace_quality_llm_repairs", fail_if_llm_repair_started)
 
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 20.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 20.0
         passed, artifact = await executor._run_workspace_quality_checks(
             run,
             {
@@ -1118,7 +1119,7 @@ class TestQualityGateDeadlineHandling:
             "from_factory",
             lambda *_args, **_kwargs: SimpleNamespace(run_command=scoped_deadline_command, close=lambda: None),
         )
-        deadline_epoch = stage_executor_module.datetime.now(stage_executor_module.timezone.utc).timestamp() + 70.0
+        deadline_epoch = datetime.now(timezone.utc).timestamp() + 70.0
         passed, artifact = await executor._run_workspace_quality_checks(
             run,
             {

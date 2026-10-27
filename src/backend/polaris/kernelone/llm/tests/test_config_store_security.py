@@ -126,14 +126,41 @@ class TestPydanticValidation:
             )
 
     def test_invalid_max_tokens_raises(self) -> None:
-        """Invalid max_tokens (out of range) raises validation error."""
+        """max_tokens above the platform ceiling (1000000) raises validation error."""
         from polaris.kernelone.llm.config_store import ProviderConfig
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
             ProviderConfig(
                 type="ollama",
-                max_tokens=200000,  # Exceeds max of 100000
+                max_tokens=1000001,  # Exceeds the platform ceiling of 1000000
+            )
+
+    def test_max_tokens_within_platform_ceiling_is_accepted(self) -> None:
+        """max_tokens up to the platform ceiling is accepted by the real schema.
+
+        The platform configuration schema accepts ``max_tokens`` from 1 up to
+        1000000. Values that a previous revision of this test wrongly rejected as
+        out-of-range (``200000``) are inside that bound and must validate. This
+        asserts the platform configuration schema range only; actual model output
+        capability must be verified separately per model/provider, which this test
+        does not prove.
+        """
+        from polaris.kernelone.llm.config_store import ProviderConfig
+
+        for max_tokens in (1, 200000, 1000000):
+            config = ProviderConfig(type="ollama", max_tokens=max_tokens)
+            assert config.max_tokens == max_tokens
+
+    def test_zero_max_tokens_raises(self) -> None:
+        """max_tokens must be strictly positive; zero raises validation error."""
+        from polaris.kernelone.llm.config_store import ProviderConfig
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            ProviderConfig(
+                type="ollama",
+                max_tokens=0,
             )
 
     def test_valid_llm_config_schema(self) -> None:

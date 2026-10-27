@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import contextlib
+import inspect
 import json
 import os
 import re
-import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
 from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.storage import (
@@ -32,6 +32,44 @@ from .types import (
 )
 
 _CHANNEL_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+# Probe arguments used only to test whether the protocol atomic call shape
+# binds against an adapter signature.  They are never written to disk.
+_CAPABILITY_PROBE_PATH = "<atomic-capability-probe>"
+_CAPABILITY_PROBE_TEXT = ""
+
+
+class AtomicWriteCapabilityError(NotImplementedError):
+    """Raised before any effect when an adapter cannot honor an atomic write.
+
+    The adapter's own contract decides whether an atomic write is possible.
+    When the adapter cannot accept the protocol's atomic call shape, this
+    error is raised *before* the write is attempted, so a non-compliant
+    adapter never causes an unmanaged physical write.
+    """
+
+
+def _binds_atomic_call(writer: Callable[..., Any]) -> bool:
+    """Return True only when the adapter can accept the protocol atomic call.
+
+    The check is a *call-shape* compatibility test, not a capability proof:
+    ``write_text(path, content, encoding=..., atomic=True)`` must bind
+    against the adapter's real signature.
+
+    A ``**kwargs`` catch-all binds successfully and is therefore accepted as
+    a legitimate wrapper.  Binding success says nothing about whether the
+    adapter honors ``atomic`` physically, so it is never treated as proof of
+    an atomic effect or of durability.
+    """
+    try:
+        signature = inspect.signature(writer)
+    except (TypeError, ValueError):
+        return False
+    try:
+        signature.bind(_CAPABILITY_PROBE_PATH, _CAPABILITY_PROBE_TEXT, encoding="utf-8", atomic=True)
+    except TypeError:
+        return False
+    return True
 
 
 class KernelFileSystem:
@@ -111,47 +149,34 @@ class KernelFileSystem:
         *,
         encoding: str = "utf-8",
     ) -> FileWriteReceipt:
-        """Atomically write UTF-8 text via the adapter's atomic write support."""
+        """Write UTF-8 text through the adapter's atomic write capability.
+
+        The adapter owns the atomic guarantee.  When the adapter cannot
+        accept the protocol atomic call shape the request is rejected
+        *before* any physical effect, so a non-compliant adapter can never
+        be silently replaced by an unmanaged physical write.
+
+        The capability check binds the adapter's ``write_text`` callable once
+        and the write uses that same callable.  The callable is never
+        re-resolved, so the write cannot reach a different writer than the
+        one that was validated.
+
+        Any failure raised by the adapter propagates unchanged.  The write is
+        never retried and never re-executed through a second writer: the
+        caller must observe the true outcome (including an unknown effect
+        state) instead of a replayed success.
+        """
         self._require_utf8_encoding(encoding)
+        writer = self._bind_atomic_write_capability()
         normalized = self.to_logical_path(logical_path)
         text = str(content)
         path = self.resolve_path(normalized)
-        try:
-            size = self._adapter.write_text(str(path), text, encoding=encoding, atomic=True)
-            return FileWriteReceipt(
-                logical_path=normalized,
-                absolute_path=str(path),
-                bytes_written=size,
-            )
-        except TypeError:
-            pass
-
-        parent_dir = Path(path).parent
-        parent_dir.mkdir(parents=True, exist_ok=True)
-
-        tmp_fd, tmp_path_str = tempfile.mkstemp(
-            dir=str(parent_dir),
-            prefix=".write_tmp_",
-            suffix=".txt",
+        size = self._atomic_write_text(writer, str(path), text, encoding=encoding)
+        return FileWriteReceipt(
+            logical_path=normalized,
+            absolute_path=str(path),
+            bytes_written=size,
         )
-        try:
-            with os.fdopen(tmp_fd, "w", encoding=encoding) as tmp_file:
-                tmp_file.write(text)
-                tmp_file.flush()
-                os.fsync(tmp_fd)
-
-            target_path = Path(path)
-            tmp_path = Path(tmp_path_str)
-            tmp_path.replace(target_path)
-            return FileWriteReceipt(
-                logical_path=normalized,
-                absolute_path=str(path),
-                bytes_written=len(text.encode(encoding)),
-            )
-        except Exception:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path_str)
-            raise
 
     def append_text(
         self,
@@ -210,54 +235,31 @@ class KernelFileSystem:
         indent: int = 2,
         ensure_ascii: bool = False,
     ) -> FileWriteReceipt:
-        """Atomically write JSON payload via temp-file-then-rename pattern.
+        """Write a JSON payload through the adapter's atomic write capability.
 
-        Delegates to the adapter's atomic write capability. The protocol
-        guarantees that write_text supports atomic=True; manual fallback
-        is only used for non-compliant adapters.
+        The adapter owns the atomic guarantee.  When the adapter cannot
+        accept the protocol atomic call shape the request is rejected
+        *before* any physical effect, so a non-compliant adapter can never
+        be silently replaced by an unmanaged physical write.
+
+        The capability check binds the adapter's ``write_text`` callable once
+        and the write uses that same callable.  The callable is never
+        re-resolved, so the write cannot reach a different writer than the
+        one that was validated.
+
+        Any failure raised by the adapter propagates unchanged.  The write is
+        never retried and never re-executed through a second writer.
         """
+        writer = self._bind_atomic_write_capability()
         normalized = self.to_logical_path(logical_path)
         path = self.resolve_path(normalized)
         data = json.dumps(payload, ensure_ascii=ensure_ascii, indent=indent) + "\n"
-
-        # Prefer adapter's atomic write (protocol guarantees atomic support)
-        try:
-            size = self._adapter.write_text(str(path), data, encoding="utf-8", atomic=True)
-            return FileWriteReceipt(
-                logical_path=normalized,
-                absolute_path=str(path),
-                bytes_written=size,
-            )
-        except TypeError:
-            # Non-compliant adapter lacking atomic parameter - manual fallback
-            pass
-
-        parent_dir = Path(path).parent
-        parent_dir.mkdir(parents=True, exist_ok=True)
-
-        tmp_fd, tmp_path_str = tempfile.mkstemp(
-            dir=str(parent_dir),
-            prefix=".write_tmp_",
-            suffix=".json",
+        size = self._atomic_write_text(writer, str(path), data, encoding="utf-8")
+        return FileWriteReceipt(
+            logical_path=normalized,
+            absolute_path=str(path),
+            bytes_written=size,
         )
-        try:
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp_file:
-                tmp_file.write(data)
-                tmp_file.flush()
-                os.fsync(tmp_fd)
-
-            target_path = Path(path)
-            tmp_path = Path(tmp_path_str)
-            tmp_path.replace(target_path)
-            return FileWriteReceipt(
-                logical_path=normalized,
-                absolute_path=str(path),
-                bytes_written=len(data.encode("utf-8")),
-            )
-        except Exception:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path_str)
-            raise
 
     def append_jsonl(
         self,
@@ -411,6 +413,56 @@ class KernelFileSystem:
         """Transfer ownership of one guarded UTF-8 append handle to the caller."""
         relative = self._lexical_workspace_relative_path(relative_or_absolute_path)
         return open_guarded_text_log_append(self._physical_workspace, relative)
+
+    def _bind_atomic_write_capability(self) -> Callable[..., int]:
+        """Bind and validate the adapter's atomic write capability before any effect.
+
+        This check must run before the target path is resolved, because path
+        resolution initializes the storage roots and therefore has physical
+        directory side effects of its own.  A rejected atomic write must not
+        create directories, temporary files, or any other physical trace.
+
+        The validated callable is returned so the write that follows uses
+        *that exact object*.  Resolving ``adapter.write_text`` a second time
+        would hand the write to a possibly different callable than the one
+        that was validated, which is how a writer that cannot accept the
+        atomic call shape could be reached after the refusal.
+
+        Binding success is call-shape compatibility only.  It is never proof
+        that the adapter performs an atomic replace or that the result is
+        durable; the adapter owns that guarantee.
+        """
+        writer = getattr(self._adapter, "write_text", None)
+        if not callable(writer):
+            raise AtomicWriteCapabilityError("adapter lacks a callable write_text capability")
+        if not _binds_atomic_call(writer):
+            raise AtomicWriteCapabilityError(
+                "adapter write_text cannot accept the protocol atomic call shape; "
+                "atomic writes are unavailable for this adapter"
+            )
+        return cast(Callable[..., int], writer)
+
+    def _atomic_write_text(
+        self,
+        writer: Callable[..., int],
+        absolute_path: str,
+        text: str,
+        *,
+        encoding: str,
+    ) -> int:
+        """Route one atomic text write through the already-bound writer.
+
+        ``writer`` is the callable that was validated by
+        :meth:`_bind_atomic_write_capability`.  It is used exactly once and is
+        never re-resolved from the adapter, so the write can only reach the
+        callable that passed the capability check.
+
+        The adapter's return value is passed through unchanged.  No exception
+        is intercepted, no write is retried, and no second writer is used, so
+        a failure after the adapter already committed its rename stays
+        visible to the caller as the original error.
+        """
+        return int(writer(absolute_path, text, encoding=encoding, atomic=True))
 
     def _lexical_workspace_relative_path(self, path: str) -> str:
         """Keep the requested path intact for the no-follow descriptor walker.

@@ -8,9 +8,9 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections import OrderedDict
-from collections.abc import ItemsView, KeysView, ValuesView
+from collections.abc import ItemsView, KeysView, Mapping, ValuesView
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from polaris.kernelone.constants import (
     FILE_MAX_CONTEXT_LINES,
@@ -23,6 +23,43 @@ from polaris.kernelone.llm.exceptions import BudgetExceededError
 logger = logging.getLogger(__name__)
 
 CODE_INTELLIGENCE_AVAILABLE = False
+
+
+@runtime_checkable
+class ToolAuthorizer(Protocol):
+    """The HOST's per-tool authorization decision for a nested tool call.
+
+    A composite handler (e.g. the Scout composite) expands ONE model-visible
+    dispatch into several executor calls. Those nested calls never re-enter
+    the host's gateway, so they must be judged by the host's own authority.
+    This protocol describes that authority: it returns ``(allowed, reason)``
+    and carries NO policy of its own.
+
+    The host supplies the callable when it builds the executor; a model can
+    never supply it, because model arguments never reach the constructor.
+    """
+
+    def __call__(self, tool_name: str, arguments: Mapping[str, object]) -> tuple[bool, str]: ...
+
+
+def _as_tool_authorizer(
+    authorizer: Any,
+) -> ToolAuthorizer | None:
+    """Adapt a host authorizer to the executor's narrow protocol.
+
+    The host gateway exposes ``authorize_nested_tool_call(tool, args)``. The
+    executor only ever calls it with a real argument mapping, so the
+    optional-argument shape of the gateway method is normalized here rather
+    than duplicated at every call site.
+    """
+    if authorizer is None:
+        return None
+
+    def _authorize(tool_name: str, arguments: Mapping[str, object]) -> tuple[bool, str]:
+        allowed, reason = authorizer(tool_name, arguments)
+        return bool(allowed), str(reason)
+
+    return _authorize
 
 
 # Tools that read file content — tracked for mandatory read-before-edit enforcement.
@@ -130,6 +167,7 @@ class AgentAccelToolExecutor:
         allowed_tools: frozenset[str] | None = None,
         capability_scope: list[str] | tuple[str, ...] | frozenset[str] | None = None,
         capability_token: dict[str, Any] | None = None,
+        tool_authorizer: ToolAuthorizer | None = None,
     ) -> None:
         self.workspace = str(Path(workspace).resolve())
         self._closed = False
@@ -144,6 +182,12 @@ class AgentAccelToolExecutor:
         # This is the executor-level hard gate — role policies (RoleToolGateway / PolicyLayer)
         # run upstream as well, but this prevents any bypass path.
         self._allowed_tools = allowed_tools
+        # Host-owned per-tool authorization for NESTED calls made by a composite
+        # handler (e.g. the Scout composite's internal read tools). The host
+        # supplies it; a model can never inject or replace it, because tool
+        # arguments never reach this constructor. The callable is the host's
+        # OWN policy decision, so the executor adds no policy of its own.
+        self._tool_authorizer = _as_tool_authorizer(tool_authorizer)
         self._capability_scope = tuple(
             str(item or "").replace("\\", "/").strip("/")
             for item in (capability_scope or ())

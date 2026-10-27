@@ -57,12 +57,37 @@ def _build_kernel_fs_for_path(path: str) -> KernelFileSystem | None:
 def write_json_atomic(path: str, data: Any) -> None:
     """Write JSON data atomically to path.
 
-    Creates parent directories if needed and writes to temp file first
-    to ensure atomicity on both Windows and Unix.
+    The write is delegated to the KernelOne atomic JSON capability so that the
+    active adapter owns the physical guarantee.
+
+    What the KernelOne capability actually guarantees is a *call-shape* check:
+    the adapter's ``write_text`` must be able to accept ``atomic=True`` before
+    any effect is attempted.  A non-compliant adapter is therefore rejected
+    before the write starts, so it never causes an unmanaged physical write.
+    Binding that call shape is **not** proof that an arbitrary custom adapter
+    replaces the target atomically; the temp-file-then-rename behaviour is a
+    verified property of the local filesystem adapter, not a platform-wide
+    fact about every adapter.
+
+    The adapter stays the single writer for the call:
+
+    - a capability rejection happens before any physical effect, so a
+      non-compliant adapter never causes an unmanaged write;
+    - a failure raised after the adapter already committed its rename
+      propagates unchanged, so the caller observes the true outcome instead
+      of a replayed success.
+
+    The write is never retried here.  ``indent`` and ``ensure_ascii`` keep the
+    previously written on-disk JSON shape, and the text is always UTF-8.
 
     Args:
         path: Target file path
         data: JSON-serializable data
+
+    Raises:
+        ValueError: If the path is outside the KernelFileSystem managed roots.
+        NotImplementedError: If the active adapter cannot accept the atomic
+            write call shape (``AtomicWriteCapabilityError``).
     """
     if not path:
         return
@@ -70,7 +95,7 @@ def write_json_atomic(path: str, data: Any) -> None:
     if fs is None:
         raise ValueError(f"Path is outside KernelFileSystem managed roots: {path}")
     logical_path = fs.to_logical_path(path)
-    fs.write_json(logical_path, data, indent=2, ensure_ascii=False)
+    fs.write_json_atomic(logical_path, data, indent=2, ensure_ascii=False)
 
 
 def _write_text_utf8(path: str, content: str) -> None:

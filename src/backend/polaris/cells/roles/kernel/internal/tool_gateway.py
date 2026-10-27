@@ -329,6 +329,29 @@ class RoleToolGateway:
             tool_snapshot=snapshot,
         )
 
+    def authorize_nested_tool_call(
+        self,
+        tool_name: str,
+        tool_args: Mapping[str, object] | None = None,
+    ) -> tuple[bool, str]:
+        """Authorize a NESTED tool call with this gateway's own policy.
+
+        A composite dispatch (e.g. ``scout_probe``) expands into several
+        executor calls that never re-enter this gateway. Those nested calls
+        must be judged by the SAME authority that judged the dispatch —
+        otherwise the gateway's blacklist (and every other per-call rule) is
+        bypassed for exactly the calls the composite performs.
+
+        This reuses the existing classification, captured tool snapshot and
+        ``check_tool_permission_from_snapshot``; it adds no new policy and no
+        new source of truth. It deliberately does NOT consume the per-turn
+        execution counter: that counter models MODEL-VISIBLE dispatches, and
+        the dispatch itself was already counted by :meth:`execute_tool`.
+        """
+        raw_tool_name = str(tool_name)
+        raw_arguments = dict(tool_args) if isinstance(tool_args, Mapping) else {}
+        return self.check_tool_permission(raw_tool_name, raw_arguments)
+
     def check_tool_permission_from_snapshot(
         self,
         *,
@@ -811,6 +834,11 @@ class RoleToolGateway:
                 allowed_tools=self._get_allowed_tools_for_executor(),
                 capability_scope=list(self._capability_scope),
                 capability_token=self._capability_token,
+                # The gateway is the authority for this dispatch, so a composite
+                # handler's NESTED tool calls are judged by this same policy
+                # (whitelist, blacklist, category rights, path scope). The
+                # callable carries no policy of its own.
+                tool_authorizer=self.authorize_nested_tool_call,
             )
             try:
                 result = executor.execute(execution_tool, dict(execution_args))
