@@ -145,6 +145,7 @@ verification:
   - polaris/cells/roles/kernel/tests/test_pending_turn_outcome_recovery.py
   - polaris/cells/roles/kernel/tests/test_adapters_kernel_boundary_scenarios.py
   - polaris/cells/roles/kernel/tests/test_slm_binding.py
+  - polaris/cells/roles/kernel/tests/test_model_proposal_contributions.py
   gaps:
   - Some callers still import role kernel components through transitional compatibility paths instead of canonical public contracts.
   - 'Turn semantic-stage separation is explicit at runtime through AssistantTurnArtifacts, but parser input and transcript output are not yet compile-time-distinct types.
@@ -246,5 +247,8 @@ verification:
   - path: polaris/cells/roles/kernel/tests/test_same_path_partial_jit_closure.py
     depends_on:
     - roles.adapters
+  - path: polaris/cells/roles/kernel/tests/test_model_proposal_contributions.py
+    depends_on:
+    - kernelone.core
 generated_artifacts:
 - generated/context.pack.json
