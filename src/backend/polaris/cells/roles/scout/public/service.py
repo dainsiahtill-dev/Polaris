@@ -48,7 +48,7 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
@@ -108,9 +108,10 @@ class ScoutReadAuthorityV1:
         # The host's token is taken BY VALUE, deeply: a caller that keeps a
         # reference to the list it passed in (the classic
         # ``allowed_read_paths`` list) can no longer empty or widen the
-        # authority after the fact. The top level is a read-only mapping and
-        # every nested sequence becomes an immutable tuple, so the committed
-        # scope facts cannot be edited in place either.
+        # authority after the fact. Every level is rebuilt as an immutable
+        # read-only mapping, and every nested sequence becomes an immutable
+        # tuple, so the committed scope facts cannot be edited in place
+        # either — and no reference the caller kept can reach them.
         token = _freeze_token(self.capability_token)
         object.__setattr__(self, "capability_token", token)
         object.__setattr__(self, "read_roots", tuple(self.read_roots))
@@ -412,41 +413,64 @@ class ScoutProbeService:
 _WEAK_CONFIDENCE_THRESHOLD = 0.3
 
 
+class _FrozenTokenMapping(Mapping[str, Any]):
+    """Read-only token snapshot that returns detached JSON-shaped values."""
+
+    __slots__ = ("_payload",)
+
+    _payload: Mapping[str, Any]
+
+    def __init__(self, values: Mapping[str, Any]) -> None:
+        object.__setattr__(self, "_payload", MappingProxyType(dict(values)))
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise TypeError("the committed capability token is read-only")
+
+    def __delattr__(self, name: str) -> None:
+        raise TypeError("the committed capability token is read-only")
+
+    def __getitem__(self, key: str) -> Any:
+        return _detached_token_value(self._payload[key])
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._payload)
+
+    def __len__(self) -> int:
+        return len(self._payload)
+
+    def __repr__(self) -> str:
+        return f"_FrozenTokenMapping({dict(self._payload)!r})"
+
+
 def _freeze_token(token: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Take the host's capability token BY VALUE, deeply and immutably.
-
-    The authority is the service's own source of truth, so it must not share
-    any mutable state with the object the host handed over. A shallow copy
-    left the nested ``allowed_read_paths`` list shared with the caller: the
-    caller could empty it afterwards, the authority's committed scope silently
-    became empty, and the authority then contradicted the cache that had been
-    produced under the wider scope.
-
-    The frozen token keeps the same values; only their mutability changes:
-    mappings become read-only mappings, sequences become tuples and sets
-    become frozensets.
-
-    The read-only mapping is a ``MappingProxyType`` — the platform's own
-    immutability idiom (``kernelone.events.sourcing.guarded`` and
-    ``kernelone.llm.engine.contracts`` freeze values the same way). It is
-    deliberately NOT a ``dict`` subclass: CPython implements ``dict.__ior__``
-    and ``dict.__setitem__`` at C level, so a ``dict`` subclass cannot block
-    ``token |= {...}`` and a subclass override would be a FALSE immutability
-    promise. A ``MappingProxyType`` rejects those operations outright, at
-    every level.
-
-    Consumers that need a plain dictionary take ``dict(frozen_token)``; the
-    nested values are tuples, so the result stays JSON-serialisable.
-    """
-    if isinstance(token, MappingProxyType):
-        return token
+    """Snapshot token mappings and sequences without sharing caller containers."""
     if isinstance(token, Mapping):
-        return MappingProxyType({str(key): _freeze_token(value) for key, value in token.items()})
+        return _FrozenTokenMapping({str(key): _freeze_token_value(value) for key, value in token.items()})
     if isinstance(token, (list, tuple)):
-        return tuple(_freeze_token(item) for item in token)
+        return tuple(_freeze_token_value(item) for item in token)
     if isinstance(token, (set, frozenset)):
         return frozenset(token)
     return token
+
+
+def _freeze_token_value(value: Any) -> Any:
+    """Copy nested mappings and sequences into read-only containers."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _freeze_token_value(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_token_value(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(value)
+    return value
+
+
+def _detached_token_value(value: Any) -> Any:
+    """Return detached mappings and sequences for token consumers."""
+    if isinstance(value, Mapping):
+        return {str(key): _detached_token_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return tuple(_detached_token_value(item) for item in value)
+    return value
 
 
 def _committed_scope_entries(token: Mapping[str, Any]) -> tuple[str, ...]:

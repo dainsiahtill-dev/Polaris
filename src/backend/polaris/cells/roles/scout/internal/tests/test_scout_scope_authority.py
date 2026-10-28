@@ -583,3 +583,152 @@ def test_a_stable_legal_probe_hits_the_cache_and_does_not_read_again(tmp_path: P
     assert first.cache_hit is False
     assert second.cache_hit is True, "the legal, stable authority lost its cache hit"
     assert any(path.endswith("alpha/a.py") for path in (f.path for f in second.findings))
+
+
+# ── the committed token must not leak a reference to the caller's state ──
+
+
+def test_a_caller_mutation_after_the_probe_cannot_widen_the_real_read(tmp_path: Path) -> None:
+    """A caller that widens its own scope list after the probe must not widen the reads.
+
+    This is the REAL read path — the canonical executor, the scout cell and
+    the real read tools — with the host committing its scope through a
+    ``MappingProxyType``-wrapped token, the shape Root's live counterexample
+    used (``Root-scout-proxy-live-effect-1793049323908352228/result.json``).
+
+    Both the BEFORE and the AFTER probe are REAL reads: the test performs an
+    actual Scout probe before the mutation and another one after it. A
+    previous version of this test probed only BEFORE the mutation and merely
+    asserted the object afterwards, which proved nothing about the reads.
+
+    The committed scope is deliberately NARROWER than the declared
+    ``read_roots`` (the host searched a wider area but committed only
+    ``alpha``), so a scope expansion is observable in the findings: the
+    private root must stay unreadable even though the plan would have
+    searched it.
+
+    Scope of the invariant: the authority is a SNAPSHOT of the token at the
+    moment it was built. A token built LATER from a backing dict the caller
+    has since mutated legitimately reports the new value — the snapshot
+    protects what was committed, it does not freeze the host's own state.
+    """
+    from types import MappingProxyType
+
+    from polaris.cells.roles.scout.internal.read_tool_adapter import RegistryReadTool
+    from polaris.cells.roles.scout.public.contracts import ScoutProbeTargetV1
+    from polaris.cells.roles.scout.public.service import ScoutProbeService, ScoutReadAuthorityV1
+
+    workspace = _build_workspace(tmp_path)
+    backing: dict[str, Any] = {"allowed_read_paths": ["alpha"]}
+    proxy = MappingProxyType(backing)
+
+    # The authority is a SNAPSHOT of what the host committed at this moment.
+    authority = ScoutReadAuthorityV1(
+        capability_token=proxy,
+        read_roots=("alpha", "private"),
+    )
+
+    def owned_probe() -> tuple[dict[str, Any], bool]:
+        """Run one real Scout probe under the committed scope.
+
+        The Scout cell builds its OWN executor from the committed token, so
+        the probe is a real read governed by the COMMITTED scope and not by
+        the host's live one.
+
+        Returns the flattened result and whether the owned executor was
+        released afterwards (resource release is part of the contract).
+        """
+        read_tool = RegistryReadTool(workspace=str(workspace), authority=authority)
+        service = ScoutProbeService(
+            read_tool=read_tool,
+            workspace=str(workspace),
+            authority=authority,
+        )
+        try:
+            report = asyncio.run(service.probe(ScoutProbeTargetV1(query="CANARY")))
+            # Capture the owned executor BEFORE the close: closing the
+            # service releases it and drops the adapter's reference.
+            owned_executor = read_tool._executor
+        finally:
+            service.close()
+        released = bool(getattr(owned_executor, "_closed", False))
+        return (
+            {
+                "cache_hit": report.cache_hit,
+                "paths": [f.path for f in report.findings],
+                "snippets": [f.snippet for f in report.findings],
+                "coverage": report.coverage,
+            },
+            released,
+        )
+
+    # BEFORE the mutation: a real, uncached probe under the committed scope.
+    before, before_released = owned_probe()
+    assert before["cache_hit"] is False, "the first probe must be a real read, not a cache hit"
+    assert before["coverage"].get("successful_calls", 0) >= 1, f"no read tool actually ran: {before['coverage']!r}"
+    assert any(path.endswith("alpha/a.py") for path in before["paths"]), (
+        f"the authorized root was not searched: {before!r}"
+    )
+    assert not any("private" in path for path in before["paths"]), (
+        f"the probe leaked a private path: {before['paths']!r}"
+    )
+    assert not any(PRIVATE_CANARY in snippet for snippet in before["snippets"]), (
+        f"the probe leaked content read from a private file: {before['snippets']!r}"
+    )
+    assert before_released is True, "the owned executor was not released after the probe"
+
+    # The host's own backing dict is mutated AFTER the authority was taken.
+    backing["allowed_read_paths"].append("private")
+
+    # The authority already taken must be unaffected: it committed "alpha".
+    assert list(authority.capability_token["allowed_read_paths"]) == ["alpha"], (
+        "the committed scope was widened through the caller's backing dict"
+    )
+
+    # AFTER the mutation: another REAL probe under the SAME committed
+    # authority. It must not be served from a cache and it must not read the
+    # private root the caller just added to its own list.
+    after, after_released = owned_probe()
+    assert after["cache_hit"] is False, "the post-mutation probe was served from a cache"
+    assert any(path.endswith("alpha/a.py") for path in after["paths"]), (
+        f"the authorized root was not searched after the mutation: {after!r}"
+    )
+    assert not any("private" in path for path in after["paths"]), (
+        f"the caller's mutation widened the committed read scope: {after['paths']!r}"
+    )
+    assert not any(PRIVATE_CANARY in snippet for snippet in after["snippets"]), (
+        f"the caller's mutation leaked private content: {after['snippets']!r}"
+    )
+    assert after_released is True, "the owned executor was not released after the probe"
+
+    # The private root was genuinely refused, not merely absent from the
+    # findings: the canonical gate must have rejected the reads that pointed
+    # outside the committed scope.
+    errors = [str(item) for item in after["coverage"].get("errors", [])]
+    assert any("committed read scope" in error for error in errors), (
+        f"the private root was not refused by the committed read scope: {errors!r}"
+    )
+
+
+def test_an_explicitly_empty_committed_scope_stays_empty_in_the_real_path(tmp_path: Path) -> None:
+    """An explicitly empty committed scope must stay empty and refuse the reads."""
+    from types import MappingProxyType
+
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    workspace = _build_workspace(tmp_path)
+    backing: dict[str, Any] = {"allowed_read_paths": []}
+    proxy = MappingProxyType(backing)
+
+    authority = ScoutReadAuthorityV1(capability_token=proxy, read_roots=())
+    assert authority.scope_committed is True
+    assert list(authority.capability_token["allowed_read_paths"]) == []
+
+    parent = AgentAccelToolExecutor(str(workspace), capability_token=dict(proxy))
+    try:
+        result = _probe(parent, ALLOWED_CANARY)
+    finally:
+        parent.close_sync()
+
+    assert result["ok"] is False
+    assert result["paths"] == []

@@ -476,6 +476,160 @@ def test_the_authority_token_stays_json_serialisable_and_plain_copyable() -> Non
     assert plain["allowed_read_paths"] == ("allowed",)
 
 
+# ── the frozen token must not leak a reference to the caller's mutable state ──
+
+
+def test_a_mapping_proxy_input_is_unwrapped_by_value_not_by_reference() -> None:
+    """A ``MappingProxyType`` input must not keep the caller's mutable state alive.
+
+    Root's live counterexample
+    (``Root-scout-proxy-live-effect-1793049323908352228/result.json``): the
+    candidate adopted the proxy as-is, so the caller kept the backing dict
+    and could still append to the committed scope list afterwards. The
+    authority then widened without the host ever re-committing it.
+    """
+    from types import MappingProxyType
+
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    backing: dict[str, Any] = {"allowed_read_paths": ["allowed"]}
+    authority = ScoutReadAuthorityV1(
+        capability_token=MappingProxyType(backing),
+        read_roots=("allowed",),
+    )
+
+    backing["allowed_read_paths"].append("private")
+
+    assert list(authority.capability_token["allowed_read_paths"]) == ["allowed"], (
+        "the caller widened the committed scope through the proxy's backing dict"
+    )
+
+
+def test_a_nested_row_in_the_committed_token_cannot_be_edited_in_place() -> None:
+    """A nested mapping row must be frozen by value too, not shared.
+
+    The host commits rows such as ``verification_command_scope``; a row that
+    stayed shared with the caller could be re-pointed at another directory
+    after the fact.
+    """
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    row = {"command": "pytest", "cwd": "."}
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": ["allowed"], "verification_command_scope": [row]},
+        read_roots=("allowed",),
+    )
+
+    row["cwd"] = "private"
+
+    assert authority.capability_token["verification_command_scope"][0]["cwd"] == ".", (
+        "the caller re-pointed a committed row through the shared reference"
+    )
+
+
+def test_the_committed_token_survives_every_c_level_dict_bypass() -> None:
+    """The frozen token must not be a ``dict`` that C-level code can write into.
+
+    Root rejected a ``dict`` subclass on this ground: CPython implements
+    ``dict.__setitem__`` and ``dict.__ior__`` at C level, so
+    ``dict.__setitem__(token, key, value)`` writes straight into the concrete
+    storage and bypasses any Python-level override. The committed scope must
+    survive that bypass.
+    """
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": ["allowed"]},
+        read_roots=("allowed",),
+    )
+    token: Any = authority.capability_token
+
+    with pytest.raises(TypeError):
+        dict.__setitem__(token, "allowed_read_paths", ["allowed", "private"])
+    with pytest.raises(TypeError):
+        dict.__ior__(token, {"allowed_read_paths": ["allowed", "private"]})
+
+    assert list(authority.capability_token["allowed_read_paths"]) == ["allowed"], (
+        "a C-level dict bypass widened the committed scope"
+    )
+
+
+def test_the_committed_token_cannot_have_its_payload_reassigned() -> None:
+    """The frozen token must not expose any attribute a holder can rewrite.
+
+    The current snapshot stores its data in ``_payload``. Replacing that
+    attribute must not change the committed scope.
+    """
+    from types import MappingProxyType
+
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    authority = ScoutReadAuthorityV1(
+        capability_token={"allowed_read_paths": ["allowed"]},
+        read_roots=("allowed",),
+    )
+    token: Any = authority.capability_token
+
+    with pytest.raises((AttributeError, TypeError)):
+        token._payload = MappingProxyType({"allowed_read_paths": ("private",)})
+    with pytest.raises((AttributeError, TypeError)):
+        token.__dict__ = {}
+
+    assert list(authority.capability_token["allowed_read_paths"]) == ["allowed"], (
+        "the committed scope was replaced through a reassignable attribute"
+    )
+
+
+def test_a_mutated_read_copy_cannot_change_the_committed_authority() -> None:
+    """What a consumer reads must not be a handle onto the committed facts.
+
+    A read hands out a detached copy, so a consumer that mutates what it
+    received cannot change the authority underneath the service.
+    """
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    authority = ScoutReadAuthorityV1(
+        capability_token={
+            "allowed_read_paths": ["allowed"],
+            "verification_command_scope": [{"command": "pytest", "cwd": "."}],
+        },
+        read_roots=("allowed",),
+    )
+
+    rows = authority.capability_token["verification_command_scope"]
+    rows[0]["cwd"] = "private"
+
+    assert authority.capability_token["verification_command_scope"][0]["cwd"] == ".", (
+        "the committed row changed through the copy a consumer read"
+    )
+
+
+def test_the_committed_token_with_nested_rows_stays_json_serialisable() -> None:
+    """A JSON-shaped token must still encode, nested rows included.
+
+    The previous candidate froze mappings as ``MappingProxyType``, which is
+    not JSON-serialisable, so ``json.dumps(dict(token))`` raised
+    ``TypeError``. The token's documented contract is that it encodes.
+    """
+    import json
+
+    from polaris.cells.roles.scout.public.service import ScoutReadAuthorityV1
+
+    authority = ScoutReadAuthorityV1(
+        capability_token={
+            "allowed_read_paths": ["allowed"],
+            "token_id": "t-1",
+            "verification_command_scope": [{"command": "pytest", "cwd": "."}],
+        },
+        read_roots=("allowed",),
+    )
+
+    payload = json.loads(json.dumps(dict(authority.capability_token)))
+    assert payload["allowed_read_paths"] == ["allowed"]
+    assert payload["token_id"] == "t-1"
+    assert payload["verification_command_scope"] == [{"command": "pytest", "cwd": "."}]
+
+
 @pytest.mark.asyncio
 async def test_a_caller_that_mutates_its_scope_list_cannot_desynchronize_the_cache() -> None:
     """A caller-side scope mutation must not let a stale report be served.
