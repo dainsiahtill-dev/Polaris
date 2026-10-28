@@ -71,6 +71,8 @@ without mutating business source-of-truth state.
 
 ## Verification
 
+- `polaris/cells/audit/diagnosis/internal/tests/test_journal_discovery_helpers.py`
+
 - `tests/test_audit_llm_runtime.py`
 - `tests/test_command_security.py`
 - `polaris/cells/audit/diagnosis/internal/tests/test_exact_run_causal_audit.py`

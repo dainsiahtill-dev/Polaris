@@ -1120,6 +1120,7 @@ cells:
       - process.exec:git
     verification:
       tests:
+        - polaris/cells/audit/diagnosis/internal/tests/test_journal_discovery_helpers.py
         - polaris/cells/audit/diagnosis/internal/tests/test_exact_run_causal_audit.py
         - tests/test_audit_llm_runtime.py
         - tests/test_command_security.py
@@ -1128,6 +1129,10 @@ cells:
         - Provider response payloads remain represented through their authoritative ContextOS snapshot refs rather than copied into the causal report.
 
       test_effects_allowed:
+        - path: polaris/cells/audit/diagnosis/internal/tests/test_journal_discovery_helpers.py
+          effects_allowed:
+          - fs.write:private_audit_journal_fixture
+          reason: Writes only synthetic journal and strategy receipt inputs in a disposable workspace to verify historical readers; no host authority, provider, target repair or business-state write.
         - path: polaris/cells/audit/diagnosis/internal/tests/test_exact_run_causal_service.py
           effects_allowed:
           - fs.write:private_audit_journal_fixture
@@ -1964,6 +1969,10 @@ cells:
         depends_on:
         - roles.adapters
       test_effects_allowed:
+      - path: polaris/cells/roles/runtime/tests/test_stream_chat_turn_audit.py
+        effects_allowed:
+        - fs.write:private_retired_stream_fixture
+        reason: Creates one historical journal canary through KFS in a disposable workspace; verifies retired stream requests never prepare execution or change old records.
       - path: polaris/cells/roles/runtime/tests/test_kernel_session_continuation.py
         effects_allowed:
         - process.spawn:python/runtime_session_component_verifier

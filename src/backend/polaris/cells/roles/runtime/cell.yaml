@@ -170,6 +170,10 @@ verification:
     depends_on:
     - roles.adapters
   test_effects_allowed:
+  - path: polaris/cells/roles/runtime/tests/test_stream_chat_turn_audit.py
+    effects_allowed:
+    - fs.write:private_retired_stream_fixture
+    reason: Creates one historical journal canary through KFS in a disposable workspace; verifies retired stream requests never prepare execution or change old records.
   - path: polaris/cells/roles/runtime/tests/test_kernel_session_continuation.py
     effects_allowed:
     - process.spawn:python/runtime_session_component_verifier

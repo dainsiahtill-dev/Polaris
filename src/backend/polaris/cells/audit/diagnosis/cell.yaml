@@ -51,6 +51,7 @@ effects_allowed:
 - process.exec:git
 verification:
   tests:
+  - polaris/cells/audit/diagnosis/internal/tests/test_journal_discovery_helpers.py
   - polaris/cells/audit/diagnosis/internal/tests/test_exact_run_causal_audit.py
   - tests/test_audit_llm_runtime.py
   - tests/test_command_security.py
@@ -60,6 +61,10 @@ verification:
     ContextOS snapshot refs rather than copied into the causal report.
   smoke_commands: []
   test_effects_allowed:
+    - path: polaris/cells/audit/diagnosis/internal/tests/test_journal_discovery_helpers.py
+      effects_allowed:
+      - fs.write:private_audit_journal_fixture
+      reason: Writes only synthetic journal and strategy receipt inputs in a disposable workspace to verify historical readers; no host authority, provider, target repair or business-state write.
     - path: polaris/cells/audit/diagnosis/internal/tests/test_exact_run_causal_service.py
       effects_allowed:
       - fs.write:private_audit_journal_fixture
