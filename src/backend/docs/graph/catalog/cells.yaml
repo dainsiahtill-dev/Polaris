@@ -4882,6 +4882,7 @@ cells:
       - fs.read:workspace/**
     verification:
       tests:
+        - polaris/cells/roles/scout/internal/tests/test_escalation.py
         - polaris/cells/roles/scout/public/tests/test_contracts.py
         - polaris/cells/roles/scout/public/tests/test_service.py
         - polaris/cells/roles/scout/internal/tests/test_distiller.py
@@ -4892,3 +4893,9 @@ cells:
         - repo_rg handler_module/handler_function not populated in ToolSpecRegistry (P2 gap).
         - LLM-backed distiller (P2) not yet wired.
         - scout_probe tool registration in SSOT deferred to P2.
+      test_effects_allowed:
+        - path: polaris/cells/roles/scout/internal/tests/test_escalation.py
+          effects_allowed:
+          - fs.write:private_scout_registration_config
+          - process.spawn:python/scout_registration_loader
+          reason: Writes synthetic role-model names under a disposable .polaris tree and invokes the real profile loader in fresh Python processes; no provider call, host config change or authoritative run.
