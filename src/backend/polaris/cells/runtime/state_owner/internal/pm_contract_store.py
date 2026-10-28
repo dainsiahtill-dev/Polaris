@@ -7,11 +7,14 @@ Designed to be testable as pure functions with minimal side effects.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.storage import canonical_workspace_runtime_root
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -20,75 +23,111 @@ def _get_fs_adapter() -> Any:
     return get_default_adapter()
 
 
+def _metadata_dir_names() -> set[str]:
+    """Return the directory names that mark a workspace metadata tree."""
+    names = {".polaris", ".polaris-cache"}
+    configured = get_workspace_metadata_dir_name()
+    if configured:
+        names.add(configured)
+    return names
+
+
+def _has_metadata_dir(directory: Path) -> bool:
+    """Return whether ``directory`` owns a workspace metadata tree."""
+    return any((directory / name).is_dir() for name in _metadata_dir_names())
+
+
+def _canonical_runtime_root(workspace: Path) -> Path:
+    """Use the storage owner's canonical root without initializing it."""
+    return Path(canonical_workspace_runtime_root(str(workspace)))
+
+
+def _is_within(parent: Path, child: Path) -> bool:
+    """Return whether ``child`` is inside ``parent``."""
+    try:
+        return os.path.commonpath([str(parent), str(child)]) == str(parent)
+    except ValueError:  # commonpath raises ValueError across Windows drives
+        return False
+
+
+def _owner_workspace_candidates(path: str) -> list[Path]:
+    """Return deepest workspace owners without mistaking run data for a project.
+
+    Canonical runtime paths identify new projects before metadata exists.
+    Metadata nested inside an outer runtime remains data of that outer owner.
+    Relative paths belong to the current workspace."""
+    raw = str(path or "").strip()
+    if not raw:
+        return []
+
+    target = Path(raw).expanduser()
+    if not target.is_absolute():
+        return [Path.cwd().resolve()]
+
+    resolved = target.resolve()
+
+    ancestors: list[Path] = []
+    current = resolved.parent
+    while True:
+        ancestors.append(current)
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+
+    # First writes must bind the canonical owner before its metadata tree exists.
+    workspace_like = [
+        directory
+        for directory in ancestors
+        if _has_metadata_dir(directory) or _is_within(_canonical_runtime_root(directory), resolved)
+    ]
+
+    # A metadata directory inside another workspace's canonical runtime root
+    # is runtime data of that workspace, not an independent workspace.
+    owners = [
+        directory
+        for directory in workspace_like
+        if not any(
+            other != directory and _is_within(_canonical_runtime_root(other), directory) for other in workspace_like
+        )
+    ]
+    if owners:
+        return owners
+
+    # Nothing identifies an owner, so the current working directory owns the
+    # namespace.
+    return [Path.cwd().resolve()]
+
+
 def _build_kernel_fs_for_path(path: str) -> KernelFileSystem | None:
     raw = str(path or "").strip()
     if not raw:
         return None
 
-    target = Path(raw).expanduser()
-    candidates: list[Path] = []
-    if target.is_absolute():
-        resolved = target.resolve()
-        lower_parts = [part.lower() for part in resolved.parts]
-        for marker in (".polaris", ".polaris", ".polaris-cache", ".polaris-cache", "runtime"):
-            if marker not in lower_parts:
-                continue
-            index = lower_parts.index(marker)
-            if index <= 0:
-                continue
-            candidates.append(Path(*resolved.parts[:index]).resolve())
-    else:
-        candidates.append(Path.cwd().resolve())
+    candidates = _owner_workspace_candidates(raw)
+    if not candidates:
+        return None
 
-    cwd = Path.cwd().resolve()
-    if cwd not in candidates:
-        candidates.append(cwd)
-
-    for workspace in candidates:
-        try:
-            fs = KernelFileSystem(str(workspace), _get_fs_adapter())
-            fs.to_logical_path(raw)
-            return fs
-        except (ValueError, OSError, RuntimeError):
-            continue
-    return None
+    # Only the owning workspace is authoritative.  An artefact that lives in a
+    # nested workspace's storage tree belongs to that workspace; if that
+    # workspace does not manage it, the artefact is invalid and must not be
+    # silently reassigned to an enclosing workspace.
+    workspace = candidates[0]
+    try:
+        fs = KernelFileSystem(str(workspace), _get_fs_adapter())
+        fs.to_logical_path(raw)
+        return fs
+    except (ValueError, OSError, RuntimeError):
+        return None
 
 
 def write_json_atomic(path: str, data: Any) -> None:
-    """Write JSON data atomically to path.
+    """Delegate UTF-8 JSON replacement to the active KernelOne adapter.
 
-    The write is delegated to the KernelOne atomic JSON capability so that the
-    active adapter owns the physical guarantee.
-
-    What the KernelOne capability actually guarantees is a *call-shape* check:
-    the adapter's ``write_text`` must be able to accept ``atomic=True`` before
-    any effect is attempted.  A non-compliant adapter is therefore rejected
-    before the write starts, so it never causes an unmanaged physical write.
-    Binding that call shape is **not** proof that an arbitrary custom adapter
-    replaces the target atomically; the temp-file-then-rename behaviour is a
-    verified property of the local filesystem adapter, not a platform-wide
-    fact about every adapter.
-
-    The adapter stays the single writer for the call:
-
-    - a capability rejection happens before any physical effect, so a
-      non-compliant adapter never causes an unmanaged write;
-    - a failure raised after the adapter already committed its rename
-      propagates unchanged, so the caller observes the true outcome instead
-      of a replayed success.
-
-    The write is never retried here.  ``indent`` and ``ensure_ascii`` keep the
-    previously written on-disk JSON shape, and the text is always UTF-8.
-
-    Args:
-        path: Target file path
-        data: JSON-serializable data
-
-    Raises:
-        ValueError: If the path is outside the KernelFileSystem managed roots.
-        NotImplementedError: If the active adapter cannot accept the atomic
-            write call shape (``AtomicWriteCapabilityError``).
-    """
+    Physical atomicity depends on the adapter; crash durability is not implied.
+    An incompatible atomic call shape is refused before execution. Adapter
+    failures propagate without retries or alternate writers, including failures
+    after a committed effect."""
     if not path:
         return
     fs = _build_kernel_fs_for_path(path)
