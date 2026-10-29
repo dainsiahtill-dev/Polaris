@@ -66,7 +66,7 @@ def select_model_for_task(
     return None
 
 
-def estimate_task_complexity(context: list[dict]) -> str:
+def estimate_task_complexity(context: list[dict[str, Any]]) -> str:
     """Estimate task complexity from context.
 
     Args:

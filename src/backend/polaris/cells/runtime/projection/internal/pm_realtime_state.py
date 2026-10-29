@@ -93,7 +93,7 @@ class PMRealtimeProvider:
 
         return state
 
-    def _convert_tasks(self, tasks: list[dict]) -> list[PMTaskNode]:
+    def _convert_tasks(self, tasks: list[dict[str, Any]]) -> list[PMTaskNode]:
         """将 Workflow 任务转换为 PM 任务节点"""
         result = []
         for task in tasks:

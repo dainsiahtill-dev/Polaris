@@ -10,6 +10,7 @@ Turn Phase Renderer - CLI观测渲染器
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Any
 
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
@@ -61,7 +62,7 @@ class TurnPhaseRenderer:
     def __init__(self, config: RenderConfig | None = None) -> None:
         self.config = config or RenderConfig()
 
-    async def render_events(self, events: AsyncIterator) -> AsyncIterator[str]:
+    async def render_events(self, events: AsyncIterator[Any]) -> AsyncIterator[Any][str]:
         """渲染事件流"""
         async for event in events:
             lines = self._render_event(event)
@@ -192,7 +193,7 @@ class TurnMetricsFormatter:
             return f"{ms / 60000:.1f}m"
 
     @staticmethod
-    def format_tokens(usage: dict) -> str:
+    def format_tokens(usage: dict[str, Any]) -> str:
         """格式化token使用"""
         prompt = usage.get("prompt_tokens", 0)
         completion = usage.get("completion_tokens", 0)
@@ -200,7 +201,7 @@ class TurnMetricsFormatter:
         return f"{total} tokens (in:{prompt}, out:{completion})"
 
     @staticmethod
-    def format_summary(result: dict) -> str:
+    def format_summary(result: dict[str, Any]) -> str:
         """格式化结果摘要"""
         metrics = result.get("metrics", {})
 
@@ -220,7 +221,7 @@ class AuditLogFormatter:
     """审计日志格式化器"""
 
     @staticmethod
-    def format_ledger(ledger: dict) -> str:
+    def format_ledger(ledger: dict[str, Any]) -> str:
         """格式化账本为可读日志"""
         lines = []
         lines.append("=" * 60)

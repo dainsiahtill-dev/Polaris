@@ -3,6 +3,7 @@
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 
 @dataclass
@@ -22,7 +23,7 @@ class TaskTraceEvent:
     attempt: int = 0
     visibility: str = "summary"  # summary|debug
     ts: str = ""
-    refs: dict = field(default_factory=dict)
+    refs: dict[str, Any] = field(default_factory=dict)
 
 
 class TaskTraceBuilder:
@@ -64,7 +65,7 @@ class TaskTraceBuilder:
             refs=refs,
         )
 
-    def to_ws_payload(self, event: TaskTraceEvent) -> dict:
+    def to_ws_payload(self, event: TaskTraceEvent) -> dict[str, Any]:
         """转换为 WebSocket payload 格式."""
         return {
             "type": "task_trace",

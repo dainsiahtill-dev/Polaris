@@ -39,7 +39,7 @@ class VerifyJob:
     end_time: datetime | None = None
     error: str | None = None
     result: dict[str, Any] | None = None
-    _events: deque[dict] = field(default_factory=deque, repr=False)
+    _events: deque[dict[str, Any]] = field(default_factory=deque, repr=False)
     _event_seq: int = field(default=0, repr=False)
     _start_perf_counter: float | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)

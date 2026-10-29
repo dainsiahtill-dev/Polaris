@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Mapping
+from typing import Any
 
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
@@ -58,7 +59,7 @@ def enforce_explicit_materialize_delivery_marker(
     )
 
 
-def detect_target_files_known(context: list[dict]) -> bool:
+def detect_target_files_known(context: list[dict[str, Any]]) -> bool:
     """检测上下文中是否包含明确的文件路径信息。"""
     for message in context:
         if not isinstance(message, Mapping):
@@ -110,7 +111,9 @@ def is_refusal_response(response: RawLLMResponse) -> bool:
     return is_refusal_response(response)
 
 
-def inherit_materialize_from_history(context: list[dict], latest_user_request: str) -> DeliveryContract | None:
+def inherit_materialize_from_history(
+    context: list[dict[str, Any]], latest_user_request: str
+) -> DeliveryContract | None:
     """多轮对话意图继承：最新消息丢失 mutation 意图时，从历史消息中恢复。
 
     场景：用户先说"实现 XX 功能"，之后说"继续""开始吧""OK"等短指令。

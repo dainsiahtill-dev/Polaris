@@ -309,7 +309,7 @@ def validate_director_action(
 
 # 扩展：不同宿主类型的能力矩阵
 # Workbench 默认比 Workflow 严格，不直接修改 workflow 状态
-ROLE_HOST_CAPABILITIES: dict[tuple, set[Capability]] = {
+ROLE_HOST_CAPABILITIES: dict[tuple[Any, ...], set[Capability]] = {
     # PM Workbench
     ("pm", "electron_workbench"): {
         Capability.READ_FILES,

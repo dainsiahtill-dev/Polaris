@@ -625,7 +625,7 @@ def _ensure_director_handoff_llm_ready(request: Request, workspace: str = "") ->
 async def pm_run_once(
     request: Request,
     workspace: str = "",
-) -> dict:
+) -> dict[str, Any]:
     """Reject retired execution before preflight, storage or scheduling."""
     raise legacy_engine_retired("Legacy pm_run_once")
 
@@ -643,7 +643,7 @@ async def pm_start(
     request: Request,
     resume: bool = False,
     workspace: str = "",
-) -> dict:
+) -> dict[str, Any]:
     """Reject retired execution before preflight, storage or scheduling."""
     raise legacy_engine_retired("Legacy pm_start")
 
@@ -654,7 +654,7 @@ async def pm_stop(
     graceful: bool = True,
     graceful_timeout: float = 5.0,
     workspace: str = "",
-) -> dict:
+) -> dict[str, Any]:
     """Only the original frozen owner may control legacy execution."""
     raise legacy_engine_retired("Legacy pm_stop")
 
@@ -664,7 +664,7 @@ def pm_status(
     request: Request,
     workspace: str = "",
     pm_service: PMService = Depends(get_pm_service),
-) -> dict:
+) -> dict[str, Any]:
     """Get PM process status with the workspace used by desktop evidence."""
     settings = request.app.state.app_state.settings
     status_payload = dict(pm_service.get_status())

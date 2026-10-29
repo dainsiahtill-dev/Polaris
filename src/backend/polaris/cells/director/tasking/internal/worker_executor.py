@@ -137,7 +137,7 @@ class CodeGenerationResult:
     """Result of code generation."""
 
     success: bool
-    files_created: list[dict] = field(default_factory=list)
+    files_created: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
     output: str = ""
     duration_ms: int = 0
@@ -269,7 +269,7 @@ class WorkerExecutor:
         """
         return _classify_task_impl(task)
 
-    def _extract_tech_stack(self, task: Task) -> dict:
+    def _extract_tech_stack(self, task: Task) -> dict[str, Any]:
         """Extract technology stack from task metadata (set by PM).
 
         Delegates to ``task_classifier.extract_tech_stack``.
@@ -287,7 +287,7 @@ class WorkerExecutor:
                 output="WorkerExecutor: code engine not initialised",
             )
 
-        files_created: list[dict] = []
+        files_created: list[dict[str, Any]] = []
         policy_messages: list[str] = []
 
         # Get model and timeout from environment
@@ -449,7 +449,7 @@ class WorkerExecutor:
         if framework:
             logger.info("[WorkerExecutor] Framework: %s", framework)
 
-        files_created: list[dict] = []
+        files_created: list[dict[str, Any]] = []
 
         # Try intelligent bootstrap templates first
         bootstrap_files = get_intelligent_bootstrap_files(
@@ -665,7 +665,7 @@ class WorkerExecutor:
         _ = (path, task, language)
         self._raise_code_writing_forbidden("_bootstrap_target_file_content")
 
-    def _construction_file_plans(self, task: Task) -> list[dict]:
+    def _construction_file_plans(self, task: Task) -> list[dict[str, Any]]:
         """Get construction file plans from task metadata.
 
         Delegates to ``CodegenRoundPlanner.construction_file_plans``.
@@ -686,7 +686,7 @@ class WorkerExecutor:
         """
         return self._prompt_builder.get_module_for_task(task)
 
-    def _build_code_generation_rounds(self, task: Task) -> list[list[dict]]:
+    def _build_code_generation_rounds(self, task: Task) -> list[list[dict[str, Any]]]:
         """Build code generation rounds from task metadata.
 
         Delegates to ``CodegenRoundPlanner.build_code_generation_rounds``. This
@@ -711,7 +711,7 @@ class WorkerExecutor:
         """
         return CodegenRoundPlanner.code_generation_round_chunk_configured()
 
-    def _effective_code_generation_round_chunk_size(self, file_plans: list[dict]) -> int:
+    def _effective_code_generation_round_chunk_size(self, file_plans: list[dict[str, Any]]) -> int:
         """Return the chunk size for this concrete file set.
 
         Delegates to ``CodegenRoundPlanner.effective_code_generation_round_chunk_size``.
@@ -727,7 +727,7 @@ class WorkerExecutor:
         """
         return CodegenRoundPlanner.is_test_like_target_file(path)
 
-    def _generated_artifact_quality_error(self, files_created: list[dict], *, phase: str) -> str | None:
+    def _generated_artifact_quality_error(self, files_created: list[dict[str, Any]], *, phase: str) -> str | None:
         """Return a fail-closed quality error for generated artifact receipts.
 
         Delegates to ``WorkspaceProbe.generated_artifact_quality_error``.
@@ -735,7 +735,7 @@ class WorkerExecutor:
         return self._workspace_probe.generated_artifact_quality_error(files_created, phase=phase)
 
     @staticmethod
-    def _generated_artifact_paths(files_created: list[dict]) -> list[str]:
+    def _generated_artifact_paths(files_created: list[dict[str, Any]]) -> list[str]:
         """Extract stable workspace-relative paths from generated file receipts.
 
         Delegates to ``WorkspaceProbe.generated_artifact_paths``.
@@ -812,13 +812,15 @@ class WorkerExecutor:
         """
         return self._workspace_probe.code_generation_round_marker_satisfied(task, round_index, round_paths)
 
-    def _write_files(self, files: list[dict], task_id: str = "") -> list[dict]:
+    def _write_files(self, files: list[dict[str, Any]], task_id: str = "") -> list[dict[str, Any]]:
         """Delegate to FileApplyService."""
         if self._file_service is None:
             return []
         return self._file_service.write_files(files, task_id)
 
-    def _collect_workspace_files(self, paths: list[str], task_id: str = "", operation: str = "modify") -> list[dict]:
+    def _collect_workspace_files(
+        self, paths: list[str], task_id: str = "", operation: str = "modify"
+    ) -> list[dict[str, Any]]:
         """Delegate to FileApplyService."""
         if self._file_service is None:
             return []
@@ -830,7 +832,7 @@ class WorkerExecutor:
         task_id: str = "",
         llm_metadata: dict[str, Any] | None = None,
         allowed_scope_paths: list[str] | tuple[str, ...] | None = None,
-    ) -> tuple[list[dict], list[str]]:
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         """Delegate to FileApplyService."""
         if self._file_service is None:
             return [], []
@@ -888,19 +890,19 @@ class WorkerExecutor:
             round_files=round_files,
         )
 
-    def _extract_files_from_response(self, response: str) -> list[dict]:
+    def _extract_files_from_response(self, response: str) -> list[dict[str, Any]]:
         """Extract file paths and contents from LLM response.
 
         Delegates to ``response_parser.extract_files_from_response``.
         """
         return _extract_files_from_response_impl(response)
 
-    def _fallback_code_files(self, task: Task, round_files: list[str] | None = None) -> list[dict]:
+    def _fallback_code_files(self, task: Task, round_files: list[str] | None = None) -> list[dict[str, Any]]:
         """Blocked compatibility entry point retained only to fail closed."""
         _ = (task, round_files)
         self._raise_code_writing_forbidden("_fallback_code_files")
 
-    def _deterministic_repair_files(self, task: Task, round_files: list[str] | None = None) -> list[dict]:
+    def _deterministic_repair_files(self, task: Task, round_files: list[str] | None = None) -> list[dict[str, Any]]:
         """Blocked compatibility entry point retained only to fail closed."""
         _ = (task, round_files)
         self._raise_code_writing_forbidden("_deterministic_repair_files")
@@ -972,7 +974,7 @@ class WorkerExecutor:
         round_label: str,
         round_files: list[str] | None,
         spin_tracker: dict[str, dict[str, Any]],
-    ) -> tuple[list[dict], list[str]]:
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         """Invoke LLM generation with retries.
 
         Delegates to code_generation_engine.

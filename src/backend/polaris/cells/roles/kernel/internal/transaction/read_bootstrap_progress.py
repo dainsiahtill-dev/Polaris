@@ -113,7 +113,7 @@ def _clear_read_bootstrap_progress(turn_id: str) -> None:
     _READ_BOOTSTRAP_PROGRESS.pop(turn_id, None)
 
 
-def _requires_write_only_single_target_repair(context: list[dict]) -> bool:
+def _requires_write_only_single_target_repair(context: list[dict[str, Any]]) -> bool:
     """Return True for Director quality repair of exactly one missing target."""
     latest_user_request = extract_latest_user_message(context).lower()
     return _WRITE_ONLY_SINGLE_TARGET_REPAIR_MARKER in latest_user_request
@@ -121,7 +121,7 @@ def _requires_write_only_single_target_repair(context: list[dict]) -> bool:
 
 def _should_bootstrap_original_read_batch(
     *,
-    context: list[dict],
+    context: list[dict[str, Any]],
     turn_id: str,
     config: Any,
     original_bootstrap_invocations: list[Any],

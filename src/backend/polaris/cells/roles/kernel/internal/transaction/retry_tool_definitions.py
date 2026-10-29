@@ -27,10 +27,10 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
 def build_retry_tool_definitions_for_mutation(
     *,
     latest_user_request: str,
-    tool_definitions: list[dict],
+    tool_definitions: list[dict[str, Any]],
     requires_mutation: bool | None = None,
     forbidden_tool_names: set[str] | None = None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Builds narrowed tool definitions for a mutation-contract retry.
 
     Critically, this function respects a ``forbidden_tool_names`` set so
@@ -58,7 +58,7 @@ def build_retry_tool_definitions_for_mutation(
     }
     # Only add verification tools that are NOT forbidden by the active contract.
     verification_candidates = {t for t in {"execute_command"} if t not in _forbidden}
-    narrowed: list[dict] = []
+    narrowed: list[dict[str, Any]] = []
     has_write = False
     selected_tool_names: set[str] = set()
     for raw_item in tool_definitions:
@@ -132,7 +132,7 @@ def detect_creation_mode(
 
 
 def select_retry_forced_write_tool_name(
-    tool_definitions: list[dict],
+    tool_definitions: list[dict[str, Any]],
     *,
     workspace: str = "",
     target_files: tuple[str, ...] | list[str] = (),
@@ -363,14 +363,14 @@ def _forced_write_allow_read_companions_enabled() -> bool:
 
 
 def build_forced_write_only_retry_tool_definitions(
-    tool_definitions: list[dict],
+    tool_definitions: list[dict[str, Any]],
     forced_write_tool_name: str | None,
     *,
     include_verification_tools: bool = False,
     forbidden_tool_names: set[str] | None = None,
     allow_write_file_companion_for_edit_blocks: bool = True,
     include_mutation_companion_tools: bool = False,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Builds the strict forced-write tool definitions.
 
     Respects ``forbidden_tool_names`` so that contract-forbidden tools
@@ -418,7 +418,7 @@ def build_forced_write_only_retry_tool_definitions(
         companion_tool_names.add("write_file")
     if include_verification_tools and "execute_command" not in _forbidden:
         companion_tool_names.add("execute_command")
-    narrowed: list[dict] = []
+    narrowed: list[dict[str, Any]] = []
     has_write_file_definition = False
     for raw_item in tool_definitions:
         if not isinstance(raw_item, Mapping):
@@ -454,7 +454,7 @@ def _extract_file_schema_from_tool_definition(definition: Mapping[str, Any]) -> 
     return None
 
 
-def _build_scoped_write_file_tool_definition(tool_definitions: list[dict]) -> dict[str, Any]:
+def _build_scoped_write_file_tool_definition(tool_definitions: list[dict[str, Any]]) -> dict[str, Any][str, Any]:
     """Build write_file from ToolSpecRegistry; pin path enums only.
 
     Live L1-08 quality-repair invented a slim schema (custom description, no

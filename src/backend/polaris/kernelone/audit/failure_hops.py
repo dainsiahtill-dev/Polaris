@@ -13,7 +13,7 @@ from polaris.kernelone.utils.time_utils import utc_now_iso as _utc_now_iso
 _logger = logging.getLogger(__name__)
 
 
-def _emit_audit_internal_failure(error_type: str, error_details: dict) -> None:
+def _emit_audit_internal_failure(error_type: str, error_details: dict[str, Any]) -> None:
     """Attempt to emit internal audit event; degrade gracefully on failure."""
     try:
         from polaris.kernelone.audit.contracts import KernelAuditEventType

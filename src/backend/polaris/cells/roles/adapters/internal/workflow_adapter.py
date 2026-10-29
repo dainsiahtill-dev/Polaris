@@ -72,7 +72,7 @@ class WorkflowRoleAdapter:
         *,
         context: dict[str, Any] | None,
         task_id: str | None,
-        history: list[tuple] | None,
+        history: list[tuple[Any, ...]] | None,
     ) -> dict[str, Any]:
         payload = dict(context or {})
         if task_id and not str(payload.get("task_id") or "").strip():
@@ -88,7 +88,7 @@ class WorkflowRoleAdapter:
         task_id: str | None = None,
         context: dict[str, Any] | None = None,
         prompt_appendix: str | None = None,
-        history: list[tuple] | None = None,
+        history: list[tuple[Any, ...]] | None = None,
         validate_output: bool = True,
         max_retries: int = 1,
     ) -> WorkflowRoleResult:
@@ -182,7 +182,9 @@ class WorkflowRoleAdapter:
             return profile_to_dict(profile)
         return None
 
-    def validate_role_permission(self, role: str, tool_name: str, tool_args: dict | None = None) -> tuple[bool, str]:
+    def validate_role_permission(
+        self, role: str, tool_name: str, tool_args: dict[str, Any] | None = None
+    ) -> tuple[bool, str]:
         """验证角色工具权限
 
         Args:
@@ -215,7 +217,7 @@ class WorkflowRoleResult:
         content: str,
         role: str,
         thinking: str | None = None,
-        structured_output: dict | None = None,
+        structured_output: dict[str, Any] | None = None,
         tool_calls: list[Any] | None = None,
         tool_results: list[Any] | None = None,
         all_tool_results: list[Any] | None = None,

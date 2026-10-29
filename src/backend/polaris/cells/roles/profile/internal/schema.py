@@ -417,7 +417,7 @@ class RoleTurnRequest:
     domain: str = "code"
 
     # 历史消息（格式: [(role, content), ...]）
-    history: list[tuple] = field(default_factory=list)
+    history: list[tuple[Any, ...]] = field(default_factory=list)
 
     # 追加提示词（仅追加到核心提示词，不覆盖）
     prompt_appendix: str | None = None
@@ -452,7 +452,7 @@ class RoleTurnRequest:
         workspace: str = "",
         message: str = "",
         domain: str = "code",
-        history: list[tuple] | None = None,
+        history: list[tuple[Any, ...]] | None = None,
         prompt_appendix: str | None = None,
         context_override: dict[str, Any] | None = None,
         tool_results: list[dict[str, Any]] | None = None,

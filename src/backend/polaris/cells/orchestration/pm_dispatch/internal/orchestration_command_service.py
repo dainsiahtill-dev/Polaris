@@ -454,11 +454,11 @@ class CommandResult:
     status: str
     message: str | None = None
     reason_code: str | None = None
-    stage_results: dict | None = None
+    stage_results: dict[str, Any] | None = None
     started_at: str | None = None
     completed_at: str | None = None
-    artifacts: list[dict] | None = None
-    metadata: dict | None = None
+    artifacts: list[dict[str, Any]] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass
@@ -524,7 +524,7 @@ class OrchestrationCommandService:
             settings: Application settings object
         """
         self.settings = settings
-        self._active_runs: dict[str, dict] = {}
+        self._active_runs: dict[str, Any][str, dict[str, Any]] = {}
 
     async def execute_pm_run(
         self,

@@ -1659,7 +1659,7 @@ def run_engine_dispatch(
     return result
 
 
-def _submit_pm_workflow_sync_resolve() -> Callable:
+def _submit_pm_workflow_sync_resolve() -> Callable[..., Any]:
     """Lazily resolve submit_pm_workflow_sync and cache at module level."""
     global submit_pm_workflow_sync
     if submit_pm_workflow_sync is None:

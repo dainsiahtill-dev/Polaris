@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-def _get_chief_engineer_service() -> Callable:
+def _get_chief_engineer_service() -> Callable[..., Any]:
     """Lazy import for chief_engineer.blueprint to avoid module-level cross-Cell coupling."""
     from polaris.cells.chief_engineer.blueprint.public.service import (
         run_pre_dispatch_chief_engineer,
@@ -22,7 +22,7 @@ def _get_chief_engineer_service() -> Callable:
     return run_pre_dispatch_chief_engineer
 
 
-def _get_chief_engineer_blueprint_services() -> tuple[type, Callable]:
+def _get_chief_engineer_blueprint_services() -> tuple[type, Callable[..., Any]]:
     """Lazy import for chief_engineer.blueprint public blueprint generation."""
     from polaris.cells.chief_engineer.blueprint.public.contracts import (
         GenerateTaskBlueprintCommandV1,
@@ -34,7 +34,7 @@ def _get_chief_engineer_blueprint_services() -> tuple[type, Callable]:
     return GenerateTaskBlueprintCommandV1, generate_task_blueprint
 
 
-def _get_workflow_runtime() -> tuple[type, type, Callable]:
+def _get_workflow_runtime() -> tuple[type, type, Callable[..., Any]]:
     """Lazy import for workflow_runtime to avoid module-level cross-Cell coupling."""
     from polaris.cells.orchestration.workflow_runtime.public.service import (
         PMWorkflowInput,
@@ -45,7 +45,7 @@ def _get_workflow_runtime() -> tuple[type, type, Callable]:
     return PMWorkflowInput, WorkflowSubmissionResult, submit_pm_workflow_sync
 
 
-def _get_task_market_services() -> tuple[type, Callable]:
+def _get_task_market_services() -> tuple[type, Callable[..., Any]]:
     """Lazy import for runtime.task_market to avoid module-level cross-Cell coupling."""
     from polaris.cells.runtime.task_market.public.contracts import (
         PublishTaskWorkItemCommandV1,
@@ -57,7 +57,7 @@ def _get_task_market_services() -> tuple[type, Callable]:
     return PublishTaskWorkItemCommandV1, get_task_market_service
 
 
-def _get_task_market_requeue_services() -> tuple[type, Callable]:
+def _get_task_market_requeue_services() -> tuple[type, Callable[..., Any]]:
     """Lazy import for supervisor requeue without widening module-level coupling."""
     from polaris.cells.runtime.task_market.public.contracts import (
         RequeueTaskCommandV1,
@@ -89,7 +89,7 @@ def _get_task_market_consumers() -> tuple[type, type, type]:
     return CEConsumer, DirectorExecutionConsumer, QAConsumer
 
 
-def _get_shared_quality() -> tuple[Callable, Callable]:
+def _get_shared_quality() -> tuple[Callable[..., Any], Callable[..., Any]]:
     """Lazy import for shared_quality to avoid circular imports."""
     from polaris.cells.orchestration.pm_planning.public.service import (
         detect_integration_verify_command,
@@ -110,14 +110,14 @@ def _get_cognitive_runtime_services() -> tuple[type, type, Callable[[], Any]]:
     return RecordRuntimeReceiptCommandV1, ResolveContextCommandV1, get_cognitive_runtime_public_service
 
 
-def _get_io_utils() -> tuple[Callable, Callable]:
+def _get_io_utils() -> tuple[Callable[..., Any], Callable[..., Any]]:
     """Lazy import for events to avoid circular imports."""
     from polaris.kernelone.events import emit_dialogue, emit_event
 
     return emit_event, emit_dialogue
 
 
-def _get_tasks_utils() -> tuple[Callable, Callable]:
+def _get_tasks_utils() -> tuple[Callable[..., Any], Callable[..., Any]]:
     """Return task utility functions from the Cell's own port module.
 
     Delivery layer is intentionally never imported here; all pure logic

@@ -16,7 +16,7 @@ Supports three modes:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
@@ -64,7 +64,7 @@ class ContextStats:
     @classmethod
     def from_complete_payload(
         cls,
-        payload: dict,
+        payload: dict[str, Any],
         context_limit: int | None = None,
         cached_tokens: int = 0,
         compressed_tokens: int = 0,

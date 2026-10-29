@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from polaris.cells.events.fact_stream.public import FactPayloadReferenceV1, FactStreamProvenanceV1
 from polaris.cells.roles.kernel.public.turn_contracts import CommitReceipt, SealedTurn, TurnOutcome
@@ -87,7 +88,7 @@ class RecoveredTurnOutcomeV1:
     result_projection_json: str = "{}"
 
     @property
-    def result_projection(self) -> dict:
+    def result_projection(self) -> dict[str, Any]:
         """Return the original detached result projection, never a guessed kind."""
         return json.loads(self.result_projection_json)
 

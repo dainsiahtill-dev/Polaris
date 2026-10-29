@@ -276,13 +276,13 @@ if __name__ == "__main__":
                 description="Example role",
             )
 
-        def get_status(self) -> dict:
+        def get_status(self) -> dict[str, Any]:
             return {"name": self.role_name, "state": self.state.name}
 
         def is_initialized(self) -> bool:
             return True
 
-        def initialize(self, **kwargs) -> dict:
+        def initialize(self, **kwargs) -> dict[str, Any]:
             return {"success": True}
 
     cli = RoleCLI(ExampleRole, prog="example", description="Example role CLI")

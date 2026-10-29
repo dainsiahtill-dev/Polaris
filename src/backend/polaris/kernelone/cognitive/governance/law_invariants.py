@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class LawViolation:
     law: str  # "L1", "L2", "L3"
     description: str
     severity: str  # "warn" | "critical"
-    context: dict = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 class CognitiveLawGuard:

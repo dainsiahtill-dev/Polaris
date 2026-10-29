@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # Polaris infrastructure
 
 
-def load_pm_task_contract(pm_task_path: str) -> dict:
+def load_pm_task_contract(pm_task_path: str) -> dict[str, Any]:
     """Load PM task contract from JSON file."""
     with open(pm_task_path, encoding="utf-8") as f:
         return json.load(f)
@@ -83,7 +83,7 @@ def map_pm_priority_to_director(priority: Any) -> TaskPriority:
     return priority_map.get(priority_str, TaskPriority.MEDIUM)
 
 
-def _format_construction_plan_for_description(construction_plan: dict) -> str:
+def _format_construction_plan_for_description(construction_plan: dict[str, Any]) -> str:
     """Render concise ChiefEngineer construction plan text for Director."""
     if not isinstance(construction_plan, dict):
         return ""
@@ -113,7 +113,7 @@ def _format_construction_plan_for_description(construction_plan: dict) -> str:
     return "\n".join(lines).strip()
 
 
-def extract_pm_tasks(pm_contract: dict) -> list[dict]:
+def extract_pm_tasks(pm_contract: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract executable tasks from PM contract."""
     raw_tasks = pm_contract.get("tasks", [])
     if not raw_tasks:
@@ -370,7 +370,7 @@ class DirectorV2Runner:
         await self.director.start()
         logger.info("[DirectorV2] Service initialized: %s", self.director.state.name)
 
-    async def execute_task(self, task_data: dict, timeout: int = DEFAULT_OPERATION_TIMEOUT_SECONDS) -> bool:
+    async def execute_task(self, task_data: dict[str, Any], timeout: int = DEFAULT_OPERATION_TIMEOUT_SECONDS) -> bool:
         """Execute a single task through Director v2."""
         if self.director is None:
             logger.error("[DirectorV2] Director service not initialized")
@@ -467,7 +467,7 @@ class DirectorV2Runner:
             self.results["errors"].append(error_msg)
             return False
 
-    async def run(self, pm_task_path: str, iterations: int, timeout: int) -> dict:
+    async def run(self, pm_task_path: str, iterations: int, timeout: int) -> dict[str, Any]:
         """Run Director v2 with PM tasks."""
         try:
             # Initialize
@@ -558,7 +558,7 @@ class DirectorV2Runner:
         return self.results
 
 
-def write_director_result(result_path: str, results: dict, start_time: datetime) -> None:
+def write_director_result(result_path: str, results: dict[str, Any], start_time: datetime) -> None:
     """Write Director result JSON in legacy-compatible format."""
     end_time = datetime.now(timezone.utc)
     duration_ms = int((end_time - start_time).total_seconds() * 1000)

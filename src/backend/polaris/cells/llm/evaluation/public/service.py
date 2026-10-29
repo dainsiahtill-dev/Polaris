@@ -493,7 +493,7 @@ async def run_strategy_benchmark_suite(
 def _load_context_benchmark_cases(
     case_ids: list[str] | None = None,
     role: str | None = None,
-) -> list:
+) -> list[Any]:
     """Load context benchmark cases.
 
     Currently uses agentic cases as placeholder; Package 8 will create
@@ -506,7 +506,7 @@ def _load_context_benchmark_cases(
 def _load_strategy_benchmark_cases(
     case_ids: list[str] | None = None,
     role: str | None = None,
-) -> list:
+) -> list[Any]:
     """Load strategy benchmark cases.
 
     Currently uses agentic cases as placeholder; Package 8 will create

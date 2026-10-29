@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from polaris.kernelone.runtime.run_id import validate_run_id
 from polaris.kernelone.storage import (
@@ -16,7 +17,7 @@ from polaris.kernelone.storage import (
 _logger = logging.getLogger(__name__)
 
 
-def _emit_audit_internal_failure(error_type: str, error_details: dict) -> None:
+def _emit_audit_internal_failure(error_type: str, error_details: dict[str, Any]) -> None:
     """Attempt to emit internal audit event; degrade gracefully on failure."""
     try:
         from polaris.kernelone.audit.contracts import KernelAuditEventType

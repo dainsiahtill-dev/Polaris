@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import sys as _sys
 from pathlib import Path
+from typing import Any
 
 # Import helpers into this module so class methods resolve free names at runtime
 # when bound through this module's globals... actually methods use defining-module globals.
@@ -51,7 +52,7 @@ def enroll_fact_stream_streams(*args, **kwargs):
 _SOURCE_PATH = Path(__file__).with_name("_repository_class.source")
 _SOURCE = _SOURCE_PATH.read_text(encoding="utf-8")
 
-_NS: dict = dict(globals())
+_NS: dict[str, Any] = dict(globals())
 _NS["__name__"] = __name__
 _NS["__file__"] = str(_SOURCE_PATH)
 _NS["__package__"] = __package__

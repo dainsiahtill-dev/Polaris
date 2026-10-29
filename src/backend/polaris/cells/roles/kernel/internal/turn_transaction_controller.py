@@ -244,11 +244,11 @@ class TurnTransactionController:
 
     def __init__(
         self,
-        llm_provider: Callable,  # LLM调用接口
-        tool_runtime: Callable,  # 工具运行时
+        llm_provider: Callable[..., Any],  # LLM调用接口
+        tool_runtime: Callable[..., Any],  # 工具运行时
         config: _TransactionConfig | None = None,
         workflow_runtime: ExplorationWorkflowRuntime | None = None,
-        llm_provider_stream: Callable | None = None,  # 流式LLM调用接口
+        llm_provider_stream: Callable[..., Any] | None = None,  # 流式LLM调用接口
         development_runtime: Any | None = None,
         directed_effect_runtime: DirectedEffectRuntimeDependenciesV1 | None = None,
         directed_effect_required: bool = False,
@@ -402,11 +402,11 @@ class TurnTransactionController:
         )
 
     @property
-    def llm_provider(self) -> Callable:
+    def llm_provider(self) -> Callable[..., Any]:
         return self._llm_provider
 
     @llm_provider.setter
-    def llm_provider(self, value: Callable) -> None:
+    def llm_provider(self, value: Callable[..., Any]) -> None:
         self._llm_provider = value
         # Propagate to submodules so owner-level tests and injected providers
         # observe the same runtime dependency.
@@ -470,7 +470,7 @@ class TurnTransactionController:
             metrics=metrics,
         )
 
-    def _resolve_shadow_workspace(self, context: list[dict]) -> str:
+    def _resolve_shadow_workspace(self, context: list[dict[str, Any]]) -> str:
         """Resolve the target workspace for speculative execution side work."""
 
         configured = str(getattr(self.config, "workspace", "") or "").strip()
@@ -494,7 +494,7 @@ class TurnTransactionController:
         return "."
 
     @staticmethod
-    def _detect_target_files_known(context: list[dict]) -> bool:
+    def _detect_target_files_known(context: list[dict[str, Any]]) -> bool:
         """检测上下文中是否包含明确的文件路径信息。"""
         return delivery_intent_resolver.detect_target_files_known(context)
 
@@ -504,7 +504,9 @@ class TurnTransactionController:
         return delivery_intent_resolver.is_refusal_response(response)
 
     @staticmethod
-    def _inherit_materialize_from_history(context: list[dict], latest_user_request: str) -> DeliveryContract | None:
+    def _inherit_materialize_from_history(
+        context: list[dict[str, Any]], latest_user_request: str
+    ) -> DeliveryContract | None:
         """多轮对话意图继承：最新消息丢失 mutation 意图时，从历史消息中恢复。
 
         场景：用户先说"实现 XX 功能"，之后说"继续""开始吧""OK"等短指令。
@@ -624,12 +626,12 @@ class TurnTransactionController:
         )
 
     @staticmethod
-    def _resolve_workspace_for_truthlog(context: list[dict]) -> str:
+    def _resolve_workspace_for_truthlog(context: list[dict[str, Any]]) -> str:
         """Resolve workspace path for turn truthlog persistence."""
         return correlation.resolve_workspace_for_truthlog(context)
 
     @classmethod
-    def _build_turn_truthlog_recorder(cls, context: list[dict]) -> TurnTruthLogRecorder | None:
+    def _build_turn_truthlog_recorder(cls, context: list[dict[str, Any]]) -> TurnTruthLogRecorder | None:
         """Build per-turn truthlog recorder. Failures are non-fatal for turn execution."""
         return correlation.build_turn_truthlog_recorder(context)
 
@@ -834,11 +836,11 @@ class TurnTransactionController:
     async def execute(
         self,
         turn_id: str,
-        context: list[dict],  # 对话上下文
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],  # 对话上下文
+        tool_definitions: list[dict[str, Any]],
         *,
         tool_choice_override: Any | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         执行完整turn（run模式）
 
@@ -946,8 +948,8 @@ class TurnTransactionController:
     async def execute_stream(
         self,
         turn_id: str,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
         turn_request_id: str | None = None,
         parent_span_id: str | None = None,
         *,
@@ -993,8 +995,8 @@ class TurnTransactionController:
             try:
 
                 async def _call_stream_llm_with_turn_tool_choice(
-                    call_context: list[dict],
-                    call_tool_definitions: list[dict],
+                    call_context: list[dict[str, Any]],
+                    call_tool_definitions: list[dict[str, Any]],
                     call_ledger: TurnLedger,
                     shadow_engine: StreamShadowEngine | None = None,
                     **kwargs: Any,
@@ -1109,14 +1111,14 @@ class TurnTransactionController:
     async def _execute_turn(
         self,
         turn_id: str,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
         stream: bool = False,
         *,
         tool_choice_override: Any | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """核心turn执行逻辑（run模式）"""
 
         # Resolve the same request-owner override used by actual preparation.
@@ -1160,8 +1162,8 @@ class TurnTransactionController:
         # monkeypatch of decoder / _call_llm_for_decision / _apply_delivery_mode_filter
         # on the instance still penetrates the pipeline module.
         async def _call_llm_for_decision(
-            call_context: list[dict],
-            call_tool_definitions: list[dict],
+            call_context: list[dict[str, Any]],
+            call_tool_definitions: list[dict[str, Any]],
             call_ledger: TurnLedger,
         ) -> RawLLMResponse:
             nonlocal invocation_tool_names
@@ -1323,8 +1325,8 @@ class TurnTransactionController:
 
     async def _call_llm_for_decision(
         self,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
         ledger: TurnLedger,
         *,
         tool_choice_override: Any | None = None,
@@ -1462,12 +1464,12 @@ class TurnTransactionController:
 
     def _build_decision_messages(
         self,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
         ledger: TurnLedger | None = None,
         *,
         tool_choice_override: Any | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Build decision-stage messages with single-batch execution constraints.
 
         Calls ``decision_message_builder.build_decision_messages``; the method
@@ -1498,11 +1500,11 @@ class TurnTransactionController:
         kind: str,
         visible_content: str,
         decision: TurnDecision,
-        batch_receipt: dict | None,
-        finalization: dict | None,
+        batch_receipt: dict[str, Any] | None,
+        finalization: dict[str, Any] | None,
         ledger: TurnLedger,
-        workflow_context: dict | None = None,
-    ) -> dict:
+        workflow_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """构建符合契约的 TurnResult dict.
 
         Session-level state (``_session_phase_manager``,
@@ -1540,7 +1542,7 @@ class TurnTransactionController:
         except (ConnectionError, RuntimeError, TypeError, ValueError):
             logger.exception("Failed to record transaction metrics")
 
-        result: dict = {
+        result: dict[str, Any] = {
             "turn_id": turn_id,
             "kind": kind,
             "visible_content": visible_content,
@@ -1596,7 +1598,7 @@ class TurnTransactionController:
 
     def _select_model_for_task(
         self,
-        context: list[dict],
+        context: list[dict[str, Any]],
         task_complexity: str = "medium",
     ) -> str | None:
         """Phase 3.1: Select optimal model based on task characteristics.
@@ -1610,7 +1612,7 @@ class TurnTransactionController:
         """
         return adaptive_session_state.select_model_for_task(self._turn_outcome_history, task_complexity)
 
-    def _estimate_task_complexity(self, context: list[dict]) -> str:
+    def _estimate_task_complexity(self, context: list[dict[str, Any]]) -> str:
         """Estimate task complexity from context.
 
         Args:
@@ -1726,7 +1728,7 @@ class TurnTransactionController:
         ledger: TurnLedger,
         *,
         emit_completion: bool = True,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """处理直接回答"""
         turn_id = decision.get("turn_id")
 

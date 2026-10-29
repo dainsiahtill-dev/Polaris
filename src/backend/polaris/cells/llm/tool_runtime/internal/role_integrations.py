@@ -273,7 +273,7 @@ class ChiefEngineerToolIntegration:
             include_should_continue=True,
         )
 
-    def build_tool_results_prompt(self, executed_tools: list[dict]) -> str:
+    def build_tool_results_prompt(self, executed_tools: list[dict[str, Any]]) -> str:
         """构建工具结果提示，发送给 LLM.
 
         Args:
@@ -503,7 +503,7 @@ class DirectorToolIntegration:
             deterministic=True,
         )
 
-    def build_tool_results_prompt(self, executed_tools: list[dict]) -> str:
+    def build_tool_results_prompt(self, executed_tools: list[dict[str, Any]]) -> str:
         """构建工具结果提示，发送给 LLM.
 
         Args:
@@ -920,7 +920,7 @@ class ScoutToolIntegration:
         """处理 LLM 响应，执行工具调用."""
         return _disabled_text_tool_protocol_result(response, role="scout")
 
-    def build_tool_results_prompt(self, executed_tools: list[dict]) -> str:
+    def build_tool_results_prompt(self, executed_tools: list[dict[str, Any]]) -> str:
         """构建工具结果提示."""
         results = []
         for item in executed_tools:

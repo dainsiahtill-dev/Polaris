@@ -54,7 +54,7 @@ def _current_workflow_owner_receipts() -> _OwnerWorkflowReceipts | None:
 
 
 @contextmanager
-def _workflow_owner_receipt_scope(decision: TurnDecision, context: dict, ledger: TurnLedger):
+def _workflow_owner_receipt_scope(decision: TurnDecision, context: dict[str, Any], ledger: TurnLedger):
     failure = _initial_batch_failure(decision, context, ledger)
     if failure:
         raise RuntimeError(failure)
@@ -91,7 +91,7 @@ def _workflow_owner_receipt_scope(decision: TurnDecision, context: dict, ledger:
         _workflow_owner_receipts.reset(token)
 
 
-def _initial_batch_failure(decision: TurnDecision, context: dict, ledger: TurnLedger) -> str | None:
+def _initial_batch_failure(decision: TurnDecision, context: dict[str, Any], ledger: TurnLedger) -> str | None:
     """A delegated native batch must already have exact owner-recorded results."""
     batch = decision.get("tool_batch")
     invocations = list(batch.get("invocations", []) or []) if batch else []
@@ -135,7 +135,7 @@ def _initial_batch_failure(decision: TurnDecision, context: dict, ledger: TurnLe
 # ---------------------------------------------------------------------------
 
 
-def select_primary_batch_receipt(receipts: list[dict]) -> dict | None:
+def select_primary_batch_receipt(receipts: list[dict[str, Any]]) -> dict[str, Any] | None:
     """选择用于恢复上下文的主 receipt。"""
     if not receipts:
         return None
@@ -145,7 +145,7 @@ def select_primary_batch_receipt(receipts: list[dict]) -> dict | None:
     return receipts[0]
 
 
-def summarize_batch_receipts(receipts: list[dict]) -> list[dict[str, object]]:
+def summarize_batch_receipts(receipts: list[dict[str, Any]]) -> list[dict[str, Any][str, object]]:
     """压缩 batch receipt 以便放入 handoff 上下文。"""
     summary: list[dict[str, object]] = []
     for receipt in receipts:
@@ -256,11 +256,11 @@ def _with_context_handoff_pack(
 def build_workflow_handoff_context(
     *,
     decision: TurnDecision,
-    receipts: list[dict],
+    receipts: list[dict[str, Any]],
     ledger: TurnLedger,
     handoff_reason: str,
     handoff_source: str,
-) -> dict:
+) -> dict[str, Any]:
     """构建可恢复的 workflow handoff 上下文。"""
     metadata = decision.get("metadata", {})
     tool_batch = decision.get("tool_batch") or {}
@@ -356,7 +356,7 @@ class HandoffHandler:
         workflow_runtime: Any | None = None,
         development_runtime: Any | None = None,
         emit_event: Callable[[TurnEvent], None],
-        build_turn_result: Callable[..., dict],
+        build_turn_result: Callable[..., dict[str, Any]],
     ) -> None:
         self.workflow_runtime = workflow_runtime
         self.development_runtime = development_runtime
@@ -370,10 +370,10 @@ class HandoffHandler:
         decision: TurnDecision,
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
-        workflow_context: dict | None = None,
+        workflow_context: dict[str, Any] | None = None,
         handoff_reason: str | None = None,
-        batch_receipt: dict | None = None,
-    ) -> dict:
+        batch_receipt: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         turn_id = decision.get("turn_id")
         metadata = decision.get("metadata", {})
         handoff_reason = handoff_reason or metadata.get("handoff_reason", "unknown")
@@ -499,9 +499,9 @@ class HandoffHandler:
         decision: TurnDecision,
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
-        workflow_context: dict | None = None,
+        workflow_context: dict[str, Any] | None = None,
         handoff_reason: str | None = None,
-        batch_receipt: dict | None = None,
+        batch_receipt: dict[str, Any] | None = None,
     ) -> AsyncIterator[TurnEvent]:
         turn_id = decision.get("turn_id")
         metadata = decision.get("metadata", {})
@@ -604,7 +604,7 @@ class HandoffHandler:
         decision: TurnDecision,
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
-    ) -> dict:
+    ) -> dict[str, Any]:
         turn_id = decision.get("turn_id")
         metadata = decision.get("metadata", {})
         intent = str(metadata.get("next_intent") or metadata.get("intent") or "")
@@ -793,7 +793,7 @@ class HandoffHandler:
         decision: TurnDecision,
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
-    ) -> dict:
+    ) -> dict[str, Any]:
         turn_id = decision.get("turn_id")
         reasoning = decision.get("reasoning_summary")
         visible_message = decision.get("visible_message", "")

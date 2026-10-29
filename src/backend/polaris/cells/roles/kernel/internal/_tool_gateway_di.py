@@ -64,7 +64,7 @@ class _ToolGatewayPortAdapter:
     def requires_approval(
         self,
         tool_name: str,
-        args: dict | None = None,
+        args: dict[str, Any] | None = None,
         state: Any | None = None,
     ) -> bool:
         """Check if tool requires approval via delegated port.
@@ -82,7 +82,7 @@ class _ToolGatewayPortAdapter:
     def check_tool_permission(
         self,
         tool_name: str,
-        tool_args: dict | None = None,
+        tool_args: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
         """Check tool permission through the injected approval contract.
 

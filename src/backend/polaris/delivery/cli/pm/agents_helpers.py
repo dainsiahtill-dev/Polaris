@@ -3,6 +3,7 @@
 import logging
 import os
 from datetime import datetime
+from typing import Any
 
 from polaris.delivery.cli.pm.config import AGENTS_DRAFT_REL, AGENTS_FEEDBACK_REL
 from polaris.delivery.cli.pm.utils import truncate_text_block
@@ -114,7 +115,7 @@ def check_existing_draft(draft_full: str, feedback_full: str, feedback_text: str
     return None
 
 
-def gather_docs_context(workspace_full: str, cache_root_full: str) -> tuple:
+def gather_docs_context(workspace_full: str, cache_root_full: str) -> tuple[Any, ...]:
     """Gather documentation context for AGENTS generation."""
     docs_sections: list[str] = []
     docs_context_parts: list[str] = []

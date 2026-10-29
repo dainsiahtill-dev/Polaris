@@ -30,7 +30,7 @@ class ActiveRunContext:
     pm_iteration: int | None = None
     director_iteration: int | None = None
     task_id: str | None = None
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Resolve paths

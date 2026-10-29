@@ -343,7 +343,7 @@ def _resolve_snapshot_paths(workspace: str, cache_root: str, state: AppState) ->
     }
 
 
-def _build_file_entries(paths: dict[str, str], workspace: str, cache_root: str) -> list:
+def _build_file_entries(paths: dict[str, str], workspace: str, cache_root: str) -> list[Any]:
     """Build the list of (label, path) file entries for the snapshot."""
     return [
         ("pm_tasks.contract.json", paths["pm_out"]),

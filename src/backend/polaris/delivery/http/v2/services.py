@@ -44,7 +44,7 @@ class TaskResponse(BaseModel):
     command: str
     state: str
     timeout: int
-    result: dict | None
+    result: dict[str, Any] | None
 
 
 class TodoCreateRequest(BaseModel):
@@ -320,7 +320,7 @@ async def get_transcript_session_info() -> dict[str, Any]:
 async def record_transcript_message(
     role: str,
     content: str,
-    metadata: dict | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, bool]:
     """Record a message to the transcript."""
     transcript_service = get_transcript_service()

@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from polaris.kernelone.constants import DEFAULT_SHORT_TIMEOUT_SECONDS
 from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
@@ -99,7 +100,7 @@ class LLMEnrichmentWorker:
         self.enriched_path = os.path.join(self.run_dir, "journal.enriched.jsonl")
 
         # Track processed events
-        self._processed_ids: set = set()
+        self._processed_ids: set[Any] = set()
         self._last_check_time = time.time()
 
     def _load_processed_ids(self) -> None:

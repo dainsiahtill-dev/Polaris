@@ -58,7 +58,7 @@ class ProtocolRequest:
     status: RequestStatus = RequestStatus.PENDING
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ProtocolFSM:
@@ -80,7 +80,12 @@ class ProtocolFSM:
         self._max_completed_requests = max_completed_requests
 
     def create_request(
-        self, protocol_type: ProtocolType, from_role: str, to_role: str, content: Any, metadata: dict | None = None
+        self,
+        protocol_type: ProtocolType,
+        from_role: str,
+        to_role: str,
+        content: Any,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """创建新请求，返回 request_id"""
         with self._lock:
@@ -246,7 +251,7 @@ class ProtocolBus:
         content: str,
         msg_type: str = "message",
         request_id: str | None = None,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """发送消息"""
         msg = {
@@ -274,7 +279,7 @@ class ProtocolBus:
                 self.send(from_role, role, content, msg_type)
         return f"Broadcast to {len(roles) - 1} roles"
 
-    def read_inbox(self, role: str, drain: bool = True) -> list[dict]:
+    def read_inbox(self, role: str, drain: bool = True) -> list[dict[str, Any]]:
         """读取收件箱"""
         if not self._inbox_dir:
             return []

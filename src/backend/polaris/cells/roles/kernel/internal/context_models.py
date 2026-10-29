@@ -13,7 +13,7 @@ class SystemContext:
     """系统级上下文（角色提示词、工具定义等）"""
 
     system_prompt: str
-    tool_definitions: list[dict] = field(default_factory=list)
+    tool_definitions: list[dict[str, Any]] = field(default_factory=list)
     role_profile_version: str = ""
     security_boundary: str = ""
 
@@ -28,7 +28,7 @@ class TokenBudget:
     conversation_budget: int = 64000
     override_budget: int = 16000
 
-    def check_budget(self, consumed: int) -> dict:
+    def check_budget(self, consumed: int) -> dict[str, Any]:
         """检查预算使用状态"""
         return {
             "within_limit": consumed <= self.max_tokens,
@@ -93,11 +93,11 @@ class ContextStats:
         """压缩比计算"""
         return self.metrics.compression_ratio if self.metrics else 1.0
 
-    def get_budget_status(self) -> dict:
+    def get_budget_status(self) -> dict[str, Any]:
         """获取预算状态"""
         return self.budget.check_budget(self.total_tokens) if self.budget else {}
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """转换为字典格式"""
         return {
             "system_tokens": self.system_tokens,

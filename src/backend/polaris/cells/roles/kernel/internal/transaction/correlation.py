@@ -86,7 +86,7 @@ def attach_event_correlation(
     return cast(TurnEvent, replace(cast(Any, event), **updates))
 
 
-def resolve_workspace_for_truthlog(context: list[dict]) -> str:
+def resolve_workspace_for_truthlog(context: list[dict[str, Any]]) -> str:
     """Resolve workspace path for turn truthlog persistence."""
     for message in reversed(context):
         if not isinstance(message, Mapping):
@@ -108,7 +108,7 @@ def resolve_workspace_for_truthlog(context: list[dict]) -> str:
     return os.path.abspath(os.getcwd())
 
 
-def build_turn_truthlog_recorder(context: list[dict]) -> TurnTruthLogRecorder | None:
+def build_turn_truthlog_recorder(context: list[dict[str, Any]]) -> TurnTruthLogRecorder | None:
     """Build per-turn truthlog recorder. Failures are non-fatal for turn execution."""
     try:
         workspace = resolve_workspace_for_truthlog(context)

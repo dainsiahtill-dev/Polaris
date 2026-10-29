@@ -240,7 +240,7 @@ def emit_pm_execution_review_conversation(
     attempt: int,
     attempts: int,
     qa_enabled: bool,
-) -> tuple:
+) -> tuple[Any, ...]:
     """Emit PM execution-review dialogue for Director and QA evidence."""
     from polaris.kernelone.events import emit_dialogue
 

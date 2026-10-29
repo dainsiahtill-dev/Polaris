@@ -29,7 +29,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
 from polaris.kernelone.audit.task_write_guidance import render_task_write_guidance
 
 
-def _extract_latest_assistant_message(context: list[dict]) -> str:
+def _extract_latest_assistant_message(context: list[dict[str, Any]]) -> str:
     """Return the most recent assistant message content (the model's own analysis).
 
     Weak models often narrate the fix in prose without emitting an edit tool call.
@@ -47,7 +47,7 @@ def _extract_latest_assistant_message(context: list[dict]) -> str:
     return ""
 
 
-def _extract_role_definition_block(context: list[dict]) -> str:
+def _extract_role_definition_block(context: list[dict[str, Any]]) -> str:
     """Return the first role identity block from the original system context."""
     for message in context:
         if not isinstance(message, Mapping):
@@ -61,14 +61,14 @@ def _extract_role_definition_block(context: list[dict]) -> str:
     return ""
 
 
-def _extract_authorized_scope_paths(context: list[dict], target_file_tokens: list[str]) -> list[str]:
+def _extract_authorized_scope_paths(context: list[dict[str, Any]], target_file_tokens: list[str]) -> list[str]:
     """Extract retry-safe scope paths from the original context."""
     raw_context = "\n".join(str(item.get("content") or "") for item in context if isinstance(item, Mapping))
     scope_paths = extract_allowed_scope_paths_from_message(raw_context)
     return filter_scope_paths_for_explicit_targets(scope_paths, target_file_tokens)
 
 
-def _retry_write_guidance_pins(context: list[dict]) -> list[str]:
+def _retry_write_guidance_pins(context: list[dict[str, Any]]) -> list[str]:
     """Keep only safe guidance data, never reconstruct capability authority."""
 
     pins: list[str] = []
@@ -108,7 +108,7 @@ def _retry_write_guidance_pins(context: list[dict]) -> list[str]:
     return pins
 
 
-def _retry_user_message(context: list[dict], content: str) -> dict[str, Any]:
+def _retry_user_message(context: list[dict[str, Any]], content: str) -> dict[str, Any][str, Any]:
     """Preserve existing typed tool contracts without promoting other metadata."""
     current_user = next(
         (
@@ -134,20 +134,20 @@ def _retry_user_message(context: list[dict], content: str) -> dict[str, Any]:
     return message
 
 
-def _continuous_retry_context_enabled(context: list[dict], enabled: bool) -> bool:
+def _continuous_retry_context_enabled(context: list[dict[str, Any]], enabled: bool) -> bool:
     from polaris.cells.roles.kernel.internal.kernel.request_tool_gating import tool_contract_requires_single_batch
 
     return enabled and not any(tool_contract_requires_single_batch(item) for item in context if isinstance(item, dict))
 
 
 def build_contract_retry_context(
-    context: list[dict],
-    tool_definitions: list[dict],
+    context: list[dict[str, Any]],
+    tool_definitions: list[dict[str, Any]],
     *,
     forced_write_tool_name: str | None = None,
     tool_choice_override: Any = None,
     continuous_execution: bool = False,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """构建突变合约违反后的 retry 上下文。"""
     continuous_execution = _continuous_retry_context_enabled(context, continuous_execution)
     role_definition = _extract_role_definition_block(context)
@@ -311,13 +311,13 @@ def build_contract_retry_context(
 
 
 def append_retry_enforcement_hint(
-    retry_context: list[dict],
+    retry_context: list[dict[str, Any]],
     *,
     allowed_tool_names: set[str],
     reason: str,
     forced_write_tool_name: str | None = None,
     continuous_execution: bool = False,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """向 retry 上下文追加强制约束提示。"""
     continuous_execution = _continuous_retry_context_enabled(retry_context, continuous_execution)
     rendered_allowed = ", ".join(sorted(allowed_tool_names)) if allowed_tool_names else "<none>"
@@ -498,13 +498,13 @@ def _diagnostic_centered_bootstrap_excerpt(
 
 def build_retry_write_after_bootstrap_context(
     *,
-    original_context: list[dict],
+    original_context: list[dict[str, Any]],
     bootstrap_receipt: Mapping[str, Any],
     forced_write_tool_name: str | None,
     from_scratch_create: bool = False,
     callable_tool_names: list[str] | None = None,
     continuous_execution: bool = False,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     continuous_execution = _continuous_retry_context_enabled(original_context, continuous_execution)
     latest_user = extract_latest_user_message(original_context)
     summary_lines: list[str] = []

@@ -359,10 +359,10 @@ class FileApplyService:
 
     def write_files(
         self,
-        files: list[dict],
+        files: list[dict[str, Any]],
         task_id: str = "",
         allowed_scope_paths: list[str] | tuple[str, ...] | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Fail closed for legacy direct file application.
 
         Raw generated bodies are not authoritative tool actions. Physical
@@ -379,7 +379,7 @@ class FileApplyService:
 
     def _validate_applied_files_against_director_policy(
         self,
-        files: list[dict],
+        files: list[dict[str, Any]],
         *,
         snapshots: dict[str, str | None],
         operation: str,
@@ -468,7 +468,7 @@ class FileApplyService:
                 return f"{path}: invalid TOML: {exc}"
         return None
 
-    def _validate_structured_files(self, files: list[dict]) -> list[str]:
+    def _validate_structured_files(self, files: list[dict[str, Any]]) -> list[str]:
         """Validate structured files included in applied file records."""
         errors: list[str] = []
         for item in files:
@@ -485,7 +485,9 @@ class FileApplyService:
 
     # === File Collection ===
 
-    def collect_workspace_files(self, paths: list[str], task_id: str = "", operation: str = "modify") -> list[dict]:
+    def collect_workspace_files(
+        self, paths: list[str], task_id: str = "", operation: str = "modify"
+    ) -> list[dict[str, Any]]:
         """Collect file payloads from workspace after patch/apply execution.
 
         Args:
@@ -496,7 +498,7 @@ class FileApplyService:
         Returns:
             List of file dictionaries with 'path' and 'content' keys
         """
-        files_created: list[dict] = []
+        files_created: list[dict[str, Any]] = []
         seen: set[str] = set()
 
         # Import here to avoid circular dependencies
@@ -546,7 +548,7 @@ class FileApplyService:
         task_id: str = "",
         llm_metadata: dict[str, Any] | None = None,
         allowed_scope_paths: list[str] | tuple[str, ...] | None = None,
-    ) -> tuple[list[dict], list[str]]:
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         """Validate raw protocol evidence but never apply it physically."""
 
         del task_id, allowed_scope_paths

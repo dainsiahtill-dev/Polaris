@@ -575,7 +575,7 @@ class KernelAuditRuntime:
     def _emit_internal_event(
         self,
         event_type: KernelAuditEventType,
-        error_details: dict,
+        error_details: dict[str, Any],
         source_event_id: str | None = None,
     ) -> None:
         """将审计系统自身失败写入审计链，而非 stdlib logging。"""

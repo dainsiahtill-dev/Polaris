@@ -209,7 +209,7 @@ class RoleRoutingEngine:
 
     def _generate_candidates(
         self,
-        matched_rules: list,
+        matched_rules: list[Any],
         context: RoutingContext,
     ) -> list[RoleTriple]:
         """Generate candidate triples based on matched rules."""

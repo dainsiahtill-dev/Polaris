@@ -27,11 +27,11 @@ class TransactionKernel(TurnTransactionController):
 
     def __init__(
         self,
-        llm_provider: Callable,
-        tool_runtime: Callable,
+        llm_provider: Callable[..., Any],
+        tool_runtime: Callable[..., Any],
         config: TransactionConfig | None = None,
         workflow_runtime: ExplorationWorkflowRuntime | None = None,
-        llm_provider_stream: Callable | None = None,
+        llm_provider_stream: Callable[..., Any] | None = None,
         directed_effect_runtime: DirectedEffectRuntimeDependenciesV1 | None = None,
         directed_effect_required: bool = False,
         directed_effect_execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None,
@@ -56,11 +56,11 @@ class TransactionKernel(TurnTransactionController):
     async def execute(
         self,
         turn_id: str,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
         *,
         tool_choice_override: Any | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         return await super().execute(
             turn_id=turn_id,
             context=context,
@@ -71,8 +71,8 @@ class TransactionKernel(TurnTransactionController):
     async def execute_stream(
         self,
         turn_id: str,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
         turn_request_id: str | None = None,
         parent_span_id: str | None = None,
         *,

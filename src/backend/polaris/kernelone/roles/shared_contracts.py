@@ -168,7 +168,7 @@ def create_protocol_fsm(
             self,
             protocol_type: Any = None,
             to_role: str | None = None,
-        ) -> list:
+        ) -> list[Any]:
             return []
 
     return _MinimalFSM(workspace)

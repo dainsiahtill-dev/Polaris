@@ -334,7 +334,7 @@ def validate_llm_config_strict(config: dict[str, Any]) -> LLMConfigSchema:
 # =============================================================================
 
 
-def register_migration(from_ver: int, to_ver: int) -> Callable:
+def register_migration(from_ver: int, to_ver: int) -> Callable[..., Any]:
     """
     Decorator to register a schema migration function.
 
@@ -346,7 +346,7 @@ def register_migration(from_ver: int, to_ver: int) -> Callable:
             return config
     """
 
-    def decorator(func: Callable[[dict[str, Any]], dict[str, Any]]) -> Callable:
+    def decorator(func: Callable[..., Any][[dict[str, Any]], dict[str, Any]]) -> Callable[..., Any]:
         _MIGRATIONS[(from_ver, to_ver)] = func
         return func
 

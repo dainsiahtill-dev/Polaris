@@ -27,7 +27,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -131,7 +131,7 @@ class MouseTracker:
     def __init__(self) -> None:
         self._enabled = False
         self._regions: list[ClickableRegion] = []
-        self._saved_terminal_settings: tuple | None = None
+        self._saved_terminal_settings: tuple[Any, ...] | None = None
 
     def enable_mouse(self) -> bool:
         """启用鼠标追踪

@@ -345,7 +345,7 @@ class QAService:
 
         return result
 
-    def _check_python_file(self, filepath: str, content: str) -> list[dict]:
+    def _check_python_file(self, filepath: str, content: str) -> list[dict[str, Any]]:
         """Check Python file for common issues."""
         issues = []
 

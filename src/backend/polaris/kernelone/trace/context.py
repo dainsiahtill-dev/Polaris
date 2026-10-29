@@ -80,7 +80,7 @@ class PolarisContext:
     workflow_id: str | None = None
     task_id: str | None = None
     workspace: str | None = None
-    span_stack: list = field(default_factory=list)
+    span_stack: list[Any] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -366,7 +366,7 @@ def inherit_context(
         yield bound_ctx
 
 
-def ensure_context(func: Callable) -> Callable:
+def ensure_context(func: Callable[..., Any]) -> Callable[..., Any]:
     """装饰器：确保函数在有效的上下文中执行
 
     如果当前没有上下文，会自动创建一个新的。

@@ -10,6 +10,7 @@
 """
 
 from enum import Enum, auto
+from typing import Any
 
 
 class PlatformRetryCategory(Enum):
@@ -164,7 +165,7 @@ def get_retry_hint(category: Enum) -> str | None:
     return hints.get(category)
 
 
-def serialize_error(category: Enum) -> dict:
+def serialize_error(category: Enum) -> dict[str, Any]:
     """序列化为统一错误结构"""
     return {
         "error_category": category.name,

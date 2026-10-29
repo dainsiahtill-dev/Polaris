@@ -66,8 +66,8 @@ class BackendBootstrapper:
 
     def __init__(self) -> None:
         """Initialize the bootstrapper."""
-        self._startup_hooks: list = []
-        self._shutdown_hooks: list = []
+        self._startup_hooks: list[Any] = []
+        self._shutdown_hooks: list[Any] = []
         self._running_servers: dict[int, Any] = {}
         # BUG-002 fix: distinguish "in progress" from "succeeded" so that
         # a failed attempt does not permanently lock out retries.

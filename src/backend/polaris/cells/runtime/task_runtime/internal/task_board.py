@@ -1624,7 +1624,7 @@ class TaskBoard:
             if not task:
                 return {"error": "Task not found"}
 
-            def get_upstream(tid: int, visited: set[int]) -> list[dict]:
+            def get_upstream(tid: int, visited: set[int]) -> list[dict[str, Any]]:
                 if tid in visited:
                     return []
                 visited.add(tid)
@@ -1636,7 +1636,7 @@ class TaskBoard:
                     result.extend(get_upstream(bid, visited))
                 return result
 
-            def get_downstream(tid: int, visited: set[int]) -> list[dict]:
+            def get_downstream(tid: int, visited: set[int]) -> list[dict[str, Any]]:
                 if tid in visited:
                     return []
                 visited.add(tid)

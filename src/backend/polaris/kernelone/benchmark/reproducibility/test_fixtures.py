@@ -7,7 +7,7 @@ Tests the full integration of seed, VCR, and mock components.
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from polaris.kernelone.benchmark.reproducibility.fixtures import (
@@ -74,7 +74,7 @@ class TestVCRFixtures:
         call_count = 0
 
         @cache_replay_fixture.replay
-        def expensive_operation(x: int) -> dict:
+        def expensive_operation(x: int) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             return {"input": x, "count": call_count}
@@ -118,7 +118,7 @@ class TestIntegrationFixtures:
 
     def test_reproducible_benchmark_setup_provides_all(
         self,
-        reproducible_benchmark_setup: dict,
+        reproducible_benchmark_setup: dict[str, Any],
     ) -> None:
         """Verify setup provides all components."""
         assert "seed_context" in reproducible_benchmark_setup
@@ -131,7 +131,7 @@ class TestIntegrationFixtures:
 
     def test_full_integration_flow(
         self,
-        reproducible_benchmark_setup: dict,
+        reproducible_benchmark_setup: dict[str, Any],
     ) -> None:
         """Verify full flow: seed -> cache -> mock."""
         seed_context = reproducible_benchmark_setup["seed_context"]
@@ -160,7 +160,7 @@ class TestEndToEndReproducibility:
     def test_random_sequence_is_deterministic(self) -> None:
         """Verify same seed produces same random sequence."""
 
-        def get_random_sequence(seed: int, count: int) -> list:
+        def get_random_sequence(seed: int, count: int) -> list[Any]:
             ReproducibleSeed.set_global_seed(seed)
             return [random.random() for _ in range(count)]
 
@@ -172,7 +172,7 @@ class TestEndToEndReproducibility:
     def test_numpy_sequence_is_deterministic(self) -> None:
         """Verify same seed produces same numpy sequence."""
 
-        def get_numpy_sequence(seed: int, count: int) -> list:
+        def get_numpy_sequence(seed: int, count: int) -> list[Any]:
             ReproducibleSeed.set_global_seed(seed)
             return list(np.random.random(count))
 
@@ -184,7 +184,7 @@ class TestEndToEndReproducibility:
     def test_cross_framework_determinism(self) -> None:
         """Verify Python and NumPy are synchronized."""
 
-        def get_combined_sequence(seed: int) -> tuple:
+        def get_combined_sequence(seed: int) -> tuple[Any, ...]:
             ReproducibleSeed.set_global_seed(seed)
             py_val = random.random()
             np_val = np.random.random()
@@ -202,7 +202,7 @@ class TestEndToEndReproducibility:
         cache = CacheReplay(tmp_path / "seed_independent", mode="both")
 
         @cache.replay
-        def get_value(x: int) -> dict:
+        def get_value(x: int) -> dict[str, Any]:
             return {"random": random.random(), "input": x}
 
         result1 = get_value(42)

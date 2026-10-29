@@ -295,7 +295,7 @@ class PMService:
         self._settings = settings
         self._refresh_storage_layout(force=True, allow_persisted_fallback=False)
 
-    async def run_once(self) -> dict:
+    async def run_once(self) -> dict[str, Any]:
         """Run PM once."""
         async with self._lifecycle_lock:
             if self._is_execution_active():
@@ -322,7 +322,7 @@ class PMService:
             except (RuntimeError, ValueError) as exc:
                 raise ProcessError("Failed to start PM process", process_name="pm", cause=exc) from exc
 
-    async def start_loop(self, resume: bool = False) -> dict:
+    async def start_loop(self, resume: bool = False) -> dict[str, Any]:
         """Start PM in loop mode."""
         async with self._lifecycle_lock:
             if self._is_execution_active():
@@ -357,7 +357,7 @@ class PMService:
         graceful: bool = True,
         graceful_timeout: float = 5.0,
         force_timeout: float = 3.0,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Stop PM process."""
         async with self._lifecycle_lock:
             # Cancel the async stdout drain task if running.
@@ -501,7 +501,7 @@ class PMService:
             return execution_status in _ACTIVE_EXECUTION_STATUSES
         return self._handle.is_running
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         lifecycle = self._read_lifecycle_status()
         execution_id = self._handle.execution_id or _text_value(lifecycle.get("execution_id"))
         handle_pid = self._handle.pid

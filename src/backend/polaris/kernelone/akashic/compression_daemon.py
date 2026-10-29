@@ -497,7 +497,7 @@ class CompressionDaemon:
         )
 
         # Remove middle chunks until under budget
-        kept_chunks: list = []
+        kept_chunks: list[Any] = []
         freed_tokens = 0
 
         for chunk in middle_chunks:

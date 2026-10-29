@@ -72,7 +72,7 @@ class TurnPhaseEvent:
             "completed",
             "failed",
         ],
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
         turn_request_id: str | None = None,
         span_id: str | None = None,
         parent_span_id: str | None = None,

@@ -1118,7 +1118,7 @@ class CodeGenerationEngine:
         task_id: str,
         allowed_scope_paths: list[str] | tuple[str, ...] | None,
         llm_metadata: dict[str, Any],
-    ) -> tuple[list[dict], list[str]]:
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         apply_func = getattr(self._executor, "_apply_response_operations", None)
         if not callable(apply_func):
             return [], ["director executor cannot apply response operations"]
@@ -1178,7 +1178,7 @@ class CodeGenerationEngine:
         round_label: str,
         round_files: list[str] | None,
         spin_tracker: dict[str, dict[str, Any]],
-    ) -> tuple[list[dict], list[str]]:
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         """Generate code through the Director role runtime when explicitly enabled."""
         _ = model
         if not self.runtime_codegen_enabled():

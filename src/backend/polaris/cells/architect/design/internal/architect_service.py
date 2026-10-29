@@ -156,7 +156,7 @@ class ArchitectService:
     async def create_interface_contract(
         self,
         api_name: str,
-        endpoints: list[dict],
+        endpoints: list[dict[str, Any]],
     ) -> ArchitectureDoc:
         """Create interface contract/API specification."""
         logger.info("[Architect Service] Creating interface contract for: %s", api_name)
@@ -199,7 +199,7 @@ class ArchitectService:
         self,
         milestones: list[str],
         verification_commands: list[str],
-        risks: list[dict],
+        risks: list[dict[str, Any]],
     ) -> ArchitectureDoc:
         """Create implementation plan."""
         logger.info("[Architect Service] Creating implementation plan")

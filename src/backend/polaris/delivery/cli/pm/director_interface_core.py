@@ -62,7 +62,7 @@ class DirectorInterface(ABC):
     to canonical services instead of launching standalone scripts.
     """
 
-    def __init__(self, workspace: Path, config: dict | None = None) -> None:
+    def __init__(self, workspace: Path, config: dict[str, Any] | None = None) -> None:
         self.workspace = Path(workspace)
         self.config = config or {}
 
@@ -238,7 +238,7 @@ class NoDirectorAdapter(DirectorInterface):
     用于任务分解、规划等纯PM功能。
     """
 
-    def __init__(self, workspace: Path, config: dict | None = None) -> None:
+    def __init__(self, workspace: Path, config: dict[str, Any] | None = None) -> None:
         super().__init__(workspace, config)
         self.config = config or {}
 
@@ -299,7 +299,7 @@ class DirectorFactory:
         cls,
         director_type: str,
         workspace: Path,
-        config: dict | None = None,
+        config: dict[str, Any] | None = None,
     ) -> DirectorInterface:
         """
         创建 Director 实例
@@ -335,7 +335,7 @@ class DirectorFactory:
 def create_director(
     workspace: str,
     director_type: str | None = None,
-    config: dict | None = None,
+    config: dict[str, Any] | None = None,
 ) -> DirectorInterface:
     """
     创建 Director 的便捷函数

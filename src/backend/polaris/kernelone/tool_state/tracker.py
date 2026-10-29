@@ -101,7 +101,7 @@ class ToolCallTracker:
         tool_call_id: str | None = None,
         execution_lane: str = "direct",
         correlation_id: str | None = None,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> ToolState:
         """Create a new tool state.
 

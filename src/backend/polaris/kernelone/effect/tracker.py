@@ -301,7 +301,7 @@ class TimeoutManager:
 
     async def run_with_timeout(
         self,
-        coro: Callable,
+        coro: Callable[..., Any],
         operation: str,
         *args: Any,
         **kwargs: Any,

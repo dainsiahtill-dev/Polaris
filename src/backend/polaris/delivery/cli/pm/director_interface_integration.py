@@ -57,7 +57,7 @@ def resolve_project_root() -> Path:
 def create_director_for_pm(
     workspace: str,
     director_type: str | None = None,
-    config: dict | None = None,
+    config: dict[str, Any] | None = None,
 ) -> DirectorInterface | None:
     """
     Create a Director instance for use by PM.

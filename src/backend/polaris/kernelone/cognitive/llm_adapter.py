@@ -40,7 +40,7 @@ class AIResponse:
     content: str
     reasoning: str | None = None
     confidence: float | None = None
-    raw: dict | None = None
+    raw: dict[str, Any] | None = None
 
 
 class AIExecutorAdapter:

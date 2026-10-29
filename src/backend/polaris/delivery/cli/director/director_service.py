@@ -141,7 +141,7 @@ class DirectorService:
             raise ValueError(f"Invalid task runtime id: {task_id}")
         return int(token)
 
-    async def _execute_task(self, task: dict) -> dict[str, Any]:
+    async def _execute_task(self, task: dict[str, Any]) -> dict[str, Any][str, Any]:
         """Execute one task through ``director.execution`` public contract."""
         task_id = str(task.get("id") or task.get("task_id") or "").strip()
         subject = str(task.get("subject") or task.get("title") or task_id).strip()

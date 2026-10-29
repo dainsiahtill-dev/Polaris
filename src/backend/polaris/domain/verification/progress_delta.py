@@ -9,6 +9,7 @@ Migrated from: scripts/director/iteration/verification.py
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,7 @@ class ProgressTracker:
 
     def __init__(self, stall_threshold: int = 2) -> None:
         self.stall_threshold = stall_threshold
-        self._previous: dict | None = None
+        self._previous: dict[str, Any] | None = None
         self._stall_count = 0
         self._round = 0
 

@@ -204,7 +204,7 @@ class ToolState:
     retry_count: int = 0
     max_retries: int = 3
     correlation_id: str | None = None
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     # Internal
     _history: list[tuple[ToolStateStatus, datetime, str | None]] = field(
@@ -422,7 +422,7 @@ class ToolState:
     # Serialization
     # -------------------------------------------------------------------------
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation.
 
         Returns:
@@ -447,7 +447,7 @@ class ToolState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> ToolState:
+    def from_dict(cls, data: dict[str, Any]) -> ToolState:
         """Create ToolState from dictionary.
 
         Args:
@@ -516,7 +516,7 @@ def create_tool_state(
     tool_call_id: str | None = None,
     execution_lane: str = "direct",
     correlation_id: str | None = None,
-    metadata: dict | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> ToolState:
     """Create a new tool state in PENDING status.
 

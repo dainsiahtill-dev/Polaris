@@ -371,7 +371,7 @@ def write_file_with_broadcast(
     message_bus=None,
     worker_id: str = "standalone",
     task_id: str = "",
-) -> dict:
+) -> dict[str, Any]:
     """带广播的文件写入
 
     统一处理文件写入和事件广播，确保所有文件变更都能实时推送到前端。
@@ -438,7 +438,7 @@ def append_file_with_broadcast(
     message_bus=None,
     worker_id: str = "standalone",
     task_id: str = "",
-) -> dict:
+) -> dict[str, Any]:
     """带广播的文件追加
 
     Args:
@@ -502,7 +502,7 @@ def replace_in_file_with_broadcast(
     message_bus=None,
     worker_id: str = "standalone",
     task_id: str = "",
-) -> dict:
+) -> dict[str, Any]:
     """带广播的文本替换
 
     Args:
@@ -573,7 +573,7 @@ def apply_patch_with_broadcast(
     message_bus=None,
     worker_id: str = "standalone",
     task_id: str = "",
-) -> dict:
+) -> dict[str, Any]:
     """带广播的 patch 应用
 
     Args:

@@ -288,7 +288,7 @@ class SensitiveDataFilter(logging.Filter):
     def redact_dict(
         cls,
         data: dict[str, Any],
-        sensitive_keys: set | None = None,
+        sensitive_keys: set[Any] | None = None,
     ) -> dict[str, Any]:
         """脱敏字典中的敏感字段"""
         if sensitive_keys is None:

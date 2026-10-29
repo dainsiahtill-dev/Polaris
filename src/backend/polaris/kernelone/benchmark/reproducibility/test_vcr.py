@@ -6,7 +6,7 @@ Verifies deterministic recording and replay of function calls.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from polaris.kernelone.benchmark.reproducibility.vcr import (
@@ -87,7 +87,7 @@ class TestCacheReplay:
         call_count = 0
 
         @cache_replay.replay
-        def expensive_function(value: int) -> dict:
+        def expensive_function(value: int) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             return {"result": value * 2}
@@ -110,7 +110,7 @@ class TestCacheReplay:
         call_count = 0
 
         @cache_replay.replay
-        def function_with_counter(x: int) -> dict:
+        def function_with_counter(x: int) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             return {"count": call_count, "input": x}
@@ -126,7 +126,7 @@ class TestCacheReplay:
         call_count = 0
 
         @cache.replay
-        def count_calls(value: int) -> dict:
+        def count_calls(value: int) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             return {"count": call_count}
@@ -143,7 +143,7 @@ class TestCacheReplay:
         call_count = 0
 
         @cache.replay
-        def always_counts(value: int) -> dict:
+        def always_counts(value: int) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             return {"count": call_count}
@@ -221,7 +221,7 @@ class TestAsyncCacheReplay:
         call_count = 0
 
         @async_cache.replay
-        async def async_function(value: int) -> dict:
+        async def async_function(value: int) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             return {"result": value * 3}
@@ -238,7 +238,7 @@ class TestAsyncCacheReplay:
 
 
 # Helper for test
-def asdict(obj: object) -> dict:
+def asdict(obj: object) -> dict[str, Any]:
     """Convert dataclass to dict."""
     if hasattr(obj, "__dataclass_fields__"):
         return {f.name: getattr(obj, f.name) for f in obj.__dataclass_fields__.values()}

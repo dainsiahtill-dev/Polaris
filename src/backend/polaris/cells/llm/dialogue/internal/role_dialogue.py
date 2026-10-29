@@ -744,7 +744,7 @@ class RoleOutputParser:
     """
 
     # 角色对应的JSON Schema
-    ROLE_SCHEMAS: dict[str, dict] = {
+    ROLE_SCHEMAS: dict[str, Any][str, dict[str, Any]] = {
         "pm": {
             "type": "object",
             "required": ["tasks"],
@@ -841,7 +841,7 @@ class RoleOutputParser:
     }
 
     @classmethod
-    def extract_json(cls, text: str) -> tuple[dict | None, list[str]]:
+    def extract_json(cls, text: str) -> tuple[dict[str, Any] | None, list[str]]:
         """从文本中提取JSON对象
 
         Returns:
@@ -943,7 +943,7 @@ class RoleOutputParser:
         return patches, errors
 
     @classmethod
-    def validate_role_output(cls, role: str, text: str) -> tuple[bool, dict | None, list[str]]:
+    def validate_role_output(cls, role: str, text: str) -> tuple[bool, dict[str, Any] | None, list[str]]:
         """验证角色输出
 
         Returns:
@@ -1018,7 +1018,7 @@ class RoleOutputParser:
             return True, {"text": text}, []
 
     @classmethod
-    def _validate_schema(cls, data: dict, schema: dict) -> list[str]:
+    def _validate_schema(cls, data: dict[str, Any], schema: dict[str, Any]) -> list[str]:
         """简单schema验证"""
         errors = []
 
@@ -1054,7 +1054,7 @@ class RoleOutputQualityChecker:
     """角色输出质量检查器"""
 
     @classmethod
-    def check_output(cls, role: str, text: str, parsed_data: dict | None) -> tuple[float, list[str]]:
+    def check_output(cls, role: str, text: str, parsed_data: dict[str, Any] | None) -> tuple[float, list[str]]:
         """检查输出质量，返回得分和建议
 
         Returns:
@@ -1079,7 +1079,7 @@ class RoleOutputQualityChecker:
         return score, suggestions
 
     @classmethod
-    def _check_pm_output(cls, text: str, data: dict | None) -> tuple[float, list[str]]:
+    def _check_pm_output(cls, text: str, data: dict[str, Any] | None) -> tuple[float, list[str]]:
         score = 100.0
         suggestions = []
 
@@ -1119,7 +1119,7 @@ class RoleOutputQualityChecker:
         return max(0, score), suggestions
 
     @classmethod
-    def _check_architect_output(cls, text: str, data: dict | None) -> tuple[float, list[str]]:
+    def _check_architect_output(cls, text: str, data: dict[str, Any] | None) -> tuple[float, list[str]]:
         score = 100.0
         suggestions = []
 
@@ -1137,7 +1137,7 @@ class RoleOutputQualityChecker:
         return max(0, score), suggestions
 
     @classmethod
-    def _check_ce_output(cls, text: str, data: dict | None) -> tuple[float, list[str]]:
+    def _check_ce_output(cls, text: str, data: dict[str, Any] | None) -> tuple[float, list[str]]:
         score = 100.0
         suggestions = []
 
@@ -1162,7 +1162,7 @@ class RoleOutputQualityChecker:
         return max(0, score), suggestions
 
     @classmethod
-    def _check_director_output(cls, text: str, data: dict | None) -> tuple[float, list[str]]:
+    def _check_director_output(cls, text: str, data: dict[str, Any] | None) -> tuple[float, list[str]]:
         score = 100.0
         suggestions: list[str] = []
 
@@ -1192,7 +1192,7 @@ class RoleOutputQualityChecker:
         return max(0, score), suggestions
 
     @classmethod
-    def _check_qa_output(cls, text: str, data: dict | None) -> tuple[float, list[str]]:
+    def _check_qa_output(cls, text: str, data: dict[str, Any] | None) -> tuple[float, list[str]]:
         score = 100.0
         suggestions = []
 
@@ -1215,7 +1215,7 @@ class RoleOutputQualityChecker:
         return max(0, score), suggestions
 
     @classmethod
-    def _check_resident_agi_output(cls, text: str, data: dict | None) -> tuple[float, list[str]]:
+    def _check_resident_agi_output(cls, text: str, data: dict[str, Any] | None) -> tuple[float, list[str]]:
         del text
         score = 100.0
         suggestions: list[str] = []

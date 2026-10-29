@@ -11,6 +11,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from polaris.kernelone.process.command_executor import CommandExecutionService, CommandRequest
 
@@ -40,7 +41,7 @@ class FileChangeSnapshot:
     lines_changed: int = 0
     files: list[FileChange] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "created": self.created,
             "modified": self.modified,

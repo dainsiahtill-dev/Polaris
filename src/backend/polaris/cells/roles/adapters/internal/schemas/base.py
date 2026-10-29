@@ -3,7 +3,7 @@
 Provides shared models for tool-enabled structured outputs.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -12,7 +12,7 @@ class ToolCall(BaseModel):
     """Generic tool call specification for all roles."""
 
     tool: str = Field(..., description="Tool name (e.g., search_code, read_file, glob)")
-    arguments: dict = Field(default_factory=dict, description="Tool arguments")
+    arguments: dict[str, Any] = Field(default_factory=dict, description="Tool arguments")
     reasoning: str | None = Field(default=None, description="Why this tool is needed for the analysis")
 
 

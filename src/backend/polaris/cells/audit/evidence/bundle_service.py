@@ -122,7 +122,7 @@ class EvidenceBundleService:
         self,
         workspace: str,
         run_id: str,
-        task_results: list[dict],
+        task_results: list[dict[str, Any]],
         base_sha: str | None = None,
     ) -> EvidenceBundle:
         """Create an evidence bundle from director run results."""
@@ -211,7 +211,7 @@ class EvidenceBundleService:
         source_type: SourceType | None = None,
         source_run_id: str | None = None,
         limit: int = 100,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """List bundles metadata from index."""
         workspace_root = str(Path(workspace).resolve())
         fs = _workspace_fs(workspace_root)
@@ -309,7 +309,7 @@ class EvidenceBundleService:
             )
         return changes
 
-    def _collect_changes_from_tasks(self, workspace: str, task_results: list[dict]) -> list[FileChange]:
+    def _collect_changes_from_tasks(self, workspace: str, task_results: list[dict[str, Any]]) -> list[FileChange]:
         """Collect changes from task results."""
         changes = []
         seen_files = set()

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from typing import Any
 
 from polaris.cells.roles.kernel.internal.transaction.constants import (
     _EN_ANALYSIS_RE,
@@ -373,7 +374,7 @@ def _has_verification_signal(raw: str, lowered: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def detect_inline_patch_escape(content: str, *, threshold: float | None = None) -> dict:
+def detect_inline_patch_escape(content: str, *, threshold: float | None = None) -> dict[str, Any]:
     """检测 LLM 输出是否包含 Inline Patch Escape（贴代码逃逸）。
 
     算法：

@@ -66,7 +66,7 @@ def detect_patterns(
     return patterns
 
 
-def _detect_singleton(classes: list[dict], functions: list[dict]) -> list[dict[str, Any]]:
+def _detect_singleton(classes: list[dict[str, Any]], functions: list[dict[str, Any]]) -> list[dict[str, Any][str, Any]]:
     """Detect Singleton pattern.
 
     Heuristics:
@@ -129,7 +129,7 @@ def _detect_singleton(classes: list[dict], functions: list[dict]) -> list[dict[s
     return patterns
 
 
-def _detect_factory(classes: list[dict], functions: list[dict]) -> list[dict[str, Any]]:
+def _detect_factory(classes: list[dict[str, Any]], functions: list[dict[str, Any]]) -> list[dict[str, Any][str, Any]]:
     """Detect Factory pattern.
 
     Heuristics:
@@ -194,7 +194,7 @@ def _detect_factory(classes: list[dict], functions: list[dict]) -> list[dict[str
     return patterns
 
 
-def _detect_observer(classes: list[dict], functions: list[dict]) -> list[dict[str, Any]]:
+def _detect_observer(classes: list[dict[str, Any]], functions: list[dict[str, Any]]) -> list[dict[str, Any][str, Any]]:
     """Detect Observer pattern.
 
     Heuristics:
@@ -258,7 +258,7 @@ def _detect_observer(classes: list[dict], functions: list[dict]) -> list[dict[st
     return patterns
 
 
-def _detect_decorator(classes: list[dict], functions: list[dict]) -> list[dict[str, Any]]:
+def _detect_decorator(classes: list[dict[str, Any]], functions: list[dict[str, Any]]) -> list[dict[str, Any][str, Any]]:
     """Detect Decorator pattern.
 
     Heuristics:
@@ -330,7 +330,7 @@ def _detect_decorator(classes: list[dict], functions: list[dict]) -> list[dict[s
     return patterns
 
 
-def _detect_builder(classes: list[dict], functions: list[dict]) -> list[dict[str, Any]]:
+def _detect_builder(classes: list[dict[str, Any]], functions: list[dict[str, Any]]) -> list[dict[str, Any][str, Any]]:
     """Detect Builder pattern.
 
     Heuristics:

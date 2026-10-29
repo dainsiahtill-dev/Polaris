@@ -100,7 +100,7 @@ class QARealtimeProvider:
 
         return {}
 
-    def _convert_audits(self, audits: list[dict]) -> list[QATaskNode]:
+    def _convert_audits(self, audits: list[dict[str, Any]]) -> list[QATaskNode]:
         """将审计结果转换为 QA 任务节点"""
         result = []
 

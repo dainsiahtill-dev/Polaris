@@ -254,7 +254,7 @@ class MutationObligationState:
         self.blocked_reason = reason
         self.blocked_detail = detail
 
-    def to_audit_dict(self) -> dict:
+    def to_audit_dict(self) -> dict[str, Any]:
         """转换为审计日志格式。"""
         return {
             "target_files_known": self.target_files_known,

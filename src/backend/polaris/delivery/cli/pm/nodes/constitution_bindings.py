@@ -112,7 +112,7 @@ class ConstitutionalRoleNodeMixin:
         }
 
 
-def constitutional_execute(method: Callable) -> Callable:
+def constitutional_execute(method: Callable[..., Any]) -> Callable[..., Any]:
     """装饰器 - 为 execute 方法添加宪法检查。"""
 
     @functools.wraps(method)

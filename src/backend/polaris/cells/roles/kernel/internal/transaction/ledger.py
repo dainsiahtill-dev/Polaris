@@ -165,14 +165,14 @@ class TurnLedger:
     completed_at_ms: int = 0
 
     # LLM调用记录
-    llm_calls: list[dict] = field(default_factory=list)
+    llm_calls: list[dict[str, Any]] = field(default_factory=list)
 
     # 工具执行记录
-    tool_executions: list[dict] = field(default_factory=list)
+    tool_executions: list[dict[str, Any]] = field(default_factory=list)
     invocation_batches: list[ToolBatch] = field(default_factory=list)
 
     # 决策记录
-    decisions: list[dict] = field(default_factory=list)
+    decisions: list[dict[str, Any]] = field(default_factory=list)
     _final_decision: TurnDecision | None = field(default=None, repr=False)
     tool_batch_count: int = 0
 
@@ -190,10 +190,10 @@ class TurnLedger:
     canonical_tool_call_ids: set[str] = field(default_factory=set)
 
     # Mutation guard 软警告记录
-    mutation_guard_warnings: list[dict] = field(default_factory=list)
+    mutation_guard_warnings: list[dict[str, Any]] = field(default_factory=list)
 
     # 异常标记（finalization 等阶段的协议偏离记录）
-    anomaly_flags: list[dict] = field(default_factory=list)
+    anomaly_flags: list[dict[str, Any]] = field(default_factory=list)
 
     # Session-level state snapshots recorded at turn boundaries.
     # Each entry captures the session-persistent PhaseManager and

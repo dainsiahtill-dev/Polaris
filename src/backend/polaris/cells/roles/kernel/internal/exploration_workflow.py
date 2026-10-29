@@ -60,7 +60,7 @@ class ExplorationStep:
     step_id: int
     action: str  # "read_file", "analyze", "synthesize"
     target: str | None = None
-    arguments: dict = field(default_factory=dict)
+    arguments: dict[str, Any] = field(default_factory=dict)
     status: ExplorationStatus = ExplorationStatus.PLANNING
     result: Any = None
     error: str | None = None
@@ -83,7 +83,7 @@ class ExplorationResult:
     turn_id: TurnId
     status: ExplorationStatus
     steps_completed: int
-    tools_executed: list[dict]
+    tools_executed: list[dict[str, Any]]
     discoveries: list[str]  # 关键发现摘要
     synthesis: str | None  # 最终综合
     duration_ms: int = 0
@@ -111,8 +111,8 @@ class ExplorationWorkflowRuntime:
 
     def __init__(
         self,
-        tool_executor: Callable,  # async def executor(tool_name, arguments) -> dict
-        synthesis_llm: Callable | None = None,  # async def synthesize(context) -> str
+        tool_executor: Callable[..., Any],  # async def executor(tool_name, arguments) -> dict
+        synthesis_llm: Callable[..., Any] | None = None,  # async def synthesize(context) -> str
         max_steps: int = 10,
         timeout_ms: int = 60000,
         cancel_token: CancelToken | None = None,
@@ -171,7 +171,7 @@ class ExplorationWorkflowRuntime:
         plan = self._create_plan(decision)
 
         # 执行探索
-        tools_executed: list[dict] = []
+        tools_executed: list[dict[str, Any]] = []
 
         try:
             # 执行初始工具批次
@@ -286,7 +286,7 @@ class ExplorationWorkflowRuntime:
         start_ms = int(time.time() * 1000)
         self._apply_handoff_pack_from_metadata(decision)
         plan = self._create_plan(decision)
-        tools_executed: list[dict] = []
+        tools_executed: list[dict[str, Any]] = []
 
         try:
             # Check cancellation before starting stream
@@ -479,7 +479,7 @@ class ExplorationWorkflowRuntime:
 
         return ExplorationPlan(initial_tools=initial_tools, strategy=strategy, max_steps=self.max_steps)
 
-    def _initial_receipt_results(self, decision: TurnDecision) -> list[dict] | None:
+    def _initial_receipt_results(self, decision: TurnDecision) -> list[dict[str, Any]] | None:
         from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import _current_workflow_owner_receipts
 
         owned = _current_workflow_owner_receipts()
@@ -514,7 +514,7 @@ class ExplorationWorkflowRuntime:
         self._remember_read_results(results)
         return results
 
-    def _remember_read_results(self, results: list[dict]) -> None:
+    def _remember_read_results(self, results: list[dict[str, Any]]) -> None:
         for row in results:
             if row.get("tool_name") == "read_file" and row.get("status") == "success":
                 arguments = row.get("arguments") or {}
@@ -524,7 +524,7 @@ class ExplorationWorkflowRuntime:
                 if path and isinstance(content, str):
                     self._discovery_cache[str(path)] = content
 
-    async def _execute_tools(self, tools: list[ToolInvocation]) -> list[dict]:
+    async def _execute_tools(self, tools: list[ToolInvocation]) -> list[dict[str, Any]]:
         """Component execution uses canonical batch receipts, never raw success wrappers."""
         if not tools:
             return []
@@ -567,7 +567,7 @@ class ExplorationWorkflowRuntime:
                 arguments=row.get("arguments"),
             )
 
-    async def _continue_exploration(self, plan: ExplorationPlan, max_additional: int) -> list[dict]:
+    async def _continue_exploration(self, plan: ExplorationPlan, max_additional: int) -> list[dict[str, Any]]:
         """继续探索（自适应策略）"""
         additional_results: list[dict[str, Any]] = []
 
@@ -638,7 +638,7 @@ class ExplorationWorkflowRuntime:
                     ):
                         yield event
 
-    def _analyze_results(self, results: list[dict]) -> dict[str, Any]:
+    def _analyze_results(self, results: list[dict[str, Any]]) -> dict[str, Any][str, Any]:
         """分析工具执行结果，提取关键发现"""
         discoveries = {}
 
@@ -682,7 +682,7 @@ class ExplorationWorkflowRuntime:
 
         return imports[:5]  # 限制数量
 
-    def _generate_fallback_synthesis(self, tools_executed: list[dict]) -> str | None:
+    def _generate_fallback_synthesis(self, tools_executed: list[dict[str, Any]]) -> str | None:
         """当 synthesis_llm 不可用时，生成基于 discoveries 的兜底摘要。"""
         if not tools_executed:
             return None
@@ -716,7 +716,7 @@ class ExplorationWorkflowRuntime:
 
         return "\n".join(lines)
 
-    async def _synthesize(self, tools_executed: list[dict]) -> str | None:
+    async def _synthesize(self, tools_executed: list[dict[str, Any]]) -> str | None:
         """综合分析探索结果"""
         if not self.synthesis_llm:
             # 兜底：即使无 synthesis_llm，也返回基于 discoveries 的基本摘要

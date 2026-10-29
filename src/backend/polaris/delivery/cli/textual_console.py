@@ -418,7 +418,7 @@ class ConversationArea(ScrollableContainer):
         self.mount(widget)
         self.scroll_end()
 
-    def add_stream_chunk(self, chunk: str, counter_ref: list | None = None) -> None:
+    def add_stream_chunk(self, chunk: str, counter_ref: list[Any] | None = None) -> None:
         """添加流式输出块 - 修复计数器问题
 
         Args:
@@ -743,7 +743,7 @@ I'm your AI assistant. How can I help you today?
                 # 调用 RoleConsoleHost 流式接口
                 content_parts: list[str] = []
                 thinking_parts: list[str] = []
-                current_tool_call: dict | None = None
+                current_tool_call: dict[str, Any] | None = None
 
                 async for event in self._host.stream_turn(
                     session_id=self._session_id,
@@ -1185,7 +1185,7 @@ I'm your AI assistant. How can I help you today?
         if conversation:
             conversation.finalize_stream()
 
-    def add_tool_call(self, name: str, arguments: dict) -> str:
+    def add_tool_call(self, name: str, arguments: dict[str, Any]) -> str:
         """添加工具调用"""
         self._message_counter += 1
         self._tool_counter += 1
@@ -1224,7 +1224,7 @@ I'm your AI assistant. How can I help you today?
         label: str,
         payload: Any,
         source: str = "",
-        tags: dict | None = None,
+        tags: dict[str, Any] | None = None,
     ) -> str:
         """添加 Debug 消息"""
         if not self.debug_enabled:

@@ -769,7 +769,7 @@ class _ToolBatchExecutorCore:
             # TODO: narrow exception type — reset_hook is an external callback
             logger.warning("tool-runtime turn boundary reset failed: turn_id=%s", turn_id, exc_info=True)
 
-    def _check_idempotency(self, batch_idempotency_key: str) -> dict | None:
+    def _check_idempotency(self, batch_idempotency_key: str) -> dict[str, Any] | None:
         """Check if a tool batch has already been executed.
 
         Returns the cached receipt if found, None otherwise.
@@ -1240,10 +1240,10 @@ class _ToolBatchExecutorCore:
         decision: TurnDecision,
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
-        receipts: list[dict],
+        receipts: list[dict[str, Any]],
         *,
         stream: bool = False,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """构建 Mutation Bypass 结果 —— 跳过 LLM_ONCE finalization，返回 continue_multi_turn。
 
         当 MATERIALIZE_CHANGES 模式下尚无写工具调用时，LLM_ONCE 会关闭工具通道

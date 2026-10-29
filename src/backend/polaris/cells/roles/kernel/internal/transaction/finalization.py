@@ -34,7 +34,7 @@ from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, TurnE
 logger = logging.getLogger(__name__)
 
 
-def _canonical_batch_receipt(receipts: list[dict]) -> dict[str, Any]:
+def _canonical_batch_receipt(receipts: list[dict[str, Any]]) -> dict[str, Any][str, Any]:
     """Return the canonical batch receipt used by result and completion events."""
     return merge_batch_receipts(receipts) or {"results": []}
 
@@ -137,13 +137,13 @@ class FinalizationHandler:
     async def execute_llm_once(
         self,
         decision: TurnDecision,
-        receipts: list[dict],
+        receipts: list[dict[str, Any]],
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
-        context: list[dict],
+        context: list[dict[str, Any]],
         *,
         stream: bool = False,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """LLM_ONCE 收口：强制 tool_choice=none，调用 LLM 生成摘要。"""
         turn_id = decision.get("turn_id")
 
@@ -512,11 +512,11 @@ class FinalizationHandler:
     @staticmethod
     def complete_with_tool_results(
         decision: TurnDecision,
-        receipts: list[dict],
+        receipts: list[dict[str, Any]],
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
         emit_event: Callable[[TurnEvent], None],
-    ) -> dict:
+    ) -> dict[str, Any]:
         """NONE 模式：工具结果即最终答案。"""
         turn_id = decision.get("turn_id")
         state_machine.transition_to(TurnState.COMPLETED)
@@ -577,11 +577,11 @@ class FinalizationHandler:
     @staticmethod
     def finalize_local(
         decision: TurnDecision,
-        receipts: list[dict],
+        receipts: list[dict[str, Any]],
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
         emit_event: Callable[[TurnEvent], None],
-    ) -> dict:
+    ) -> dict[str, Any]:
         """LOCAL 模式：本地模板渲染。"""
         turn_id = decision.get("turn_id")
         state_machine.transition_to(TurnState.COMPLETED)
@@ -630,12 +630,12 @@ class FinalizationHandler:
 
     @staticmethod
     def _build_finalization_context(
-        original_context: list[dict],
-        receipts: list[dict],
+        original_context: list[dict[str, Any]],
+        receipts: list[dict[str, Any]],
         delivery_contract: Any | None = None,
         *,
         config: Any | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """构建收口上下文，保留调用方输出契约与有界工具反馈。
 
         保留原始角色 system 和当前请求；收口指令只约束阶段及 effect
@@ -659,7 +659,7 @@ class FinalizationHandler:
                 break
 
         # 保留原始上下文中的 system 消息（避免 HARD GATE 丢失）
-        preserved_messages: list[dict] = []
+        preserved_messages: list[dict[str, Any]] = []
         for msg in original_context:
             if not isinstance(msg, Mapping):
                 continue
@@ -734,7 +734,7 @@ class FinalizationHandler:
         return [finalization_message]
 
     @staticmethod
-    def _render_local_template(receipts: list[dict]) -> str:
+    def _render_local_template(receipts: list[dict[str, Any]]) -> str:
         """本地模板渲染。"""
         lines = ["## Execution Results", ""]
         for receipt in receipts:
@@ -757,7 +757,7 @@ class FinalizationHandler:
 # ---------------------------------------------------------------------------
 
 
-def _pre_finalization_self_check(ledger: TurnLedger, receipts: list[dict]) -> dict[str, bool]:
+def _pre_finalization_self_check(ledger: TurnLedger, receipts: list[dict[str, Any]]) -> dict[str, Any][str, bool]:
     """Agent 提交完成前必须自问三个问题（Superpowers 风格）。
 
     在 finalization 之前对 ledger 执行完整性/质量/纪律三维检查。

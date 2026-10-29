@@ -506,7 +506,7 @@ class ConversationState:
         )
 
         # 反序列化 transcript
-        transcript: list = []
+        transcript: list[Any] = []
         for item_data in data.get("transcript", []):
             if "tool_name" in item_data and "call_id" in item_data:
                 if "status" in item_data or "content" in item_data:

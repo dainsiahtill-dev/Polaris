@@ -270,9 +270,9 @@ class DirectorStateTracker:
     def _collect_taskboard_samples(
         self,
         task_runtime: Any,
-        entries: list,
-        counts: dict,
-        samples: dict,
+        entries: list[Any],
+        counts: dict[str, Any],
+        samples: dict[str, Any],
         sample_limit: int,
     ) -> None:
         """Collect task samples from entries."""
@@ -305,8 +305,8 @@ class DirectorStateTracker:
 
     @staticmethod
     def _derive_qa_state(
-        adapter_result: dict,
-        metadata: dict,
+        adapter_result: dict[str, Any],
+        metadata: dict[str, Any],
         status: str,
     ) -> str:
         """Derive QA state from adapter_result and metadata."""
@@ -329,8 +329,8 @@ class DirectorStateTracker:
 
     def _add_ready_samples(
         self,
-        ready_entries: list,
-        samples: dict,
+        ready_entries: list[Any],
+        samples: dict[str, Any],
         sample_limit: int,
     ) -> None:
         """Add ready task samples."""

@@ -153,7 +153,7 @@ def _contract_path_looks_like_file_target(path: str) -> bool:
     return "." in basename
 
 
-def extract_platform_tool_contract(context: list[dict]) -> dict[str, Any]:
+def extract_platform_tool_contract(context: list[dict[str, Any]]) -> dict[str, Any][str, Any]:
     """Extract the platform tool contract from context metadata."""
     contract: dict[str, Any] = {}
     for message in context:
@@ -172,7 +172,7 @@ def extract_platform_tool_contract(context: list[dict]) -> dict[str, Any]:
     return contract
 
 
-def extract_task_instruction(context: list[dict]) -> str:
+def extract_task_instruction(context: list[dict[str, Any]]) -> str:
     """Classify current task intent without interpreting appended platform policy.
 
     This is guidance, never capability authority. Only the latest user message
@@ -211,7 +211,7 @@ def extract_task_instruction(context: list[dict]) -> str:
     return latest_user
 
 
-def extract_platform_tool_contract_target_files(context: list[dict]) -> tuple[str, ...]:
+def extract_platform_tool_contract_target_files(context: list[dict[str, Any]]) -> tuple[str, ...]:
     """Return explicit file targets carried by platform tool-contract metadata."""
     contract = extract_platform_tool_contract(context)
     targets: list[str] = []
@@ -237,7 +237,7 @@ def extract_platform_tool_contract_target_files(context: list[dict]) -> tuple[st
     return tuple(dict.fromkeys(targets))
 
 
-def extract_platform_tool_contract_missing_target_files(context: list[dict]) -> tuple[str, ...]:
+def extract_platform_tool_contract_missing_target_files(context: list[dict[str, Any]]) -> tuple[str, ...]:
     """Return targets that authoritative platform evidence says are absent.
 
     ``missing_target_files`` is produced by the platform materialization
@@ -253,7 +253,7 @@ def extract_platform_tool_contract_missing_target_files(context: list[dict]) -> 
     )
 
 
-def extract_platform_tool_contract_scope_paths(context: list[dict]) -> tuple[str, ...]:
+def extract_platform_tool_contract_scope_paths(context: list[dict[str, Any]]) -> tuple[str, ...]:
     """Return directory scopes carried by platform tool-contract metadata."""
     contract = extract_platform_tool_contract(context)
     scopes: list[str] = []
@@ -266,7 +266,7 @@ def extract_platform_tool_contract_scope_paths(context: list[dict]) -> tuple[str
     return tuple(dict.fromkeys(scopes))
 
 
-def platform_tool_contract_is_single_batch(context: list[dict]) -> bool:
+def platform_tool_contract_is_single_batch(context: list[dict[str, Any]]) -> bool:
     """Return True when the context metadata pins single-batch execution."""
     contract = extract_platform_tool_contract(context)
     mode = str(contract.get("execution_mode") or "").strip().lower()
@@ -278,7 +278,7 @@ def platform_tool_contract_is_single_batch(context: list[dict]) -> bool:
     )
 
 
-def platform_tool_contract_bypasses_read_write_barrier(context: list[dict]) -> bool:
+def platform_tool_contract_bypasses_read_write_barrier(context: list[dict[str, Any]]) -> bool:
     """Return True when a contract explicitly allows mixed read/write batches."""
     contract = extract_platform_tool_contract(context)
     return bool(
@@ -288,13 +288,13 @@ def platform_tool_contract_bypasses_read_write_barrier(context: list[dict]) -> b
     )
 
 
-def platform_tool_contract_disables_phase_manager(context: list[dict]) -> bool:
+def platform_tool_contract_disables_phase_manager(context: list[dict[str, Any]]) -> bool:
     """Return True when an external contract owns phase progression for this batch."""
     contract = extract_platform_tool_contract(context)
     return bool(contract.get("disable_phase_manager") or contract.get("external_batch_rules"))
 
 
-def _context_has_actual_sibling_exports(context: list[dict]) -> bool:
+def _context_has_actual_sibling_exports(context: list[dict[str, Any]]) -> bool:
     for message in context:
         if not isinstance(message, Mapping):
             continue
@@ -402,7 +402,7 @@ def extract_continuation_prompt_metadata(content: str) -> dict[str, Any]:
     return metadata
 
 
-def extract_latest_user_message(context: list[dict]) -> str:
+def extract_latest_user_message(context: list[dict[str, Any]]) -> str:
     """从 conversation context 中提取最新的用户消息。"""
     for message in reversed(context):
         if not isinstance(message, Mapping):
@@ -428,7 +428,7 @@ def extract_tool_name_from_definition(item: Mapping[str, Any]) -> str:
     return str(item.get("name") or "").strip()
 
 
-def extract_allowed_tool_names_from_definitions(tool_definitions: list[dict]) -> set[str]:
+def extract_allowed_tool_names_from_definitions(tool_definitions: list[dict[str, Any]]) -> set[str]:
     """从 tool definitions 中提取所有允许的工具名。"""
     allowed: set[str] = set()
     for raw_item in tool_definitions:
@@ -440,7 +440,7 @@ def extract_allowed_tool_names_from_definitions(tool_definitions: list[dict]) ->
     return allowed
 
 
-def resolve_callable_tool_names(tool_definitions: list[dict], tool_choice_override: Any = None) -> list[str]:
+def resolve_callable_tool_names(tool_definitions: list[dict[str, Any]], tool_choice_override: Any = None) -> list[str]:
     """Bind guidance to this request's unchanged definitions and choice."""
     names = list(
         dict.fromkeys(extract_tool_name_from_definition(item) for item in tool_definitions if isinstance(item, Mapping))
@@ -465,7 +465,7 @@ def resolve_callable_tool_names(tool_definitions: list[dict], tool_choice_overri
     raise ValueError("tool_choice_unsupported")
 
 
-def readonly_planning_role(context: list[dict]) -> str:
+def readonly_planning_role(context: list[dict[str, Any]]) -> str:
     """Read the platform system identity, never downstream task or user quotes."""
     roles = {"pm", "architect", "chief_engineer"}
     for message in context:
@@ -485,7 +485,7 @@ def readonly_planning_role(context: list[dict]) -> str:
     return ""
 
 
-def validate_required_tool_surface(context: list[dict], callable_tools: list[str]) -> None:
+def validate_required_tool_surface(context: list[dict[str, Any]], callable_tools: list[str]) -> None:
     """Explicit requirements survive guidance pruning; absent capabilities block."""
     contract = extract_platform_tool_contract(context)
     required = _normalize_tool_list(contract.get("required_tools"))
@@ -519,8 +519,8 @@ def validate_required_tool_surface(context: list[dict], callable_tools: list[str
 
 
 def build_single_batch_task_contract_hint(
-    context: list[dict],
-    tool_definitions: list[dict],
+    context: list[dict[str, Any]],
+    tool_definitions: list[dict[str, Any]],
     *,
     tool_choice_override: Any = None,
     single_batch: bool | None = None,

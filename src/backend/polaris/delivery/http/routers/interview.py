@@ -159,7 +159,7 @@ async def run_interactive_interview_streaming(
     )
 
 
-def cancel_interactive_interview_stream(session_id: str) -> dict:
+def cancel_interactive_interview_stream(session_id: str) -> dict[str, Any]:
     """Return a best-effort cancellation acknowledgement for an interview stream."""
     return {"ok": True, "cancelled": True}
 

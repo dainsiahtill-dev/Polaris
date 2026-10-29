@@ -398,9 +398,9 @@ class DirectorPatchExecutor:
         rel_path: str,
         workspace_path: Path,
         domain_tokens: list[str],
-        low_quality_patterns: tuple,
-        patch_residue_patterns: tuple,
-        generic_scaffold_markers: tuple,
+        low_quality_patterns: tuple[Any, ...],
+        patch_residue_patterns: tuple[Any, ...],
+        generic_scaffold_markers: tuple[Any, ...],
     ) -> tuple[str | None, bool, bool] | str:
         """检查单个文件的质量问题
 

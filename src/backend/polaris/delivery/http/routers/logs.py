@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 from fastapi import APIRouter, Body, Depends, Query
 from polaris.delivery.http.routers._shared import StructuredHTTPException, require_auth
@@ -28,7 +28,7 @@ class UserActionRequest(BaseModel):
 
     action: str
     user: str = "anonymous"
-    metadata: dict = {}
+    metadata: dict[str, Any] = {}
 
 
 @router.get("/v2/query", response_model=LogsQueryResponse)
@@ -42,7 +42,7 @@ async def v2_query_logs(
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
     high_signal_only: bool = Query(False, description="Filter out noise"),
     workspace: str | None = Query(None, description="Workspace path"),
-) -> dict:
+) -> dict[str, Any]:
     """Query canonical log events with filtering and pagination.
 
     Returns:
@@ -81,9 +81,9 @@ async def v2_query_logs(
 async def v2_log_user_action(
     action: str = Body(..., description="User action name"),
     user: str = Body("anonymous", description="User identifier"),
-    metadata: dict = Body({}, description="Additional metadata"),
+    metadata: dict[str, Any] = Body({}, description="Additional metadata"),
     workspace: str | None = Query(None, description="Workspace path"),
-) -> dict:
+) -> dict[str, Any]:
     """Log a user action to the system channel for audit."""
     workspace_path = workspace or resolve_env_str("workspace") or "."
 
@@ -121,7 +121,7 @@ async def v2_log_user_action(
 @router.get("/v2/channels", response_model=LogsChannelsResponse)
 async def v2_get_channels(
     workspace: str | None = Query(None, description="Workspace path"),
-) -> dict:
+) -> dict[str, Any]:
     """Get available log channels.
 
     Returns:

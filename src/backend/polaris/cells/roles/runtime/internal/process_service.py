@@ -151,7 +151,7 @@ _INVARIANT_IO_FSYNC_MODES = {"strict", "relaxed"}
 _INVARIANT_MEMORY_REFS_MODES = {"strict", "soft", "off"}
 
 
-def _normalize_invariant_mode(value: str | None, allowed: set, default: str) -> str:
+def _normalize_invariant_mode(value: str | None, allowed: set[Any], default: str) -> str:
     raw = str(value or "").strip().lower()
     if raw in allowed:
         return raw

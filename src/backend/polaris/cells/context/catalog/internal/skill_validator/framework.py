@@ -98,7 +98,7 @@ class InvariantRule(Protocol):
     rule_id: str
     severity: str  # "blocking" | "warning"
 
-    def validate(self, content: str, context: dict[str, Any]) -> tuple[bool, float, dict]:
+    def validate(self, content: str, context: dict[str, Any][str, Any]) -> tuple[bool, float, dict[str, Any]]:
         """Returns (passed, score, evidence)"""
         ...
 
@@ -116,7 +116,7 @@ class SQLWhereClauseInvariant:
         re.DOTALL | re.IGNORECASE,
     )
 
-    def validate(self, content: str, context: dict[str, Any]) -> tuple[bool, float, dict]:
+    def validate(self, content: str, context: dict[str, Any][str, Any]) -> tuple[bool, float, dict[str, Any]]:
         """Validate SQL blocks for WHERE/LIMIT clauses"""
         violations = []
         valid_count = 0
@@ -174,7 +174,7 @@ class PythonTestPrefixInvariant:
     rule_id = "python_tests_must_have_test_prefix"
     severity = "warning"
 
-    def validate(self, content: str, context: dict[str, Any]) -> tuple[bool, float, dict]:
+    def validate(self, content: str, context: dict[str, Any][str, Any]) -> tuple[bool, float, dict[str, Any]]:
         """Validate Python test function naming"""
         # Extract Python code blocks
         python_blocks = re.findall(r"```(?:python|py)\s*\n(.*?)\n```", content, re.DOTALL | re.IGNORECASE)

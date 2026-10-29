@@ -28,7 +28,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Request, Response
 from polaris.delivery.http.endpoint_policy import is_observability_exempt
@@ -55,7 +55,7 @@ class RequestMetrics:
     request_count: int = 0
     error_count: int = 0
     total_latency_ms: float = 0.0
-    latency_buckets: list = field(
+    latency_buckets: list[Any] = field(
         default_factory=lambda: [
             HistogramBucket(10),
             HistogramBucket(25),

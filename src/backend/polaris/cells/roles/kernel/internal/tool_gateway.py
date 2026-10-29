@@ -308,7 +308,7 @@ class RoleToolGateway:
         "forbidden",
     )
 
-    def check_tool_permission(self, tool_name: str, tool_args: dict | None = None) -> tuple[bool, str]:
+    def check_tool_permission(self, tool_name: str, tool_args: dict[str, Any] | None = None) -> tuple[bool, str]:
         """Compatibility entry that captures and normalizes exactly one owner view."""
         from polaris.cells.roles.kernel.public.turn_contracts import classify_tool_invocation
 

@@ -682,12 +682,12 @@ class _DecisionMessageBuilder(Protocol):
 
     def __call__(
         self,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
         ledger: TurnLedger | None = None,
         *,
         tool_choice_override: Any | None = None,
-    ) -> list[dict]: ...
+    ) -> list[dict[str, Any]]: ...
 
 
 class StreamOrchestrator:
@@ -696,11 +696,12 @@ class StreamOrchestrator:
     def __init__(
         self,
         *,
-        llm_provider: Callable,
-        llm_provider_stream: Callable | None,
+        llm_provider: Callable[..., Any],
+        llm_provider_stream: Callable[..., Any] | None,
         decoder: Any,
         emit_event: Callable[[TurnEvent], None],
-        build_decision_messages: _DecisionMessageBuilder | Callable[[list[dict], list[dict]], list[dict]],
+        build_decision_messages: _DecisionMessageBuilder
+        | Callable[[list[dict[str, Any]], list[dict[str, Any]]], list[dict[str, Any]]],
         build_stream_shadow_engine: Callable[..., StreamShadowEngine | None],
         call_llm_for_decision: Callable[..., Any],
         handoff_handler: HandoffHandler,
@@ -709,7 +710,7 @@ class StreamOrchestrator:
         handle_final_answer: Callable[..., Any],
         requires_mutation_intent_hybrid: Callable[..., Any],
         extract_monitoring_metrics: Callable[..., dict[str, float]],
-        resolve_shadow_workspace: Callable[[list[dict]], str] | None = None,
+        resolve_shadow_workspace: Callable[[list[dict[str, Any]]], str] | None = None,
         config: Any | None = None,
     ) -> None:
         self.llm_provider = llm_provider
@@ -732,7 +733,7 @@ class StreamOrchestrator:
         self._consecutive_exploring_count: int = 0
         self._escape_hatch_triggered: bool = False
 
-    def _resolve_shadow_workspace(self, context: list[dict]) -> str:
+    def _resolve_shadow_workspace(self, context: list[dict[str, Any]]) -> str:
         if self.resolve_shadow_workspace is None:
             return "."
         workspace = str(self.resolve_shadow_workspace(context) or "").strip()
@@ -744,8 +745,8 @@ class StreamOrchestrator:
 
     async def _call_llm_for_decision_stream_impl(
         self,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
         ledger: TurnLedger,
         shadow_engine: StreamShadowEngine | None = None,
         *,
@@ -974,8 +975,8 @@ class StreamOrchestrator:
     async def execute_turn_stream(
         self,
         turn_id: str,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
         *,
@@ -1341,9 +1342,9 @@ class StreamOrchestrator:
         ledger.state_history.append(("DECISION_DECODED", int(time.time() * 1000)))
 
         decision_kind = decision.get("kind")
-        result: dict
+        result: dict[str, Any]
         batch_receipt: dict[str, Any] = {}
-        forced_retry_result: dict | None = None
+        forced_retry_result: dict[str, Any] | None = None
         latest_user_request = extract_task_instruction(context)
         guard_mode = str(getattr(self.config, "mutation_guard_mode", "warn"))
         # 当 delivery contract 明确要求 MATERIALIZE_CHANGES 时，无视 guard_mode 强制 strict

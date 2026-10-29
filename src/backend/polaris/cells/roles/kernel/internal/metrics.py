@@ -33,18 +33,18 @@ class Counter:
         self._name = name
         self._description = description
         self._labelnames = labelnames or ()
-        self._values: dict[tuple, float] = {}
+        self._values: dict[tuple[Any, ...], float] = {}
         self._lock = threading.RLock()
 
     def labels(self, **label_values: str) -> _LabeledCounter:
         return _LabeledCounter(self, tuple(sorted(label_values.items())))
 
-    def inc(self, value: float = 1, label_key: tuple | None = None) -> None:
+    def inc(self, value: float = 1, label_key: tuple[Any, ...] | None = None) -> None:
         with self._lock:
             key = label_key or ()
             self._values[key] = self._values.get(key, 0) + value
 
-    def get(self, label_key: tuple | None = None) -> float:
+    def get(self, label_key: tuple[Any, ...] | None = None) -> float:
         with self._lock:
             return self._values.get(label_key or (), 0)
 
@@ -64,7 +64,7 @@ class _LabeledCounter:
 
     __slots__ = ("_label_key", "_parent")
 
-    def __init__(self, parent: Counter, label_key: tuple) -> None:
+    def __init__(self, parent: Counter, label_key: tuple[Any, ...]) -> None:
         self._parent = parent
         self._label_key = label_key
 

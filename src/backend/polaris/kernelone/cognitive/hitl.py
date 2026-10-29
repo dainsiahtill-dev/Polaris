@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class InterventionDecision(Enum):
@@ -25,7 +25,7 @@ class ExecutionPlan:
     action: str
     intent: str
     risk_level: float
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class NotificationChannel(Protocol):

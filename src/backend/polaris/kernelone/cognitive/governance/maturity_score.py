@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from polaris.kernelone.cognitive.governance.evolution_metrics import EvolutionMetrics
 from polaris.kernelone.cognitive.governance.truthfulness import TruthfulnessMetrics
@@ -115,7 +116,7 @@ class CognitiveMaturityScore:
         """Whether the score has been calibrated through actual measurement."""
         return self.overall_score > 0
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "truthfulness_score": self.truthfulness_score,
@@ -171,7 +172,7 @@ class CognitiveMaturityScore:
             evolution_score=0.0,
         )
 
-    def with_trend(self, previous_score: CognitiveMaturityScore) -> dict:
+    def with_trend(self, previous_score: CognitiveMaturityScore) -> dict[str, Any]:
         """Calculate trend compared to previous score.
 
         Args:

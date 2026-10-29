@@ -90,7 +90,7 @@ def _normalize_deterministic_bootstrap_target(value: Any) -> str:
     return path
 
 
-def _extract_declared_step_card(original_context: list[dict]) -> dict[str, Any] | None:
+def _extract_declared_step_card(original_context: list[dict[str, Any]]) -> dict[str, Any][str, Any] | None:
     """Return the executing construction-step card carried in the turn context.
 
     A CE-fissioned leaf step is dispatched with its blueprint card injected as
@@ -118,14 +118,14 @@ def _extract_declared_step_card(original_context: list[dict]) -> dict[str, Any] 
     return None
 
 
-def _context_has_declared_bootstrap_target_line(original_context: list[dict]) -> bool:
+def _context_has_declared_bootstrap_target_line(original_context: list[dict[str, Any]]) -> bool:
     latest_user = extract_latest_user_message(original_context)
     return any(_DECLARED_BOOTSTRAP_TARGET_LINE_RE.match(line) for line in latest_user.splitlines())
 
 
 def _extract_deterministic_bootstrap_write_targets(
     *,
-    original_context: list[dict],
+    original_context: list[dict[str, Any]],
     bootstrap_receipt: Mapping[str, Any],
 ) -> list[str]:
     candidates: list[str] = []
@@ -276,7 +276,7 @@ def _read_leaf_write_file_max_chars() -> int:
 
 def _should_force_leaf_bootstrap_followup_write_file(
     *,
-    original_context: list[dict],
+    original_context: list[dict[str, Any]],
     bootstrap_receipt: Mapping[str, Any],
     allowed_tool_names: set[str],
 ) -> bool:
@@ -579,7 +579,9 @@ def _is_calculator_source_bootstrap_target(target: str, latest_user: str) -> boo
     return _has_calculator_bootstrap_hints(latest_user)
 
 
-def _context_text_for_bootstrap(original_context: list[dict], declared_step: Mapping[str, Any] | None = None) -> str:
+def _context_text_for_bootstrap(
+    original_context: list[dict[str, Any]], declared_step: Mapping[str, Any] | None = None
+) -> str:
     parts: list[str] = []
     for message in original_context:
         if not isinstance(message, Mapping):
@@ -974,7 +976,7 @@ def merge_bootstrap_receipt_into_result(result: Any, bootstrap_receipt: Mapping[
 def build_deterministic_bootstrap_followup_write_decision(
     *,
     turn_id: str,
-    original_context: list[dict],
+    original_context: list[dict[str, Any]],
     bootstrap_receipt: Mapping[str, Any],
     allowed_tool_names: set[str],
     workspace: str = ".",

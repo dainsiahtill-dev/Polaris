@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Operation inference
@@ -38,7 +39,7 @@ _FILE_DELETE_SIGNALS = frozenset(
 )
 
 
-def _infer_operation(file_path: str, args: dict) -> str:
+def _infer_operation(file_path: str, args: dict[str, Any]) -> str:
     """Infer file operation (create / modify / delete) from args.
 
     Args:
@@ -75,7 +76,7 @@ def _infer_operation(file_path: str, args: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _sorted_args_hash(args: dict) -> str:
+def _sorted_args_hash(args: dict[str, Any]) -> str:
     """Return sha256 of sorted JSON-serialised args (stable across calls)."""
     # Normalise: sort keys recursively
     normalised = json.dumps(args, sort_keys=True, separators=(",", ":"))
@@ -121,7 +122,7 @@ class ToolFingerprint:
     def from_tool_call(
         cls,
         tool_name: str,
-        args: dict,
+        args: dict[str, Any],
         file_path: str = "",
     ) -> ToolFingerprint:
         """Build a fingerprint from a raw tool call.
@@ -146,7 +147,7 @@ class ToolFingerprint:
             full_hash=full_hash,
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialise to a plain dict (for JSON / audit events)."""
         return {
             "tool_name": self.tool_name,
@@ -160,7 +161,7 @@ class ToolFingerprint:
 _FILE_PATH_KEYS = ("file", "path", "file_path", "target_path", "src_path")
 
 
-def _resolve_file_path_from_data(data: dict) -> str:
+def _resolve_file_path_from_data(data: dict[str, Any]) -> str:
     """Extract the first matching file path from data or nested args.
 
     Checks both flat (data["file"]) and nested (data["args"]["file"]) forms.
@@ -198,7 +199,7 @@ def _resolve_file_path_from_data(data: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def compute_tool_fingerprint(event: dict) -> ToolFingerprint | None:
+def compute_tool_fingerprint(event: dict[str, Any]) -> ToolFingerprint | None:
     """Extract tool-call info from a stream_turn event and return its fingerprint.
 
     Returns None when the event is not a tool_call or tool_result,
@@ -231,7 +232,7 @@ def compute_tool_fingerprint(event: dict) -> ToolFingerprint | None:
             break
 
     # Resolve args — tool_result may nest args under "result" / "raw_result"
-    raw_args: dict = {}
+    raw_args: dict[str, Any] = {}
     if "args" in data:
         raw_args = data["args"] if isinstance(data["args"], dict) else {}
     else:

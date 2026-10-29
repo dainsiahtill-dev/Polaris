@@ -230,7 +230,7 @@ class SkillLoader:
             self._kernel_fs = _kernel_fs_for(str(self.workspace))
         return self._kernel_fs
 
-    def _parse_frontmatter(self, text: str) -> tuple:
+    def _parse_frontmatter(self, text: str) -> tuple[Any, ...]:
         """Parse YAML frontmatter between --- delimiters.
 
         Returns: (metadata_dict, body_text)

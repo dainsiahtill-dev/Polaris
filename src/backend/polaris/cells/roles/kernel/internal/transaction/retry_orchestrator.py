@@ -201,7 +201,7 @@ __all__ = [
 
 def _should_use_original_read_bootstrap_for_retry(
     *,
-    context: list[dict],
+    context: list[dict[str, Any]],
     turn_id: str,
     config: Any,
     original_bootstrap_invocations: list[Any],
@@ -261,7 +261,7 @@ class RetryOrchestrator:
         execute_tool_batch: Callable[..., Any],
         guard_assert_single_tool_batch: Callable[..., None],
         emit_event: Callable[[Any], None] | None = None,
-        resolve_tool_surface: Callable[[list[dict], Any], tuple[list[dict], Any]] | None = None,
+        resolve_tool_surface: Callable[[list[dict[str, Any]], Any], tuple[list[dict[str, Any]], Any]] | None = None,
     ) -> None:
         self.tool_runtime = tool_runtime
         self.config = config
@@ -275,9 +275,9 @@ class RetryOrchestrator:
 
     def _resolve_retry_tool_surface(
         self,
-        tool_definitions: list[dict],
+        tool_definitions: list[dict[str, Any]],
         tool_choice: Any = None,
-    ) -> tuple[list[dict], Any, set[str]]:
+    ) -> tuple[list[dict[str, Any]], Any, set[str]]:
         """Bind retry execution to its effective offered definitions and choice."""
         if self.resolve_tool_surface is not None:
             tool_definitions, tool_choice = self.resolve_tool_surface(tool_definitions, tool_choice)
@@ -409,12 +409,22 @@ class RetryOrchestrator:
         self,
         *,
         turn_id: str,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
         requires_verification: bool,
         requires_mutation: bool,
         forbidden_tool_names: set[str] | None = None,
-    ) -> tuple[list[dict], list[dict], set[str], set[str], str | None, dict[str, Any] | None, list[dict], bool, bool]:
+    ) -> tuple[
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        set[str],
+        set[str],
+        str | None,
+        dict[str, Any][str, Any] | None,
+        list[dict[str, Any]],
+        bool,
+        bool,
+    ]:
         """构建重试上下文和工具定义。
 
         ``forbidden_tool_names`` is threaded through all narrowing helpers so
@@ -489,8 +499,8 @@ class RetryOrchestrator:
         self,
         *,
         turn_id: str,
-        attempt_context: list[dict],
-        attempt_tool_definitions: list[dict],
+        attempt_context: list[dict[str, Any]],
+        attempt_tool_definitions: list[dict[str, Any]],
         ledger: TurnLedger,
         attempt_tool_choice_override: dict[str, Any] | None,
         attempt_model_override: str | None,
@@ -590,12 +600,12 @@ class RetryOrchestrator:
         self,
         *,
         turn_id: str,
-        original_context: list[dict],
+        original_context: list[dict[str, Any]],
         bootstrap_receipt: Mapping[str, Any],
         allowed_tool_names: set[str],
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
-        write_context: list[dict],
+        write_context: list[dict[str, Any]],
         stream: bool,
         shadow_engine: Any | None,
         workspace: str = ".",
@@ -644,8 +654,8 @@ class RetryOrchestrator:
         self,
         *,
         turn_id: str,
-        context: list[dict],
-        tool_definitions: list[dict],
+        context: list[dict[str, Any]],
+        tool_definitions: list[dict[str, Any]],
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
         stream: bool,
@@ -653,7 +663,7 @@ class RetryOrchestrator:
         original_decision: Any | None = None,
         original_allowed_tool_names: frozenset[str] | None = None,
         initial_failure_reason: str = "",
-    ) -> dict:
+    ) -> dict[str, Any]:
         # Capture the original invocation before building any new retry scope.
         # Normal dispatch passes its pre-I/O snapshot; direct internal callers
         # use the same existing request-owner resolver, never a schema union.

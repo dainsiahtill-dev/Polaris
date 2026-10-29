@@ -230,7 +230,7 @@ class ToolGatewayPort(Protocol):
         >>> kernel = RoleExecutionKernel(tool_gateway=MockToolGateway())
     """
 
-    def execute(self, tool_name: str, args: dict) -> dict[str, Any]:
+    def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any][str, Any]:
         """Execute a tool by name with given arguments.
 
         Args:
@@ -245,7 +245,7 @@ class ToolGatewayPort(Protocol):
     def requires_approval(
         self,
         tool_name: str,
-        args: dict | None = None,
+        args: dict[str, Any] | None = None,
         state: Any | None = None,
     ) -> bool:
         """Check if a tool call requires user approval.

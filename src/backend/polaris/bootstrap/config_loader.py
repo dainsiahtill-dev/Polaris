@@ -90,7 +90,7 @@ class ConfigLoader:
     # Environment variable mappings
     # Maps config key to (primary_env_var, fallback_env_var, value_transform)
     # Priority: KERNELONE_* > default
-    ENV_MAPPINGS: dict[str, tuple] = {
+    ENV_MAPPINGS: dict[str, tuple[Any, ...]] = {
         "server.host": ("KERNELONE_HOST", None, None),
         "server.port": ("KERNELONE_BACKEND_PORT", None, int),
         "logging.level": ("KERNELONE_LOG_LEVEL", None, None),

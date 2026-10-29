@@ -125,7 +125,7 @@ class WorkerConfig:
     work_dir: Path
     max_idle_time: int = 60
     poll_interval: int = 5
-    env: dict = field(default_factory=dict)
+    env: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -135,9 +135,9 @@ class WorkerTask:
     task_id: int
     command: str
     work_dir: Path
-    env: dict = field(default_factory=dict)
+    env: dict[str, Any] = field(default_factory=dict)
     timeout: int = 300
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     execution_attempt: TaskRuntimeExecutionAttemptIdentityV1 | None = None
 
 
@@ -151,7 +151,7 @@ class WorkerResult:
     output: str = ""
     error: str = ""
     duration: float = 0
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def _merge_task_runtime_finalization_result(
@@ -399,7 +399,7 @@ class Worker:
         self,
         config: WorkerConfig,
         task_runtime: TaskRuntimeLike | None = None,
-        message_callback: Callable | None = None,
+        message_callback: Callable[..., Any] | None = None,
     ) -> None:
         self.config = config
         self.task_runtime = task_runtime
@@ -637,7 +637,7 @@ class AsyncWorkerConfig:
     work_dir: Path
     max_idle_time: int = 60
     poll_interval: float = 5.0
-    env: dict = field(default_factory=dict)
+    env: dict[str, Any] = field(default_factory=dict)
 
 
 class AsyncWorker:
@@ -1060,7 +1060,7 @@ class WorkerPool:
                 return available[0].submit_task(task)
             return False
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         """Get Worker pool status"""
         with self._lock:
             return {
@@ -1091,7 +1091,7 @@ class WorkerPool:
             },
         )
 
-    def _emit_event(self, event: str, data: dict) -> None:
+    def _emit_event(self, event: str, data: dict[str, Any]) -> None:
         """Record event (UTF-8 safe)"""
         append_jsonl_atomic(
             str(self._event_log_path),
@@ -1212,7 +1212,7 @@ class AsyncWorkerPool:
                 return await available[0].submit_task(task)
             return False
 
-    async def get_status(self) -> dict:
+    async def get_status(self) -> dict[str, Any]:
         """Get AsyncWorker pool status"""
         async with self._lock:
             return {
@@ -1256,7 +1256,7 @@ class AsyncWorkerPool:
             },
         )
 
-    def _emit_event(self, event: str, data: dict) -> None:
+    def _emit_event(self, event: str, data: dict[str, Any]) -> None:
         """Record event (UTF-8 safe)"""
         append_jsonl_atomic(
             str(self._event_log_path),

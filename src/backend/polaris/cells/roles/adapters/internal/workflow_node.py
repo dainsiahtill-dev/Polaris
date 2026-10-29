@@ -80,7 +80,7 @@ class WorkflowRoleNode(ABC):
         task_id: str | None = None,
         context: dict[str, Any] | None = None,
         prompt_appendix: str | None = None,
-        history: list[tuple] | None = None,
+        history: list[tuple[Any, ...]] | None = None,
         validate_output: bool = True,
         handle_tools: bool = True,
         max_tool_rounds: int = 5,
@@ -118,7 +118,7 @@ class WorkflowRoleNode(ABC):
             return profile_to_dict(profile)
         return None
 
-    def validate_tool_permission(self, tool_name: str, tool_args: dict | None = None) -> tuple[bool, str]:
+    def validate_tool_permission(self, tool_name: str, tool_args: dict[str, Any] | None = None) -> tuple[bool, str]:
         """验证工具权限"""
         from polaris.cells.roles.kernel.public.service import RoleToolGateway
 

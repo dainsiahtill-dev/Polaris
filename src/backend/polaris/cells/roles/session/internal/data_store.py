@@ -335,7 +335,7 @@ class RoleDataStore:
 
         return event_file
 
-    def save_output(self, name: str, content: str | bytes, metadata: dict | None = None) -> Path:
+    def save_output(self, name: str, content: str | bytes, metadata: dict[str, Any] | None = None) -> Path:
         """保存输出产物
 
         Args:

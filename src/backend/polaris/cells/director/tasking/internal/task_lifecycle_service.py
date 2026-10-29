@@ -357,7 +357,7 @@ class TaskService:
         priority: TaskPriority = TaskPriority.MEDIUM,
         blocked_by: list[int | str] | None = None,
         timeout_seconds: int | None = None,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Task:
         """Create a new task.
 
@@ -613,7 +613,7 @@ class TaskService:
             if not task:
                 return None
 
-            def get_task_info(tid: str) -> dict:
+            def get_task_info(tid: str) -> dict[str, Any]:
                 t = self._tasks.get(tid)
                 if not t:
                     return {"id": tid, "status": "UNKNOWN"}

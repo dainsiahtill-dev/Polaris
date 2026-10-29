@@ -543,7 +543,7 @@ def set_tracer(tracer: UnifiedTracer) -> None:
 def traced(
     name: str | None = None,
     tags: dict[str, Any] | None = None,
-) -> Callable:
+) -> Callable[..., Any]:
     """装饰器：自动追踪函数执行
 
     Args:
@@ -556,7 +556,7 @@ def traced(
             return await do_process(data)
     """
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         tracer = get_tracer()
         span_name = name or func.__qualname__
 

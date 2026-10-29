@@ -193,7 +193,7 @@ def _project_directed_effect_dropped_member_receipt(
     }
 
 
-def _terminal_feedback_class(receipts: list[dict]) -> str | None:
+def _terminal_feedback_class(receipts: list[dict[str, Any]]) -> str | None:
     terminal = {
         "POLICY_FAILURE",
         "SECURITY_POLICY_VIOLATION",
@@ -210,7 +210,7 @@ def _terminal_feedback_class(receipts: list[dict]) -> str | None:
                 continue
             stack = [row]
             for _ in range(4):
-                nested: list[dict] = []
+                nested: list[dict[str, Any]] = []
                 for value in stack:
                     for key in ("failure_class", "error_type", "error_code"):
                         token = str(value.get(key, "")).upper()
@@ -229,14 +229,14 @@ class _ToolBatchExecuteMixin:
         decision: TurnDecision,
         state_machine: TurnStateMachine,
         ledger: TurnLedger,
-        context: list[dict],
+        context: list[dict[str, Any]],
         *,
         stream: bool = False,
         shadow_engine: Any | None = None,
         allowed_tool_names: set[str] | None = None,
         enforce_mutation_write_guard: bool = True,
         count_towards_batch_limit: bool = True,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """执行工具批次。"""
 
         # Bind the caller's complete declaration before path rewriting, the
@@ -941,7 +941,7 @@ class _ToolBatchExecuteMixin:
         self.emit_event(TurnPhaseEvent.create(turn_id, "tool_batch_started", {"tool_count": len(invocations)}))
 
         # Speculative Execution Kernel v2 integration
-        receipts_as_dicts: list[dict] = []
+        receipts_as_dicts: list[dict[str, Any]] = []
         if phase_blocked_invocations:
             blocked_results: list[dict[str, Any]] = []
             for invocation in phase_blocked_invocations:

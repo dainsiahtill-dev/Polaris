@@ -405,7 +405,7 @@ class DirectorService(DirectorCodeIntelMixin):
     async def get_task(self, task_id: str) -> Task | None:
         return await self._task_service.get_task(task_id)
 
-    async def list_tasks(self, status: TaskStatus | None = None) -> list[dict]:
+    async def list_tasks(self, status: TaskStatus | None = None) -> list[dict[str, Any]]:
         tasks = await self._task_service.get_tasks(status=status)
         return [t.to_dict() for t in tasks]
 

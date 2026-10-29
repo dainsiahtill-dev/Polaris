@@ -73,9 +73,9 @@ _LINE_RANGE_EDIT_BLOCKS_PARAMETERS: dict[str, Any] = {
 _VERIFICATION_TOOLS_DURING_FORCED_WRITE = frozenset({"execute_command"})
 
 
-def remove_verification_tools_for_forced_write(tool_definitions: list[dict]) -> list[dict]:
+def remove_verification_tools_for_forced_write(tool_definitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop verification-only tools once API-level tool_choice forces a write tool."""
-    narrowed: list[dict] = []
+    narrowed: list[dict[str, Any]] = []
     for definition in tool_definitions:
         if not isinstance(definition, dict):
             narrowed.append(definition)
@@ -92,7 +92,7 @@ def remove_verification_tools_for_forced_write(tool_definitions: list[dict]) -> 
     return narrowed
 
 
-def narrow_edit_blocks_schema_to_line_range(tool_definitions: list[dict]) -> list[dict]:
+def narrow_edit_blocks_schema_to_line_range(tool_definitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Rewrite the ``edit_blocks`` schema to the line-range-only form (ADR-0090).
 
     Under named tool forcing, guided decoding constrains ARGUMENTS to the
@@ -102,7 +102,7 @@ def narrow_edit_blocks_schema_to_line_range(tool_definitions: list[dict]) -> lis
     output a concrete line-range replacement — the easy form the model already
     used for ``repo_read_slice``.
     """
-    narrowed: list[dict] = []
+    narrowed: list[dict[str, Any]] = []
     for definition in tool_definitions:
         if not isinstance(definition, dict):
             narrowed.append(definition)
@@ -278,11 +278,11 @@ def resolve_retry_escalation(
     *,
     attempt_index: int,
     max_retry_attempts: int,
-    strict_tool_definitions: list[dict] | None,
+    strict_tool_definitions: list[dict[str, Any]] | None,
     forced_write_tool_name: str | None,
     force_write_immediately: bool = False,
     force_required_tool_choice: bool = False,
-) -> tuple[list[dict] | None, Any | None]:
+) -> tuple[list[dict[str, Any]] | None, Any | None]:
     """ADR-0090: API-level escalation ladder for mutation-contract retries.
 
     Prompt-level MANDATORY hints are exactly what weak models ignore (observed

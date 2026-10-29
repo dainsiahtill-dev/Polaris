@@ -83,7 +83,7 @@ class QualityChecker:
         self,
         content: str,
         profile: RoleProfile,
-        pre_validated_data: dict | None = None,
+        pre_validated_data: dict[str, Any] | None = None,
         instructor_validated: bool = False,
     ) -> QualityResult:
         """验证角色输出
@@ -498,7 +498,7 @@ class QualityChecker:
         candidates: list[dict[str, Any]],
         *,
         role: str | None,
-    ) -> tuple[dict | None, list[str]]:
+    ) -> tuple[dict[str, Any] | None, list[str]]:
         if not candidates:
             return None, []
 
@@ -523,7 +523,7 @@ class QualityChecker:
 
         return candidates[0], []
 
-    def _extract_json(self, text: str, *, role: str | None = None) -> tuple[dict | None, list[str]]:
+    def _extract_json(self, text: str, *, role: str | None = None) -> tuple[dict[str, Any] | None, list[str]]:
         """提取JSON内容"""
         import json
 
@@ -593,7 +593,7 @@ class QualityChecker:
             errors.append("JSON解析错误: no JSON object found")
         return None, errors
 
-    def _validate_director_output(self, content: str) -> tuple[dict | None, list[str]]:
+    def _validate_director_output(self, content: str) -> tuple[dict[str, Any] | None, list[str]]:
         """验证Director输出"""
         errors = []
 
@@ -774,7 +774,7 @@ class QualityChecker:
             return ()
         return tuple(ToolSpecRegistry.get_all_canonical_names())
 
-    def _validate_architect_output(self, content: str) -> tuple[dict | None, list[str]]:
+    def _validate_architect_output(self, content: str) -> tuple[dict[str, Any] | None, list[str]]:
         """验证Architect输出"""
         errors = []
 

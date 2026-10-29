@@ -999,7 +999,7 @@ class DirectorAdapter(BaseRoleAdapter):
     # Task Retrieval
     # -------------------------------------------------------------------------
 
-    def _get_task(self, task_id: str) -> dict | None:
+    def _get_task(self, task_id: str) -> dict[str, Any] | None:
         """获取任务信息"""
         return self.task_runtime.get_task(task_id)
 

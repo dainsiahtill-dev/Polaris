@@ -483,14 +483,14 @@ class Toolbox:
 
     def __init__(self, agent_name: str) -> None:
         self.agent_name = agent_name
-        self._tools: dict[str, Callable] = {}
+        self._tools: dict[str, Callable[..., Any]] = {}
         self._tool_metadata: dict[str, dict[str, Any]] = {}
         self._tool_specs: dict[str, ToolSpec] = {}
 
     def register(
         self,
         name: str,
-        func: Callable,
+        func: Callable[..., Any],
         description: str = "",
         parameters: dict[str, Any] | None = None,
         *,
@@ -532,7 +532,7 @@ class Toolbox:
 
     def _build_spec_from_registration(
         self,
-        func: Callable,
+        func: Callable[..., Any],
         parameters: dict[str, Any],
     ) -> ToolSpec:
         schema: dict[str, dict[str, Any]] = {}
@@ -762,7 +762,7 @@ class RoleAgent(ABC):
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
 
-        self._callbacks: dict[str, list[Callable]] = {
+        self._callbacks: dict[str, list[Callable[..., Any]]] = {
             "on_status_change": [],
             "on_message": [],
             "on_error": [],
@@ -905,7 +905,7 @@ class RoleAgent(ABC):
             metadata=metadata or {},
         )
 
-    def register_callback(self, event: str, callback: Callable) -> None:
+    def register_callback(self, event: str, callback: Callable[..., Any]) -> None:
         """Register a callback for events."""
         if event in self._callbacks:
             self._callbacks[event].append(callback)

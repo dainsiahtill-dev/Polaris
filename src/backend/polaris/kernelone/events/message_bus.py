@@ -466,7 +466,7 @@ class MessageBus:
         message_type: MessageType,
         sender: str,
         recipient: str,
-        payload: dict | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> None:
         """Send a direct message to a specific actor.
 
@@ -488,7 +488,7 @@ class MessageBus:
         self,
         message_type: MessageType,
         sender: str,
-        payload: dict | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> None:
         """Broadcast a message to all subscribers.
 
@@ -638,7 +638,7 @@ class Actor:
         self,
         recipient: str,
         message_type: MessageType,
-        payload: dict | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> None:
         """Send a message to another actor.
 
@@ -652,7 +652,7 @@ class Actor:
     async def broadcast(
         self,
         message_type: MessageType,
-        payload: dict | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> None:
         """Broadcast a message.
 

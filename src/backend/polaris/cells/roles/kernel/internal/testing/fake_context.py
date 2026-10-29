@@ -78,7 +78,7 @@ class FakeContextResult:
     compression_applied: bool = False
     compression_strategy: str = "none"
 
-    def to_tuple(self) -> tuple:
+    def to_tuple(self) -> tuple[Any, ...]:
         """Convert to tuple format for compatibility."""
         return (
             self.messages,
