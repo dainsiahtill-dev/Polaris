@@ -1,18 +1,49 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ResidentStatusDetailsPayload } from "@/app/types/appContracts";
+import type {
+  ResidentAgiTacticalActionCatalogPayload,
+  ResidentStatusDetailsPayload,
+} from "@/app/types/appContracts";
+
+type ResidentServiceContract = typeof import("@/services/api").residentService;
 
 const residentServiceMock = vi.hoisted(() => ({
+  approveGoal: vi.fn(),
+  chat: vi.fn(),
+  createGoal: vi.fn(),
   decide: vi.fn(),
+  executeAgiAction: vi.fn(),
+  extractSkills: vi.fn(),
+  getAgiActionCatalog: vi.fn(),
   getAgiAuditPack: vi.fn(),
   getAgiEvidenceInterfaces: vi.fn(),
   getAgiHandoffs: vi.fn(),
   getAgiRepairAdvisoryOverlay: vi.fn(),
+  getCapabilities: vi.fn(),
+  getGoalExecution: vi.fn(),
   getStatus: vi.fn(),
+  listDecisions: vi.fn(),
+  listExperiments: vi.fn(),
+  listGoalExecutions: vi.fn(),
+  listGoals: vi.fn(),
+  listImprovements: vi.fn(),
+  listSkills: vi.fn(),
+  materializeGoal: vi.fn(),
+  recordDecision: vi.fn(),
+  rejectGoal: vi.fn(),
+  runExperiments: vi.fn(),
+  runGoal: vi.fn(),
+  runImprovements: vi.fn(),
+  stageGoal: vi.fn(),
+  start: vi.fn(),
+  stop: vi.fn(),
+  tick: vi.fn(),
   updateAgiParticipation: vi.fn(),
   updateIdentity: vi.fn(),
-}));
+  // Contract guard: the mock must expose every real residentService method so
+  // service/hook drift fails here at typecheck time instead of "not a function".
+})) satisfies Record<keyof ResidentServiceContract, unknown>;
 
 vi.mock("sonner", () => ({
   toast: {
@@ -270,12 +301,39 @@ const LIVE_REPAIR_ADVISORY_OVERLAY = {
   },
 };
 
+const LIVE_ACTION_CATALOG: ResidentAgiTacticalActionCatalogPayload = {
+  schema_version: "resident.agi_tactical_action_catalog.v1",
+  source: "resident.agi.tactical_actions",
+  items: [
+    {
+      action_id: "inspect_run_evidence",
+      label: "Inspect run evidence",
+      mode: "read_only",
+      status: "available",
+      capability_id: "contextos.final_request_audit.read",
+      risk_level: "low",
+      execution_boundary: "read_only",
+      requires_participation: false,
+      authoritative: false,
+      agi_direct_execution_allowed: false,
+    },
+  ],
+  summary: {
+    total: 1,
+    available: 1,
+  },
+};
+
 describe("useResident", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     residentServiceMock.getAgiRepairAdvisoryOverlay.mockResolvedValue({
       ok: true,
       data: LIVE_REPAIR_ADVISORY_OVERLAY,
+    });
+    residentServiceMock.getAgiActionCatalog.mockResolvedValue({
+      ok: true,
+      data: LIVE_ACTION_CATALOG,
     });
   });
 
@@ -363,6 +421,7 @@ describe("useResident", () => {
     expect(
       residentServiceMock.getAgiRepairAdvisoryOverlay,
     ).not.toHaveBeenCalled();
+    expect(residentServiceMock.getAgiActionCatalog).not.toHaveBeenCalled();
   });
 
   it("runs a Resident AGI decision turn through the service and refreshes", async () => {
@@ -476,6 +535,10 @@ describe("useResident", () => {
     expect(
       residentServiceMock.getAgiRepairAdvisoryOverlay,
     ).toHaveBeenCalledWith("/tmp/polaris-demo", { limit: 50 });
+    expect(residentServiceMock.getAgiActionCatalog).toHaveBeenCalledWith();
+    expect(result.current.residentAgiActionCatalog?.schema_version).toBe(
+      "resident.agi_tactical_action_catalog.v1",
+    );
   });
 
   it("refreshes AGI evidence interfaces for the selected decision type", async () => {
