@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src",
+    "e2e/**/*.test.ts",
+    "vite.config.ts",
+    "tailwind.config.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": []
+}

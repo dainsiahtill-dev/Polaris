@@ -36,14 +36,14 @@ describe('useTestStore LLM runtime payloads', () => {
         set: vi.fn(async () => ({ ok: true })),
         remove: vi.fn(async () => ({ ok: true })),
       },
-    };
+    } as NonNullable<Window['polaris']>;
   });
 
   it('resolves keychain environment overrides before running CLI provider tests', async () => {
-    let requestBody: Record<string, unknown> | null = null;
+    const captured: { body?: Record<string, unknown> } = {};
     apiFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === '/v2/llm/test' && init?.method === 'POST') {
-        requestBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        captured.body = JSON.parse(String(init.body)) as Record<string, unknown>;
         return new Response(JSON.stringify({ ok: true, final: { ready: true } }), { status: 200 });
       }
       throw new Error(`unexpected request: ${url}`);
@@ -73,7 +73,7 @@ describe('useTestStore LLM runtime payloads', () => {
 
     expect(report).toEqual({ ok: true, final: { ready: true } });
     expect(window.polaris?.secrets?.get).toHaveBeenCalledWith('llm:minimax');
-    expect(requestBody?.env_overrides).toEqual({
+    expect(captured.body?.env_overrides).toEqual({
       CODEX_API_KEY: 'resolved-minimax-key',
       STATIC_FLAG: 'enabled',
     });

@@ -31,6 +31,8 @@ describe('runtimeParsing director state normalization', () => {
   it('treats Run Ledger platform failures as error and suppresses stale running', () => {
     const status = {
       running: true,
+      pid: null,
+      started_at: null,
       execution_state: 'FAILED_PLATFORM',
       state: 'FAILED_PLATFORM',
       status: {
@@ -48,6 +50,8 @@ describe('runtimeParsing director state normalization', () => {
   it('treats failed artifact task-boundary states as error', () => {
     const status = {
       running: false,
+      pid: null,
+      started_at: null,
       execution_state: 'FAILED_ARTIFACT',
     };
 

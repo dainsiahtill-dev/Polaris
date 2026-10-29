@@ -20,6 +20,7 @@
     "test:backend:shard": "python infrastructure/scripts/run-backend-pytest-shard.py",
     "lint": "eslint \"src/frontend/src/**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit -p src/frontend/tsconfig.json",
+    "typecheck:test": "tsc --noEmit -p src/frontend/tsconfig.test.json",
     "build": "npm run build:renderer",
     "build:renderer": "vite build --config src/frontend/vite.config.ts",
     "start": "node infrastructure/scripts/run-electron.js",

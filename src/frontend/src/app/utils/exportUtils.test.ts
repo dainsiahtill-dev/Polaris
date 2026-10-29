@@ -2,7 +2,7 @@
  * Tests for Export Utilities
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   downloadFile,
   logsToJSON,

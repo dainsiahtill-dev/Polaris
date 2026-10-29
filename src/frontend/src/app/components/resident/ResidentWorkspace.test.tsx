@@ -8,6 +8,10 @@ import {
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import { ResidentWorkspace } from "./ResidentWorkspace";
+import type {
+  ResidentAgiTacticalActionResponse,
+  ResidentAgiTacticalChatResponse,
+} from "@/app/types/appContracts";
 
 const mockResidentState = {
   workspace: "X:/Git/polaris",
@@ -1482,7 +1486,8 @@ const mockResidentState = {
   stageGoal: vi.fn(async () => null),
   runGoal: vi.fn(async () => null),
   recordDecision: vi.fn(async () => ({ decision_id: "decision-console" })),
-  executeAgiAction: vi.fn(async () => ({
+  executeAgiAction: vi.fn<() => Promise<ResidentAgiTacticalActionResponse>>(
+    async () => ({
     schema_version: "resident.agi_tactical_action_result.v1",
     action_id: "request_director_controlled_repair",
     status: "executed",
@@ -1545,7 +1550,7 @@ const mockResidentState = {
     },
   })),
   runAgiDecision: vi.fn(async () => null),
-  chatAgi: vi.fn(async () => ({
+  chatAgi: vi.fn<() => Promise<ResidentAgiTacticalChatResponse>>(async () => ({
     schema_version: "resident.agi_tactical_chat.v1",
     intent: "status_summary",
     status: "ready",

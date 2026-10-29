@@ -9,7 +9,9 @@ const runtimeSocketManagerMock = vi.hoisted(() => ({
   reconnect: vi.fn(),
   subscribeChannels: vi.fn(),
   unsubscribeChannels: vi.fn(),
-  registerMessageListener: vi.fn(() => vi.fn()),
+  registerMessageListener: vi.fn<
+    (listener: import("@/runtime/transport").MessageListener) => () => void
+  >(() => () => {}),
 }));
 
 vi.mock('@/api', () => ({
@@ -42,7 +44,7 @@ function jsonResponse(payload: unknown, ok = true): Response {
 function emitTestChunk(channel: string, type: string, data: Record<string, unknown>) {
   const listener = runtimeSocketManagerMock.registerMessageListener.mock.calls.at(-1)?.[0];
   expect(listener?.handler).toBeTypeOf('function');
-  listener.handler({
+  listener!.handler({
     channel,
     payload: { type, data, seq: 0 },
   });

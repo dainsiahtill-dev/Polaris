@@ -1742,6 +1742,9 @@ describe('pmService', () => {
         timeout_seconds: 300,
         metadata: {
           pm_task_id: 'pm-task-1',
+          pm_task_title: 'New Task',
+          pm_task_status: 'pending',
+          acceptance: [],
         },
       };
 

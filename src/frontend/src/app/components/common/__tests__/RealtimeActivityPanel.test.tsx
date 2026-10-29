@@ -22,14 +22,15 @@ describe('RealtimeActivityPanel', () => {
   });
 
   it('uses EXEC as the source label when execution logs do not provide one', () => {
-    const logs: LogEntry[] = [
+    // Intentionally malformed runtime payload: source is not provided.
+    const logs = [
       {
         id: 'exec-1',
         timestamp: '2026-05-23T00:00:00Z',
         level: 'thinking',
         message: 'Execution event',
       },
-    ];
+    ] as unknown as LogEntry[];
 
     render(<RealtimeActivityPanel executionLogs={logs} role="director" />);
 

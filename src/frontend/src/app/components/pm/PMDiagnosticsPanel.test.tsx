@@ -120,6 +120,9 @@ describe('PMDiagnosticsPanel', () => {
     });
   });
 
+  // Extended budget: the panel is the heaviest render in this suite and the
+  // bounded awaits (waitFor/findByText) alone approach the default 5s wall
+  // when the parallel vitest workers saturate the CPU.
   it('loads PM startup diagnostics through the backend contract', async () => {
     render(<PMDiagnosticsPanel isOpen onClose={vi.fn()} workspace="C:/Temp/Product" />);
 
@@ -138,7 +141,7 @@ describe('PMDiagnosticsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /规划输入/ }));
     expect(screen.getByTestId('pm-planning-input-diagnostics')).toHaveTextContent('PM 已找到可规划输入');
     expect(screen.getByTestId('pm-planning-input-diagnostics')).toHaveTextContent('workspace requirements');
-  });
+  }, 15_000);
 
   it('treats a missing docs directory as a PM startup blocker', async () => {
     serviceMocks.getPmStartupDiagnostics.mockResolvedValueOnce({

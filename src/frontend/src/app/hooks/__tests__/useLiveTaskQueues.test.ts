@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import type { PmTask } from '@/types/task';
+import { TaskStatus, type PmTask } from '@/types/task';
 import { isDirectorAssignedTask, splitTaskQueues, useLiveTaskQueues } from '../useLiveTaskQueues';
 
-function createTask(overrides: Partial<PmTask> = {}): PmTask {
+function createTask(
+  overrides: Omit<Partial<PmTask>, 'status'> & {
+    status?: PmTask['status'] | 'todo' | 'done';
+  } = {},
+): PmTask {
   return {
-    id: overrides.id ?? 'task-1',
-    title: overrides.title ?? 'Task',
-    status: overrides.status ?? 'pending',
-    done: overrides.done ?? false,
-    priority: overrides.priority ?? 1,
-    acceptance: overrides.acceptance ?? [],
+    id: 'task-1',
+    title: 'Task',
+    done: false,
+    priority: 1,
+    acceptance: [],
     ...overrides,
+    // The shared TaskRuntime feed carries runtime states ('todo'/'done') that
+    // useLiveTaskQueues normalizes to TaskStatus on projection.
+    status: (overrides.status ?? TaskStatus.PENDING) as PmTask['status'],
   };
 }
 
@@ -82,7 +88,7 @@ describe('splitTaskQueues', () => {
 
     const result = splitTaskQueues(snapshotTasks, {
       tasks: [
-        createTask({ id: 'dir-1', title: 'Live director task', assigned_to: 'director', status: 'in_progress' }),
+        createTask({ id: 'dir-1', title: 'Live director task', assigned_to: 'director', status: TaskStatus.IN_PROGRESS }),
       ],
       isConnected: true,
       runId: 'director:workspace',
@@ -116,8 +122,8 @@ describe('splitTaskQueues', () => {
 
 describe('Director projection from the shared TaskRuntime feed', () => {
   it('keeps CE work out of the Director queue and updates when only CE work remains', () => {
-    const ce = createTask({ id: 'ce', title: 'Chief Engineer portfolio review', assignee: 'chief_engineer', status: 'in_progress', metadata: { role: 'chief_engineer' } });
-    const director = createTask({ id: 'director', title: 'Implement blueprint', assignee: 'director', status: 'in_progress' });
+    const ce = createTask({ id: 'ce', title: 'Chief Engineer portfolio review', assignee: 'chief_engineer', status: TaskStatus.IN_PROGRESS, metadata: { role: 'chief_engineer' } });
+    const director = createTask({ id: 'director', title: 'Implement blueprint', assignee: 'director', status: TaskStatus.IN_PROGRESS });
     const snapshotTasks = [ce, director];
     const { result, rerender } = renderHook(({ tasks }) => useLiveTaskQueues({
       snapshotTasks,

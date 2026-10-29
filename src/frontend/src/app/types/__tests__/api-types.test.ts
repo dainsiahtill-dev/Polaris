@@ -126,7 +126,7 @@ namespace CancelPayloadTests {
   // sessionId <-> session_id
   export type SessionIdAssignable = AssertAssignable<CancelInterviewPayload['sessionId'], BackendCancelPayload['session_id']>;
   
-  export const _sessionIdAssignable: SessionIdTests.SessionIdAssignable = true;
+  export const _sessionIdAssignable: SessionIdAssignable = true;
 }
 
 // ============================================================================
@@ -215,7 +215,7 @@ describe('Runtime Type Guards', () => {
     });
     
     it('should return false when a required field is missing', () => {
-      const payload = {
+      const payload: Record<string, unknown> = {
         roleId: 'pm',
         providerId: 'test-provider',
         // model is missing

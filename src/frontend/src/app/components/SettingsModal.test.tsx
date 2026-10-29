@@ -9,12 +9,14 @@ vi.mock('@/api', () => ({
 }));
 
 // Mock window.polaris.secrets
+const polarisSecretsMock = {
+  get: vi.fn(),
+  set: vi.fn(),
+};
+
 Object.defineProperty(window, 'polaris', {
   value: {
-    secrets: {
-      get: vi.fn(),
-      set: vi.fn(),
-    },
+    secrets: polarisSecretsMock,
   },
   writable: true,
 });
@@ -48,7 +50,7 @@ vi.mock('./ui/tabs', () => ({
   ),
 }));
 
-const defaultSettings = {
+const defaultSettings: React.ComponentProps<typeof SettingsModal>['settings'] = {
   prompt_profile: 'zhenguan_governance',
   interval: 20,
   timeout: 0,
@@ -97,8 +99,8 @@ describe('SettingsModal', () => {
     mockApiFetch.mockReset();
     // Default successful responses
     mockApiFetch.mockImplementation(() => new Promise(() => { }));
-    (window.polaris.secrets.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, value: 'test-key' });
-    (window.polaris.secrets.set as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true });
+    polarisSecretsMock.get.mockResolvedValue({ ok: true, value: 'test-key' });
+    polarisSecretsMock.set.mockResolvedValue({ ok: true });
   });
 
   afterEach(() => {

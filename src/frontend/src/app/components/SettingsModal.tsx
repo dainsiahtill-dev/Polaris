@@ -87,7 +87,7 @@ interface SettingsModalProps {
   initialTab?: 'general' | 'llm' | 'arsenal' | 'services';
   onClose: () => void;
   onLlmStatusChange?: (status: LLMStatus | null) => void;
-  settings: {
+  settings?: {
     prompt_profile?: string;
     interval?: number;
     timeout?: number;

@@ -222,8 +222,12 @@ describe("LLM visual config editor — multi-binding concurrency", () => {
       (edge) => edge.data?.kind === "model-to-role",
     );
     const assignedModels = nodes
-      .filter((node) => node.type === "model" && node.data.kind === "model")
-      .filter((node) => node.data.assignedRoles?.includes("director"))
+      .filter(
+        (node) =>
+          node.type === "model" &&
+          node.data.kind === "model" &&
+          node.data.assignedRoles?.includes("director"),
+      )
       .map((node) => node.data.model)
       .sort();
 

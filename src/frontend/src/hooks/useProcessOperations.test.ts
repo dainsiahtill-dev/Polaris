@@ -1,6 +1,7 @@
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useProcessOperations } from './useProcessOperations';
+import { TaskStatus } from '@/types/task';
 
 // Mock toast
 vi.mock('sonner', () => ({
@@ -122,8 +123,10 @@ describe('useProcessOperations', () => {
         {
           id: 'task-workspace',
           title: 'Workspace Task',
-          status: 'pending',
+          status: TaskStatus.PENDING,
+          done: false,
           priority: 1,
+          acceptance: [],
           acceptance_criteria: ['task passes'],
         },
       ];
@@ -390,8 +393,10 @@ describe('useProcessOperations', () => {
         {
           id: 'task-1',
           title: 'Task 1',
-          status: 'pending',
+          status: TaskStatus.PENDING,
+          done: false,
           priority: 1,
+          acceptance: [],
           target_files: ['src/task.ts'],
           acceptance_criteria: ['task passes'],
         },
@@ -447,7 +452,10 @@ describe('useProcessOperations', () => {
         {
           id: 'task-1',
           title: 'Task 1',
-          status: 'pending',
+          status: TaskStatus.PENDING,
+          done: false,
+          priority: 1,
+          acceptance: [],
         },
       ];
       const { result } = renderHook(() => useProcessOperations());
@@ -464,8 +472,10 @@ describe('useProcessOperations', () => {
         {
           id: 'task-1',
           title: 'Task 1',
-          status: 'completed',
+          status: TaskStatus.COMPLETED,
           done: true,
+          priority: 1,
+          acceptance: [],
         },
       ];
       const { result } = renderHook(() => useProcessOperations());

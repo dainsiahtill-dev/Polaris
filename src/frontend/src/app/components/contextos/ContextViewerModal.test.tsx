@@ -364,7 +364,9 @@ describe('ContextViewerModal', () => {
     });
     mockFetchOk(payload);
     const writeText = vi.fn().mockResolvedValue(undefined);
-    const originalClipboard = (navigator as { clipboard?: { writeText: typeof writeText } }).clipboard;
+    const originalClipboard = (
+      navigator as unknown as { clipboard?: { writeText: typeof writeText } }
+    ).clipboard;
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
 
     render(<ContextViewerModal contextSnapshotRef="abc123abc123abc123abc123" roleId="pm" onClose={vi.fn()} />);
@@ -712,11 +714,11 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
 
   it('re-fetches with a new AbortController when contextSnapshotRef changes; old fetch is cancelled', async () => {
     // 第一个 fetch 永远 pending（模拟慢请求）
-    let firstResolve: ((value: Response) => void) | null = null;
+    const pendingFirst: { resolve?: (value: Response) => void } = {};
     mockedApiFetch.mockImplementationOnce(
       () =>
         new Promise<Response>((resolve) => {
-          firstResolve = resolve;
+          pendingFirst.resolve = resolve;
         }),
     );
     // 第二次 fetch 即时返回成功
@@ -736,8 +738,8 @@ describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
     await waitFor(() => {
       expect(screen.getByText('second')).toBeTruthy();
     });
-    if (firstResolve) {
-      firstResolve(
+    if (pendingFirst.resolve) {
+      pendingFirst.resolve(
         new Response(JSON.stringify({ messages: [{ role: 'user', content: 'first-wins' }] }), {
           status: 200,
           headers: { 'content-type': 'application/json' },

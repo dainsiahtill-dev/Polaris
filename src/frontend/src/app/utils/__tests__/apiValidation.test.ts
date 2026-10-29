@@ -4,11 +4,12 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import {
-  validateApiPayload, 
-  assertApiPayload, 
+  validateApiPayload,
+  assertApiPayload,
   validatePayloadDetailed,
-  createValidatedFetch 
+  createValidatedFetch
 } from '../apiValidation';
+import type { InterviewApiEndpoints } from '@/app/types/llm';
 
 describe('API Validation', () => {
   describe('validateApiPayload', () => {
@@ -75,8 +76,12 @@ describe('API Validation', () => {
         model: null,
         report: { id: 'test' },
       };
-      
-      const result = validateApiPayload('/v2/llm/interview/save', payload);
+
+      const result = validateApiPayload(
+        '/v2/llm/interview/save',
+        // Intentionally malformed runtime payload: model is null.
+        payload as unknown as InterviewApiEndpoints['/v2/llm/interview/save'],
+      );
       
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.includes('model'))).toBe(true);
@@ -137,7 +142,7 @@ describe('API Validation', () => {
       
       try {
         assertApiPayload('/v2/llm/interview/ask', payload as any);
-        fail('Should have thrown');
+        expect.fail('Should have thrown');
       } catch (e: any) {
         expect(e.message).toContain('model');
         expect(e.message).toContain('question');

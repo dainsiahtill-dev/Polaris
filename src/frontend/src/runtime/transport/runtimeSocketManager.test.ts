@@ -233,10 +233,10 @@ describe("runtimeSocketManager connection coalescing", () => {
   });
 
   it("does not create a second WebSocket while the first connection is still pending", async () => {
-    let resolveSocket: ((value: WebSocket) => void) | null = null;
+    const pendingSocket: { resolve?: (value: WebSocket) => void } = {};
     mockConnectWebSocket.mockReturnValue(
       new Promise<WebSocket>((resolve) => {
-        resolveSocket = resolve;
+        pendingSocket.resolve = resolve;
       }),
     );
 
@@ -245,7 +245,7 @@ describe("runtimeSocketManager connection coalescing", () => {
 
     expect(mockConnectWebSocket).toHaveBeenCalledTimes(1);
 
-    resolveSocket?.(socket as unknown as WebSocket);
+    pendingSocket.resolve?.(socket as unknown as WebSocket);
     await flushMicrotasks();
 
     socket.readyState = WebSocket.OPEN;

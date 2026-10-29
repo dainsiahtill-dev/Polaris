@@ -88,6 +88,7 @@ const READY_LLM_WITH_WINDOWS: LlmRuntimeGateState = {
       maxOutputTokens: 8_192,
       bindings: [
         {
+          bindingId: null,
           providerId: 'qwen-a',
           providerName: 'Qwen A',
           providerType: 'openai_compat',
@@ -97,6 +98,7 @@ const READY_LLM_WITH_WINDOWS: LlmRuntimeGateState = {
           maxOutputTokens: 8_192,
         },
         {
+          bindingId: null,
           providerId: 'qwen-b',
           providerName: 'Qwen B',
           providerType: 'openai_compat',

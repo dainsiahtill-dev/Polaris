@@ -4,6 +4,7 @@ import { ProjectProgressPanel, extractLatestQaEvidence, extractRunLedgerQaEviden
 import type { DialogueEvent } from './DialoguePanel';
 import type { LogEntry } from './pm';
 import type { ControlPlaneProjection } from '@/services/controlPlane';
+import { TaskStatus, type PmTask } from '@/types/task';
 
 const qaLog: LogEntry = {
   id: 'qa-1',
@@ -178,10 +179,10 @@ describe('ProjectProgressPanel QA evidence', () => {
   });
 
   it('does not show terminal progress success while Run Ledger projection is pending', () => {
-    const tasks = [
-      { id: '1', subject: '实现 CLI 科学计算器核心模块', status: 'completed' },
-      { id: '2', subject: '编写 README', status: 'completed' },
-      { id: '3', subject: '实现验证与 QA 闭环', status: 'completed' },
+    const tasks: PmTask[] = [
+      { id: '1', title: '实现 CLI 科学计算器核心模块', subject: '实现 CLI 科学计算器核心模块', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
+      { id: '2', title: '编写 README', subject: '编写 README', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
+      { id: '3', title: '实现验证与 QA 闭环', subject: '实现验证与 QA 闭环', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
     ];
 
     render(
@@ -205,10 +206,10 @@ describe('ProjectProgressPanel QA evidence', () => {
   });
 
   it('prevents runtime role completion from bypassing a pending Run Ledger projection', () => {
-    const tasks = [
-      { id: '1', subject: '实现 CLI 科学计算器核心模块', status: 'completed' },
-      { id: '2', subject: '编写 README', status: 'completed' },
-      { id: '3', subject: '实现验证与 QA 闭环', status: 'completed' },
+    const tasks: PmTask[] = [
+      { id: '1', title: '实现 CLI 科学计算器核心模块', subject: '实现 CLI 科学计算器核心模块', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
+      { id: '2', title: '编写 README', subject: '编写 README', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
+      { id: '3', title: '实现验证与 QA 闭环', subject: '实现验证与 QA 闭环', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
     ];
 
     render(
@@ -240,10 +241,10 @@ describe('ProjectProgressPanel QA evidence', () => {
   });
 
   it('allows runtime role completion after Run Ledger projection passes', () => {
-    const tasks = [
-      { id: '1', subject: '实现 CLI 科学计算器核心模块', status: 'completed' },
-      { id: '2', subject: '编写 README', status: 'completed' },
-      { id: '3', subject: '实现验证与 QA 闭环', status: 'completed' },
+    const tasks: PmTask[] = [
+      { id: '1', title: '实现 CLI 科学计算器核心模块', subject: '实现 CLI 科学计算器核心模块', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
+      { id: '2', title: '编写 README', subject: '编写 README', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
+      { id: '3', title: '实现验证与 QA 闭环', subject: '实现验证与 QA 闭环', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
     ];
 
     render(
@@ -306,7 +307,8 @@ describe('ProjectProgressPanel QA evidence', () => {
             subject: '实现账户服务 API',
             goal: '交付可运行的账户服务',
             priority: 1,
-            status: 'in_progress',
+            status: TaskStatus.IN_PROGRESS,
+            done: false,
             acceptance: [{ description: '账户服务测试通过' }],
           },
         ]}
@@ -340,7 +342,9 @@ describe('ProjectProgressPanel QA evidence', () => {
             subject: '实现创建语义化 HTML5 简历结构',
             goal: '构建个人简历的语义化 HTML5 骨架',
             priority: 1,
-            status: 'in_progress',
+            status: TaskStatus.IN_PROGRESS,
+            done: false,
+            acceptance: [],
           },
           {
             id: 2 as unknown as string,
@@ -348,7 +352,9 @@ describe('ProjectProgressPanel QA evidence', () => {
             subject: '实现响应式 CSS3 样式表',
             goal: '通过 CSS Grid 和 Flexbox 适配桌面与移动端',
             priority: 1,
-            status: 'pending',
+            status: TaskStatus.PENDING,
+            done: false,
+            acceptance: [],
           },
           {
             id: 3 as unknown as string,
@@ -356,7 +362,9 @@ describe('ProjectProgressPanel QA evidence', () => {
             subject: '交付验证与 README 编写',
             goal: '完成 QA 闭环并编写运行说明',
             priority: 1,
-            status: 'pending',
+            status: TaskStatus.PENDING,
+            done: false,
+            acceptance: [],
           },
         ]}
         pmRunning={false}
@@ -371,10 +379,10 @@ describe('ProjectProgressPanel QA evidence', () => {
   });
 
   it('shows CE handoff and completed Director queue instead of stale waiting labels', () => {
-    const tasks = [
-      { id: '1', subject: '实现 CLI 科学计算器核心模块', status: 'completed' },
-      { id: '2', subject: '编写 README', status: 'completed' },
-      { id: '3', subject: '实现验证与 QA 闭环', status: 'completed' },
+    const tasks: PmTask[] = [
+      { id: '1', title: '实现 CLI 科学计算器核心模块', subject: '实现 CLI 科学计算器核心模块', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
+      { id: '2', title: '编写 README', subject: '编写 README', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
+      { id: '3', title: '实现验证与 QA 闭环', subject: '实现验证与 QA 闭环', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
     ];
 
     render(
@@ -406,10 +414,10 @@ describe('ProjectProgressPanel QA evidence', () => {
   });
 
   it('does not show completed chain success before Run Ledger projection loads', () => {
-    const tasks = [
-      { id: '1', subject: '实现 CLI 科学计算器核心模块', status: 'completed' },
-      { id: '2', subject: '编写 README', status: 'completed' },
-      { id: '3', subject: '实现验证与 QA 闭环', status: 'completed' },
+    const tasks: PmTask[] = [
+      { id: '1', title: '实现 CLI 科学计算器核心模块', subject: '实现 CLI 科学计算器核心模块', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
+      { id: '2', title: '编写 README', subject: '编写 README', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
+      { id: '3', title: '实现验证与 QA 闭环', subject: '实现验证与 QA 闭环', status: TaskStatus.COMPLETED, done: true, priority: 1, acceptance: [] },
     ];
 
     render(

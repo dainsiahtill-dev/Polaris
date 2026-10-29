@@ -10,6 +10,7 @@ import { render, screen, within } from '@testing-library/react';
 import { BenchPanel } from './BenchPanel';
 import { useFactoryBench } from '@/hooks/useFactoryBench';
 import type {
+  FactoryBenchEvent,
   FactoryBenchSessionDetail,
   FactoryBenchSessionSummary,
 } from '@/services/benchService';
@@ -17,7 +18,7 @@ import type {
 const mockHookValue = {
   sessions: [] as FactoryBenchSessionSummary[],
   currentSession: null as FactoryBenchSessionDetail | null,
-  events: [],
+  events: [] as FactoryBenchEvent[],
   isStreaming: false,
   isLoading: false,
   error: null as string | null,

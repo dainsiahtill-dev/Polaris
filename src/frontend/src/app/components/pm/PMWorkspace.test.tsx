@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PMWorkspace } from './PMWorkspace';
+import { TaskStatus } from '@/types/task';
 
 const listPmTaskHistoryMock = vi.hoisted(() => vi.fn());
 const listPmDirectorTaskHistoryMock = vi.hoisted(() => vi.fn());
@@ -1230,7 +1231,7 @@ describe('PMWorkspace history panel', () => {
           {
             id: 'PM-workbench-source',
             title: 'Workbench source task',
-            status: 'pending',
+            status: TaskStatus.PENDING,
             done: false,
             priority: 1,
             acceptance: [],

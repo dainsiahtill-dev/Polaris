@@ -17,8 +17,8 @@ const retryFactoryRunFromCheckpointMock = vi.fn();
 const getFactoryRunMock = vi.fn();
 const getFactoryRunArtifactsMock = vi.fn();
 const listFactoryRunsMock = vi.fn();
-const transportSubscribeMock = vi.fn(() => () => {});
-const transportRegisterMock = vi.fn(() => () => {});
+const transportSubscribeMock = vi.fn<(...args: unknown[]) => () => void>(() => () => {});
+const transportRegisterMock = vi.fn<(...args: unknown[]) => () => void>(() => () => {});
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 
@@ -62,7 +62,7 @@ vi.mock('@/runtime/transport', () => ({
   }),
 }));
 
-import { useFactory } from './useFactory.ts';
+import { useFactory } from './useFactory';
 
 const baseRun = {
   run_id: 'run-1',

@@ -11,11 +11,21 @@ const runtimeTransportMock = vi.hoisted(() => ({
   reconnecting: false,
   error: null as string | null,
   attemptCount: 0,
-  subscribeChannels: vi.fn(() => vi.fn()),
-  sendCommand: vi.fn(() => true),
-  getLastCursor: vi.fn(() => 0),
-  reconnect: vi.fn(),
-  registerMessageHandler: vi.fn(() => vi.fn()),
+  subscribeChannels: vi.fn<
+    import("@/runtime/transport").TransportActionsContextValue["subscribeChannels"]
+  >(() => () => {}),
+  sendCommand: vi.fn<
+    import("@/runtime/transport").TransportActionsContextValue["sendCommand"]
+  >(() => true),
+  getLastCursor: vi.fn<
+    import("@/runtime/transport").TransportActionsContextValue["getLastCursor"]
+  >(() => 0),
+  reconnect: vi.fn<
+    import("@/runtime/transport").TransportActionsContextValue["reconnect"]
+  >(),
+  registerMessageHandler: vi.fn<
+    import("@/runtime/transport").MessageHandlerContextValue["registerMessageHandler"]
+  >(() => () => {}),
 }));
 
 vi.mock('@/api', () => ({
@@ -465,8 +475,10 @@ describe('ChiefEngineerWorkspace', () => {
             id: 'pm-workbench-source',
             title: 'Workbench blueprint source',
             status: TaskStatus.PENDING,
+            done: false,
+            priority: 1,
             acceptance: [],
-          } as PmTask,
+          },
         ]}
       />,
     );
@@ -1173,7 +1185,7 @@ describe('ChiefEngineerWorkspace', () => {
         status: TaskStatus.PENDING,
         done: false,
         priority: 1,
-        acceptance: ['Director 可追踪'],
+        acceptance: [{ description: 'Director 可追踪' }],
       },
     ];
 
@@ -1195,7 +1207,7 @@ describe('ChiefEngineerWorkspace', () => {
         status: TaskStatus.PENDING,
         done: false,
         priority: 1,
-        acceptance: ['Director 可追踪'],
+        acceptance: [{ description: 'Director 可追踪' }],
       },
     ];
 
@@ -1854,6 +1866,9 @@ describe('ChiefEngineerWorkspace', () => {
         title: 'Backend blueprint-backed task',
         subject: 'Backend blueprint-backed task',
         status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: [],
         metadata: {
           pm_task_id: 'PM-blueprint',
           blueprint_id: 'bp-backend-task',
@@ -1994,6 +2009,9 @@ describe('ChiefEngineerWorkspace', () => {
         title: 'Alpha covered task',
         subject: 'Alpha covered task',
         status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: [],
         metadata: {
           pm_task_id: 'PM-alpha',
           blueprint_id: 'bp-alpha',
@@ -2005,6 +2023,9 @@ describe('ChiefEngineerWorkspace', () => {
         title: 'Beta covered task',
         subject: 'Beta covered task',
         status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: [],
         metadata: {
           pm_task_id: 'PM-beta',
           blueprint_id: 'bp-beta',
@@ -2016,6 +2037,9 @@ describe('ChiefEngineerWorkspace', () => {
         title: 'Gamma covered task',
         subject: 'Gamma covered task',
         status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: [],
         metadata: {
           pm_task_id: 'PM-gamma',
           blueprint_id: 'bp-gamma',
@@ -2142,6 +2166,9 @@ describe('ChiefEngineerWorkspace', () => {
         title: 'Covered backend task',
         subject: 'Covered backend task',
         status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: [],
         metadata: {
           pm_task_id: 'PM-covered',
           blueprint_id: 'bp-covered',
@@ -2153,6 +2180,9 @@ describe('ChiefEngineerWorkspace', () => {
         title: 'Missing blueprint backend task',
         subject: 'Missing blueprint backend task',
         status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: [],
         metadata: { pm_task_id: 'PM-missing' },
       },
     ];

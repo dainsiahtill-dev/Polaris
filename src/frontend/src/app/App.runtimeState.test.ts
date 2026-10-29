@@ -15,6 +15,8 @@ describe('App PM runtime state resolution', () => {
   it('keeps a live PM run active when a stale runtime issue is still present', () => {
     const status: BackendStatus = {
       running: true,
+      pid: null,
+      started_at: null,
       terminal: false,
       status: 'running',
       error: 'PM_ITERATION_FAILED',
@@ -42,6 +44,8 @@ describe('App PM runtime state resolution', () => {
   it('still marks terminal PM failures as inactive when there is no active run', () => {
     const status: BackendStatus = {
       running: false,
+      pid: null,
+      started_at: null,
       terminal: true,
       status: 'failed',
       error: 'PM_ITERATION_FAILED',
@@ -53,6 +57,8 @@ describe('App PM runtime state resolution', () => {
   it('treats a latest successful PM terminal status as a resolved run', () => {
     const status: BackendStatus = {
       running: false,
+      pid: null,
+      started_at: null,
       terminal: true,
       status: 'success',
       ok: true,
@@ -66,6 +72,8 @@ describe('App PM runtime state resolution', () => {
   it('suppresses stale PM iteration failures after the latest PM run succeeds', () => {
     const status: BackendStatus = {
       running: false,
+      pid: null,
+      started_at: null,
       terminal: true,
       status: 'success',
       ok: true,
@@ -84,6 +92,8 @@ describe('App PM runtime state resolution', () => {
   it('does not suppress unrelated Director failures after PM planning succeeds', () => {
     const status: BackendStatus = {
       running: false,
+      pid: null,
+      started_at: null,
       terminal: true,
       status: 'success',
       ok: true,

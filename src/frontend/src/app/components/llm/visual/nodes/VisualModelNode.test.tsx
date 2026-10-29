@@ -21,7 +21,7 @@ describe('VisualModelNode', () => {
               label: 'qwen3-max',
               assignedRoles: ['director', 'chief_engineer'],
             },
-          } as never)}
+          } as unknown as Parameters<typeof VisualModelNode>[0])}
         />
       </ReactFlowProvider>
     );

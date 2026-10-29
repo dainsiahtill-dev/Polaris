@@ -45,7 +45,7 @@ describe('useLLMStore save pipeline', () => {
         set: vi.fn(async () => ({ ok: true })),
         remove: vi.fn(async () => ({ ok: true })),
       },
-    };
+    } as NonNullable<Window['polaris']>;
   });
 
   it('sanitizes orphan role bindings before persisting through the save queue', async () => {

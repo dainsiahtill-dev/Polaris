@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PmTask } from '@/types/task';
+import { TaskStatus, type PmTask } from '@/types/task';
 import type { FileEditEvent } from '@/app/hooks/useRuntimeStore';
 import {
   buildTaskRealtimeTelemetry,
@@ -77,7 +77,7 @@ describe('buildTaskRealtimeTelemetry', () => {
     return {
       id,
       title: id,
-      status: 'pending',
+      status: TaskStatus.PENDING,
       done: false,
       priority: 0,
       acceptance: [],

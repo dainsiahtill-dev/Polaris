@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ subscribe: vi.fn(() => vi.fn()), register: vi.fn(() => vi.fn()), get: vi.fn(), current: vi.fn(), start: vi.fn(), cancel: vi.fn(), resume: vi.fn(), discuss: vi.fn() }));
+const mocks = vi.hoisted(() => ({ subscribe: vi.fn(() => vi.fn()), register: vi.fn<(fn: (message: unknown) => void) => () => void>(() => () => {}), get: vi.fn(), current: vi.fn(), start: vi.fn(), cancel: vi.fn(), resume: vi.fn(), discuss: vi.fn() }));
 let receive: (message: unknown) => void = () => { };
 let connected = true;
 function registerMessageHandler(fn: (message: unknown) => void) { receive = fn; return mocks.register(fn); }

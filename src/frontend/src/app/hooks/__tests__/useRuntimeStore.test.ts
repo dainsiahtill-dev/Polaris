@@ -11,6 +11,7 @@ import { useRuntimeStore } from '../useRuntimeStore';
 import type { BackendStatus, EngineStatus, LlmStatus, LanceDbStatus } from '@/app/types/appContracts';
 import type { DialogueEvent } from '@/app/components/DialoguePanel';
 import type { LogEntry } from '@/types/log';
+import { TaskStatus } from '@/types/task';
 
 // Enable MapSet plugin for Immer
 enableMapSet();
@@ -179,8 +180,8 @@ describe('useRuntimeStore', () => {
       const { result } = renderHook(createStoreHook());
 
       const engineStatus: EngineStatus = {
-        state: 'running',
-        iterations: 5,
+        running: true,
+        pm_iteration: 5,
       };
 
       act(() => {
@@ -196,6 +197,9 @@ describe('useRuntimeStore', () => {
       const llmStatus: LlmStatus = {
         state: 'ready',
         roles: {},
+        required_ready_roles: [],
+        blocked_roles: [],
+        unsupported_roles: [],
       };
 
       act(() => {
@@ -227,8 +231,8 @@ describe('useRuntimeStore', () => {
       const { result } = renderHook(createStoreHook());
 
       const event: DialogueEvent = {
-        id: 'evt-1',
-        role: 'pm',
+        eventId: 'evt-1',
+        speaker: 'PM',
         type: 'message',
         content: 'Test message',
         timestamp: new Date().toISOString(),
@@ -249,8 +253,8 @@ describe('useRuntimeStore', () => {
       for (let i = 0; i < 600; i++) {
         act(() => {
           useRuntimeStore.getState().appendDialogueEvent({
-            id: `evt-${i}`,
-            role: 'pm',
+            eventId: `evt-${i}`,
+            speaker: 'PM',
             type: 'message',
             content: `Message ${i}`,
             timestamp: new Date().toISOString(),
@@ -260,8 +264,8 @@ describe('useRuntimeStore', () => {
 
       expect(result.current.dialogueEvents).toHaveLength(500);
       // Should keep the last 500
-      expect(result.current.dialogueEvents[0].id).toBe('evt-100');
-      expect(result.current.dialogueEvents[499].id).toBe('evt-599');
+      expect(result.current.dialogueEvents[0].eventId).toBe('evt-100');
+      expect(result.current.dialogueEvents[499].eventId).toBe('evt-599');
     });
 
     it('should set dialogue events', () => {
@@ -269,15 +273,15 @@ describe('useRuntimeStore', () => {
 
       const events: DialogueEvent[] = [
         {
-          id: 'evt-1',
-          role: 'pm',
+          eventId: 'evt-1',
+          speaker: 'PM',
           type: 'message',
           content: 'First',
           timestamp: new Date().toISOString(),
         },
         {
-          id: 'evt-2',
-          role: 'director',
+          eventId: 'evt-2',
+          speaker: 'Director',
           type: 'message',
           content: 'Second',
           timestamp: new Date().toISOString(),
@@ -545,7 +549,7 @@ describe('useRuntimeStore', () => {
         {
           id: 'task-1',
           title: 'Task 1',
-          status: 'PENDING' as const,
+          status: TaskStatus.PENDING,
           goal: 'Task 1 goal',
           priority: 1 as const,
           done: false,
@@ -554,7 +558,7 @@ describe('useRuntimeStore', () => {
         {
           id: 'task-2',
           title: 'Task 2',
-          status: 'IN_PROGRESS' as const,
+          status: TaskStatus.IN_PROGRESS,
           goal: 'Task 2 goal',
           priority: 2 as const,
           done: false,
@@ -743,7 +747,7 @@ describe('useRuntimeStore', () => {
         useRuntimeStore.getState().setTasks([{
           id: 'task-1',
           title: 'Test',
-          status: 'PENDING' as const,
+          status: TaskStatus.PENDING,
           goal: 'Test',
           priority: 1 as const,
           done: false,
@@ -775,7 +779,7 @@ describe('useRuntimeStore', () => {
         useRuntimeStore.getState().setTasks([{
           id: 'task-1',
           title: 'Test',
-          status: 'PENDING' as const,
+          status: TaskStatus.PENDING,
           goal: 'Test',
           priority: 1 as const,
           done: false,

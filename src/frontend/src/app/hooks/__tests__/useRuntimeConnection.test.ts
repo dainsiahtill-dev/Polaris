@@ -12,7 +12,11 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import React from "react";
 import { useRuntimeConnection } from "../useRuntimeConnection";
 
-const mockSubscribeChannels = vi.hoisted(() => vi.fn(() => vi.fn()));
+const mockSubscribeChannels = vi.hoisted(() =>
+  vi.fn<
+    import("@/runtime/transport").TransportActionsContextValue["subscribeChannels"]
+  >(() => () => {}),
+);
 const mockSendCommand = vi.hoisted(() => vi.fn());
 const mockReconnect = vi.hoisted(() => vi.fn());
 const mockRegisterMessageHandler = vi.hoisted(() => vi.fn(() => vi.fn()));

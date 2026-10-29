@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PmTask } from '@/types/task';
+import { TaskStatus, type PmTask } from '@/types/task';
 import {
   DirectorWorkspace,
   mergeDirectorWorkers,
@@ -1401,7 +1401,10 @@ describe.sequential('Director capability desktop integration', () => {
             id: 'director-task-1',
             subject: 'Runtime worker task',
             title: 'Backend worker task',
-            status: 'RUNNING',
+            status: TaskStatus.IN_PROGRESS,
+            done: false,
+            priority: 1,
+            acceptance: [],
             metadata: { director_task_source: 'workflow' },
           },
         ]}
@@ -1484,7 +1487,10 @@ describe.sequential('Director capability desktop integration', () => {
             id: 'director-task-llm',
             subject: 'Inspect LLM calls',
             title: 'Inspect LLM calls',
-            status: 'RUNNING',
+            status: TaskStatus.IN_PROGRESS,
+            done: false,
+            priority: 1,
+            acceptance: [],
             metadata: { director_task_source: 'workflow' },
           },
         ]}
@@ -1540,7 +1546,10 @@ describe.sequential('Director capability desktop integration', () => {
           {
             id: 'director-task-cancel',
             title: 'Cancelable Director task',
-            status: 'RUNNING',
+            status: TaskStatus.IN_PROGRESS,
+            done: false,
+            priority: 1,
+            acceptance: [],
             metadata: { director_task_source: 'workflow' },
           },
         ]}
@@ -1588,8 +1597,10 @@ describe.sequential('Director capability desktop integration', () => {
           {
             id: 'PM-create',
             title: 'PM source task',
-            status: 'pending',
-            acceptance: ['created task can be audited'],
+            status: TaskStatus.PENDING,
+            done: false,
+            priority: 1,
+            acceptance: [{ description: 'created task can be audited' }],
             metadata: { director_task_source: 'workflow' },
           },
         ]}
@@ -1852,11 +1863,11 @@ describe.sequential('Director capability desktop integration', () => {
           {
             id: 'director-workbench-source',
             title: 'Workbench source task',
-            status: 'running',
+            status: TaskStatus.IN_PROGRESS,
             done: false,
             priority: 1,
             acceptance: [],
-          } as PmTask,
+          },
         ]}
         directorRunning={true}
         onToggleDirector={vi.fn()}
@@ -1883,11 +1894,11 @@ describe.sequential('Director capability desktop integration', () => {
           {
             id: 'director-strategy-source',
             title: 'Strategy source task',
-            status: 'running',
+            status: TaskStatus.IN_PROGRESS,
             done: false,
             priority: 1,
             acceptance: [],
-          } as PmTask,
+          },
         ]}
         directorRunning={true}
         onToggleDirector={vi.fn()}

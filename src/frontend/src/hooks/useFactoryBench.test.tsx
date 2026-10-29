@@ -12,11 +12,21 @@ const runtimeTransportMock = vi.hoisted(() => ({
   reconnecting: false,
   error: null as string | null,
   attemptCount: 0,
-  subscribeChannels: vi.fn(() => vi.fn()),
-  sendCommand: vi.fn(() => true),
-  getLastCursor: vi.fn(() => 0),
-  reconnect: vi.fn(),
-  registerMessageHandler: vi.fn(() => vi.fn()),
+  subscribeChannels: vi.fn<
+    import("@/runtime/transport").TransportActionsContextValue["subscribeChannels"]
+  >(() => () => {}),
+  sendCommand: vi.fn<
+    import("@/runtime/transport").TransportActionsContextValue["sendCommand"]
+  >(() => true),
+  getLastCursor: vi.fn<
+    import("@/runtime/transport").TransportActionsContextValue["getLastCursor"]
+  >(() => 0),
+  reconnect: vi.fn<
+    import("@/runtime/transport").TransportActionsContextValue["reconnect"]
+  >(),
+  registerMessageHandler: vi.fn<
+    import("@/runtime/transport").MessageHandlerContextValue["registerMessageHandler"]
+  >(() => () => {}),
 }));
 
 vi.mock('@/services/benchService', () => benchServiceMock);

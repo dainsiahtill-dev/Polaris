@@ -40,6 +40,7 @@ const READY_LLM_WITH_WINDOWS: LlmRuntimeGateState = {
       maxOutputTokens: 16_384,
       bindings: [
         {
+          bindingId: null,
           providerId: 'kimi',
           providerName: 'Kimi Coding',
           providerType: 'anthropic_compat',
@@ -68,6 +69,7 @@ const READY_LLM_WITH_WINDOWS: LlmRuntimeGateState = {
       maxOutputTokens: 8_192,
       bindings: [
         {
+          bindingId: null,
           providerId: 'qwen-a',
           providerName: 'Qwen A',
           providerType: 'openai_compat',
@@ -77,6 +79,7 @@ const READY_LLM_WITH_WINDOWS: LlmRuntimeGateState = {
           maxOutputTokens: 8_192,
         },
         {
+          bindingId: null,
           providerId: 'qwen-b',
           providerName: 'Qwen B',
           providerType: 'openai_compat',
@@ -1593,6 +1596,7 @@ describe('null-safe fallback', () => {
           maxOutputTokens: null,
           bindings: [
             {
+              bindingId: null,
               providerId: 'test',
               providerName: 'Test Provider',
               providerType: 'openai_compat',
@@ -1643,9 +1647,10 @@ describe('null-safe fallback', () => {
   });
 
   it('handles dialogueEvents with missing speaker/type gracefully', () => {
-    const dialogue: import('@/app/components/DialoguePanel').DialogueEvent[] = [
+    // Intentionally malformed runtime payload: speaker/type are empty strings.
+    const dialogue = [
       { speaker: '', content: '', timestamp: 'invalid', type: '' },
-    ];
+    ] as unknown as import('@/app/components/DialoguePanel').DialogueEvent[];
     const model = buildContextOSModel(baseInput({ dialogueEvents: dialogue }));
     expect(model.decisions.length).toBeGreaterThanOrEqual(0);
     expect(model.running).toBe(false);
