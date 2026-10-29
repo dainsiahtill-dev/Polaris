@@ -22,6 +22,7 @@ from polaris.cells.runtime.state_owner.internal.pm_contract_store import (
     write_json_atomic,
 )
 from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+from polaris.kernelone.fs.types import NamespaceBindingV1
 from polaris.kernelone.storage import resolve_logical_path
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
@@ -258,9 +259,13 @@ def test_engine_dispatch_contracts_backfill_missing_runtime_plan(
 class _RecordingLocalAdapter(LocalFileSystemAdapter):
     """Transparent subclass of the real local adapter that records its calls.
 
-    The physical behaviour is the production one (temp file plus rename); only
-    the calls are observed so that the test can assert how the store asked for
-    the write.
+    The physical behaviour is the production one (staged bytes plus an atomic
+    no-replace-free replacement); only the calls are observed so that the test
+    can assert how the store asked for the write.
+
+    The subclass overrides the legacy ``write_text``, so it must opt into the
+    managed atomic capability explicitly; the opt-in keeps the recorded call
+    shape identical to the legacy one.
     """
 
     def __init__(self) -> None:
@@ -277,9 +282,13 @@ class _RecordingLocalAdapter(LocalFileSystemAdapter):
         self.calls.append({"path": path, "atomic": atomic, "encoding": encoding})
         return super().write_text(path, content, encoding=encoding, atomic=atomic)
 
+    def write_managed_namespace_bytes_atomic(self, binding: NamespaceBindingV1, content: bytes) -> int:
+        self.calls.append({"path": binding.physical_path(), "atomic": True, "encoding": "utf-8"})
+        return LocalFileSystemAdapter.write_managed_namespace_bytes_atomic(self, binding, content)
+
 
 class _NonCompliantAdapter(LocalFileSystemAdapter):
-    """Adapter whose ``write_text`` predates the protocol ``atomic`` keyword."""
+    """Adapter that does not implement the managed atomic capability."""
 
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -307,6 +316,13 @@ class _PostWriteErrorAdapter(LocalFileSystemAdapter):
         # The replacement is committed first, so the failure below happens
         # *after* the physical effect and must not be retried.
         super().write_text(path, content, encoding=encoding, atomic=atomic)
+        raise OSError("synthetic adapter failure after the replacement was committed")
+
+    def write_managed_namespace_bytes_atomic(self, binding: NamespaceBindingV1, content: bytes) -> int:
+        self.calls.append(binding.physical_path())
+        # The replacement is committed first, so the failure below happens
+        # *after* the physical effect and must not be retried.
+        LocalFileSystemAdapter.write_managed_namespace_bytes_atomic(self, binding, content)
         raise OSError("synthetic adapter failure after the replacement was committed")
 
 
@@ -350,13 +366,24 @@ def _install_store_adapter(monkeypatch: pytest.MonkeyPatch, adapter: Any) -> Any
 
 
 def _record_renames(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
-    """Record every physical rename performed while the patch is active."""
+    """Record every physical rename performed while the patch is active.
+
+    The managed atomic write commits through ``os.replace`` with
+    descriptor-relative arguments, so that is the syscall observed here.
+    Only ``os.replace`` is patched: the capability probe reads ``os.rename``
+    from ``os.supports_dir_fd``, and replacing that function object would
+    remove it from the capability set and make the probe report an
+    unsupported platform.
+
+    The assertion this feeds is "exactly one physical replacement", which is
+    a property of the effect, not of one particular rename syscall.
+    """
     renames: list[tuple[str, str]] = []
     original_replace = os.replace
 
-    def counting_replace(src: Any, dst: Any) -> None:
+    def counting_replace(src: Any, dst: Any, **kwargs: Any) -> None:
         renames.append((str(src), str(dst)))
-        original_replace(src, dst)
+        original_replace(src, dst, **kwargs)
 
     monkeypatch.setattr(os, "replace", counting_replace)
     return renames
@@ -401,11 +428,17 @@ def test_pm_contract_store_write_performs_single_atomic_replacement(
     assert len(renames) == 1, "the contract write must perform exactly one physical replacement"
 
     target = _physical_target(workspace, "runtime/contracts/pm_tasks.contract.json")
-    assert renames[0][1] == str(target)
     assert target.is_file()
     assert json.loads(target.read_text(encoding="utf-8")) == {"version": 1, "tasks": []}
 
-    # The temporary file used for the replacement must not survive.
+    # The replacement committed onto the target leaf itself.  The managed
+    # atomic write commits with a descriptor-relative replace, so the
+    # observed destination is the leaf *name* inside the retained parent
+    # directory rather than an absolute path.
+    assert renames[0][1] == target.name
+
+    # The staged file used for the replacement must not survive: only the
+    # committed leaf remains in the target directory.
     assert sorted(item.name for item in target.parent.iterdir()) == [target.name]
 
 

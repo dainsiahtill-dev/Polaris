@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-10-26T11:49:17.363108Z",
-  "source_hash": "a972ba2dab932c3c",
+  "generated_at": "2026-10-28T17:34:37.577106Z",
+  "source_hash": "fb26235721bc1b94",
   "cell_id": "runtime.state_owner",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -49,6 +49,36 @@
     },
     {
       "type": "function",
+      "name": "_metadata_dir_names",
+      "description": "Return the directory names that mark a workspace metadata tree.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_metadata_dir",
+      "description": "Return whether ``directory`` owns a workspace metadata tree.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_runtime_root",
+      "description": "Use the storage owner's canonical root without initializing it.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_within",
+      "description": "Return whether ``child`` is inside ``parent``.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_workspace_candidates",
+      "description": "Return deepest workspace owners without mistaking run data for a project.",
+      "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
+    },
+    {
+      "type": "function",
       "name": "_build_kernel_fs_for_path",
       "description": "",
       "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
@@ -56,7 +86,7 @@
     {
       "type": "function",
       "name": "write_json_atomic",
-      "description": "Write JSON data atomically to path.",
+      "description": "Delegate UTF-8 JSON replacement to the active KernelOne adapter.",
       "defined_in": "polaris/cells/runtime/state_owner/internal/pm_contract_store.py"
     },
     {

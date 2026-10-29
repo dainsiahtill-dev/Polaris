@@ -2,18 +2,24 @@
 
 Registers load_skill and skill_manifest tools so the agent can discover
 and load skill definitions at runtime.
+
+Both handlers are *read* tools.  They never install anything: the hidden
+``install_default_skills(workspace, explicit=True)`` call that used to sit
+behind ``contextlib.suppress(RuntimeError)`` turned a read into a hidden
+writer that materialised the builtin catalogue on first use, even when the
+registered adapter refused every write.  The read-only loader already
+exposes the builtin catalogue from memory, so the installation is removed
+without losing any skill.
 """
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from typing import Any
 
 from polaris.kernelone.single_agent.skill_system import (
     SkillLoader,
     SkillToolInterface,
-    install_default_skills,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,12 +31,14 @@ _skill_interfaces: dict[str, SkillToolInterface] = {}
 
 
 def _get_skill_interface(workspace: str) -> SkillToolInterface:
-    """Get or create SkillToolInterface for a workspace."""
-    if workspace not in _skill_interfaces:
-        # Ensure default skills are installed (idempotent)
-        with contextlib.suppress(RuntimeError):
-            install_default_skills(workspace, explicit=True)
+    """Get or create SkillToolInterface for a workspace.
 
+    This is a read-only path: the loader discovers the installed skills and
+    the builtin catalogue, and it never writes.  Materialising the builtin
+    catalogue on disk is an explicit, host-authorised operation
+    (``install_default_skills``), not a side effect of listing skills.
+    """
+    if workspace not in _skill_interfaces:
         loader = SkillLoader(workspace)
         _skill_loaders[workspace] = loader
         _skill_interfaces[workspace] = SkillToolInterface(loader)

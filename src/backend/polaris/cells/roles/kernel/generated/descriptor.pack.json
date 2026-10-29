@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-10-26T16:52:02.777292Z",
-  "source_hash": "08bd729466269639",
+  "generated_at": "2026-10-28T17:34:39.840571Z",
+  "source_hash": "0e0a9d48271c0a38",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -11402,6 +11402,10 @@
         {
           "name": "check_tool_permission",
           "doc": "Compatibility entry that captures and normalizes exactly one owner view."
+        },
+        {
+          "name": "authorize_nested_tool_call",
+          "doc": "Authorize a NESTED tool call with this gateway's own policy."
         },
         {
           "name": "check_tool_permission_from_snapshot",

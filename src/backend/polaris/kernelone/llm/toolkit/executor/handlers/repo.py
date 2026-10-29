@@ -1254,16 +1254,50 @@ def _handle_apply_patch(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
                     }
                 )
 
-    effect_receipt = {
+    # Aggregate the changed-file evidence over every operation that produced
+    # a real file effect, including a partially applied move.  A failed
+    # operation is not automatically a no-effect operation: a move whose
+    # source deletion failed still wrote its destination, and that write must
+    # stay visible instead of being reported as files_changed=[].
+    changed_files: list[str] = []
+    director_policy_by_file: dict[str, Any] = {}
+    partial_effects: list[dict[str, Any]] = []
+    for result in results:
+        observed = _apply_patch_observed_changed_files(result)
+        for path in observed:
+            if path not in changed_files:
+                changed_files.append(path)
+        policy = result.get("director_policy")
+        if policy:
+            anchor = str(result.get("file") or "")
+            if anchor:
+                director_policy_by_file[anchor] = policy
+        if result.get("partial"):
+            partial_effects.append(
+                {
+                    "file": result.get("file"),
+                    "source_file": result.get("source_file"),
+                    "destination_file": result.get("destination_file"),
+                    "error_type": result.get("error_type"),
+                    "move_effects": result.get("move_effects"),
+                    "files_changed": observed,
+                }
+            )
+
+    effect_receipt: dict[str, Any] = {
         "operation": "apply_patch",
-        "files_changed": [str(result.get("file")) for result in results if result.get("ok")],
-        "director_policy": {
-            str(result.get("file")): result.get("director_policy")
-            for result in results
-            if result.get("ok") and result.get("director_policy")
-        },
+        "files_changed": changed_files,
+        "director_policy": director_policy_by_file,
     }
-    response = {
+    move_effects = _apply_patch_move_effects(results)
+    if move_effects:
+        effect_receipt["move_effects"] = move_effects
+    if partial_effects:
+        # The receipt states that some effects landed and some did not, so a
+        # consumer can never read this receipt as a clean failure.
+        effect_receipt["partial"] = True
+        effect_receipt["partial_effects"] = partial_effects
+    response: dict[str, Any] = {
         "ok": all_ok,
         "operations": len(operations),
         "files_ok": sum(1 for result in results if result.get("ok")),
@@ -1273,7 +1307,82 @@ def _handle_apply_patch(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         **({"error_type": "director_write_policy_denied", "blocked": True} if director_policy_denials else {}),
         **({} if all_ok else {"error": _summarize_errors(results)}),
     }
+    if partial_effects:
+        # The outward projection keeps the real effect evidence and marks the
+        # outcome as partial, so no consumer reads it as "nothing happened".
+        response["partial"] = True
+        response["partial_effects"] = partial_effects
+        response["files_changed"] = changed_files
+        if not director_policy_denials:
+            # A policy denial keeps its own fail-closed error type; otherwise
+            # the outward error type names the real partial outcome.
+            response["error_type"] = _apply_patch_partial_error_type(results)
     return response
+
+
+def _apply_patch_partial_error_type(results: list[dict[str, Any]]) -> str:
+    """Return the outward error type for a partially applied patch.
+
+    Args:
+        results: The routed patch operation results.
+
+    Returns:
+        The error type of the first partial operation, or a generic partial
+        marker when no operation carried a specific classification.
+    """
+    for result in results:
+        if not result.get("partial"):
+            continue
+        error_type = str(result.get("error_type") or "").strip()
+        if error_type:
+            return error_type
+    return "partial_apply_patch_effect"
+
+
+def _apply_patch_move_effects(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Collect the per-effect move evidence of every move in a patch.
+
+    The evidence is reused from the operation results rather than rebuilt, so
+    the receipt and the operation result can never disagree.
+
+    Args:
+        results: The routed patch operation results.
+
+    Returns:
+        The merged move-effect evidence, or an empty mapping when the patch
+        contained no move.
+    """
+    merged: dict[str, Any] = {}
+    for result in results:
+        effects = result.get("move_effects")
+        if not isinstance(effects, dict):
+            continue
+        for key, value in effects.items():
+            merged[f"{result.get('destination_file') or result.get('file')}:{key}"] = value
+    return merged
+
+
+def _apply_patch_observed_changed_files(result: dict[str, Any]) -> list[str]:
+    """Return the files a single patch operation really changed.
+
+    A successful operation reports its own file.  A partially applied move
+    reports the paths it really changed even though the operation as a whole
+    failed, because those writes are real, already-observed effects.  A
+    failed operation without an observed effect reports nothing.
+
+    Args:
+        result: One routed patch operation result.
+
+    Returns:
+        The workspace-relative paths that the operation really changed.
+    """
+    observed = result.get("files_changed")
+    if isinstance(observed, (list, tuple)):
+        return [str(item).strip() for item in observed if str(item).strip()]
+    if result.get("ok"):
+        path = str(result.get("file") or "").strip()
+        return [path] if path else []
+    return []
 
 
 def _apply_routed_patch_operation(
@@ -1452,25 +1561,109 @@ def _apply_patch_update(
     if not create_policy.get("ok"):
         return _apply_patch_policy_denial(move_rel, create_policy)
 
+    move_policy = {
+        "delete": delete_policy.get("director_policy"),
+        "create": create_policy.get("director_policy"),
+    }
+
+    # The move is two physical effects: the destination write and the source
+    # deletion.  Each is executed and then observed, so a failed call can never
+    # erase the observation of an effect that already happened.  A failed call
+    # is not a no-effect: the adapter may have completed the effect and failed
+    # afterwards, so the physical state is observed instead of assumed.
+    # Nothing is rolled back automatically: the destination write is a real,
+    # already-authorized effect, and removing it again would be a second
+    # effect the caller never authorized.
     try:
         receipt = self._kernel_fs.workspace_write_text(move_rel, new_content, encoding="utf-8")
-        self._kernel_fs.workspace_remove(rel, missing_ok=False)
-        emit_file_written(self, file_path=move_rel, operation="create", old_content="", new_content=new_content)
-        emit_file_written(self, file_path=rel, operation="delete", old_content=old_content, new_content="")
-    except (OSError, ValueError) as exc:
-        return {"ok": False, "file": rel, "error": f"Failed to move file: {exc}"}
+    except Exception as exc:  # noqa: BLE001 - the write effect may be unknown
+        # No receipt means no confirmed byte count.  The destination did not
+        # exist before this move, so an observed destination was created here.
+        destination_exists = _observe_workspace_presence(self._kernel_fs, move_rel)
+        logger.warning("apply_patch move could not write destination %s: %s", move_rel, exc)
+        return _apply_patch_move_result(
+            rel=rel,
+            move_rel=move_rel,
+            move_policy=move_policy,
+            move_effects={
+                "destination_write": "failed" if destination_exists is False else "unknown",
+                "source_delete": "not_attempted",
+                "source_exists_after_failure": True,
+            },
+            changed_paths=[move_rel] if destination_exists else [],
+            ok=False,
+            error=f"Failed to move file: {exc}",
+            error_type=(
+                "move_destination_write_failed" if destination_exists is False else "move_destination_write_unknown"
+            ),
+        )
 
-    return {
-        "ok": True,
-        "file": move_rel,
-        "source_file": rel,
-        "operation": "move",
-        "bytes_written": receipt.bytes_written,
-        "director_policy": {
-            "delete": delete_policy.get("director_policy"),
-            "create": create_policy.get("director_policy"),
+    try:
+        self._kernel_fs.workspace_remove(rel, missing_ok=False)
+    except Exception as exc:  # noqa: BLE001 - the delete effect may be unknown
+        # The destination write already succeeded, so the destination changed.
+        # The source deletion failed, which does not prove the deletion had no
+        # effect: the adapter may have removed the file and failed afterwards.
+        # Presence or absence is an observation, never a fabricated successful
+        # deletion receipt.
+        source_exists = _observe_workspace_presence(self._kernel_fs, rel)
+        logger.warning(
+            "apply_patch move wrote destination %s but could not remove source %s: %s",
+            move_rel,
+            rel,
+            exc,
+        )
+        reporting_failure = _emit_destination_write_event(
+            self,
+            emit_file_written=emit_file_written,
+            move_rel=move_rel,
+            new_content=new_content,
+        )
+        return _apply_patch_move_result(
+            rel=rel,
+            move_rel=move_rel,
+            move_policy=move_policy,
+            move_effects={
+                "destination_write": "succeeded",
+                "source_delete": "failed" if source_exists is True else "unknown",
+                "source_exists_after_failure": source_exists,
+            },
+            changed_paths=[move_rel] + ([rel] if source_exists is False else []),
+            ok=False,
+            error=f"Failed to move file: {exc}",
+            error_type=("partial_move_source_delete_failed" if source_exists is True else "move_source_delete_unknown"),
+            bytes_written=receipt.bytes_written,
+            reporting_failure=reporting_failure,
+        )
+
+    # Reporting runs after the physical effects.  The reporter is a realtime
+    # projection, not the authority for the physical effect, so its failure is
+    # recorded as evidence and never downgrades the observed effects.
+    reporting_failure = _emit_move_write_events(
+        self,
+        emit_file_written=emit_file_written,
+        move_rel=move_rel,
+        rel=rel,
+        old_content=old_content,
+        new_content=new_content,
+    )
+
+    return _apply_patch_move_result(
+        rel=rel,
+        move_rel=move_rel,
+        move_policy=move_policy,
+        move_effects={
+            "destination_write": "succeeded",
+            "source_delete": "succeeded",
+            "source_exists_after_failure": False,
         },
-    }
+        # A completed move changed two paths: the destination was written and
+        # the source was removed.  Both are confirmed changed paths.
+        changed_paths=[move_rel, rel],
+        ok=True,
+        bytes_written=receipt.bytes_written,
+        reporting_failure=reporting_failure,
+    )
 
 
 def _apply_patch_delete(
@@ -1511,6 +1704,196 @@ def _apply_patch_delete(
         "operation": "delete",
         "director_policy": policy_result.get("director_policy"),
     }
+
+
+def _observe_workspace_presence(kernel_fs: Any, rel: str) -> bool | None:
+    """Observe whether *rel* still exists without turning doubt into a claim.
+
+    The source removal already failed, so its final state is not known by
+    construction.  A successful observation reports the real presence; an
+    observation that itself fails returns ``None`` so the caller reports an
+    unknown source state instead of inventing one.
+
+    Args:
+        kernel_fs: The KernelOne filesystem boundary.
+        rel: Workspace-relative path to observe.
+
+    Returns:
+        True/False for a successful observation, or None when the observation
+        itself could not be completed.
+    """
+    try:
+        return bool(kernel_fs.workspace_exists(rel))
+    except Exception as exc:  # noqa: BLE001 - a failed observation leaves the effect unknown
+        logger.warning("apply_patch could not observe source presence for %s: %s", rel, exc)
+        return None
+
+
+def _emit_move_write_events(
+    executor: AgentAccelToolExecutor,
+    *,
+    emit_file_written: Any,
+    move_rel: str,
+    rel: str,
+    old_content: str,
+    new_content: str,
+) -> dict[str, Any] | None:
+    """Publish the two write events of a completed move.
+
+    The physical move already happened, so both events are attempted even
+    when the first one fails: the source deletion really did occur and its
+    report must not be skipped because the destination report failed.  A
+    reporting failure is recorded as evidence instead of being raised, so
+    that observed effects are never discarded by a broken observer.
+
+    Args:
+        executor: The executor that owns the write event emitter.
+        emit_file_written: Emitter used to publish the write events.
+        move_rel: Workspace-relative destination path.
+        rel: Workspace-relative source path.
+        old_content: The original source content.
+        new_content: The content written to the destination.
+
+    Returns:
+        The reporting failure evidence, or None when both events were emitted.
+    """
+    failures: list[dict[str, Any]] = []
+    destination_failure = _emit_destination_write_event(
+        executor,
+        emit_file_written=emit_file_written,
+        move_rel=move_rel,
+        new_content=new_content,
+    )
+    if destination_failure is not None:
+        failures.append(destination_failure)
+    try:
+        emit_file_written(executor, file_path=rel, operation="delete", old_content=old_content, new_content="")
+    except Exception as exc:  # noqa: BLE001 - reporting must not discard observed effects
+        logger.warning("apply_patch move delete reporting failed for %s: %s", rel, exc)
+        failures.append(
+            {
+                "stage": "file_written_event",
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "files_changed": [rel],
+            }
+        )
+    if not failures:
+        return None
+    return {
+        "stage": "file_written_event",
+        "error": "; ".join(str(item.get("error")) for item in failures),
+        "error_type": str(failures[0].get("error_type") or ""),
+        # The reporting failure is about the observed reports, not about the
+        # physical effect, so it lists the paths whose report failed.
+        "files_changed": [path for item in failures for path in item.get("files_changed", [])],
+        "failures": failures,
+    }
+
+
+def _emit_destination_write_event(
+    executor: AgentAccelToolExecutor,
+    *,
+    emit_file_written: Any,
+    move_rel: str,
+    new_content: str,
+) -> dict[str, Any] | None:
+    """Publish the destination-write event of a move.
+
+    The destination write is a real, already-observed effect, so it is
+    published even when the rest of the move fails.  A reporting failure is
+    recorded as evidence instead of being raised.
+
+    Args:
+        executor: The executor that owns the write event emitter.
+        emit_file_written: Emitter used to publish the write event.
+        move_rel: Workspace-relative destination path.
+        new_content: The content written to the destination.
+
+    Returns:
+        The reporting failure evidence, or None when the event was emitted.
+    """
+    try:
+        emit_file_written(executor, file_path=move_rel, operation="create", old_content="", new_content=new_content)
+    except Exception as exc:  # noqa: BLE001 - reporting must not discard observed effects
+        logger.warning("apply_patch move create reporting failed for %s: %s", move_rel, exc)
+        return {
+            "stage": "file_written_event",
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+            "files_changed": [move_rel],
+        }
+    return None
+
+
+def _apply_patch_move_result(
+    *,
+    rel: str,
+    move_rel: str,
+    move_policy: dict[str, Any],
+    move_effects: dict[str, Any],
+    changed_paths: list[str],
+    ok: bool,
+    error: str | None = None,
+    error_type: str | None = None,
+    bytes_written: int | None = None,
+    reporting_failure: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project one apply_patch move outcome.
+
+    A single projection serves every move outcome so that the effect
+    dictionaries are stated once.  ``changed_paths`` carries the paths the
+    move really changed; it is empty only when no effect is confirmed.  A
+    failed move keeps the confirmed destination write, and ``move_effects``
+    states per-effect what is confirmed, what failed and what is unknown, so
+    no consumer can read a failed call as a completed deletion.
+
+    Args:
+        rel: Workspace-relative source path.
+        move_rel: Workspace-relative destination path.
+        move_policy: Director policy evidence for both halves of the move.
+        move_effects: Per-effect outcome of the destination write and the
+            source deletion.
+        changed_paths: The paths the move really changed.
+        ok: Whether the move completed.
+        error: The failure message, when the move did not complete.
+        error_type: The failure classification, when the move did not complete.
+        bytes_written: Confirmed bytes written, only when a receipt exists.
+        reporting_failure: Evidence of a failed realtime report.
+
+    Returns:
+        The projected move result.
+    """
+    result: dict[str, Any] = {
+        "ok": ok,
+        # The destination is the file this operation changed, so it is the
+        # operation's file identity; the source is reported separately.
+        "file": move_rel,
+        "source_file": rel,
+        "destination_file": move_rel,
+        "operation": "move",
+        "files_changed": list(changed_paths),
+        "move_effects": move_effects,
+        "director_policy": move_policy,
+    }
+    if bytes_written is not None:
+        result["bytes_written"] = bytes_written
+    receipt: dict[str, Any] = {
+        "operation": "apply_patch",
+        "files_changed": list(changed_paths),
+        "director_policy": {move_rel: move_policy},
+        "move_effects": move_effects,
+    }
+    if not ok:
+        result["error"] = error
+        result["error_type"] = error_type
+        # A move that changed a confirmed path is partial, not a no-effect.
+        result["partial"] = bool(changed_paths)
+        receipt["partial"] = bool(changed_paths)
+    result["effect_receipt"] = receipt
+    if reporting_failure:
+        result["reporting_failure"] = reporting_failure
+    return result
 
 
 def _apply_patch_policy_denial(rel: str, policy_result: dict[str, Any]) -> dict[str, Any]:

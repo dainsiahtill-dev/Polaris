@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:47.448936Z",
-  "source_hash": "2240799ba819316c",
+  "generated_at": "2026-10-28T17:34:37.997734Z",
+  "source_hash": "0bb7fc55987b9785",
   "cell_id": "roles.scout",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -69,6 +69,18 @@
       "type": "function",
       "name": "build_read_plan",
       "description": "Return an ordered list of ``(tool, args)`` read-tool calls.",
+      "defined_in": "polaris/cells/roles/scout/internal/planner.py"
+    },
+    {
+      "type": "function",
+      "name": "_narrow_to_roots",
+      "description": "Keep only the host roots that a model hint points into.",
+      "defined_in": "polaris/cells/roles/scout/internal/planner.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_within",
+      "description": "True when ``hint`` denotes ``root`` or something inside it.",
       "defined_in": "polaris/cells/roles/scout/internal/planner.py"
     },
     {
@@ -166,6 +178,18 @@
     },
     {
       "type": "class",
+      "name": "_ReadExecutor",
+      "description": "The minimal executor surface this adapter uses.",
+      "defined_in": "polaris/cells/roles/scout/internal/read_tool_adapter.py",
+      "methods": [
+        {
+          "name": "execute",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "RegistryReadTool",
       "description": "ReadToolPort backed by the canonical AgentAccelToolExecutor.",
       "defined_in": "polaris/cells/roles/scout/internal/read_tool_adapter.py",
@@ -179,12 +203,24 @@
           "doc": ""
         },
         {
+          "name": "_build_owned_executor",
+          "doc": "Create the executor this adapter owns, carrying the host authority."
+        },
+        {
+          "name": "_borrow_executor",
+          "doc": "Adopt the host's executor for the lifetime of this adapter."
+        },
+        {
+          "name": "_host_authorization_denial",
+          "doc": "Ask the HOST whether this nested read is allowed. None means allowed."
+        },
+        {
           "name": "run",
           "doc": "Execute a read tool and return a normalized, flat payload."
         },
         {
           "name": "close",
-          "doc": "Release the underlying executor, if one was created."
+          "doc": "Release the underlying executor, if one was created by this adapter."
         }
       ]
     },
@@ -204,6 +240,18 @@
       "type": "function",
       "name": "_parse_findings",
       "description": "Translate one normalized tool result into findings across known shapes.",
+      "defined_in": "polaris/cells/roles/scout/internal/retrieval.py"
+    },
+    {
+      "type": "function",
+      "name": "_tree_root",
+      "description": "The directory a ``repo_tree`` step queried.",
+      "defined_in": "polaris/cells/roles/scout/internal/retrieval.py"
+    },
+    {
+      "type": "function",
+      "name": "_rebase",
+      "description": "Make a tool-reported path workspace-relative.",
       "defined_in": "polaris/cells/roles/scout/internal/retrieval.py"
     },
     {
@@ -286,6 +334,33 @@
     },
     {
       "type": "class",
+      "name": "ScoutReadAuthorityV1",
+      "description": "Host-committed read authority for one Scout composite call.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py",
+      "methods": [
+        {
+          "name": "scope_committed",
+          "doc": "True when the host committed a read scope (even an empty one)."
+        },
+        {
+          "name": "cache_hits_permitted",
+          "doc": "True when a cached report may be served for this authority."
+        },
+        {
+          "name": "live",
+          "doc": "The host's CURRENT authority, re-read at the moment of use."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ScoutProbeDeniedError",
+      "description": "Raised when the host authority denies every read of a probe.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "ScoutProbeService",
       "description": "Synchronous-inline, read-only code/symbol reconnaissance facade.",
       "defined_in": "polaris/cells/roles/scout/public/service.py",
@@ -301,8 +376,102 @@
         {
           "name": "_escalate",
           "doc": "Bridge to a governed read-only scout role-session. Returns its output."
+        },
+        {
+          "name": "close",
+          "doc": "Release the read tool's own resources."
+        },
+        {
+          "name": "_cache_hits_permitted",
+          "doc": "True when this service may serve a cached report at all."
+        },
+        {
+          "name": "_cache_key",
+          "doc": "Bind the cache to the workspace AND the authority identity."
+        },
+        {
+          "name": "_planned_roots",
+          "doc": "The roots the planner may search."
+        },
+        {
+          "name": "_assert_readable_authority",
+          "doc": "Refuse up front when the committed scope authorizes no readable path."
+        },
+        {
+          "name": "_assert_cached_report_is_authorized",
+          "doc": "Refuse a cached report the CURRENT authority no longer authorizes."
+        },
+        {
+          "name": "_assert_readable_outcome",
+          "doc": "Refuse when no read tool was actually permitted to run."
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "_FrozenTokenMapping",
+      "description": "Read-only token snapshot that returns detached JSON-shaped values.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_freeze_token",
+      "description": "Snapshot token mappings and sequences without sharing caller containers.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_freeze_token_value",
+      "description": "Copy nested mappings and sequences into read-only containers.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_detached_token_value",
+      "description": "Return detached mappings and sequences for token consumers.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_committed_scope_entries",
+      "description": "The host's committed read scope, as declared in the token.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_relative_scope_entries",
+      "description": "The committed scope entries that are workspace-relative.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_committed_scope_fingerprint",
+      "description": "Bind the committed read scope into the cache key.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_decision_fingerprint",
+      "description": "Bind the host's CURRENT per-tool decisions into the cache key.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_authority_identity",
+      "description": "Fingerprint the identity that authorized a probe.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_path_within_roots",
+      "description": "True when ``path`` denotes a root or something inside one of them.",
+      "defined_in": "polaris/cells/roles/scout/public/service.py"
     },
     {
       "type": "function",

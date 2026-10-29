@@ -6,7 +6,10 @@ Layer 2: Full skill body via load_skill tool result
 
 设计约束：
 - KernelOne 通用技能加载系统，不嵌入特定产品目录名
-- skills_root 由调用方注入，默认从环境变量或 ".polaris/skills" 读取
+- skills_root 由调用方注入，默认从环境变量或 "<metadata>/skills" 读取
+- 读取只读：SkillLoader 不创建目录、不复制文件、不写入任何内容
+- 写入只允许显式 install_default_skills(...)，且必须经 KFS 落在工作区内
+- 内置技能内容始终可读，不需要任何磁盘写入
 """
 
 from __future__ import annotations
@@ -15,21 +18,141 @@ import json
 import logging
 import os
 import re
-import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
-from polaris.kernelone.storage import resolve_runtime_path
+from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
+from polaris.kernelone.errors import PathSecurityError
+from polaris.kernelone.fs.guarded_metadata import GuardedMetadataError
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # The concrete runtime module is imported for typing only: the package
+    # facade resolves ``KernelFileSystem`` dynamically, which would erase
+    # the real return types under a type checker.
+    from polaris.kernelone.fs.contracts import KernelFileSystemAdapter
+    from polaris.kernelone.fs.runtime import KernelFileSystem
 
 logger = logging.getLogger(__name__)
 
-#: Default skills root. KERNELONE_SKILLS_ROOT env var takes precedence.
-_DEFAULT_SKILLS_ROOT = os.environ.get(
-    "KERNELONE_SKILLS_ROOT",
-    ".polaris/skills",
-)
+
+class SkillWorkspaceMissingError(PathSecurityError, RuntimeError):
+    """The workspace root does not exist, so no installation can be bound.
+
+    The managed create capability provisions the *intermediate* directories
+    of a target leaf, but the namespace root itself is retained, never
+    provisioned.  This error reports that unsupported edge honestly instead
+    of creating the root through an out-of-band path that would bypass the
+    registered adapter.
+    """
+
+    def __init__(self, message: str, *, path: str = "") -> None:
+        PathSecurityError.__init__(self, message, path=path, violation_type="skills_workspace_missing")
+
+
+class SkillRootSecurityError(PathSecurityError, RuntimeError):
+    """A requested skills root is not usable inside the workspace.
+
+    The error is both a :class:`PathSecurityError` (semantic classification)
+    and a :class:`RuntimeError` so that existing ``except RuntimeError``
+    boundaries keep treating it as a controlled refusal instead of an
+    unexpected crash.  It is always raised *before* any effect.
+    """
+
+    def __init__(self, message: str, *, path: str = "", violation_type: str = "skills_root_escape") -> None:
+        PathSecurityError.__init__(self, message, path=path, violation_type=violation_type)
+
+
+#: Upper bound of directory entries inspected during one discovery pass.
+_MAX_SKILL_DISCOVERY_ENTRIES = 512
+
+#: Upper bound of bytes written for one installed skill file.
+_MAX_SKILL_FILE_BYTES = 1_048_576
+
+
+def _canonical_skills_root() -> str:
+    """Return the workspace-relative skills root inside the metadata tree."""
+    metadata = str(get_workspace_metadata_dir_name() or "").strip() or ".polaris"
+    return f"{metadata}/skills"
+
+
+def _configured_skills_root() -> str:
+    """Return the configured workspace-relative skills root.
+
+    The environment variable is read per call so a host can relocate the root
+    without reimporting this module.  The raw value is NOT trusted here; it is
+    validated by :func:`_validated_skills_root` before any path is built.
+    """
+    raw = str(os.environ.get("KERNELONE_SKILLS_ROOT") or "").strip()
+    return raw or _canonical_skills_root()
+
+
+def _validated_skills_root(raw: str) -> str:
+    """Return a canonical workspace-relative skills root or refuse it.
+
+    The root is always resolved *inside* the workspace.  Absolute paths,
+    ``..`` components, home expansion and drive-qualified paths are refused
+    before any effect, so a hostile configuration can never redirect an
+    installation outside the workspace.
+
+    Raises:
+        PathSecurityError: The requested root escapes the workspace or is
+            not a usable workspace-relative path.
+    """
+    text = str(raw or "").strip().replace("\\", "/")
+    if not text:
+        raise SkillRootSecurityError(
+            "skills root must not be empty",
+            path=text,
+            violation_type="skills_root_invalid",
+        )
+    if text.startswith("/") or text.startswith("~"):
+        raise SkillRootSecurityError(
+            "skills root must be workspace-relative",
+            path=text,
+            violation_type="skills_root_escape",
+        )
+    parts = [part for part in text.split("/") if part not in {"", "."}]
+    if not parts:
+        raise SkillRootSecurityError(
+            "skills root must not be empty",
+            path=text,
+            violation_type="skills_root_invalid",
+        )
+    if any(part == ".." for part in parts):
+        raise SkillRootSecurityError(
+            "skills root must not escape the workspace",
+            path=text,
+            violation_type="skills_root_escape",
+        )
+    if ":" in parts[0]:
+        raise SkillRootSecurityError(
+            "skills root must not be drive-qualified",
+            path=text,
+            violation_type="skills_root_escape",
+        )
+    return "/".join(parts)
+
+
+def _legacy_runtime_skills_root() -> str:
+    """Return the read-only legacy runtime skills root.
+
+    Older releases installed a duplicate copy below the canonical runtime
+    root.  That tree is now discovery-only: it is never written and never
+    copied into the canonical root.
+    """
+    metadata = str(get_workspace_metadata_dir_name() or "").strip() or ".polaris"
+    return f"{metadata}/runtime/skills"
+
+
+def _kernel_fs_for(workspace: str) -> KernelFileSystem:
+    """Build the workspace-bound KernelOne filesystem boundary."""
+    from polaris.kernelone.fs import get_default_adapter
+    from polaris.kernelone.fs.runtime import KernelFileSystem as _KernelFileSystem
+
+    adapter = cast("KernelFileSystemAdapter", get_default_adapter())
+    return _KernelFileSystem(str(Path(workspace).resolve()), adapter)
 
 
 @dataclass
@@ -61,29 +184,51 @@ class SkillLoader:
     """Two-layer skill loading system.
 
     Avoids bloating system prompt by loading skill content on demand.
+
+    The loader is strictly read-only: it never creates a directory, never
+    copies a file and never writes content.  Skills are discovered from the
+    canonical workspace skills root, from the read-only legacy runtime root
+    (explicit discovery only) and from the built-in ``DEFAULT_SKILLS``
+    catalogue, so a fresh workspace still exposes usable builtin skills
+    without any disk effect.
     """
 
     MAX_SKILL_SIZE = 50000  # Max chars per skill
 
     def __init__(self, workspace: str, *, skills_root: str | None = None) -> None:
         self.workspace = Path(workspace)
-        skills_root_str = skills_root or _DEFAULT_SKILLS_ROOT
-        self.skills_dir = self.workspace / skills_root_str
-        self.skills_dir.mkdir(parents=True, exist_ok=True)
-        runtime_skills_dir = Path(resolve_runtime_path(str(self.workspace), "runtime/skills"))
-        if runtime_skills_dir.exists():
-            for skill_file in runtime_skills_dir.glob("*.md"):
-                target = self.skills_dir / skill_file.name
-                if target.exists():
-                    continue
-                try:
-                    shutil.copyfile(skill_file, target)
-                except (RuntimeError, ValueError) as exc:
-                    logger.warning("kernelone.single_agent.skill_system.copy_skill_file failed: %s", exc, exc_info=True)
-                    continue
-
+        if skills_root is None:
+            # A hostile *configuration* must not break the read path: the
+            # loader is read-only, so falling back to the canonical root is
+            # safe and keeps the builtin catalogue available.
+            self.skills_root = self._configured_or_canonical_root()
+        else:
+            # An explicitly requested root is a caller decision and is
+            # refused loudly when it is unusable.
+            self.skills_root = _validated_skills_root(skills_root)
+        self.skills_dir = self.workspace / self.skills_root
+        self._kernel_fs: KernelFileSystem | None = None
         self._skills: dict[str, Skill] = {}
         self._load_all_skills()
+
+    @staticmethod
+    def _configured_or_canonical_root() -> str:
+        """Return the configured skills root, or the canonical one when unusable."""
+        try:
+            return _validated_skills_root(_configured_skills_root())
+        except SkillRootSecurityError as exc:
+            logger.warning(
+                "[SkillLoader] Ignoring unusable configured skills root %s: %s",
+                exc.details.get("path", ""),
+                exc,
+            )
+            return _canonical_skills_root()
+
+    def _fs(self) -> KernelFileSystem:
+        """Return the workspace-bound KernelOne filesystem boundary."""
+        if self._kernel_fs is None:
+            self._kernel_fs = _kernel_fs_for(str(self.workspace))
+        return self._kernel_fs
 
     def _parse_frontmatter(self, text: str) -> tuple:
         """Parse YAML frontmatter between --- delimiters.
@@ -110,31 +255,73 @@ class SkillLoader:
 
         return meta, body
 
-    def _load_all_skills(self) -> None:
-        """Load all skills from skills_dir/*.md"""
-        if not self.skills_dir.exists():
+    def _build_skill(self, name: str, text: str, path: str) -> Skill:
+        """Build one skill from raw markdown content."""
+        if len(text) > self.MAX_SKILL_SIZE:
+            text = text[: self.MAX_SKILL_SIZE] + "\n... [truncated]"
+
+        meta, body = self._parse_frontmatter(text)
+        return Skill(
+            name=name,
+            description=meta.get("description", "No description"),
+            tags=meta.get("tags", []) if isinstance(meta.get("tags"), list) else [],
+            body=body,
+            meta=meta,
+            path=path,
+        )
+
+    def _read_workspace_skill(self, relative_path: str) -> str | None:
+        """Read one workspace skill through the guarded KFS boundary.
+
+        Returns the UTF-8 content, or ``None`` when the file is absent or
+        cannot be read as a regular file.  A read failure never aborts the
+        whole discovery pass.
+        """
+        try:
+            return self._fs().workspace_read_text(relative_path, encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.warning(
+                "[SkillLoader] Failed to read %s: %s",
+                relative_path,
+                exc,
+            )
+            return None
+
+    def _discover_root(self, root: str) -> None:
+        """Load every ``*.md`` skill below one workspace-relative root."""
+        try:
+            listing = self._fs().workspace_list_directory(root, max_entries=_MAX_SKILL_DISCOVERY_ENTRIES)
+        except GuardedMetadataError as exc:
+            if exc.code == "guarded_metadata_missing":
+                return
+            logger.warning("[SkillLoader] Failed to list %s: %s", root, exc)
+            return
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.warning("[SkillLoader] Failed to list %s: %s", root, exc)
             return
 
-        for skill_file in sorted(self.skills_dir.glob("*.md")):
-            try:
-                text = skill_file.read_text(encoding="utf-8")
-                if len(text) > self.MAX_SKILL_SIZE:
-                    text = text[: self.MAX_SKILL_SIZE] + "\n... [truncated]"
+        for entry in listing.entries:
+            if not entry.name.endswith(".md"):
+                continue
+            relative = f"{root}/{entry.name}"
+            content = self._read_workspace_skill(relative)
+            if content is None:
+                continue
+            self._skills.setdefault(entry.name[:-3], self._build_skill(entry.name[:-3], content, relative))
 
-                meta, body = self._parse_frontmatter(text)
+    def _load_all_skills(self) -> None:
+        """Load workspace skills, then fall back to the builtin catalogue."""
+        self._discover_root(self.skills_root)
+        # The legacy runtime tree is discovery-only: it is read, never written
+        # and never copied into the canonical root.
+        self._discover_root(_legacy_runtime_skills_root())
 
-                skill = Skill(
-                    name=skill_file.stem,
-                    description=meta.get("description", "No description"),
-                    tags=meta.get("tags", []) if isinstance(meta.get("tags"), list) else [],
-                    body=body,
-                    meta=meta,
-                    path=str(skill_file),
-                )
-                self._skills[skill.name] = skill
-
-            except (RuntimeError, ValueError) as e:
-                logger.warning("[SkillLoader] Failed to load %s: %s", skill_file, e)
+        for name, content in DEFAULT_SKILLS.items():
+            if name in self._skills:
+                continue
+            self._skills[name] = self._build_skill(name, content, f"builtin://{name}")
 
     def get_system_prompt_section(self) -> str:
         """Layer 1: Get skill descriptions for system prompt.
@@ -620,31 +807,96 @@ def install_default_skills(
     skills_root: str | None = None,
     explicit: bool = False,
 ) -> list[str]:
-    """Install default skills to workspace.
+    """Install default skills into the workspace skills root.
 
     为防止隐式安装掩盖环境问题，默认拒绝执行，必须显式声明 explicit=True。
+
+    The installation is workspace-contained by construction:
+
+    * the skills root is validated as a workspace-relative path *before* any
+      effect, so an absolute, home-expanded, drive-qualified or ``..``
+      escaping root is refused without touching the filesystem;
+    * every file is created through the *active adapter* via the generic
+      ``KernelFileSystem.workspace_create_text`` capability.  The effect is
+      owned by the adapter, so a registered refusal stops the installation
+      before any parent directory or file exists.  The legacy writer is
+      never used as an authorization probe;
+    * a single canonical root is written — the legacy runtime tree is never
+      written again;
+    * an existing file is never overwritten, so user-authored skill content
+      is preserved.
 
     Args:
         workspace: 工作区路径
         skills_root: 技能目录根路径（可选，默认从 KERNELONE_SKILLS_ROOT 读取）
         explicit: 必须为 True 才执行
+
+    Returns:
+        The names of the skills created by this call.  Skills that already
+        existed are not reported and not rewritten.
+
+    Raises:
+        RuntimeError: ``explicit`` was not True.
+        SkillRootSecurityError: The requested skills root is not usable
+            inside the workspace.  Raised before any effect.
+        NamespaceOperationUnavailableError: The registered adapter cannot
+            perform the managed create.  Raised before any effect.
+        NamespaceBoundaryError: The target leaf is not a usable workspace
+            path (linked parent, non-regular leaf, oversized content).
+        NamespaceOperationEffectUnknownError: The create may already have
+            landed.  It is never replayed and never rolled back.
     """
     if not explicit:
         raise RuntimeError("install_default_skills requires explicit=True to avoid implicit fallback behavior")
-    skills_root_str = skills_root or _DEFAULT_SKILLS_ROOT
-    workspace_skills_dir = Path(workspace) / skills_root_str
-    runtime_skills_dir = Path(resolve_runtime_path(workspace, "runtime/skills"))
-    workspace_skills_dir.mkdir(parents=True, exist_ok=True)
-    runtime_skills_dir.mkdir(parents=True, exist_ok=True)
 
-    installed = []
+    requested_root = skills_root if skills_root is not None else _configured_skills_root()
+    root = _validated_skills_root(requested_root)
+
+    kernel_fs = _kernel_fs_for(workspace)
+    _require_existing_workspace(kernel_fs)
+
+    installed: list[str] = []
     for name, content in DEFAULT_SKILLS.items():
-        workspace_skill_path = workspace_skills_dir / f"{name}.md"
-        runtime_skill_path = runtime_skills_dir / f"{name}.md"
-        if not workspace_skill_path.exists():
-            workspace_skill_path.write_text(content, encoding="utf-8")
+        relative_path = f"{root}/{name}.md"
+        if _create_skill_file(kernel_fs, relative_path, content):
             installed.append(name)
-        if not runtime_skill_path.exists():
-            runtime_skill_path.write_text(content, encoding="utf-8")
 
     return installed
+
+
+def _require_existing_workspace(kernel_fs: KernelFileSystem) -> None:
+    """Require an existing workspace root before any installation effect.
+
+    The managed create capability creates the *intermediate* directories of
+    the target leaf, but it cannot create the workspace root itself: the
+    namespace root is retained, not provisioned.  Installing into a
+    workspace that does not exist yet is therefore reported honestly as an
+    unsupported edge instead of being satisfied with an out-of-band
+    directory creation that would bypass the registered adapter.
+    """
+    if kernel_fs.workspace_exists("."):
+        return
+    raise SkillWorkspaceMissingError(
+        f"skill installation requires an existing workspace root: {kernel_fs.workspace}",
+        path=str(kernel_fs.workspace),
+    )
+
+
+def _create_skill_file(kernel_fs: KernelFileSystem, relative_path: str, content: str) -> bool:
+    """Create one skill file when it is absent, through the active adapter.
+
+    Returns True when this call created the file, False when it already
+    existed.  An existing file is never replaced, so user-authored skill
+    content survives an installation.
+
+    The create capability creates the missing intermediate directories of
+    the leaf itself, so no directory is provisioned before the adapter has
+    accepted the operation: a registered refusal leaves no physical trace.
+    """
+    receipt = kernel_fs.workspace_create_text(
+        relative_path,
+        content,
+        encoding="utf-8",
+        max_bytes=max(len(content.encode("utf-8")), _MAX_SKILL_FILE_BYTES),
+    )
+    return bool(receipt.created)

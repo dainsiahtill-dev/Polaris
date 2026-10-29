@@ -17,7 +17,12 @@ import os
 import tempfile
 from typing import Any, Literal, Protocol, TypeAlias, cast, runtime_checkable
 
-from polaris.kernelone.fs.types import AtomicWriteBindingV1, FileWriteReceipt
+from polaris.kernelone.fs.types import (
+    AtomicWriteBindingV1,
+    FileWriteReceipt,
+    NamespaceBindingV1,
+    NamespaceCreateReceiptV1,
+)
 
 DurabilityMode: TypeAlias = Literal["buffered", "flush", "fsync"]
 
@@ -32,6 +37,20 @@ class FileDurabilityError(OSError):
         self.path = path
         self.durability = durability
         self.stage = stage
+
+
+class NamespaceOperationUnavailableError(NotImplementedError, PermissionError):
+    """The adapter cannot perform a namespace-bound operation.
+
+    This is the pre-effect refusal of the managed namespace capability.  It
+    is raised *before* any physical effect, so an adapter that cannot honour
+    the namespace contract never causes an unmanaged write.
+
+    It inherits from both ``NotImplementedError`` and ``PermissionError`` so
+    that existing callers which treat "the filesystem refused" and "the
+    filesystem cannot do this" as refusals keep their current behaviour,
+    while the concrete type stays distinguishable.
+    """
 
 
 def validate_durability(value: str) -> DurabilityMode:
@@ -115,6 +134,80 @@ class KernelFileSystemAdapter(Protocol):
         fall back to an unmanaged or non-atomic writer after a failure.
         """
         raise NotImplementedError("managed atomic writes are unavailable")
+
+    def read_managed_namespace_bytes(self, binding: NamespaceBindingV1) -> bytes:
+        """Read one leaf that is bound to a logical namespace root.
+
+        The implementation must reach the leaf through retained no-follow
+        descriptors inside ``binding.namespace_root`` so that a symbolic link
+        in the chain is refused instead of followed.  Missing capability
+        rejects before any effect.
+        """
+        raise NotImplementedError("managed namespace reads are unavailable")
+
+    def write_managed_namespace_bytes(self, binding: NamespaceBindingV1, content: bytes) -> int:
+        """Replace one leaf that is bound to a logical namespace root.
+
+        The implementation must reach the leaf through retained no-follow
+        descriptors inside ``binding.namespace_root``.  Missing capability
+        rejects before any effect, and a failure after a possible effect must
+        surface an explicit unknown effect rather than a false success.
+        """
+        raise NotImplementedError("managed namespace writes are unavailable")
+
+    def write_managed_namespace_bytes_atomic(self, binding: NamespaceBindingV1, content: bytes) -> int:
+        """Atomically replace one leaf bound to a logical namespace root.
+
+        The atomic guarantee is owned by the implementation.  Missing
+        capability rejects before any effect, and no fallback to an unmanaged
+        or non-atomic writer is permitted after a failure.
+        """
+        raise NotImplementedError("managed namespace atomic writes are unavailable")
+
+    def append_managed_namespace_bytes(
+        self,
+        binding: NamespaceBindingV1,
+        content: bytes,
+        *,
+        durability: DurabilityMode = "buffered",
+    ) -> int:
+        """Append to one leaf bound to a logical namespace root.
+
+        The requested durability stage must complete before success is
+        reported.  Missing capability rejects before any effect.
+        """
+        raise NotImplementedError("managed namespace appends are unavailable")
+
+    def remove_managed_namespace(self, binding: NamespaceBindingV1, *, missing_ok: bool = True) -> bool:
+        """Remove one leaf entry bound to a logical namespace root.
+
+        ``missing_ok`` selects how an absent leaf is reported.  It must never
+        turn a real operation failure into a success, and it must never
+        remove the target of a symbolic link.
+        """
+        raise NotImplementedError("managed namespace removal is unavailable")
+
+    def create_managed_namespace_bytes(
+        self,
+        binding: NamespaceBindingV1,
+        content: bytes,
+        *,
+        max_bytes: int,
+    ) -> NamespaceCreateReceiptV1:
+        """Create one leaf bound to a logical namespace root, only when absent.
+
+        This is the *create-only* capability: it never overwrites and never
+        removes an existing leaf.  When the leaf already exists the existing
+        content is preserved and the receipt reports ``created=False``.
+
+        Missing capability rejects before any effect.  A refusal must precede
+        every compound creation effect, so a denied create leaves no
+        directory, no temporary file and no partially created tree.  A
+        failure after a possible creation must surface an explicit unknown
+        effect rather than a false success, and the operation must never be
+        replayed.
+        """
+        raise NotImplementedError("managed namespace creation is unavailable")
 
     def append_text(
         self,

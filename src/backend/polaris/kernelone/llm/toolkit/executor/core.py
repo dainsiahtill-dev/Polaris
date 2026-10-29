@@ -5,7 +5,6 @@ This module contains the main AgentAccelToolExecutor class.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from collections import OrderedDict
 from collections.abc import ItemsView, KeysView, Mapping, ValuesView
@@ -138,6 +137,9 @@ def _copy_handler_failure_evidence(payload: dict[str, Any], handler_result: dict
         "failure_class",
         "responsible_layer",
         "evidence_refs",
+        "partial",
+        "files_changed",
+        "move_effects",
     ):
         if key in handler_result:
             payload[key] = handler_result[key]
@@ -147,6 +149,12 @@ def _copy_handler_failure_evidence(payload: dict[str, Any], handler_result: dict
     if handler_error_type:
         payload["handler_error_type"] = handler_error_type
         payload["error_type"] = handler_error_type
+    if handler_result.get("partial"):
+        # A partial or unknown physical effect must not be presented as a
+        # retryable failure: the confirmed part of the effect already landed,
+        # so replaying the call could repeat it.  The evidence stays visible
+        # so the caller can reconcile instead of blindly retrying.
+        payload["retryable"] = False
 
 
 class AgentAccelToolExecutor:
@@ -209,11 +217,14 @@ class AgentAccelToolExecutor:
         self._kernel_fs = KernelFileSystem(self.workspace, get_default_adapter())
         self._command_executor = CommandExecutionService(self.workspace)
 
-        # Initialize skill system (lazy: only installs default skills, actual loading on first use)
-        from polaris.kernelone.single_agent.skill_system import install_default_skills
-
-        with contextlib.suppress(RuntimeError):
-            install_default_skills(self.workspace, explicit=True)
+        # Constructing the executor has no filesystem effect beyond the
+        # workspace-scoped services above.  Skill materialisation is an
+        # explicit, host-authorised action (see
+        # ``install_default_skills``); the ``explicit=True`` flag used to be
+        # synthesised here, which turned a constructor into an unauthorised
+        # writer and produced skill files even for a role with an empty
+        # tool allowlist.  The skill *loader* stays read-only and exposes
+        # the builtin catalogue without touching the disk.
 
         from polaris.kernelone.llm.toolkit.executor.handlers.treesitter import (
             TreeSitterSymbolHandler,

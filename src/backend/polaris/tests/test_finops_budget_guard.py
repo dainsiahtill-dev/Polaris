@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 
 import pytest
+from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 from polaris.kernelone.fs import KernelFileSystem
 
 # ---------------------------------------------------------------------------
@@ -24,55 +25,16 @@ from polaris.kernelone.fs import KernelFileSystem
 # ---------------------------------------------------------------------------
 
 
-class _LocalFSAdapter:
-    """Minimal local-filesystem-backed adapter for testing."""
+class _LocalFSAdapter(LocalFileSystemAdapter):
+    """Local-filesystem-backed adapter for testing.
 
-    @staticmethod
-    def _path(path: Path | str) -> Path:
-        return Path(path)
-
-    def read_text(self, path: Path | str, *, encoding: str = "utf-8") -> str:
-        return self._path(path).read_text(encoding=encoding)
-
-    def read_bytes(self, path: Path | str) -> bytes:
-        return self._path(path).read_bytes()
-
-    def write_text(self, path: Path | str, content: str, *, encoding: str = "utf-8") -> int:
-        resolved = self._path(path)
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_text(content, encoding=encoding)
-        return len(content.encode(encoding))
-
-    def write_bytes(self, path: Path | str, content: bytes) -> int:
-        resolved = self._path(path)
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_bytes(content)
-        return len(content)
-
-    def append_text(self, path: Path | str, content: str, *, encoding: str = "utf-8") -> int:
-        resolved = self._path(path)
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        with open(resolved, "a", encoding=encoding) as fh:
-            fh.write(content)
-        return len(content.encode(encoding))
-
-    def exists(self, path: Path | str) -> bool:
-        return self._path(path).exists()
-
-    def is_file(self, path: Path | str) -> bool:
-        return self._path(path).is_file()
-
-    def is_dir(self, path: Path | str) -> bool:
-        return self._path(path).is_dir()
-
-    def remove(self, path: Path | str, *, missing_ok: bool = True) -> bool:
-        try:
-            self._path(path).unlink()
-            return True
-        except FileNotFoundError:
-            if missing_ok:
-                return False
-            raise
+    The adapter owns the logical namespace effects, so this fixture derives
+    from the *real* production adapter rather than re-implementing the
+    filesystem.  It deliberately overrides no legacy method: the fixture
+    carries no refusal policy of its own, so the managed namespace
+    capabilities are inherited unchanged and there is nothing to defeat and
+    nothing to opt into.
+    """
 
 
 def _make_fs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[KernelFileSystem, Path]:

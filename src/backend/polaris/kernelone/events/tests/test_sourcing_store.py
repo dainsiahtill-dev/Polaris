@@ -16,12 +16,13 @@ from polaris.kernelone.events.sourcing import (
     file_store,
 )
 from polaris.kernelone.fs import KernelFileSystem, set_default_adapter
-from polaris.kernelone.fs.contracts import FileDurabilityError
+from polaris.kernelone.fs.contracts import DurabilityMode, FileDurabilityError
 from polaris.kernelone.fs.locked_regular_file import (
     LockedRegularFileSetV1,
     StreamLeaseV1,
     default_platform_lock_root,
 )
+from polaris.kernelone.fs.types import NamespaceBindingV1
 
 
 def _provision_store(store: JsonlEventStore, paths: tuple[str, ...]) -> None:
@@ -865,16 +866,15 @@ def test_kernel_filesystem_append_jsonl_preserves_buffered_default_and_utf8(tmp_
     calls: list[tuple[str, str, str, str]] = []
 
     class RecordingAdapter(LocalFileSystemAdapter):
-        def append_text(
+        def append_managed_namespace_bytes(
             self,
-            path: str,
-            content: str,
+            binding: NamespaceBindingV1,
+            content: bytes,
             *,
-            encoding: str = "utf-8",
-            durability: str = "buffered",
+            durability: DurabilityMode = "buffered",
         ) -> int:
-            calls.append((path, content, encoding, durability))
-            return super().append_text(path, content, encoding=encoding, durability=durability)  # type: ignore[arg-type]
+            calls.append((binding.physical_path(), content.decode("utf-8"), "utf-8", durability))
+            return LocalFileSystemAdapter.append_managed_namespace_bytes(self, binding, content, durability=durability)
 
     fs = KernelFileSystem(str(tmp_path), RecordingAdapter())
     fs.append_jsonl("runtime/events/utf8.jsonl", {"message": "中文"})

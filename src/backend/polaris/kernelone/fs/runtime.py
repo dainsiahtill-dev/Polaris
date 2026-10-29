@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import json
 import os
 import re
@@ -18,7 +17,13 @@ from polaris.kernelone.storage import (
 )
 from polaris.kernelone.utils import utc_now_str
 
-from .contracts import DurabilityMode, FileWriteReceipt, KernelFileSystemAdapter, validate_durability
+from .contracts import (
+    DurabilityMode,
+    FileWriteReceipt,
+    KernelFileSystemAdapter,
+    NamespaceOperationUnavailableError,
+    validate_durability,
+)
 from .guarded_directory import guarded_create_directory
 from .guarded_metadata import list_guarded_directory, read_guarded_metadata, read_guarded_symlink
 from .guarded_remove_tree import guarded_remove_tree
@@ -28,48 +33,17 @@ from .types import (
     DirectoryCreateReceipt,
     DirectoryListingV1,
     FileMetadataV1,
+    NamespaceBindingV1,
+    NamespaceCreateReceiptV1,
     SymlinkObservationV1,
 )
 
 _CHANNEL_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
-# Probe arguments used only to test whether the protocol atomic call shape
-# binds against an adapter signature.  They are never written to disk.
-_CAPABILITY_PROBE_PATH = "<atomic-capability-probe>"
-_CAPABILITY_PROBE_TEXT = ""
-
-
-class AtomicWriteCapabilityError(NotImplementedError):
-    """Raised before any effect when an adapter cannot honor an atomic write.
-
-    The adapter's own contract decides whether an atomic write is possible.
-    When the adapter cannot accept the protocol's atomic call shape, this
-    error is raised *before* the write is attempted, so a non-compliant
-    adapter never causes an unmanaged physical write.
-    """
-
-
-def _binds_atomic_call(writer: Callable[..., Any]) -> bool:
-    """Return True only when the adapter can accept the protocol atomic call.
-
-    The check is a *call-shape* compatibility test, not a capability proof:
-    ``write_text(path, content, encoding=..., atomic=True)`` must bind
-    against the adapter's real signature.
-
-    A ``**kwargs`` catch-all binds successfully and is therefore accepted as
-    a legitimate wrapper.  Binding success says nothing about whether the
-    adapter honors ``atomic`` physically, so it is never treated as proof of
-    an atomic effect or of durability.
-    """
-    try:
-        signature = inspect.signature(writer)
-    except (TypeError, ValueError):
-        return False
-    try:
-        signature.bind(_CAPABILITY_PROBE_PATH, _CAPABILITY_PROBE_TEXT, encoding="utf-8", atomic=True)
-    except TypeError:
-        return False
-    return True
+#: Default upper bound of one created workspace file.  The bound is a
+#: resource ceiling, not an admission quota: a caller may pass its own
+#: ``max_bytes``.
+_DEFAULT_CREATE_MAX_BYTES = 1_048_576
 
 
 class KernelFileSystem:
@@ -103,6 +77,40 @@ class KernelFileSystem:
             return Path(resolve_logical_path(self.workspace, normalized, read_only=True))
         return Path(resolve_logical_path(self.workspace, normalized))
 
+    def _namespace_binding(self, normalized: str) -> NamespaceBindingV1:
+        """Bind one normalized logical path to its configured namespace root.
+
+        The binding reuses the roots that ``storage.layout`` actually selected
+        for this workspace.  It never re-derives a canonical root of its own
+        and never bypasses the host runtime-root validation that the layout
+        performs, so an unsupported runtime configuration still fails in the
+        layout rather than silently producing a different namespace here.
+
+        The returned relative path is the part *below* the namespace root.
+        The consumer walks that chain itself with retained no-follow
+        descriptors, so a symbolic link anywhere in it is refused instead of
+        followed.
+        """
+        prefix, _, remainder = normalized.partition("/")
+        roots = (resolve_storage_roots_read_only if self._read_only_paths else resolve_storage_roots)(self.workspace)
+        if prefix == "runtime":
+            namespace_root = roots.runtime_project_root
+        elif prefix == "workspace":
+            namespace_root = roots.project_persistent_root
+        elif prefix == "config":
+            namespace_root = roots.config_root
+        else:  # pragma: no cover - normalize_logical_rel_path already refused it.
+            raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {normalized}")
+        namespace_root = os.path.abspath(namespace_root)
+        relative = remainder.strip("/")
+        if not relative:
+            raise ValueError(f"{UNSUPPORTED_PATH_PREFIX}: {normalized}")
+        return NamespaceBindingV1(
+            namespace_root=namespace_root,
+            relative_path=relative,
+            logical_prefix=prefix,
+        )
+
     def to_logical_path(self, logical_or_absolute_path: str) -> str:
         raw = str(logical_or_absolute_path or "").strip()
         if not raw:
@@ -116,10 +124,15 @@ class KernelFileSystem:
 
     def read_text(self, logical_path: str, *, encoding: str = "utf-8") -> str:
         self._require_utf8_encoding(encoding)
-        return self._adapter.read_text(str(self.resolve_path(logical_path)), encoding=encoding)
+        normalized = self.to_logical_path(logical_path)
+        binding = self._namespace_binding(normalized)
+        content = self._read_managed_namespace_bytes(binding)
+        return content.decode(encoding)
 
     def read_bytes(self, logical_path: str) -> bytes:
-        return self._adapter.read_bytes(str(self.resolve_path(logical_path)))
+        normalized = self.to_logical_path(logical_path)
+        binding = self._namespace_binding(normalized)
+        return self._read_managed_namespace_bytes(binding)
 
     def read_json(self, logical_path: str) -> Any:
         return json.loads(self.read_text(logical_path, encoding="utf-8"))
@@ -134,11 +147,11 @@ class KernelFileSystem:
         self._require_utf8_encoding(encoding)
         normalized = self.to_logical_path(logical_path)
         text = str(content)
-        path = self.resolve_path(normalized)
-        size = self._adapter.write_text(str(path), text, encoding=encoding)
+        binding = self._namespace_binding(normalized)
+        size = self._write_managed_namespace_bytes(binding, text.encode(encoding))
         return FileWriteReceipt(
             logical_path=normalized,
-            absolute_path=str(path),
+            absolute_path=binding.physical_path(),
             bytes_written=size,
         )
 
@@ -149,17 +162,16 @@ class KernelFileSystem:
         *,
         encoding: str = "utf-8",
     ) -> FileWriteReceipt:
-        """Write UTF-8 text through the adapter's atomic write capability.
+        """Write UTF-8 text through the adapter's managed atomic capability.
 
         The adapter owns the atomic guarantee.  When the adapter cannot
-        accept the protocol atomic call shape the request is rejected
+        honour the managed namespace capability the request is rejected
         *before* any physical effect, so a non-compliant adapter can never
         be silently replaced by an unmanaged physical write.
 
-        The capability check binds the adapter's ``write_text`` callable once
-        and the write uses that same callable.  The callable is never
-        re-resolved, so the write cannot reach a different writer than the
-        one that was validated.
+        The capability is bound once and the write uses that same callable.
+        The callable is never re-resolved, so the write cannot reach a
+        different writer than the one that was validated.
 
         Any failure raised by the adapter propagates unchanged.  The write is
         never retried and never re-executed through a second writer: the
@@ -167,15 +179,16 @@ class KernelFileSystem:
         state) instead of a replayed success.
         """
         self._require_utf8_encoding(encoding)
-        writer = self._bind_atomic_write_capability()
+        writer = self._bind_managed_namespace_capability("write_managed_namespace_bytes_atomic")
         normalized = self.to_logical_path(logical_path)
         text = str(content)
-        path = self.resolve_path(normalized)
-        size = self._atomic_write_text(writer, str(path), text, encoding=encoding)
+        binding = self._namespace_binding(normalized)
+        size = int(writer(binding, text.encode(encoding)))
         return FileWriteReceipt(
             logical_path=normalized,
-            absolute_path=str(path),
+            absolute_path=binding.physical_path(),
             bytes_written=size,
+            atomic=True,
         )
 
     def append_text(
@@ -192,27 +205,22 @@ class KernelFileSystem:
         normalized_durability = validate_durability(durability)
         normalized = self.to_logical_path(logical_path)
         text = str(content)
-        path = self.resolve_path(normalized)
-        size = self._adapter.append_text(
-            str(path),
-            text,
-            encoding=encoding,
-            durability=normalized_durability,
-        )
+        binding = self._namespace_binding(normalized)
+        size = self._append_managed_namespace_bytes(binding, text.encode(encoding), durability=normalized_durability)
         return FileWriteReceipt(
             logical_path=normalized,
-            absolute_path=str(path),
+            absolute_path=binding.physical_path(),
             bytes_written=size,
         )
 
     def write_bytes(self, logical_path: str, content: bytes) -> FileWriteReceipt:
         normalized = self.to_logical_path(logical_path)
-        path = self.resolve_path(normalized)
+        binding = self._namespace_binding(normalized)
         payload = bytes(content)
-        size = self._adapter.write_bytes(str(path), payload)
+        size = self._write_managed_namespace_bytes(binding, payload)
         return FileWriteReceipt(
             logical_path=normalized,
-            absolute_path=str(path),
+            absolute_path=binding.physical_path(),
             bytes_written=size,
         )
 
@@ -235,30 +243,30 @@ class KernelFileSystem:
         indent: int = 2,
         ensure_ascii: bool = False,
     ) -> FileWriteReceipt:
-        """Write a JSON payload through the adapter's atomic write capability.
+        """Write a JSON payload through the adapter's managed atomic capability.
 
         The adapter owns the atomic guarantee.  When the adapter cannot
-        accept the protocol atomic call shape the request is rejected
+        honour the managed namespace capability the request is rejected
         *before* any physical effect, so a non-compliant adapter can never
         be silently replaced by an unmanaged physical write.
 
-        The capability check binds the adapter's ``write_text`` callable once
-        and the write uses that same callable.  The callable is never
-        re-resolved, so the write cannot reach a different writer than the
-        one that was validated.
+        The capability is bound once and the write uses that same callable.
+        The callable is never re-resolved, so the write cannot reach a
+        different writer than the one that was validated.
 
         Any failure raised by the adapter propagates unchanged.  The write is
         never retried and never re-executed through a second writer.
         """
-        writer = self._bind_atomic_write_capability()
+        writer = self._bind_managed_namespace_capability("write_managed_namespace_bytes_atomic")
         normalized = self.to_logical_path(logical_path)
-        path = self.resolve_path(normalized)
+        binding = self._namespace_binding(normalized)
         data = json.dumps(payload, ensure_ascii=ensure_ascii, indent=indent) + "\n"
-        size = self._atomic_write_text(writer, str(path), data, encoding="utf-8")
+        size = int(writer(binding, data.encode("utf-8")))
         return FileWriteReceipt(
             logical_path=normalized,
-            absolute_path=str(path),
+            absolute_path=binding.physical_path(),
             bytes_written=size,
+            atomic=True,
         )
 
     def append_jsonl(
@@ -293,7 +301,8 @@ class KernelFileSystem:
 
     def remove(self, logical_path: str, *, missing_ok: bool = True) -> bool:
         normalized = self.to_logical_path(logical_path)
-        return self._adapter.remove(str(self.resolve_path(normalized)), missing_ok=missing_ok)
+        binding = self._namespace_binding(normalized)
+        return self._remove_managed_namespace(binding, missing_ok=missing_ok)
 
     # ---------------------------------------------------------------------
     # Workspace-scoped APIs for LLM tooling paths (relative to workspace root)
@@ -414,55 +423,57 @@ class KernelFileSystem:
         relative = self._lexical_workspace_relative_path(relative_or_absolute_path)
         return open_guarded_text_log_append(self._physical_workspace, relative)
 
-    def _bind_atomic_write_capability(self) -> Callable[..., int]:
-        """Bind and validate the adapter's atomic write capability before any effect.
+    def _bind_managed_namespace_capability(self, capability: str) -> Callable[..., Any]:
+        """Bind the adapter's managed namespace capability before any effect.
 
-        This check must run before the target path is resolved, because path
-        resolution initializes the storage roots and therefore has physical
-        directory side effects of its own.  A rejected atomic write must not
-        create directories, temporary files, or any other physical trace.
+        The capability must exist and must be callable.  A missing or
+        non-callable capability is refused *before* the target namespace is
+        resolved and before any physical effect, so an adapter that cannot
+        honour the namespace contract never produces an unmanaged write.
 
-        The validated callable is returned so the write that follows uses
-        *that exact object*.  Resolving ``adapter.write_text`` a second time
-        would hand the write to a possibly different callable than the one
-        that was validated, which is how a writer that cannot accept the
-        atomic call shape could be reached after the refusal.
-
-        Binding success is call-shape compatibility only.  It is never proof
-        that the adapter performs an atomic replace or that the result is
-        durable; the adapter owns that guarantee.
+        The validated callable is returned so the operation that follows uses
+        *that exact object*.  Re-resolving the attribute would hand the
+        effect to a possibly different callable than the one that was
+        validated, which is how a writer that cannot accept the managed call
+        shape could be reached after the refusal.
         """
-        writer = getattr(self._adapter, "write_text", None)
-        if not callable(writer):
-            raise AtomicWriteCapabilityError("adapter lacks a callable write_text capability")
-        if not _binds_atomic_call(writer):
-            raise AtomicWriteCapabilityError(
-                "adapter write_text cannot accept the protocol atomic call shape; "
-                "atomic writes are unavailable for this adapter"
+        operation = getattr(self._adapter, capability, None)
+        if not callable(operation):
+            raise NamespaceOperationUnavailableError(
+                f"adapter lacks a callable {capability!r} managed namespace capability"
             )
-        return cast(Callable[..., int], writer)
+        return cast(Callable[..., Any], operation)
 
-    def _atomic_write_text(
+    def _read_managed_namespace_bytes(self, binding: NamespaceBindingV1) -> bytes:
+        """Read one namespace-bound leaf through the adapter's capability."""
+        reader = self._bind_managed_namespace_capability("read_managed_namespace_bytes")
+        return bytes(reader(binding))
+
+    def _write_managed_namespace_bytes(self, binding: NamespaceBindingV1, payload: bytes) -> int:
+        """Replace one namespace-bound leaf through the adapter's capability."""
+        writer = self._bind_managed_namespace_capability("write_managed_namespace_bytes")
+        return int(writer(binding, payload))
+
+    def _write_managed_namespace_bytes_atomic(self, binding: NamespaceBindingV1, payload: bytes) -> int:
+        """Atomically replace one namespace-bound leaf through the adapter."""
+        writer = self._bind_managed_namespace_capability("write_managed_namespace_bytes_atomic")
+        return int(writer(binding, payload))
+
+    def _append_managed_namespace_bytes(
         self,
-        writer: Callable[..., int],
-        absolute_path: str,
-        text: str,
+        binding: NamespaceBindingV1,
+        payload: bytes,
         *,
-        encoding: str,
+        durability: DurabilityMode,
     ) -> int:
-        """Route one atomic text write through the already-bound writer.
+        """Append to one namespace-bound leaf through the adapter's capability."""
+        appender = self._bind_managed_namespace_capability("append_managed_namespace_bytes")
+        return int(appender(binding, payload, durability=durability))
 
-        ``writer`` is the callable that was validated by
-        :meth:`_bind_atomic_write_capability`.  It is used exactly once and is
-        never re-resolved from the adapter, so the write can only reach the
-        callable that passed the capability check.
-
-        The adapter's return value is passed through unchanged.  No exception
-        is intercepted, no write is retried, and no second writer is used, so
-        a failure after the adapter already committed its rename stays
-        visible to the caller as the original error.
-        """
-        return int(writer(absolute_path, text, encoding=encoding, atomic=True))
+    def _remove_managed_namespace(self, binding: NamespaceBindingV1, *, missing_ok: bool) -> bool:
+        """Remove one namespace-bound leaf entry through the adapter."""
+        remover = self._bind_managed_namespace_capability("remove_managed_namespace")
+        return bool(remover(binding, missing_ok=missing_ok))
 
     def _lexical_workspace_relative_path(self, path: str) -> str:
         """Keep the requested path intact for the no-follow descriptor walker.
@@ -571,6 +582,54 @@ class KernelFileSystem:
             absolute_path=str(path),
             bytes_written=size,
         )
+
+    def workspace_create_text(
+        self,
+        relative_or_absolute_path: str,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+        max_bytes: int | None = None,
+    ) -> NamespaceCreateReceiptV1:
+        """Create one workspace file only when it does not exist yet.
+
+        This is the generic *create-only* producer.  It never overwrites and
+        never removes an existing file: when the leaf already exists its
+        content is preserved and the receipt reports ``created=False``.
+
+        The effect is owned by the adapter.  A capability or policy refusal
+        happens *before* any effect, so a denied create leaves no directory,
+        no temporary file and no partially created tree.  The legacy writer
+        is never used as an authorization probe.
+
+        A failure after a possible creation surfaces an explicit unknown
+        effect; the create is never replayed and never rolled back.
+
+        Args:
+            relative_or_absolute_path: The workspace-relative target path.
+            content: The UTF-8 text to create the file with.
+            encoding: Text encoding; only UTF-8 is accepted.
+            max_bytes: Optional upper bound of the created content.
+
+        Returns:
+            A receipt that reports whether this call created the file.
+
+        Raises:
+            NamespaceOperationUnavailableError: The adapter cannot honour the
+                managed create capability.
+            NamespaceBoundaryError: The path is not a usable workspace leaf.
+        """
+        self._require_utf8_encoding(encoding)
+        relative = self._lexical_workspace_relative_path(relative_or_absolute_path)
+        payload = str(content).encode(encoding)
+        bound = int(max_bytes) if max_bytes is not None else max(len(payload), _DEFAULT_CREATE_MAX_BYTES)
+        creator = self._bind_managed_namespace_capability("create_managed_namespace_bytes")
+        binding = NamespaceBindingV1(
+            namespace_root=self._physical_workspace,
+            relative_path=relative,
+            logical_prefix="workspace",
+        )
+        return cast(NamespaceCreateReceiptV1, creator(binding, payload, max_bytes=bound))
 
     def workspace_remove_tree(self, relative_or_absolute_path: str, *, expected: FileMetadataV1) -> None:
         """Clean a physically drained owned directory using its original identity."""

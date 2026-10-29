@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-08-02T15:47:41.573783Z",
-  "source_hash": "a81bd7315be51725",
+  "generated_at": "2026-10-28T17:34:40.498621Z",
+  "source_hash": "9753278e5aa078ca",
   "cell_id": "audit.diagnosis",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -170,6 +170,120 @@
       "name": "_normalize_rel_path",
       "description": "",
       "defined_in": "polaris/cells/audit/diagnosis/internal/diagnosis_engine.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_sequence",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_strings",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_integer",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_link",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_candidate",
+      "description": "Build one deterministic root-cause candidate.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_diagnosis_id",
+      "description": "Return a stable 24-hex identity for one exact causal verdict.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_next_action",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_required_evidence_links",
+      "description": "Return only evidence needed to prove the selected root cause.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_stage_root_cause",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalized_role",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_stage_role",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_expected_llm_roles",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_context_coverage",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_stage_failure_signal",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_owner_for_structured_signal",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_contract_scope_contradiction",
+      "description": "Return proof that a failed file-count gate cannot be satisfied.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_diagnosis",
+      "description": "Project verifier residuals into an immediately actionable repair route.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
+    },
+    {
+      "type": "function",
+      "name": "build_exact_run_causal_report",
+      "description": "Return one current root cause plus an evidence-link matrix.",
+      "defined_in": "polaris/cells/audit/diagnosis/internal/exact_run_causal_audit.py"
     },
     {
       "type": "class",
@@ -939,6 +1053,13 @@
     },
     {
       "type": "class",
+      "name": "QueryExactRunCausalAuditV1",
+      "description": "Read the authoritative causal diagnosis for one exact Factory run.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
       "name": "AuditDiagnosisCompletedEventV1",
       "description": "",
       "defined_in": "polaris/cells/audit/diagnosis/public/contracts.py",
@@ -976,6 +1097,10 @@
         {
           "name": "query_trail",
           "doc": "Query diagnosis events/trail."
+        },
+        {
+          "name": "query_exact_run_causal_audit",
+          "doc": "Query the current causal blocker for one exact Factory run."
         }
       ]
     },
@@ -993,14 +1118,56 @@
     },
     {
       "type": "function",
-      "name": "_event_run_id",
+      "name": "_event_correlated_run_ids",
+      "description": "Collect exact run identifiers from identifier fields only.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "visit",
       "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_event_matches_run_id",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_offline_journal_events",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_diagnosis_event_identity",
+      "description": "Return a stable identity without assuming every evidence source has an event id.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_merge_diagnosis_events",
+      "description": "Merge AuditStore and physical journals without letting either hide evidence.",
       "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
     },
     {
       "type": "function",
       "name": "_has_audit_artifacts",
       "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_journal_artifacts",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_chief_engineer_authority_feasibility",
+      "description": "Revalidate persisted PM minimums against immutable CE artifacts.",
       "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
     },
     {
@@ -1013,6 +1180,108 @@
       "type": "function",
       "name": "query_audit_diagnosis_trail",
       "description": "Read audit diagnosis trail evidence through the public Cell boundary.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_context_snapshot_refs",
+      "description": "Keep recent refs without starving earlier role stages.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "collect",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_run_pinned_context_refs",
+      "description": "Return exact-run pinned refs, preferring physical provider requests per role.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_mapping_value",
+      "description": "Return first nested value for ``key`` from structured evidence only.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "visit",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_structured_failure_signals",
+      "description": "Project typed failure signals without parsing human prose.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_message_texts",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "visit",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_file_deficits_from_final_request",
+      "description": "Extract fixed delivery-depth metric signatures from final request input.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_effective_file_deficits_from_final_request",
+      "description": "Read file deficits only from an explicit delivery-depth failure clause.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_file_deficits_from_request_metadata",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_provider_audit_projection",
+      "description": "",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_evidence_from_ledger",
+      "description": "Return the latest bounded workspace-repair evidence from Run Ledger.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_evidence_from_workspace",
+      "description": "Read the full workspace-quality artifact through canonical storage roots.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_base_files_from_coverage",
+      "description": "Read only diagnostic-owned files needed by the read-only plan probe.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_enrich_repair_evidence",
+      "description": "Attach read-only coverage and concrete plan proof to verifier evidence.",
+      "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_exact_run_causal_audit",
+      "description": "Diagnose one exact Factory run from authoritative public projections.",
       "defined_in": "polaris/cells/audit/diagnosis/public/service.py"
     }
   ],

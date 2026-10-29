@@ -1344,6 +1344,7 @@ def guarded_compare_and_create_regular_file(
         temp_name, temp_fd = _open_guarded_replace_temp(current.fd, leaf_name)
         stack.callback(os.close, temp_fd)
         temp_present = True
+        commit_attempted = False
         try:
             _write_all(temp_fd, content, name=temp_name)
             os.fsync(temp_fd)
@@ -1369,6 +1370,7 @@ def guarded_compare_and_create_regular_file(
                     "guarded create target exists at commit time",
                     name=relative_path,
                 )
+            commit_attempted = True
             try:
                 _rename_guarded_leaf_noreplace(temp_name, leaf_name, current.fd)
             except FileExistsError as exc:
@@ -1414,12 +1416,16 @@ def guarded_compare_and_create_regular_file(
                 root_device=root_witness.device,
                 root_inode=root_witness.inode,
             )
-        except OSError as exc:
-            raise _fail(
-                "guarded_create_io_failed",
-                "guarded create I/O failed",
-                errno=exc.errno,
-            ) from exc
+        except GuardedRegularFileSnapshotError as exc:
+            if commit_attempted and exc.code != "guarded_create_expected_mismatch":
+                details = {**exc.details, "original_effect": "unknown", "phase": "create_commit_or_verify"}
+                raise _fail(exc.code, str(exc), **details) from exc
+            raise
+        except (OSError, RuntimeError) as exc:
+            details = {"errno": getattr(exc, "errno", None)}
+            if commit_attempted:
+                details.update(original_effect="unknown", phase="create_commit_or_verify")
+            raise _fail("guarded_create_io_failed", "guarded create I/O failed", **details) from exc
         finally:
             if temp_present:
                 _cleanup_guarded_temp(current.fd, temp_name)

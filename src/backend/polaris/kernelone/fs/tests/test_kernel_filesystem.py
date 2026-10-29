@@ -10,13 +10,21 @@ from polaris.kernelone.exceptions import PathSecurityError
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.fs.contracts import DurabilityMode, FileWriteReceipt, KernelFileSystemAdapter
 from polaris.kernelone.fs.registry import get_default_adapter, set_default_adapter
-from polaris.kernelone.fs.types import AtomicWriteBindingV1
+from polaris.kernelone.fs.types import (
+    AtomicWriteBindingV1,
+    NamespaceBindingV1,
+    NamespaceCreateReceiptV1,
+)
 
 
 class _TestFileSystemAdapter(KernelFileSystemAdapter):
     """Test adapter that implements KernelFileSystemAdapter protocol.
 
     All methods accept str paths per the contract and convert to Path internally.
+
+    The managed namespace capabilities are implemented through the *real*
+    descriptor-bound primitives, so the fixture exercises the same capability
+    contract that the production adapter honours.
     """
 
     def read_text(self, path: str, *, encoding: str = "utf-8") -> str:
@@ -27,6 +35,48 @@ class _TestFileSystemAdapter(KernelFileSystemAdapter):
         from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 
         return LocalFileSystemAdapter().write_managed_text_atomic(binding, content, encoding=encoding)
+
+    def read_managed_namespace_bytes(self, binding: NamespaceBindingV1) -> bytes:
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+
+        return LocalFileSystemAdapter().read_managed_namespace_bytes(binding)
+
+    def write_managed_namespace_bytes(self, binding: NamespaceBindingV1, content: bytes) -> int:
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+
+        return LocalFileSystemAdapter().write_managed_namespace_bytes(binding, content)
+
+    def write_managed_namespace_bytes_atomic(self, binding: NamespaceBindingV1, content: bytes) -> int:
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+
+        return LocalFileSystemAdapter().write_managed_namespace_bytes_atomic(binding, content)
+
+    def append_managed_namespace_bytes(
+        self,
+        binding: NamespaceBindingV1,
+        content: bytes,
+        *,
+        durability: DurabilityMode = "buffered",
+    ) -> int:
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+
+        return LocalFileSystemAdapter().append_managed_namespace_bytes(binding, content, durability=durability)
+
+    def remove_managed_namespace(self, binding: NamespaceBindingV1, *, missing_ok: bool = True) -> bool:
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+
+        return LocalFileSystemAdapter().remove_managed_namespace(binding, missing_ok=missing_ok)
+
+    def create_managed_namespace_bytes(
+        self,
+        binding: NamespaceBindingV1,
+        content: bytes,
+        *,
+        max_bytes: int,
+    ) -> NamespaceCreateReceiptV1:
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
+
+        return LocalFileSystemAdapter().create_managed_namespace_bytes(binding, content, max_bytes=max_bytes)
 
     def read_bytes(self, path: str) -> bytes:
         return Path(path).read_bytes()
@@ -351,18 +401,24 @@ def test_resolve_absolute_workspace_path_rejects_symlink_in_absolute_path(
 
 
 # ---------------------------------------------------------------------------
-# Logical atomic writes must not guess adapter behavior from caught errors.
+# The logical atomic write must not guess adapter behavior from caught errors.
 #
 # The former implementation caught any ``TypeError`` raised by the adapter and
 # then wrote the file itself through a private temporary file.  That bypassed
 # the adapter's own permission and error contract, and it replayed a write that
 # the adapter had already committed, so a post-effect failure was reported as
 # a success.  These tests pin the replacement contract.
+#
+# The atomic write is now performed by the adapter's *managed namespace*
+# capability.  The refusal contract is unchanged in substance: an adapter
+# that cannot honour the capability is refused before any effect, a denial
+# stays visible and is never replayed, and the validated callable is the one
+# that writes.
 # ---------------------------------------------------------------------------
 
 
-class _NoAtomicKeywordAdapter:
-    """Adapter whose ``write_text`` predates the protocol ``atomic`` keyword."""
+class _NoManagedNamespaceAdapter:
+    """Adapter that does not implement the managed namespace capability."""
 
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -412,9 +468,12 @@ class _DenyingAtomicAdapter:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    def write_text(self, path: str, content: str, *, encoding: str = "utf-8", atomic: bool = False) -> int:
-        self.calls.append({"path": path, "atomic": atomic})
+    def write_managed_namespace_bytes_atomic(self, binding: NamespaceBindingV1, content: bytes) -> int:
+        self.calls.append({"path": binding.physical_path(), "atomic": True})
         raise PermissionError("synthetic adapter write policy denial")
+
+    def write_text(self, path: str, content: str, *, encoding: str = "utf-8", atomic: bool = False) -> int:
+        raise AssertionError("unexpected legacy write")
 
     def write_bytes(self, path: str, content: bytes) -> int:
         raise AssertionError("unexpected bytes write")
@@ -454,53 +513,34 @@ class _DenyingAtomicAdapter:
 class _TypeErrorBeforeEffectAdapter(_DenyingAtomicAdapter):
     """Adapter that fails with ``TypeError`` before any physical effect."""
 
-    def write_text(self, path: str, content: str, *, encoding: str = "utf-8", atomic: bool = False) -> int:
-        self.calls.append({"path": path, "atomic": atomic})
+    def write_managed_namespace_bytes_atomic(self, binding: NamespaceBindingV1, content: bytes) -> int:
+        self.calls.append({"path": binding.physical_path(), "atomic": True})
         raise TypeError("synthetic adapter type error before effect")
 
 
 class _TypeErrorAfterEffectAdapter(_DenyingAtomicAdapter):
-    """Adapter that commits the atomic rename and then raises ``TypeError``."""
+    """Adapter that commits the atomic replacement and then raises ``TypeError``."""
 
     def __init__(self) -> None:
         super().__init__()
         self.sentinel = TypeError("synthetic adapter type error after effect")
 
-    def write_text(self, path: str, content: str, *, encoding: str = "utf-8", atomic: bool = False) -> int:
-        self.calls.append({"path": path, "atomic": atomic})
-        import tempfile
+    def write_managed_namespace_bytes_atomic(self, binding: NamespaceBindingV1, content: bytes) -> int:
+        self.calls.append({"path": binding.physical_path(), "atomic": True})
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode="w", encoding=encoding, delete=False, dir=str(target.parent)) as handle:
-            handle.write(content)
-            temporary = Path(handle.name)
-        temporary.replace(target)
+        LocalFileSystemAdapter().write_managed_namespace_bytes_atomic(binding, content)
         raise self.sentinel
 
 
 class _KwargsAtomicWrapperAdapter(_DenyingAtomicAdapter):
-    """Compliant ``**kwargs`` wrapper that forwards the atomic request."""
+    """Compliant ``**kwargs`` wrapper that forwards the managed request."""
 
-    def write_text(self, path: str, content: str, **kwargs: Any) -> int:
-        self.calls.append({"path": path, "atomic": kwargs.get("atomic")})
-        encoding = str(kwargs.get("encoding", "utf-8"))
-        if kwargs.get("atomic"):
-            import tempfile
+    def write_managed_namespace_bytes_atomic(self, binding: NamespaceBindingV1, content: bytes, **kwargs: Any) -> int:
+        self.calls.append({"path": binding.physical_path(), "atomic": True})
+        from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 
-            target = Path(path)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding=encoding, delete=False, dir=str(target.parent)
-            ) as handle:
-                handle.write(content)
-                temporary = Path(handle.name)
-            temporary.replace(target)
-            return len(content.encode(encoding))
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding=encoding)
-        return len(content.encode(encoding))
+        return LocalFileSystemAdapter().write_managed_namespace_bytes_atomic(binding, content)
 
 
 def _workspace_tree(root: Path) -> list[str]:
@@ -510,13 +550,13 @@ def _workspace_tree(root: Path) -> list[str]:
     return sorted(str(item.relative_to(root)) for item in root.rglob("*"))
 
 
-def test_atomic_write_rejects_adapter_without_atomic_keyword_before_any_effect(
+def test_atomic_write_rejects_adapter_without_managed_capability_before_any_effect(
     tmp_path: Path,
 ) -> None:
     """A non-compliant adapter must not be replaced by an unmanaged write."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    adapter = _NoAtomicKeywordAdapter()
+    adapter = _NoManagedNamespaceAdapter()
     fs = KernelFileSystem(str(workspace), adapter)  # type: ignore[arg-type]
 
     with pytest.raises(NotImplementedError):
@@ -526,13 +566,13 @@ def test_atomic_write_rejects_adapter_without_atomic_keyword_before_any_effect(
     assert _workspace_tree(workspace) == []
 
 
-def test_atomic_json_write_rejects_adapter_without_atomic_keyword_before_any_effect(
+def test_atomic_json_write_rejects_adapter_without_managed_capability_before_any_effect(
     tmp_path: Path,
 ) -> None:
     """The JSON route must reject before it resolves a path or calls the adapter."""
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    adapter = _NoAtomicKeywordAdapter()
+    adapter = _NoManagedNamespaceAdapter()
     fs = KernelFileSystem(str(workspace), adapter)  # type: ignore[arg-type]
 
     with pytest.raises(NotImplementedError):
@@ -613,9 +653,9 @@ def test_atomic_write_accepts_compliant_kwargs_wrapper(
 # ---------------------------------------------------------------------------
 # The validated writer must be the writer that is actually used.
 #
-# The capability check resolves ``adapter.write_text`` and validates that
+# The capability check resolves the adapter attribute and validates that
 # callable, but the write used to resolve the attribute a second time.  An
-# adapter whose ``write_text`` attribute is dynamic could therefore return a
+# adapter whose capability attribute is dynamic could therefore return a
 # different, incompatible callable for the write, so a write that passed the
 # refusal check could still fail with the adapter's own ``TypeError`` after
 # the runtime directories had already been created.  These tests pin that the
@@ -624,11 +664,11 @@ def test_atomic_write_accepts_compliant_kwargs_wrapper(
 
 
 class _SwitchingWriterAdapter:
-    """Adapter whose ``write_text`` attribute yields a different callable per lookup.
+    """Adapter whose managed capability attribute yields a different callable per lookup.
 
     The first lookup yields a compliant writer that performs a real atomic
-    rename.  Every later lookup yields a writer that cannot accept the
-    protocol ``atomic`` keyword, so it raises ``TypeError`` when called.
+    replacement.  Every later lookup yields a writer that cannot accept the
+    managed call shape, so it raises ``TypeError`` when called.
     """
 
     def __init__(self) -> None:
@@ -637,28 +677,20 @@ class _SwitchingWriterAdapter:
         self.writer_ids: list[int] = []
 
     @property
-    def write_text(self) -> Any:
+    def write_managed_namespace_bytes_atomic(self) -> Any:
         self.lookups += 1
         if self.lookups == 1:
 
-            def compatible(path: str, content: str, *, encoding: str = "utf-8", atomic: bool = False) -> int:
+            def compatible(binding: NamespaceBindingV1, content: bytes) -> int:
                 self.writes += 1
-                import tempfile
+                from polaris.infrastructure.storage.local_fs_adapter import LocalFileSystemAdapter
 
-                target = Path(path)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with tempfile.NamedTemporaryFile(
-                    mode="w", encoding=encoding, delete=False, dir=str(target.parent)
-                ) as handle:
-                    handle.write(content)
-                    temporary = Path(handle.name)
-                temporary.replace(target)
-                return len(content.encode(encoding))
+                return LocalFileSystemAdapter().write_managed_namespace_bytes_atomic(binding, content)
 
             self.writer_ids.append(id(compatible))
             return compatible
 
-        def incompatible(path: str, content: str, *, encoding: str = "utf-8") -> int:
+        def incompatible(binding: NamespaceBindingV1, content: bytes) -> int:
             self.writes += 1
             raise TypeError("incompatible() got an unexpected keyword argument 'atomic'")
 

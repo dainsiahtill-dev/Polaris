@@ -10,29 +10,31 @@ deterministic grounding the model cannot lose.
 Storage: ``<workspace>/.polaris/runtime/scout_anchors.json`` — a runtime
 artifact (never committed), UTF-8, confidence-ranked, deduplicated by path,
 capped so the injected card stays within its token budget.
+
+Every read and write goes through the KernelOne logical namespace.  A
+refused or unreadable anchor file is *not* retried through a raw open: a
+fallback path would reintroduce the exact out-of-namespace read the logical
+boundary exists to prevent.  Missing and corrupt payloads remain fail-soft
+because that is the documented behaviour of this store; a *refused* read is
+reported as an empty set with an audit log, never as a silent fallback.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any
 
 from polaris.kernelone.fs import KernelFileSystem
+from polaris.kernelone.fs.guarded_namespace_ops import NamespaceOperationEffectUnknownError
 from polaris.kernelone.fs.registry import get_default_adapter
 
 logger = logging.getLogger(__name__)
 
 _ANCHOR_LOGICAL_PATH = "runtime/scout_anchors.json"
-_LEGACY_ANCHOR_RELPATH = os.path.join(".polaris", "runtime", "scout_anchors.json")
 _MAX_ANCHORS = 8
 _MIN_CONFIDENCE = 0.2
 _MAX_CARD_CHARS = 900
-
-
-def _anchor_path(workspace: str) -> str:
-    return os.path.join(workspace, _LEGACY_ANCHOR_RELPATH)
 
 
 def _kernel_fs(workspace: str) -> KernelFileSystem:
@@ -40,27 +42,38 @@ def _kernel_fs(workspace: str) -> KernelFileSystem:
 
 
 def load_scout_anchors(workspace: str) -> list[dict[str, Any]]:
-    """Load persisted anchors; missing/corrupt files load as empty (fail-soft)."""
+    """Load persisted anchors; missing/corrupt/refused files load as empty.
+
+    The store is fail-soft by contract: a missing file, a corrupt payload and
+    a refused read all yield an empty anchor set.  A refusal is logged so the
+    audit trail shows that the boundary refused the read rather than the
+    file being absent; it is never worked around with a raw open.
+    """
+    try:
+        return _read_scout_anchors(workspace)
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.debug("scout anchor read failed (fail-soft): %s", exc)
+        return []
+
+
+def _read_scout_anchors(workspace: str) -> list[dict[str, Any]]:
+    """Keep absent data distinct from a refused read for merge writers."""
     try:
         data = _kernel_fs(workspace).read_json(_ANCHOR_LOGICAL_PATH)
-    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
-        path = _anchor_path(workspace)
-        try:
-            with open(path, encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (OSError, json.JSONDecodeError):
-            return []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
     anchors = data.get("anchors") if isinstance(data, dict) else None
     return [a for a in anchors or [] if isinstance(a, dict) and a.get("path")]
 
 
-def record_scout_anchors(workspace: str, query: str, findings: list[dict[str, Any]]) -> int:
-    """Merge probe findings into the persistent anchor set.
+def record_scout_anchors(workspace: str, query: str, findings: list[dict[str, Any]]) -> int | None:
+    """Merge findings; return the confirmed count, or None for unknown state.
 
-    Dedup by file path keeping the highest-confidence entry; low-confidence
-    findings (< _MIN_CONFIDENCE) are not worth pinning. Returns the number of
-    anchors now stored. Never raises (one failed persistence must not break a
-    read-only probe).
+    Absent or corrupt cache data starts an empty store. A refused initial read
+    prevents the merge from overwriting anchors it could not observe. A known
+    write refusal preserves the previously observed count; an uncertain effect
+    returns None and is never replayed. Storage failures remain fail-soft for
+    the read-only probe, whose caller does not consume this count.
     """
     fresh: list[dict[str, Any]] = []
     for finding in findings:
@@ -79,11 +92,16 @@ def record_scout_anchors(workspace: str, query: str, findings: list[dict[str, An
                 "query": str(query or "")[:120],
             }
         )
+    try:
+        existing = _read_scout_anchors(workspace)
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.warning("scout anchor merge skipped: initial state is unknown: %s", exc)
+        return None
     if not fresh:
-        return len(load_scout_anchors(workspace))
+        return len(existing)
 
     by_path: dict[str, dict[str, Any]] = {}
-    for anchor in load_scout_anchors(workspace) + fresh:
+    for anchor in existing + fresh:
         path = str(anchor.get("path") or "")
         current = by_path.get(path)
         if current is None or float(anchor.get("confidence") or 0.0) > float(current.get("confidence") or 0.0):
@@ -97,8 +115,18 @@ def record_scout_anchors(workspace: str, query: str, findings: list[dict[str, An
             ensure_ascii=False,
             indent=1,
         )
+    except NamespaceOperationEffectUnknownError as exc:
+        # The write may already have landed.  The state is UNKNOWN, so the
+        # stored count is not asserted: the caller must not read a confirmed
+        # number from this path.
+        logger.warning("scout anchor persistence effect is unknown (fail-soft): %s", exc)
+        return None
     except (OSError, RuntimeError, ValueError) as exc:
+        # A known no-write: the write was refused or failed before it could
+        # commit, so the previously stored anchors are still the ones in
+        # effect.
         logger.debug("scout anchor persistence failed (fail-soft): %s", exc)
+        return len(existing)
     return len(merged)
 
 

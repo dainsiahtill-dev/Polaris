@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-10-26T18:40:35.412790Z",
-  "source_hash": "99d673aa2f3e23d9",
+  "generated_at": "2026-10-28T17:34:37.365996Z",
+  "source_hash": "1df8a9210521a713",
   "cell_id": "kernelone.core",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -8161,12 +8161,6 @@
     },
     {
       "type": "function",
-      "name": "_anchor_path",
-      "description": "",
-      "defined_in": "polaris/kernelone/context/scout_anchor_store.py"
-    },
-    {
-      "type": "function",
       "name": "_kernel_fs",
       "description": "",
       "defined_in": "polaris/kernelone/context/scout_anchor_store.py"
@@ -8174,13 +8168,19 @@
     {
       "type": "function",
       "name": "load_scout_anchors",
-      "description": "Load persisted anchors; missing/corrupt files load as empty (fail-soft).",
+      "description": "Load persisted anchors; missing/corrupt/refused files load as empty.",
+      "defined_in": "polaris/kernelone/context/scout_anchor_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_scout_anchors",
+      "description": "Keep absent data distinct from a refused read for merge writers.",
       "defined_in": "polaris/kernelone/context/scout_anchor_store.py"
     },
     {
       "type": "function",
       "name": "record_scout_anchors",
-      "description": "Merge probe findings into the persistent anchor set.",
+      "description": "Merge findings; return the confirmed count, or None for unknown state.",
       "defined_in": "polaris/kernelone/context/scout_anchor_store.py"
     },
     {

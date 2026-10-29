@@ -34,7 +34,16 @@ from polaris.cells.finops.budget_guard.public.contracts import (
 )
 from polaris.cells.finops.budget_guard.public.service import BudgetService
 from polaris.kernelone.fs import KernelFileSystem
-from polaris.kernelone.fs.contracts import FileWriteReceipt, KernelFileSystemAdapter
+from polaris.kernelone.fs.contracts import (
+    DurabilityMode,
+    FileWriteReceipt,
+    KernelFileSystemAdapter,
+)
+from polaris.kernelone.fs.types import (
+    AtomicWriteBindingV1,
+    NamespaceBindingV1,
+    NamespaceCreateReceiptV1,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -43,21 +52,86 @@ if TYPE_CHECKING:
 
 
 class _FakeKFSAdapter(KernelFileSystemAdapter):
-    """In-memory KFS adapter for isolated testing — never touches the real filesystem."""
+    """In-memory KFS adapter for isolated testing — never touches the real filesystem.
+
+    The logical namespace effects are owned by the adapter, so this in-memory
+    double implements the managed namespace capabilities directly.  The
+    store's real contract (a durable state file that survives a reload) is
+    preserved: the managed write replaces the entry, the managed append
+    extends it, and the managed create only creates an absent entry.
+    """
 
     def __init__(self) -> None:
         self._store: dict[str, str] = {}
 
-    def exists(self, path: Path) -> bool:
+    def read_managed_namespace_bytes(self, binding: NamespaceBindingV1) -> bytes:
+        key = binding.physical_path()
+        if key not in self._store:
+            raise FileNotFoundError(f"FakeKFS: {key} not found")
+        return self._store[key].encode("utf-8")
+
+    def write_managed_namespace_bytes(self, binding: NamespaceBindingV1, content: bytes) -> int:
+        self._store[binding.physical_path()] = content.decode("utf-8")
+        return len(content)
+
+    def write_managed_namespace_bytes_atomic(self, binding: NamespaceBindingV1, content: bytes) -> int:
+        self._store[binding.physical_path()] = content.decode("utf-8")
+        return len(content)
+
+    def append_managed_namespace_bytes(
+        self,
+        binding: NamespaceBindingV1,
+        content: bytes,
+        *,
+        durability: DurabilityMode = "buffered",
+    ) -> int:
+        key = binding.physical_path()
+        text = content.decode("utf-8")
+        self._store[key] = self._store.get(key, "") + text
+        return len(content)
+
+    def remove_managed_namespace(self, binding: NamespaceBindingV1, *, missing_ok: bool = True) -> bool:
+        key = binding.physical_path()
+        if key in self._store:
+            del self._store[key]
+            return True
+        if missing_ok:
+            return False
+        raise FileNotFoundError(f"FakeKFS: {key} not found")
+
+    def create_managed_namespace_bytes(
+        self,
+        binding: NamespaceBindingV1,
+        content: bytes,
+        *,
+        max_bytes: int,
+    ) -> NamespaceCreateReceiptV1:
+        key = binding.physical_path()
+        if key in self._store:
+            return NamespaceCreateReceiptV1(
+                absolute_path=key, relative_path=binding.relative_path, created=False, bytes_written=0
+            )
+        self._store[key] = content.decode("utf-8")
+        return NamespaceCreateReceiptV1(
+            absolute_path=key, relative_path=binding.relative_path, created=True, bytes_written=len(content)
+        )
+
+    def write_managed_text_atomic(self, binding: AtomicWriteBindingV1, content: str, *, encoding: str = "utf-8") -> int:
+        """The in-memory double honours the managed atomic capability."""
+        key = binding.target_workspace + "/" + binding.relative_path
+        self._store[key] = content
+        return len(content.encode(encoding))
+
+    def exists(self, path: str) -> bool:
         return str(path) in self._store
 
-    def read_text(self, path: Path, *, encoding: str = "utf-8") -> str:
+    def read_text(self, path: str, *, encoding: str = "utf-8") -> str:
         key = str(path)
         if key not in self._store:
             raise FileNotFoundError(f"FakeKFS: {key} not found")
         return self._store[key]
 
-    def read_bytes(self, path: Path) -> bytes:
+    def read_bytes(self, path: str) -> bytes:
         key = str(path)
         if key not in self._store:
             raise FileNotFoundError(f"FakeKFS: {key} not found")
@@ -65,7 +139,7 @@ class _FakeKFSAdapter(KernelFileSystemAdapter):
 
     def write_text(
         self,
-        path: Path,
+        path: str,
         content: str,
         *,
         encoding: str = "utf-8",
@@ -76,12 +150,19 @@ class _FakeKFSAdapter(KernelFileSystemAdapter):
         encoded = content.encode(encoding)
         return len(encoded)
 
-    def write_bytes(self, path: Path, content: bytes) -> int:
+    def write_bytes(self, path: str, content: bytes, *, atomic: bool = False) -> int:
         key = str(path)
         self._store[key] = content.decode("utf-8")
         return len(content)
 
-    def append_text(self, path: Path, content: str, *, encoding: str = "utf-8") -> int:
+    def append_text(
+        self,
+        path: str,
+        content: str,
+        *,
+        encoding: str = "utf-8",
+        durability: DurabilityMode = "buffered",
+    ) -> int:
         key = str(path)
         if key not in self._store:
             self._store[key] = content
@@ -89,7 +170,7 @@ class _FakeKFSAdapter(KernelFileSystemAdapter):
             self._store[key] += content
         return len(content.encode(encoding))
 
-    def write_json_atomic(self, path: Path, data: Any, *, indent: int = 2) -> FileWriteReceipt:
+    def write_json_atomic(self, path: str, data: Any, *, indent: int = 2) -> FileWriteReceipt:
         import json
 
         key = str(path)
@@ -103,14 +184,14 @@ class _FakeKFSAdapter(KernelFileSystemAdapter):
             atomic=True,
         )
 
-    def is_file(self, path: Path) -> bool:
+    def is_file(self, path: str) -> bool:
         return str(path) in self._store
 
-    def is_dir(self, path: Path) -> bool:
+    def is_dir(self, path: str) -> bool:
         # In-memory store doesn't have directories
         return False
 
-    def remove(self, path: Path, *, missing_ok: bool = True) -> bool:
+    def remove(self, path: str, *, missing_ok: bool = True) -> bool:
         key = str(path)
         if key in self._store:
             del self._store[key]
